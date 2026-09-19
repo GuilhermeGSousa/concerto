@@ -5,7 +5,7 @@ mod example;
 use app::App;
 use ecs::{
     command::CommandQueue, events::event_channel::EventChannel, Component, Entity, IntoSystem, Res,
-    Resource, System, World,
+    ResMut, Resource, System, World,
 };
 use editable::{Editable, PropertyPath};
 use editor::inspector::{
@@ -82,9 +82,9 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
             PropertyPath::new(["gain"])
         ]
     );
-    assert!(fallback[0].registration().is_none());
-    assert!(fallback[1].registration().is_none());
-    assert!(fallback[2].registration().is_some());
+    assert!(!fallback[0].has_editor());
+    assert!(!fallback[1].has_editor());
+    assert!(fallback[2].has_editor());
     assert!(fallback[0]
         .value
         .snapshot::<Setting, SettingEditor>()
@@ -193,11 +193,12 @@ fn replacing_an_adapter_invalidates_old_edits_even_for_the_same_adapter_type() {
     let (mut world, a, _) = world();
     let old = property(&world, a);
     let edit = commit(&world, a, SettingEdit::Toggle);
-    world
-        .get_resource_mut::<InspectorRegistry>()
-        .unwrap()
+    world.tick();
+    // Registering through `ResMut` stamps the registry, which is what tells
+    // rows captured earlier that they are stale.
+    ResMut::<InspectorRegistry>::new(world.as_unsafe_world_cell_mut())
         .register_property_editor::<Setting, SettingEditor>(SettingEditor);
-    assert_ne!(old.registration(), property(&world, a).registration());
+    assert_ne!(old.registry_tick(), property(&world, a).registry_tick());
     assert_eq!(
         apply_property_commit(&mut world, edit),
         Err(EditError::StaleEditor)

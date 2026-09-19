@@ -3,13 +3,9 @@ use std::{
     sync::Arc,
 };
 
-use ecs::{command::CommandQueue, Component, Entity, Resource};
+use ecs::{command::CommandQueue, component::Tick, Component, Entity, Resource};
 use editable::{Editable, PropertyPath};
 use ui::theme::UITheme;
-
-/// Identity of one registration, including replacements of the same adapter.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct EditorRegistration(pub(crate) u64);
 
 /// A rejected edit leaves the target unchanged. Type mismatches and stale
 /// registrations are reported without invoking the adapter.
@@ -59,13 +55,19 @@ pub struct PropertyRow {
     pub component: TypeId,
     pub path: PropertyPath,
     pub type_id: TypeId,
-    pub(crate) registration: Option<EditorRegistration>,
     pub(crate) editor_type: Option<TypeId>,
+    pub(crate) registry_tick: Tick,
 }
 
 impl PropertyRow {
-    pub fn registration(&self) -> Option<EditorRegistration> {
-        self.registration
+    /// Whether an adapter claimed this row when it was collected.
+    pub fn has_editor(&self) -> bool {
+        self.editor_type.is_some()
+    }
+
+    /// The registry's change tick at collection, which later edits are checked against.
+    pub fn registry_tick(&self) -> Tick {
+        self.registry_tick
     }
 }
 
@@ -132,22 +134,28 @@ pub struct Property {
     pub path: PropertyPath,
     pub type_id: TypeId,
     pub value: PropertyRowValue,
-    pub(crate) registration: Option<EditorRegistration>,
     pub(crate) editor_type: Option<TypeId>,
+    pub(crate) registry_tick: Tick,
 }
 
 impl Property {
-    pub fn registration(&self) -> Option<EditorRegistration> {
-        self.registration
+    /// Whether an adapter claimed this property.
+    pub fn has_editor(&self) -> bool {
+        self.editor_type.is_some()
     }
+
+    pub fn registry_tick(&self) -> Tick {
+        self.registry_tick
+    }
+
     pub fn row(&self, entity: Entity, component: TypeId) -> PropertyRow {
         PropertyRow {
             entity,
             component,
             path: self.path.clone(),
             type_id: self.type_id,
-            registration: self.registration,
             editor_type: self.editor_type,
+            registry_tick: self.registry_tick,
         }
     }
 }
@@ -163,11 +171,11 @@ impl PropertyCommit {
         row: &PropertyRow,
         edit: E::Edit,
     ) -> Result<Self, EditError> {
+        if row.editor_type.is_none() {
+            return Err(EditError::StaleEditor);
+        }
         if row.type_id != TypeId::of::<T>() || row.editor_type != Some(TypeId::of::<E>()) {
             return Err(EditError::TypeMismatch);
-        }
-        if row.registration.is_none() {
-            return Err(EditError::StaleEditor);
         }
         Ok(Self {
             row: row.clone(),

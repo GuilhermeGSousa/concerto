@@ -40,8 +40,8 @@ use numeric::{
 
 pub use registry::{apply_property_commit, apply_property_commits, EditableApp, InspectorRegistry};
 pub use rows::{
-    EditError, EditorRegistration, Property, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyRow, PropertyRowValue,
+    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
+    PropertyRowValue,
 };
 
 pub const PANEL_ID: &str = "rabbithole.ecs";

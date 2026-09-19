@@ -181,11 +181,4 @@ impl ComponentRegistry {
     pub(crate) fn type_info(&self, component_id: &ComponentId) -> Option<&TypeInfo> {
         self.type_info.get(component_id)
     }
-
-    /// Resolves a canonical full type path or a short alias to its read side.
-    pub(crate) fn type_info_by_name(&self, name: &str) -> Option<&TypeInfo> {
-        self.type_info
-            .values()
-            .find(|info| info.name == name || info.short == name)
-    }
 }

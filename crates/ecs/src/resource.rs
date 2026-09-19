@@ -46,7 +46,7 @@ impl<T: Resource> ResourceStorage<T> {
         Self {
             data: resource,
             added_tick: Tick::new(current_tick),
-            changed_tick: Tick::new(0),
+            changed_tick: Tick::new(current_tick),
         }
     }
 }
@@ -75,6 +75,12 @@ impl<'world, T: Resource> Res<'world, T> {
             changed_tick: &res_storage.changed_tick,
             current_tick: world.current_tick(),
         }
+    }
+}
+
+impl<T: Resource> Res<'_, T> {
+    pub fn changed_tick(&self) -> Tick {
+        *self.changed_tick
     }
 }
 
@@ -151,6 +157,10 @@ impl<'world, T: Resource> ResMut<'world, T> {
 
     pub fn mark_changed(&mut self) {
         self.deref_mut();
+    }
+
+    pub fn changed_tick(&self) -> Tick {
+        *self.changed_tick
     }
 }
 

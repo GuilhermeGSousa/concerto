@@ -1,6 +1,7 @@
 use super::*;
 use ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
+    entity::hierarchy::{ChildOf, Children},
     IntoSystem, System, World,
 };
 use glam::Vec3;
@@ -16,6 +17,7 @@ pub(super) fn update(world: &mut World) {
         system.initialize(world);
         system.run_and_apply(world);
     }
+    world.tick();
 }
 
 #[test]
@@ -123,6 +125,8 @@ fn alternating_selections_keep_showing_their_properties() {
 
 fn world() -> (World, Entity, Entity) {
     let mut world = World::default();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
     let entity = world.spawn(Transform::IDENTITY);
     let mut registry = InspectorRegistry::default();
     registry.register_component::<Transform>();
@@ -266,8 +270,14 @@ impl PropertyEditor<Transform> for WholeTransform {
     }
 }
 
+/// Mutating through `ResMut` marks the registry changed, which is how an app's
+/// registration reaches the inspector.
+fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
+    ResMut::new(world.as_unsafe_world_cell_mut())
+}
+
 #[test]
-fn values_refresh_in_place_and_replacing_an_adapter_replaces_only_its_rows() {
+fn values_refresh_in_place_and_registering_an_adapter_rebuilds_the_cards_rows() {
     let (mut world, entity, _) = world();
     update(&mut world);
     let original_card = cards(&mut world)[0].0;
@@ -293,22 +303,16 @@ fn values_refresh_in_place_and_replacing_an_adapter_replaces_only_its_rows() {
             .snapshot::<Vec3, numeric::NumericFields>(),
         Some(numeric::NumericSnapshot::Vec3([8.0, 0.0, 0.0]))
     ));
-    world
-        .get_resource_mut::<InspectorRegistry>()
-        .unwrap()
-        .register_property_editor::<Vec3, _>(numeric::NumericFields);
+    registry_mut(&mut world).register_property_editor::<Vec3, _>(numeric::NumericFields);
     update(&mut world);
+    // Rows carry the registry's change tick, so any registration rebuilds them
+    // all; the card itself is keyed by component and survives.
     assert!(world.entity_is_valid(original_card));
-    for (entity, row) in &original_rows {
-        assert_eq!(
-            world.entity_is_valid(*entity),
-            row.type_id == TypeId::of::<glam::Quat>()
-        );
-    }
-    world
-        .get_resource_mut::<InspectorRegistry>()
-        .unwrap()
-        .register_property_editor::<Transform, _>(WholeTransform);
+    assert!(original_rows
+        .iter()
+        .all(|(entity, _)| !world.entity_is_valid(*entity)));
+    let original_rows = rows(&mut world);
+    registry_mut(&mut world).register_property_editor::<Transform, _>(WholeTransform);
     update(&mut world);
     assert_eq!(cards(&mut world)[0].0, original_card);
     assert!(original_rows
@@ -401,7 +405,7 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     update(&mut world);
     let all_rows = rows(&mut world);
     assert_eq!(all_rows.len(), 1);
-    assert!(all_rows[0].1.registration().is_none());
+    assert!(!all_rows[0].1.has_editor());
     let mut texts = world.query::<&TextComponent, ()>();
     assert!(texts
         .iter(&mut world)

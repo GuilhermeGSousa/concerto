@@ -81,7 +81,27 @@ pub struct ChildOf {
 }
 
 impl Component for ChildOf {
+    fn on_add() -> Option<crate::component::ComponentLifecycleCallback> {
+        Some(|mut world, context| {
+            let Some(parent) = world
+                .get_component_for_entity::<ChildOf>(context.entity)
+                .map(ChildOf::parent)
+            else {
+                return;
+            };
+
+            match world.get_component_for_entity_mut::<Children>(parent) {
+                Some(children) => children.add_child(context.entity),
+                None => world.insert(Children::from_children(vec![context.entity]), parent, true),
+            }
+        })
+    }
+
     fn on_despawn() -> Option<crate::component::ComponentLifecycleCallback> {
+        Self::on_remove()
+    }
+
+    fn on_remove() -> Option<crate::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let Some(parent) = world
                 .get_component_for_entity::<ChildOf>(context.entity)

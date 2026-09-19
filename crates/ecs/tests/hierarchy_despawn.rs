@@ -3,9 +3,18 @@ use ecs::{
     entity::hierarchy::{ChildOf, Children},
 };
 
-#[test]
-fn despawn_detaches_surviving_relatives() {
+/// Relationship upkeep lives in these components' lifecycle callbacks, which an
+/// app installs by registering them.
+fn world() -> World {
     let mut world = World::new();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
+    world
+}
+
+#[test]
+fn despawn_takes_descendants_and_detaches_the_surviving_parent() {
+    let mut world = world();
     let grandparent = world.spawn(());
     let parent = world.spawn(());
     let child = world.spawn(());
@@ -15,8 +24,10 @@ fn despawn_detaches_surviving_relatives() {
     world.despawn(parent);
 
     assert!(world.entity_is_valid(grandparent));
-    assert!(world.entity_is_valid(child));
-    assert!(world.get_component_for_entity::<ChildOf>(child).is_none());
+    assert!(
+        !world.entity_is_valid(child),
+        "despawn must cascade to descendants"
+    );
     assert!(
         world
             .get_component_for_entity::<Children>(grandparent)
@@ -27,7 +38,7 @@ fn despawn_detaches_surviving_relatives() {
 
 #[test]
 fn reparenting_repairs_the_previous_parents_children() {
-    let mut world = World::new();
+    let mut world = world();
     let first_parent = world.spawn(());
     let second_parent = world.spawn(());
     let child = world.spawn(());
@@ -51,7 +62,7 @@ fn reparenting_repairs_the_previous_parents_children() {
 
 #[test]
 fn recursive_despawn_handles_deep_hierarchies_iteratively() {
-    let mut world = World::new();
+    let mut world = world();
     let root = world.spawn(());
     let mut entities = vec![root];
     let mut parent = root;

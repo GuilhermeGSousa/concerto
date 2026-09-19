@@ -151,7 +151,6 @@ pub struct EditorCommands(pub VecDeque<EditorCommand>);
 pub struct ProjectState {
     pub project: Option<Project>,
     pub status: String,
-    pub revision: u64,
     pub generation: u64,
     job: Option<JoinHandle<Result<Option<Project>, String>>>,
 }
@@ -161,7 +160,6 @@ impl Default for ProjectState {
         Self {
             project: None,
             status: "Choose a project folder to get started.".into(),
-            revision: 0,
             generation: 0,
             job: None,
         }
@@ -200,7 +198,6 @@ fn process_commands(
                     asset_server.publish_project_content(&project.root, project.registry.clone())
                 {
                     state.status = format!("Could not activate project assets: {error:#}");
-                    state.revision += 1;
                     return;
                 }
                 state.status = format!(
@@ -218,7 +215,6 @@ fn process_commands(
             Ok(None) => state.status = "Folder selection cancelled.".into(),
             Err(error) => state.status = format!("Could not open project: {error}"),
         }
-        state.revision += 1;
     }
     while let Some(command) = commands.0.pop_front() {
         if state.busy() {
@@ -248,7 +244,6 @@ fn process_commands(
                 }));
             }
         }
-        state.revision += 1;
     }
 }
 

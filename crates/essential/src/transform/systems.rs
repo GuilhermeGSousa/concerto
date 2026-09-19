@@ -63,7 +63,10 @@ pub fn propagate_global_transforms(
 
 #[cfg(test)]
 mod tests {
-    use ecs::{IntoSystem, System, World};
+    use ecs::{
+        entity::hierarchy::{ChildOf, Children},
+        IntoSystem, System, World,
+    };
     use glam::Vec3;
 
     use super::propagate_global_transforms;
@@ -73,6 +76,8 @@ mod tests {
     fn propagates_a_ten_thousand_deep_hierarchy_without_recursion() {
         let mut world = World::new();
         world.register_component::<Transform>();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
 
         let root = world.spawn(Transform::from_translation(Vec3::X));
         let mut leaf = root;

@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     component::{Component, bundle::ComponentBundle},
@@ -66,6 +66,16 @@ impl<'w, 's> CommandQueue<'w, 's> {
         }
     }
 
+    pub(crate) fn for_callbacks(
+        state: &'s mut CommandQueueState,
+        entities: &'w mut EntityStore,
+    ) -> Self {
+        Self {
+            queue_state: state,
+            entities,
+        }
+    }
+
     pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> EntityCommandQueue<'_> {
         let spawned_entity = self.entities.alloc();
         self.queue_state
@@ -96,13 +106,34 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 
     pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.queue_state
-            .add_command(InsertCommand::new(component, entity));
+        self.insert_with_events(component, entity, true);
+    }
+
+    /// Queues insertion with explicit control over lifecycle callbacks.
+    pub fn insert_with_events<T: ComponentBundle + 'static>(
+        &mut self,
+        component: T,
+        entity: Entity,
+        trigger_events: bool,
+    ) {
+        self.queue_state.add_command(InsertCommand {
+            component,
+            entity,
+            trigger_events,
+        });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {
-        self.queue_state
-            .add_command(RemoveCommand::<T>::new(entity));
+        self.remove_with_events::<T>(entity, true);
+    }
+
+    /// Queues removal with explicit control over lifecycle callbacks.
+    pub fn remove_with_events<T: Component>(&mut self, entity: Entity, trigger_events: bool) {
+        self.queue_state.add_command(RemoveCommand::<T> {
+            entity,
+            trigger_events,
+            marker: PhantomData,
+        });
     }
 
     pub fn add_child(&mut self, parent: Entity, child: Entity) {
@@ -146,23 +177,135 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 }
 
+/// Runs a command previously written into the queue's buffer, or drops it in
+/// place when `world` is `None`.
+pub(crate) type ConsumeCommand = unsafe fn(NonNull<MaybeUninit<u8>>, Option<&mut World>);
+
+/// # Safety
+/// `ptr` must address a `C` written by [`CommandQueueState::add_command`] that
+/// has not been consumed yet.
+unsafe fn consume_command<C: Command>(ptr: NonNull<MaybeUninit<u8>>, world: Option<&mut World>) {
+    // The command is moved out before `world` is touched: executing it can push
+    // onto the same buffer and reallocate it, leaving `ptr` dangling.
+    let command = unsafe { ptr.as_ptr().cast::<C>().read_unaligned() };
+
+    if let Some(world) = world {
+        command.execute(world);
+    }
+}
+
+struct CommandEntry {
+    offset: usize,
+    consume: Option<ConsumeCommand>,
+}
+
+/// Pending commands, packed into one buffer rather than boxed individually.
+///
+/// An entry's index stays valid as the buffer grows, so a command can queue
+/// more commands while it runs.
 pub struct CommandQueueState {
-    queue: Vec<Box<dyn Command>>,
+    bytes: Vec<MaybeUninit<u8>>,
+    entries: Vec<CommandEntry>,
 }
 
 impl CommandQueueState {
     pub fn new() -> Self {
-        CommandQueueState { queue: Vec::new() }
+        CommandQueueState {
+            bytes: Vec::new(),
+            entries: Vec::new(),
+        }
     }
 
     pub fn add_command<C: Command + 'static>(&mut self, command: C) {
-        self.queue.push(Box::new(command));
+        let offset = self.bytes.len();
+        self.bytes.reserve(size_of::<C>());
+
+        // SAFETY: `reserve` guarantees room for a `C` at `offset`, and
+        // `MaybeUninit<u8>` needs no initialization to be valid.
+        unsafe {
+            self.bytes
+                .as_mut_ptr()
+                .add(offset)
+                .cast::<C>()
+                .write_unaligned(command);
+            self.bytes.set_len(offset + size_of::<C>());
+        }
+
+        self.entries.push(CommandEntry {
+            offset,
+            consume: Some(consume_command::<C>),
+        });
     }
 
+    /// Runs the queued commands, and everything their callbacks queue, on `world`.
     pub fn execute_commands(&mut self, world: &mut World) {
-        for command in self.queue.drain(..) {
-            command.execute(world);
+        world.apply_commands(self);
+    }
+
+    /// Hands out the command at `index`, or `None` if it was already taken.
+    ///
+    /// The caller must pass the pointer to the returned function exactly once.
+    pub(crate) fn take_command(
+        &mut self,
+        index: usize,
+    ) -> Option<(NonNull<MaybeUninit<u8>>, ConsumeCommand)> {
+        let entry = self.entries.get_mut(index)?;
+        let offset = entry.offset;
+        let consume = entry.consume.take()?;
+
+        // SAFETY: `offset` is in bounds of a buffer that has been allocated.
+        let ptr = unsafe { NonNull::new_unchecked(self.bytes.as_mut_ptr().add(offset)) };
+
+        Some((ptr, consume))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub(crate) fn append(&mut self, other: &mut Self) {
+        let base = self.bytes.len();
+        self.bytes.append(&mut other.bytes);
+        self.entries
+            .extend(other.entries.drain(..).map(|entry| CommandEntry {
+                offset: base + entry.offset,
+                consume: entry.consume,
+            }));
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Drops the commands from `new_len` on that have not run yet.
+    pub fn truncate(&mut self, new_len: usize) {
+        if new_len >= self.entries.len() {
+            return;
         }
+
+        let byte_len = self.entries[new_len].offset;
+
+        for entry in self.entries.drain(new_len..) {
+            let Some(consume) = entry.consume else {
+                continue;
+            };
+
+            // SAFETY: the entry is live, so its command is still in the buffer,
+            // and taking it here means it cannot be consumed again.
+            unsafe {
+                let ptr = NonNull::new_unchecked(self.bytes.as_mut_ptr().add(entry.offset));
+                consume(ptr, None);
+            }
+        }
+
+        // SAFETY: shrinking a buffer of `MaybeUninit<u8>` to a length it held.
+        unsafe { self.bytes.set_len(byte_len) };
+    }
+}
+
+impl Drop for CommandQueueState {
+    fn drop(&mut self) {
+        self.truncate(0);
     }
 }
 
@@ -188,7 +331,9 @@ impl SystemInput for CommandQueue<'_, '_> {
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
-        state.execute_commands(world);
+        if !state.is_empty() {
+            state.execute_commands(world);
+        }
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -197,7 +342,7 @@ impl SystemInput for CommandQueue<'_, '_> {
 }
 
 pub trait Command: Send + Sync {
-    fn execute(self: Box<Self>, world: &mut World);
+    fn execute(self, world: &mut World);
 }
 
 pub(crate) struct SpawnCommand<T: ComponentBundle> {
@@ -212,7 +357,7 @@ impl<T: ComponentBundle> SpawnCommand<T> {
 }
 
 impl<T: ComponentBundle> Command for SpawnCommand<T> {
-    fn execute(self: Box<Self>, world: &mut World) {
+    fn execute(self, world: &mut World) {
         world.spawn_allocated(self.entity, self.components);
     }
 }
@@ -228,7 +373,7 @@ impl DespawnCommand {
 }
 
 impl Command for DespawnCommand {
-    fn execute(self: Box<Self>, world: &mut World) {
+    fn execute(self, world: &mut World) {
         world.despawn(self.entity);
     }
 }
@@ -236,17 +381,15 @@ impl Command for DespawnCommand {
 pub(crate) struct InsertCommand<T: ComponentBundle> {
     component: T,
     entity: Entity,
-}
-
-impl<T: ComponentBundle> InsertCommand<T> {
-    pub fn new(component: T, entity: Entity) -> Self {
-        InsertCommand { component, entity }
-    }
+    trigger_events: bool,
 }
 
 impl<T: ComponentBundle> Command for InsertCommand<T> {
-    fn execute(self: Box<Self>, world: &mut World) {
-        world.insert(self.component, self.entity);
+    fn execute(self, world: &mut World) {
+        if !world.entity_is_valid(self.entity) {
+            return;
+        }
+        world.insert_with_events(self.component, self.entity, self.trigger_events);
     }
 }
 
@@ -267,7 +410,7 @@ impl InsertErasedCommand {
 }
 
 impl Command for InsertErasedCommand {
-    fn execute(self: Box<Self>, world: &mut World) {
+    fn execute(self, world: &mut World) {
         world.apply_scene_component(&self.component_name, &self.component_data, self.entity, &[]);
     }
 }
@@ -280,7 +423,7 @@ pub(crate) struct ApplySceneComponentCommand {
 }
 
 impl Command for ApplySceneComponentCommand {
-    fn execute(self: Box<Self>, world: &mut World) {
+    fn execute(self, world: &mut World) {
         world.apply_scene_component(
             &self.type_name,
             &self.data,
@@ -292,21 +435,17 @@ impl Command for ApplySceneComponentCommand {
 
 pub(crate) struct RemoveCommand<T: Component> {
     entity: Entity,
-    _marker: PhantomData<T>,
-}
-
-impl<T: Component> RemoveCommand<T> {
-    pub fn new(entity: Entity) -> Self {
-        RemoveCommand {
-            entity,
-            _marker: PhantomData,
-        }
-    }
+    trigger_events: bool,
+    marker: PhantomData<fn(T)>,
 }
 
 impl<T: Component> Command for RemoveCommand<T> {
-    fn execute(self: Box<Self>, world: &mut World) {
-        world.remove_component::<T>(self.entity);
+    fn execute(self, world: &mut World) {
+        if !world.entity_is_valid(self.entity) {
+            return;
+        }
+
+        world.remove_with_events::<T>(self.entity, self.trigger_events);
     }
 }
 
@@ -322,7 +461,7 @@ impl AddChild {
 }
 
 impl Command for AddChild {
-    fn execute(self: Box<Self>, world: &mut World) {
+    fn execute(self, world: &mut World) {
         world.add_child(self.parent, self.child);
     }
 }
@@ -338,7 +477,7 @@ impl<T: Resource> InsertResource<T> {
 }
 
 impl<T: Resource> Command for InsertResource<T> {
-    fn execute(self: Box<Self>, world: &mut World) {
+    fn execute(self, world: &mut World) {
         world.insert_resource(self.resource);
     }
 }

@@ -6,13 +6,12 @@ use std::{
 };
 
 use app::App;
-use ecs::{command::CommandQueue, Component, Entity, Resource, World};
+use ecs::{command::CommandQueue, component::Tick, Component, Entity, ResMut, Resource, World};
 use editable::{with_property_mut, Editable, PropertyPath, PropertyVisitor};
 use ui::theme::UITheme;
 
 use super::rows::{
-    EditError, EditorRegistration, Property, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyRowValue,
+    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
 };
 
 #[derive(Clone, Copy)]
@@ -70,7 +69,6 @@ impl<T: Editable, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
 }
 
 pub(crate) struct RegisteredEditor {
-    pub id: EditorRegistration,
     pub editor_type: TypeId,
     pub adapter: Arc<dyn ErasedEditor>,
 }
@@ -81,7 +79,6 @@ pub(crate) struct RegisteredEditor {
 pub struct InspectorRegistry {
     components: HashMap<TypeId, EditableComponent>,
     editors: HashMap<TypeId, RegisteredEditor>,
-    revision: u64,
 }
 
 impl Default for InspectorRegistry {
@@ -89,7 +86,6 @@ impl Default for InspectorRegistry {
         let mut registry = Self {
             components: HashMap::new(),
             editors: HashMap::new(),
-            revision: 0,
         };
         super::numeric::register_defaults(&mut registry);
         registry
@@ -97,10 +93,6 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
-    pub(crate) fn revision(&self) -> u64 {
-        self.revision
-    }
-
     pub fn register_component<T: Component + Editable>(&mut self) {
         let path = std::any::type_name::<T>();
         self.components.insert(
@@ -114,11 +106,9 @@ impl InspectorRegistry {
     }
 
     pub fn register_property_editor<T: Editable, E: PropertyEditor<T>>(&mut self, editor: E) {
-        let id = EditorRegistration(self.revision);
         self.editors.insert(
             TypeId::of::<T>(),
             RegisteredEditor {
-                id,
                 editor_type: TypeId::of::<E>(),
                 adapter: Arc::new(Adapter::<T, E> {
                     editor,
@@ -174,8 +164,8 @@ impl Collect<'_> {
                     path: PropertyPath::new(self.path.iter().copied()),
                     type_id,
                     value: snapshot,
-                    registration: Some(editor.id),
                     editor_type: Some(editor.editor_type),
+                    registry_tick: Tick::default(),
                 }),
                 Err(error) => log::warn!("Unable to snapshot {:?}: {error}", self.path),
             }
@@ -188,8 +178,8 @@ impl Collect<'_> {
                 path: PropertyPath::new(self.path.iter().copied()),
                 type_id,
                 value: PropertyRowValue::default(),
-                registration: None,
                 editor_type: None,
+                registry_tick: Tick::default(),
             });
         }
     }
@@ -208,9 +198,16 @@ fn collect_typed<T: Component + Editable>(
     world: &World,
     entity: Entity,
 ) -> Option<Vec<Property>> {
-    world
-        .get_component_for_entity::<T>(entity)
-        .map(|value| registry.collect(value))
+    let registry_tick = world
+        .resource_changed_tick::<InspectorRegistry>()
+        .unwrap_or_default();
+    world.get_component_for_entity::<T>(entity).map(|value| {
+        let mut properties = registry.collect(value);
+        for property in &mut properties {
+            property.registry_tick = registry_tick;
+        }
+        properties
+    })
 }
 
 fn apply_typed<T: Component + Editable>(
@@ -253,9 +250,15 @@ impl EditableApp for App {
     }
 }
 
-fn registry(app: &mut App) -> &mut InspectorRegistry {
-    app.get_resource_mut::<InspectorRegistry>()
-        .expect("InspectorPlugin must be registered first")
+/// A stamped handle, so registering an editor marks the registry changed and
+/// every inspector row rebuilds against it.
+fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
+    let world = app.main_mut().world_mut();
+    assert!(
+        world.get_resource::<InspectorRegistry>().is_some(),
+        "InspectorPlugin must be registered first"
+    );
+    ResMut::new(world.as_unsafe_world_cell_mut())
 }
 
 /// Apply one captured edit to the live world. Useful for headless editor hosts.
@@ -270,7 +273,9 @@ pub fn apply_property_commit(world: &mut World, commit: PropertyCommit) -> Resul
         .component(row.component)
         .ok_or(EditError::UnregisteredComponent)?;
     let editor = registry.editor(row.type_id).ok_or(EditError::StaleEditor)?;
-    if row.registration != Some(editor.id) || row.editor_type != Some(editor.editor_type) {
+    if row.editor_type != Some(editor.editor_type)
+        || Some(row.registry_tick) != world.resource_changed_tick::<InspectorRegistry>()
+    {
         return Err(EditError::StaleEditor);
     }
     let adapter = Arc::clone(&editor.adapter);

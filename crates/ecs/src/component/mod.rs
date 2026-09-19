@@ -18,7 +18,9 @@ pub type ComponentId = TypeId;
 /// Callback invoked when a component is added to or removed from an entity.
 ///
 /// The callback receives a [`RestrictedWorld`] so it can safely react to the
-/// lifecycle event (e.g. inserting or removing companion components).
+/// lifecycle event (e.g. queueing insertion or removal of companion components).
+/// Structural commands run after the enclosing operation's hook pass and storage
+/// update; existing component and resource data can be mutated immediately.
 pub type ComponentLifecycleCallback = for<'w> fn(RestrictedWorld<'w>, ComponentLifecycleContext);
 
 /// Context passed to a [`ComponentLifecycleCallback`].
@@ -60,15 +62,18 @@ pub trait Component: Send + Sync + 'static {
         None
     }
 
-    /// Optional callback invoked after explicit component removal while the entity remains alive.
-    /// This callback is not invoked by despawning the entity.
+    /// Optional callback invoked before explicit component removal, while its data is readable.
+    /// This callback is not invoked by replacement or despawning the entity.
+    /// Structural changes requested by the callback are queued and applied after
+    /// the removal completes; the callback cannot invalidate component storage.
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         None
     }
 
     /// Optional callback invoked when the entity is despawned, before its components are dropped.
     /// This callback is not invoked by explicit component removal.
-    /// The component is still present unless an earlier callback removed it.
+    /// All components remain present throughout the despawn hook pass. Structural
+    /// commands queued by callbacks run after the entity has been dropped.
     fn on_despawn() -> Option<ComponentLifecycleCallback> {
         None
     }
@@ -97,7 +102,7 @@ impl ComponentLifecycleCallbacks {
 /// mutated.  Filters like [`Added`](crate::query::query_filter::Added) and
 /// [`Changed`](crate::query::query_filter::Changed) compare the stored tick
 /// against the world's current tick to decide whether to include an entity.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Tick(u32);
 
 impl Tick {

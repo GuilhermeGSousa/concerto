@@ -6,7 +6,7 @@
 //! mesh-handle upgrade in `MeshComponent::apply` is exercised for real.
 use ecs::component::name::Name;
 use ecs::component::Component;
-use ecs::entity::hierarchy::Children;
+use ecs::entity::hierarchy::{ChildOf, Children};
 use ecs::{IntoSystem, Res, ResMut, Resource, System, World};
 use essential::assets::asset_server::AssetServer;
 use essential::assets::asset_store::AssetStore;
@@ -71,6 +71,8 @@ fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
     let mut world = World::default();
     world.register_component_type::<Transform>();
     world.register_component_type::<Camera>();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
 
     let parent = world.spawn(());
     let camera = SerializedComponent {
@@ -241,6 +243,8 @@ fn spawner_expands_nodes_and_upgrades_weak_handles() {
     world.register_component_type::<Transform>();
     world.register_component_type::<MeshComponent>();
     world.register_component::<SceneSpawnerComponent>();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
 
     // A wired AssetServer with the Mesh lifetime sender registered lets
     // `MeshComponent::apply` upgrade a serialized Weak handle to Strong exactly

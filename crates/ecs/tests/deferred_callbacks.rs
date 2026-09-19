@@ -66,7 +66,7 @@ impl Component for Spawner {
     fn on_add() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, _| {
             let entity = world.spawn(());
-            world.commands().insert(Marker, entity);
+            world.insert(Marker, entity, true);
             assert!(world.get_component_for_entity::<Marker>(entity).is_none());
             world.get_resource_mut::<Spawned>().unwrap().0 = Some(entity);
         })
@@ -118,7 +118,7 @@ struct Cleanup;
 impl Component for Cleanup {
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.commands().remove::<Self>(context.entity);
+            world.remove_component::<Self>(context.entity, true);
             assert!(
                 world
                     .get_component_for_entity::<Self>(context.entity)

@@ -1,22 +1,26 @@
 //! A downstream asset editor. Run with `cargo run -p editor --example custom_asset`.
 use anyhow::Result;
 use app::schedule_groups::Update;
-use ecs::{Component, Entity, IntoSystem, Query, Res, command::{CommandQueue, EntityCommandQueue}};
+use ecs::{
+    command::{CommandQueue, EntityCommandQueue},
+    entity::hierarchy::{ChildOf, Children},
+    Component, Entity, IntoSystem, Query, Res,
+};
 use editor::{
     asset_editor::{
-        ActiveEditor, AssetEditor, AssetEditorAppExt, AssetEditorCommand, AssetEditorCommands,
-        AssetEditorRegistry, EditorDocument, asset_request_is_current,
-        finish_asset_request, process_editor_commands,
+        asset_request_is_current, finish_asset_request, process_editor_commands, ActiveEditor,
+        AssetEditor, AssetEditorAppExt, AssetEditorCommand, AssetEditorCommands,
+        AssetEditorRegistry, EditorDocument,
     },
     project::{AssetEntry, Project, ProjectState},
 };
 use essential::assets::{
-    Asset, AssetId,
     asset_server::AssetServer,
     content::{
-        AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
-        read_content_asset, write_content_asset,
+        read_content_asset, write_content_asset, AssetRegistry, ContentAssetHeader,
+        ImportProvenance, CONTENT_FORMAT_VERSION,
     },
+    Asset, AssetId,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -146,6 +150,8 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     project.generation = 1;
     app.insert_resource(project);
     let world = app.main_mut().world_mut();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
     let mut process = process_editor_commands.into_system();
     process.initialize(world);
     let mut document = None;
@@ -195,7 +201,11 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         load.run_and_apply(world);
         let active = world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         assert_eq!(*document.get_or_insert(active), active);
-        let widget = world.query::<&DialogueWidget, ()>().iter(world).next().unwrap();
+        let widget = world
+            .query::<&DialogueWidget, ()>()
+            .iter(world)
+            .next()
+            .unwrap();
         assert_eq!(widget.document, active);
         let widget_text = widget.text.clone();
         assert_eq!(widget_text, if text.is_empty() { "Goodbye" } else { text });

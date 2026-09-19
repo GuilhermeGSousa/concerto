@@ -14,7 +14,7 @@ pub struct InspectedComponent {
     pub name: &'static str,
     body: Entity,
     last_read_tick: Option<Tick>,
-    registry_revision: Option<u64>,
+    registry_tick: Option<Tick>,
 }
 
 /// Widget creation is deferred to a regular system with a CommandQueue, keeping
@@ -41,7 +41,7 @@ pub(super) fn sync_inspected_components(
         .collect();
 
     // Descriptors are temporary discovery data, never another persistent model.
-    let registry_revision = Some(registry.revision());
+    let registry_tick = Some(registry.changed_tick());
     let mut desired: Vec<_> = target
         .into_iter()
         .flat_map(|entity| world.component_ids(entity))
@@ -79,7 +79,7 @@ pub(super) fn sync_inspected_components(
             .unwrap_or_else(|| spawn_card(&mut cmd, stack, target, type_id, name, &theme));
         ordered.push(entity);
         if card.last_read_tick.is_none()
-            || card.registry_revision != registry_revision
+            || card.registry_tick != registry_tick
             || card
                 .last_read_tick
                 .is_some_and(|tick| world.has_component_changed_since(target, type_id, tick))
@@ -89,7 +89,7 @@ pub(super) fn sync_inspected_components(
                 .unwrap_or_default();
             reconcile_rows(world, &mut cmd, &card, properties, &theme);
             card.last_read_tick = Some(world.current_tick());
-            card.registry_revision = registry_revision;
+            card.registry_tick = registry_tick;
             cmd.insert(card, entity);
         }
     }
@@ -166,7 +166,8 @@ fn reconcile_rows(
                         && row.component == card.type_id
                         && row.path == property.path
                         && row.type_id == property.type_id
-                        && row.registration == property.registration
+                        && row.editor_type == property.editor_type
+                        && row.registry_tick == property.registry_tick
                 })
         });
         let row = if let Some(index) = matching {
@@ -258,7 +259,7 @@ fn spawn_card(
         name,
         body,
         last_read_tick: None,
-        registry_revision: None,
+        registry_tick: None,
     };
     cmd.insert(card, entity);
     (entity, card)
@@ -335,7 +336,7 @@ pub(super) fn build_property_widgets(
     for (entity, row, value) in rows.iter() {
         if let Some(editor) = registry
             .editor(row.type_id)
-            .filter(|editor| Some(editor.id) == row.registration)
+            .filter(|editor| Some(editor.editor_type) == row.editor_type)
         {
             if let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme) {
                 log::warn!("Unable to build property widget: {error}");
