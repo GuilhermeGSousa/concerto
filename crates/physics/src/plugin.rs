@@ -4,7 +4,7 @@ use app::{
 };
 
 use crate::{
-    collider::{register_colliders, Collider},
+    collider::register_colliders,
     ground::probe_ground,
     interpolation::interpolate_body_transforms,
     movement::apply_character_movement,
@@ -20,7 +20,6 @@ pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut app::App) {
-        app.register_component_lifetimes::<Collider>();
         app.register_scene_component::<MeshCollider>();
         app.insert_resource(PhysicsPipeline::new())
             .insert_resource(PhysicsState::new())

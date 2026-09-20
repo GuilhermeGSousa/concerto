@@ -57,5 +57,11 @@ impl Plugin for MainSchedulePlugin {
     fn build(&self, app: &mut crate::App) {
         app.main_mut().set_update_schedule(Main);
         app.add_system(Main, run_main);
+
+        #[cfg(all(feature = "multithreaded", not(target_arch = "wasm32")))]
+        {
+            use ecs::system::executor::multi_thread::MainThreadExecutor;
+            app.insert_resource(MainThreadExecutor::default());
+        }
     }
 }

@@ -3,7 +3,7 @@ use ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use ecs::system::executor::single_thread::SingleThreadedExecutor;
 use ecs::{
-    component::{scene::SceneComponent, Component},
+    component::scene::SceneComponent,
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
@@ -240,12 +240,6 @@ impl App {
         self.subapps.render_mut()
     }
 
-    /// Registers component lifecycle callbacks (`on_add` / `on_remove`) for `T`.
-    pub fn register_component_lifetimes<T: Component>(&mut self) -> &mut Self {
-        self.main_mut().register_component_lifetimes::<T>();
-        self
-    }
-
     /// Polls each plugin's [`ready`](Plugin::ready) method and transitions the state machine.
     ///
     /// Returns the current [`PluginsState`].
@@ -319,5 +313,41 @@ impl App {
 impl Default for App {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ecs::events::{event_channel::EventChannel, event_reader::EventReader};
+
+    #[derive(Event)]
+    struct ExternalEvent;
+
+    #[derive(Resource, Default)]
+    struct Seen(usize);
+
+    fn observe(mut events: EventReader<ExternalEvent>, mut seen: ResMut<Seen>) {
+        seen.0 += events.read().count();
+    }
+
+    #[test]
+    fn externally_queued_events_survive_until_late_update() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_event::<ExternalEvent>()
+            .insert_resource(Seen::default())
+            .add_system(schedule_groups::LateUpdate, observe);
+        app.get_resource_mut::<EventChannel<ExternalEvent>>()
+            .unwrap()
+            .push_event(ExternalEvent);
+        app.finish_plugin_build();
+
+        app.update();
+
+        assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
+        app.update();
+        assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
     }
 }

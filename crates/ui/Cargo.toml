@@ -27,3 +27,6 @@ derive_more = { version = "2", features = ["full"] }
 glam = { version = "0.30.1", features = ["bytemuck", "scalar-math"] }
 log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
+winit = "0.30"
+
+[dev-dependencies]

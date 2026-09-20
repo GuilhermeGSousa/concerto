@@ -1,8 +1,15 @@
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
 use app::{plugins::PluginsState, App};
 use ecs::events::event_channel::EventChannel;
 use input::Input;
-use plugin::Window;
-use winit::{application::ApplicationHandler, keyboard::PhysicalKey};
+use plugin::{Window, WindowGesture, WindowGestureRegion};
+use winit::{
+    application::ApplicationHandler,
+    event::{ElementState, MouseButton},
+    keyboard::PhysicalKey,
+};
 
 use winit::event::WindowEvent as WinitWindowEvent;
 
@@ -14,9 +21,14 @@ pub mod winit_events;
 
 pub fn run() {}
 
+/// How close together two presses on a move region count as a double press.
+const DOUBLE_PRESS: Duration = Duration::from_millis(400);
+
 pub struct ApplicationWindowHandler {
     app: App,
     winit_events: Vec<winit::event::WindowEvent>,
+    /// The last press that started a move, for spotting a double press.
+    last_move_press: Option<Instant>,
 }
 
 impl ApplicationWindowHandler {
@@ -24,11 +36,89 @@ impl ApplicationWindowHandler {
         Self {
             app,
             winit_events: Vec::new(),
+            last_move_press: None,
+        }
+    }
+
+    /// Starts whatever [`WindowGestureRegion`] puts under this press.
+    ///
+    /// The position is the pointer's as of this press: winit delivers the move
+    /// that lands on the grip before the press itself, so pressing a grip the
+    /// instant you reach it still counts.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn start_window_gesture(&mut self) {
+        let Some(window) = self.app.get_resource::<Window>() else {
+            return;
+        };
+        let handle = Arc::clone(&window.window_handle);
+        let Some(input) = self.app.get_resource::<Input>() else {
+            return;
+        };
+        let pointer = window.logical_pointer_position(input);
+        let Some(gesture) = self
+            .app
+            .get_resource::<WindowGestureRegion>()
+            .and_then(|region| region.gesture_at(pointer))
+        else {
+            return;
+        };
+        match gesture {
+            WindowGesture::Move => {
+                let now = Instant::now();
+                let doubled = self
+                    .last_move_press
+                    .is_some_and(|previous| now.duration_since(previous) < DOUBLE_PRESS);
+                self.last_move_press = (!doubled).then_some(now);
+                if doubled {
+                    handle.set_maximized(!handle.is_maximized());
+                } else if left_button_held() {
+                    let _ = handle.drag_window();
+                }
+            }
+            WindowGesture::Resize { direction } => {
+                if left_button_held() {
+                    let _ = handle.drag_resize_window(direction);
+                }
+            }
         }
     }
 }
 
+/// Whether the left button is physically down right now, not as of the press
+/// being handled.
+///
+/// A frame long enough to outlast a click delivers the press and the release
+/// together. Asking Windows to move the window after the release has already
+/// happened would jam winit's drag state, so a press whose button is already up
+/// is left as the click it was.
+#[cfg(windows)]
+fn left_button_held() -> bool {
+    use windows_sys::Win32::UI::{
+        Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON},
+        WindowsAndMessaging::{GetSystemMetrics, SM_SWAPBUTTON},
+    };
+    // GetAsyncKeyState reads the physical buttons; with them swapped, the
+    // logical left one is the physical right.
+    let key = if unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0 {
+        VK_RBUTTON
+    } else {
+        VK_LBUTTON
+    };
+    let state = unsafe { GetAsyncKeyState(i32::from(key)) };
+    // The high bit is set while the key is down.
+    state < 0
+}
+
+#[cfg(not(windows))]
+fn left_button_held() -> bool {
+    true
+}
+
 impl ApplicationHandler for ApplicationWindowHandler {
+    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        drop(std::mem::take(&mut self.app));
+    }
+
     fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let _ = event_loop;
     }
@@ -88,6 +178,10 @@ impl ApplicationHandler for ApplicationWindowHandler {
             WinitWindowEvent::MouseInput { state, button, .. } => {
                 let input = self.app.get_resource_mut::<Input>().unwrap();
                 input.update_mouse_button(button, state);
+                #[cfg(not(target_arch = "wasm32"))]
+                if state == ElementState::Pressed && button == MouseButton::Left {
+                    self.start_window_gesture();
+                }
             }
             _ => (),
         }
@@ -122,7 +216,13 @@ impl ApplicationHandler for ApplicationWindowHandler {
     }
 
     fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let _ = event_loop;
+        if self
+            .app
+            .get_resource::<plugin::CloseRequest>()
+            .is_some_and(|request| request.0)
+        {
+            event_loop.exit();
+        }
     }
 }
 

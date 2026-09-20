@@ -46,6 +46,10 @@ impl SystemAccess {
         self.needs_apply
     }
 
+    pub fn is_exclusive(&self) -> bool {
+        self.writes_all
+    }
+
     pub fn are_disjoint(a: &Self, b: &Self) -> bool {
         if a.writes_all || b.writes_all {
             return false;

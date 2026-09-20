@@ -98,6 +98,7 @@ fn import_upserts_the_registry_for_every_written_asset() {
         let id = read_content_asset_header(&project_root.join(&asset.address))
             .expect("header")
             .asset_id;
+        assert_eq!(asset.asset_id, id);
         assert_eq!(
             registry.get(id),
             Some(asset.address.as_str()),
@@ -117,25 +118,11 @@ fn re_importing_reuses_the_ids_already_on_disk() {
 
     let first = import::import_source(&fixture(&project_root), &project_root, &Default::default())
         .expect("first import");
-    let ids_before: Vec<AssetId> = first
-        .iter()
-        .map(|a| {
-            read_content_asset_header(&project_root.join(&a.address))
-                .unwrap()
-                .asset_id
-        })
-        .collect();
+    let ids_before: Vec<AssetId> = first.iter().map(|asset| asset.asset_id).collect();
 
     let second = import::import_source(&fixture(&project_root), &project_root, &Default::default())
         .expect("second import");
-    let ids_after: Vec<AssetId> = second
-        .iter()
-        .map(|a| {
-            read_content_asset_header(&project_root.join(&a.address))
-                .unwrap()
-                .asset_id
-        })
-        .collect();
+    let ids_after: Vec<AssetId> = second.iter().map(|asset| asset.asset_id).collect();
 
     assert_eq!(
         ids_before, ids_after,

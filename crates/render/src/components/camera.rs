@@ -11,7 +11,7 @@ use ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     query::Query,
-    resource::Res,
+    resource::{Res, ResMut},
     Entity,
 };
 use glam::{Mat4, Vec3};
@@ -20,8 +20,12 @@ use wgpu::util::DeviceExt;
 use window::plugin::Window;
 
 use crate::{
-    assets::texture::Texture, components::render_entity::RenderEntity, device::RenderDevice,
-    layouts::CameraLayout, queue::RenderQueue, render_asset::render_texture::RenderTexture,
+    assets::texture::Texture,
+    components::render_entity::RenderEntity,
+    device::RenderDevice,
+    layouts::CameraLayout,
+    queue::RenderQueue,
+    render_asset::{render_texture::RenderTexture, RenderAssets},
     resources::RenderContext,
 };
 
@@ -160,6 +164,22 @@ impl RenderCamera {
     }
 }
 
+fn publish_render_target(
+    camera: &Camera,
+    render_camera: &RenderCamera,
+    render_textures: &mut RenderAssets<RenderTexture>,
+) {
+    let RenderTarget::Texture(handle) = &camera.render_target else {
+        return;
+    };
+    let Some(target) = render_camera.render_target.as_ref() else {
+        return;
+    };
+
+    render_textures.insert(handle.id(), target.clone());
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn extract_cameras(
     cameras: Extracted<Query<(&Camera, &GlobalTransform, &RenderEntity)>>,
     render_cameras: Query<&mut RenderCamera>,
@@ -168,6 +188,7 @@ pub(crate) fn extract_cameras(
     context: Res<RenderContext>,
     camera_layouts: Res<CameraLayout>,
     texture_assets: Extracted<Res<AssetStore<Texture>>>,
+    mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
     for (camera, transform, render_entity) in cameras.iter() {
@@ -178,6 +199,28 @@ pub(crate) fn extract_cameras(
 
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;
+            render_camera.clear_color = camera.clear_color.to_linear();
+
+            if let RenderTarget::Texture(handle) = &camera.render_target {
+                if let Some(texture) = texture_assets.get(handle) {
+                    let requested = texture.size();
+                    let current = render_camera
+                        .render_target
+                        .as_ref()
+                        .map(|target| target.texture.size());
+                    if current.is_none_or(|size| {
+                        size.width != requested.width || size.height != requested.height
+                    }) {
+                        render_camera.resize_render_target(
+                            &device,
+                            context.surface_config.format,
+                            requested.width.max(1),
+                            requested.height.max(1),
+                        );
+                    }
+                }
+            }
+            publish_render_target(camera, &render_camera, &mut render_textures);
 
             let mut buffer = UniformBuffer::new(Vec::new());
             buffer.write(&render_camera.camera_uniform).unwrap();
@@ -240,6 +283,7 @@ pub(crate) fn extract_cameras(
             clear_color: camera.clear_color.to_linear(),
             render_target,
         };
+        publish_render_target(camera, &render_cam, &mut render_textures);
 
         cmd.insert(render_cam, render_entity);
     }

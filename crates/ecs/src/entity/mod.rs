@@ -3,7 +3,12 @@ use std::{
     num::NonZero,
 };
 
-use crate::table::TableRowIndex;
+use crate::{
+    component::bundle::ComponentBundle,
+    entity::hierarchy::{ChildOf, Children},
+    table::TableRowIndex,
+    world::World,
+};
 
 pub mod entity_store;
 pub mod hierarchy;
@@ -65,4 +70,56 @@ impl EntityLocation {
         archetype_index: u32::MAX,
         row: TableRowIndex::new(usize::MAX),
     };
+}
+
+/// A borrow of a single entity, used to edit its place in the hierarchy.
+pub struct EntityWorldMut<'w> {
+    world: &'w mut World,
+    entity: Entity,
+}
+
+impl<'w> EntityWorldMut<'w> {
+    pub(crate) fn new(world: &'w mut World, entity: Entity) -> Self {
+        Self { world, entity }
+    }
+
+    pub fn id(&self) -> Entity {
+        self.entity
+    }
+
+    /// Makes `child` a child of this entity, detaching it from its previous parent.
+    pub fn add_child(&mut self, child: Entity) -> &mut Self {
+        let parent = self
+            .world
+            .get_component_for_entity::<ChildOf>(child)
+            .map(ChildOf::parent);
+        if parent != Some(self.entity) {
+            self.world.insert(ChildOf::new(self.entity), child);
+        }
+        self
+    }
+
+    pub fn add_children(&mut self, children: &[Entity]) -> &mut Self {
+        // Who is already attached is one lookup on this entity, not one per child:
+        // `Children` holds exactly the entities whose `ChildOf` points here.
+        let attached: Vec<Entity> = self
+            .world
+            .get_component_for_entity::<Children>(self.entity)
+            .map(|attached| attached.iter().copied().collect())
+            .unwrap_or_default();
+
+        for child in children {
+            if !attached.contains(child) {
+                self.world.insert(ChildOf::new(self.entity), *child);
+            }
+        }
+        self
+    }
+
+    /// Spawns an entity as a child of this one and borrows it in turn.
+    pub fn spawn_child<T: ComponentBundle>(&mut self, bundle: T) -> EntityWorldMut<'_> {
+        let child = self.world.spawn(bundle);
+        self.add_child(child);
+        EntityWorldMut::new(self.world, child)
+    }
 }

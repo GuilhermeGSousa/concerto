@@ -12,6 +12,7 @@ use std::ops::Deref;
 use wgpu::TextureUsages;
 
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct RenderTexture {
     /// The GPU texture view (used for bind groups and render pass attachments).
     pub view: wgpu::TextureView,

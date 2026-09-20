@@ -90,9 +90,9 @@ mod tests {
     #[test]
     fn stepping_preserves_transform_scale() {
         let mut world = World::new();
-        world.register_component_lifetimes::<Collider>();
+        world.register_component::<Collider>();
         // Inserts the GlobalTransform that `register_colliders` reads.
-        world.register_component_lifetimes::<Transform>();
+        world.register_component::<Transform>();
         world.insert_resource(PhysicsState::new());
         world.insert_resource(PhysicsPipeline::new());
         world.insert_resource(Time::new());

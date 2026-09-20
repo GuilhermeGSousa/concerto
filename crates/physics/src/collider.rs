@@ -78,15 +78,15 @@ impl Component for Collider {
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            // `remove_component::<Collider>` fires this after the Collider is
-            // gone; the body id survives on its own `BodyId` component.
+            // Both removal and despawn run cleanup before the Collider is
+            // dropped; its backend body is tracked by the companion `BodyId`.
             if let Some(&body) = world.get_component_for_entity::<BodyId>(context.entity) {
                 if let Some(state) = world.get_resource_mut::<PhysicsState>() {
                     state.destroy_body(body);
                     state.unregister_body_entity(body);
                 }
 
-                world.remove_component::<BodyId>(context.entity, true);
+                world.remove_component::<BodyId>(context.entity);
                 // Without a body there are no more fixed-step poses; left in
                 // place the interpolator would keep rewriting the Transform
                 // from stale history.
@@ -94,7 +94,7 @@ impl Component for Collider {
                     .get_component_for_entity::<TransformInterpolation>(context.entity)
                     .is_some()
                 {
-                    world.remove_component::<TransformInterpolation>(context.entity, true);
+                    world.remove_component::<TransformInterpolation>(context.entity);
                 }
             }
         })

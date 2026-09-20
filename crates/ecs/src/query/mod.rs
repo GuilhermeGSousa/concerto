@@ -18,6 +18,7 @@ use crate::{
     system::{
         access::SystemAccess,
         input::{ReadOnlySystemInput, SystemInput},
+        meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
 };
@@ -57,7 +58,7 @@ pub trait QueryData: WorldQuery {
     fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>>;
 
     /// Registers component access with the scheduler's access tracker.
-    fn fill_access(access: &mut SystemAccess);
+    fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess);
 }
 
 pub trait ReadOnlyQueryData: QueryData {}
@@ -161,8 +162,8 @@ where
         Query::new(world, state)
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
-        T::fill_access(access);
+    fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
+        T::fill_access(meta, access);
     }
 }
 
@@ -191,7 +192,7 @@ where
             .and_then(|location| world.get_component_for_entity_location::<T>(location))
     }
 
-    fn fill_access(access: &mut SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
         access.read_component::<T>();
     }
 }
@@ -224,7 +225,7 @@ where
             })
     }
 
-    fn fill_access(access: &mut SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
         access.write_component::<T>();
     }
 }
@@ -240,7 +241,7 @@ impl QueryData for Entity {
         Some(entity)
     }
 
-    fn fill_access(_access: &mut SystemAccess) {}
+    fn fill_access(_meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
 }
 
 impl ReadOnlyQueryData for Entity {}
@@ -263,7 +264,7 @@ where
             .map(|location| world.get_component_for_entity_location(location))
     }
 
-    fn fill_access(access: &mut SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
         access.read_component::<T>();
     }
 }
@@ -291,7 +292,7 @@ where
         })
     }
 
-    fn fill_access(access: &mut SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
         access.write_component::<T>();
     }
 }
@@ -326,9 +327,9 @@ where
         ))
     }
 
-    fn fill_access(access: &mut SystemAccess) {
+    fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         for typle_index!(i) in 0..T::LEN {
-            <T<{ i }>>::fill_access(access);
+            <T<{ i }>>::fill_access(meta, access);
         }
     }
 }

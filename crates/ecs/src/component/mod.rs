@@ -4,7 +4,8 @@ use std::{
 };
 
 pub mod bundle;
-pub(crate) mod registry;
+pub mod name;
+pub mod registry;
 pub mod scene;
 
 pub use ecs_macros::Component;
@@ -17,7 +18,9 @@ pub type ComponentId = TypeId;
 /// Callback invoked when a component is added to or removed from an entity.
 ///
 /// The callback receives a [`RestrictedWorld`] so it can safely react to the
-/// lifecycle event (e.g. inserting or removing companion components).
+/// lifecycle event (e.g. queueing insertion or removal of companion components).
+/// Structural commands run after the enclosing operation's hook pass and storage
+/// update; existing component and resource data can be mutated immediately.
 pub type ComponentLifecycleCallback = for<'w> fn(RestrictedWorld<'w>, ComponentLifecycleContext);
 
 /// Context passed to a [`ComponentLifecycleCallback`].
@@ -32,8 +35,10 @@ pub struct ComponentLifecycleContext {
 /// should live in the ECS storage.
 ///
 /// # Lifecycle callbacks
-/// Override [`on_add`](Component::on_add) or [`on_remove`](Component::on_remove) to
-/// run logic automatically when the component is added to or removed from an entity.
+/// Override [`on_add`](Component::on_add), [`on_replace`](Component::on_replace),
+/// [`on_remove`](Component::on_remove), or [`on_despawn`](Component::on_despawn) to
+/// react to component insertion, an insert overwriting an existing value, component
+/// removal (including the removal a despawn implies), or the despawn itself.
 ///
 /// # Example
 /// ```
@@ -58,8 +63,28 @@ pub trait Component: Send + Sync + 'static {
         None
     }
 
-    /// Optional callback invoked immediately before this component is removed from an entity.
+    /// Optional callback invoked before an insert overwrites this component, while the old
+    /// value is still readable. This callback is not invoked by the first insert, by explicit
+    /// removal, or by despawning the entity.
+    fn on_replace() -> Option<ComponentLifecycleCallback> {
+        None
+    }
+
+    /// Optional callback invoked before this component is removed, while its data is
+    /// readable. Despawning removes every component, so this fires then too; replacement
+    /// does not fire it.
+    /// Structural changes requested by the callback are queued and applied after
+    /// the removal completes; the callback cannot invalidate component storage.
     fn on_remove() -> Option<ComponentLifecycleCallback> {
+        None
+    }
+
+    /// Optional callback for teardown that only makes sense for a dying entity, invoked
+    /// after this component's [`on_remove`](Component::on_remove) during a despawn and not
+    /// at all on explicit component removal.
+    /// All components remain present throughout the despawn hook pass. Structural
+    /// commands queued by callbacks run after the entity has been dropped.
+    fn on_despawn() -> Option<ComponentLifecycleCallback> {
         None
     }
 }
@@ -67,14 +92,18 @@ pub trait Component: Send + Sync + 'static {
 #[allow(dead_code)]
 pub(crate) struct ComponentLifecycleCallbacks {
     pub(crate) on_add: Option<ComponentLifecycleCallback>,
+    pub(crate) on_replace: Option<ComponentLifecycleCallback>,
     pub(crate) on_remove: Option<ComponentLifecycleCallback>,
+    pub(crate) on_despawn: Option<ComponentLifecycleCallback>,
 }
 
 impl ComponentLifecycleCallbacks {
     pub(crate) fn from_component<T: Component>() -> Self {
         Self {
             on_add: T::on_add(),
+            on_replace: T::on_replace(),
             on_remove: T::on_remove(),
+            on_despawn: T::on_despawn(),
         }
     }
 }
@@ -85,7 +114,7 @@ impl ComponentLifecycleCallbacks {
 /// mutated.  Filters like [`Added`](crate::query::query_filter::Added) and
 /// [`Changed`](crate::query::query_filter::Changed) compare the stored tick
 /// against the world's current tick to decide whether to include an entity.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Tick(u32);
 
 impl Tick {

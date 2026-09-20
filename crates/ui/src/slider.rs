@@ -15,7 +15,7 @@ use window::input::{Input, InputState, MouseButton};
 use crate::{
     interaction::HoveredNode,
     material::UIMaterial,
-    node::{UIComputedNode, UINode},
+    node::{UILayout, UINode},
     transform::UIValue,
 };
 
@@ -82,8 +82,8 @@ pub(crate) fn setup_slider_visuals(
             .spawn((
                 UISliderFill,
                 UINode {
-                    width: UIValue::Percent(slider.normalized()),
-                    height: UIValue::Percent(1.0),
+                    width: UIValue::Percent(slider.normalized() * 100.0),
+                    height: UIValue::Percent(100.0),
                     ..Default::default()
                 },
                 UIMaterial::flat(Color::rgba(0.25, 0.55, 0.95, 1.0)),
@@ -98,12 +98,13 @@ pub(crate) fn setup_slider_visuals(
 /// Drag begins on `MouseButton::Left` `Pressed` over the slider and continues
 /// while the button is held, even if the cursor leaves the node bounds.
 pub(crate) fn update_slider_drag(
-    sliders: Query<(Entity, &mut UISlider, &UIComputedNode)>,
+    sliders: Query<(Entity, &mut UISlider, &UILayout)>,
     input: Res<Input>,
+    window: Res<window::plugin::Window>,
     hovered: Res<HoveredNode>,
     mut writer: EventWriter<UISliderChanged>,
 ) {
-    let cursor = input.mouse_position();
+    let cursor = window.logical_pointer_position(&input);
     let left = input.get_mouse_button_state(MouseButton::Left);
 
     for (entity, mut slider, computed) in sliders.iter() {
@@ -117,7 +118,7 @@ pub(crate) fn update_slider_drag(
         }
 
         if slider.dragging && (left == InputState::Pressed || left == InputState::Down) {
-            let norm = ((cursor.x - computed.location.x) / computed.size.x).clamp(0.0, 1.0);
+            let norm = ((cursor.x - computed.rect.min.x) / computed.rect.size.x).clamp(0.0, 1.0);
             let new_value = slider.min + norm * (slider.max - slider.min);
             if (new_value - slider.value).abs() > f32::EPSILON {
                 slider.value = new_value;
@@ -140,7 +141,7 @@ pub(crate) fn sync_slider_fill(
 ) {
     for (mut node, child_of) in fills.iter() {
         if let Some(slider) = sliders.get_entity(**child_of) {
-            node.width = UIValue::Percent(slider.normalized());
+            node.width = UIValue::Percent(slider.normalized() * 100.0);
         }
     }
 }

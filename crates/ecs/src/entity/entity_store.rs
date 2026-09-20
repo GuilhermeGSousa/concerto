@@ -48,6 +48,7 @@ impl EntityStore {
         let meta = &mut self.metadata[entity.index() as usize];
         meta.current_generation =
             NonZero::new(meta.current_generation.get() + 1).expect("Entity generation overflow");
+        meta.location = EntityLocation::INVALID;
 
         self.pending.push(entity.index());
     }

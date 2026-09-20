@@ -6,7 +6,10 @@ use std::{
 pub use ecs_macros::Resource;
 
 use crate::{
-    World, component::Tick, query::change_detection::DetectChanges, system::input::SystemInput,
+    World,
+    component::Tick,
+    query::change_detection::DetectChanges,
+    system::{input::SystemInput, meta::SystemMetadata},
     world::UnsafeWorldCell,
 };
 
@@ -43,7 +46,7 @@ impl<T: Resource> ResourceStorage<T> {
         Self {
             data: resource,
             added_tick: Tick::new(current_tick),
-            changed_tick: Tick::new(0),
+            changed_tick: Tick::new(current_tick),
         }
     }
 }
@@ -75,6 +78,12 @@ impl<'world, T: Resource> Res<'world, T> {
     }
 }
 
+impl<T: Resource> Res<'_, T> {
+    pub fn changed_tick(&self) -> Tick {
+        *self.changed_tick
+    }
+}
+
 impl<'a, T> SystemInput for Res<'a, T>
 where
     T: Resource,
@@ -91,7 +100,7 @@ where
         Res::new(world)
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
         access.read_resource::<T>();
     }
 }
@@ -149,6 +158,10 @@ impl<'world, T: Resource> ResMut<'world, T> {
     pub fn mark_changed(&mut self) {
         self.deref_mut();
     }
+
+    pub fn changed_tick(&self) -> Tick {
+        *self.changed_tick
+    }
 }
 
 impl<T> SystemInput for ResMut<'_, T>
@@ -167,7 +180,7 @@ where
         ResMut::new(world)
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
         access.write_resource::<T>();
     }
 }

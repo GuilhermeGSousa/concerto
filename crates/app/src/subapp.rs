@@ -1,7 +1,7 @@
 use ecs::{
     component::scene::SceneComponent,
     system::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules},
-    Component, IntoSystemConfig, Resource, World,
+    IntoSystemConfig, Resource, World,
 };
 
 use crate::{extractor::ExtractFn, schedule_groups::Startup};
@@ -82,11 +82,6 @@ impl SubApp {
 
     pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
         self.world.get_resource_mut::<R>()
-    }
-
-    pub fn register_component_lifetimes<T: Component>(&mut self) -> &mut Self {
-        self.world.register_component_lifetimes::<T>();
-        self
     }
 
     pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {

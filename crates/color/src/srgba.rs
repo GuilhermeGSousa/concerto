@@ -15,6 +15,11 @@ impl Srgba {
         Self { r, g, b, a }
     }
 
+    #[inline]
+    pub const fn to_array(self) -> [f32; 4] {
+        [self.r, self.g, self.b, self.a]
+    }
+
     /// Construct from raw sRGB bytes (0–255).
     #[inline]
     pub fn from_bytes(r: u8, g: u8, b: u8, a: u8) -> Self {

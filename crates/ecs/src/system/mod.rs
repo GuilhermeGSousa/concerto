@@ -3,6 +3,7 @@ pub mod config;
 pub mod executor;
 mod graph;
 pub mod input;
+pub mod meta;
 pub mod schedule;
 mod sync_point;
 
@@ -14,7 +15,7 @@ use input::SystemInput;
 use typle::typle;
 
 use crate::{
-    system::access::SystemAccess,
+    system::{access::SystemAccess, meta::SystemMetadata},
     world::{UnsafeWorldCell, World},
 };
 
@@ -38,7 +39,7 @@ pub trait System: Send + Sync + 'static {
     fn initialize(&mut self, world: &mut World);
 
     /// Describes which components and resources this system reads or writes.
-    fn access(&self) -> SystemAccess;
+    fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
     /// Executes the system against the world, then applies any deferred commands.
     fn run_and_apply(&mut self, world: &mut World) {
@@ -80,8 +81,8 @@ impl System for BoxedSystem {
         unsafe { (**self).run_unsafe(world) };
     }
 
-    fn access(&self) -> SystemAccess {
-        (**self).access()
+    fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
+        (**self).fill_access(meta, access);
     }
 
     fn initialize(&mut self, world: &mut World) {
@@ -145,12 +146,10 @@ where
         }));
     }
 
-    fn access(&self) -> SystemAccess {
-        let mut access: SystemAccess = SystemAccess::default();
+    fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
         for typle_index!(i) in 0..T::LEN {
-            <T<{ i }>>::fill_access(&mut access);
+            <T<{ i }>>::fill_access(meta, access);
         }
-        access
     }
 }
 
@@ -183,5 +182,26 @@ where
 {
     fn into_system(self) -> BoxedSystem {
         Box::new(FunctionSystem::new(self))
+    }
+}
+
+pub struct NonSendMarker;
+
+impl SystemInput for NonSendMarker {
+    type State = ();
+
+    type Data<'world, 'state> = NonSendMarker;
+
+    fn init_state(_world: &mut World) -> Self::State {}
+
+    fn get_data<'world, 'state>(
+        _state: &'state mut Self::State,
+        _world: UnsafeWorldCell<'world>,
+    ) -> Self::Data<'world, 'state> {
+        NonSendMarker
+    }
+
+    fn fill_access(meta: &mut SystemMetadata, _access: &mut SystemAccess) {
+        meta.set_non_send();
     }
 }

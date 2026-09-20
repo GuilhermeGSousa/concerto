@@ -31,7 +31,6 @@ pub(crate) fn prepare_render_asset<A: RenderAsset>(
     mut render_assets: ResMut<RenderAssets<A>>,
 ) {
     for (asset_id, asset) in asset_store.into_iter() {
-        // TODO: Do something more performant than this
         if render_assets.contains(asset_id) {
             continue;
         }

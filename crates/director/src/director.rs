@@ -125,7 +125,7 @@ impl CameraDirector {
         self.stack.iter().position(|entry| entry.camera == camera)
     }
 
-    /// Called from [`VirtualCamera`]'s `on_remove`, which covers despawns.
+    /// Called from [`VirtualCamera`]'s removal and despawn callbacks.
     pub(crate) fn stack_remove(&mut self, camera: Entity) {
         let outgoing = self.live();
         self.detach(camera);
@@ -296,9 +296,9 @@ mod tests {
         fn new() -> Self {
             let mut world = World::new();
             // Inserts the GlobalTransform the director reads poses from.
-            world.register_component_lifetimes::<Transform>();
+            world.register_component::<Transform>();
             // Joins/leaves the stack on spawn and despawn.
-            world.register_component_lifetimes::<VirtualCamera>();
+            world.register_component::<VirtualCamera>();
             world.insert_resource(Time::new());
             world.insert_resource(CameraDirector::default());
 

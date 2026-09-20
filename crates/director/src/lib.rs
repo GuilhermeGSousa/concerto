@@ -54,8 +54,6 @@ impl Plugin for CameraDirectorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CameraDirector::default());
         app.register_scene_component::<VirtualCamera>();
-        // Must precede any VirtualCamera spawn, or it never joins the stack.
-        app.register_component_lifetimes::<VirtualCamera>();
 
         app.add_system(Startup, main_camera::spawn_main_camera);
 

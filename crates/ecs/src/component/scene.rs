@@ -90,6 +90,9 @@ impl<'w> SceneSpawnContext<'w> {
 /// A type that is a runtime component inserts itself. A type that is really
 /// authoring data expands into several runtime components — possibly on other
 /// entities — and never inserts one of itself. Both are this one interface.
-pub trait SceneComponent: Component + DeserializeOwned + Sized + 'static {
+/// A component that can be written into a scene file and applied back out of
+/// one. The `Serialize` half is also what lets tools read a live component's
+/// value back out of the world; see [`World::component_types`].
+pub trait SceneComponent: Component + Serialize + DeserializeOwned + Sized + 'static {
     fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>);
 }

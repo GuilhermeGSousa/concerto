@@ -2,14 +2,14 @@ use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
     components::{
         camera::{extract_cameras, sync_camera_aspect},
-        light::{extract_lights, update_changed_lights, RenderLight, RenderLights},
+        light::{extract_lights, update_changed_lights, RenderLights},
         mesh::extract_meshes,
-        render_entity::{extract, RenderEntity},
+        render_entity::extract,
         shadows::{
             resize_shadow_maps, update_shadow_view_proj, RenderLighting, RenderPointShadowMaps,
-            RenderShadowCasterSlot, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
+            RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
         },
-        skeleton::{extract_skeletons, RenderSkeletonComponent, SkinUniforms},
+        skeleton::{extract_skeletons, SkinUniforms},
         world_environment::WorldEnvironment,
     },
     device::RenderDevice,
@@ -261,12 +261,6 @@ impl Plugin for RenderPlugin {
         let skeleton_layout = SkeletonLayout::new(&device);
 
         let lighting_layout = LightingLayout::new(&device);
-
-        app.render_mut()
-            .register_component_lifetimes::<RenderEntity>()
-            .register_component_lifetimes::<RenderSkeletonComponent>()
-            .register_component_lifetimes::<RenderLight>()
-            .register_component_lifetimes::<RenderShadowCasterSlot>();
 
         let render_lights = RenderLights::new(&device);
         let render_spot_directional_shadow_maps = RenderSpotDirectionalShadowMaps::new(&device);

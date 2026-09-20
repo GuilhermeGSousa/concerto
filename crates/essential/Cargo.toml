@@ -9,6 +9,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 asset-format = { path = "../asset-format" }
+editable = { path = "../editable" }
 ecs = { path = "../ecs" }
 tasks = { path = "../tasks" }
 bytemuck = { version = "1.22.0", features = ["derive"] }

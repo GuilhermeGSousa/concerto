@@ -4,7 +4,10 @@ use crate::{
     World,
     events::{Event, event_channel::EventChannel, event_cursor::EventCursor},
     resource::Res,
-    system::input::{SystemInput, SystemLocal},
+    system::{
+        input::{SystemInput, SystemLocal},
+        meta::SystemMetadata,
+    },
     world::UnsafeWorldCell,
 };
 
@@ -81,9 +84,9 @@ where
         }
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
-        <ChannelParam<T>>::fill_access(access);
-        <CursorParam<T>>::fill_access(access);
+    fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
+        <ChannelParam<T>>::fill_access(meta, access);
+        <CursorParam<T>>::fill_access(meta, access);
     }
 }
 

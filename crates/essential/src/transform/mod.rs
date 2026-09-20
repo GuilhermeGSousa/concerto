@@ -3,13 +3,14 @@ use std::ops::Mul;
 use ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use ecs::component::{Component, ComponentLifecycleCallback};
 use ecs::entity::Entity;
+use editable::Editable;
 use glam::{Affine3A, Mat4, Quat, Vec3};
 
 use crate::blend::Blendable;
 
 pub mod systems;
 
-#[derive(Clone, Blendable, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Blendable, Editable, serde::Serialize, serde::Deserialize)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,
@@ -26,13 +27,13 @@ impl Component for Transform {
                     .compute_matrix(),
             );
 
-            world.insert(global_transform, context.entity, false);
+            world.insert(global_transform, context.entity);
         })
     }
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.remove_component::<GlobalTransform>(context.entity, false);
+            world.remove_component::<GlobalTransform>(context.entity);
         })
     }
 }
@@ -281,4 +282,55 @@ impl GlobalTransform {
 #[derive(Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct GlobalTransformRaw {
     matrix: [[f32; 4]; 4],
+}
+
+#[cfg(test)]
+mod editable_tests {
+    use super::Transform;
+    use editable::{with_property, Editable, PropertyPath, PropertyVisitor};
+    use glam::{Quat, Vec3};
+    use std::any::{Any, TypeId};
+
+    #[test]
+    fn transform_exposes_translation_rotation_and_scale() {
+        struct Fields(Vec<(&'static str, TypeId)>);
+        impl PropertyVisitor for Fields {
+            fn field(&mut self, name: &'static str, value: &dyn Editable) {
+                self.0.push((name, (value as &dyn Any).type_id()));
+            }
+        }
+        let transform = Transform::from_translation_rotation_scale(
+            Vec3::new(1.0, 2.0, 3.0),
+            Quat::from_rotation_y(90_f32.to_radians()),
+            Vec3::ONE,
+        );
+        let mut fields = Fields(Vec::new());
+        transform.visit(&mut fields);
+        assert_eq!(
+            fields.0,
+            vec![
+                ("translation", TypeId::of::<Vec3>()),
+                ("rotation", TypeId::of::<Quat>()),
+                ("scale", TypeId::of::<Vec3>())
+            ]
+        );
+        with_property(
+            &transform,
+            &PropertyPath::new(["translation"]),
+            &mut |value| {
+                assert_eq!(
+                    (value as &dyn Any).downcast_ref::<Vec3>(),
+                    Some(&transform.translation)
+                );
+            },
+        )
+        .unwrap();
+        with_property(&transform, &PropertyPath::new(["rotation"]), &mut |value| {
+            assert_eq!(
+                (value as &dyn Any).downcast_ref::<Quat>(),
+                Some(&transform.rotation)
+            );
+        })
+        .unwrap();
+    }
 }

@@ -1,6 +1,7 @@
 use std::{
     any::TypeId,
     collections::{BTreeMap, HashMap, HashSet},
+    path::Path,
     sync::{Arc, RwLock, Weak},
 };
 
@@ -36,8 +37,8 @@ impl LoadedAsset {
 }
 
 enum AssetLoadEvent {
-    Loaded(LoadedAsset),
-    LoadFailed(AssetId),
+    Loaded { asset: LoadedAsset },
+    LoadFailed { id: AssetId },
 }
 
 pub struct AssetLoadContext {
@@ -72,11 +73,11 @@ pub(crate) struct AssetServerData {
     handle_provider: AssetHandleProvider,
     asset_load_event_sender: Sender<AssetLoadEvent>,
     asset_load_event_receiver: Receiver<AssetLoadEvent>,
-    content_root: ContentAssetRoot,
     content: RwLock<ContentState>,
 }
 
 struct ContentState {
+    root: ContentAssetRoot,
     registry: Option<Arc<BTreeMap<AssetId, String>>>,
     initialization: Option<Task<()>>,
     error: Option<String>,
@@ -92,7 +93,7 @@ impl AssetServer {
         Self::with_content_root(ContentAssetRoot::default_for_platform())
     }
 
-    /// Creates a server whose content root is fixed for its lifetime.
+    /// Creates a server with the supplied initial content root.
     pub fn with_content_root(root: ContentAssetRoot) -> Self {
         let (asset_load_event_sender, asset_load_event_receiver) = crossbeam_channel::unbounded();
         let server_data = AssetServerData {
@@ -101,8 +102,8 @@ impl AssetServer {
             handle_provider: AssetHandleProvider::new(),
             asset_load_event_sender,
             asset_load_event_receiver,
-            content_root: root,
             content: RwLock::new(ContentState {
+                root,
                 registry: None,
                 initialization: None,
                 error: None,
@@ -114,9 +115,41 @@ impl AssetServer {
         }
     }
 
-    /// The immutable root every content asset address resolves against.
-    fn content_root(&self) -> ContentAssetRoot {
-        self.data.content_root.clone()
+    /// Configures the editor project root and its complete registry snapshot.
+    pub fn publish_project_content(
+        &self,
+        project_root: &Path,
+        registry: crate::assets::content::AssetRegistry,
+    ) -> anyhow::Result<()> {
+        let root = project_root.canonicalize().with_context(|| {
+            format!(
+                "failed to resolve project root '{}'",
+                project_root.display()
+            )
+        })?;
+        self.publish_content_source(ContentAssetRoot::Directory(root), registry);
+        Ok(())
+    }
+
+    /// Atomically replaces the root and UUID registry used by subsequent
+    /// loads. This is also available for non-native content providers.
+    pub fn publish_content_source(
+        &self,
+        root: ContentAssetRoot,
+        registry: crate::assets::content::AssetRegistry,
+    ) {
+        // `load` takes these locks in the same order. Holding the pending lock
+        // closes the gap where a request could otherwise attach to the old
+        // snapshot while it is being replaced.
+        let mut pending = self.data.pending_tasks.write().unwrap();
+        {
+            let mut content = self.data.content.write().unwrap();
+            content.root = root;
+            content.registry = Some(Arc::new(registry.into_entries()));
+            content.initialization = None;
+            content.error = None;
+        };
+        pending.clear();
     }
 
     /// Eagerly loads the UUID-to-path registry.
@@ -124,10 +157,14 @@ impl AssetServer {
     /// standalone callers may await it to report errors before requesting loads.
     /// Otherwise, load tasks initialize the registry lazily.
     pub async fn initialize(&self) -> anyhow::Result<()> {
-        if self.data.content.read().unwrap().registry.is_some() {
-            return Ok(());
-        }
-        self.initialize_root(self.content_root()).await
+        let root = {
+            let content = self.data.content.read().unwrap();
+            if content.registry.is_some() {
+                return Ok(());
+            }
+            content.root.clone()
+        };
+        self.initialize_root(root).await
     }
 
     async fn initialize_root(&self, root: ContentAssetRoot) -> anyhow::Result<()> {
@@ -151,7 +188,6 @@ impl AssetServer {
     /// Starts registry initialization on first poll, then reports readiness or
     /// the initialization error. Does not block the native or browser runner.
     pub fn poll_initialize(&self) -> anyhow::Result<bool> {
-        let root = self.content_root();
         let mut content = self.data.content.write().unwrap();
         if content.registry.is_some() {
             return Ok(true);
@@ -160,6 +196,7 @@ impl AssetServer {
             anyhow::bail!("{error}");
         }
         if content.initialization.is_none() {
+            let root = content.root.clone();
             let server = self.clone();
             content.initialization = Some(
                 LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
@@ -181,7 +218,9 @@ impl AssetServer {
         let id = AssetId::new();
 
         let sender = self.data.asset_load_event_sender.clone();
-        let _ = sender.send(AssetLoadEvent::Loaded(LoadedAsset::new(id, asset)));
+        let _ = sender.send(AssetLoadEvent::Loaded {
+            asset: LoadedAsset::new(id, asset),
+        });
         self.data.handle_provider.request_handle(id)
     }
 
@@ -202,19 +241,19 @@ impl AssetServer {
         self.data.loaded_assets.write().unwrap().remove(id);
     }
 
+    #[cfg(test)]
     async fn resolve_by_id(&self, id: AssetId) -> Option<String> {
+        self.resolve_asset(id).await.map(|(_, address)| address)
+    }
+
+    async fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, String)> {
         if let Err(error) = self.initialize().await {
             log::error!("{error:#}");
             return None;
         }
-        self.data
-            .content
-            .read()
-            .unwrap()
-            .registry
-            .as_ref()?
-            .get(&id)
-            .cloned()
+        let content = self.data.content.read().unwrap();
+        let address = content.registry.as_ref()?.get(&id)?.clone();
+        Some((content.root.clone(), address))
     }
 
     /// Resolves the UUID through the registry before reading the cooked asset.
@@ -227,18 +266,17 @@ impl AssetServer {
         // held across .await (tasks can migrate between worker threads).
         // Load costs show up on the named "asset-load-N" threads instead.
         LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
-            let address = match server.resolve_by_id(id).await {
-                Some(address) => address,
+            let (content_root, address) = match server.resolve_asset(id).await {
+                Some(resolved) => resolved,
                 None => {
                     log::error!(
                         "no content asset registered for AssetId {id:?} (type {})",
                         std::any::type_name::<A>()
                     );
-                    sender.send(AssetLoadEvent::LoadFailed(id)).unwrap();
+                    sender.send(AssetLoadEvent::LoadFailed { id }).unwrap();
                     return;
                 }
             };
-            let content_root = server.content_root();
             let asset = async {
                 let bytes = crate::assets::utils::load_content_asset_bytes(
                     &content_root,
@@ -257,7 +295,9 @@ impl AssetServer {
             match asset {
                 Ok(asset) => {
                     sender
-                        .send(AssetLoadEvent::Loaded(LoadedAsset::new(id, asset)))
+                        .send(AssetLoadEvent::Loaded {
+                            asset: LoadedAsset::new(id, asset),
+                        })
                         .unwrap();
                 }
                 Err(error) => {
@@ -267,7 +307,7 @@ impl AssetServer {
                         std::any::type_name::<A>(),
                         error
                     );
-                    sender.send(AssetLoadEvent::LoadFailed(id)).unwrap();
+                    sender.send(AssetLoadEvent::LoadFailed { id }).unwrap();
                 }
             }
         })
@@ -289,7 +329,9 @@ pub fn handle_asset_load_events(world: &mut world::World) {
         .asset_load_event_receiver
         .try_iter()
         .for_each(|event| match event {
-            AssetLoadEvent::Loaded(loaded_asset) => {
+            AssetLoadEvent::Loaded {
+                asset: loaded_asset,
+            } => {
                 server
                     .data
                     .pending_tasks
@@ -304,7 +346,7 @@ pub fn handle_asset_load_events(world: &mut world::World) {
                     .insert(loaded_asset.id);
                 loaded_asset.value.insert(loaded_asset.id, world);
             }
-            AssetLoadEvent::LoadFailed(id) => {
+            AssetLoadEvent::LoadFailed { id } => {
                 server.data.pending_tasks.write().unwrap().remove(&id);
                 server.data.loaded_assets.write().unwrap().remove(&id);
             }
@@ -339,7 +381,12 @@ impl AssetHandleProvider {
             .read()
             .unwrap()
             .get(&TypeId::of::<A>())
-            .expect("Asset lifetime sender not found, make sure to register it")
+            .unwrap_or_else(|| {
+                panic!(
+                    "Asset lifetime sender not found for {}, make sure to register it",
+                    A::name()
+                )
+            })
             .clone();
 
         let mut binding = self.asset_handles.write().unwrap();
@@ -521,8 +568,10 @@ mod tests {
         drive_pending_load(&server, id);
 
         match server.data.asset_load_event_receiver.try_recv() {
-            Ok(AssetLoadEvent::LoadFailed(failed)) => assert_eq!(failed, id),
-            Ok(AssetLoadEvent::Loaded(_)) => panic!("an unregistered id must not produce an asset"),
+            Ok(AssetLoadEvent::LoadFailed { id: failed, .. }) => assert_eq!(failed, id),
+            Ok(AssetLoadEvent::Loaded { .. }) => {
+                panic!("an unregistered id must not produce an asset")
+            }
             Err(error) => panic!("expected a LoadFailed event, got {error}"),
         }
         assert!(!server.data.loaded_assets.read().unwrap().contains(&id));

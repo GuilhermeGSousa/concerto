@@ -1,7 +1,7 @@
 use derive_more::{Deref, From};
 
 use crate::{
-    component::{Component, ComponentId},
+    component::{Component, ComponentId, Tick},
     entity::Entity,
     table::{MutableCellAccessor, Table, TableRowIndex},
 };
@@ -82,6 +82,17 @@ impl Archetype {
         current_tick: u32,
     ) -> bool {
         self.data_table.was_added(row, component_id, current_tick)
+    }
+
+    pub(crate) fn has_component_changed_since(
+        &self,
+        component_id: ComponentId,
+        row: TableRowIndex,
+        since: Tick,
+        current_tick: Tick,
+    ) -> bool {
+        self.data_table
+            .has_changed_since(row, component_id, since, current_tick)
     }
 
     pub fn was_entity_changed(

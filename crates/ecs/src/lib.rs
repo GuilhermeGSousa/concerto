@@ -30,7 +30,7 @@ pub mod world;
 // Commonly-used re-exports so downstream crates don't need to know the module layout.
 pub use command::CommandQueue;
 pub use component::Component;
-pub use entity::Entity;
+pub use entity::{Entity, EntityWorldMut};
 pub use events::Event;
 pub use query::{
     Query,
@@ -499,8 +499,8 @@ mod tests {
         let entity_child_1 = world.spawn((Health, Position { x: 10.0, y: 20.0 }));
         let entity_child_2 = world.spawn((Health, Position { x: 10.0, y: 20.0 }));
 
-        world.add_child(entity_parent, entity_child_1);
-        world.add_child(entity_parent, entity_child_2);
+        world.entity_mut(entity_parent).add_child(entity_child_1);
+        world.entity_mut(entity_parent).add_child(entity_child_2);
     }
 
     #[derive(Resource)]

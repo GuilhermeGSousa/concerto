@@ -1,7 +1,7 @@
 use color::{Color, LinearRgba};
 use ecs::component::Component;
-use essential::assets::Asset;
-use render::{AsBindGroup, assets::vertex::VertexBufferLayout};
+use essential::assets::{Asset, handle::AssetHandle};
+use render::{AsBindGroup, assets::texture::Texture, assets::vertex::VertexBufferLayout};
 
 use crate::vertex::UIVertex;
 
@@ -30,6 +30,7 @@ use crate::vertex::UIVertex;
     fragment_shader = include_str!("shaders/ui.wgsl"),
     camera = false,
     depth_stencil = "none",
+    blend = "alpha",
     vertex_layouts = vec![UIVertex::describe()],
 )]
 pub struct UIMaterial {
@@ -41,17 +42,45 @@ pub struct UIMaterial {
     #[uniform(1)]
     pub border_color: LinearRgba,
 
-    /// GPU-side border parameters — **do not set manually**.
+    /// GPU-side shape parameters — **do not set manually**.
     ///
-    /// Layout: `[border_width_px, node_width_px, node_height_px, 0.0]`.
-    /// The `sync_border_size` system fills in the node dimensions each frame;
-    /// `border_width_px` is copied from the user-facing `border_width` field.
+    /// Layout: `[border_width_px, node_width_px, node_height_px, corner_radius_px]`.
+    /// The `sync_material_params` system fills these in each frame from the
+    /// user-facing fields and the node's measured size.
     #[uniform(2)]
     pub border_params: [f32; 4],
+
+    /// GPU-side shape flags — **do not set manually**.
+    ///
+    /// Layout: `[has_texture, rotation_radians, 0, 0]`. `has_texture` is an
+    /// explicit flag rather than relying on the dummy texture's contents,
+    /// matching `StandardMaterial`; the rotation is packed here by
+    /// `sync_material_params` from the user-facing field.
+    #[uniform(3)]
+    pub flags: [f32; 4],
+
+    /// Optional texture, multiplied by [`color`](Self::color).
+    ///
+    /// This is what makes a UI node able to show anything sampled: a camera's
+    /// render target, an icon, a baked gradient.
+    #[texture(4)]
+    #[sampler(5)]
+    pub texture: Option<AssetHandle<Texture>>,
 
     /// Border width in logical pixels.  Set this; the engine manages
     /// `border_params` automatically.
     pub border_width: f32,
+
+    /// Corner radius in logical pixels, clamped to half the node's shorter
+    /// side so a fully-rounded pill is just a large value.
+    pub corner_radius: f32,
+
+    /// Rotation of the drawn shape within its node, in radians.
+    ///
+    /// The node itself does not rotate — layout is unaffected — only the
+    /// rectangle drawn inside it, which is shrunk to stay within the node's
+    /// box. A square at `FRAC_PI_4` is how the design system draws a diamond.
+    pub rotation: f32,
 }
 
 impl UIMaterial {
@@ -61,7 +90,11 @@ impl UIMaterial {
             color: color.to_linear(),
             border_color: LinearRgba::TRANSPARENT,
             border_width: 0.0,
+            corner_radius: 0.0,
             border_params: [0.0; 4],
+            flags: [0.0; 4],
+            texture: None,
+            rotation: 0.0,
         }
     }
 
@@ -71,7 +104,11 @@ impl UIMaterial {
             color: color.to_linear(),
             border_color: border_color.to_linear(),
             border_width,
+            corner_radius: 0.0,
             border_params: [border_width, 0.0, 0.0, 0.0],
+            flags: [0.0; 4],
+            texture: None,
+            rotation: 0.0,
         }
     }
 }

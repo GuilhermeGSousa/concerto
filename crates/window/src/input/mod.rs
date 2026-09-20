@@ -1,3 +1,4 @@
+pub mod actions;
 use cfg_if::cfg_if;
 use ecs::resource::Resource;
 use glam::Vec2;
@@ -44,6 +45,14 @@ impl Input {
             Some(state) => *state,
             None => InputState::Up,
         }
+    }
+
+    /// Every key that entered the pressed state this frame.
+    pub fn just_pressed_keys(&self) -> impl Iterator<Item = PhysicalKey> + '_ {
+        self.input_map
+            .iter()
+            .filter(|(_, state)| **state == InputState::Pressed)
+            .map(|(key, _)| *key)
     }
 
     pub fn is_just_pressed(&self, key: PhysicalKey) -> bool {

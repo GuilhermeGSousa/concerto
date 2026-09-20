@@ -253,7 +253,7 @@ mod tests {
     /// serde, which still reaches the private fields.
     fn spawn_from_json(json: &'static str) -> (World, Entity) {
         let mut world = World::new();
-        world.register_component_lifetimes::<VirtualCamera>();
+        world.register_component::<VirtualCamera>();
         world.register_component_type::<VirtualCamera>();
         world.insert_resource(CameraDirector::default());
 

@@ -4,7 +4,6 @@ use essential::time::{FrameStats, Time};
 
 use ecs::resource::{Res, ResMut};
 use essential::transform::systems::{propagate_global_transforms, update_simple_entities};
-use essential::transform::Transform;
 
 use crate::schedule_groups::{LateUpdate, Update};
 use crate::App;
@@ -106,7 +105,6 @@ pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
-        app.register_component_lifetimes::<Transform>();
         app.add_system(LateUpdate, update_simple_entities)
             .add_system(LateUpdate, propagate_global_transforms);
     }

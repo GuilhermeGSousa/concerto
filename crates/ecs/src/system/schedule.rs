@@ -9,6 +9,7 @@ use crate::{
         config::{IntoSystemConfig, SystemConfig},
         executor::SystemExecutor,
         graph::{SystemDependencyGraph, SystemNode},
+        meta::SystemMetadata,
         sync_point::SyncPoint,
     },
     world::World,
@@ -99,13 +100,16 @@ impl Schedule {
             .collect();
 
         let name = config.system.name();
-        let access = config.system.access();
+        let mut access = SystemAccess::default();
+        let mut metadata = SystemMetadata::default();
+        config.system.fill_access(&mut metadata, &mut access);
 
         let node_idx: SystemNodeIndex = self
             .graph
             .add_node(SystemNode::new(
                 self.systems.len().into(),
                 access.clone(),
+                metadata,
                 name,
             ))
             .into();
@@ -167,6 +171,12 @@ impl Schedule {
             .map(|idx| self.graph.node_weight(**idx).unwrap().access().clone())
             .collect();
 
+        let system_meta: Vec<SystemMetadata> = self
+            .system_ids
+            .iter()
+            .map(|idx| self.graph.node_weight(**idx).unwrap().meta().clone())
+            .collect();
+
         let sorted_systems = toposort(&self.graph, None)
             .expect("Cycle detected in schedule — check your .after()/.before() constraints")
             .into_iter()
@@ -183,6 +193,7 @@ impl Schedule {
             dependency_count,
             dependants,
             system_access,
+            system_meta,
         };
 
         CompiledSchedule {
@@ -236,6 +247,7 @@ pub struct CompiledScheduleData {
     pub dependency_count: Vec<usize>,
     pub dependants: Vec<Vec<usize>>,
     pub system_access: Vec<SystemAccess>,
+    pub system_meta: Vec<SystemMetadata>,
 }
 
 define_label!(ScheduleLabel);

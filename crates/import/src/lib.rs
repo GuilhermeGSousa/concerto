@@ -29,6 +29,8 @@ fn registered_importers() -> Vec<Box<dyn Importer>> {
 /// One content asset written by [`import_source`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedAsset {
+    /// The persistent UUID written into the content asset header.
+    pub asset_id: AssetId,
     /// The sub-asset name within the source, e.g. `"mesh/0"`.
     pub sub_asset_name: String,
     /// The project-relative content-tree address it was written to.
@@ -212,6 +214,7 @@ pub fn import_source(
             },
         );
         written.push(ImportedAsset {
+            asset_id: sub_asset.asset_id,
             sub_asset_name: sub_asset.name.clone(),
             address,
             kind: header.kind,

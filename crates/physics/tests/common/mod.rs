@@ -16,8 +16,8 @@ use physics::physics_state::PhysicsState;
 /// it colliders are skipped with no diagnostic.
 pub fn physics_world() -> World {
     let mut world = World::new();
-    world.register_component_lifetimes::<Collider>();
-    world.register_component_lifetimes::<Transform>();
+    world.register_component::<Collider>();
+    world.register_component::<Transform>();
     world.insert_resource(PhysicsState::new());
     world
 }

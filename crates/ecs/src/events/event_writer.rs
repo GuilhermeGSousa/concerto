@@ -2,7 +2,7 @@ use crate::{
     World,
     events::{Event, event_channel::EventChannel},
     resource::ResMut,
-    system::input::SystemInput,
+    system::{input::SystemInput, meta::SystemMetadata},
     world::UnsafeWorldCell,
 };
 
@@ -52,7 +52,7 @@ where
         EventWriter::new(world)
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
         access.write_resource::<EventChannel<T>>();
     }
 }

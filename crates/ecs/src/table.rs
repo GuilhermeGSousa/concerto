@@ -200,6 +200,22 @@ impl Table {
         }
     }
 
+    pub(crate) fn has_changed_since(
+        &self,
+        row: TableRowIndex,
+        component_id: ComponentId,
+        since: Tick,
+        current_tick: Tick,
+    ) -> bool {
+        let Some(column) = self.columns.get(&component_id) else {
+            return false;
+        };
+        let age = current_tick.wrapping_sub(*since);
+        [column.added_ticks[*row], column.changed_ticks[*row]]
+            .iter()
+            .any(|tick| current_tick.wrapping_sub(**tick) <= age)
+    }
+
     pub fn was_changed(
         &self,
         row: TableRowIndex,

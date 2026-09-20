@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use crate::{
-    system::access::SystemAccess,
+    system::{access::SystemAccess, meta::SystemMetadata},
     utilities::SyncCell,
     world::{FromWorld, UnsafeWorldCell, World},
 };
@@ -21,7 +21,7 @@ pub trait SystemInput {
 
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
-    fn fill_access(access: &mut SystemAccess);
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess);
 }
 
 pub trait ReadOnlySystemInput: SystemInput {}
@@ -47,8 +47,8 @@ where
         typle_for!(i in .. => <T<{i}>>::get_data(&mut state[[i]], world))
     }
 
-    fn fill_access(access: &mut SystemAccess) {
-        typle_for!(i in .. => <T<{i}>>::fill_access(access));
+    fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
+        typle_for!(i in .. => <T<{i}>>::fill_access(meta, access));
     }
 }
 
@@ -91,8 +91,8 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
         StaticSystemInput(P::get_data(state, world))
     }
 
-    fn fill_access(access: &mut SystemAccess) {
-        P::fill_access(access);
+    fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
+        P::fill_access(meta, access);
     }
 }
 
@@ -115,5 +115,5 @@ impl<'s, T: FromWorld + Send + 'static> SystemInput for SystemLocal<'s, T> {
         SystemLocal(state.get())
     }
 
-    fn fill_access(_access: &mut SystemAccess) {}
+    fn fill_access(_meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
 }

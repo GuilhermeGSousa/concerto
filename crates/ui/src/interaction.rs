@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use color::Color;
 use derive_more::{Deref, DerefMut};
 use ecs::events::event_writer::EventWriter;
@@ -5,17 +7,29 @@ use ecs::{
     component::Component,
     entity::Entity,
     events::Event,
-    query::{Query, filter::With},
+    query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
 };
 use glam::Vec2;
 use window::input::{Input, InputState, MouseButton};
 
-use crate::{material::UIMaterial, node::UIComputedNode};
+use crate::{material::UIMaterial, node::UILayout};
 
 /// The UI entity currently under the cursor, if any.
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct HoveredNode(Option<Entity>);
+
+/// Shared pointer routing state. Captured widgets continue receiving drag and
+/// release events after the pointer leaves their bounds.
+#[derive(Resource, Default)]
+pub struct UIInputState {
+    pub hovered: Option<Entity>,
+    pub pressed: Option<Entity>,
+    pub captured: Option<Entity>,
+    press_origin: Option<Vec2>,
+    last_cursor: Option<Vec2>,
+    dragged: bool,
+}
 
 /// Opts a node into hit testing and click events.
 ///
@@ -60,52 +74,142 @@ pub struct UIInteractionStyle {
     pub disabled: Color,
 }
 
-/// Fired the frame a UI node is clicked with the left mouse button.
+/// Fired when the left button is released over the same node it pressed.
 #[derive(Event)]
 pub struct UIClick {
     pub entity: Entity,
     pub position: Vec2,
 }
 
-/// Walks all [`UIComputedNode`]s each frame, determines which one (if any) is
+#[derive(Event)]
+pub struct UIPointerDown {
+    pub entity: Entity,
+    pub position: Vec2,
+}
+
+#[derive(Event)]
+pub struct UIPointerUp {
+    pub entity: Entity,
+    pub position: Vec2,
+}
+
+#[derive(Event)]
+pub struct UIDrag {
+    pub entity: Entity,
+    pub position: Vec2,
+    pub delta: Vec2,
+}
+
+#[derive(Event)]
+pub struct UIPointerEnter {
+    pub entity: Entity,
+    pub position: Vec2,
+}
+
+#[derive(Event)]
+pub struct UIPointerLeave {
+    pub entity: Entity,
+    pub position: Vec2,
+}
+
+/// Walks all [`UILayout`]s each frame, determines which one (if any) is
 /// under the cursor, updates [`HoveredNode`], and fires [`UIClick`] events on
-/// left-button press.
+/// left-button interaction events.
 ///
 /// Runs in `LateUpdate`, after `compute_ui_nodes` has populated
-/// [`UIComputedNode`] for the current frame.
+/// [`UILayout`] for the current frame.
 pub(crate) fn update_ui_interaction(
-    computed_nodes: Query<(Entity, &UIComputedNode), With<Interactable>>,
+    computed_nodes: Query<(Entity, &UILayout, &Interactable), Without<UIDisabled>>,
     input: Res<Input>,
+    window: Res<window::plugin::Window>,
     mut hovered: ResMut<HoveredNode>,
+    mut state: ResMut<UIInputState>,
     mut click_writer: EventWriter<UIClick>,
+    mut down_writer: EventWriter<UIPointerDown>,
+    mut up_writer: EventWriter<UIPointerUp>,
+    mut drag_writer: EventWriter<UIDrag>,
+    mut enter_writer: EventWriter<UIPointerEnter>,
+    mut leave_writer: EventWriter<UIPointerLeave>,
 ) {
-    let cursor = input.mouse_position();
+    let cursor = window.logical_pointer_position(&input);
 
     // Pick the node highest in the Z-order that contains the cursor.
-    let mut best: Option<(Entity, i32)> = None;
-    for (entity, node) in computed_nodes.iter() {
-        let loc = node.location;
-        let size = node.size;
-        if cursor.x >= loc.x
-            && cursor.x <= loc.x + size.x
-            && cursor.y >= loc.y
-            && cursor.y <= loc.y + size.y
-            && best.is_none_or(|(_, z)| node.z_index > z)
+    let mut best: Option<(Entity, i64)> = None;
+    for (entity, node, _) in computed_nodes.iter() {
+        if node.rect.contains(cursor)
+            && node.clip_rect.contains(cursor)
+            && best.is_none_or(|(_, z)| node.paint_order > z)
         {
-            best = Some((entity, node.z_index));
+            best = Some((entity, node.paint_order));
         }
     }
 
-    **hovered = best.map(|(e, _)| e);
-
-    if input.get_mouse_button_state(MouseButton::Left) == InputState::Pressed
-        && let Some((entity, _)) = best
-    {
-        click_writer.write(UIClick {
-            entity,
-            position: cursor,
-        });
+    let hit = best.map(|(entity, _)| entity);
+    if state.hovered != hit {
+        if let Some(entity) = state.hovered {
+            leave_writer.write(UIPointerLeave {
+                entity,
+                position: cursor,
+            });
+        }
+        if let Some(entity) = hit {
+            enter_writer.write(UIPointerEnter {
+                entity,
+                position: cursor,
+            });
+        }
     }
+    **hovered = hit;
+    state.hovered = hit;
+
+    match input.get_mouse_button_state(MouseButton::Left) {
+        InputState::Pressed => {
+            state.pressed = hit;
+            state.captured = hit;
+            state.press_origin = hit.map(|_| cursor);
+            state.dragged = false;
+            if let Some(entity) = hit {
+                down_writer.write(UIPointerDown {
+                    entity,
+                    position: cursor,
+                });
+            }
+        }
+        InputState::Down => {
+            if let Some(entity) = state.captured {
+                state.dragged |= state
+                    .press_origin
+                    .is_some_and(|origin| origin.distance(cursor) >= 4.0);
+                let delta = cursor - state.last_cursor.unwrap_or(cursor);
+                drag_writer.write(UIDrag {
+                    entity,
+                    position: cursor,
+                    delta,
+                });
+            }
+        }
+        InputState::Released => {
+            if let Some(entity) = state.captured {
+                up_writer.write(UIPointerUp {
+                    entity,
+                    position: cursor,
+                });
+                if state.pressed == hit && !state.dragged {
+                    click_writer.write(UIClick {
+                        entity,
+                        position: cursor,
+                    });
+                }
+            }
+            state.pressed = None;
+            state.captured = None;
+            state.press_origin = None;
+            state.dragged = false;
+        }
+        InputState::Up => {}
+    }
+
+    state.last_cursor = Some(cursor);
 }
 
 /// Drives [`UIMaterial::color`] from [`UIInteractionStyle`] each frame.
@@ -140,5 +244,29 @@ pub(crate) fn apply_interaction_styles(
             style.normal
         };
         material.color = color.to_linear();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::node::{UIBox, UILayout};
+    use glam::Vec2;
+
+    #[test]
+    fn clip_rect_excludes_visually_clipped_area() {
+        let layout = UILayout {
+            rect: UIBox {
+                min: Vec2::ZERO,
+                size: Vec2::splat(100.0),
+            },
+            content_rect: UIBox::default(),
+            clip_rect: UIBox {
+                min: Vec2::ZERO,
+                size: Vec2::splat(50.0),
+            },
+            paint_order: 0,
+        };
+        assert!(layout.rect.contains(Vec2::new(75.0, 25.0)));
+        assert!(!layout.clip_rect.contains(Vec2::new(75.0, 25.0)));
     }
 }

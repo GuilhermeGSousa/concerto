@@ -1,0 +1,1403 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="_ds/nocturne-65b2bbac-1310-4623-b17d-26000ab76e5c/styles.css">
+<script src="_ds/nocturne-65b2bbac-1310-4623-b17d-26000ab76e5c/_ds_bundle.js"></script>
+<style>
+body{margin:0;background:#0f1119;font-family:var(--font-body)}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(233,233,237,.08);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#e9e9ed;color:#161826;border-radius:4px;text-decoration:none}
+.dv-tname{font:500 13px/1.2 var(--font-heading);color:#e9e9ed}
+.dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(233,233,237,.1);color:#e9e9ed;border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 var(--font-body);color:rgba(233,233,237,.55)}
+.dv-card{max-width:100%;border-radius:10px;box-shadow:var(--shadow-md);overflow:hidden}
+.dv-opt:target .dv-oid{background:var(--color-accent);color:#161826}
+.dv-next{margin:22px 0 0;font:12px/1.5 var(--font-body);color:rgba(233,233,237,.5)}
+</style>
+</helmet>
+
+<section class="dv-turn" id="t4">
+<div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Non-scene editors on <a class="dv-oid" href="#3a">3a</a>'s shell — one canvas, same two rails, same foot</span></div>
+<div class="dv-opts">
+
+<!-- ══ 4a — system graph ══ -->
+<div class="dv-opt" id="4a">
+  <div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>System graph — the world's schedule as a graph; rails become systems + component queries</div>
+  <div class="dv-card" style="width:1180px;height:760px;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%, rgba(49,53,80,.42) 0%, transparent 62%), #101220;color:var(--color-text)">
+
+    <div style="position:absolute;inset:0;background-image:radial-gradient(circle, rgba(233,233,237,.075) 1px, transparent 1px);background-size:26px 26px"></div>
+
+    <!-- tab strip -->
+    <div style="position:absolute;left:18px;right:18px;top:14px;display:flex;align-items:center;gap:8px;min-width:0">
+      <div style="width:13px;height:19px;flex:none;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+      <div style="display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden">
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);color:var(--color-neutral-500);font-size:12px"><span style="width:7px;height:7px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>bunny_stage</span>
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);color:var(--color-neutral-200);font-size:12px"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent)"></span>world graph<span style="margin-left:2px;color:var(--color-neutral-600)">×</span></span>
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);color:var(--color-neutral-500);font-size:12px"><span style="width:9px;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span>hop_controller.lua</span>
+        <span style="flex:none;padding:0 7px;color:var(--color-neutral-600);font-size:13px">+</span>
+      </div>
+      <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+        <div style="margin-left:auto;display:flex;gap:12px;flex:none;font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)"><span>frame 4.1 ms</span><span>4 systems</span></div>
+      </sc-if>
+    </div>
+
+    <!-- canvas: schedule graph -->
+    <div style="position:absolute;left:284px;right:326px;top:56px;bottom:74px">
+      <div style="position:absolute;left:0;top:6px;display:flex;align-items:center;gap:8px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">schedule · per frame<span style="font-family:ui-monospace,Menlo,monospace;letter-spacing:0;text-transform:none;color:var(--color-neutral-600)">left → right</span></div>
+
+      <!-- stage columns -->
+      <div style="position:absolute;left:0;right:0;top:38px;bottom:0;display:grid;grid-template-columns:repeat(4,1fr);gap:12px;min-width:0">
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+          <div style="font-size:10.5px;color:var(--color-neutral-600);padding-left:2px">input</div>
+          <div style="padding:9px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 78%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent);min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-accent-2-500)"></span><span style="font:500 12px var(--font-heading)">InputSystem</span></div>
+            <div style="margin-top:6px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">reads Input<br>writes Intent</div>
+            <div style="margin-top:6px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.2 ms · 1 entity</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+          <div style="font-size:10.5px;color:var(--color-neutral-600);padding-left:2px">simulate</div>
+          <div style="padding:9px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-accent) 18%, transparent);box-shadow:inset 0 0 0 1px var(--color-accent);min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-accent-100)"></span><span style="font:500 12px var(--font-heading);color:var(--color-accent-100)">ScriptSystem</span></div>
+            <div style="margin-top:6px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-accent-200)">reads Intent, Transform<br>writes Transform</div>
+            <div style="margin-top:6px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-accent-200)">1.4 ms · 3 entities</div>
+          </div>
+          <div style="padding:9px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 78%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent);min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span><span style="font:500 12px var(--font-heading)">PhysicsSystem</span></div>
+            <div style="margin-top:6px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">reads RigidBody<br>writes Transform</div>
+            <div style="margin-top:6px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1.9 ms · 6 entities</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-accent) 12%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-accent) 55%, transparent);min-width:0">
+            <span style="color:var(--color-accent-300);font:400 11px ui-monospace,Menlo,monospace;flex:none">!</span>
+            <span style="font-size:10.5px;color:var(--color-accent-200);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">both write Transform — ordered</span>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+          <div style="font-size:10.5px;color:var(--color-neutral-600);padding-left:2px">resolve</div>
+          <div style="padding:9px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 78%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent);min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span><span style="font:500 12px var(--font-heading)">AnimationSystem</span></div>
+            <div style="margin-top:6px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">reads AnimGraph<br>writes Pose</div>
+            <div style="margin-top:6px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.4 ms · 2 entities</div>
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:8px;min-width:0">
+          <div style="font-size:10.5px;color:var(--color-neutral-600);padding-left:2px">present</div>
+          <div style="padding:9px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 78%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent);min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span><span style="font:500 12px var(--font-heading)">RenderSystem</span></div>
+            <div style="margin-top:6px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">reads Transform, MeshRenderer, Pose</div>
+            <div style="margin-top:6px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2.1 ms · 8 entities</div>
+          </div>
+          <div style="padding:9px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 78%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent);min-width:0">
+            <div style="display:flex;align-items:center;gap:7px;min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span><span style="font:500 12px var(--font-heading)">AudioSystem</span></div>
+            <div style="margin-top:6px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">reads AudioSource</div>
+            <div style="margin-top:6px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.1 ms · 2 entities</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- left rail -->
+    <div style="position:absolute;left:18px;top:56px;bottom:18px;width:238px;display:flex;flex-direction:column;gap:10px;min-height:0">
+      <div style="flex:1 1 46%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">Systems</span>
+          <span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">6</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-accent-2-500)"></span>InputSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.2</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-accent)"></span>ScriptSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.75">1.4</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span>PhysicsSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1.9</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span>AnimationSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.4</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span>RenderSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2.1</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-500)"></span>AudioSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.1</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-600);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:50%;border:1px solid var(--color-neutral-700)"></span>NavSystem<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace">off</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">6.1 ms of a 16.6 ms budget</div>
+      </div>
+      <div style="flex:1 1 54%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">Component types</span>
+          <span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">14</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;margin-bottom:7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);font-size:12px;color:var(--color-neutral-500);min-width:0"><span>⌕</span>filter types</div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12px">
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-accent-100);border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 14%, transparent);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>Transform<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.75">9 · rw</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>MeshRenderer<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">8 · r</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>RigidBody<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">6 · rw</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-accent-2-500);transform:rotate(45deg)"></span>HopController<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3 · rw</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>AnimGraph<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2 · r</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>AudioSource<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2 · r</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Pose<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2 · w</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">click a type to highlight its readers</div>
+      </div>
+    </div>
+
+    <!-- right rail: system inspector -->
+    <div style="position:absolute;right:18px;top:56px;bottom:18px;width:290px;display:flex;flex-direction:column;padding:12px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm);min-height:0">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <span style="width:8px;height:8px;flex:none;border-radius:50%;background:var(--color-accent)"></span>
+        <span style="font:500 14px var(--font-heading)">ScriptSystem</span>
+        <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+      </div>
+      <div style="padding:9px 0;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">query</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="padding:8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent);font:400 11px/1.7 ui-monospace,Menlo,monospace;min-width:0">
+          <div><span style="color:var(--color-neutral-500)">with</span> <span style="color:var(--color-accent-200)">Transform</span>, <span style="color:var(--color-accent-200)">HopController</span></div>
+          <div><span style="color:var(--color-neutral-500)">without</span> <span style="color:var(--color-neutral-300)">Frozen</span></div>
+          <div style="color:var(--color-neutral-600)">→ 3 of 9 entities</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:1px;font-size:12px">
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Bunny<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">#0142</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>WhiteRabbit<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">#0143</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">#0151</span></div>
+        </div>
+      </div>
+      <div style="padding:14px 0 9px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">order</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px">
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">stage</span><span style="padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">simulate</span></div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">after</span><span style="padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">InputSystem</span></div>
+        <div style="display:grid;grid-template-columns:52px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">before</span><span style="padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;box-shadow:inset 0 0 0 1px var(--color-accent)">PhysicsSystem</span></div>
+        <label class="radio" style="font-size:11.5px;margin-top:2px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>parallel with siblings</label>
+        <label class="radio" style="font-size:11.5px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>enabled</label>
+      </div>
+      <div style="margin-top:auto;padding-top:10px;font-size:10.5px;color:var(--color-neutral-600);line-height:1.5">Writes Transform after ScriptSystem — reordering here reorders the graph.</div>
+    </div>
+
+    <!-- foot -->
+    <div style="position:absolute;left:284px;right:326px;bottom:18px;display:flex;flex-direction:column;gap:8px;min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;align-self:center;padding:6px 8px 6px 14px;border-radius:99px;background:color-mix(in srgb, #101220 82%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-md)">
+        <span style="font-size:12.5px;color:var(--color-neutral-500);white-space:nowrap">{{ commandHint }}</span>
+        <span style="font:400 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 10%, transparent);color:var(--color-neutral-400)">⌘K</span>
+        <button class="btn btn-primary" style="flex:none;height:28px;min-height:28px;padding:0 16px;font-size:12px;border-radius:99px;white-space:nowrap">{{ playLabel }}</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:0 12px;height:32px;border-radius:var(--radius-md);background:color-mix(in srgb, #101220 78%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-sm);min-width:0;font:400 11.5px ui-monospace,Menlo,monospace">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);flex:none">{{ logTitle }}</span>
+        <span style="display:inline-flex;align-items:center;height:14px;padding:0 5px;flex:none;border-radius:99px;background:var(--color-accent-800);color:var(--color-accent-100);font:400 9.5px ui-monospace,Menlo,monospace">1</span>
+        <span style="color:var(--color-accent-300);flex:none">!</span>
+        <span style="color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">ScriptSystem and PhysicsSystem both write Transform — resolved by explicit order</span>
+        <span style="margin-left:auto;flex:none;color:var(--color-neutral-600);font-size:11px">⌥L</span>
+        <span style="flex:none;color:var(--color-neutral-500);font-size:13px">⌃</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 4b — animation graph ══ -->
+<div class="dv-opt" id="4b">
+  <div class="dv-olabel"><a class="dv-oid" href="#4b">4b</a>Animation graph — states and transitions on the canvas; the foot becomes a scrub track</div>
+  <div class="dv-card" style="width:1180px;height:760px;position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 0%, rgba(49,53,80,.42) 0%, transparent 62%), #101220;color:var(--color-text)">
+
+    <div style="position:absolute;inset:0;background-image:radial-gradient(circle, rgba(233,233,237,.075) 1px, transparent 1px);background-size:26px 26px"></div>
+
+    <div style="position:absolute;left:18px;right:18px;top:14px;display:flex;align-items:center;gap:8px;min-width:0">
+      <div style="width:13px;height:19px;flex:none;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+      <div style="display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden">
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);color:var(--color-neutral-500);font-size:12px"><span style="width:7px;height:7px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>bunny_stage</span>
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);color:var(--color-neutral-200);font-size:12px"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent)"></span>bunny_locomotion.anim<span style="margin-left:2px;color:var(--color-neutral-600)">×</span></span>
+        <span style="flex:none;padding:0 7px;color:var(--color-neutral-600);font-size:13px">+</span>
+      </div>
+      <span style="margin-left:auto;flex:none;font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">used by 2 entities</span>
+    </div>
+
+    <!-- state machine canvas -->
+    <div style="position:absolute;left:284px;right:326px;top:56px;bottom:126px">
+      <div style="position:absolute;left:0;top:6px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">Locomotion layer</div>
+
+      <div style="position:absolute;left:0;right:0;top:40px;bottom:0">
+        <!-- edges -->
+        <div style="position:absolute;left:112px;top:56px;width:96px;height:2px;background:linear-gradient(90deg, var(--color-neutral-700), var(--color-neutral-600))"></div>
+        <div style="position:absolute;left:200px;top:52px;width:0;height:0;border-left:7px solid var(--color-neutral-600);border-top:5px solid transparent;border-bottom:5px solid transparent"></div>
+        <div style="position:absolute;left:112px;top:172px;width:96px;height:2px;background:var(--color-accent)"></div>
+        <div style="position:absolute;left:200px;top:168px;width:0;height:0;border-left:7px solid var(--color-accent);border-top:5px solid transparent;border-bottom:5px solid transparent"></div>
+        <div style="position:absolute;left:150px;top:150px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-accent-200)">0.18s</div>
+        <div style="position:absolute;left:328px;top:78px;width:2px;height:94px;background:var(--color-neutral-700)"></div>
+        <div style="position:absolute;left:324px;top:168px;width:0;height:0;border-top:7px solid var(--color-neutral-600);border-left:5px solid transparent;border-right:5px solid transparent"></div>
+
+        <!-- nodes -->
+        <div style="position:absolute;left:0;top:26px;width:112px;padding:8px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 82%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent)">
+          <div style="font:500 12px var(--font-heading)">Idle</div>
+          <div style="margin-top:4px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">idle.clip · 1.2s · loop</div>
+        </div>
+        <div style="position:absolute;left:0;top:142px;width:112px;padding:8px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 82%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent)">
+          <div style="font:500 12px var(--font-heading)">Crouch</div>
+          <div style="margin-top:4px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">crouch.clip · 0.6s</div>
+        </div>
+        <div style="position:absolute;left:212px;top:22px;width:140px;padding:9px 11px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-accent) 18%, transparent);box-shadow:inset 0 0 0 1px var(--color-accent)">
+          <div style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent-100)"></span><span style="font:500 12px var(--font-heading);color:var(--color-accent-100)">Hop</span></div>
+          <div style="margin-top:4px;font:400 10px/1.5 ui-monospace,Menlo,monospace;color:var(--color-accent-200)">hop.clip · 0.8s<br>speed × HopSpeed</div>
+        </div>
+        <div style="position:absolute;left:212px;top:186px;width:140px;padding:8px 11px;border-radius:var(--radius-md);background:color-mix(in srgb, #141622 82%, transparent);box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--color-neutral-100) 12%, transparent)">
+          <div style="font:500 12px var(--font-heading)">Land</div>
+          <div style="margin-top:4px;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">land.clip · 0.3s</div>
+        </div>
+        <div style="position:absolute;left:404px;top:96px;width:132px;padding:8px 11px;border-radius:var(--radius-md);border:1px dashed var(--color-neutral-700);color:var(--color-neutral-500);font-size:11.5px;text-align:center">drop a clip to add a state</div>
+      </div>
+    </div>
+
+    <!-- left rail -->
+    <div style="position:absolute;left:18px;top:56px;bottom:18px;width:238px;display:flex;flex-direction:column;gap:10px;min-height:0">
+      <div style="flex:1 1 44%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">Layers &amp; states</span>
+          <span style="margin-left:auto;flex:none;font-size:14px;line-height:1;color:var(--color-neutral-600)">+</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;font-size:9px">▾</span>Locomotion<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1.00</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span>Idle</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 22px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:2px;background:var(--color-accent)"></span>Hop</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span>Land</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300);min-width:0"><span style="width:7px;height:7px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span>Crouch</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;font-size:9px;opacity:.6">▸</span>Ears (additive)<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.40</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">2 layers · 6 states · 7 transitions</div>
+      </div>
+      <div style="flex:1 1 56%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ assetsTitle }}</span>
+          <span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">412</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;margin-bottom:7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);font-size:12px;color:var(--color-neutral-400);min-width:0"><span>⌕</span><span style="color:var(--color-neutral-200)">.clip</span><span style="width:1px;height:13px;background:var(--color-accent)"></span></div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12px">
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-accent)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">hop.clip</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.7">0.8s</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">idle.clip</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1.2s</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">land.clip</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.3s</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">crouch.clip</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.6s</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">ear_twitch.clip</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.4s</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-600)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">nose_sniff.clip</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">0.9s</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">14 of 412 match “.clip”</div>
+      </div>
+    </div>
+
+    <!-- right rail: transition inspector -->
+    <div style="position:absolute;right:18px;top:56px;bottom:18px;width:290px;display:flex;flex-direction:column;padding:12px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm);min-height:0">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <span style="width:7px;height:7px;flex:none;border-radius:2px;background:var(--color-accent)"></span>
+        <span style="font:500 14px var(--font-heading)">Crouch → Hop</span>
+        <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+      </div>
+      <div style="padding:9px 0;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">blend</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <div style="height:40px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent);position:relative;overflow:hidden">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:46%;background:linear-gradient(90deg, color-mix(in srgb, var(--color-neutral-100) 12%, transparent), transparent)"></div>
+          <div style="position:absolute;right:0;top:0;bottom:0;width:62%;background:linear-gradient(270deg, color-mix(in srgb, var(--color-accent) 26%, transparent), transparent)"></div>
+          <div style="position:absolute;left:46%;top:0;bottom:0;width:1px;background:var(--color-accent)"></div>
+          <span style="position:absolute;left:6px;bottom:4px;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">Crouch</span>
+          <span style="position:absolute;right:6px;bottom:4px;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-accent-200)">Hop</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="width:58px;color:var(--color-neutral-500)">duration</span><div style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent);position:relative"><div style="position:absolute;inset:0 78% 0 0;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:22%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-100)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">0.18s</span></div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="width:58px;color:var(--color-neutral-500)">curve</span><div class="seg" style="flex:1"><label class="seg-opt" style="flex:1;justify-content:center;padding:4px 0;font-size:11px"><input type="radio" name="b4-curve">linear</label><label class="seg-opt" style="flex:1;justify-content:center;padding:4px 0;font-size:11px"><input type="radio" name="b4-curve" defaultChecked="{{ true }}">ease</label><label class="seg-opt" style="flex:1;justify-content:center;padding:4px 0;font-size:11px"><input type="radio" name="b4-curve">step</label></div></div>
+        <label class="radio" style="font-size:11.5px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>match root motion</label>
+      </div>
+      <div style="padding:14px 0 9px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">conditions</div>
+      <div style="display:flex;flex-direction:column;gap:5px;font:400 11px ui-monospace,Menlo,monospace">
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent);min-width:0"><span style="color:var(--color-accent-200);flex:none">HopTrigger</span><span style="color:var(--color-neutral-500)">is</span><span style="color:var(--color-neutral-200)">true</span></div>
+        <div style="display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent);min-width:0"><span style="color:var(--color-accent-200);flex:none">Grounded</span><span style="color:var(--color-neutral-500)">is</span><span style="color:var(--color-neutral-200)">true</span></div>
+        <div style="display:flex;align-items:center;gap:6px;height:28px;padding:0 8px;border-radius:var(--radius-md);border:1px dashed var(--color-neutral-700);color:var(--color-neutral-500);font-family:var(--font-body);font-size:11.5px">+ condition</div>
+      </div>
+      <div style="padding:14px 0 9px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">parameters</div>
+      <div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px">
+        <div style="display:grid;grid-template-columns:1fr 62px;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-300);font:400 11px ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">HopSpeed</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;text-align:right">1.20</span></div>
+        <div style="display:grid;grid-template-columns:1fr 62px;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-300);font:400 11px ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">HopTrigger</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;text-align:right">true</span></div>
+        <div style="display:grid;grid-template-columns:1fr 62px;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-300);font:400 11px ui-monospace,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Grounded</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;text-align:right">true</span></div>
+      </div>
+      <div style="margin-top:auto;padding-top:10px;font-size:10.5px;color:var(--color-neutral-600);line-height:1.5">Driven by HopController on Bunny · preview uses live parameter values.</div>
+    </div>
+
+    <!-- foot: scrub track + chatter -->
+    <div style="position:absolute;left:284px;right:326px;bottom:18px;display:flex;flex-direction:column;gap:8px;min-width:0">
+      <div style="padding:9px 12px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #101220 80%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-sm);min-width:0">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;min-width:0">
+          <span style="display:grid;place-items:center;width:26px;height:24px;flex:none;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);font-size:10px">▶</span>
+          <span style="font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-300);flex:none">0:00.34 / 0:00.80</span>
+          <span style="font-size:11px;color:var(--color-neutral-600);flex:none">Hop</span>
+          <div class="seg" style="margin-left:auto;flex:none"><label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="b4-sp" defaultChecked="{{ true }}">1×</label><label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="b4-sp">0.5×</label><label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="b4-sp">0.25×</label></div>
+        </div>
+        <div style="position:relative;height:30px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 6%, transparent);overflow:hidden">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:42%;background:color-mix(in srgb, var(--color-accent) 14%, transparent)"></div>
+          <div style="position:absolute;left:18%;top:6px;bottom:6px;width:2px;background:var(--color-neutral-600)"></div>
+          <div style="position:absolute;left:52%;top:6px;bottom:6px;width:2px;background:var(--color-neutral-600)"></div>
+          <div style="position:absolute;left:78%;top:6px;bottom:6px;width:2px;background:var(--color-neutral-600)"></div>
+          <div style="position:absolute;left:42%;top:0;bottom:0;width:2px;background:var(--color-accent-100)"></div>
+          <div style="position:absolute;left:42%;top:0;width:9px;height:9px;margin-left:-3.5px;background:var(--color-accent-100);clip-path:polygon(0 0,100% 0,50% 100%)"></div>
+          <span style="position:absolute;left:8px;top:8px;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">liftoff</span>
+          <span style="position:absolute;left:calc(52% + 8px);top:8px;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">apex</span>
+          <span style="position:absolute;left:calc(78% + 8px);top:8px;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">thump ♪</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:0 12px;height:32px;border-radius:var(--radius-md);background:color-mix(in srgb, #101220 78%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-sm);min-width:0;font:400 11.5px ui-monospace,Menlo,monospace">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);flex:none">{{ logTitle }}</span>
+        <span style="color:var(--color-neutral-600);flex:none">·</span>
+        <span style="color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">event “thump” fires at 0.62s — bunny_thump.wav</span>
+        <span style="margin-left:auto;flex:none;color:var(--color-neutral-600);font-size:11px">⌥L</span>
+        <span style="flex:none;color:var(--color-neutral-500);font-size:13px">⌃</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 4c — mesh asset ══ -->
+<div class="dv-opt" id="4c">
+  <div class="dv-olabel"><a class="dv-oid" href="#4c">4c</a>Mesh asset — same viewport, but the rails address one file: LODs, submeshes, import settings</div>
+  <div class="dv-card" style="width:1180px;height:760px;position:relative;overflow:hidden;background:radial-gradient(130% 100% at 50% 0%, rgba(49,53,80,.5) 0%, transparent 60%), radial-gradient(100% 80% at 50% 100%, #1b1d2c 0%, #101220 70%);color:var(--color-text)">
+
+    <div style="position:absolute;left:-30%;right:-30%;bottom:-16%;height:130%;transform:perspective(900px) rotateX(63deg);transform-origin:50% 100%;background-image:linear-gradient(var(--color-neutral-800) 1px, transparent 1px), linear-gradient(90deg, var(--color-neutral-800) 1px, transparent 1px);background-size:52px 52px;mask-image:radial-gradient(60% 60% at 50% 74%, #000 0%, transparent 92%)"></div>
+    <div style="position:absolute;left:50%;top:62%;width:200px;height:42px;margin-left:-100px;border-radius:50%;background:radial-gradient(#0a0b12 0%, transparent 70%)"></div>
+    <div style="position:absolute;left:50%;top:22%;width:220px;height:270px;margin-left:-110px">
+      <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh · wireframe</span></div></div>
+      <div style="position:absolute;left:-14px;top:-14px;right:-14px;bottom:-14px;border:1px solid color-mix(in srgb, var(--color-accent) 55%, transparent)"></div>
+      <span style="position:absolute;left:-14px;bottom:-30px;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-accent-200)">bounds 0.24 × 0.31 × 0.19 m</span>
+    </div>
+
+    <div style="position:absolute;left:18px;right:18px;top:14px;display:flex;align-items:center;gap:8px;min-width:0">
+      <div style="width:13px;height:19px;flex:none;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+      <div style="display:flex;align-items:center;gap:2px;min-width:0;overflow:hidden">
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);color:var(--color-neutral-500);font-size:12px"><span style="width:7px;height:7px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>bunny_stage</span>
+        <span style="display:flex;align-items:center;gap:6px;flex:none;height:26px;padding:0 11px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);color:var(--color-neutral-200);font-size:12px"><span style="width:7px;height:7px;background:var(--color-accent);transform:rotate(45deg)"></span>bunny.glb<span style="margin-left:2px;color:var(--color-neutral-600)">×</span></span>
+        <span style="flex:none;padding:0 7px;color:var(--color-neutral-600);font-size:13px">+</span>
+      </div>
+      <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+        <div style="margin-left:auto;display:flex;gap:12px;flex:none;font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)"><span>69,451 tris</span><span>34,834 verts</span><span>1 UV set</span></div>
+      </sc-if>
+    </div>
+
+    <!-- left rail -->
+    <div style="position:absolute;left:18px;top:56px;bottom:18px;width:238px;display:flex;flex-direction:column;gap:10px;min-height:0">
+      <div style="flex:1 1 46%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">Mesh contents</span>
+          <span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3 LOD</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;font-size:9px">▾</span>LOD 0<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">69,451</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 22px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>body<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.75">64,120</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>ears<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">4,208</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>eyes<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1,123</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;font-size:9px;opacity:.6">▸</span>LOD 1<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">18,240</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;font-size:9px;opacity:.6">▸</span>LOD 2<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">4,610</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px"></span><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-neutral-600)"></span>skeleton<span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">24 bones</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">used by 2 entities · 1 prefab</div>
+      </div>
+      <div style="flex:1 1 54%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ assetsTitle }}</span>
+          <span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">412</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;margin-bottom:7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);font-size:12px;color:var(--color-neutral-400);min-width:0"><span>⌕</span><span style="color:var(--color-neutral-200)">bun</span><span style="width:1px;height:13px;background:var(--color-accent)"></span><span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌘P</span></div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12px">
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.7">2.1 MB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_lod1.glb</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">640 KB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:9px;height:9px;flex:none;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_porcelain.mat</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">4 KB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-500)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_ao.png</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1.2 MB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;border-radius:2px;background:var(--color-neutral-500)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_normal.png</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3.4 MB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px;color:var(--color-neutral-300);min-width:0"><span style="width:9px;flex:none;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_hop.lua</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2 KB</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">9 of 412 match “bun”</div>
+      </div>
+    </div>
+
+    <!-- right rail: asset inspector -->
+    <div style="position:absolute;right:18px;top:56px;bottom:18px;width:290px;display:flex;flex-direction:column;padding:12px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm);min-height:0">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <span style="width:9px;height:9px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+        <span style="font:500 14px var(--font-heading)">bunny.glb</span>
+        <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+      </div>
+      <div style="padding:9px 0;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">import</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px">
+        <div style="display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">scale</span><span style="padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">1.00</span></div>
+        <div style="display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">up axis</span><div class="seg" style="flex:1"><label class="seg-opt" style="flex:1;justify-content:center;padding:4px 0;font-size:11px"><input type="radio" name="c4-up" defaultChecked="{{ true }}">Y</label><label class="seg-opt" style="flex:1;justify-content:center;padding:4px 0;font-size:11px"><input type="radio" name="c4-up">Z</label></div></div>
+        <label class="radio" style="font-size:11.5px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>recalculate normals</label>
+        <label class="radio" style="font-size:11.5px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>generate tangents</label>
+        <label class="radio" style="font-size:11.5px"><input type="checkbox"><span class="dot"></span>import skeleton as entities</label>
+      </div>
+      <div style="padding:14px 0 9px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">submesh · body</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px">
+        <div style="display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">material</span><span style="display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;white-space:nowrap"><span style="width:9px;height:9px;flex:none;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span>bunny_porcelain.mat</span></div>
+        <div style="display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">tris</span><span style="padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">64,120</span></div>
+        <div style="display:grid;grid-template-columns:62px 1fr;gap:6px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">uv sets</span><span style="padding:5px 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">1 · 0–1 range</span></div>
+      </div>
+      <div style="padding:14px 0 9px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">LOD thresholds</div>
+      <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="width:44px;color:var(--color-neutral-500);font:400 11px ui-monospace,Menlo,monospace">LOD 1</span><div style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent);position:relative"><div style="position:absolute;inset:0 65% 0 0;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:35%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-100)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">35%</span></div>
+        <div style="display:flex;align-items:center;gap:8px"><span style="width:44px;color:var(--color-neutral-500);font:400 11px ui-monospace,Menlo,monospace">LOD 2</span><div style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent);position:relative"><div style="position:absolute;inset:0 88% 0 0;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:12%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-100)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">12%</span></div>
+      </div>
+      <div style="margin-top:auto;display:flex;flex-direction:column;gap:8px;padding-top:12px">
+        <div style="font-size:10.5px;color:var(--color-accent-300);line-height:1.5">Import settings changed — 2 entities will rebuild.</div>
+        <button class="btn btn-primary btn-block" style="flex:none;height:28px;min-height:28px;font-size:12px;white-space:nowrap">Reimport</button>
+      </div>
+    </div>
+
+    <!-- foot -->
+    <div style="position:absolute;left:284px;right:326px;bottom:18px;display:flex;flex-direction:column;gap:8px;min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;align-self:center;padding:6px 8px 6px 14px;border-radius:99px;background:color-mix(in srgb, #101220 82%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-md)">
+        <div style="display:flex;gap:3px">
+          <span style="display:grid;place-items:center;width:30px;height:26px;border-radius:99px;background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);font-size:10.5px">wire</span>
+          <span style="display:grid;place-items:center;width:30px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:10.5px">uv</span>
+          <span style="display:grid;place-items:center;width:30px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:10.5px">norm</span>
+          <span style="display:grid;place-items:center;width:30px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:10.5px">bone</span>
+        </div>
+        <div style="width:1px;height:20px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent)"></div>
+        <span style="font-size:12.5px;color:var(--color-neutral-500);white-space:nowrap">{{ commandHint }}</span>
+        <span style="font:400 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 10%, transparent);color:var(--color-neutral-400)">⌘K</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:10px;padding:0 12px;height:32px;border-radius:var(--radius-md);background:color-mix(in srgb, #101220 78%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-sm);min-width:0;font:400 11.5px ui-monospace,Menlo,monospace">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);flex:none">{{ logTitle }}</span>
+        <span style="display:inline-flex;align-items:center;height:14px;padding:0 5px;flex:none;border-radius:99px;background:var(--color-accent-800);color:var(--color-accent-100);font:400 9.5px ui-monospace,Menlo,monospace">1</span>
+        <span style="color:var(--color-accent-300);flex:none">!</span>
+        <span style="color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb — LOD 2 has no UV set; generated from LOD 1</span>
+        <span style="margin-left:auto;flex:none;color:var(--color-neutral-600);font-size:11px">⌥L</span>
+        <span style="flex:none;color:var(--color-neutral-500);font-size:13px">⌃</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "add a material editor in the same shell" · "show how you get between these — expand the tab strip" · "the animation graph needs a blend-tree node, not just states"</p>
+</section>
+
+<section class="dv-turn" id="t3">
+<div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname"><a class="dv-oid" href="#1c">1c</a>'s full-bleed scene · <a class="dv-oid" href="#2a">2a</a>'s docked arrangement · list assets, collapsible Chatter</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="3a">
+  <div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Left rail carries Warren over Curiosities; ECS inspector right; Chatter a collapsed strip at the foot of the scene</div>
+  <div class="dv-card" style="width:1180px;height:760px;position:relative;overflow:hidden;background:radial-gradient(130% 100% at 50% 0%, rgba(49,53,80,.5) 0%, transparent 60%), radial-gradient(100% 80% at 50% 100%, #1b1d2c 0%, #101220 70%);color:var(--color-text)">
+
+    <div style="position:absolute;left:-30%;right:-30%;bottom:-16%;height:130%;transform:perspective(900px) rotateX(63deg);transform-origin:50% 100%;background-image:conic-gradient(#2a2e42 0 25%, #1e2131 0 50%);background-size:104px 104px;mask-image:radial-gradient(72% 68% at 50% 74%, #000 0%, transparent 92%)"></div>
+    <div style="position:absolute;left:50%;top:62%;width:200px;height:42px;margin-left:-100px;border-radius:50%;background:radial-gradient(#0a0b12 0%, transparent 70%)"></div>
+    <div style="position:absolute;left:50%;top:20%;width:220px;height:280px;margin-left:-110px">
+      <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh</span></div></div>
+      <sc-if value="{{ showGizmo }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;left:52%;top:78%">
+          <div style="position:absolute;width:74px;height:2px;background:linear-gradient(90deg,var(--color-accent-400),transparent)"></div>
+          <div style="position:absolute;width:2px;height:74px;bottom:0;background:linear-gradient(0deg,transparent,var(--color-neutral-100))"></div>
+          <div style="position:absolute;width:54px;height:2px;background:linear-gradient(-90deg,var(--color-accent-2-400),transparent);transform:rotate(155deg);transform-origin:0 50%"></div>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="position:absolute;left:18px;top:16px;display:flex;align-items:center;gap:9px">
+      <div style="width:13px;height:19px;flex:none;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+      <span style="font:500 12.5px var(--font-heading);color:var(--color-neutral-300)">bunny_stage</span>
+      <span style="font-size:11px;color:var(--color-neutral-600)">· Stage / Bunny</span>
+    </div>
+
+    <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;right:18px;top:16px;display:flex;gap:12px;font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)"><span>60 fps</span><span>4 systems</span><span>69,451 tris</span></div>
+    </sc-if>
+
+    <!-- LEFT RAIL: Warren over Curiosities -->
+    <div style="position:absolute;left:18px;top:52px;bottom:18px;width:238px;display:flex;flex-direction:column;gap:10px;min-height:0">
+
+      <div style="flex:1 1 44%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ treeTitle }}</span>
+          <span style="margin-left:auto;flex:none;font-size:14px;line-height:1;color:var(--color-neutral-600)">+</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px;opacity:.6">▸</span><span style="width:7px;height:7px;flex:none;border-radius:50%;background:var(--color-accent-2-500)"></span>Environment</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px"></span><span style="width:8px;height:6px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Camera_Main</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Stage</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 22px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>Bunny<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;opacity:.75">4</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Checkerboard<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>WhiteRabbit<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">5</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px"></span><span style="width:9px;flex:none;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span>systems (4)</div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">9 entities · 21 components</div>
+      </div>
+
+      <div style="flex:1 1 56%;min-height:0;display:flex;flex-direction:column;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+        <div style="display:flex;align-items:center;margin-bottom:8px;min-width:0">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ assetsTitle }}</span>
+          <span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">412</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;margin-bottom:7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 9%, transparent);font-size:12px;color:var(--color-neutral-400);min-width:0">
+          <span>⌕</span><span style="color:var(--color-neutral-200)">bun</span><span style="width:1px;height:13px;background:var(--color-accent)"></span><span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌘P</span>
+        </div>
+        <div style="display:flex;gap:4px;margin-bottom:7px;overflow:hidden">
+          <span class="tag tag-outline" style="flex:none;white-space:nowrap;font-size:10px">all</span>
+          <span class="tag tag-neutral" style="flex:none;white-space:nowrap;font-size:10px">mesh</span>
+          <span class="tag tag-neutral" style="flex:none;white-space:nowrap;font-size:10px">mat</span>
+          <span class="tag tag-neutral" style="flex:none;white-space:nowrap;font-size:10px">tex</span>
+          <span class="tag tag-neutral" style="flex:none;white-space:nowrap;font-size:10px">lua</span>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:1px;font-size:12px">
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;flex:none;font-size:9px;opacity:.6">▾</span><span style="width:10px;height:7px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:1px 2px 2px 2px;border-top-width:2.5px"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">assets</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">412</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 18px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;flex:none;font-size:9px;opacity:.6">▾</span><span style="width:10px;height:7px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:1px 2px 2px 2px;border-top-width:2.5px"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">characters</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">64</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 30px;color:var(--color-accent-100);min-width:0"><span style="width:9px;flex:none;font-size:9px;opacity:.7">▾</span><span style="width:10px;height:7px;flex:none;border:1.5px solid var(--color-accent-300);border-radius:1px 2px 2px 2px;border-top-width:2.5px"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.7">3</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px 4px 44px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;opacity:.7">2.1 MB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px 4px 44px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_lod1.glb</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">640 KB</span></div>
+          <div style="display:flex;align-items:center;gap:8px;padding:4px 6px 4px 44px;color:var(--color-neutral-300);min-width:0"><span style="width:9px;height:9px;flex:none;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_porcelain.mat</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">4 KB</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 30px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;flex:none;font-size:9px;opacity:.6">▸</span><span style="width:10px;height:7px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:1px 2px 2px 2px;border-top-width:2.5px"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">white_rabbit</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 18px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;flex:none;font-size:9px;opacity:.6">▸</span><span style="width:10px;height:7px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:1px 2px 2px 2px;border-top-width:2.5px"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">textures</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">5</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 18px;color:var(--color-neutral-400);min-width:0"><span style="width:9px;flex:none;font-size:9px;opacity:.6">▸</span><span style="width:10px;height:7px;flex:none;border:1.5px solid var(--color-neutral-500);border-radius:1px 2px 2px 2px;border-top-width:2.5px"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">audio</span><span style="margin-left:auto;flex:none;font:400 9.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">1</span></div>
+        </div>
+        <div style="padding-top:7px;font-size:10.5px;color:var(--color-neutral-600)">8 of 412 match “bun” · 6 folders</div>
+      </div>
+    </div>
+
+    <!-- RIGHT: ECS inspector -->
+    <div style="position:absolute;right:18px;top:52px;bottom:18px;width:290px;display:flex;flex-direction:column;padding:12px;border-radius:var(--radius-lg);background:color-mix(in srgb, #141622 62%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm);min-height:0">
+      <div style="display:flex;align-items:center;gap:8px;min-width:0">
+        <span style="width:9px;height:9px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+        <span style="font:500 14px var(--font-heading)">Bunny</span>
+        <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">#0142</span>
+        <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:9px 0;min-width:0">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">components</span>
+        <span style="font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">4</span>
+      </div>
+      <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;gap:6px">
+
+        <div style="border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent)">
+          <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;min-width:0">
+            <span style="font-size:8px;color:var(--color-neutral-500)">▾</span><span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+            <span style="font:500 12px var(--font-heading)">Transform</span>
+            <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="width:13px;height:13px"></span></label>
+          </div>
+          <div style="padding:0 8px 8px;display:flex;flex-direction:column;gap:4px;font:400 11px ui-monospace,Menlo,monospace">
+            <div style="display:grid;grid-template-columns:38px repeat(3,1fr);gap:4px;align-items:center;min-width:0"><span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">pos</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0.00</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0.42</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0.00</span></div>
+            <div style="display:grid;grid-template-columns:38px repeat(3,1fr);gap:4px;align-items:center;min-width:0"><span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">rot</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);box-shadow:inset 0 0 0 1px var(--color-accent);min-width:0">-14</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0</span></div>
+            <div style="display:grid;grid-template-columns:38px 1fr;gap:4px;align-items:center;min-width:0"><span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">scale</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">1.00 <span style="color:var(--color-neutral-600)">uniform</span></span></div>
+          </div>
+        </div>
+
+        <div style="border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent)">
+          <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;min-width:0">
+            <span style="font-size:8px;color:var(--color-neutral-500)">▾</span><span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+            <span style="font:500 12px var(--font-heading)">MeshRenderer</span>
+            <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="width:13px;height:13px"></span></label>
+          </div>
+          <div style="padding:0 8px 8px;display:flex;flex-direction:column;gap:4px;font-size:11.5px">
+            <div style="display:grid;grid-template-columns:52px 1fr;gap:4px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">mesh</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span></div>
+            <div style="display:grid;grid-template-columns:52px 1fr;gap:4px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">material</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny_porcelain.mat</span></div>
+            <label class="radio" style="font-size:11.5px;margin-top:2px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>cast shadows</label>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent);min-width:0">
+          <span style="font-size:8px;color:var(--color-neutral-500)">▸</span><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-500);transform:rotate(45deg)"></span>
+          <span style="font:500 12px var(--font-heading)">RigidBody</span>
+          <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2.4 kg</span>
+          <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="width:13px;height:13px"></span></label>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 7%, transparent);min-width:0">
+          <span style="font-size:8px;color:var(--color-neutral-500)">▸</span><span style="width:7px;height:7px;flex:none;background:var(--color-accent-2-500);transform:rotate(45deg)"></span>
+          <span style="font:500 12px var(--font-heading)">HopController</span>
+          <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">lua</span>
+          <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox"><span class="dot" style="width:13px;height:13px"></span></label>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;border-radius:var(--radius-md);border:1px dashed var(--color-neutral-700);color:var(--color-neutral-500);font-size:12px;min-width:0">
+          <span>⌕</span>add component<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace">⌘⇧A</span>
+        </div>
+        <div style="margin-top:auto;font-size:10.5px;color:var(--color-neutral-600)">systems touching this entity: Render · Physics · Script</div>
+      </div>
+    </div>
+
+    <!-- CENTER FOOT: collapsed Chatter + tools -->
+    <div style="position:absolute;left:284px;right:326px;bottom:18px;display:flex;flex-direction:column;gap:8px;min-width:0">
+      <div style="display:flex;align-items:center;gap:10px;align-self:center;padding:6px 8px 6px 14px;border-radius:99px;background:color-mix(in srgb, #101220 82%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-md)">
+        <div style="display:flex;gap:3px">
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:99px;background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);font-size:11px">✥</span>
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:11px">⟳</span>
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:11px">⤢</span>
+        </div>
+        <div style="width:1px;height:20px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent)"></div>
+        <span style="font-size:12.5px;color:var(--color-neutral-500);white-space:nowrap">{{ commandHint }}</span>
+        <span style="font:400 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 10%, transparent);color:var(--color-neutral-400)">⌘K</span>
+        <button class="btn btn-primary" style="flex:none;height:28px;min-height:28px;padding:0 16px;font-size:12px;border-radius:99px;white-space:nowrap">{{ playLabel }}</button>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;padding:0 12px;height:32px;border-radius:var(--radius-md);background:color-mix(in srgb, #101220 78%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-sm);min-width:0;font:400 11.5px ui-monospace,Menlo,monospace">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);flex:none">{{ logTitle }}</span>
+        <span style="display:inline-flex;align-items:center;height:14px;padding:0 5px;flex:none;border-radius:99px;background:var(--color-accent-800);color:var(--color-accent-100);font:400 9.5px ui-monospace,Menlo,monospace">1</span>
+        <span style="color:var(--color-accent-300);flex:none">!</span>
+        <span style="color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">hop_controller.lua:14 — interval clamped to 0.8</span>
+        <span style="margin-left:auto;flex:none;color:var(--color-neutral-600);font-size:11px;white-space:nowrap">⌥L</span>
+        <span style="flex:none;color:var(--color-neutral-500);font-size:13px">⌃</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "show <a class="dv-oid" href="#3a">3a</a> with Chatter expanded" · "collapse the rail to icons" · "add a breadcrumb above the Curiosities tree"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">ECS inspector + one tabbed bottom region — riffs on <a class="dv-oid" href="#1a">1a</a> and <a class="dv-oid" href="#1b">1b</a></span></div>
+<div class="dv-opts">
+
+<!-- ══ 2a — docked, ECS component stack ══ -->
+<div class="dv-opt" id="2a">
+  <div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Docked — inspector is a stack of components; Curiosities / Chatter share the bottom region</div>
+  <div class="dv-card" style="width:1180px;height:760px;display:grid;grid-template-rows:44px 1fr 244px;background:var(--color-bg);color:var(--color-text)">
+
+    <div style="display:flex;align-items:center;gap:14px;padding:0 12px;min-width:0;box-shadow:inset 0 -1px 0 var(--color-neutral-900)">
+      <div style="display:flex;align-items:center;gap:7px;flex:none">
+        <div style="width:14px;height:20px;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+        <span style="font:500 14px var(--font-heading);letter-spacing:-.01em">Rabbithole</span>
+      </div>
+      <div style="width:1px;height:18px;background:var(--color-neutral-900)"></div>
+      <div style="display:flex;align-items:baseline;gap:7px;font-size:12px;flex:none"><span style="color:var(--color-neutral-500)">scene</span><span>bunny_stage</span><span style="color:var(--color-accent)">•</span></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px;flex:none">
+        <button class="btn btn-primary" style="flex:none;height:28px;min-height:28px;padding:0 12px;font-size:12px;white-space:nowrap">{{ playLabel }}</button>
+        <button class="btn btn-secondary" style="flex:none;height:28px;min-height:28px;width:28px;padding:0"><span style="display:block;width:8px;height:9px;border-left:2px solid currentColor;border-right:2px solid currentColor"></span></button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:236px 1fr 304px;min-height:0;min-width:0">
+
+      <!-- tree -->
+      <div style="display:flex;flex-direction:column;min-width:0;min-height:0;box-shadow:inset -1px 0 0 var(--color-neutral-900)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px 7px">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ treeTitle }}</span>
+          <span style="font-size:15px;line-height:1;color:var(--color-neutral-600)">+</span>
+        </div>
+        <div style="padding:0 8px 8px">
+          <div style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500)"><span style="opacity:.7">⌕</span>filter entities</div>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;padding:0 6px;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>bunny_stage</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:9px;font-size:9px;opacity:.6">▸</span><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-2-500)"></span>Environment</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:8px;height:6px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Camera_Main</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Stage</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 38px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 16%, transparent);box-shadow:inset 2px 0 0 var(--color-accent);color:var(--color-accent-200);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>Bunny<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;opacity:.75">4</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 38px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Checkerboard<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 38px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 38px;color:var(--color-neutral-300);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>WhiteRabbit<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">5</span></div>
+        </div>
+        <div style="padding:8px 12px;font-size:10.5px;color:var(--color-neutral-600);box-shadow:inset 0 1px 0 var(--color-neutral-900)">9 entities · 21 components</div>
+      </div>
+
+      <!-- viewport -->
+      <div style="position:relative;overflow:hidden;min-width:0;background:radial-gradient(120% 90% at 50% 8%, #2a2d40 0%, #191b28 55%, #131521 100%)">
+        <div style="position:absolute;left:-40%;right:-40%;bottom:-24%;height:150%;transform:perspective(760px) rotateX(66deg);transform-origin:50% 100%;background-image:conic-gradient(#262a3c 0 25%, #1d2030 0 50%);background-size:88px 88px;mask-image:radial-gradient(78% 70% at 50% 78%, #000 0%, transparent 92%)"></div>
+        <div style="position:absolute;left:50%;top:56%;width:160px;height:34px;margin-left:-80px;border-radius:50%;background:radial-gradient(#0c0d15 0%, transparent 70%)"></div>
+        <div style="position:absolute;left:50%;top:20%;width:190px;height:240px;margin-left:-95px">
+          <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh</span></div></div>
+          <sc-if value="{{ showGizmo }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;left:52%;top:74%">
+              <div style="position:absolute;width:62px;height:2px;background:linear-gradient(90deg,var(--color-accent-400),transparent)"></div>
+              <div style="position:absolute;width:2px;height:62px;bottom:0;background:linear-gradient(0deg,transparent,var(--color-neutral-200))"></div>
+              <div style="position:absolute;width:46px;height:2px;background:linear-gradient(-90deg,var(--color-accent-2-400),transparent);transform:rotate(155deg);transform-origin:0 50%"></div>
+            </div>
+          </sc-if>
+        </div>
+        <div style="position:absolute;left:12px;top:12px;display:flex;gap:4px">
+          <div style="display:flex;padding:3px;gap:2px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 72%, transparent);box-shadow:var(--shadow-sm)">
+            <span style="display:grid;place-items:center;width:26px;height:24px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 18%, transparent);color:var(--color-accent-200);font-size:11px">✥</span>
+            <span style="display:grid;place-items:center;width:26px;height:24px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⟳</span>
+            <span style="display:grid;place-items:center;width:26px;height:24px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⤢</span>
+          </div>
+        </div>
+        <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute;right:12px;top:12px;display:flex;gap:12px;padding:6px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 72%, transparent);box-shadow:var(--shadow-sm);font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-400)"><span>60 fps</span><span>4 systems</span></div>
+        </sc-if>
+      </div>
+
+      <!-- ECS inspector -->
+      <div style="display:flex;flex-direction:column;min-width:0;min-height:0;box-shadow:inset 1px 0 0 var(--color-neutral-900)">
+        <div style="padding:9px 12px 8px">
+          <div style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:6px">{{ inspectorTitle }}</div>
+          <div style="display:flex;align-items:center;gap:8px;min-width:0">
+            <span style="width:9px;height:9px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+            <span style="font:500 15px var(--font-heading)">Bunny</span>
+            <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">#0142</span>
+            <span class="tag tag-neutral" style="margin-left:auto;flex:none;white-space:nowrap">4 components</span>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;padding:0 12px 10px;display:flex;flex-direction:column;gap:7px">
+
+          <div style="border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm)">
+            <div style="display:flex;align-items:center;gap:7px;padding:7px 9px;min-width:0">
+              <span style="font-size:8px;color:var(--color-neutral-500)">▾</span>
+              <span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+              <span style="font:500 12px var(--font-heading)">Transform</span>
+              <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+            </div>
+            <div style="padding:0 9px 9px;display:flex;flex-direction:column;gap:5px">
+              <div style="display:grid;grid-template-columns:44px repeat(3,1fr);gap:5px;align-items:center;min-width:0">
+                <span style="font-size:11px;color:var(--color-neutral-500)">pos</span>
+                <div style="height:24px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;min-width:0"><span style="color:var(--color-accent-400)">x</span>0.00</div>
+                <div style="height:24px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;min-width:0"><span style="color:var(--color-neutral-300)">y</span>0.42</div>
+                <div style="height:24px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;min-width:0"><span style="color:var(--color-accent-2-400)">z</span>0.00</div>
+              </div>
+              <div style="display:grid;grid-template-columns:44px repeat(3,1fr);gap:5px;align-items:center;min-width:0">
+                <span style="font-size:11px;color:var(--color-neutral-500)">rot</span>
+                <div style="height:24px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;min-width:0"><span style="color:var(--color-accent-400)">x</span>0</div>
+                <div style="height:24px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;box-shadow:inset 0 0 0 1px var(--color-accent);min-width:0"><span style="color:var(--color-neutral-300)">y</span>-14</div>
+                <div style="height:24px;display:flex;align-items:center;gap:4px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;min-width:0"><span style="color:var(--color-accent-2-400)">z</span>0</div>
+              </div>
+              <div style="display:grid;grid-template-columns:44px 1fr;gap:5px;align-items:center;min-width:0">
+                <span style="font-size:11px;color:var(--color-neutral-500)">scale</span>
+                <div style="height:24px;display:flex;align-items:center;gap:8px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;min-width:0">1.00<span style="color:var(--color-neutral-600)">uniform</span></div>
+              </div>
+            </div>
+          </div>
+
+          <div style="border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm)">
+            <div style="display:flex;align-items:center;gap:7px;padding:7px 9px;min-width:0">
+              <span style="font-size:8px;color:var(--color-neutral-500)">▾</span>
+              <span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+              <span style="font:500 12px var(--font-heading)">MeshRenderer</span>
+              <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+            </div>
+            <div style="padding:0 9px 9px;display:flex;flex-direction:column;gap:5px;font-size:11.5px">
+              <div style="display:grid;grid-template-columns:52px 1fr;gap:5px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">mesh</span><div style="height:24px;display:flex;align-items:center;gap:6px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;white-space:nowrap"><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-400);transform:rotate(45deg)"></span>bunny.glb</div></div>
+              <div style="display:grid;grid-template-columns:52px 1fr;gap:5px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">material</span><div style="height:24px;display:flex;align-items:center;gap:6px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;white-space:nowrap"><span style="width:9px;height:9px;flex:none;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span>porcelain.mat</div></div>
+              <label class="radio" style="font-size:11.5px;margin-top:2px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>cast shadows</label>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm);min-width:0">
+            <span style="font-size:8px;color:var(--color-neutral-500)">▸</span>
+            <span style="width:7px;height:7px;flex:none;background:var(--color-neutral-500);transform:rotate(45deg)"></span>
+            <span style="font:500 12px var(--font-heading)">RigidBody</span>
+            <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2.4 kg</span>
+            <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:7px;padding:7px 9px;border-radius:var(--radius-md);background:var(--color-surface);box-shadow:var(--shadow-sm);min-width:0">
+            <span style="font-size:8px;color:var(--color-neutral-500)">▸</span>
+            <span style="width:7px;height:7px;flex:none;background:var(--color-accent-2-500);transform:rotate(45deg)"></span>
+            <span style="font:500 12px var(--font-heading)">HopController</span>
+            <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">lua</span>
+            <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:7px;height:30px;padding:0 9px;border-radius:var(--radius-md);border:1px dashed var(--color-neutral-700);color:var(--color-neutral-500);font-size:12px;min-width:0">
+            <span>⌕</span>add component<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace">⌘⇧A</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- tabbed bottom region -->
+    <div style="display:flex;flex-direction:column;min-height:0;min-width:0;box-shadow:inset 0 1px 0 var(--color-neutral-900)">
+      <div style="display:flex;align-items:center;gap:16px;padding:0 12px;min-width:0;box-shadow:inset 0 -1px 0 var(--color-neutral-900)">
+        <div style="display:flex;align-items:center;gap:7px;height:34px;padding:0 2px;box-shadow:inset 0 -2px 0 var(--color-accent);color:var(--color-accent-200);font:500 12px var(--font-heading)">{{ assetsTitle }}<span style="font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)">412</span></div>
+        <div style="display:flex;align-items:center;gap:7px;height:34px;padding:0 2px;color:var(--color-neutral-500);font:500 12px var(--font-heading)">{{ logTitle }}<span style="display:inline-flex;align-items:center;height:14px;padding:0 5px;border-radius:99px;background:var(--color-accent-800);color:var(--color-accent-100);font:400 9.5px ui-monospace,Menlo,monospace">1</span></div>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex:none">
+          <div style="display:flex;align-items:center;gap:6px;width:214px;height:26px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500)"><span>⌕</span>search 412 assets<span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌘P</span></div>
+          <div class="seg" style="flex:none">
+            <label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="a-view" defaultChecked="{{ true }}">grid</label>
+            <label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="a-view">list</label>
+          </div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 12px 6px;min-width:0;overflow:hidden">
+        <span style="font-size:11px;color:var(--color-neutral-600);flex:none">assets / stage /</span>
+        <span class="tag tag-outline" style="flex:none;white-space:nowrap">all 412</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">meshes 96</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">materials 51</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">textures 188</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">scripts 34</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">audio 43</span>
+        <span style="margin-left:auto;flex:none;font-size:11px;color:var(--color-neutral-600)">sorted by recent</span>
+      </div>
+      <div style="flex:1;min-height:0;min-width:0;overflow:hidden;padding:2px 12px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(86px,1fr));gap:10px;align-content:start">
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:inset 0 0 0 1px var(--color-accent);display:grid;place-items:center"><span style="width:16px;height:16px;background:var(--color-neutral-300);transform:rotate(45deg)"></span></div><span style="font-size:10.5px;color:var(--color-accent-200);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294);box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">porcelain.mat</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background-image:conic-gradient(#e4e7f5 0 25%,#292b31 0 50%);background-size:19px 19px;box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">checker.png</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:var(--shadow-sm);display:grid;place-items:center"><span style="width:18px;height:12px;border:1.5px solid var(--color-neutral-400);border-radius:0 0 8px 8px"></span></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">teacup.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(#423a6a,#2b2741);box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">dusk.hdr</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:var(--color-neutral-900);box-shadow:var(--shadow-sm);display:grid;place-items:center;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">hop_controller.lua</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#595d6c,#292b31);box-shadow:var(--shadow-sm);display:grid;place-items:center"><span style="width:14px;height:18px;border:1.5px solid var(--color-neutral-300);border-radius:2px"></span></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">card_soldier.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:var(--shadow-sm);display:grid;place-items:center"><span style="width:4px;height:22px;background:var(--color-neutral-400);border-radius:2px"></span></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">mallet.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:radial-gradient(70% 70% at 35% 30%,#b2b6ca,#3f424d);box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">pocket_watch.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(120deg,#5d5294,#292b31);box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">tea_stain.png</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#75798c,#292b31);box-shadow:var(--shadow-sm);display:grid;place-items:center"><span style="width:8px;height:14px;border:1.5px solid var(--color-neutral-200);border-radius:50% 50% 2px 2px"></span></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">gold_key.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0"><div style="height:58px;border-radius:var(--radius-sm);background:var(--color-neutral-900);box-shadow:var(--shadow-sm);display:grid;place-items:center;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">grow_shrink.lua</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 2b — rail + tabbed drawer, Chatter open ══ -->
+<div class="dv-opt" id="2b">
+  <div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Rail — floating ECS inspector, same tabbed region with Chatter open and asset list view</div>
+  <div class="dv-card" style="width:1180px;height:760px;display:grid;grid-template-columns:250px 1fr;background:var(--color-bg);color:var(--color-text)">
+
+    <div style="display:flex;flex-direction:column;min-width:0;min-height:0;padding:12px 0;box-shadow:inset -1px 0 0 var(--color-neutral-900)">
+      <div style="display:flex;align-items:center;gap:8px;padding:0 12px 12px;min-width:0">
+        <div style="width:13px;height:19px;flex:none;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+        <span style="font:500 13px var(--font-heading)">bunny_stage</span>
+        <span style="margin-left:auto;flex:none;font-size:10.5px;color:var(--color-neutral-600)">saved</span>
+      </div>
+      <div style="padding:0 12px 10px">
+        <div style="display:flex;align-items:center;gap:7px;height:28px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500);min-width:0"><span>⌕</span>Find anything<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌘K</span></div>
+      </div>
+      <div style="padding:6px 12px 6px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ treeTitle }}</div>
+      <div style="flex:1;min-height:0;overflow:hidden;padding:0 8px;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px;opacity:.6">▸</span><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-2-500)"></span>Environment</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px"></span><span style="width:8px;height:6px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Camera_Main</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Stage</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 22px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 16%, transparent);box-shadow:inset 2px 0 0 var(--color-accent);color:var(--color-accent-200);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>Bunny<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;opacity:.75">4</span></div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Checkerboard<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">2</span></div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">3</span></div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-400);min-width:0"><span style="width:8px;height:8px;flex:none;background:var(--color-neutral-600);transform:rotate(45deg)"></span>WhiteRabbit<span style="margin-left:auto;flex:none;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">5</span></div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px"></span><span style="width:9px;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span>systems (4)</div>
+      </div>
+      <div style="padding:8px 12px 0;font-size:10.5px;color:var(--color-neutral-600);box-shadow:inset 0 1px 0 var(--color-neutral-900)">9 entities · 21 components</div>
+    </div>
+
+    <div style="display:grid;grid-template-rows:1fr 224px;min-height:0;min-width:0">
+      <div style="position:relative;overflow:hidden;min-width:0;background:radial-gradient(120% 90% at 55% 6%, #2c2f44 0%, #1a1c29 55%, #131521 100%)">
+        <div style="position:absolute;left:-40%;right:-40%;bottom:-20%;height:145%;transform:perspective(820px) rotateX(64deg);transform-origin:50% 100%;background-image:conic-gradient(#272b3e 0 25%, #1d2030 0 50%);background-size:96px 96px;mask-image:radial-gradient(76% 70% at 50% 76%, #000 0%, transparent 92%)"></div>
+        <div style="position:absolute;left:40%;top:60%;width:170px;height:38px;margin-left:-85px;border-radius:50%;background:radial-gradient(#0b0c14 0%, transparent 70%)"></div>
+        <div style="position:absolute;left:40%;top:22%;width:190px;height:230px;margin-left:-95px">
+          <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh</span></div></div>
+          <sc-if value="{{ showGizmo }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;left:52%;top:76%">
+              <div style="position:absolute;width:66px;height:2px;background:linear-gradient(90deg,var(--color-accent-400),transparent)"></div>
+              <div style="position:absolute;width:2px;height:66px;bottom:0;background:linear-gradient(0deg,transparent,var(--color-neutral-200))"></div>
+              <div style="position:absolute;width:48px;height:2px;background:linear-gradient(-90deg,var(--color-accent-2-400),transparent);transform:rotate(155deg);transform-origin:0 50%"></div>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="position:absolute;left:14px;top:14px;display:flex;flex-direction:column;gap:3px;padding:4px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 70%, transparent);box-shadow:var(--shadow-sm)">
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 18%, transparent);color:var(--color-accent-200);font-size:11px">✥</span>
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⟳</span>
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⤢</span>
+        </div>
+
+        <div style="position:absolute;left:calc(50% - 150px);top:14px;display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:99px;background:color-mix(in srgb, #0f1119 74%, transparent);box-shadow:var(--shadow-sm)">
+          <button class="btn btn-primary" style="flex:none;height:26px;min-height:26px;padding:0 14px;font-size:12px;border-radius:99px;white-space:nowrap">{{ playLabel }}</button>
+          <span style="font-size:11px;color:var(--color-neutral-500);white-space:nowrap">⇧⏎</span>
+        </div>
+
+        <!-- floating ECS inspector -->
+        <div style="position:absolute;right:14px;top:14px;bottom:14px;width:290px;display:flex;flex-direction:column;border-radius:var(--radius-lg);background:color-mix(in srgb, var(--color-surface) 94%, transparent);box-shadow:var(--shadow-md);overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:11px 12px 8px;min-width:0">
+            <span style="width:9px;height:9px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+            <span style="font:500 14px var(--font-heading)">Bunny</span>
+            <span style="font:400 10.5px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">#0142</span>
+            <span style="margin-left:auto;flex:none;font-size:12px;color:var(--color-neutral-600)">⋯</span>
+          </div>
+          <div style="padding:0 12px 9px;display:flex;align-items:center;gap:6px;min-width:0">
+            <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">components</span>
+            <span style="font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">4</span>
+            <span style="margin-left:auto;flex:none;font-size:11.5px;color:var(--color-accent)">+ add</span>
+          </div>
+          <div style="flex:1;min-height:0;overflow:hidden;padding:0 12px 12px;display:flex;flex-direction:column;gap:6px">
+            <div style="border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 6%, transparent)">
+              <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;min-width:0">
+                <span style="font-size:8px;color:var(--color-neutral-500)">▾</span><span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+                <span style="font:500 12px var(--font-heading)">Transform</span>
+                <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="width:13px;height:13px"></span></label>
+              </div>
+              <div style="padding:0 8px 8px;display:flex;flex-direction:column;gap:4px;font:400 11px ui-monospace,Menlo,monospace">
+                <div style="display:grid;grid-template-columns:36px repeat(3,1fr);gap:4px;align-items:center;min-width:0"><span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">pos</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0.00</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0.42</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0.00</span></div>
+                <div style="display:grid;grid-template-columns:36px repeat(3,1fr);gap:4px;align-items:center;min-width:0"><span style="font-family:var(--font-body);font-size:11px;color:var(--color-neutral-500)">rot</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);box-shadow:inset 0 0 0 1px var(--color-accent);min-width:0">-14</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0">0</span></div>
+              </div>
+            </div>
+            <div style="border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 6%, transparent)">
+              <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;min-width:0">
+                <span style="font-size:8px;color:var(--color-neutral-500)">▾</span><span style="width:7px;height:7px;flex:none;background:var(--color-accent);transform:rotate(45deg)"></span>
+                <span style="font:500 12px var(--font-heading)">MeshRenderer</span>
+                <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="width:13px;height:13px"></span></label>
+              </div>
+              <div style="padding:0 8px 8px;display:flex;flex-direction:column;gap:4px;font-size:11.5px">
+                <div style="display:grid;grid-template-columns:52px 1fr;gap:4px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">mesh</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span></div>
+                <div style="display:grid;grid-template-columns:52px 1fr;gap:4px;align-items:center;min-width:0"><span style="color:var(--color-neutral-500)">material</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">porcelain.mat</span></div>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 6%, transparent);min-width:0">
+              <span style="font-size:8px;color:var(--color-neutral-500)">▸</span><span style="width:7px;height:7px;flex:none;background:var(--color-neutral-500);transform:rotate(45deg)"></span><span style="font:500 12px var(--font-heading)">RigidBody</span>
+              <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot" style="width:13px;height:13px"></span></label>
+            </div>
+            <div style="display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:var(--radius-md);background:color-mix(in srgb, var(--color-neutral-100) 6%, transparent);min-width:0">
+              <span style="font-size:8px;color:var(--color-neutral-500)">▸</span><span style="width:7px;height:7px;flex:none;background:var(--color-accent-2-500);transform:rotate(45deg)"></span><span style="font:500 12px var(--font-heading)">HopController</span>
+              <label class="radio" style="margin-left:auto;flex:none"><input type="checkbox"><span class="dot" style="width:13px;height:13px"></span></label>
+            </div>
+            <div style="margin-top:auto;font-size:10.5px;color:var(--color-neutral-600)">systems touching this entity: Render · Physics · Script</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- tabbed region, Chatter open -->
+      <div style="display:flex;flex-direction:column;min-height:0;min-width:0;box-shadow:inset 0 1px 0 var(--color-neutral-900)">
+        <div style="display:flex;align-items:center;gap:16px;padding:0 14px;min-width:0;box-shadow:inset 0 -1px 0 var(--color-neutral-900)">
+          <div style="display:flex;align-items:center;gap:7px;height:34px;color:var(--color-neutral-500);font:500 12px var(--font-heading)">{{ assetsTitle }}<span style="font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">412</span></div>
+          <div style="display:flex;align-items:center;gap:7px;height:34px;box-shadow:inset 0 -2px 0 var(--color-accent);color:var(--color-accent-200);font:500 12px var(--font-heading)">{{ logTitle }}<span style="display:inline-flex;align-items:center;height:14px;padding:0 5px;border-radius:99px;background:var(--color-accent-800);color:var(--color-accent-100);font:400 9.5px ui-monospace,Menlo,monospace">1</span></div>
+          <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex:none">
+            <div style="display:flex;align-items:center;gap:6px;width:190px;height:26px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500)"><span>⌕</span>filter output</div>
+            <div class="seg" style="flex:none">
+              <label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="c-lvl" defaultChecked="{{ true }}">all</label>
+              <label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="c-lvl">warn</label>
+              <label class="seg-opt" style="padding:4px 9px;font-size:11px"><input type="radio" name="c-lvl">script</label>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;min-width:0;overflow:hidden;padding:8px 14px 12px;display:flex;flex-direction:column;gap:4px;font:400 11.5px/1.6 ui-monospace,Menlo,monospace;white-space:nowrap">
+          <div style="display:flex;gap:10px;min-width:0"><span style="color:var(--color-neutral-600);flex:none">14:02:11</span><span style="color:var(--color-neutral-600);flex:none;width:52px">assets</span><span style="color:var(--color-accent-400);flex:none">✓</span><span style="color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis">loaded bunny.glb — 69,451 tris, 1 material</span></div>
+          <div style="display:flex;gap:10px;min-width:0"><span style="color:var(--color-neutral-600);flex:none">14:02:11</span><span style="color:var(--color-neutral-600);flex:none;width:52px">world</span><span style="color:var(--color-neutral-600);flex:none">·</span><span style="color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis">registered 21 components across 9 entities</span></div>
+          <div style="display:flex;gap:10px;min-width:0"><span style="color:var(--color-neutral-600);flex:none">14:02:12</span><span style="color:var(--color-neutral-600);flex:none;width:52px">systems</span><span style="color:var(--color-neutral-600);flex:none">·</span><span style="color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis">Render, Physics, Script, Audio ready in 240 ms</span></div>
+          <div style="display:flex;gap:10px;min-width:0;padding:2px 6px;margin:0 -6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 12%, transparent)"><span style="color:var(--color-neutral-600);flex:none">14:02:14</span><span style="color:var(--color-neutral-600);flex:none;width:52px">script</span><span style="color:var(--color-accent-300);flex:none">!</span><span style="color:var(--color-accent-200);overflow:hidden;text-overflow:ellipsis">hop_controller.lua:14 — interval clamped to 0.8</span></div>
+          <div style="display:flex;gap:10px;min-width:0"><span style="color:var(--color-neutral-600);flex:none">14:02:16</span><span style="color:var(--color-neutral-600);flex:none;width:52px">world</span><span style="color:var(--color-neutral-600);flex:none">·</span><span style="color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis">play started</span></div>
+          <div style="display:flex;gap:10px;min-width:0"><span style="color:var(--color-neutral-600);flex:none">14:02:17</span><span style="color:var(--color-neutral-600);flex:none;width:52px">script</span><span style="color:var(--color-neutral-600);flex:none">·</span><span style="color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis">Bunny.hop() ×3</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "in <a class="dv-oid" href="#2a">2a</a> show the add-component search open" · "give <a class="dv-oid" href="#2b">2b</a> the asset list view instead of Chatter" · "let me drag a component between entities"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">Rabbithole — three editor layouts</span></div>
+<div class="dv-opts">
+
+<!-- ══ 1a — docked ══ -->
+<div class="dv-opt" id="1a">
+  <div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Docked — the familiar four-pane frame, stripped to essentials</div>
+  <div class="dv-card" style="width:1180px;height:720px;display:grid;grid-template-rows:44px 1fr;background:var(--color-bg);color:var(--color-text)">
+
+    <div style="display:flex;align-items:center;gap:14px;padding:0 12px;background:var(--color-bg);box-shadow:inset 0 -1px 0 var(--color-neutral-900)">
+      <div style="display:flex;align-items:center;gap:7px">
+        <div style="width:14px;height:20px;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+        <span style="font:500 14px var(--font-heading);letter-spacing:-.01em">Rabbithole</span>
+      </div>
+      <div style="width:1px;height:18px;background:var(--color-neutral-900)"></div>
+      <div style="display:flex;align-items:baseline;gap:7px;font-size:12px"><span style="color:var(--color-neutral-500)">scene</span><span>bunny_stage</span><span style="color:var(--color-accent)">•</span></div>
+      <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+        <button class="btn btn-primary" style="flex:none;height:28px;min-height:28px;padding:0 12px;font-size:12px;white-space:nowrap">{{ playLabel }}</button>
+        <button class="btn btn-secondary" style="flex:none;height:28px;min-height:28px;width:28px;padding:0"><span style="display:block;width:8px;height:9px;border-left:2px solid currentColor;border-right:2px solid currentColor"></span></button>
+        <button class="btn btn-secondary" style="flex:none;height:28px;min-height:28px;width:28px;padding:0;font:500 11px var(--font-heading)">›|</button>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:236px 1fr 268px;min-height:0">
+
+      <!-- scene tree -->
+      <div style="display:flex;flex-direction:column;min-height:0;box-shadow:inset -1px 0 0 var(--color-neutral-900)">
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px 7px">
+          <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ treeTitle }}</span>
+          <span style="font-size:15px;line-height:1;color:var(--color-neutral-600)">+</span>
+        </div>
+        <div style="padding:0 8px 8px">
+          <div style="display:flex;align-items:center;gap:6px;height:26px;padding:0 8px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500)"><span style="opacity:.7">⌕</span>filter</div>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;padding:0 6px;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>bunny_stage</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:9px;font-size:9px;opacity:.6">▸</span><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-2-500)"></span>Environment</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:8px;height:6px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Camera_Main</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Stage</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 38px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 16%, transparent);box-shadow:inset 2px 0 0 var(--color-accent);color:var(--color-accent-200)"><span style="width:9px"></span><span style="width:8px;height:8px;background:var(--color-accent);transform:rotate(45deg)"></span>Bunny<span style="margin-left:auto;font-size:10px;opacity:.7">mesh</span></div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 54px;color:var(--color-neutral-400);font-size:12px"><span style="width:9px"></span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-600);border-radius:50%"></span>RigidBody</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 38px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:8px;height:8px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Checkerboard</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 38px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:8px;height:8px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup</div>
+          <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:9px;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span>hop_controller.lua</div>
+        </div>
+        <div style="padding:8px 12px;font-size:10.5px;color:var(--color-neutral-600);box-shadow:inset 0 1px 0 var(--color-neutral-900)">8 entities · 1 script</div>
+      </div>
+
+      <!-- viewport + bottom dock -->
+      <div style="display:grid;grid-template-rows:1fr 196px;min-height:0;min-width:0">
+        <div style="position:relative;overflow:hidden;background:radial-gradient(120% 90% at 50% 8%, #2a2d40 0%, #191b28 55%, #131521 100%)">
+          <div style="position:absolute;left:-40%;right:-40%;bottom:-24%;height:150%;transform:perspective(760px) rotateX(66deg);transform-origin:50% 100%;background-image:conic-gradient(#262a3c 0 25%, #1d2030 0 50%);background-size:88px 88px;opacity:1;mask-image:radial-gradient(78% 70% at 50% 78%, #000 0%, transparent 92%)"></div>
+          <div style="position:absolute;left:50%;top:56%;width:150px;height:34px;margin-left:-75px;border-radius:50%;background:radial-gradient(#0c0d15 0%, transparent 70%);opacity:.85"></div>
+          <div style="position:absolute;left:50%;top:20%;width:190px;height:240px;margin-left:-95px">
+            <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh</span></div></div>
+            <div style="position:absolute;inset:-10px;border:1px dashed color-mix(in srgb, var(--color-accent) 70%, transparent);border-radius:3px"></div>
+            <sc-if value="{{ showGizmo }}" hint-placeholder-val="{{ true }}">
+              <div style="position:absolute;left:52%;top:74%">
+                <div style="position:absolute;width:62px;height:2px;background:linear-gradient(90deg,var(--color-accent-400),transparent)"></div>
+                <div style="position:absolute;width:2px;height:62px;bottom:0;background:linear-gradient(0deg,transparent,var(--color-neutral-200))"></div>
+                <div style="position:absolute;width:46px;height:2px;background:linear-gradient(-90deg,var(--color-accent-2-400),transparent);transform:rotate(155deg);transform-origin:0 50%"></div>
+                <div style="position:absolute;left:-4px;top:-4px;width:8px;height:8px;border-radius:50%;background:var(--color-accent-100)"></div>
+              </div>
+            </sc-if>
+          </div>
+          <div style="position:absolute;left:12px;top:12px;display:flex;gap:4px">
+            <div style="display:flex;padding:3px;gap:2px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 72%, transparent);box-shadow:var(--shadow-sm)">
+              <span style="display:grid;place-items:center;width:26px;height:24px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 18%, transparent);color:var(--color-accent-200);font-size:11px">✥</span>
+              <span style="display:grid;place-items:center;width:26px;height:24px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⟳</span>
+              <span style="display:grid;place-items:center;width:26px;height:24px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⤢</span>
+            </div>
+            <div style="display:flex;align-items:center;padding:0 9px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 72%, transparent);box-shadow:var(--shadow-sm);font-size:11px;color:var(--color-neutral-400)">Perspective</div>
+          </div>
+          <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;right:12px;top:12px;display:flex;gap:12px;padding:6px 10px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 72%, transparent);box-shadow:var(--shadow-sm);font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-400)"><span>60 fps</span><span>69,451 tris</span><span>3 draws</span></div>
+          </sc-if>
+          <div style="position:absolute;left:12px;bottom:10px;font-size:11px;color:var(--color-neutral-500)">Bunny · bunny.glb</div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1.15fr 1fr;min-height:0;min-width:0;box-shadow:inset 0 1px 0 var(--color-neutral-900)">
+          <div style="display:flex;flex-direction:column;min-width:0;min-height:0;box-shadow:inset -1px 0 0 var(--color-neutral-900)">
+            <div style="display:flex;align-items:center;gap:14px;padding:8px 12px 6px">
+              <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">{{ assetsTitle }}</span>
+              <span style="font-size:11px;color:var(--color-neutral-600)">assets / stage</span>
+            </div>
+            <div style="flex:1;min-height:0;overflow:hidden;padding:2px 12px 12px;display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:10px;align-content:start;min-width:0">
+              <div style="display:flex;flex-direction:column;gap:5px"><div style="height:56px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:inset 0 0 0 1px var(--color-accent);display:grid;place-items:center"><span style="width:16px;height:16px;background:var(--color-neutral-300);transform:rotate(45deg)"></span></div><span style="font-size:10.5px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><div style="height:56px;border-radius:var(--radius-sm);background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294);box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">porcelain.mat</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><div style="height:56px;border-radius:var(--radius-sm);background-image:conic-gradient(#e4e7f5 0 25%,#292b31 0 50%);background-size:18px 18px;box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">checker.png</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><div style="height:56px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:var(--shadow-sm);display:grid;place-items:center"><span style="width:18px;height:12px;border:1.5px solid var(--color-neutral-400);border-radius:0 0 8px 8px"></span></div><span style="font-size:10.5px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">teacup.glb</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><div style="height:56px;border-radius:var(--radius-sm);background:linear-gradient(#423a6a,#2b2741);box-shadow:var(--shadow-sm)"></div><span style="font-size:10.5px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">dusk.hdr</span></div>
+              <div style="display:flex;flex-direction:column;gap:5px"><div style="height:56px;border-radius:var(--radius-sm);background:var(--color-neutral-900);box-shadow:var(--shadow-sm);display:grid;place-items:center;font:400 13px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</div><span style="font-size:10.5px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">hop_controller</span></div>
+            </div>
+          </div>
+          <div style="display:flex;flex-direction:column;min-width:0;min-height:0">
+            <div style="display:flex;align-items:center;gap:10px;padding:8px 12px 6px">
+              <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ logTitle }}</span>
+              <span style="margin-left:auto;font-size:10.5px;color:var(--color-neutral-600)">1 warning</span>
+            </div>
+            <div style="flex:1;min-height:0;overflow:hidden;padding:0 12px 12px;display:flex;flex-direction:column;gap:4px;min-width:0;font:400 11.5px/1.5 ui-monospace,Menlo,monospace;white-space:nowrap;overflow:hidden">
+              <div style="display:flex;gap:8px"><span style="color:var(--color-neutral-600)">14:02:11</span><span style="color:var(--color-accent-400)">✓</span><span style="color:var(--color-neutral-300)">loaded bunny.glb — 69,451 tris</span></div>
+              <div style="display:flex;gap:8px"><span style="color:var(--color-neutral-600)">14:02:11</span><span style="color:var(--color-neutral-600)">·</span><span style="color:var(--color-neutral-400)">scene ready in 240 ms</span></div>
+              <div style="display:flex;gap:8px;padding:2px 6px;margin-left:-6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 12%, transparent)"><span style="color:var(--color-neutral-600)">14:02:14</span><span style="color:var(--color-accent-300)">!</span><span style="color:var(--color-accent-200)">hop_controller.lua:14 interval clamped to 0.8</span></div>
+              <div style="display:flex;gap:8px"><span style="color:var(--color-neutral-600)">14:02:16</span><span style="color:var(--color-neutral-600)">·</span><span style="color:var(--color-neutral-400)">play started</span></div>
+              <div style="display:flex;gap:8px"><span style="color:var(--color-neutral-600)">14:02:17</span><span style="color:var(--color-neutral-600)">·</span><span style="color:var(--color-neutral-400)">Bunny.hop() ×3</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- inspector -->
+      <div style="display:flex;flex-direction:column;min-height:0;box-shadow:inset 1px 0 0 var(--color-neutral-900)">
+        <div style="padding:9px 12px 8px">
+          <div style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:6px">{{ inspectorTitle }}</div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="width:9px;height:9px;background:var(--color-accent);transform:rotate(45deg)"></span>
+            <span style="font:500 15px var(--font-heading)">Bunny</span>
+            <span class="tag tag-neutral" style="margin-left:auto">mesh</span>
+          </div>
+        </div>
+        <div style="flex:1;min-height:0;overflow:hidden;padding:0 12px 12px;display:flex;flex-direction:column;gap:12px">
+          <div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--color-neutral-400);margin-bottom:7px"><span style="font-size:8px">▾</span>Transform</div>
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="display:grid;grid-template-columns:52px repeat(3,1fr);gap:5px;align-items:center">
+                <span style="font-size:11px;color:var(--color-neutral-500)">Position</span>
+                <div style="height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-400)">x</span>0.00</div>
+                <div style="height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-neutral-300)">y</span>0.42</div>
+                <div style="height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-2-400)">z</span>0.00</div>
+              </div>
+              <div style="display:grid;grid-template-columns:52px repeat(3,1fr);gap:5px;align-items:center">
+                <span style="font-size:11px;color:var(--color-neutral-500)">Rotation</span>
+                <div style="height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-400)">x</span>0</div>
+                <div style="height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;box-shadow:inset 0 0 0 1px var(--color-accent)"><span style="color:var(--color-neutral-300)">y</span>-14</div>
+                <div style="height:24px;display:flex;align-items:center;gap:5px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-2-400)">z</span>0</div>
+              </div>
+              <div style="display:grid;grid-template-columns:52px 1fr;gap:5px;align-items:center">
+                <span style="font-size:11px;color:var(--color-neutral-500)">Scale</span>
+                <div style="height:24px;display:flex;align-items:center;gap:8px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">1.00<span style="color:var(--color-neutral-600)">uniform</span></div>
+              </div>
+            </div>
+          </div>
+          <hr class="hr" style="margin:0">
+          <div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--color-neutral-400);margin-bottom:7px"><span style="font-size:8px">▾</span>Mesh renderer</div>
+            <div style="display:flex;flex-direction:column;gap:5px;font-size:11.5px">
+              <div style="display:grid;grid-template-columns:52px 1fr;gap:5px;align-items:center"><span style="color:var(--color-neutral-500)">Mesh</span><div style="height:24px;display:flex;align-items:center;gap:6px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900)"><span style="width:7px;height:7px;background:var(--color-neutral-400);transform:rotate(45deg)"></span>bunny.glb</div></div>
+              <div style="display:grid;grid-template-columns:52px 1fr;gap:5px;align-items:center"><span style="color:var(--color-neutral-500)">Material</span><div style="height:24px;display:flex;align-items:center;gap:6px;padding:0 6px;border-radius:var(--radius-sm);background:var(--color-neutral-900)"><span style="width:9px;height:9px;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span>porcelain.mat</div></div>
+              <label class="radio" style="font-size:11.5px;margin-top:2px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>Cast shadows</label>
+            </div>
+          </div>
+          <hr class="hr" style="margin:0">
+          <div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--color-neutral-400);margin-bottom:7px"><span style="font-size:8px">▾</span>hop_controller.lua</div>
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px">
+              <div style="display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center"><span style="color:var(--color-neutral-500)">Hop height</span><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:3px;border-radius:2px;background:var(--color-neutral-800);position:relative"><div style="position:absolute;left:0;top:0;bottom:0;width:44%;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:44%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-200)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">1.20</span></div></div>
+              <div style="display:grid;grid-template-columns:64px 1fr;gap:8px;align-items:center"><span style="color:var(--color-neutral-500)">Interval</span><div style="display:flex;align-items:center;gap:8px"><div style="flex:1;height:3px;border-radius:2px;background:var(--color-neutral-800);position:relative"><div style="position:absolute;left:0;top:0;bottom:0;width:28%;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:28%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-200)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">0.80s</span></div></div>
+            </div>
+          </div>
+          <button class="btn btn-secondary btn-block" style="height:28px;font-size:12px">+ Add component</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 1b — single rail ══ -->
+<div class="dv-opt" id="1b">
+  <div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>One rail — tree and assets stack on the left; inspector floats, log is a strip</div>
+  <div class="dv-card" style="width:1180px;height:720px;display:grid;grid-template-columns:250px 1fr;background:var(--color-bg);color:var(--color-text)">
+
+    <div style="display:flex;flex-direction:column;min-height:0;padding:12px 0;box-shadow:inset -1px 0 0 var(--color-neutral-900)">
+      <div style="display:flex;align-items:center;gap:8px;padding:0 12px 12px">
+        <div style="width:13px;height:19px;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+        <span style="font:500 13px var(--font-heading)">bunny_stage</span>
+        <span style="margin-left:auto;font-size:10.5px;color:var(--color-neutral-600)">saved</span>
+      </div>
+      <div style="padding:0 12px 10px">
+        <div style="display:flex;align-items:center;gap:7px;height:28px;padding:0 9px;border-radius:var(--radius-md);background:var(--color-neutral-900);font-size:12px;color:var(--color-neutral-500)"><span>⌕</span>Find anything<span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌘K</span></div>
+      </div>
+      <div style="padding:6px 12px 6px;font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ treeTitle }}</div>
+      <div style="padding:0 8px;display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-300)"><span style="width:9px;font-size:9px;opacity:.6">▸</span><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-2-500)"></span>Environment</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:8px;height:6px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Camera_Main</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font-size:9px">▾</span><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Stage</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 22px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 16%, transparent);box-shadow:inset 2px 0 0 var(--color-accent);color:var(--color-accent-200)"><span style="width:8px;height:8px;background:var(--color-accent);transform:rotate(45deg)"></span>Bunny</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:8px;height:8px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Checkerboard</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 22px;color:var(--color-neutral-300)"><span style="width:8px;height:8px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-300)"><span style="width:9px"></span><span style="width:9px;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span>hop_controller.lua</div>
+      </div>
+      <hr class="hr" style="margin:12px 0">
+      <div style="display:flex;align-items:center;padding:0 12px 8px">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ assetsTitle }}</span>
+        <span style="margin-left:auto;font-size:10.5px;color:var(--color-accent)">import</span>
+      </div>
+      <div style="flex:1;min-height:0;overflow:hidden;padding:0 12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-content:start">
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:52px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:inset 0 0 0 1px var(--color-accent);display:grid;place-items:center"><span style="width:15px;height:15px;background:var(--color-neutral-300);transform:rotate(45deg)"></span></div><span style="font-size:10px;color:var(--color-neutral-300);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">bunny.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:52px;border-radius:var(--radius-sm);background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294);box-shadow:var(--shadow-sm)"></div><span style="font-size:10px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">porcelain</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:52px;border-radius:var(--radius-sm);background-image:conic-gradient(#e4e7f5 0 25%,#292b31 0 50%);background-size:17px 17px;box-shadow:var(--shadow-sm)"></div><span style="font-size:10px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">checker.png</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:52px;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:var(--shadow-sm);display:grid;place-items:center"><span style="width:17px;height:11px;border:1.5px solid var(--color-neutral-400);border-radius:0 0 8px 8px"></span></div><span style="font-size:10px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">teacup.glb</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:52px;border-radius:var(--radius-sm);background:linear-gradient(#423a6a,#2b2741);box-shadow:var(--shadow-sm)"></div><span style="font-size:10px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">dusk.hdr</span></div>
+        <div style="display:flex;flex-direction:column;gap:4px"><div style="height:52px;border-radius:var(--radius-sm);background:var(--color-neutral-900);box-shadow:var(--shadow-sm);display:grid;place-items:center;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</div><span style="font-size:10px;color:var(--color-neutral-400);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">hop_ctrl</span></div>
+      </div>
+    </div>
+
+    <div style="position:relative;min-height:0;display:grid;grid-template-rows:1fr 34px">
+      <div style="position:relative;overflow:hidden;background:radial-gradient(120% 90% at 55% 6%, #2c2f44 0%, #1a1c29 55%, #131521 100%)">
+        <div style="position:absolute;left:-40%;right:-40%;bottom:-20%;height:145%;transform:perspective(820px) rotateX(64deg);transform-origin:50% 100%;background-image:conic-gradient(#272b3e 0 25%, #1d2030 0 50%);background-size:96px 96px;opacity:1;mask-image:radial-gradient(76% 70% at 50% 76%, #000 0%, transparent 92%)"></div>
+        <div style="position:absolute;left:44%;top:58%;width:170px;height:38px;margin-left:-85px;border-radius:50%;background:radial-gradient(#0b0c14 0%, transparent 70%)"></div>
+        <div style="position:absolute;left:44%;top:18%;width:210px;height:270px;margin-left:-105px">
+          <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh</span></div></div>
+          <sc-if value="{{ showGizmo }}" hint-placeholder-val="{{ true }}">
+            <div style="position:absolute;left:52%;top:76%">
+              <div style="position:absolute;width:66px;height:2px;background:linear-gradient(90deg,var(--color-accent-400),transparent)"></div>
+              <div style="position:absolute;width:2px;height:66px;bottom:0;background:linear-gradient(0deg,transparent,var(--color-neutral-200))"></div>
+              <div style="position:absolute;width:48px;height:2px;background:linear-gradient(-90deg,var(--color-accent-2-400),transparent);transform:rotate(155deg);transform-origin:0 50%"></div>
+            </div>
+          </sc-if>
+        </div>
+
+        <div style="position:absolute;left:14px;top:14px;display:flex;flex-direction:column;gap:3px;padding:4px;border-radius:var(--radius-md);background:color-mix(in srgb, #0f1119 70%, transparent);box-shadow:var(--shadow-sm)">
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 18%, transparent);color:var(--color-accent-200);font-size:11px">✥</span>
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⟳</span>
+          <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:var(--radius-sm);color:var(--color-neutral-400);font-size:11px">⤢</span>
+        </div>
+
+        <div style="position:absolute;left:50%;top:14px;transform:translateX(-50%);display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:99px;background:color-mix(in srgb, #0f1119 74%, transparent);box-shadow:var(--shadow-sm)">
+          <button class="btn btn-primary" style="flex:none;height:26px;min-height:26px;padding:0 14px;font-size:12px;border-radius:99px;white-space:nowrap">{{ playLabel }}</button>
+          <span style="font-size:11px;color:var(--color-neutral-500)">⇧⏎</span>
+        </div>
+
+        <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+          <div style="position:absolute;left:14px;bottom:14px;display:flex;gap:10px;font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-500)"><span>60 fps</span><span>69,451 tris</span></div>
+        </sc-if>
+
+        <!-- floating inspector -->
+        <div style="position:absolute;right:14px;top:14px;bottom:14px;width:276px;display:flex;flex-direction:column;border-radius:var(--radius-lg);background:color-mix(in srgb, var(--color-surface) 92%, transparent);box-shadow:var(--shadow-md);overflow:hidden">
+          <div style="display:flex;align-items:center;gap:8px;padding:11px 12px 9px">
+            <span style="width:9px;height:9px;background:var(--color-accent);transform:rotate(45deg)"></span>
+            <span style="font:500 14px var(--font-heading)">Bunny</span>
+            <span class="tag tag-accent" style="margin-left:auto">mesh</span>
+          </div>
+          <div style="padding:0 12px 10px">
+            <div class="seg" style="width:100%">
+              <label class="seg-opt" style="flex:1;justify-content:center;padding:5px 0;font-size:11.5px"><input type="radio" name="b-tab" defaultChecked="{{ true }}">Object</label>
+              <label class="seg-opt" style="flex:1;justify-content:center;padding:5px 0;font-size:11.5px"><input type="radio" name="b-tab">Physics</label>
+              <label class="seg-opt" style="flex:1;justify-content:center;padding:5px 0;font-size:11.5px"><input type="radio" name="b-tab">Script</label>
+            </div>
+          </div>
+          <div style="flex:1;min-height:0;overflow:hidden;padding:0 12px 12px;display:flex;flex-direction:column;gap:11px">
+            <div style="display:flex;flex-direction:column;gap:5px">
+              <div style="font-size:11px;color:var(--color-neutral-500)">Position</div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">
+                <div style="height:26px;display:flex;align-items:center;gap:5px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-400)">x</span>0.00</div>
+                <div style="height:26px;display:flex;align-items:center;gap:5px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-neutral-300)">y</span>0.42</div>
+                <div style="height:26px;display:flex;align-items:center;gap:5px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-2-400)">z</span>0.00</div>
+              </div>
+              <div style="font-size:11px;color:var(--color-neutral-500);margin-top:4px">Rotation</div>
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:5px">
+                <div style="height:26px;display:flex;align-items:center;gap:5px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-400)">x</span>0</div>
+                <div style="height:26px;display:flex;align-items:center;gap:5px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace;box-shadow:inset 0 0 0 1px var(--color-accent)"><span style="color:var(--color-neutral-300)">y</span>-14</div>
+                <div style="height:26px;display:flex;align-items:center;gap:5px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace"><span style="color:var(--color-accent-2-400)">z</span>0</div>
+              </div>
+            </div>
+            <hr class="hr" style="margin:0">
+            <div style="display:flex;flex-direction:column;gap:7px;font-size:11.5px">
+              <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--color-neutral-500);width:58px">Material</span><div style="flex:1;height:26px;display:flex;align-items:center;gap:6px;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900)"><span style="width:9px;height:9px;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span>porcelain.mat</div></div>
+              <div style="display:flex;align-items:center;gap:8px"><span style="color:var(--color-neutral-500);width:58px">Mass</span><div style="flex:1;height:26px;display:flex;align-items:center;padding:0 7px;border-radius:var(--radius-sm);background:var(--color-neutral-900);font:400 11px ui-monospace,Menlo,monospace">2.40 kg</div></div>
+              <label class="radio" style="font-size:11.5px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>Cast shadows</label>
+              <label class="radio" style="font-size:11.5px"><input type="checkbox" defaultChecked="{{ true }}"><span class="dot"></span>Simulate physics</label>
+            </div>
+            <hr class="hr" style="margin:0">
+            <div style="display:flex;flex-direction:column;gap:6px;font-size:11.5px">
+              <div style="color:var(--color-neutral-500)">hop_controller.lua</div>
+              <div style="display:flex;align-items:center;gap:8px"><span style="width:58px;color:var(--color-neutral-500);font-size:11px">Height</span><div style="flex:1;height:3px;border-radius:2px;background:var(--color-neutral-800);position:relative"><div style="position:absolute;inset:0 56% 0 0;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:44%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-200)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">1.20</span></div>
+              <div style="display:flex;align-items:center;gap:8px"><span style="width:58px;color:var(--color-neutral-500);font-size:11px">Interval</span><div style="flex:1;height:3px;border-radius:2px;background:var(--color-neutral-800);position:relative"><div style="position:absolute;inset:0 72% 0 0;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:28%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-200)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">0.80s</span></div>
+            </div>
+            <button class="btn btn-secondary btn-block" style="height:28px;font-size:12px;margin-top:auto">+ Add component</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- log strip -->
+      <div style="display:flex;align-items:center;gap:10px;padding:0 14px;box-shadow:inset 0 1px 0 var(--color-neutral-900);font:400 11.5px ui-monospace,Menlo,monospace">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ logTitle }}</span>
+        <span style="color:var(--color-accent-300)">!</span>
+        <span style="color:var(--color-neutral-300)">hop_controller.lua:14 interval clamped to 0.8</span>
+        <span style="color:var(--color-neutral-600)">+4 more</span>
+        <span style="margin-left:auto;color:var(--color-neutral-600);font-size:11px">⌥L to expand</span>
+        <span style="color:var(--color-neutral-500);font-size:13px">⌃</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══ 1c — keyhole ══ -->
+<div class="dv-opt" id="1c">
+  <div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Keyhole — full-bleed scene, panels as glass cards, one command bar</div>
+  <div class="dv-card" style="width:1180px;height:720px;position:relative;overflow:hidden;background:radial-gradient(130% 100% at 50% 0%, #31355080 0%, transparent 60%), radial-gradient(100% 80% at 50% 100%, #1b1d2c 0%, #101220 70%);color:var(--color-text)">
+
+    <div style="position:absolute;left:-30%;right:-30%;bottom:-16%;height:130%;transform:perspective(900px) rotateX(63deg);transform-origin:50% 100%;background-image:conic-gradient(#2a2e42 0 25%, #1e2131 0 50%);background-size:104px 104px;opacity:1;mask-image:radial-gradient(72% 68% at 50% 74%, #000 0%, transparent 92%)"></div>
+    <div style="position:absolute;left:50%;top:60%;width:200px;height:42px;margin-left:-100px;border-radius:50%;background:radial-gradient(#0a0b12 0%, transparent 70%)"></div>
+    <div style="position:absolute;left:50%;top:15%;width:250px;height:320px;margin-left:-125px">
+      <div style="position:absolute;inset:0;border:1px dashed var(--color-neutral-500);border-radius:var(--radius-md);background:linear-gradient(150deg, rgba(207,211,229,.14), rgba(93,82,148,.12));display:grid;place-items:center"><div style="text-align:center;font:400 11px/1.7 ui-monospace,Menlo,monospace;color:var(--color-neutral-300)">bunny.glb<br><span style="color:var(--color-neutral-500)">placeholder mesh</span></div></div>
+      <sc-if value="{{ showGizmo }}" hint-placeholder-val="{{ true }}">
+        <div style="position:absolute;left:52%;top:78%">
+          <div style="position:absolute;width:74px;height:2px;background:linear-gradient(90deg,var(--color-accent-400),transparent)"></div>
+          <div style="position:absolute;width:2px;height:74px;bottom:0;background:linear-gradient(0deg,transparent,var(--color-neutral-100))"></div>
+          <div style="position:absolute;width:54px;height:2px;background:linear-gradient(-90deg,var(--color-accent-2-400),transparent);transform:rotate(155deg);transform-origin:0 50%"></div>
+        </div>
+      </sc-if>
+    </div>
+
+    <div style="position:absolute;left:18px;top:16px;display:flex;align-items:center;gap:9px">
+      <div style="width:13px;height:19px;border:1.5px solid var(--color-accent);border-radius:7px 7px 4px 4px;position:relative"><div style="position:absolute;left:50%;top:5px;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--color-accent)"></div></div>
+      <span style="font:500 12.5px var(--font-heading);color:var(--color-neutral-300)">bunny_stage</span>
+      <span style="font-size:11px;color:var(--color-neutral-600)">· Stage / Bunny</span>
+    </div>
+
+    <sc-if value="{{ showStats }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;right:18px;top:16px;display:flex;gap:12px;font:400 11px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)"><span>60 fps</span><span>69,451 tris</span></div>
+    </sc-if>
+
+    <!-- glass tree -->
+    <div style="position:absolute;left:18px;top:52px;width:216px;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #14162280 60%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+      <div style="display:flex;align-items:center;margin-bottom:8px">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ treeTitle }}</span>
+        <span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌥1</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:1px;font-size:12.5px">
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:7px;height:7px;border-radius:50%;background:var(--color-accent-2-500)"></span>Environment</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:8px;height:6px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Camera_Main</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:7px;height:7px;border:1.5px solid var(--color-neutral-500);border-radius:2px"></span>Stage</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:5px 6px 5px 20px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100)"><span style="width:8px;height:8px;background:var(--color-accent);transform:rotate(45deg)"></span>Bunny</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 20px;color:var(--color-neutral-400)"><span style="width:8px;height:8px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Checkerboard</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px 4px 20px;color:var(--color-neutral-400)"><span style="width:8px;height:8px;background:var(--color-neutral-600);transform:rotate(45deg)"></span>Teacup</div>
+        <div style="display:flex;align-items:center;gap:7px;padding:4px 6px;color:var(--color-neutral-400)"><span style="width:9px;font:500 11px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</span>hop_controller.lua</div>
+      </div>
+    </div>
+
+    <!-- glass inspector -->
+    <div style="position:absolute;right:18px;top:52px;width:264px;padding:12px;border-radius:var(--radius-lg);background:color-mix(in srgb, #14162280 60%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:11px">
+      <div style="display:flex;align-items:center;gap:8px">
+        <span style="width:9px;height:9px;background:var(--color-accent);transform:rotate(45deg)"></span>
+        <span style="font:500 14px var(--font-heading)">Bunny</span>
+        <span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌥2</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="width:48px;color:var(--color-neutral-500)">Pos</span><div style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font:400 11px ui-monospace,Menlo,monospace"><span style="padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)">0.00</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)">0.42</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)">0.00</span></div></div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="width:48px;color:var(--color-neutral-500)">Rot</span><div style="flex:1;display:grid;grid-template-columns:repeat(3,1fr);gap:5px;font:400 11px ui-monospace,Menlo,monospace"><span style="padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)">0</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-accent) 22%, transparent);color:var(--color-accent-100)">-14</span><span style="padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)">0</span></div></div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:11.5px"><span style="width:48px;color:var(--color-neutral-500)">Scale</span><span style="font:400 11px ui-monospace,Menlo,monospace;padding:4px 6px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)">1.00</span></div>
+      </div>
+      <hr class="hr" style="margin:0">
+      <div style="display:flex;flex-wrap:wrap;gap:5px">
+        <span class="tag tag-outline" style="flex:none;white-space:nowrap">mesh renderer</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">rigid body</span>
+        <span class="tag tag-neutral" style="flex:none;white-space:nowrap">hop_controller</span>
+        <span class="tag" style="flex:none;white-space:nowrap;border:1px dashed var(--color-neutral-700);color:var(--color-neutral-500)">+ add</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:7px;font-size:11.5px">
+        <div style="display:flex;align-items:center;gap:8px"><span style="width:48px;color:var(--color-neutral-500)">Material</span><div style="flex:1;display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 8%, transparent)"><span style="width:9px;height:9px;border-radius:50%;background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></span>porcelain.mat</div></div>
+        <div style="display:flex;align-items:center;gap:8px"><span style="width:48px;color:var(--color-neutral-500)">Hop</span><div style="flex:1;height:3px;border-radius:2px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent);position:relative"><div style="position:absolute;inset:0 56% 0 0;border-radius:2px;background:var(--color-accent)"></div><div style="position:absolute;left:44%;top:50%;width:9px;height:9px;margin:-4.5px 0 0 -4.5px;border-radius:50%;background:var(--color-accent-100)"></div></div><span style="font:400 11px ui-monospace,Menlo,monospace">1.20</span></div>
+      </div>
+    </div>
+
+    <!-- glass assets -->
+    <div style="position:absolute;left:18px;bottom:74px;width:216px;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #14162280 60%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+      <div style="display:flex;align-items:center;margin-bottom:8px">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ assetsTitle }}</span>
+        <span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌥3</span>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px">
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);box-shadow:inset 0 0 0 1px var(--color-accent);display:grid;place-items:center"><span style="width:13px;height:13px;background:var(--color-neutral-300);transform:rotate(45deg)"></span></div>
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);background:radial-gradient(60% 60% at 40% 35%,#cfd3e5,#5d5294)"></div>
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);background-image:conic-gradient(#e4e7f5 0 25%,#292b31 0 50%);background-size:15px 15px"></div>
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);background:linear-gradient(150deg,#3f424d,#1d2030);display:grid;place-items:center"><span style="width:15px;height:10px;border:1.5px solid var(--color-neutral-400);border-radius:0 0 7px 7px"></span></div>
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);background:linear-gradient(#423a6a,#2b2741)"></div>
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);background:var(--color-neutral-900);display:grid;place-items:center;font:400 12px ui-monospace,Menlo,monospace;color:var(--color-accent-2-400)">/</div>
+        <div style="aspect-ratio:1;border-radius:var(--radius-sm);border:1px dashed var(--color-neutral-700);display:grid;place-items:center;color:var(--color-neutral-600);font-size:12px">+</div>
+      </div>
+    </div>
+
+    <!-- glass log -->
+    <div style="position:absolute;right:18px;bottom:74px;width:264px;padding:10px;border-radius:var(--radius-lg);background:color-mix(in srgb, #14162280 60%, transparent);backdrop-filter:blur(14px);box-shadow:var(--shadow-sm)">
+      <div style="display:flex;align-items:center;margin-bottom:7px">
+        <span style="font:500 10px var(--font-heading);letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">{{ logTitle }}</span>
+        <span style="margin-left:auto;font:400 10px ui-monospace,Menlo,monospace;color:var(--color-neutral-600)">⌥4</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:4px;font:400 11px/1.5 ui-monospace,Menlo,monospace">
+        <div style="display:flex;gap:7px"><span style="color:var(--color-accent-400)">✓</span><span style="color:var(--color-neutral-300)">bunny.glb loaded</span></div>
+        <div style="display:flex;gap:7px"><span style="color:var(--color-neutral-600)">·</span><span style="color:var(--color-neutral-400)">scene ready · 240 ms</span></div>
+        <div style="display:flex;gap:7px"><span style="color:var(--color-accent-300)">!</span><span style="color:var(--color-accent-200)">interval clamped to 0.8</span></div>
+        <div style="display:flex;gap:7px"><span style="color:var(--color-neutral-600)">·</span><span style="color:var(--color-neutral-400)">Bunny.hop() ×3</span></div>
+      </div>
+    </div>
+
+    <!-- command bar -->
+    <div style="position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;align-items:center;gap:10px;padding:7px 8px 7px 14px;border-radius:99px;background:color-mix(in srgb, #101220 82%, transparent);backdrop-filter:blur(16px);box-shadow:var(--shadow-md)">
+      <span style="font-size:12.5px;color:var(--color-neutral-500)">{{ commandHint }}</span>
+      <span style="font:400 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;border-radius:var(--radius-sm);background:color-mix(in srgb, var(--color-neutral-100) 10%, transparent);color:var(--color-neutral-400)">⌘K</span>
+      <div style="width:1px;height:20px;background:color-mix(in srgb, var(--color-neutral-100) 14%, transparent)"></div>
+      <div style="display:flex;gap:3px">
+        <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:99px;background:color-mix(in srgb, var(--color-accent) 20%, transparent);color:var(--color-accent-100);font-size:11px">✥</span>
+        <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:11px">⟳</span>
+        <span style="display:grid;place-items:center;width:28px;height:26px;border-radius:99px;color:var(--color-neutral-400);font-size:11px">⤢</span>
+      </div>
+      <button class="btn btn-primary" style="flex:none;height:28px;min-height:28px;padding:0 16px;font-size:12px;border-radius:99px;white-space:nowrap">{{ playLabel }}</button>
+    </div>
+  </div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "take <a class="dv-oid" href="#1b">1b</a> and give it <a class="dv-oid" href="#1c">1c</a>'s command bar" · "show <a class="dv-oid" href="#1a">1a</a> in play mode with the log expanded" · "turn off the Wonderland naming and compare"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;wonderlandNaming&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Theming&quot;},&quot;showGizmo&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Viewport&quot;},&quot;showStats&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Viewport&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const w = this.props.wonderlandNaming ?? true;
+    return {
+      showGizmo: this.props.showGizmo ?? true,
+      showStats: this.props.showStats ?? true,
+      treeTitle: w ? "Warren" : "Scene",
+      inspectorTitle: w ? "Looking glass" : "Inspector",
+      assetsTitle: w ? "Curiosities" : "Assets",
+      logTitle: w ? "Chatter" : "Console",
+      playLabel: w ? "Fall in" : "Play",
+      commandHint: w ? "Ask the caterpillar…" : "Run a command…"
+    };
+  }
+}
+</script>
+</body>
+</html>

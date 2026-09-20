@@ -1,3 +1,4 @@
+use serde_json::Value;
 use std::{
     any::TypeId,
     collections::{
@@ -14,6 +15,7 @@ use crate::{
         ComponentId,
         scene::{SceneComponent, SceneSpawnContext},
     },
+    world::World,
 };
 
 pub(crate) struct ComponentInfo {}
@@ -24,6 +26,44 @@ pub(crate) struct ComponentIndex(usize);
 /// Deserializes a JSON payload into `T` and applies it. Returns `Err` with a
 /// human-readable reason when the payload does not parse.
 type ErasedApply = fn(&str, Entity, &mut SceneSpawnContext<'_>) -> Result<(), serde_json::Error>;
+
+/// Serializes `T` off `entity`, or `None` when the entity does not carry it.
+type ErasedRead = fn(&World, Entity) -> Option<Value>;
+
+/// What a tool can learn about one registered scene component without knowing
+/// its Rust type.
+pub struct TypeInfo {
+    name: &'static str,
+    short: &'static str,
+    read: ErasedRead,
+}
+
+impl TypeInfo {
+    /// The canonical full type path, e.g. `essential::transform::Transform`.
+    pub fn name(&self) -> &'static str {
+        self.name
+    }
+
+    /// The final `::` segment, e.g. `Transform`.
+    pub fn short(&self) -> &'static str {
+        self.short
+    }
+
+    /// Reads the component's current value off `entity`.
+    ///
+    /// `None` covers three cases a caller should not need to distinguish: the
+    /// entity is stale, it does not carry this component, or the value failed
+    /// to serialize. A component that is present but unserializable is still
+    /// *listed* by [`World::component_types`], so a tool can show it by name
+    /// rather than silently under-reporting what the entity is.
+    pub fn read(&self, world: &World, entity: Entity) -> Option<Value> {
+        (self.read)(world, entity)
+    }
+}
+
+fn read_typed<T: SceneComponent>(world: &World, entity: Entity) -> Option<Value> {
+    serde_json::to_value(world.get_component_for_entity::<T>(entity)?).ok()
+}
 
 fn apply_typed<T: SceneComponent>(
     json: &str,
@@ -51,6 +91,9 @@ pub(crate) struct ComponentRegistry {
     scene_component_map: HashMap<&'static str, ErasedApply>,
     /// Convenience key: the final `::` segment, for hand-authored glTF `extras`.
     scene_alias_map: HashMap<&'static str, AliasEntry>,
+    /// The read side, keyed by the same `TypeId` an archetype stores, so an
+    /// entity's components can be listed without knowing their Rust types.
+    type_info: HashMap<TypeId, TypeInfo>,
     component_info: Vec<ComponentInfo>,
 }
 
@@ -90,9 +133,18 @@ impl ComponentRegistry {
         let full = T::name();
         self.scene_component_map.insert(full, apply_typed::<T>);
 
+        let short = full.rsplit("::").next().unwrap_or(full);
+        self.type_info.insert(
+            TypeId::of::<T>(),
+            TypeInfo {
+                name: full,
+                short,
+                read: read_typed::<T>,
+            },
+        );
+
         // Short alias so Blender-authored `extras` keys resolve. `full` is
         // 'static, so the suffix borrows from it without allocating.
-        let short = full.rsplit("::").next().unwrap_or(full);
         if short != full {
             let type_id = TypeId::of::<T>();
             match self.scene_alias_map.entry(short) {
@@ -124,5 +176,9 @@ impl ComponentRegistry {
             .get(name)
             .copied()
             .or_else(|| self.scene_alias_map.get(name).map(|entry| entry.apply))
+    }
+
+    pub(crate) fn type_info(&self, component_id: &ComponentId) -> Option<&TypeInfo> {
+        self.type_info.get(component_id)
     }
 }

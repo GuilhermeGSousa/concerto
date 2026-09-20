@@ -4,9 +4,10 @@
 //! `spawner_expands_nodes_and_upgrades_weak_handles` case additionally
 //! drives the real system with a wired `AssetServer`, so the Weak->Strong
 //! mesh-handle upgrade in `MeshComponent::apply` is exercised for real.
+use ecs::component::name::Name;
 use ecs::component::Component;
-use ecs::entity::hierarchy::Children;
-use ecs::{IntoSystem, System, World};
+use ecs::entity::hierarchy::{ChildOf, Children};
+use ecs::{IntoSystem, Res, ResMut, Resource, System, World};
 use essential::assets::asset_server::AssetServer;
 use essential::assets::asset_store::AssetStore;
 use essential::assets::handle::AssetHandle;
@@ -14,8 +15,9 @@ use essential::assets::AssetId;
 use essential::transform::Transform;
 use glam::Vec3;
 use mesh::mesh::{Mesh, MeshComponent};
+use render::components::camera::Camera;
 use scene::scene::{Scene, SceneNode, SerializedComponent};
-use scene::spawner::{spawn_scene_components, SceneSpawnerComponent};
+use scene::spawner::{spawn_scene, spawn_scene_components, SceneSpawnerComponent, SpawnedScene};
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
     SceneNode {
@@ -42,6 +44,132 @@ fn mesh_component(id: AssetId) -> SerializedComponent {
         })
         .unwrap(),
     }
+}
+
+#[derive(Resource)]
+struct SceneFixture(Scene);
+
+#[derive(Resource)]
+struct SpawnParent(ecs::Entity);
+
+#[derive(Resource, Default)]
+struct SpawnOutput(Option<SpawnedScene>);
+
+fn spawn_fixture_scene(
+    mut cmd: ecs::command::CommandQueue,
+    fixture: Res<SceneFixture>,
+    parent: Res<SpawnParent>,
+    mut output: ResMut<SpawnOutput>,
+) {
+    if output.0.is_none() {
+        output.0 = Some(spawn_scene(&mut cmd, &fixture.0, parent.0));
+    }
+}
+
+#[test]
+fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
+    let mut world = World::default();
+    world.register_component_type::<Transform>();
+    world.register_component_type::<Camera>();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
+
+    let parent = world.spawn(());
+    let camera = SerializedComponent {
+        type_name: Camera::name().to_string(),
+        data: serde_json::to_string(&Camera::default()).unwrap(),
+    };
+    world.insert_resource(SceneFixture(Scene {
+        nodes: vec![
+            node("first root", vec![1], vec![transform_component(1.0)]),
+            node("child", vec![], vec![camera]),
+            node("second root", vec![], vec![transform_component(2.0)]),
+        ],
+        referenced_assets: vec![],
+    }));
+    world.insert_resource(SpawnParent(parent));
+    world.insert_resource(SpawnOutput::default());
+
+    let mut system = spawn_fixture_scene.into_system();
+    system.initialize(&mut world);
+    system.run_and_apply(&mut world);
+
+    let output = world
+        .get_resource::<SpawnOutput>()
+        .unwrap()
+        .0
+        .as_ref()
+        .unwrap();
+    assert_eq!(output.node_entities.len(), 3);
+    assert_eq!(
+        output.root_entities,
+        vec![output.node_entities[0], output.node_entities[2]]
+    );
+    assert!(world
+        .get_component_for_entity::<Transform>(output.node_entities[0])
+        .is_some());
+    assert!(
+        world
+            .get_component_for_entity::<Camera>(output.node_entities[1])
+            .is_some(),
+        "the generic spawner preserves registered scene components"
+    );
+    assert_eq!(
+        world
+            .get_component_for_entity::<Children>(parent)
+            .unwrap()
+            .into_iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        output.root_entities
+    );
+}
+
+#[test]
+fn spawned_nodes_carry_their_authored_name() {
+    let mut world = World::default();
+    world.register_component_type::<Transform>();
+
+    let parent = world.spawn(());
+    world.insert_resource(SceneFixture(Scene {
+        nodes: vec![
+            node("Armature", vec![1], vec![transform_component(1.0)]),
+            node("spine_01", vec![], vec![]),
+        ],
+        referenced_assets: vec![],
+    }));
+    world.insert_resource(SpawnParent(parent));
+    world.insert_resource(SpawnOutput::default());
+
+    let mut system = spawn_fixture_scene.into_system();
+    system.initialize(&mut world);
+    system.run_and_apply(&mut world);
+
+    let entities = world
+        .get_resource::<SpawnOutput>()
+        .unwrap()
+        .0
+        .as_ref()
+        .unwrap()
+        .node_entities
+        .clone();
+
+    // Without this the authored name dies with the scene file and a tree view
+    // has nothing to show but entity indices.
+    assert_eq!(
+        world
+            .get_component_for_entity::<Name>(entities[0])
+            .map(Name::as_str),
+        Some("Armature"),
+        "a spawned node must carry the name its scene node was authored with"
+    );
+    assert_eq!(
+        world
+            .get_component_for_entity::<Name>(entities[1])
+            .map(Name::as_str),
+        Some("spine_01"),
+        "nodes without components must be named too"
+    );
 }
 
 #[test]
@@ -115,6 +243,8 @@ fn spawner_expands_nodes_and_upgrades_weak_handles() {
     world.register_component_type::<Transform>();
     world.register_component_type::<MeshComponent>();
     world.register_component::<SceneSpawnerComponent>();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
 
     // A wired AssetServer with the Mesh lifetime sender registered lets
     // `MeshComponent::apply` upgrade a serialized Weak handle to Strong exactly

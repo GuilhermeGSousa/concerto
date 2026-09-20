@@ -1,0 +1,482 @@
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    marker::PhantomData,
+    sync::Arc,
+};
+
+use app::App;
+use ecs::{command::CommandQueue, component::Tick, Component, Entity, ResMut, Resource, World};
+use editable::{with_property_mut, Editable, PropertyPath, PropertyVisitor};
+use ui::theme::UITheme;
+
+use super::rows::{
+    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
+};
+
+#[derive(Clone, Copy)]
+pub(crate) struct EditableComponent {
+    pub name: &'static str,
+    pub collect: fn(&InspectorRegistry, &World, Entity) -> Option<Vec<Property>>,
+    pub apply:
+        fn(&mut World, Entity, &PropertyPath, &dyn ErasedEditor, &dyn Any) -> Result<(), EditError>,
+}
+
+pub(crate) trait ErasedEditor: Send + Sync {
+    fn snapshot(&self, value: &dyn Editable) -> Result<PropertyRowValue, EditError>;
+    fn build(
+        &self,
+        cmd: &mut CommandQueue,
+        row: Entity,
+        snapshot: &PropertyRowValue,
+        theme: &UITheme,
+    ) -> Result<(), EditError>;
+    fn apply(&self, value: &mut dyn Editable, edit: &dyn Any) -> Result<(), EditError>;
+}
+
+struct Adapter<T, E> {
+    editor: E,
+    marker: PhantomData<fn() -> T>,
+}
+
+impl<T: Editable, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
+    fn snapshot(&self, value: &dyn Editable) -> Result<PropertyRowValue, EditError> {
+        let value = (value as &dyn Any)
+            .downcast_ref::<T>()
+            .ok_or(EditError::TypeMismatch)?;
+        Ok(PropertyRowValue::new::<T, E>(self.editor.snapshot(value)))
+    }
+    fn build(
+        &self,
+        cmd: &mut CommandQueue,
+        row: Entity,
+        snapshot: &PropertyRowValue,
+        theme: &UITheme,
+    ) -> Result<(), EditError> {
+        let snapshot = snapshot.snapshot::<T, E>().ok_or(EditError::TypeMismatch)?;
+        self.editor.build(cmd, row, snapshot, theme);
+        Ok(())
+    }
+    fn apply(&self, value: &mut dyn Editable, edit: &dyn Any) -> Result<(), EditError> {
+        let value = (value as &mut dyn Any)
+            .downcast_mut::<T>()
+            .ok_or(EditError::TypeMismatch)?;
+        let edit = edit
+            .downcast_ref::<E::Edit>()
+            .ok_or(EditError::TypeMismatch)?;
+        self.editor.apply(value, edit)
+    }
+}
+
+pub(crate) struct RegisteredEditor {
+    pub editor_type: TypeId,
+    pub adapter: Arc<dyn ErasedEditor>,
+}
+
+/// Components and typed editors available to the inspector. `Default` includes
+/// numeric editors for f32, f64, Vec3 and Quat. Later registration replaces them.
+#[derive(Resource)]
+pub struct InspectorRegistry {
+    components: HashMap<TypeId, EditableComponent>,
+    editors: HashMap<TypeId, RegisteredEditor>,
+}
+
+impl Default for InspectorRegistry {
+    fn default() -> Self {
+        let mut registry = Self {
+            components: HashMap::new(),
+            editors: HashMap::new(),
+        };
+        super::numeric::register_defaults(&mut registry);
+        registry
+    }
+}
+
+impl InspectorRegistry {
+    pub fn register_component<T: Component + Editable>(&mut self) {
+        let path = std::any::type_name::<T>();
+        self.components.insert(
+            TypeId::of::<T>(),
+            EditableComponent {
+                name: path.rsplit("::").next().unwrap_or(path),
+                collect: collect_typed::<T>,
+                apply: apply_typed::<T>,
+            },
+        );
+    }
+
+    pub fn register_property_editor<T: Editable, E: PropertyEditor<T>>(&mut self, editor: E) {
+        self.editors.insert(
+            TypeId::of::<T>(),
+            RegisteredEditor {
+                editor_type: TypeId::of::<E>(),
+                adapter: Arc::new(Adapter::<T, E> {
+                    editor,
+                    marker: PhantomData,
+                }),
+            },
+        );
+    }
+
+    pub(crate) fn component(&self, id: TypeId) -> Option<EditableComponent> {
+        self.components.get(&id).copied()
+    }
+    pub(crate) fn editor(&self, id: TypeId) -> Option<&RegisteredEditor> {
+        self.editors.get(&id)
+    }
+
+    /// Collect fresh owned snapshots, preferring an editor for each node over its
+    /// children. This direct API is uncached; the inspector system caches its results.
+    pub fn collect(&self, root: &dyn Editable) -> Vec<Property> {
+        let mut collector = Collect {
+            registry: self,
+            path: Vec::new(),
+            properties: Vec::new(),
+        };
+        collector.node(root);
+        collector.properties
+    }
+
+    /// Take fresh snapshots of a registered component, or return `None` if the
+    /// component is absent or unregistered. This direct API is uncached.
+    pub fn collect_component(
+        &self,
+        world: &World,
+        entity: Entity,
+        component: TypeId,
+    ) -> Option<Vec<Property>> {
+        (self.component(component)?.collect)(self, world, entity)
+    }
+}
+
+struct Collect<'a> {
+    registry: &'a InspectorRegistry,
+    path: Vec<&'static str>,
+    properties: Vec<Property>,
+}
+
+impl Collect<'_> {
+    fn node(&mut self, value: &dyn Editable) {
+        let type_id = (value as &dyn Any).type_id();
+        if let Some(editor) = self.registry.editor(type_id) {
+            match editor.adapter.snapshot(value) {
+                Ok(snapshot) => self.properties.push(Property {
+                    path: PropertyPath::new(self.path.iter().copied()),
+                    type_id,
+                    value: snapshot,
+                    editor_type: Some(editor.editor_type),
+                    registry_tick: Tick::default(),
+                }),
+                Err(error) => log::warn!("Unable to snapshot {:?}: {error}", self.path),
+            }
+            return;
+        }
+        let count = self.properties.len();
+        value.visit(self);
+        if count == self.properties.len() {
+            self.properties.push(Property {
+                path: PropertyPath::new(self.path.iter().copied()),
+                type_id,
+                value: PropertyRowValue::default(),
+                editor_type: None,
+                registry_tick: Tick::default(),
+            });
+        }
+    }
+}
+
+impl PropertyVisitor for Collect<'_> {
+    fn field(&mut self, name: &'static str, value: &dyn Editable) {
+        self.path.push(name);
+        self.node(value);
+        self.path.pop();
+    }
+}
+
+fn collect_typed<T: Component + Editable>(
+    registry: &InspectorRegistry,
+    world: &World,
+    entity: Entity,
+) -> Option<Vec<Property>> {
+    let registry_tick = world
+        .resource_changed_tick::<InspectorRegistry>()
+        .unwrap_or_default();
+    world.get_component_for_entity::<T>(entity).map(|value| {
+        let mut properties = registry.collect(value);
+        for property in &mut properties {
+            property.registry_tick = registry_tick;
+        }
+        properties
+    })
+}
+
+fn apply_typed<T: Component + Editable>(
+    world: &mut World,
+    entity: Entity,
+    path: &PropertyPath,
+    editor: &dyn ErasedEditor,
+    edit: &dyn Any,
+) -> Result<(), EditError> {
+    let value = world
+        .get_component_for_entity_mut::<T>(entity)
+        .ok_or(EditError::MissingTarget)?;
+    let mut result = Err(EditError::NotFound);
+    with_property_mut(value, path, &mut |value| {
+        result = editor.apply(value, edit);
+    })
+    .map_err(|_| EditError::NotFound)?;
+    result
+}
+
+pub trait EditableApp {
+    fn register_editable<T: Component + Editable>(&mut self) -> &mut Self;
+    fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
+        &mut self,
+        editor: E,
+    ) -> &mut Self;
+}
+
+impl EditableApp for App {
+    fn register_editable<T: Component + Editable>(&mut self) -> &mut Self {
+        registry(self).register_component::<T>();
+        self
+    }
+    fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
+        &mut self,
+        editor: E,
+    ) -> &mut Self {
+        registry(self).register_property_editor::<T, E>(editor);
+        self
+    }
+}
+
+/// A stamped handle, so registering an editor marks the registry changed and
+/// every inspector row rebuilds against it.
+fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
+    let world = app.main_mut().world_mut();
+    assert!(
+        world.get_resource::<InspectorRegistry>().is_some(),
+        "InspectorPlugin must be registered first"
+    );
+    ResMut::new(world.as_unsafe_world_cell_mut())
+}
+
+/// Apply one captured edit to the live world. Useful for headless editor hosts.
+/// Rejection can stamp the component's changed tick, since validation requires
+/// mutable access; adapters must leave its contents unchanged on error.
+pub fn apply_property_commit(world: &mut World, commit: PropertyCommit) -> Result<(), EditError> {
+    let row = &commit.row;
+    let registry = world
+        .get_resource::<InspectorRegistry>()
+        .ok_or(EditError::UnregisteredComponent)?;
+    let component = registry
+        .component(row.component)
+        .ok_or(EditError::UnregisteredComponent)?;
+    let editor = registry.editor(row.type_id).ok_or(EditError::StaleEditor)?;
+    if row.editor_type != Some(editor.editor_type)
+        || Some(row.registry_tick) != world.resource_changed_tick::<InspectorRegistry>()
+    {
+        return Err(EditError::StaleEditor);
+    }
+    let adapter = Arc::clone(&editor.adapter);
+    (component.apply)(
+        world,
+        row.entity,
+        &row.path,
+        adapter.as_ref(),
+        commit.edit.as_ref(),
+    )
+}
+
+/// Drain queued edits without consulting current selection or UI entity lifetime.
+///
+/// This is the editor's dynamic mutation boundary: captured component types are
+/// registered at runtime, so a static `Query<T>` cannot declare the full write
+/// set. Keep exclusive access here until ECS supports runtime component access;
+/// presentation and user adapters do not receive this world borrow.
+pub fn apply_property_commits(world: &mut World) {
+    let Some(commits) = world.get_resource_mut::<PropertyCommits>() else {
+        return;
+    };
+    for commit in std::mem::take(&mut commits.0) {
+        if let Err(error) = apply_property_commit(world, commit) {
+            log::warn!("Property commit dropped: {error}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{
+        numeric::{NumericEdit, NumericFields},
+        PropertyRow,
+    };
+    use super::*;
+    use essential::transform::Transform;
+    use glam::Vec3;
+
+    fn world() -> (World, Entity) {
+        let mut registry = InspectorRegistry::default();
+        registry.register_component::<Transform>();
+        let mut world = World::default();
+        world.insert_resource(registry);
+        world.insert_resource(PropertyCommits::default());
+        let entity = world.spawn(Transform::IDENTITY);
+        world.tick();
+        (world, entity)
+    }
+
+    fn row(world: &World, entity: Entity) -> PropertyRow {
+        world
+            .get_resource::<InspectorRegistry>()
+            .unwrap()
+            .collect_component(world, entity, TypeId::of::<Transform>())
+            .unwrap()[0]
+            .row(entity, TypeId::of::<Transform>())
+    }
+
+    #[test]
+    fn queued_slot_edits_compose_against_the_live_vector() {
+        let (mut world, entity) = world();
+        let row = row(&world, entity);
+        let queue = world.get_resource_mut::<PropertyCommits>().unwrap();
+        queue
+            .push::<Vec3, NumericFields>(
+                &row,
+                NumericEdit {
+                    slot: 0,
+                    number: 4.0,
+                },
+            )
+            .unwrap();
+        queue
+            .push::<Vec3, NumericFields>(
+                &row,
+                NumericEdit {
+                    slot: 1,
+                    number: 5.0,
+                },
+            )
+            .unwrap();
+        // A simulation update after the snapshot must survive edits to other slots.
+        world
+            .get_component_for_entity_mut::<Transform>(entity)
+            .unwrap()
+            .translation
+            .z = 6.0;
+        apply_property_commits(&mut world);
+        assert_eq!(
+            world
+                .get_component_for_entity::<Transform>(entity)
+                .unwrap()
+                .translation,
+            Vec3::new(4.0, 5.0, 6.0)
+        );
+        assert!(world
+            .get_resource::<PropertyCommits>()
+            .unwrap()
+            .0
+            .is_empty());
+    }
+
+    #[test]
+    fn mismatched_payloads_are_errors_and_never_reach_the_adapter() {
+        let (mut world, entity) = world();
+        let row = row(&world, entity);
+        assert!(matches!(
+            PropertyCommit::new::<f32, NumericFields>(
+                &row,
+                NumericEdit {
+                    slot: 0,
+                    number: 9.0
+                }
+            ),
+            Err(EditError::TypeMismatch)
+        ));
+        let malformed = PropertyCommit {
+            row,
+            edit: Box::new("wrong payload"),
+        };
+        assert_eq!(
+            apply_property_commit(&mut world, malformed),
+            Err(EditError::TypeMismatch)
+        );
+        assert_eq!(
+            world
+                .get_component_for_entity::<Transform>(entity)
+                .unwrap()
+                .translation,
+            Vec3::ZERO
+        );
+    }
+
+    #[test]
+    fn replacing_the_registry_also_invalidates_old_edits() {
+        let (mut world, entity) = world();
+        let edit = PropertyCommit::new::<Vec3, NumericFields>(
+            &row(&world, entity),
+            NumericEdit {
+                slot: 0,
+                number: 9.0,
+            },
+        )
+        .unwrap();
+        let mut registry = InspectorRegistry::default();
+        registry.register_component::<Transform>();
+        world.insert_resource(registry);
+        assert_eq!(
+            apply_property_commit(&mut world, edit),
+            Err(EditError::StaleEditor)
+        );
+    }
+
+    #[test]
+    fn unregistered_components_return_an_error() {
+        let (mut world, entity) = world();
+        let edit = PropertyCommit::new::<Vec3, NumericFields>(
+            &row(&world, entity),
+            NumericEdit {
+                slot: 0,
+                number: 9.0,
+            },
+        )
+        .unwrap();
+        world.insert_resource(InspectorRegistry::default());
+        assert_eq!(
+            apply_property_commit(&mut world, edit),
+            Err(EditError::UnregisteredComponent)
+        );
+    }
+
+    #[test]
+    fn commits_are_visible_to_transform_propagation_in_the_same_tick() {
+        use ecs::{IntoSystem, System};
+        use essential::transform::{systems::update_simple_entities, GlobalTransform};
+        let mut registry = InspectorRegistry::default();
+        registry.register_component::<Transform>();
+        let mut world = World::default();
+        world.register_component::<Transform>();
+        world.insert_resource(registry);
+        let entity = world.spawn(Transform::IDENTITY);
+        world.tick();
+        let edit = PropertyCommit::new::<Vec3, NumericFields>(
+            &row(&world, entity),
+            NumericEdit {
+                slot: 0,
+                number: 3.0,
+            },
+        )
+        .unwrap();
+        apply_property_commit(&mut world, edit).unwrap();
+        let mut propagation = update_simple_entities.into_system();
+        propagation.initialize(&mut world);
+        propagation.run_and_apply(&mut world);
+        assert_eq!(
+            world
+                .get_component_for_entity::<GlobalTransform>(entity)
+                .unwrap()
+                .translation(),
+            Vec3::new(3.0, 0.0, 0.0)
+        );
+    }
+}

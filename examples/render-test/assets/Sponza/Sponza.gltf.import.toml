@@ -1,4 +1,3 @@
-# Persistent identities for imported outputs. Commit this file with the source.
 version = 1
 source_id = "8887c4fb-a521-49fd-b5ed-941c7134b74c"
 importer = "gltf"
@@ -387,7 +386,7 @@ asset_id = "10251c6a-fa1a-5d4b-825f-f08ea1984118"
 [outputs."mesh/99"]
 asset_id = "f1bc8457-cd02-5939-88dd-8624aff63cae"
 
-[outputs."scene"]
+[outputs.scene]
 asset_id = "af1e81f9-14eb-521d-971f-77445bfa86c3"
 
 [outputs."texture/0_linear"]

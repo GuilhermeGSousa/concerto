@@ -226,7 +226,7 @@ impl<'w> SystemInput for DebugGizmos<'w> {
         }
     }
 
-    fn fill_access(access: &mut SystemAccess) {
+    fn fill_access(_meta: &mut ecs::system::meta::SystemMetadata, access: &mut SystemAccess) {
         access.write_resource::<GizmoStorage>();
     }
 }

@@ -68,7 +68,10 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
         Extracted(T::get_data(state, main_world.as_unsafe_world_cell()))
     }
 
-    fn fill_access(access: &mut ecs::system::access::SystemAccess) {
+    fn fill_access(
+        _meta: &mut ecs::system::meta::SystemMetadata,
+        access: &mut ecs::system::access::SystemAccess,
+    ) {
         access.read_resource::<MainWorld>();
     }
 }
