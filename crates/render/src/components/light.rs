@@ -243,9 +243,6 @@ impl Component for RenderLight {
         })
     }
 
-    fn on_despawn() -> Option<ecs::component::ComponentLifecycleCallback> {
-        Self::on_remove()
-    }
 
     fn on_remove() -> Option<ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {

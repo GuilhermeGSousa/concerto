@@ -792,8 +792,11 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
+    /// Despawning removes every component, so each one's `on_remove` runs before the
+    /// `on_despawn` reserved for teardown that only makes sense for a dying entity.
     pub(crate) fn trigger_on_despawn(&self, entity: Entity, ids: &[ComponentId]) {
         for id in ids {
+            self.trigger_on_remove_component(entity, id);
             self.trigger_on_despawn_component(entity, id);
         }
     }

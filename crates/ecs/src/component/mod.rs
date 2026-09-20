@@ -37,8 +37,8 @@ pub struct ComponentLifecycleContext {
 /// # Lifecycle callbacks
 /// Override [`on_add`](Component::on_add), [`on_replace`](Component::on_replace),
 /// [`on_remove`](Component::on_remove), or [`on_despawn`](Component::on_despawn) to
-/// react to component insertion, an insert overwriting an existing value, explicit
-/// component removal, or entity despawning, respectively.
+/// react to component insertion, an insert overwriting an existing value, component
+/// removal (including the removal a despawn implies), or the despawn itself.
 ///
 /// # Example
 /// ```
@@ -70,16 +70,18 @@ pub trait Component: Send + Sync + 'static {
         None
     }
 
-    /// Optional callback invoked before explicit component removal, while its data is readable.
-    /// This callback is not invoked by replacement or despawning the entity.
+    /// Optional callback invoked before this component is removed, while its data is
+    /// readable. Despawning removes every component, so this fires then too; replacement
+    /// does not fire it.
     /// Structural changes requested by the callback are queued and applied after
     /// the removal completes; the callback cannot invalidate component storage.
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         None
     }
 
-    /// Optional callback invoked when the entity is despawned, before its components are dropped.
-    /// This callback is not invoked by explicit component removal.
+    /// Optional callback for teardown that only makes sense for a dying entity, invoked
+    /// after this component's [`on_remove`](Component::on_remove) during a despawn and not
+    /// at all on explicit component removal.
     /// All components remain present throughout the despawn hook pass. Structural
     /// commands queued by callbacks run after the entity has been dropped.
     fn on_despawn() -> Option<ComponentLifecycleCallback> {

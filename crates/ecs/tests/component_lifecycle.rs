@@ -38,9 +38,6 @@ impl Component for Tracked {
         })
     }
 
-    fn on_despawn() -> Option<ComponentLifecycleCallback> {
-        Self::on_remove()
-    }
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
@@ -90,9 +87,6 @@ impl Component for Companion {
         })
     }
 
-    fn on_despawn() -> Option<ComponentLifecycleCallback> {
-        Self::on_remove()
-    }
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, _context| {
@@ -116,9 +110,6 @@ impl Component for Body {
         })
     }
 
-    fn on_despawn() -> Option<ComponentLifecycleCallback> {
-        Self::on_remove()
-    }
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
@@ -135,9 +126,6 @@ struct DespawnTarget(Option<Entity>);
 struct Reaper;
 
 impl Component for Reaper {
-    fn on_despawn() -> Option<ComponentLifecycleCallback> {
-        Self::on_remove()
-    }
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, _context| {
