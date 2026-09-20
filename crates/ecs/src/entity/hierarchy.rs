@@ -79,7 +79,7 @@ impl Component for Children {
                 return;
             };
 
-            let children: Vec<_> = children.into_iter().map(|e| *e).collect();
+            let children: Vec<_> = children.into_iter().copied().collect();
             for child in children {
                 world.despawn(child);
             }

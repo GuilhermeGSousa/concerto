@@ -127,7 +127,8 @@ impl AssetServer {
                 project_root.display()
             )
         })?;
-        Ok(self.publish_content_source(ContentAssetRoot::Directory(root), registry))
+        self.publish_content_source(ContentAssetRoot::Directory(root), registry);
+        Ok(())
     }
 
     /// Atomically replaces the root and UUID registry used by subsequent

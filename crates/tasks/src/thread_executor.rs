@@ -63,3 +63,9 @@ impl<'task, 'ticker> ThreadExecutorTicker<'task, 'ticker> {
         self.executor.executor.tick().await;
     }
 }
+
+impl<'task> Default for ThreadExecutor<'task> {
+    fn default() -> Self {
+        Self::new()
+    }
+}

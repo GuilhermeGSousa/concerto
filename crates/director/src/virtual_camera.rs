@@ -63,7 +63,6 @@ impl Component for VirtualCamera {
         })
     }
 
-
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
             if let Some(director) = world.get_resource_mut::<CameraDirector>() {

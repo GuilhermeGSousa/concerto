@@ -58,7 +58,6 @@ impl RenderShadowCasterSlot {
 }
 
 impl Component for RenderShadowCasterSlot {
-
     fn on_remove() -> Option<ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let Some(&slot) =

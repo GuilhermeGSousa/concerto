@@ -106,7 +106,8 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 
     pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.queue_state.add_command(InsertCommand { component, entity });
+        self.queue_state
+            .add_command(InsertCommand { component, entity });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {

@@ -76,7 +76,6 @@ impl Component for Collider {
         None
     }
 
-
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
             // Both removal and despawn run cleanup before the Collider is

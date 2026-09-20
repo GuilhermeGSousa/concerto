@@ -38,7 +38,6 @@ impl Component for Tracked {
         })
     }
 
-
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let readable = world
@@ -87,7 +86,6 @@ impl Component for Companion {
         })
     }
 
-
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, _context| {
             if let Some(log) = world.get_resource_mut::<CompanionLog>() {
@@ -110,7 +108,6 @@ impl Component for Body {
         })
     }
 
-
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
             world.remove_component::<Companion>(context.entity);
@@ -126,7 +123,6 @@ struct DespawnTarget(Option<Entity>);
 struct Reaper;
 
 impl Component for Reaper {
-
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, _context| {
             let target = world

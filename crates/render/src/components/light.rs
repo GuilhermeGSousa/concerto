@@ -243,7 +243,6 @@ impl Component for RenderLight {
         })
     }
 
-
     fn on_remove() -> Option<ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let Some(&slot) = world.get_component_for_entity::<RenderLightSlot>(context.entity)
