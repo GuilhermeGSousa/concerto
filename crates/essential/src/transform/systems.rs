@@ -83,7 +83,7 @@ mod tests {
         let mut leaf = root;
         for _ in 0..10_000 {
             let child = world.spawn(Transform::from_translation(Vec3::X));
-            world.add_child(leaf, child);
+            world.entity_mut(leaf).add_child(child);
             leaf = child;
         }
 

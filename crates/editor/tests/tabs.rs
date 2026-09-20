@@ -47,7 +47,7 @@ fn setup() -> (App, Entity, Entity) {
         layout(0.0, 100.0),
     ));
     let content = world.spawn((TabStripContent, UINode::default(), layout(0.0, 300.0)));
-    world.add_child(strip, content);
+    world.entity_mut(strip).add_child(content);
     app.finish_plugin_build();
     (app, strip, content)
 }

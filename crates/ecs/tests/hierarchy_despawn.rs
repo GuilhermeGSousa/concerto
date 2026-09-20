@@ -1,5 +1,6 @@
 use ecs::{
     World,
+    entity::Entity,
     entity::hierarchy::{ChildOf, Children},
 };
 
@@ -18,8 +19,8 @@ fn despawn_takes_descendants_and_detaches_the_surviving_parent() {
     let grandparent = world.spawn(());
     let parent = world.spawn(());
     let child = world.spawn(());
-    world.add_child(grandparent, parent);
-    world.add_child(parent, child);
+    world.entity_mut(grandparent).add_child(parent);
+    world.entity_mut(parent).add_child(child);
 
     world.despawn(parent);
 
@@ -42,8 +43,8 @@ fn reparenting_repairs_the_previous_parents_children() {
     let first_parent = world.spawn(());
     let second_parent = world.spawn(());
     let child = world.spawn(());
-    world.add_child(first_parent, child);
-    world.add_child(second_parent, child);
+    world.entity_mut(first_parent).add_child(child);
+    world.entity_mut(second_parent).add_child(child);
 
     assert_eq!(
         world
@@ -68,7 +69,7 @@ fn recursive_despawn_handles_deep_hierarchies_iteratively() {
     let mut parent = root;
     for _ in 0..2_048 {
         let child = world.spawn(());
-        world.add_child(parent, child);
+        world.entity_mut(parent).add_child(child);
         entities.push(child);
         parent = child;
     }
@@ -80,4 +81,52 @@ fn recursive_despawn_handles_deep_hierarchies_iteratively() {
             .into_iter()
             .all(|entity| !world.entity_is_valid(entity))
     );
+}
+
+#[test]
+fn inserting_child_of_reparents_without_going_through_the_builder() {
+    let mut world = world();
+    let first_parent = world.spawn(());
+    let second_parent = world.spawn(());
+    let child = world.spawn(());
+    world.entity_mut(first_parent).add_child(child);
+
+    world.insert(ChildOf::new(second_parent), child);
+
+    assert!(
+        world
+            .get_component_for_entity::<Children>(first_parent)
+            .is_none(),
+        "the old parent must lose its emptied relationship component"
+    );
+    assert_eq!(
+        children_of(&world, second_parent),
+        vec![child],
+        "the new parent must hold the child"
+    );
+}
+
+#[test]
+fn re_adding_a_child_to_its_current_parent_keeps_the_relationship() {
+    let mut world = world();
+    let parent = world.spawn(());
+    let child = world.spawn(());
+    world.entity_mut(parent).add_child(child);
+
+    world.entity_mut(parent).add_child(child);
+    assert_eq!(children_of(&world, parent), vec![child]);
+
+    world.insert(ChildOf::new(parent), child);
+    assert_eq!(
+        children_of(&world, parent),
+        vec![child],
+        "a raw re-insert must not drop the relationship component it re-fills"
+    );
+}
+
+fn children_of(world: &World, parent: Entity) -> Vec<Entity> {
+    world
+        .get_component_for_entity::<Children>(parent)
+        .map(|children| children.iter().copied().collect())
+        .unwrap_or_default()
 }

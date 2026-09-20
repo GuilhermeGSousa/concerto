@@ -2,7 +2,7 @@ use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     component::{Component, bundle::ComponentBundle},
-    entity::{Entity, entity_store::EntityStore},
+    entity::{Entity, entity_store::EntityStore, hierarchy::ChildOf},
     resource::Resource,
     system::{input::SystemInput, meta::SystemMetadata},
     world::World,
@@ -106,38 +106,23 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 
     pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.insert_with_events(component, entity, true);
-    }
-
-    /// Queues insertion with explicit control over lifecycle callbacks.
-    pub fn insert_with_events<T: ComponentBundle + 'static>(
-        &mut self,
-        component: T,
-        entity: Entity,
-        trigger_events: bool,
-    ) {
-        self.queue_state.add_command(InsertCommand {
-            component,
-            entity,
-            trigger_events,
-        });
+        self.queue_state.add_command(InsertCommand { component, entity });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {
-        self.remove_with_events::<T>(entity, true);
-    }
-
-    /// Queues removal with explicit control over lifecycle callbacks.
-    pub fn remove_with_events<T: Component>(&mut self, entity: Entity, trigger_events: bool) {
         self.queue_state.add_command(RemoveCommand::<T> {
             entity,
-            trigger_events,
             marker: PhantomData,
         });
     }
 
     pub fn add_child(&mut self, parent: Entity, child: Entity) {
-        self.queue_state.add_command(AddChild::new(parent, child));
+        self.insert(ChildOf::new(parent), child);
+    }
+
+    /// Queues a command that is not part of this queue's typed API.
+    pub(crate) fn queue<C: Command + 'static>(&mut self, command: C) {
+        self.queue_state.add_command(command);
     }
 
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
@@ -381,7 +366,6 @@ impl Command for DespawnCommand {
 pub(crate) struct InsertCommand<T: ComponentBundle> {
     component: T,
     entity: Entity,
-    trigger_events: bool,
 }
 
 impl<T: ComponentBundle> Command for InsertCommand<T> {
@@ -389,7 +373,7 @@ impl<T: ComponentBundle> Command for InsertCommand<T> {
         if !world.entity_is_valid(self.entity) {
             return;
         }
-        world.insert_with_events(self.component, self.entity, self.trigger_events);
+        world.insert(self.component, self.entity);
     }
 }
 
@@ -435,7 +419,6 @@ impl Command for ApplySceneComponentCommand {
 
 pub(crate) struct RemoveCommand<T: Component> {
     entity: Entity,
-    trigger_events: bool,
     marker: PhantomData<fn(T)>,
 }
 
@@ -445,24 +428,7 @@ impl<T: Component> Command for RemoveCommand<T> {
             return;
         }
 
-        world.remove_with_events::<T>(self.entity, self.trigger_events);
-    }
-}
-
-pub(crate) struct AddChild {
-    parent: Entity,
-    child: Entity,
-}
-
-impl AddChild {
-    pub fn new(parent: Entity, child: Entity) -> Self {
-        Self { parent, child }
-    }
-}
-
-impl Command for AddChild {
-    fn execute(self, world: &mut World) {
-        world.add_child(self.parent, self.child);
+        world.remove_component::<T>(self.entity);
     }
 }
 

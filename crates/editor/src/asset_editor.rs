@@ -533,7 +533,7 @@ mod tests {
         let e = open(&mut w, "a");
         let child = w.spawn((EditorOwned(e),));
         let grandchild = w.spawn((EditorOwned(e),));
-        w.add_child(child, grandchild);
+        w.entity_mut(child).add_child(grandchild);
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0

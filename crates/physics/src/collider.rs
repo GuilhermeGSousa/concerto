@@ -90,7 +90,7 @@ impl Component for Collider {
                     state.unregister_body_entity(body);
                 }
 
-                world.remove_component::<BodyId>(context.entity, true);
+                world.remove_component::<BodyId>(context.entity);
                 // Without a body there are no more fixed-step poses; left in
                 // place the interpolator would keep rewriting the Transform
                 // from stale history.
@@ -98,7 +98,7 @@ impl Component for Collider {
                     .get_component_for_entity::<TransformInterpolation>(context.entity)
                     .is_some()
                 {
-                    world.remove_component::<TransformInterpolation>(context.entity, true);
+                    world.remove_component::<TransformInterpolation>(context.entity);
                 }
             }
         })

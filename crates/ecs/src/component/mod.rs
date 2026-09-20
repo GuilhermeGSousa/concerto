@@ -35,8 +35,9 @@ pub struct ComponentLifecycleContext {
 /// should live in the ECS storage.
 ///
 /// # Lifecycle callbacks
-/// Override [`on_add`](Component::on_add), [`on_remove`](Component::on_remove), or
-/// [`on_despawn`](Component::on_despawn) to react to component insertion, explicit
+/// Override [`on_add`](Component::on_add), [`on_replace`](Component::on_replace),
+/// [`on_remove`](Component::on_remove), or [`on_despawn`](Component::on_despawn) to
+/// react to component insertion, an insert overwriting an existing value, explicit
 /// component removal, or entity despawning, respectively.
 ///
 /// # Example
@@ -62,6 +63,13 @@ pub trait Component: Send + Sync + 'static {
         None
     }
 
+    /// Optional callback invoked before an insert overwrites this component, while the old
+    /// value is still readable. This callback is not invoked by the first insert, by explicit
+    /// removal, or by despawning the entity.
+    fn on_replace() -> Option<ComponentLifecycleCallback> {
+        None
+    }
+
     /// Optional callback invoked before explicit component removal, while its data is readable.
     /// This callback is not invoked by replacement or despawning the entity.
     /// Structural changes requested by the callback are queued and applied after
@@ -82,6 +90,7 @@ pub trait Component: Send + Sync + 'static {
 #[allow(dead_code)]
 pub(crate) struct ComponentLifecycleCallbacks {
     pub(crate) on_add: Option<ComponentLifecycleCallback>,
+    pub(crate) on_replace: Option<ComponentLifecycleCallback>,
     pub(crate) on_remove: Option<ComponentLifecycleCallback>,
     pub(crate) on_despawn: Option<ComponentLifecycleCallback>,
 }
@@ -90,6 +99,7 @@ impl ComponentLifecycleCallbacks {
     pub(crate) fn from_component<T: Component>() -> Self {
         Self {
             on_add: T::on_add(),
+            on_replace: T::on_replace(),
             on_remove: T::on_remove(),
             on_despawn: T::on_despawn(),
         }

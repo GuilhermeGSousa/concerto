@@ -3,12 +3,12 @@ use log::warn;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomData, ptr};
 
-use crate::component::Tick;
+use crate::command::{Command, CommandQueue, CommandQueueState};
 use crate::component::bundle::{ComponentBundle, MergeRow, PushRow, ReplaceRow};
-use crate::component::registry::ComponentRegistry;
+use crate::component::registry::{ComponentRegistry, TypeInfo};
 use crate::component::scene::{SceneComponent, SceneSpawnContext};
+use crate::entity::EntityWorldMut;
 use crate::entity::entity_store::EntityStore;
-use crate::entity::hierarchy::{ChildOf, Children};
 use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
@@ -25,6 +25,7 @@ use crate::{
     table::TableRowIndex,
     utilities::TypeIdMap,
 };
+use crate::{component::Tick, system::meta::SystemMetadata};
 
 /// The central container of the ECS.
 ///
@@ -50,6 +51,8 @@ pub struct World {
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
     current_tick: u32,
+    command_queue_start: usize,
+    command_queue: CommandQueueState,
 }
 
 unsafe impl Send for World {}
@@ -66,19 +69,26 @@ impl World {
             entity_store: EntityStore::new(),
             current_tick: 0,
             component_registry: ComponentRegistry::default(),
+            command_queue_start: 0,
+            command_queue: CommandQueueState::new(),
         }
     }
 
     /// Spawns a new entity with the given component bundle and returns its [`Entity`] handle.
     pub fn spawn<T: ComponentBundle>(&mut self, bundle: T) -> Entity {
         let entity = self.entity_store.alloc();
-
-        self.spawn_allocated(entity, bundle);
-
+        self.spawn_allocated_internal(entity, bundle);
+        self.flush_commands();
         entity
     }
 
+    /// Spawns onto an entity handle reserved earlier, typically by a command.
     pub(crate) fn spawn_allocated<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
+        self.spawn_allocated_internal(entity, bundle);
+        self.flush_commands();
+    }
+
+    fn spawn_allocated_internal<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
         let type_ids = T::get_component_ids();
         let entity_type = generate_type_id(&type_ids);
 
@@ -109,8 +119,13 @@ impl World {
         cell.trigger_on_add(entity, &T::get_component_ids());
     }
 
-    /// Removes an entity and all of its components from the world.
+    /// Removes an entity, its components, and its descendants from the world.
     pub fn despawn(&mut self, entity: Entity) {
+        self.despawn_internal(entity);
+        self.flush_commands();
+    }
+
+    fn despawn_internal(&mut self, entity: Entity) {
         match self.entity_store.find_location(entity) {
             Some(location) => {
                 {
@@ -118,15 +133,8 @@ impl World {
                         .component_ids()
                         .to_vec();
                     let cell = self.as_unsafe_world_cell_mut();
-                    cell.trigger_on_remove(entity, &component_ids);
+                    cell.trigger_on_despawn(entity, &component_ids);
                 }
-
-                // The callbacks may have inserted or removed components,
-                // migrating the entity to another archetype (or despawned it
-                // outright), so the location must be re-resolved.
-                let Some(location) = self.entity_store.find_location(entity) else {
-                    return;
-                };
 
                 let archetype = &mut self.archetypes[location.archetype_index as usize];
 
@@ -139,7 +147,7 @@ impl World {
                 archetype.drop_row(location.row);
                 self.entity_store.free(entity);
             }
-            None => panic!("Entity {:?} should exist in the world", entity),
+            None => warn!("Attempted to despawn invalid entity {:?}", entity),
         }
     }
 
@@ -159,7 +167,8 @@ impl World {
     ///
     /// If the entity already has a component of type `T`, the existing value is replaced.
     pub fn insert<T: ComponentBundle>(&mut self, bundle: T, entity: Entity) {
-        self.insert_internal(bundle, entity, true);
+        self.insert_internal(bundle, entity);
+        self.flush_commands();
     }
 
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
@@ -171,21 +180,25 @@ impl World {
     /// If the entity does not have a component of type `T`, a warning is logged and the call
     /// is a no-op.
     pub fn remove_component<T: Component>(&mut self, entity: Entity) {
-        self.remove_component_internal::<T>(entity, true);
+        self.remove_component_internal::<T>(entity);
+        self.flush_commands();
     }
 
-    fn insert_internal<T: ComponentBundle>(
-        &mut self,
-        components: T,
-        entity: Entity,
-        trigger_events: bool,
-    ) {
+    fn insert_internal<T: ComponentBundle>(&mut self, components: T, entity: Entity) {
         let Some(location) = self.entity_store.find_location(entity) else {
             panic!("Entity should exist in the world");
         };
 
         let source_index = location.archetype_index as usize;
         let inserted_ids = T::get_component_ids();
+
+        let replaced_ids: Vec<ComponentId> = inserted_ids
+            .iter()
+            .copied()
+            .filter(|id| self.archetypes[source_index].component_ids().contains(id))
+            .collect();
+        self.as_unsafe_world_cell_mut()
+            .trigger_on_replace(entity, &replaced_ids);
 
         let mut component_ids = self.archetypes[source_index].component_ids().to_vec();
         for id in &inserted_ids {
@@ -239,29 +252,26 @@ impl World {
             self.entity_store.set_location(entity, new_location);
         }
 
-        if trigger_events {
-            self.as_unsafe_world_cell_mut()
-                .trigger_on_add(entity, &inserted_ids);
-        }
+        self.as_unsafe_world_cell_mut()
+            .trigger_on_add(entity, &inserted_ids);
     }
 
-    pub(crate) fn remove_component_internal<T: Component>(
-        &mut self,
-        entity: Entity,
-        trigger_events: bool,
-    ) {
+    fn remove_component_internal<T: Component>(&mut self, entity: Entity) {
         let Some(location) = self.entity_store.find_location(entity) else {
             panic!("Entity should exist in the world");
         };
 
-        let source_index = location.archetype_index as usize;
         let removed_id = TypeId::of::<T>();
-
+        let source_index = location.archetype_index as usize;
         let mut component_ids = self.archetypes[source_index].component_ids().to_vec();
         let Some(removed_index) = component_ids.iter().position(|id| *id == removed_id) else {
             warn!("Entity does not have the component being removed.");
             return;
         };
+
+        self.as_unsafe_world_cell_mut()
+            .trigger_on_remove_component(entity, &removed_id);
+
         component_ids.swap_remove(removed_index);
 
         let entity_type = generate_type_id(&component_ids);
@@ -307,11 +317,6 @@ impl World {
             row: TableRowIndex::new(destination.len() - 1),
         };
         self.entity_store.set_location(entity, new_location);
-
-        if trigger_events {
-            let cell = self.as_unsafe_world_cell_mut();
-            cell.trigger_on_remove_component(entity, &removed_id);
-        }
     }
 
     pub(crate) fn entity_store(&self) -> &EntityStore {
@@ -343,15 +348,6 @@ impl World {
                         accessor.data
                     })
             })
-    }
-
-    pub(crate) fn get_component_accessor_for_entity_mut<T: Component>(
-        &mut self,
-        entity: Entity,
-    ) -> Option<MutableCellAccessor<'_, T>> {
-        self.entity_store
-            .find_location(entity)
-            .and_then(|location| self.get_component_for_entity_location_mut(location))
     }
 
     pub(crate) fn get_component_for_entity_location<T: Component>(
@@ -407,6 +403,12 @@ impl World {
             .map(|resource_storage| &mut resource_storage.data)
     }
 
+    /// The tick of the last write to `T`, or `None` if it is not present.
+    pub fn resource_changed_tick<T: Resource + 'static>(&self) -> Option<Tick> {
+        self.get_resource_storage::<T>()
+            .map(|storage| storage.changed_tick)
+    }
+
     pub(crate) fn get_resource_storage<T: Resource + 'static>(
         &self,
     ) -> Option<&ResourceStorage<T>> {
@@ -451,6 +453,32 @@ impl World {
         }
     }
 
+    /// Whether an existing component was added, replaced, or mutably accessed
+    /// between `since` and the current tick, inclusive. Returns false if absent.
+    ///
+    /// Unlike `was_component_changed`, this also observes changes from earlier
+    /// frames. Pass the tick of the last read. The inclusive boundary catches
+    /// writes later in that same tick; it can conservatively report a change
+    /// already seen by the reader. Keep observations less than a full u32 tick
+    /// cycle apart. This query does not mark the component changed.
+    pub fn has_component_changed_since(
+        &self,
+        entity: Entity,
+        component_id: ComponentId,
+        since: Tick,
+    ) -> bool {
+        self.entity_store
+            .find_location(entity)
+            .is_some_and(|location| {
+                self.archetypes[location.archetype_index as usize].has_component_changed_since(
+                    component_id,
+                    location.row,
+                    since,
+                    self.current_tick(),
+                )
+            })
+    }
+
     pub fn was_component_changed(&self, entity: Entity, component_id: ComponentId) -> bool {
         if let Some(location) = self.entity_store.find_location(entity) {
             self.archetypes[location.archetype_index as usize].was_entity_changed(
@@ -463,39 +491,50 @@ impl World {
         }
     }
 
-    /// Registers lifecycle callbacks (`on_add` / `on_remove`) for component type `T`.
-    ///
-    /// Must be called before any entity is spawned with `T` for the callbacks to fire.
-    pub fn register_component_lifetimes<T: Component>(&mut self) {
+    pub(crate) fn register_component_lifetimes<T: Component>(&mut self) {
         self.component_lifetimes
             .entry(ComponentId::of::<T>())
             .or_insert(ComponentLifecycleCallbacks::from_component::<T>());
     }
 
-    /// Establishes a parent-child relationship between two entities.
-    ///
-    /// Inserts a [`ChildOf`](crate::entity::hierarchy::ChildOf) component on `child` and
-    /// updates (or creates) the [`Children`](crate::entity::hierarchy::Children) component on
-    /// `parent`.
-    pub fn add_child(&mut self, parent: Entity, child: Entity) {
-        self.insert(ChildOf::new(parent), child);
-
-        match self.get_component_accessor_for_entity_mut::<Children>(parent) {
-            Some(table_cell) => {
-                table_cell.data.add_child(child);
-            }
-            None => {
-                self.insert(Children::from_children(vec![child]), parent);
-            }
-        }
+    /// Borrows one entity for hierarchy edits.
+    pub fn entity_mut(&mut self, entity: Entity) -> EntityWorldMut<'_> {
+        EntityWorldMut::new(self, entity)
     }
 
     pub fn register_component<T: Component>(&mut self) {
         self.component_registry.register_component::<T>();
+        self.register_component_lifetimes::<T>();
     }
 
     pub fn register_component_type<T: SceneComponent>(&mut self) {
         self.component_registry.register_scene_component::<T>();
+    }
+
+    /// Every component `entity` carries, including ones that are not scene
+    /// components. Empty for a stale entity.
+    pub fn component_ids(&self, entity: Entity) -> &[ComponentId] {
+        self.entity_store
+            .find_location(entity)
+            .map(|location| self.archetypes[location.archetype_index as usize].component_ids())
+            .unwrap_or(&[])
+    }
+
+    /// The read side of a registered scene component, or `None` if `id` is not one.
+    pub fn type_info(&self, id: ComponentId) -> Option<&TypeInfo> {
+        self.component_registry.type_info(&id)
+    }
+
+    /// The registered scene components `entity` currently carries.
+    ///
+    /// Empty for a stale entity handle. Components registered only through
+    /// [`register_component`](Self::register_component) — engine plumbing such
+    /// as render-world mirrors — are deliberately not listed: this reports what
+    /// a scene can describe, which is what a tool wants to show.
+    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = &TypeInfo> {
+        self.component_ids(entity)
+            .iter()
+            .filter_map(|component_id| self.component_registry.type_info(component_id))
     }
 
     /// Deserializes `json` into the component registered under `type_name` and
@@ -503,6 +542,18 @@ impl World {
     /// is unregistered or the payload does not parse — a scene may carry
     /// components this application does not know about.
     pub fn apply_scene_component(
+        &mut self,
+        type_name: &str,
+        json: &str,
+        entity: Entity,
+        node_entities: &[Entity],
+    ) -> bool {
+        let applied = self.apply_scene_component_internal(type_name, json, entity, node_entities);
+        self.flush_commands();
+        applied
+    }
+
+    fn apply_scene_component_internal(
         &mut self,
         type_name: &str,
         json: &str,
@@ -524,6 +575,55 @@ impl World {
                 warn!("Failed to deserialize component '{type_name}' from `{json}`: {err}");
                 false
             }
+        }
+    }
+
+    pub(crate) fn make_command_queue<'world>(&'world mut self) -> CommandQueue<'world, 'world> {
+        CommandQueue::for_callbacks(&mut self.command_queue, &mut self.entity_store)
+    }
+
+    /// Appends `commands` to the pending queue and runs everything in it.
+    pub(crate) fn apply_commands(&mut self, commands: &mut CommandQueueState) {
+        self.command_queue.append(commands);
+        self.flush_commands();
+    }
+
+    fn command_queue_is_empty(&self) -> bool {
+        self.command_queue_start >= self.command_queue.len()
+    }
+
+    fn flush_commands(&mut self) {
+        if self.command_queue_is_empty() {
+            return;
+        }
+
+        struct FlushGuard<'w> {
+            world: &'w mut World,
+            start: usize,
+        }
+
+        impl Drop for FlushGuard<'_> {
+            fn drop(&mut self) {
+                self.world.command_queue_start = self.start;
+                self.world.command_queue.truncate(self.start);
+            }
+        }
+
+        let start = self.command_queue_start;
+        let end = self.command_queue.len();
+        let guard = FlushGuard { world: self, start };
+        guard.world.command_queue_start = end;
+
+        for cursor in start..end {
+            let Some((command, consume)) = guard.world.command_queue.take_command(cursor) else {
+                continue;
+            };
+
+            // SAFETY: `take_command` hands out a live command once, paired with
+            // the function that was written alongside it.
+            unsafe { consume(command, Some(guard.world)) };
+
+            guard.world.flush_commands();
         }
     }
 
@@ -594,7 +694,7 @@ impl SystemInput for &World {
         world.world()
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
         access.read_world();
     }
 }
@@ -612,7 +712,7 @@ impl SystemInput for &mut World {
         world.world_mut()
     }
 
-    fn fill_access(access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
         access.write_world();
     }
 }
@@ -647,7 +747,7 @@ impl<'w> UnsafeWorldCell<'w> {
         unsafe { &mut *self.ptr }
     }
 
-    pub fn into_restricted(self) -> RestrictedWorld<'w> {
+    pub(crate) fn into_restricted(self) -> RestrictedWorld<'w> {
         RestrictedWorld { world_cell: self }
     }
 
@@ -666,9 +766,19 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
-    pub(crate) fn trigger_on_remove(&self, entity: Entity, ids: &[ComponentId]) {
+    pub(crate) fn trigger_on_replace(&self, entity: Entity, ids: &[ComponentId]) {
         for id in ids {
-            self.trigger_on_remove_component(entity, id);
+            self.trigger_on_replace_component(entity, id);
+        }
+    }
+
+    pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
+        let world = self.world();
+
+        if let Some(lifetimes) = world.component_lifetimes.get(id)
+            && let Some(replace) = lifetimes.on_replace
+        {
+            replace(self.into_restricted(), ComponentLifecycleContext { entity });
         }
     }
 
@@ -682,6 +792,22 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
+    pub(crate) fn trigger_on_despawn(&self, entity: Entity, ids: &[ComponentId]) {
+        for id in ids {
+            self.trigger_on_despawn_component(entity, id);
+        }
+    }
+
+    pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
+        let world = self.world();
+
+        if let Some(lifetimes) = world.component_lifetimes.get(id)
+            && let Some(despawn) = lifetimes.on_despawn
+        {
+            despawn(self.into_restricted(), ComponentLifecycleContext { entity });
+        }
+    }
+
     pub(crate) fn archetypes(&self) -> &[Archetype] {
         self.world().archetypes()
     }
@@ -690,29 +816,42 @@ impl<'w> UnsafeWorldCell<'w> {
 /// A scoped, restricted view of a [`World`] that is safe to pass into component lifecycle
 /// callbacks.
 ///
-/// `RestrictedWorld` is provided to `on_add` and `on_remove` lifecycle callbacks.  It
-/// intentionally exposes a limited API to avoid re-entrant mutation issues.
+/// `RestrictedWorld` is provided to component lifecycle callbacks. It
+/// permits immediate changes to existing data, but all structural changes go
+/// through commands applied after the enclosing world operation completes.
 pub struct RestrictedWorld<'w> {
     world_cell: UnsafeWorldCell<'w>,
 }
 
 impl<'w> RestrictedWorld<'w> {
+    fn commands(&mut self) -> CommandQueue<'_, '_> {
+        self.world_cell.world_mut().make_command_queue()
+    }
+
+    /// Reserves an entity and queues its spawn after the enclosing operation.
+    pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> Entity {
+        self.commands().spawn(components).entity()
+    }
+
+    /// Queues despawning after the enclosing operation; the entity stays readable meanwhile.
     pub fn despawn(&mut self, entity: Entity) {
-        // TODO: Use commands instead
-        self.world_cell.world_mut().despawn(entity);
+        self.commands().despawn(entity);
     }
 
-    pub fn insert<T: Component>(&mut self, component: T, entity: Entity, trigger_events: bool) {
-        // TODO: Use commands instead
-        self.world_cell
-            .world_mut()
-            .insert_internal(component, entity, trigger_events);
+    /// Queues an arbitrary command after the enclosing operation, for structural work
+    /// whose conditions must be re-checked at flush time.
+    pub(crate) fn queue_command<C: Command + 'static>(&mut self, command: C) {
+        self.commands().queue(command);
     }
 
-    pub fn remove_component<T: Component>(&mut self, entity: Entity, trigger_events: bool) {
-        self.world_cell
-            .world_mut()
-            .remove_component_internal::<T>(entity, trigger_events);
+    /// Queues insertion after the enclosing operation.
+    pub fn insert<T: Component>(&mut self, component: T, entity: Entity) {
+        self.commands().insert(component, entity);
+    }
+
+    /// Queues removal after the enclosing operation.
+    pub fn remove_component<T: Component>(&mut self, entity: Entity) {
+        self.commands().remove::<T>(entity);
     }
 
     pub fn get_component_for_entity<T: Component>(&self, entity: Entity) -> Option<&T> {
@@ -731,17 +870,6 @@ impl<'w> RestrictedWorld<'w> {
 
     pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
         self.world_cell.world_mut().get_resource_mut::<T>()
-    }
-}
-
-impl<'w> From<&'w mut World> for RestrictedWorld<'w> {
-    fn from(world: &'w mut World) -> RestrictedWorld<'w> {
-        // A `&mut World` grants exclusive access, so the cell must be mutable —
-        // otherwise `insert`/`despawn`/`remove_component`/`get_resource_mut`
-        // trip `assert_mutable`.
-        RestrictedWorld {
-            world_cell: world.as_unsafe_world_cell_mut(),
-        }
     }
 }
 

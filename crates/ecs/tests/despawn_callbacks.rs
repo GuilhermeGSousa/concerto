@@ -55,8 +55,8 @@ fn despawning_a_leaf_detaches_it_and_preserves_siblings() {
     let parent = world.spawn(());
     let leaf = world.spawn(());
     let sibling = world.spawn(());
-    world.add_child(parent, leaf);
-    world.add_child(parent, sibling);
+    world.entity_mut(parent).add_child(leaf);
+    world.entity_mut(parent).add_child(sibling);
 
     world.despawn(leaf);
     let children = world.get_component_for_entity::<Children>(parent).unwrap();
@@ -73,7 +73,7 @@ fn despawning_the_last_leaf_removes_the_children_component() {
     let mut world = hierarchy_world();
     let parent = world.spawn(());
     let leaf = world.spawn(());
-    world.add_child(parent, leaf);
+    world.entity_mut(parent).add_child(leaf);
 
     world.despawn(leaf);
     assert!(world.entity_is_valid(parent));
@@ -87,8 +87,8 @@ fn despawning_a_subtree_detaches_it_from_its_surviving_parent() {
     let grandparent = world.spawn(());
     let parent = world.spawn(());
     let child = world.spawn(());
-    world.add_child(grandparent, parent);
-    world.add_child(parent, child);
+    world.entity_mut(grandparent).add_child(parent);
+    world.entity_mut(parent).add_child(child);
 
     world.despawn(parent);
     assert!(!world.entity_is_valid(parent));

@@ -103,17 +103,16 @@ impl Component for Companion {
     }
 }
 
-/// Inserts a `Companion` from `on_add` (triggering its callbacks) and removes
-/// it from `on_remove` with events suppressed. During a despawn the
-/// `Companion` still gets one `on_despawn` firing from despawn's own pass over
-/// the component list captured at despawn start. Its queued removal is a no-op
-/// once the entity has been despawned.
+/// Inserts a `Companion` from `on_add` and removes it from `on_remove`. During a
+/// despawn the `Companion` gets one `on_despawn` firing from despawn's own pass
+/// over the component list captured at despawn start. Its queued removal is a
+/// no-op once the entity has been despawned.
 struct Body;
 
 impl Component for Body {
     fn on_add() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.insert(Companion, context.entity, true);
+            world.insert(Companion, context.entity);
         })
     }
 
@@ -123,18 +122,7 @@ impl Component for Body {
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.remove_component::<Companion>(context.entity, false);
-        })
-    }
-}
-
-/// Inserts a `Companion` from `on_add` with events suppressed.
-struct Quiet;
-
-impl Component for Quiet {
-    fn on_add() -> Option<ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            world.insert(Companion, context.entity, false);
+            world.remove_component::<Companion>(context.entity);
         })
     }
 }
@@ -263,27 +251,6 @@ fn on_add_can_insert_a_companion_and_trigger_its_callbacks() {
     assert_eq!(
         log.adds, 1,
         "the nested insert should fire Companion::on_add exactly once"
-    );
-}
-
-#[test]
-fn suppressed_insert_does_not_fire_callbacks() {
-    let mut world = World::new();
-    world.register_component::<Quiet>();
-    world.register_component::<Companion>();
-    world.insert_resource(CompanionLog::default());
-
-    let entity = world.spawn((Quiet, Value(1)));
-
-    assert!(
-        world
-            .get_component_for_entity::<Companion>(entity)
-            .is_some()
-    );
-    let log = world.get_resource::<CompanionLog>().unwrap();
-    assert_eq!(
-        log.adds, 0,
-        "trigger_events = false must not fire the companion's on_add"
     );
 }
 
@@ -437,7 +404,11 @@ fn on_remove_can_queue_companion_removal() {
             .get_component_for_entity::<Companion>(survivor)
             .is_some()
     );
-    assert_eq!(world.get_resource::<CompanionLog>().unwrap().removes, 0);
+    assert_eq!(
+        world.get_resource::<CompanionLog>().unwrap().removes,
+        1,
+        "the companion removal queued from on_remove fires its own callback"
+    );
 }
 
 #[test]
@@ -467,7 +438,7 @@ fn on_remove_can_queue_component_insertion() {
                         .get_component_for_entity::<Self>(context.entity)
                         .is_some()
                 );
-                world.insert(Marker, context.entity, true);
+                world.insert(Marker, context.entity);
             })
         }
     }
@@ -496,7 +467,7 @@ fn on_remove_can_queue_component_insertion() {
 }
 
 #[test]
-fn on_remove_can_remove_itself_with_events_suppressed_and_drop_once() {
+fn on_remove_can_remove_itself_and_drop_once() {
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -515,7 +486,7 @@ fn on_remove_can_remove_itself_with_events_suppressed_and_drop_once() {
                     .get_component_for_entity::<Self>(context.entity)
                     .unwrap();
                 assert_eq!(component.0.load(Ordering::SeqCst), 0);
-                world.remove_component::<Self>(context.entity, false);
+                world.remove_component::<Self>(context.entity);
             })
         }
     }
@@ -563,4 +534,61 @@ fn on_remove_can_despawn_its_entity() {
             .get_component_for_entity::<DespawnsItself>(survivor)
             .is_some()
     );
+}
+
+/// Records the value each `on_replace` could still read before being overwritten.
+#[derive(Resource, Default)]
+struct ReplaceLog(Vec<i32>);
+
+struct Replaceable(i32);
+
+impl Component for Replaceable {
+    fn on_replace() -> Option<ComponentLifecycleCallback> {
+        Some(|mut world, context| {
+            let old = world
+                .get_component_for_entity::<Replaceable>(context.entity)
+                .map(|value| value.0)
+                .expect("the old value must still be readable");
+            if let Some(log) = world.get_resource_mut::<ReplaceLog>() {
+                log.0.push(old);
+            }
+        })
+    }
+}
+
+#[test]
+fn on_replace_reads_the_old_value_and_skips_the_first_insert() {
+    let mut world = World::new();
+    world.register_component::<Replaceable>();
+    world.insert_resource(ReplaceLog::default());
+
+    let entity = world.spawn(Replaceable(1));
+    assert!(
+        world.get_resource::<ReplaceLog>().unwrap().0.is_empty(),
+        "spawning must not replace anything"
+    );
+
+    world.insert(Replaceable(2), entity);
+    world.insert(Replaceable(3), entity);
+
+    assert_eq!(world.get_resource::<ReplaceLog>().unwrap().0, vec![1, 2]);
+    assert_eq!(
+        world
+            .get_component_for_entity::<Replaceable>(entity)
+            .unwrap()
+            .0,
+        3
+    );
+}
+
+#[test]
+fn on_replace_does_not_fire_for_a_component_added_alongside_an_existing_one() {
+    let mut world = World::new();
+    world.register_component::<Replaceable>();
+    world.insert_resource(ReplaceLog::default());
+
+    let entity = world.spawn(Replaceable(1));
+    world.insert((Extra, Marker), entity);
+
+    assert!(world.get_resource::<ReplaceLog>().unwrap().0.is_empty());
 }

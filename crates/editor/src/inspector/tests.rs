@@ -52,7 +52,7 @@ fn metadata_tracks_live_names_children_and_removal_without_changing_selection() 
     unchanged.run_and_apply(&mut world);
     world.insert(Name::new("Renamed"), target);
     let child = world.spawn(());
-    world.add_child(target, child);
+    world.entity_mut(target).add_child(child);
     collect.run_and_apply(&mut world);
     let data = world.get_resource::<InspectorData>().unwrap();
     assert!(data.heading.starts_with("Renamed"));

@@ -10,8 +10,8 @@ struct Second;
 impl Component for First {
     fn on_add() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.remove_component::<Second>(context.entity, true);
-            world.insert(Marker, context.entity, true);
+            world.remove_component::<Second>(context.entity);
+            world.insert(Marker, context.entity);
             assert!(
                 world
                     .get_component_for_entity::<Second>(context.entity)
@@ -66,7 +66,7 @@ impl Component for Spawner {
     fn on_add() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, _| {
             let entity = world.spawn(());
-            world.insert(Marker, entity, true);
+            world.insert(Marker, entity);
             assert!(world.get_component_for_entity::<Marker>(entity).is_none());
             world.get_resource_mut::<Spawned>().unwrap().0 = Some(entity);
         })
@@ -96,10 +96,10 @@ impl Component for Chain {
                 .0;
             world.get_resource_mut::<Order>().unwrap().0.push(step);
             if step == 0 {
-                world.insert(Self(1), context.entity, true);
-                world.insert(Self(3), context.entity, true);
+                world.insert(Self(1), context.entity);
+                world.insert(Self(3), context.entity);
             } else if step == 1 {
-                world.insert(Self(2), context.entity, true);
+                world.insert(Self(2), context.entity);
             }
         })
     }
@@ -118,7 +118,7 @@ struct Cleanup;
 impl Component for Cleanup {
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.remove_component::<Self>(context.entity, true);
+            world.remove_component::<Self>(context.entity);
             assert!(
                 world
                     .get_component_for_entity::<Self>(context.entity)
@@ -130,8 +130,8 @@ impl Component for Cleanup {
     fn on_despawn() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
             world.despawn(context.entity);
-            world.insert(Marker, context.entity, true);
-            world.remove_component::<Self>(context.entity, true);
+            world.insert(Marker, context.entity);
+            world.remove_component::<Self>(context.entity);
             assert!(
                 world
                     .get_component_for_entity::<Self>(context.entity)
@@ -165,7 +165,7 @@ fn callback_despawns_handle_deep_hierarchies_without_recursive_flushing() {
     let mut entities = vec![root];
     for _ in 0..2_048 {
         let child = world.spawn(());
-        world.add_child(*entities.last().unwrap(), child);
+        world.entity_mut(*entities.last().unwrap()).add_child(child);
         entities.push(child);
     }
     world.despawn(root);

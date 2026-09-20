@@ -27,13 +27,13 @@ impl Component for Transform {
                     .compute_matrix(),
             );
 
-            world.insert(global_transform, context.entity, false);
+            world.insert(global_transform, context.entity);
         })
     }
 
     fn on_remove() -> Option<ComponentLifecycleCallback> {
         Some(|mut world, context| {
-            world.remove_component::<GlobalTransform>(context.entity, false);
+            world.remove_component::<GlobalTransform>(context.entity);
         })
     }
 }
