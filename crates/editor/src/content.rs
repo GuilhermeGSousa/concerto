@@ -19,6 +19,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, selection_tint, Mark, TRANSPARENT};
@@ -389,6 +390,9 @@ fn handle_actions(
 ) {
     let mut reset = false;
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         let Some(action) = actions.get_entity(click.entity) else {
             continue;
         };

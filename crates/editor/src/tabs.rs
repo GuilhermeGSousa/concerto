@@ -19,6 +19,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 use window::winit_events::WindowEvent;
 use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
@@ -75,6 +76,9 @@ fn handle_tab_clicks(
     mut commands: ResMut<AssetEditorCommands>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         if let Some(close) = closes.get_entity(click.entity) {
             commands
                 .0

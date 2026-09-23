@@ -6,8 +6,18 @@ use std::{
 };
 
 use app::App;
-use ecs::{command::CommandQueue, component::Tick, Component, Entity, ResMut, Resource, World};
-use editable::{with_property_mut, Editable, PropertyPath, PropertyVisitor};
+use ecs::{Component, Entity, ResMut, Resource, World, command::CommandQueue, component::Tick};
+use ecs::{
+    Res,
+    entity::EntityStructuralVersion,
+    system::{
+        access::SystemAccess,
+        input::{ComponentMetadata, ReadOnlySystemInput, SystemInput},
+        meta::SystemMetadata,
+    },
+    world::UnsafeWorldCell,
+};
+use editable::{Editable, PropertyPath, PropertyVisitor, with_property_mut};
 use ui::theme::UITheme;
 
 use super::rows::{
@@ -17,7 +27,7 @@ use super::rows::{
 #[derive(Clone, Copy)]
 pub(crate) struct EditableComponent {
     pub name: &'static str,
-    pub collect: fn(&InspectorRegistry, &World, Entity) -> Option<Vec<Property>>,
+    pub collect: fn(&InspectorRegistry, &ComponentMetadata, Entity, Tick) -> Option<Vec<Property>>,
     pub apply:
         fn(&mut World, Entity, &PropertyPath, &dyn ErasedEditor, &dyn Any) -> Result<(), EditError>,
 }
@@ -145,7 +155,14 @@ impl InspectorRegistry {
         entity: Entity,
         component: TypeId,
     ) -> Option<Vec<Property>> {
-        (self.component(component)?.collect)(self, world, entity)
+        (self.component(component)?.collect)(
+            self,
+            &ComponentMetadata::new(world),
+            entity,
+            world
+                .resource_changed_tick::<InspectorRegistry>()
+                .unwrap_or_default(),
+        )
     }
 }
 
@@ -195,13 +212,11 @@ impl PropertyVisitor for Collect<'_> {
 
 fn collect_typed<T: Component + Editable>(
     registry: &InspectorRegistry,
-    world: &World,
+    components: &ComponentMetadata,
     entity: Entity,
+    registry_tick: Tick,
 ) -> Option<Vec<Property>> {
-    let registry_tick = world
-        .resource_changed_tick::<InspectorRegistry>()
-        .unwrap_or_default();
-    world.get_component_for_entity::<T>(entity).map(|value| {
+    components.get::<T>(entity).map(|value| {
         let mut properties = registry.collect(value);
         for property in &mut properties {
             property.registry_tick = registry_tick;
@@ -209,6 +224,74 @@ fn collect_typed<T: Component + Editable>(
         properties
     })
 }
+
+/// The inspector's runtime data source. No general component/resource access
+/// escapes this input; adapters can only snapshot registered editable components.
+pub(super) struct InspectionSource<'w> {
+    components: ComponentMetadata<'w>,
+    registry: Res<'w, InspectorRegistry>,
+}
+
+impl InspectionSource<'_> {
+    pub fn entity_structure_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
+        self.components.entity_structure_version(entity)
+    }
+    pub fn entity_is_valid(&self, entity: Entity) -> bool {
+        self.components.entity_is_valid(entity)
+    }
+    pub fn current_tick(&self) -> Tick {
+        self.components.current_tick()
+    }
+    pub fn registry_tick(&self) -> Tick {
+        self.registry.changed_tick()
+    }
+    pub fn has_component_changed_since(&self, entity: Entity, id: TypeId, tick: Tick) -> bool {
+        self.components
+            .has_component_changed_since(entity, id, tick)
+    }
+    pub fn visible_components(&self, entity: Entity) -> Vec<(TypeId, &'static str)> {
+        self.components
+            .component_ids(entity)
+            .iter()
+            .filter_map(|&id| {
+                let name = self
+                    .registry
+                    .component(id)
+                    .map(|c| c.name)
+                    .or_else(|| self.components.type_info(id).map(|info| info.short()))?;
+                Some((id, name))
+            })
+            .collect()
+    }
+    pub fn collect_component(&self, entity: Entity, id: TypeId) -> Option<Vec<Property>> {
+        (self.registry.component(id)?.collect)(
+            &self.registry,
+            &self.components,
+            entity,
+            self.registry_tick(),
+        )
+    }
+}
+
+impl SystemInput for InspectionSource<'_> {
+    type State = ();
+    type Data<'world, 'state> = InspectionSource<'world>;
+    fn init_state(_: &mut World) {}
+    fn get_data<'world, 'state>(
+        state: &'state mut (),
+        world: UnsafeWorldCell<'world>,
+    ) -> Self::Data<'world, 'state> {
+        InspectionSource {
+            components: ComponentMetadata::get_data(state, world),
+            registry: Res::new(world),
+        }
+    }
+    fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
+        ComponentMetadata::fill_access(meta, access);
+        Res::<InspectorRegistry>::fill_access(meta, access);
+    }
+}
+impl ReadOnlySystemInput for InspectionSource<'_> {}
 
 fn apply_typed<T: Component + Editable>(
     world: &mut World,
@@ -308,8 +391,8 @@ pub fn apply_property_commits(world: &mut World) {
 #[cfg(test)]
 mod tests {
     use super::super::{
-        numeric::{NumericEdit, NumericFields},
         PropertyRow,
+        numeric::{NumericEdit, NumericFields},
     };
     use super::*;
     use essential::transform::Transform;
@@ -372,11 +455,13 @@ mod tests {
                 .translation,
             Vec3::new(4.0, 5.0, 6.0)
         );
-        assert!(world
-            .get_resource::<PropertyCommits>()
-            .unwrap()
-            .0
-            .is_empty());
+        assert!(
+            world
+                .get_resource::<PropertyCommits>()
+                .unwrap()
+                .0
+                .is_empty()
+        );
     }
 
     #[test]
@@ -451,7 +536,7 @@ mod tests {
     #[test]
     fn commits_are_visible_to_transform_propagation_in_the_same_tick() {
         use ecs::{IntoSystem, System};
-        use essential::transform::{systems::update_simple_entities, GlobalTransform};
+        use essential::transform::{GlobalTransform, systems::update_simple_entities};
         let mut registry = InspectorRegistry::default();
         registry.register_component::<Transform>();
         let mut world = World::default();

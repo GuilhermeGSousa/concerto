@@ -23,6 +23,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 use window::plugin::{CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone};
 use winit::window::ResizeDirection;
 
@@ -354,6 +355,9 @@ fn handle_controls(
     mut close: ResMut<CloseRequest>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         let Some(control) = controls.get_entity(click.entity) else {
             continue;
         };

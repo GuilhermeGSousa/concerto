@@ -22,7 +22,7 @@ impl<'w> ComponentMetadata<'w> {
 
     /// See [`World::entity_structure_version`].
     pub fn entity_structure_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
-        self.world.world().entity_structure_version(entity)
+        self.world.world().structural_version(entity)
     }
 
     pub fn entity_is_valid(&self, entity: Entity) -> bool {

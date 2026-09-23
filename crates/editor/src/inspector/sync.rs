@@ -2,7 +2,8 @@
 //! collection creates temporary values which are moved into those components.
 use super::*;
 
-use ecs::{component::Tick, entity::hierarchy::ChildOf, query::filter::With, World};
+use super::registry::InspectionSource;
+use ecs::{component::Tick, query::filter::With};
 
 /// A component card in the inspector's UI hierarchy. Query this component to
 /// discover which live world component a card inspects. Its child property rows
@@ -14,7 +15,6 @@ pub struct InspectedComponent {
     pub name: &'static str,
     body: Entity,
     last_read_tick: Option<Tick>,
-    registry_tick: Option<Tick>,
 }
 
 /// Widget creation is deferred to a regular system with a CommandQueue, keeping
@@ -22,169 +22,86 @@ pub struct InspectedComponent {
 #[derive(Component)]
 pub(super) struct BuildPropertyWidget;
 
-/// World access is read-only because component discovery and snapshot reads
-/// use runtime type IDs. Every presentation change is a deferred ECS command.
+/// Runtime snapshots come from a scoped source; presentation reads use typed
+/// queries. Every presentation change is a deferred ECS command.
 pub(super) fn sync_inspected_components(
-    world: &World,
+    source: InspectionSource,
     data: Res<InspectorData>,
-    registry: Res<InspectorRegistry>,
     theme: Res<UITheme>,
-    stacks: Query<Entity, With<ComponentStack>>,
-    cards: Query<(Entity, &InspectedComponent, Option<&ChildOf>)>,
+    stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
+    cards: Query<&InspectedComponent>,
     mut cmd: CommandQueue,
 ) {
-    let target = data.entity.filter(|&entity| world.entity_is_valid(entity));
-    let stack = stacks.iter().next();
-    let cards: Vec<_> = cards
-        .iter()
-        .map(|(entity, card, parent)| (entity, *card, parent.map(ChildOf::parent)))
-        .collect();
-
-    // Descriptors are temporary discovery data, never another persistent model.
-    let registry_tick = Some(registry.changed_tick());
-    let mut desired: Vec<_> = target
-        .into_iter()
-        .flat_map(|entity| world.component_ids(entity))
-        .filter_map(|&type_id| {
-            let name = registry
-                .component(type_id)
-                .map(|c| c.name)
-                .or_else(|| world.type_info(type_id).map(|info| info.short()))?;
-            Some((type_id, name))
-        })
-        .collect();
-    desired.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
-
-    let mut retained = Vec::new();
-    for (entity, card, parent) in cards {
-        if stack.is_none()
-            || parent != stack
-            || Some(card.entity) != target
-            || !desired.iter().any(|(type_id, _)| *type_id == card.type_id)
-        {
-            cmd.despawn(entity);
-        } else {
-            retained.push((entity, card));
-        }
-    }
-    let (Some(stack), Some(target)) = (stack, target) else {
+    let Some((stack_entity, stack, children)) = stacks.iter().next() else {
         return;
     };
-    let mut ordered = Vec::with_capacity(desired.len());
-    for (type_id, name) in desired {
-        let (entity, mut card) = retained
-            .iter()
-            .find(|(_, card)| card.type_id == type_id)
-            .copied()
-            .unwrap_or_else(|| spawn_card(&mut cmd, stack, target, type_id, name, &theme));
-        ordered.push(entity);
-        if card.last_read_tick.is_none()
-            || card.registry_tick != registry_tick
-            || card
-                .last_read_tick
-                .is_some_and(|tick| world.has_component_changed_since(target, type_id, tick))
-        {
-            let properties = registry
-                .collect_component(world, target, type_id)
-                .unwrap_or_default();
-            reconcile_rows(world, &mut cmd, &card, properties, &theme);
-            card.last_read_tick = Some(world.current_tick());
-            card.registry_tick = registry_tick;
-            cmd.insert(card, entity);
+    let target = data.entity.filter(|&entity| source.entity_is_valid(entity));
+    let structural_version = target.and_then(|entity| source.entity_structure_version(entity));
+    let registry_tick = Some(source.registry_tick());
+    let rebuild = stack.target != target
+        || stack.structural_version != structural_version
+        || stack.registry_tick != registry_tick;
+    if rebuild {
+        if children.is_some() {
+            cmd.entity(stack_entity).despawn_children();
+        }
+        cmd.insert(
+            ComponentStack {
+                target,
+                structural_version,
+                registry_tick,
+            },
+            stack_entity,
+        );
+    }
+    let Some(target) = target else {
+        return;
+    };
+
+    if rebuild {
+        let mut components = source.visible_components(target);
+        components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
+        for (type_id, name) in components {
+            let (entity, card) = spawn_card(&mut cmd, stack_entity, target, type_id, name, &theme);
+            refresh_card(&source, &mut cmd, entity, card, &theme);
+        }
+    } else {
+        for &entity in children.into_iter().flat_map(|children| children.iter()) {
+            if let Some(card) = cards.get_entity(entity) {
+                refresh_card(&source, &mut cmd, entity, *card, &theme);
+            }
         }
     }
-    order_children(world, &mut cmd, stack, ordered);
 }
 
-fn child_entities(world: &World, parent: Entity) -> Vec<Entity> {
-    world
-        .get_component_for_entity::<Children>(parent)
-        .map(|children| children.iter().copied().collect())
-        .unwrap_or_default()
-}
-
-/// A one-pass ordering request. Applied after deferred spawns/despawns so new
-/// children participate in the same ordering as retained widgets.
-#[derive(Component)]
-pub(super) struct PendingChildOrder(Vec<Entity>);
-
-fn order_children(world: &World, cmd: &mut CommandQueue, parent: Entity, ordered: Vec<Entity>) {
-    if !child_entities(world, parent)
-        .iter()
-        .copied()
-        .eq(ordered.iter().copied())
-    {
-        cmd.insert(PendingChildOrder(ordered), parent);
-    }
-}
-
-pub(super) fn order_inspector_children(
-    parents: Query<(Entity, &PendingChildOrder, Option<&mut Children>)>,
-    mut cmd: CommandQueue,
-) {
-    for (entity, order, children) in parents.iter() {
-        if let Some(mut children) = children {
-            children.sort_by_key(|child| {
-                order
-                    .0
-                    .iter()
-                    .position(|&e| e == child)
-                    .unwrap_or(usize::MAX)
-            });
-        }
-        cmd.remove::<PendingChildOrder>(entity);
-    }
-}
-
-fn reconcile_rows(
-    world: &World,
+fn refresh_card(
+    source: &InspectionSource,
     cmd: &mut CommandQueue,
-    card: &InspectedComponent,
-    properties: Vec<Property>,
+    entity: Entity,
+    mut card: InspectedComponent,
     theme: &UITheme,
 ) {
-    let visible = !properties.is_empty();
-    if world
-        .get_component_for_entity::<UINode>(card.body)
-        .is_none_or(|node| node.visible != visible)
+    if card
+        .last_read_tick
+        .is_some_and(|tick| !source.has_component_changed_since(card.entity, card.type_id, tick))
     {
-        let mut node = world
-            .get_component_for_entity::<UINode>(card.body)
-            .cloned()
-            .unwrap_or_else(|| body_node(theme));
-        node.visible = visible;
-        cmd.insert(node, card.body);
+        return;
     }
-    let mut existing = child_entities(world, card.body);
-    let mut ordered = Vec::with_capacity(properties.len());
+    let properties = source
+        .collect_component(card.entity, card.type_id)
+        .unwrap_or_default();
+    if card.last_read_tick.is_some() {
+        cmd.entity(card.body).despawn_children();
+    }
+    let mut body = body_node(theme);
+    body.visible = !properties.is_empty();
+    cmd.insert(body, card.body);
     for property in properties {
-        let matching = existing.iter().position(|&entity| {
-            world
-                .get_component_for_entity::<PropertyRow>(entity)
-                .is_some_and(|row| {
-                    row.entity == card.entity
-                        && row.component == card.type_id
-                        && row.path == property.path
-                        && row.type_id == property.type_id
-                        && row.editor_type == property.editor_type
-                        && row.registry_tick == property.registry_tick
-                })
-        });
-        let row = if let Some(index) = matching {
-            let row = existing.swap_remove(index);
-            if world.get_component_for_entity::<PropertyRowValue>(row) != Some(&property.value) {
-                cmd.insert(property.value, row);
-            }
-            row
-        } else {
-            spawn_row(cmd, card, property, theme)
-        };
-        ordered.push(row);
+        spawn_row(cmd, &card, property, theme);
     }
-    for row in existing {
-        cmd.despawn(row);
-    }
-    order_children(world, cmd, card.body, ordered);
+    // The inclusive boundary also catches writes later in this same frame.
+    card.last_read_tick = Some(source.current_tick());
+    cmd.insert(card, entity);
 }
 
 fn spawn_card(
@@ -259,7 +176,6 @@ fn spawn_card(
         name,
         body,
         last_read_tick: None,
-        registry_tick: None,
     };
     cmd.insert(card, entity);
     (entity, card)

@@ -20,6 +20,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
 #[derive(Component, Editable)]
@@ -112,6 +113,9 @@ pub fn click_settings(
     mut commits: ResMut<PropertyCommits>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         let Some(button) = buttons.get_entity(click.entity) else {
             continue;
         };

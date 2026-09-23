@@ -28,6 +28,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 use window::input::actions::{ActionFired, ActionMap};
 
 pub const PANEL_ID: &str = "rabbithole.warren";
@@ -471,6 +472,9 @@ fn click_tree(
     mut selection: ResMut<Selection>,
 ) {
     for event in events.read() {
+        if event.button != MouseButton::Left {
+            continue;
+        }
         let Some(action) = actions.get_entity(event.entity) else {
             continue;
         };
