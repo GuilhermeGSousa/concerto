@@ -138,9 +138,17 @@ before `Render` begins, so no edge is needed.
 
 Two material types claiming the same slot produce two components of different
 types on one render entity, so both passes draw it. This is an authoring error
-rather than a state the engine can resolve: the fallback system warns when it
-finds a primitive entity carrying more than one `RenderMaterialComponent`, and
-the double draw stands.
+rather than a state the engine can resolve, and nothing can detect it by
+querying, since `RenderMaterialComponent<M1>` and `<M2>` are distinct types with
+no cross-type query.
+
+It is detected by bookkeeping instead. A `ClaimedSlots` render-world resource
+holds the primitive entities claimed this frame. Every `extract_materials::<M>`
+records its claims there and warns when an entity is already present; resource
+writes are immediate rather than deferred, so the second claimant sees the
+first regardless of which order the per-type systems run in. The system that
+applies the fallback clears the set, which is correct without an ordering edge
+because it runs in `Render`, after all of `Extract`.
 
 ## Instancing
 
