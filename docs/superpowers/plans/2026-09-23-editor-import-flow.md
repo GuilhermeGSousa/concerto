@@ -1078,16 +1078,305 @@ impl Plugin for DialogPlugin {
 }
 ```
 
-`build_dialog` spawns, as a child of `PanelRegistry::root()`:
-- a scrim `UINode` with `position: taffy::Position::Absolute`, `inset: UIInset` of `UIValue::Px(0.0)` on all four sides, `z_index: SCRIM_LAYER`, `visible: false`, plus `Interactable` and `DialogRoot`, with a `UIMaterial::flat` in a dimmed `theme.canvas`;
-- inside it a centred card using `UIMaterial { corner_radius: theme.radius_md, ..UIMaterial::with_border(theme.surface, theme.border, 1.0) }`, `z_index: SCRIM_LAYER + 1`;
-- a title `TextComponent` reading `Import assets`;
-- a `UIScrollArea` + `UIVirtualList::new(0, ROW_HEIGHT)` viewport holding a pool of `ROWS` rows, each with a `DialogRow(slot)` marker, a source-name label, a `UITextInput::new("assets/…")` carrying `Interactable`, `UIFocusable` and `DialogField(slot)`, and a `DialogStatus(slot)` message label;
-- a footer row with two `Interactable` buttons carrying `DialogAction::Cancel` and `DialogAction::Confirm`.
+Then the three node-building and rendering functions:
 
-`edit_destinations` reads `UITextInputChanged`, matches the event entity against `DialogField`, writes the new value into `staging.rows[index].destination`, then calls `validate_rows` against the open project's root.
+```rust
+fn text(theme: &UITheme, value: &str) -> TextComponent {
+    TextComponent {
+        text: value.into(),
+        font_size: theme.font_size_md,
+        line_height: theme.line_height(theme.font_size_md),
+        wrap: false,
+        ellipsis: true,
+        ..Default::default()
+    }
+}
 
-`render_dialog` sets the scrim's `visible` from `staging.visible`, fills each pooled row's labels from `staging.rows`, hides unused rows, and colours each status message: `theme.text_muted` for `RowState::New`, `theme.warning` with the text `replaces existing, keeps asset IDs` for `RowState::Replaces`, and `theme.error` with the reason for `RowState::Rejected`.
+fn build_dialog(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
+    let Some(root) = registry.root() else {
+        return;
+    };
+    let scrim = cmd
+        .spawn((
+            UINode {
+                position: taffy::Position::Absolute,
+                inset: UIInset {
+                    top: UIValue::Px(0.0),
+                    right: UIValue::Px(0.0),
+                    bottom: UIValue::Px(0.0),
+                    left: UIValue::Px(0.0),
+                },
+                z_index: SCRIM_LAYER,
+                visible: false,
+                flex_direction: FlexDirection::Column,
+                align_items: Some(taffy::AlignItems::Center),
+                justify_content: Some(taffy::JustifyContent::Center),
+                ..Default::default()
+            },
+            UIMaterial::flat(theme.canvas.with_alpha(0.7)),
+            Interactable,
+            DialogRoot,
+        ))
+        .entity();
+    cmd.add_child(root, scrim);
+
+    let card = cmd
+        .spawn((
+            UINode {
+                width: UIValue::Px(460.0),
+                flex_direction: FlexDirection::Column,
+                padding: UIRect::all(14.0),
+                gap: glam::Vec2::new(0.0, 10.0),
+                z_index: SCRIM_LAYER + 1,
+                ..Default::default()
+            },
+            UIMaterial {
+                corner_radius: theme.radius_md,
+                ..UIMaterial::with_border(theme.surface, theme.border, 1.0)
+            },
+            Interactable,
+        ))
+        .entity();
+    cmd.add_child(scrim, card);
+
+    let title = cmd
+        .spawn((UINode::default(), text(&theme, "Import assets")))
+        .entity();
+    cmd.add_child(card, title);
+
+    let view = cmd
+        .spawn((
+            UINode {
+                height: UIValue::Px(ROWS as f32 * ROW_HEIGHT),
+                flex_direction: FlexDirection::Column,
+                ..Default::default()
+            }
+            .clipped(),
+            Interactable,
+            UIVirtualList {
+                overscan: 1,
+                ..UIVirtualList::new(0, ROW_HEIGHT)
+            },
+        ))
+        .entity();
+    cmd.add_child(card, view);
+
+    let pool = cmd
+        .spawn(UINode {
+            flex_direction: FlexDirection::Column,
+            flex_shrink: 0.0,
+            ..Default::default()
+        })
+        .entity();
+    cmd.add_child(view, pool);
+    cmd.insert(
+        UIScrollArea {
+            content: Some(pool),
+            ..Default::default()
+        },
+        view,
+    );
+
+    for slot in 0..ROWS {
+        let row = cmd
+            .spawn((
+                UINode {
+                    height: UIValue::Px(ROW_HEIGHT),
+                    flex_shrink: 0.0,
+                    flex_direction: FlexDirection::Row,
+                    align_items: Some(taffy::AlignItems::Center),
+                    gap: glam::Vec2::new(8.0, 0.0),
+                    ..Default::default()
+                },
+                DialogRow(slot),
+            ))
+            .entity();
+        cmd.add_child(pool, row);
+
+        let name = cmd
+            .spawn((
+                UINode {
+                    width: UIValue::Px(120.0),
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                },
+                TextComponent {
+                    color: theme.text_muted,
+                    ..text(&theme, "")
+                },
+                DialogName(slot),
+            ))
+            .entity();
+        cmd.add_child(row, name);
+
+        let field = cmd
+            .spawn((
+                UINode {
+                    flex_grow: 1.0,
+                    flex_shrink: 1.0,
+                    min_width: UIValue::Px(0.0),
+                    padding: UIRect::axes(0.0, 6.0),
+                    ..Default::default()
+                },
+                UIMaterial {
+                    corner_radius: theme.radius_sm,
+                    ..UIMaterial::flat(theme.surface_raised)
+                },
+                text(&theme, ""),
+                UITextInput::new("assets/…"),
+                Interactable,
+                UIFocusable,
+                DialogField(slot),
+            ))
+            .entity();
+        cmd.add_child(row, field);
+
+        let status = cmd
+            .spawn((
+                UINode {
+                    width: UIValue::Px(150.0),
+                    flex_shrink: 0.0,
+                    ..Default::default()
+                },
+                TextComponent {
+                    font_size: 10.0,
+                    line_height: theme.line_height(10.0),
+                    ..text(&theme, "")
+                },
+                DialogStatus(slot),
+            ))
+            .entity();
+        cmd.add_child(row, status);
+    }
+
+    let footer = cmd
+        .spawn(UINode {
+            flex_direction: FlexDirection::Row,
+            justify_content: Some(taffy::JustifyContent::End),
+            gap: glam::Vec2::new(8.0, 0.0),
+            ..Default::default()
+        })
+        .entity();
+    cmd.add_child(card, footer);
+
+    for (label, action) in [("Cancel", DialogAction::Cancel), ("Import", DialogAction::Confirm)] {
+        let button = cmd
+            .spawn((
+                UINode {
+                    padding: UIRect::axes(4.0, 12.0),
+                    ..Default::default()
+                },
+                UIMaterial {
+                    corner_radius: theme.radius_sm,
+                    ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
+                },
+                text(&theme, label),
+                Interactable,
+                UIInteractionStyle {
+                    normal: TRANSPARENT,
+                    hovered: theme.surface_hovered,
+                    pressed: theme.accent,
+                    disabled: TRANSPARENT,
+                },
+                action,
+            ))
+            .entity();
+        cmd.add_child(footer, button);
+    }
+}
+
+fn edit_destinations(
+    mut changes: EventReader<UITextInputChanged>,
+    fields: Query<&DialogField>,
+    mut staging: ResMut<ImportStaging>,
+    project: Res<ProjectState>,
+) {
+    let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
+        return;
+    };
+    let mut edited = false;
+    for change in changes.read() {
+        let Some(field) = fields.get_entity(change.entity) else {
+            continue;
+        };
+        let Some(row) = staging.rows.get_mut(field.0) else {
+            continue;
+        };
+        row.destination = change.value.clone();
+        edited = true;
+    }
+    if edited {
+        validate_rows(&mut staging.rows, &root);
+    }
+}
+
+fn render_dialog(
+    staging: Res<ImportStaging>,
+    theme: Res<UITheme>,
+    roots: Query<(&DialogRoot, &mut UINode)>,
+    rows: Query<(&DialogRow, &mut UINode)>,
+    names: Query<(&DialogName, &mut TextComponent)>,
+    fields: Query<(&DialogField, &mut UITextInput)>,
+    statuses: Query<(&DialogStatus, &mut TextComponent)>,
+) {
+    for (_, mut node) in roots.iter() {
+        if node.visible != staging.visible {
+            node.visible = staging.visible;
+        }
+    }
+    for (row, mut node) in rows.iter() {
+        let present = row.0 < staging.rows.len();
+        if node.visible != present {
+            node.visible = present;
+        }
+    }
+    for (name, mut label) in names.iter() {
+        let value = staging
+            .rows
+            .get(name.0)
+            .map(|row| {
+                row.source
+                    .file_name()
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            })
+            .unwrap_or_default();
+        if label.text != value {
+            label.text = value;
+        }
+    }
+    for (field, mut input) in fields.iter() {
+        let value = staging
+            .rows
+            .get(field.0)
+            .map(|row| row.destination.clone())
+            .unwrap_or_default();
+        if input.value != value {
+            input.value = value;
+        }
+    }
+    for (status, mut label) in statuses.iter() {
+        let (value, color) = match staging.rows.get(status.0).map(|row| &row.state) {
+            Some(RowState::New) => (String::new(), theme.text_muted),
+            Some(RowState::Replaces) => (
+                "replaces existing, keeps asset IDs".to_string(),
+                theme.warning,
+            ),
+            Some(RowState::Rejected(reason)) => (reason.clone(), theme.error),
+            None => (String::new(), theme.text_muted),
+        };
+        if label.text != value {
+            label.text = value;
+        }
+        if label.color != color {
+            label.color = color;
+        }
+    }
+}
+```
+
+Add a `DialogName(usize)` component alongside the others, and import
+`UIScrollArea`, `UIVirtualList` from `ui::scroll` plus `glam`.
 
 `handle_buttons` reads `UIClick`, matches the event entity against `DialogAction`,
 and calls `confirm(&mut staging, &mut queue)` or `cancel(&mut staging)`.
