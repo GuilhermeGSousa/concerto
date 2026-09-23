@@ -143,7 +143,9 @@ state of its own.
   `Interactable` by `paint_order`, so the scrim blocks every click beneath it.
 - A centred card holding a recycled row pool, sized like `content.rs`'s pool.
   Each row: the source's file name as a label, a `UITextInput` bound to that
-  row's `destination`, and a state message.
+  row's `destination`, and a state message. The pool is fixed size; a selection
+  larger than it scrolls through a `UIScrollArea` and `UIVirtualList`, the same
+  pairing the Curiosities list already uses.
 - Confirm and Cancel buttons. `Enter` confirms, `Esc` cancels, both read from
   the `Input` resource.
 - Confirm moves every non-`Rejected` row onto `ImportQueue`, clears the staging
