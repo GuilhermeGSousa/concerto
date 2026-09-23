@@ -1,9 +1,9 @@
 //! Exercise the real tab systems without a window or GPU.
-use app::{schedule_groups::LateUpdate, App};
+use app::{App, schedule_groups::LateUpdate};
 use ecs::{
+    Entity, World,
     entity::hierarchy::{ChildOf, Children},
     events::event_channel::EventChannel,
-    Entity, World,
 };
 use editor::{
     asset_editor::{ActiveEditor, AssetEditorCommand, AssetEditorCommands, EditorDocument},

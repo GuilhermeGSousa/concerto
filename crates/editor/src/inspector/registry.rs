@@ -233,8 +233,8 @@ pub(super) struct InspectionSource<'w> {
 }
 
 impl InspectionSource<'_> {
-    pub fn entity_structure_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
-        self.components.entity_structure_version(entity)
+    pub fn structural_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
+        self.components.structural_version(entity)
     }
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
         self.components.entity_is_valid(entity)

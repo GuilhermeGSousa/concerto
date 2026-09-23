@@ -4,16 +4,16 @@ use crate::actions::{
     CollapseRow, ExpandRow, SelectFirst, SelectLast, SelectNext, SelectPrevious, TreeContext,
 };
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::marks::{self, selection_tint, Mark, TRANSPARENT};
+use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
 use crate::scene::{SceneRoot, SceneState};
 use crate::selection::Selection;
 use app::{
-    schedule_groups::{LateUpdate, Startup},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup},
 };
 use ecs::{
-    command::CommandQueue, component::name::Name, entity::hierarchy::Children,
-    events::event_reader::EventReader, Component, Entity, Query, Res, ResMut, Resource,
+    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue, component::name::Name,
+    entity::hierarchy::Children, events::event_reader::EventReader,
 };
 use std::collections::HashSet;
 use taffy::FlexDirection;
@@ -22,7 +22,7 @@ use ui::{
     interaction::{Interactable, UIClick, UIDisabled},
     material::UIMaterial,
     node::{UILayout, UINode, UIRect},
-    scroll::{scroll_to_rect, UIScrollArea, UIVirtualList},
+    scroll::{UIScrollArea, UIVirtualList, scroll_to_rect},
     text::TextComponent,
     text_input::{UITextInput, UITextInputChanged},
     theme::UITheme,

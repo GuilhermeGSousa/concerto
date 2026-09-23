@@ -3,10 +3,10 @@
 //!
 //! Everything with content of its own is a panel; this is what is left.
 use app::{
-    schedule_groups::{LateUpdate, Startup},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup},
 };
-use ecs::{command::CommandQueue, Component, Query, Res};
+use ecs::{Component, Query, Res, command::CommandQueue};
 use taffy::FlexDirection;
 use ui::{
     material::UIMaterial,
@@ -17,7 +17,7 @@ use ui::{
 };
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::fonts::{glyph, icon, MEDIUM};
+use crate::fonts::{MEDIUM, glyph, icon};
 use crate::marks::TRANSPARENT;
 use crate::project::ProjectState;
 use crate::scene::SceneState;

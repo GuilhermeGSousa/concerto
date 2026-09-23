@@ -20,8 +20,8 @@ impl<'w> ComponentMetadata<'w> {
         }
     }
 
-    /// See [`World::entity_structure_version`].
-    pub fn entity_structure_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
+    /// See [`World::structural_version`].
+    pub fn structural_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
         self.world.world().structural_version(entity)
     }
 

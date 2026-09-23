@@ -15,13 +15,13 @@ fn structural_versions_track_membership_not_values_or_frames() {
     world.insert((), entity);
     world.remove_component::<B>(entity);
     world.tick();
-    assert_eq!(world.entity_structure_version(entity), Some(initial));
+    assert_eq!(world.structural_version(entity), Some(initial));
     world.insert(B, entity);
     let added = world.structural_version(entity).unwrap();
     assert_ne!(added, initial);
     world.remove_component::<B>(entity);
-    assert_ne!(world.entity_structure_version(entity), Some(added));
-    assert_ne!(world.entity_structure_version(entity), Some(initial));
+    assert_ne!(world.structural_version(entity), Some(added));
+    assert_ne!(world.structural_version(entity), Some(initial));
     for _ in 0..3 {
         world.tick();
     }
@@ -35,15 +35,15 @@ fn row_swaps_and_recycled_handles_do_not_report_false_changes() {
     let second = world.spawn(A(2));
     let version = world.structural_version(second);
     world.insert(B, first); // Swaps second into first's old row.
-    assert_eq!(world.entity_structure_version(second), version);
+    assert_eq!(world.structural_version(second), version);
     world.remove_component::<B>(first);
     world.despawn(first);
-    assert_eq!(world.entity_structure_version(second), version);
-    assert_eq!(world.entity_structure_version(first), None);
+    assert_eq!(world.structural_version(second), version);
+    assert_eq!(world.structural_version(first), None);
     let replacement = world.spawn(());
     assert_eq!(replacement.index(), first.index());
     assert!(world.structural_version(replacement).is_some());
-    assert_eq!(world.entity_structure_version(first), None);
+    assert_eq!(world.structural_version(first), None);
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn deferred_changes_are_visible_only_after_apply() {
     .into_system();
     add.initialize(&mut world);
     add.run(&mut world);
-    assert_eq!(world.entity_structure_version(target), version);
+    assert_eq!(world.structural_version(target), version);
     add.apply(&mut world);
     let added = world.structural_version(target);
     assert_ne!(added, version);
@@ -67,5 +67,5 @@ fn deferred_changes_are_visible_only_after_apply() {
     .into_system();
     remove.initialize(&mut world);
     remove.run_and_apply(&mut world);
-    assert_ne!(world.entity_structure_version(target), added);
+    assert_ne!(world.structural_version(target), added);
 }

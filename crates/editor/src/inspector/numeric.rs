@@ -1,5 +1,5 @@
 use ecs::{
-    command::CommandQueue, events::event_reader::EventReader, Component, Entity, Query, Res, ResMut,
+    Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
 };
 use editable::Editable;
 use glam::{EulerRot, Quat, Vec3};
@@ -516,8 +516,8 @@ mod tests {
 
     #[test]
     fn transform_numeric_widget_submit_refresh_and_cancel_smoke_test() {
-        use super::super::{apply_property_commits, InspectorRegistry, Property};
-        use ecs::{events::event_channel::EventChannel, IntoSystem, Res, Resource, System, World};
+        use super::super::{InspectorRegistry, Property, apply_property_commits};
+        use ecs::{IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel};
         use essential::transform::Transform;
         use std::any::TypeId;
         use ui::{
@@ -654,10 +654,12 @@ mod tests {
             "2.500"
         );
         assert_eq!(**world.get_resource::<FocusedWidget>().unwrap(), None);
-        assert!(world
-            .get_resource::<PropertyCommits>()
-            .unwrap()
-            .0
-            .is_empty());
+        assert!(
+            world
+                .get_resource::<PropertyCommits>()
+                .unwrap()
+                .0
+                .is_empty()
+        );
     }
 }

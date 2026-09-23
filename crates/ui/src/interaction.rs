@@ -434,7 +434,12 @@ mod tests {
             "the first drag reports movement since the press"
         );
 
-        let up = advance_capture(&mut capture, InputState::Released, node, Vec2::new(40.0, 0.0));
+        let up = advance_capture(
+            &mut capture,
+            InputState::Released,
+            node,
+            Vec2::new(40.0, 0.0),
+        );
         assert_eq!(up.click, None, "a drag is not a click");
     }
 
@@ -482,7 +487,12 @@ mod tests {
             "the left button must still own the node it grabbed"
         );
 
-        let left = advance_capture(&mut state.left, InputState::Down, handle, Vec2::new(9.0, 0.0));
+        let left = advance_capture(
+            &mut state.left,
+            InputState::Down,
+            handle,
+            Vec2::new(9.0, 0.0),
+        );
         assert_eq!(left.drag, handle, "and must keep receiving its drags");
     }
 

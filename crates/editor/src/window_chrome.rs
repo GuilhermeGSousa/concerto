@@ -6,13 +6,13 @@
 //! (see [`WindowGestureRegion`]); all this module does is publish where the
 //! frame's edges and title band currently are.
 use app::{
-    schedule_groups::{LateUpdate, Startup},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup},
 };
 use color::Color;
 use ecs::{
-    command::CommandQueue, events::event_reader::EventReader, Component, Query, Res, ResMut,
-    Resource,
+    Component, Query, Res, ResMut, Resource, command::CommandQueue,
+    events::event_reader::EventReader,
 };
 use taffy::{FlexDirection, Position};
 use ui::{

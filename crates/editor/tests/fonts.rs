@@ -3,7 +3,7 @@
 //! hard to trace back to a constant.
 use glyphon::cosmic_text::fontdb;
 use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, Wrap};
-use ui::text::fonts::{build_font_system, UIFonts};
+use ui::text::fonts::{UIFonts, build_font_system};
 
 fn fonts() -> UIFonts {
     let mut fonts = UIFonts::default();

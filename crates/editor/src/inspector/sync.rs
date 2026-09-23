@@ -36,7 +36,7 @@ pub(super) fn sync_inspected_components(
         return;
     };
     let target = data.entity.filter(|&entity| source.entity_is_valid(entity));
-    let structural_version = target.and_then(|entity| source.entity_structure_version(entity));
+    let structural_version = target.and_then(|entity| source.structural_version(entity));
     let registry_tick = Some(source.registry_tick());
     let rebuild = stack.target != target
         || stack.structural_version != structural_version

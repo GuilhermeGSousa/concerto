@@ -1,11 +1,11 @@
 //! The project's asset catalogue, as a docked panel.
 use app::{
-    schedule_groups::{LateUpdate, Startup},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup},
 };
 use ecs::{
-    command::CommandQueue, events::event_reader::EventReader, Component, Query, Res, ResMut,
-    Resource,
+    Component, Query, Res, ResMut, Resource, command::CommandQueue,
+    events::event_reader::EventReader,
 };
 use taffy::FlexDirection;
 use ui::{
@@ -22,7 +22,7 @@ use ui::{
 use window::input::MouseButton;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::marks::{self, selection_tint, Mark, TRANSPARENT};
+use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
 use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
 use essential::assets::AssetId;
 

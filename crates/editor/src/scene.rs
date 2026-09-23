@@ -2,21 +2,21 @@
 //! Temporary inspector changes live in ECS; this editor never saves them.
 use std::{path::PathBuf, thread::JoinHandle};
 
-use app::{schedule_groups::Update, App, Plugin};
+use app::{App, Plugin, schedule_groups::Update};
 use ecs::{
+    Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
-    Component, Entity, Query, Resource,
 };
 use essential::{
-    assets::{content::read_content_asset, Asset, AssetId},
+    assets::{Asset, AssetId, content::read_content_asset},
     transform::Transform,
 };
 use scene::{scene::Scene, spawner::spawn_scene};
 
 use crate::{
     asset_editor::{
-        finish_asset_request, AssetEditor, AssetEditorAppExt, EditorDocument, EditorOwned,
+        AssetEditor, AssetEditorAppExt, EditorDocument, EditorOwned, finish_asset_request,
     },
     project::ProjectState,
     selection::Selection,
@@ -226,8 +226,8 @@ mod tests {
     };
     use crate::project::AssetEntry;
     use essential::assets::content::{
-        write_content_asset, AssetRegistry, ContentAssetHeader, ImportProvenance,
-        CONTENT_FORMAT_VERSION,
+        AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
+        write_content_asset,
     };
     use std::time::{Duration, Instant};
 
@@ -465,11 +465,13 @@ mod tests {
         update_scenes(&mut world);
         assert_eq!(world.query::<&SceneRoot, ()>().iter(&mut world).count(), 0);
         assert!(world.get_resource::<ActiveEditor>().unwrap().0.is_none());
-        assert!(world
-            .get_resource::<Selection>()
-            .unwrap()
-            .entity()
-            .is_none());
+        assert!(
+            world
+                .get_resource::<Selection>()
+                .unwrap()
+                .entity()
+                .is_none()
+        );
     }
 
     #[test]
@@ -504,11 +506,13 @@ mod tests {
         world.get_resource_mut::<ProjectState>().unwrap().generation = 2;
         update_scenes(&mut world);
         assert_eq!(root(&world, editor), old);
-        assert!(world
-            .get_component_for_entity::<SceneEditorState>(editor)
-            .unwrap()
-            .job
-            .is_none());
+        assert!(
+            world
+                .get_component_for_entity::<SceneEditorState>(editor)
+                .unwrap()
+                .job
+                .is_none()
+        );
         assert_eq!(
             world
                 .get_component_for_entity::<EditorDocument>(editor)
@@ -544,11 +548,13 @@ mod tests {
         process_editor_commands(&mut world);
         update_scenes(&mut world);
         assert!(!world.entity_is_valid(old));
-        assert!(world
-            .get_resource::<Selection>()
-            .unwrap()
-            .entity()
-            .is_none());
+        assert!(
+            world
+                .get_resource::<Selection>()
+                .unwrap()
+                .entity()
+                .is_none()
+        );
     }
 
     #[test]

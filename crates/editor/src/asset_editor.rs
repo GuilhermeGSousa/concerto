@@ -4,12 +4,12 @@
 //! editor is a single, type-owned document; opening another asset of the same
 //! type replaces the document's contents instead of creating another world.
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use app::App;
 use ecs::{
+    Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
-    Component, Entity, Query, Resource,
 };
 use essential::assets::Asset;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -461,11 +461,12 @@ mod tests {
                 .request_generation,
             g
         );
-        assert!(w
-            .get_component_for_entity::<EditorDocument>(e)
-            .unwrap()
-            .pending
-            .is_some());
+        assert!(
+            w.get_component_for_entity::<EditorDocument>(e)
+                .unwrap()
+                .pending
+                .is_some()
+        );
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
@@ -623,10 +624,11 @@ mod tests {
         process_editor_commands(&mut w);
         assert!(w.get_resource::<ActiveEditor>().unwrap().0.is_none());
         assert_eq!(w.query::<&EditorDocument, ()>().iter(&mut w).count(), 0);
-        assert!(w
-            .get_resource_mut::<AssetEditorRegistry>()
-            .unwrap()
-            .register::<TestAsset>(Fake)
-            .is_err());
+        assert!(
+            w.get_resource_mut::<AssetEditorRegistry>()
+                .unwrap()
+                .register::<TestAsset>(Fake)
+                .is_err()
+        );
     }
 }

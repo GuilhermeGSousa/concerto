@@ -1,9 +1,9 @@
 //! Contextual panel hosts and input transitions for asset editors.
 use ecs::{
+    Changed, Entity, Query, Res, ResMut, Without,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     query::change_detection::DetectChanges,
-    Changed, Entity, Query, Res, ResMut, Without,
 };
 use essential::assets::Asset;
 use ui::{
@@ -184,7 +184,7 @@ mod tests {
     use crate::asset_editor::{
         AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
-    use essential::assets::{content::ImportProvenance, Asset, AssetId};
+    use essential::assets::{Asset, AssetId, content::ImportProvenance};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
@@ -267,7 +267,10 @@ mod tests {
             Some(first)
         );
         assert_eq!(
-            world.get_resource::<UIInputState>().unwrap().captured(MouseButton::Left),
+            world
+                .get_resource::<UIInputState>()
+                .unwrap()
+                .captured(MouseButton::Left),
             Some(first)
         );
         assert!(
@@ -309,11 +312,13 @@ mod tests {
                 .visible
         );
         assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
-        assert!(world
-            .get_resource::<UIInputState>()
-            .unwrap()
-            .captured(MouseButton::Left)
-            .is_none());
+        assert!(
+            world
+                .get_resource::<UIInputState>()
+                .unwrap()
+                .captured(MouseButton::Left)
+                .is_none()
+        );
         assert!(
             world
                 .get_resource::<ViewportCommands>()
