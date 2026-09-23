@@ -13,7 +13,7 @@ use crate::{
 /// so it has to wait for the flush. Re-checking here keeps a child attached in the
 /// meantime from being dropped along with the component.
 pub(crate) struct RemoveEmptyChildren {
-    parent: Entity,
+    pub(crate) parent: Entity,
 }
 
 impl RemoveEmptyChildren {
@@ -30,6 +30,24 @@ impl Command for RemoveEmptyChildren {
         if emptied {
             world.remove_component::<Children>(self.parent);
         }
+    }
+}
+
+pub(crate) struct DespawnChildren {
+    pub(crate) parent: Entity,
+}
+
+impl Command for DespawnChildren {
+    fn execute(self, world: &mut World) {
+        let children: Vec<_> = world
+            .get_component_for_entity::<Children>(self.parent)
+            .map(|c| c.iter().copied().collect())
+            .unwrap_or_default();
+
+        for child in children {
+            world.despawn(child);
+        }
+        world.remove_component::<Children>(self.parent);
     }
 }
 

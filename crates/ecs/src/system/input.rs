@@ -1,3 +1,6 @@
+mod component_reader;
+pub use component_reader::ComponentMetadata;
+
 use std::ops::{Deref, DerefMut};
 
 use crate::{

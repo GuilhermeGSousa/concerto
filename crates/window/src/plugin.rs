@@ -105,6 +105,45 @@ impl Window {
     pub fn height(&self) -> u32 {
         self.window_handle.inner_size().height
     }
+
+    /// Sets the smallest size a person can resize the window down to, in
+    /// logical pixels. `None` clears a floor set earlier.
+    ///
+    /// Winit stays an implementation detail behind this wrapper — callers
+    /// pass a plain `Vec2` rather than reaching for `winit::dpi` themselves.
+    pub fn set_min_inner_size(&self, min: Option<Vec2>) {
+        self.window_handle.set_min_inner_size(
+            min.map(|size| winit::dpi::LogicalSize::new(size.x as f64, size.y as f64)),
+        );
+    }
+
+    /// Asks the platform to resize the window to `size` logical pixels.
+    ///
+    /// The compositor can refuse or defer this: `Some` means it resized
+    /// synchronously and this is the physical size it landed on; `None`
+    /// means the request was queued and will arrive later as an ordinary
+    /// resize, or was declined outright. Callers that need to know the
+    /// outcome should read `logical_size()` on a later frame rather than
+    /// trust this return value either way.
+    pub fn request_inner_size(&self, size: Vec2) -> Option<PhysicalWindowSize> {
+        self.window_handle
+            .request_inner_size(winit::dpi::LogicalSize::new(size.x as f64, size.y as f64))
+            .map(|physical| PhysicalWindowSize {
+                width: physical.width,
+                height: physical.height,
+            })
+    }
+}
+
+/// A window size in physical pixels, as the platform reports it.
+///
+/// Named rather than a bare pair because `(u32, u32)` says nothing about
+/// which number is which at a call site, and nothing about the pixels being
+/// physical rather than the logical ones the rest of this API takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhysicalWindowSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 impl HasDisplayHandle for Window {

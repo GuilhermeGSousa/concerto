@@ -1,3 +1,4 @@
+pub mod anchor;
 pub mod checkbox;
 pub mod focus;
 pub mod frame_stats_overlay;

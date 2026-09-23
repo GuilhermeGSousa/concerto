@@ -1,17 +1,19 @@
 use std::num::NonZero;
 
-use crate::entity::{Entity, EntityLocation};
+use crate::entity::{Entity, EntityLocation, EntityStructuralVersion};
 
 #[derive(Clone, Copy)]
 struct EntityData {
     current_generation: NonZero<u32>,
     location: EntityLocation,
+    structural_version: EntityStructuralVersion,
 }
 
 impl EntityData {
     const EMPTY: EntityData = EntityData {
         current_generation: NonZero::<u32>::MIN,
         location: EntityLocation::INVALID,
+        structural_version: EntityStructuralVersion(0),
     };
 }
 
@@ -60,21 +62,29 @@ impl EntityStore {
             return;
         }
 
+        if meta.location.archetype_index != location.archetype_index {
+            meta.structural_version = meta.structural_version.next();
+        }
         meta.location = location;
     }
 
-    pub fn find_location(&self, entity: Entity) -> Option<EntityLocation> {
-        if let Some(data) = self.metadata.get(entity.index() as usize) {
-            if data.location == EntityLocation::INVALID {
-                return None;
-            }
+    pub fn structural_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
+        self.metadata
+            .get(entity.index() as usize)
+            .filter(|data| {
+                data.location != EntityLocation::INVALID
+                    && data.current_generation == entity.generation()
+            })
+            .map(|data| data.structural_version)
+    }
 
-            if entity.generation() == data.current_generation {
-                return Some(data.location);
-            }
-            None
-        } else {
-            None
-        }
+    pub fn find_location(&self, entity: Entity) -> Option<EntityLocation> {
+        self.metadata
+            .get(entity.index() as usize)
+            .filter(|data| {
+                data.location != EntityLocation::INVALID
+                    && data.current_generation == entity.generation()
+            })
+            .map(|data| data.location)
     }
 }

@@ -72,6 +72,18 @@ impl EntityLocation {
     };
 }
 
+/// An opaque version of an entity's component set; compare only for the same entity handle.
+/// Wraps after 65,536 changes, so a full cycle between observations is indistinguishable
+/// from no change.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EntityStructuralVersion(u16);
+
+impl EntityStructuralVersion {
+    fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
+}
+
 /// A borrow of a single entity, used to edit its place in the hierarchy.
 pub struct EntityWorldMut<'w> {
     world: &'w mut World,
@@ -121,5 +133,17 @@ impl<'w> EntityWorldMut<'w> {
         let child = self.world.spawn(bundle);
         self.add_child(child);
         EntityWorldMut::new(self.world, child)
+    }
+}
+
+#[cfg(test)]
+mod structural_version_tests {
+    use super::EntityStructuralVersion;
+
+    #[test]
+    fn structural_version_wraps_and_continues_incrementing() {
+        let wrapped = EntityStructuralVersion(u16::MAX).next();
+        assert_eq!(wrapped, EntityStructuralVersion(0));
+        assert_eq!(wrapped.next(), EntityStructuralVersion(1));
     }
 }

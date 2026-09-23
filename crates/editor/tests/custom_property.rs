@@ -15,6 +15,7 @@ use editor::inspector::{
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
 use ui::{interaction::UIClick, text::TextComponent, theme::UITheme};
+use window::input::MouseButton;
 
 #[derive(Component, Editable)]
 struct Container {
@@ -309,6 +310,7 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         .push_event(UIClick {
             entity: button,
             position: glam::Vec2::ZERO,
+            button: MouseButton::Left,
         });
     let mut click = example::click_settings.into_system();
     click.initialize(&mut world);

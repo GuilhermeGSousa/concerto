@@ -2,6 +2,7 @@ use app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateUpdate, Render},
 };
+use ecs::IntoSystemConfig;
 use glyphon::{Cache, SwashCache, Viewport};
 use render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
@@ -9,6 +10,7 @@ use render::{
 };
 
 use crate::{
+    anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
     checkbox::{UICheckboxChanged, sync_checkbox_material, toggle_checkboxes},
     focus::{
         FocusedWidget, UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, sync_text_capture,
@@ -43,8 +45,7 @@ use crate::{
     },
     theme::UITheme,
     widgets::{
-        UICollapsibleChanged, UITabChanged, sync_tab_bodies, update_popup_menus, update_tooltips,
-        update_widgets,
+        UICollapsibleChanged, UITabChanged, sync_tab_bodies, update_tooltips, update_widgets,
     },
 };
 
@@ -68,6 +69,10 @@ impl Plugin for UIPlugin {
                 UIFocusPrevious,
                 window::input::actions::Shortcut::key(window::input::KeyCode::Tab).with_shift(),
             );
+            actions.bind_global(
+                UIDismissPanel,
+                window::input::actions::Shortcut::key(window::input::KeyCode::Escape),
+            );
         }
 
         // Resources
@@ -77,6 +82,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(UITheme::default());
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
+        app.insert_resource(UIPanelStack::default());
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
@@ -105,18 +111,30 @@ impl Plugin for UIPlugin {
         // build UI. Hit testing itself reads the previous frame's `UILayout`;
         // everything it changes is laid out below, so a click, drag or scroll
         // is on screen in the frame that produced it.
+        // Three of the edges below are declared with `.after()` rather than
+        // left to registration order, because reversing any one of them
+        // reintroduces a shipped bug while every unit test stays green. Note
+        // that `.after(dep)` *owns* and registers `dep`, so a system named as
+        // a dep here must not also be added on a line of its own — it would
+        // run twice. That is why each edge reads as one line rather than two,
+        // and why the third is declared against its first consumer instead of
+        // against every downstream system.
+        //
         // 1. Hit test — updates HoveredNode and fires pointer events.
-        app.add_system(LateUpdate, update_ui_interaction);
         // 2. Focus — reads HoveredNode and focus actions, updates FocusedWidget.
-        app.add_system(LateUpdate, update_focus);
+        //    Everything after this point reacts to pointer state the hit test
+        //    produced, so the hit test has to have run.
+        app.add_system(LateUpdate, update_focus.after(update_ui_interaction));
         app.add_system(LateUpdate, sync_text_capture);
         // 3. Widgets react to clicks and focus.
         app.add_system(LateUpdate, toggle_checkboxes);
-        app.add_system(LateUpdate, update_text_inputs);
+        // A focused field takes the first Escape to cancel editing, and the
+        // panel takes the second. Swap these two and a panel holding a text
+        // field can never be closed with Escape.
+        app.add_system(LateUpdate, dismiss_panels.after(update_text_inputs));
         app.add_system(LateUpdate, update_widgets);
         app.add_system(LateUpdate, sync_tab_bodies);
         app.add_system(LateUpdate, update_tooltips);
-        app.add_system(LateUpdate, update_popup_menus);
         app.add_system(LateUpdate, update_scroll_areas);
         // Virtual ranges follow the scroll offset set above, so that the content
         // shift below is computed against this frame's range.
@@ -137,8 +155,11 @@ impl Plugin for UIPlugin {
         app.add_system(LateUpdate, apply_interaction_styles);
 
         // 7. Resolve layout and everything derived from it, last.
-        // Taffy layout pass — computes UILayout for all nodes.
-        app.add_system(LateUpdate, compute_ui_nodes);
+        // Taffy layout pass — computes UILayout for all nodes. Panels resolve
+        // their stack, visibility and layer first: the layout pass places
+        // anchored roots in stack order, and the other way round it would
+        // place them against last frame's stack.
+        app.add_system(LateUpdate, compute_ui_nodes.after(track_panel_stack));
         // Sync engine-managed border_params uniform from user-facing border_width.
         app.add_system(LateUpdate, sync_material_params);
         // Scrollbars read the viewport measured by the layout pass above.

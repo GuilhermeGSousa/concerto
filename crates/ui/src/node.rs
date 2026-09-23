@@ -34,6 +34,7 @@ use wgpu::{Buffer, util::DeviceExt};
 use window::plugin::Window;
 
 use crate::{
+    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack},
     material::UIMaterial,
     resources::UIRenderDiagnostics,
     transform::UIValue,
@@ -441,8 +442,23 @@ pub(crate) struct UILayoutEngine {
     hierarchy_signature: Vec<(Entity, Vec<Entity>)>,
     style_snapshot: Vec<(Entity, UINode)>,
     text_snapshot: Vec<(Entity, u64)>,
+    panel_snapshot: Vec<PanelPlacementSnapshot>,
     logical_size: Vec2,
     scale_factor: f64,
+}
+
+/// Everything `place` reads off one panel, kept between passes.
+///
+/// A panel that moves without changing any style — a context menu reopened at
+/// a new cursor position, or one re-pointed from `Below` to `Right` — would
+/// otherwise be filtered out by the early-out and stay where it was.
+#[derive(Clone, Copy, PartialEq)]
+struct PanelPlacementSnapshot {
+    entity: Entity,
+    target: UIAnchorTarget,
+    side: UIAnchorSide,
+    align: UIAnchorAlign,
+    gap: f32,
 }
 
 impl Default for UILayoutEngine {
@@ -451,6 +467,7 @@ impl Default for UILayoutEngine {
             hierarchy_signature: Vec::new(),
             style_snapshot: Vec::new(),
             text_snapshot: Vec::new(),
+            panel_snapshot: Vec::new(),
             logical_size: Vec2::ZERO,
             scale_factor: 0.0,
         }
@@ -491,6 +508,10 @@ pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
     ui_roots: Query<(Entity, &UINode, Option<&Children>), Without<ChildOf>>,
     texts: Query<&crate::text::TextComponent>,
+    // Mutable so the placement sweep below can write `resolved_side` back
+    // onto the panel it just placed; every other use here only reads.
+    panels: Query<(Entity, &mut UIAnchoredPanel)>,
+    panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
     mut engine: ecs::resource::ResMut<UILayoutEngine>,
     mut measurer: ecs::resource::ResMut<UITextMeasure>,
@@ -532,7 +553,24 @@ pub(crate) fn compute_ui_nodes(
         })
         .collect::<Vec<_>>();
     text_snapshot.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
+    let mut panel_snapshot = panels
+        .iter()
+        .map(|(entity, panel)| PanelPlacementSnapshot {
+            entity,
+            target: panel.target,
+            side: panel.side,
+            align: panel.align,
+            gap: panel.gap,
+        })
+        .collect::<Vec<_>>();
+    panel_snapshot.sort_by_key(|panel| (panel.entity.index(), panel.entity.generation()));
 
+    // The panel STACK's order is not snapshotted directly. It does not need
+    // to be only because `track_panel_stack` derives each panel's `z_index`
+    // from its index in the stack, and `z_index` travels in the cloned
+    // `UINode` inside `style_snapshot` — so a reorder always shows up as a
+    // style change. If layer assignment ever stops being index-derived, the
+    // stack has to be snapshotted here instead.
     let hierarchy_changed = engine.hierarchy_signature != signature;
     if hierarchy_changed {
         diagnostics.tree_rebuilds += 1;
@@ -541,6 +579,7 @@ pub(crate) fn compute_ui_nodes(
     if !hierarchy_changed
         && engine.style_snapshot == styles
         && engine.text_snapshot == text_snapshot
+        && engine.panel_snapshot == panel_snapshot
         && engine.logical_size == logical_size
         && engine.scale_factor == scale_factor
     {
@@ -549,6 +588,7 @@ pub(crate) fn compute_ui_nodes(
     engine.hierarchy_signature = signature;
     engine.style_snapshot = styles;
     engine.text_snapshot = text_snapshot;
+    engine.panel_snapshot = panel_snapshot;
     engine.logical_size = logical_size;
     engine.scale_factor = scale_factor;
 
@@ -606,7 +646,19 @@ pub(crate) fn compute_ui_nodes(
         size: logical_size,
     };
     let mut sequence = 0_i64;
+    // Every laid-out rect, so the panel sweep can anchor to a node however
+    // deep in another tree it sits.
+    let mut anchor_rects: HashMap<Entity, UIBox> = HashMap::new();
     for (entity, root_node, children) in ui_roots.iter() {
+        // Only OPEN panels are deferred: the second sweep walks the stack,
+        // which lists nothing else, so skipping a closed panel here would
+        // leave it with whatever UILayout it last had — and a stale rect is
+        // exactly what keeps a dismissed menu painting and taking clicks.
+        // `track_panel_stack` latches `open` to false for everything it
+        // drops, so "open" and "in the stack" cannot disagree.
+        if panel_stack.open().contains(&entity) {
+            continue;
+        }
         let Some(&node_id) = entity_to_taffy.get(&entity) else {
             continue;
         };
@@ -631,6 +683,9 @@ pub(crate) fn compute_ui_nodes(
             ),
             entity,
         );
+        if root_node.visible {
+            anchor_rects.insert(entity, rect);
+        }
         sequence += 1;
 
         if let Some(children) = children {
@@ -638,11 +693,80 @@ pub(crate) fn compute_ui_nodes(
                 &taffy,
                 abs_pos,
                 clip_rect,
+                root_node.z_index,
+                root_node.visible,
                 children,
                 &ui_nodes,
                 &entity_to_taffy,
                 &mut cmd,
                 &mut sequence,
+                &mut anchor_rects,
+            );
+        }
+    }
+
+    // Panels are placed in stack order so a submenu's owner already has a
+    // rect by the time the submenu is placed. Placing them last also puts
+    // them above their same-layer neighbours in `sequence`.
+    for panel_entity in panel_stack.open() {
+        let Some((_, mut panel)) = panels.get_entity(*panel_entity) else {
+            continue;
+        };
+        let Some((entity, root_node, children)) = ui_roots.get_entity(*panel_entity) else {
+            continue;
+        };
+        let Some(&node_id) = entity_to_taffy.get(&entity) else {
+            continue;
+        };
+        let Ok(layout) = taffy.layout(node_id) else {
+            continue;
+        };
+        let size = Vec2::new(layout.size.width, layout.size.height);
+
+        let Some(anchor) = panel.target.anchor_box(&anchor_rects) else {
+            // Anchored to something not laid out this pass; leave it where it
+            // is rather than snapping it to the origin.
+            continue;
+        };
+
+        let placement = crate::anchor::place(anchor, size, logical_size, &panel);
+        // Crate-written output: whatever side the caller asked for in
+        // `side`, this is the side `place` actually settled on after flip.
+        panel.resolved_side = placement.side;
+        let rect = UIBox {
+            min: placement.origin,
+            size,
+        };
+        let clip_rect = node_clip(rect, window_clip, root_node);
+        let layer = root_node.z_index;
+        cmd.insert(
+            (
+                UILayout {
+                    rect,
+                    content_rect: root_node.padding.inset_box(rect),
+                    clip_rect,
+                    paint_order: paint_order(layer, sequence),
+                },
+                SyncWithRenderWorld,
+            ),
+            entity,
+        );
+        anchor_rects.insert(entity, rect);
+        sequence += 1;
+
+        if let Some(children) = children {
+            write_absolute_positions(
+                &taffy,
+                placement.origin,
+                clip_rect,
+                layer,
+                root_node.visible,
+                children,
+                &ui_nodes,
+                &entity_to_taffy,
+                &mut cmd,
+                &mut sequence,
+                &mut anchor_rects,
             );
         }
     }
@@ -783,19 +907,32 @@ fn write_absolute_positions(
     taffy: &TaffyTree<TextMeasure>,
     parent_origin: Vec2,
     parent_clip: UIBox,
+    parent_layer: i32,
+    parent_visible: bool,
     children: &Children,
     ui_nodes: &Query<(Entity, &UINode, Option<&Children>)>,
     entity_to_taffy: &HashMap<Entity, NodeId>,
     cmd: &mut CommandQueue,
     sequence: &mut i64,
+    anchor_rects: &mut HashMap<Entity, UIBox>,
 ) {
     let mut stack = children
         .iter()
         .copied()
-        .map(|entity| (parent_origin, parent_clip, entity))
+        .map(|entity| {
+            (
+                parent_origin,
+                parent_clip,
+                parent_layer,
+                parent_visible,
+                entity,
+            )
+        })
         .collect::<Vec<_>>();
     stack.reverse();
-    while let Some((origin, inherited_clip, child_entity)) = stack.pop() {
+    while let Some((origin, inherited_clip, inherited_layer, inherited_visible, child_entity)) =
+        stack.pop()
+    {
         let Some(&node_id) = entity_to_taffy.get(&child_entity) else {
             continue;
         };
@@ -812,6 +949,7 @@ fn write_absolute_positions(
         };
         let rect = UIBox { min: abs_pos, size };
         let clip_rect = node_clip(rect, inherited_clip, node);
+        let layer = effective_layer(inherited_layer, node.z_index);
 
         cmd.insert(
             (
@@ -819,19 +957,28 @@ fn write_absolute_positions(
                     rect,
                     content_rect: node.padding.inset_box(rect),
                     clip_rect,
-                    paint_order: paint_order(node.z_index, *sequence),
+                    paint_order: paint_order(layer, *sequence),
                 },
                 SyncWithRenderWorld,
             ),
             child_entity,
         );
+        // A node under a hidden ancestor is still walked and still has a
+        // Taffy layout, but that layout is the collapsed one its ancestor
+        // left behind. Recording it would let a panel anchor to a rect that
+        // is nowhere near where the user last saw the node, so only nodes
+        // that are actually on screen become anchors.
+        let visible = inherited_visible && node.visible;
+        if visible {
+            anchor_rects.insert(child_entity, rect);
+        }
         *sequence += 1;
 
         if let Some(grand_children) = grand_children {
             let mut descendants = grand_children
                 .iter()
                 .copied()
-                .map(|entity| (abs_pos, clip_rect, entity))
+                .map(|entity| (abs_pos, clip_rect, layer, visible, entity))
                 .collect::<Vec<_>>();
             descendants.reverse();
             stack.extend(descendants);
@@ -860,6 +1007,16 @@ fn node_clip(rect: UIBox, inherited: UIBox, node: &UINode) -> UIBox {
         }
         clipped
     }
+}
+
+/// The layer a node paints on, given the one it inherits.
+///
+/// `max` rather than a sum: the editor already repeats a layer on every node
+/// of a subtree by hand, so summing would turn a 71 under a 70 into a 141 and
+/// break every call site that does it. Taking the larger of the two leaves
+/// those untouched while still letting a container lift everything inside it.
+fn effective_layer(inherited: i32, own: i32) -> i32 {
+    inherited.max(own)
 }
 
 fn paint_order(z_index: i32, sequence: i64) -> i64 {
@@ -1641,5 +1798,28 @@ mod tests {
     #[test]
     fn explicit_z_index_dominates_tree_sequence() {
         assert!(paint_order(1, 0) > paint_order(0, i32::MAX as i64));
+    }
+
+    #[test]
+    fn a_child_paints_on_its_parents_layer_unless_it_asks_for_more() {
+        // A floating panel lifts its whole subtree: a menu row that never
+        // mentions z_index must not paint back down at layer 0.
+        assert_eq!(effective_layer(200, 0), 200);
+        // And a child that asks for more still gets it, which is what the
+        // editor's tab close button (71 under a 70 strip) relies on.
+        assert_eq!(effective_layer(70, 71), 71);
+        // A child asking for less keeps its parent's layer rather than
+        // dropping below the panel it lives in.
+        assert_eq!(effective_layer(70, 10), 70);
+    }
+
+    #[test]
+    fn paint_order_packs_the_layer_above_the_sequence() {
+        // The renderer recovers the layer with an arithmetic shift, so the
+        // sequence must never bleed into it.
+        assert_eq!(paint_order(3, 0) >> 32, 3);
+        assert_eq!(paint_order(3, i32::MAX as i64) >> 32, 3);
+        assert!(paint_order(3, 1) > paint_order(3, 0));
+        assert!(paint_order(4, 0) > paint_order(3, i32::MAX as i64));
     }
 }

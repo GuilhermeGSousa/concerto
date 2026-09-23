@@ -11,7 +11,9 @@ use render::components::render_entity::RenderEntity;
 use std::hash::{Hash, Hasher};
 use window::plugin::Window;
 
-use crate::{node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem};
+use crate::{
+    node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem, theme::UITheme,
+};
 
 pub mod fonts;
 pub(crate) mod resources;
@@ -57,6 +59,17 @@ pub struct TextComponent {
     /// Whether text too long for its box is cut short with an ellipsis rather
     /// than simply clipped. Only meaningful for unwrapped single-line text.
     pub ellipsis: bool,
+}
+
+impl TextComponent {
+    pub fn from_theme(text: impl Into<String>, theme: &UITheme) -> Self {
+        Self {
+            text: text.into(),
+            font_size: theme.font_size_md,
+            line_height: theme.line_height(theme.font_size_md),
+            ..Default::default()
+        }
+    }
 }
 
 impl Default for TextComponent {
