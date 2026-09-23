@@ -202,16 +202,24 @@ that schedule is known:
 4. **Check the explicit graph.** If it contains a cycle, panic with a message
    naming the systems and sets on the cycle, replacing the current bare
    `expect`.
-5. **Reachability.** Compute reachability bitsets over the explicit-only graph
-   from its topological order.
-6. **Implicit edges.** For each pair of systems whose `SystemAccess` is not
-   disjoint and where neither is reachable from the other, add an edge in
-   registration order — today's rule, applied only where nothing explicit
-   already decides. An explicit constraint therefore wins over registration
-   order instead of colliding with it.
+5. **Reachability.** Compute a reachability bitset per node over the
+   explicit-only graph.
+6. **Implicit edges.** Walk conflicting pairs in registration order and add
+   `earlier -> later` — today's rule — but skip any edge whose head already
+   reaches its tail, and update the reachability bitsets after each insertion.
+   The check must be transitive, not pairwise: a sync point (or any third
+   system) between two explicitly ordered systems would otherwise close a cycle
+   through a path neither endpoint names. Skipping only edges that would close
+   a cycle keeps the graph acyclic by construction, so an explicit constraint
+   wins over registration order instead of colliding with it. Updating a bitset
+   on insertion is `O(V²/64)` per edge on schedules of a few hundred systems,
+   at compile time only.
 7. **Sync points.** Unchanged in meaning: a system whose access needs apply and
    that is not itself a sync point gets one after it. Sync points are inserted
-   during this pass rather than during registration.
+   during this pass rather than during registration, before step 6, so they
+   participate in implicit edges exactly as they do today. They are excluded
+   from the `TypeId` index of step 1 — every `SyncPoint` shares one `TypeId`,
+   and they are never ordering targets.
 8. Toposort, initialize, hand off to the executor exactly as now.
 
 A system whose `TypeId` appears more than once (the same function added twice)
@@ -295,6 +303,8 @@ In `crates/ecs`, unit tests over `Schedule`:
 - two access-conflicting systems with no explicit constraint keep registration
   order
 - a cycle in the explicit graph panics with both names in the message
+- an explicit constraint reversing registration order across an intervening
+  sync point compiles (the transitive skip in step 6) rather than panicking
 - `.chain()` on a set tuple and on a system tuple produces consecutive edges
 
 Integration test: a schedule where a counter system is the target of two
