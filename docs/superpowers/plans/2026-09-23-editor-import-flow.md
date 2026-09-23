@@ -793,7 +793,7 @@ use std::collections::VecDeque;
 use std::thread::JoinHandle;
 
 use app::{schedule_groups::Update, App, Plugin};
-use ecs::{Res, ResMut, Resource};
+use ecs::{ResMut, Resource};
 
 use crate::project::{EditorCommand, EditorCommands, ProjectState};
 
@@ -841,12 +841,7 @@ impl Plugin for ImportPlugin {
     }
 }
 
-fn drive_imports(
-    mut queue: ResMut<ImportQueue>,
-    mut state: ResMut<ProjectState>,
-    project: Res<ProjectState>,
-) {
-    let _ = &project;
+fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>) {
     if queue.job.is_some() {
         return;
     }
@@ -894,12 +889,6 @@ fn finish_import(
 }
 ```
 
-Remove the unused `project: Res<ProjectState>` parameter and the `let _ = &project;` line from `drive_imports` — a system cannot take both `Res` and `ResMut` of the same resource. The signature is:
-
-```rust
-fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>) {
-```
-
 - [ ] **Step 4: Register the plugin**
 
 In `crates/editor/src/lib.rs`, in `EditorPlugin::build`, after `app.register_plugin(content::ContentPlugin);`:
@@ -943,79 +932,57 @@ git commit -m "Run queued imports one at a time and refresh on completion"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `crates/editor/tests/import_dialog.rs`:
+Create `crates/editor/tests/import_dialog.rs`. `confirm` and `cancel` take plain
+`&mut` references rather than `ResMut`, so they are testable without an `App`
+and the dialog's systems stay thin wrappers around them.
 
 ```rust
 //! Confirming the staging dialog queues exactly the importable rows.
-use app::App;
-use editor::import::{stage_sources, ImportPlugin, ImportQueue, ImportStaging, RowState};
-use editor::project::{discover_project, EditorCommands, ProjectPlugin, ProjectState};
-use editor::asset_editor::AssetEditorCommands;
-use essential::assets::asset_server::AssetServer;
-use ui::interaction::{HoveredNode, UIClick};
-use ui::theme::UITheme;
+use editor::import::{dialog, stage_sources, ImportQueue, ImportStaging, RowState};
 
-fn editor(root: &std::path::Path) -> App {
-    std::fs::create_dir_all(root.join("content")).expect("content");
-    let mut app = App::new();
-    app.insert_resource(EditorCommands::default());
-    app.insert_resource(AssetEditorCommands::default());
-    app.insert_resource(AssetServer::new());
-    app.insert_resource(UITheme::default());
-    app.insert_resource(HoveredNode::default());
-    app.register_event::<UIClick>();
-    let mut state = ProjectState::default();
-    state.project = Some(discover_project(root).expect("discover"));
-    app.insert_resource(state);
-    app.register_plugin(ProjectPlugin);
-    app.register_plugin(ImportPlugin);
-    app.finish_plugin_build();
-    app
+fn staged(sources: &[&str]) -> ImportStaging {
+    ImportStaging {
+        rows: stage_sources(sources.iter().map(std::path::PathBuf::from).collect()),
+        visible: true,
+    }
 }
 
 #[test]
 fn confirming_queues_only_the_importable_rows() {
-    let project = tempfile::tempdir().expect("tempdir");
-    let mut app = editor(project.path());
-    let mut rows = stage_sources(vec![
-        std::path::PathBuf::from("/tmp/hero.obj"),
-        std::path::PathBuf::from("/tmp/notes.txt"),
-    ]);
-    rows[1].state = RowState::Rejected("no importer handles '.txt'".into());
-    {
-        let staging = app.get_resource_mut::<ImportStaging>().expect("staging");
-        staging.rows = rows;
-        staging.visible = true;
-    }
-    editor::import::dialog::confirm(
-        app.get_resource_mut::<ImportStaging>().expect("staging"),
-        app.get_resource_mut::<ImportQueue>().expect("queue"),
-    );
-    let queue = app.get_resource::<ImportQueue>().expect("queue");
+    let mut staging = staged(&["/tmp/hero.obj", "/tmp/notes.txt"]);
+    staging.rows[1].state = RowState::Rejected("no importer handles '.txt'".into());
+    let mut queue = ImportQueue::default();
+
+    dialog::confirm(&mut staging, &mut queue);
+
     assert_eq!(queue.remaining(), 1, "the rejected row is not queued");
-    let staging = app.get_resource::<ImportStaging>().expect("staging");
     assert!(!staging.visible, "confirming closes the dialog");
     assert!(staging.rows.is_empty(), "confirming clears the staged rows");
 }
 
 #[test]
 fn confirming_with_no_importable_rows_queues_nothing() {
-    let project = tempfile::tempdir().expect("tempdir");
-    let mut app = editor(project.path());
-    let mut rows = stage_sources(vec![std::path::PathBuf::from("/tmp/notes.txt")]);
-    rows[0].state = RowState::Rejected("no importer handles '.txt'".into());
-    {
-        let staging = app.get_resource_mut::<ImportStaging>().expect("staging");
-        staging.rows = rows;
-        staging.visible = true;
-    }
-    editor::import::dialog::confirm(
-        app.get_resource_mut::<ImportStaging>().expect("staging"),
-        app.get_resource_mut::<ImportQueue>().expect("queue"),
-    );
-    let queue = app.get_resource::<ImportQueue>().expect("queue");
+    let mut staging = staged(&["/tmp/notes.txt"]);
+    staging.rows[0].state = RowState::Rejected("no importer handles '.txt'".into());
+    let mut queue = ImportQueue::default();
+
+    dialog::confirm(&mut staging, &mut queue);
+
     assert_eq!(queue.remaining(), 0);
     assert!(!queue.is_running());
+    assert!(!staging.visible, "confirming closes the dialog even with nothing to do");
+}
+
+#[test]
+fn cancelling_discards_the_rows_without_queueing_them() {
+    let mut staging = staged(&["/tmp/hero.obj"]);
+    let mut queue = ImportQueue::default();
+
+    dialog::cancel(&mut staging);
+
+    assert!(staging.rows.is_empty());
+    assert!(!staging.visible);
+    assert_eq!(queue.remaining(), 0);
 }
 ```
 
@@ -1105,6 +1072,7 @@ impl Plugin for DialogPlugin {
         app.add_system(Startup, build_dialog);
         app.add_system(LateUpdate, edit_destinations);
         app.add_system(LateUpdate, handle_buttons);
+        app.add_system(LateUpdate, handle_keys);
         app.add_system(LateUpdate, render_dialog);
     }
 }
@@ -1121,18 +1089,45 @@ impl Plugin for DialogPlugin {
 
 `render_dialog` sets the scrim's `visible` from `staging.visible`, fills each pooled row's labels from `staging.rows`, hides unused rows, and colours each status message: `theme.text_muted` for `RowState::New`, `theme.warning` with the text `replaces existing, keeps asset IDs` for `RowState::Replaces`, and `theme.error` with the reason for `RowState::Rejected`.
 
-`handle_buttons` reads `UIClick`, matches `DialogAction`, and calls the two functions below.
+`handle_buttons` reads `UIClick`, matches the event entity against `DialogAction`,
+and calls `confirm(&mut staging, &mut queue)` or `cancel(&mut staging)`.
+
+`handle_keys` gives the dialog its keyboard shortcuts:
+
+```rust
+fn handle_keys(
+    input: Res<window::input::Input>,
+    mut staging: ResMut<ImportStaging>,
+    mut queue: ResMut<ImportQueue>,
+) {
+    if !staging.visible {
+        return;
+    }
+    let pressed = |code| {
+        input.is_just_pressed(winit::keyboard::PhysicalKey::Code(code))
+    };
+    if pressed(winit::keyboard::KeyCode::Escape) {
+        cancel(&mut staging);
+    } else if pressed(winit::keyboard::KeyCode::Enter) {
+        confirm(&mut staging, &mut queue);
+    }
+}
+```
+
+`UITextInput` already emits `UITextInputSubmitted` and `UITextInputCancelled` for a
+focused field, so check whether the focused-field case double-fires with this system
+when running Task 8; if it does, gate `handle_keys` on no field being focused.
 
 ```rust
 /// Queues every importable row and closes the dialog.
-pub fn confirm(mut staging: ResMut<ImportStaging>, mut queue: ResMut<ImportQueue>) {
+pub fn confirm(staging: &mut ImportStaging, queue: &mut ImportQueue) {
     let rows = std::mem::take(&mut staging.rows);
     queue.enqueue(rows);
     staging.visible = false;
 }
 
 /// Discards the staged rows and closes the dialog.
-pub fn cancel(mut staging: ResMut<ImportStaging>) {
+pub fn cancel(staging: &mut ImportStaging) {
     staging.rows.clear();
     staging.visible = false;
 }
@@ -1352,7 +1347,7 @@ let import = cmd
         UINode {
             flex_shrink: 0.0,
             margin: UIRect {
-                left: UIValue::Auto,
+                left: 8.0,
                 ..Default::default()
             },
             padding: UIRect::axes(2.0, 7.0),
