@@ -3,11 +3,11 @@
 //! Tabs are deliberately just views over editor document entities.  The
 //! document owns the asset and its state; this module owns the small amount of
 //! chrome needed to activate or close it.
-use app::{schedule_groups::LateUpdate, App, Plugin};
+use app::{App, Plugin, schedule_groups::LateUpdate};
 use ecs::query::filter::With;
 use ecs::{
-    command::CommandQueue, entity::hierarchy::ChildOf, events::event_reader::EventReader,
-    Component, Entity, Query, Res, ResMut,
+    Component, Entity, Query, Res, ResMut, command::CommandQueue, entity::hierarchy::ChildOf,
+    events::event_reader::EventReader,
 };
 use taffy::FlexDirection;
 use ui::{
@@ -19,6 +19,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 use window::winit_events::WindowEvent;
 use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
@@ -75,6 +76,9 @@ fn handle_tab_clicks(
     mut commands: ResMut<AssetEditorCommands>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         if let Some(close) = closes.get_entity(click.entity) {
             commands
                 .0

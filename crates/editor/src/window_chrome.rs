@@ -6,13 +6,13 @@
 //! (see [`WindowGestureRegion`]); all this module does is publish where the
 //! frame's edges and title band currently are.
 use app::{
-    schedule_groups::{LateUpdate, Startup},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup},
 };
 use color::Color;
 use ecs::{
-    command::CommandQueue, events::event_reader::EventReader, Component, Query, Res, ResMut,
-    Resource,
+    Component, Query, Res, ResMut, Resource, command::CommandQueue,
+    events::event_reader::EventReader,
 };
 use taffy::{FlexDirection, Position};
 use ui::{
@@ -23,6 +23,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 use window::plugin::{CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone};
 use winit::window::ResizeDirection;
 
@@ -354,6 +355,9 @@ fn handle_controls(
     mut close: ResMut<CloseRequest>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         let Some(control) = controls.get_entity(click.entity) else {
             continue;
         };

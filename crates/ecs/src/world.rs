@@ -19,7 +19,7 @@ use crate::{
     archetype::Archetype,
     common::generate_type_id,
     component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
-    entity::{Entity, EntityLocation, EntityType},
+    entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
     system::input::SystemInput,
     table::TableRowIndex,
@@ -169,6 +169,11 @@ impl World {
     pub fn insert<T: ComponentBundle>(&mut self, bundle: T, entity: Entity) {
         self.insert_internal(bundle, entity);
         self.flush_commands();
+    }
+
+    /// Version of a live entity's component set, or `None` if `entity` is not live.
+    pub fn structural_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
+        self.entity_store.structural_version(entity)
     }
 
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
@@ -844,7 +849,7 @@ impl<'w> RestrictedWorld<'w> {
     /// Queues an arbitrary command after the enclosing operation, for structural work
     /// whose conditions must be re-checked at flush time.
     pub(crate) fn queue_command<C: Command + 'static>(&mut self, command: C) {
-        self.commands().queue(command);
+        self.commands().push(command);
     }
 
     /// Queues insertion after the enclosing operation.

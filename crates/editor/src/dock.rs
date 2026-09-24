@@ -9,8 +9,8 @@
 //! memory mean something.
 use std::collections::HashMap;
 
-use app::{schedule_groups::Startup, App, Plugin};
-use ecs::{command::CommandQueue, system::NonSendMarker, Entity, Res, ResMut, Resource};
+use app::{App, Plugin, schedule_groups::Startup};
+use ecs::{Entity, Res, ResMut, Resource, command::CommandQueue, system::NonSendMarker};
 use taffy::{FlexDirection, Position};
 use ui::{
     interaction::Interactable,

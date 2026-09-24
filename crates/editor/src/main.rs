@@ -1,7 +1,7 @@
 use app::{
+    App,
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
-    App,
 };
 use debug_gizmos::DebugGizmosPlugin;
 use editor::EditorPlugin;

@@ -16,16 +16,11 @@ pub enum SelectionKind {
 #[derive(Resource, Default)]
 pub struct Selection {
     current: Option<SelectionKind>,
-    revision: u64,
 }
 
 impl Selection {
     pub fn current(&self) -> Option<SelectionKind> {
         self.current
-    }
-
-    pub fn revision(&self) -> u64 {
-        self.revision
     }
 
     pub fn entity(&self) -> Option<Entity> {
@@ -71,10 +66,7 @@ impl Selection {
     }
 
     fn replace(&mut self, next: Option<SelectionKind>) {
-        if self.current != next {
-            self.current = next;
-            self.revision += 1;
-        }
+        self.current = next;
     }
 }
 
@@ -82,27 +74,6 @@ impl Selection {
 mod tests {
     use super::*;
     use ecs::World;
-
-    #[test]
-    fn revision_only_moves_on_a_real_change() {
-        let mut world = World::default();
-        let entity = world.spawn(());
-        let mut selection = Selection::default();
-
-        selection.select_entity(entity);
-        let after_first = selection.revision();
-        assert!(
-            after_first > 0,
-            "selecting something must bump the revision"
-        );
-
-        selection.select_entity(entity);
-        assert_eq!(
-            selection.revision(),
-            after_first,
-            "re-selecting the same thing must not invalidate every panel"
-        );
-    }
 
     #[test]
     fn clearing_a_different_entity_leaves_the_selection_alone() {

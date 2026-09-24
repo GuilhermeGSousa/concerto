@@ -1,9 +1,9 @@
 //! Exercise the real tab systems without a window or GPU.
-use app::{schedule_groups::LateUpdate, App};
+use app::{App, schedule_groups::LateUpdate};
 use ecs::{
+    Entity, World,
     entity::hierarchy::{ChildOf, Children},
     events::event_channel::EventChannel,
-    Entity, World,
 };
 use editor::{
     asset_editor::{ActiveEditor, AssetEditorCommand, AssetEditorCommands, EditorDocument},
@@ -16,6 +16,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 use window::winit_events::WindowEvent;
 
 fn layout(x: f32, width: f32) -> UILayout {
@@ -116,10 +117,12 @@ fn tabs_build_in_order_inside_scroll_content_and_route_clicks() {
     clicks.push_event(UIClick {
         entity: children[1],
         position: Vec2::ZERO,
+        button: MouseButton::Left,
     });
     clicks.push_event(UIClick {
         entity: close,
         position: Vec2::ZERO,
+        button: MouseButton::Left,
     });
     tick(&mut app);
     let commands = app.get_resource_mut::<AssetEditorCommands>().unwrap();

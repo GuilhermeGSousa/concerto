@@ -2,25 +2,25 @@
 use anyhow::Result;
 use app::schedule_groups::Update;
 use ecs::{
+    Component, Entity, IntoSystem, Query, Res,
     command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::{ChildOf, Children},
-    Component, Entity, IntoSystem, Query, Res,
 };
 use editor::{
     asset_editor::{
-        asset_request_is_current, finish_asset_request, process_editor_commands, ActiveEditor,
-        AssetEditor, AssetEditorAppExt, AssetEditorCommand, AssetEditorCommands,
-        AssetEditorRegistry, EditorDocument,
+        ActiveEditor, AssetEditor, AssetEditorAppExt, AssetEditorCommand, AssetEditorCommands,
+        AssetEditorRegistry, EditorDocument, asset_request_is_current, finish_asset_request,
+        process_editor_commands,
     },
     project::{AssetEntry, Project, ProjectState},
 };
 use essential::assets::{
+    Asset, AssetId,
     asset_server::AssetServer,
     content::{
-        read_content_asset, write_content_asset, AssetRegistry, ContentAssetHeader,
-        ImportProvenance, CONTENT_FORMAT_VERSION,
+        AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
+        read_content_asset, write_content_asset,
     },
-    Asset, AssetId,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]

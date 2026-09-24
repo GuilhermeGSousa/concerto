@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use ecs::{command::CommandQueue, component::Tick, Component, Entity, Resource};
+use ecs::{Component, Entity, Resource, command::CommandQueue, component::Tick};
 use editable::{Editable, PropertyPath};
 use ui::theme::UITheme;
 

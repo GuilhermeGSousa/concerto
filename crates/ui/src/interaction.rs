@@ -19,16 +19,128 @@ use crate::{material::UIMaterial, node::UILayout};
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct HoveredNode(Option<Entity>);
 
-/// Shared pointer routing state. Captured widgets continue receiving drag and
-/// release events after the pointer leaves their bounds.
+/// Shared pointer routing state.
 #[derive(Resource, Default)]
 pub struct UIInputState {
     pub hovered: Option<Entity>,
-    pub pressed: Option<Entity>,
-    pub captured: Option<Entity>,
+    left: ButtonCapture,
+    right: ButtonCapture,
+    middle: ButtonCapture,
+}
+
+impl UIInputState {
+    fn capture_mut(&mut self, button: MouseButton) -> Option<&mut ButtonCapture> {
+        match button {
+            MouseButton::Left => Some(&mut self.left),
+            MouseButton::Right => Some(&mut self.right),
+            MouseButton::Middle => Some(&mut self.middle),
+            _ => None,
+        }
+    }
+
+    fn capture(&self, button: MouseButton) -> Option<&ButtonCapture> {
+        match button {
+            MouseButton::Left => Some(&self.left),
+            MouseButton::Right => Some(&self.right),
+            MouseButton::Middle => Some(&self.middle),
+            _ => None,
+        }
+    }
+
+    /// The node this button pressed on, if it is still down.
+    pub fn pressed(&self, button: MouseButton) -> Option<Entity> {
+        self.capture(button).and_then(|capture| capture.pressed)
+    }
+
+    /// The node this button is routing events to, wherever the pointer is.
+    pub fn captured(&self, button: MouseButton) -> Option<Entity> {
+        self.capture(button).and_then(|capture| capture.captured)
+    }
+
+    /// Test-only escape hatch: forces a button's capture without going through `advance_capture`.
+    #[doc(hidden)]
+    pub fn set_captured(&mut self, button: MouseButton, entity: Option<Entity>) {
+        if let Some(capture) = self.capture_mut(button) {
+            capture.captured = entity;
+        }
+    }
+}
+
+#[derive(Default)]
+struct ButtonCapture {
+    pressed: Option<Entity>,
+    captured: Option<Entity>,
     press_origin: Option<Vec2>,
     last_cursor: Option<Vec2>,
     dragged: bool,
+}
+
+struct CaptureOutcome {
+    down: Option<Entity>,
+    up: Option<Entity>,
+    click: Option<Entity>,
+    drag: Option<Entity>,
+    delta: Vec2,
+}
+
+impl CaptureOutcome {
+    fn none() -> Self {
+        Self {
+            down: None,
+            up: None,
+            click: None,
+            drag: None,
+            delta: Vec2::ZERO,
+        }
+    }
+}
+
+const DRAG_THRESHOLD: f32 = 4.0;
+
+fn advance_capture(
+    capture: &mut ButtonCapture,
+    state: InputState,
+    hit: Option<Entity>,
+    cursor: Vec2,
+) -> CaptureOutcome {
+    let mut outcome = CaptureOutcome::none();
+    match state {
+        InputState::Pressed => {
+            capture.pressed = hit;
+            capture.captured = hit;
+            capture.press_origin = hit.map(|_| cursor);
+            capture.last_cursor = Some(cursor);
+            capture.dragged = false;
+            outcome.down = hit;
+        }
+        InputState::Down => {
+            if let Some(entity) = capture.captured {
+                capture.dragged |= capture
+                    .press_origin
+                    .is_some_and(|origin| origin.distance(cursor) >= DRAG_THRESHOLD);
+                outcome.delta = cursor - capture.last_cursor.unwrap_or(cursor);
+                outcome.drag = Some(entity);
+            }
+            capture.last_cursor = Some(cursor);
+        }
+        InputState::Released => {
+            if let Some(entity) = capture.captured {
+                outcome.up = Some(entity);
+                if capture.pressed == hit && !capture.dragged {
+                    outcome.click = Some(entity);
+                }
+            }
+            capture.pressed = None;
+            capture.captured = None;
+            capture.press_origin = None;
+            capture.last_cursor = Some(cursor);
+            capture.dragged = false;
+        }
+        InputState::Up => {
+            capture.last_cursor = Some(cursor);
+        }
+    }
+    outcome
 }
 
 /// Opts a node into hit testing and click events.
@@ -74,23 +186,26 @@ pub struct UIInteractionStyle {
     pub disabled: Color,
 }
 
-/// Fired when the left button is released over the same node it pressed.
+/// Fired when a button is released over the same node it pressed.
 #[derive(Event)]
 pub struct UIClick {
     pub entity: Entity,
     pub position: Vec2,
+    pub button: MouseButton,
 }
 
 #[derive(Event)]
 pub struct UIPointerDown {
     pub entity: Entity,
     pub position: Vec2,
+    pub button: MouseButton,
 }
 
 #[derive(Event)]
 pub struct UIPointerUp {
     pub entity: Entity,
     pub position: Vec2,
+    pub button: MouseButton,
 }
 
 #[derive(Event)]
@@ -98,6 +213,7 @@ pub struct UIDrag {
     pub entity: Entity,
     pub position: Vec2,
     pub delta: Vec2,
+    pub button: MouseButton,
 }
 
 #[derive(Event)]
@@ -162,54 +278,42 @@ pub(crate) fn update_ui_interaction(
     **hovered = hit;
     state.hovered = hit;
 
-    match input.get_mouse_button_state(MouseButton::Left) {
-        InputState::Pressed => {
-            state.pressed = hit;
-            state.captured = hit;
-            state.press_origin = hit.map(|_| cursor);
-            state.dragged = false;
-            if let Some(entity) = hit {
-                down_writer.write(UIPointerDown {
-                    entity,
-                    position: cursor,
-                });
-            }
+    for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
+        let input_state = input.get_mouse_button_state(button);
+        let Some(capture) = state.capture_mut(button) else {
+            continue;
+        };
+        let outcome = advance_capture(capture, input_state, hit, cursor);
+        if let Some(entity) = outcome.down {
+            down_writer.write(UIPointerDown {
+                entity,
+                position: cursor,
+                button,
+            });
         }
-        InputState::Down => {
-            if let Some(entity) = state.captured {
-                state.dragged |= state
-                    .press_origin
-                    .is_some_and(|origin| origin.distance(cursor) >= 4.0);
-                let delta = cursor - state.last_cursor.unwrap_or(cursor);
-                drag_writer.write(UIDrag {
-                    entity,
-                    position: cursor,
-                    delta,
-                });
-            }
+        if let Some(entity) = outcome.up {
+            up_writer.write(UIPointerUp {
+                entity,
+                position: cursor,
+                button,
+            });
         }
-        InputState::Released => {
-            if let Some(entity) = state.captured {
-                up_writer.write(UIPointerUp {
-                    entity,
-                    position: cursor,
-                });
-                if state.pressed == hit && !state.dragged {
-                    click_writer.write(UIClick {
-                        entity,
-                        position: cursor,
-                    });
-                }
-            }
-            state.pressed = None;
-            state.captured = None;
-            state.press_origin = None;
-            state.dragged = false;
+        if let Some(entity) = outcome.click {
+            click_writer.write(UIClick {
+                entity,
+                position: cursor,
+                button,
+            });
         }
-        InputState::Up => {}
+        if let Some(entity) = outcome.drag {
+            drag_writer.write(UIDrag {
+                entity,
+                position: cursor,
+                delta: outcome.delta,
+                button,
+            });
+        }
     }
-
-    state.last_cursor = Some(cursor);
 }
 
 /// Drives [`UIMaterial::color`] from [`UIInteractionStyle`] each frame.
@@ -251,6 +355,114 @@ pub(crate) fn apply_interaction_styles(
 mod tests {
     use crate::node::{UIBox, UILayout};
     use glam::Vec2;
+
+    use super::{ButtonCapture, Interactable, UIInputState, advance_capture};
+    use ecs::{World, entity::Entity};
+    use window::input::{InputState, MouseButton};
+
+    fn entities(count: usize) -> Vec<Entity> {
+        let mut world = World::default();
+        (0..count).map(|_| world.spawn(Interactable)).collect()
+    }
+
+    #[test]
+    fn a_press_and_release_on_the_same_node_is_a_click() {
+        let mut capture = ButtonCapture::default();
+        let node = Some(entities(1)[0]);
+
+        let down = advance_capture(&mut capture, InputState::Pressed, node, Vec2::ZERO);
+        assert_eq!(down.down, node);
+        assert_eq!(down.click, None);
+
+        let up = advance_capture(&mut capture, InputState::Released, node, Vec2::ZERO);
+        assert_eq!(up.up, node);
+        assert_eq!(up.click, node, "press and release on one node is a click");
+    }
+
+    #[test]
+    fn releasing_over_a_different_node_is_not_a_click() {
+        let ids = entities(2);
+        let mut capture = ButtonCapture::default();
+        advance_capture(&mut capture, InputState::Pressed, Some(ids[0]), Vec2::ZERO);
+
+        let up = advance_capture(&mut capture, InputState::Released, Some(ids[1]), Vec2::ZERO);
+        assert_eq!(up.up, Some(ids[0]), "the captured node still gets the up");
+        assert_eq!(up.click, None, "but sliding off it cancels the click");
+    }
+
+    #[test]
+    fn a_drag_past_the_threshold_cancels_the_click() {
+        let mut capture = ButtonCapture::default();
+        let node = Some(entities(1)[0]);
+        advance_capture(&mut capture, InputState::Pressed, node, Vec2::ZERO);
+
+        let held = advance_capture(&mut capture, InputState::Down, node, Vec2::new(40.0, 0.0));
+        assert_eq!(held.drag, node);
+        assert_eq!(
+            held.delta,
+            Vec2::new(40.0, 0.0),
+            "the first drag reports movement since the press"
+        );
+
+        let up = advance_capture(
+            &mut capture,
+            InputState::Released,
+            node,
+            Vec2::new(40.0, 0.0),
+        );
+        assert_eq!(up.click, None, "a drag is not a click");
+    }
+
+    #[test]
+    fn a_captured_node_keeps_receiving_drags_after_the_pointer_leaves_it() {
+        let handle = entities(1)[0];
+        let mut capture = ButtonCapture::default();
+        advance_capture(&mut capture, InputState::Pressed, Some(handle), Vec2::ZERO);
+
+        let held = advance_capture(&mut capture, InputState::Down, None, Vec2::new(5.0, 9.0));
+        assert_eq!(
+            held.drag,
+            Some(handle),
+            "a split handle dragged off its own bounds must keep the pointer"
+        );
+    }
+
+    #[test]
+    fn a_press_on_empty_space_captures_nothing() {
+        let mut capture = ButtonCapture::default();
+        let down = advance_capture(&mut capture, InputState::Pressed, None, Vec2::ZERO);
+        assert_eq!(down.down, None);
+
+        let up = advance_capture(&mut capture, InputState::Released, None, Vec2::ZERO);
+        assert_eq!(up.up, None);
+        assert_eq!(up.click, None);
+    }
+
+    #[test]
+    fn each_button_captures_independently() {
+        let ids = entities(2);
+        let mut state = UIInputState::default();
+        let handle = Some(ids[0]);
+        let row = Some(ids[1]);
+
+        advance_capture(&mut state.left, InputState::Pressed, handle, Vec2::ZERO);
+        let right = advance_capture(&mut state.right, InputState::Pressed, row, Vec2::ZERO);
+
+        assert_eq!(right.down, row);
+        assert_eq!(
+            state.captured(MouseButton::Left),
+            handle,
+            "the left button must still own the node it grabbed"
+        );
+
+        let left = advance_capture(
+            &mut state.left,
+            InputState::Down,
+            handle,
+            Vec2::new(9.0, 0.0),
+        );
+        assert_eq!(left.drag, handle, "and must keep receiving its drags");
+    }
 
     #[test]
     fn clip_rect_excludes_visually_clipped_area() {

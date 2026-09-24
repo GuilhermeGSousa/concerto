@@ -89,7 +89,7 @@ pub struct TextInputResource;
 /// - `TextComponent::text` is updated every frame to reflect the current
 ///   value + cursor indicator (focused) or placeholder (empty + unfocused).
 pub(crate) fn update_text_inputs(
-    focused: Res<FocusedWidget>,
+    mut focused: ResMut<FocusedWidget>,
     input: Res<Input>,
     mut clipboard: ResMut<window::plugin::WindowClipboard>,
     text_inputs: Query<(Entity, &mut UITextInput, &mut TextComponent)>,
@@ -206,6 +206,9 @@ pub(crate) fn update_text_inputs(
                 }
                 Some(Finish::Cancel) => {
                     cancelled.write(UITextInputCancelled { entity });
+                    if **focused == Some(entity) {
+                        **focused = None;
+                    }
                 }
                 None => {}
             }

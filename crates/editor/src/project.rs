@@ -1,9 +1,9 @@
-use app::{schedule_groups::Update, App, Plugin};
+use app::{App, Plugin, schedule_groups::Update};
 use ecs::{ResMut, Resource};
 use essential::assets::{
-    asset_server::AssetServer,
-    content::{read_content_asset_header, AssetRegistry, ImportProvenance},
     AssetId,
+    asset_server::AssetServer,
+    content::{AssetRegistry, ImportProvenance, read_content_asset_header},
 };
 use std::{
     collections::VecDeque,
@@ -251,7 +251,7 @@ fn process_commands(
 mod tests {
     use super::*;
     use essential::assets::content::{
-        write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION,
+        CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset,
     };
     #[test]
     fn discovers_only_scenes_without_writing_registry() {

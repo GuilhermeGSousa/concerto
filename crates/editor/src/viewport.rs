@@ -1,14 +1,14 @@
 //! Texture-backed editor viewport and fly navigation.
 use app::{
-    schedule_groups::{LateUpdate, Startup, Update},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup, Update},
 };
 use color::Color;
 use ecs::entity::hierarchy::Children;
 use ecs::system::NonSendMarker;
 use ecs::{
-    command::CommandQueue, events::event_reader::EventReader, Component, Entity, Query, Res,
-    ResMut, Resource,
+    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
+    events::event_reader::EventReader,
 };
 use essential::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
@@ -16,7 +16,7 @@ use essential::{
     transform::{GlobalTransform, Transform},
 };
 use glam::{Quat, Vec3};
-use mesh::{mesh::Aabb, Mesh, MeshComponent};
+use mesh::{Mesh, MeshComponent, mesh::Aabb};
 use render::{
     assets::texture::Texture,
     components::{
@@ -27,16 +27,16 @@ use render::{
 };
 use std::collections::HashSet;
 use ui::{
+    UIViewport,
     interaction::{HoveredNode, Interactable},
     material::UIMaterial,
     node::{UILayout, UINode},
     transform::UIValue,
-    UIViewport,
 };
 use window::{
     input::{
-        actions::{ActionFired, ActionMap},
         Input, KeyCode, MouseButton, PhysicalKey,
+        actions::{ActionFired, ActionMap},
     },
     winit_events::WindowEvent,
 };
@@ -321,11 +321,7 @@ fn movement(input: &Input, rotation: Quat) -> Vec3 {
 fn speed_scale(input: &Input) -> f32 {
     let shift = input.is_held(PhysicalKey::Code(KeyCode::ShiftLeft))
         || input.is_held(PhysicalKey::Code(KeyCode::ShiftRight));
-    if shift {
-        BOOST
-    } else {
-        1.0
-    }
+    if shift { BOOST } else { 1.0 }
 }
 
 /// Confines the pointer while looking around, so a long turn does not end with

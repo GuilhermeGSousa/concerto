@@ -26,18 +26,13 @@ use winit::{
     window::{ResizeDirection, Window as WinitWindow},
 };
 
-/// The application's window.
-///
-/// Reading it (size, scale factor, maximised) is fine from any system. Changing
-/// it from a worker thread is not: on Windows several `window_handle` setters
-/// wait for the event-loop thread, which is itself waiting for the schedule.
+/// The application's window. Only change it from the event-loop thread.
 #[derive(Resource)]
 pub struct Window {
     pub window_handle: Arc<WinitWindow>,
 }
 
-/// Clipboard adapter consumed by UI controls. The portable in-process backing
-/// can be replaced by a platform runner without changing widget APIs.
+/// Clipboard adapter consumed by UI controls.
 #[derive(Resource, Default)]
 pub struct WindowClipboard(String);
 
@@ -105,6 +100,32 @@ impl Window {
     pub fn height(&self) -> u32 {
         self.window_handle.inner_size().height
     }
+
+    /// Sets the smallest size a person can resize the window down to, in
+    /// logical pixels. `None` clears a floor set earlier.
+    pub fn set_min_inner_size(&self, min: Option<Vec2>) {
+        self.window_handle.set_min_inner_size(
+            min.map(|size| winit::dpi::LogicalSize::new(size.x as f64, size.y as f64)),
+        );
+    }
+
+    /// Asks the platform to resize the window to `size` logical pixels.
+    /// Returns the physical size if the compositor resized synchronously.
+    pub fn request_inner_size(&self, size: Vec2) -> Option<PhysicalWindowSize> {
+        self.window_handle
+            .request_inner_size(winit::dpi::LogicalSize::new(size.x as f64, size.y as f64))
+            .map(|physical| PhysicalWindowSize {
+                width: physical.width,
+                height: physical.height,
+            })
+    }
+}
+
+/// A window size in physical pixels, as the platform reports it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PhysicalWindowSize {
+    pub width: u32,
+    pub height: u32,
 }
 
 impl HasDisplayHandle for Window {
@@ -126,9 +147,6 @@ impl HasWindowHandle for Window {
 }
 
 /// Asks the event loop to close the window, the way its close button would.
-///
-/// An undecorated window has no close button of its own, so the application
-/// has to be able to ask. Checked once per event-loop iteration.
 #[derive(Resource, Default)]
 pub struct CloseRequest(pub bool);
 
@@ -143,26 +161,13 @@ pub enum WindowGesture {
 }
 
 /// One rectangle of the window's frame, in logical pixels.
-///
-/// `gesture: None` blocks rather than starts one: a control standing inside the
-/// title band is a button first, and pressing it must not drag the window.
 pub struct WindowGestureZone {
     pub min: Vec2,
     pub max: Vec2,
     pub gesture: Option<WindowGesture>,
 }
 
-/// Where the window's own frame lives, kept current by whoever draws it — an
-/// undecorated application, over its title band and edges.
-///
-/// Zones rather than "what the pointer is over", because the event loop starts
-/// the gesture while it handles the press: a press that lands a frame after the
-/// pointer arrives would otherwise be judged against where the pointer used to
-/// be, and pressing a grip the moment you reach it would do nothing.
-///
-/// Moving and resizing are handed to the window manager, which on Windows only
-/// takes them while the button is still down, so they cannot wait for a system
-/// to notice the press next frame.
+/// Where the window's own frame lives, kept current by whoever draws it.
 #[derive(Resource, Default)]
 pub struct WindowGestureRegion {
     /// Topmost first: the first zone containing the press decides.
@@ -235,8 +240,6 @@ impl Plugin for WindowPlugin {
         app.insert_resource(Input::new());
         app.insert_resource(ActionMap::default());
         app.register_event::<ActionFired>();
-        // Runs before any consumer's LateUpdate systems, because WindowPlugin
-        // is registered before them.
         app.add_system(LateUpdate, resolve_actions);
         app.insert_resource(WindowClipboard::default());
         app.insert_resource(CloseRequest::default());
@@ -244,9 +247,6 @@ impl Plugin for WindowPlugin {
         app.insert_resource(Window::new(window));
         app.insert_resource(WindowEventLoopProxy(event_loop.create_proxy()));
 
-        // `MainSchedulePlugin` runs Update and LateUpdate from its `Main`
-        // system. Advance transient input states afterwards so every input
-        // consumer gets one frame in which to observe Pressed/Released.
         app.add_system(Main, update_input);
         app.set_runner(|app| winit_runner(app, event_loop));
     }

@@ -7,6 +7,7 @@ use ecs::{
     query::{Query, filter::Added},
     resource::Res,
 };
+use window::input::MouseButton;
 use window::winit_events::WindowEvent;
 use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
@@ -176,6 +177,9 @@ pub(crate) fn update_split_panes(
     panes: Query<(&mut UISplitPane, &UILayout)>,
 ) {
     for drag in drags.read() {
+        if drag.button != MouseButton::Left {
+            continue;
+        }
         let Some(pane_entity) = handles
             .get_entity(drag.entity)
             .map(|(handle, _)| handle.pane)
@@ -577,6 +581,9 @@ pub(crate) fn drag_scrollbar_thumbs(
     areas: Query<(&mut UIScrollArea, &UILayout)>,
 ) {
     for drag in drags.read() {
+        if drag.button != MouseButton::Left {
+            continue;
+        }
         let Some(thumb) = thumbs.get_entity(drag.entity) else {
             continue;
         };

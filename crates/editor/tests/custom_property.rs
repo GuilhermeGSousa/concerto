@@ -4,17 +4,18 @@ mod example;
 
 use app::App;
 use ecs::{
-    command::CommandQueue, events::event_channel::EventChannel, Component, Entity, IntoSystem, Res,
-    ResMut, Resource, System, World,
+    Component, Entity, IntoSystem, Res, ResMut, Resource, System, World, command::CommandQueue,
+    events::event_channel::EventChannel,
 };
 use editable::{Editable, PropertyPath};
 use editor::inspector::{
-    apply_property_commit, apply_property_commits, EditError, InspectorRegistry, Property,
-    PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
+    EditError, InspectorRegistry, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyRowValue, apply_property_commit, apply_property_commits,
 };
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
 use ui::{interaction::UIClick, text::TextComponent, theme::UITheme};
+use window::input::MouseButton;
 
 #[derive(Component, Editable)]
 struct Container {
@@ -85,10 +86,12 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
     assert!(!fallback[0].has_editor());
     assert!(!fallback[1].has_editor());
     assert!(fallback[2].has_editor());
-    assert!(fallback[0]
-        .value
-        .snapshot::<Setting, SettingEditor>()
-        .is_none());
+    assert!(
+        fallback[0]
+            .value
+            .snapshot::<Setting, SettingEditor>()
+            .is_none()
+    );
 
     let mut registry = registry;
     registry.register_property_editor::<Setting, SettingEditor>(SettingEditor);
@@ -298,28 +301,33 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         .map(|(entity, button)| (entity, button.0))
         .next()
         .unwrap();
-    assert!(world
-        .get_component_for_entity::<TextComponent>(button)
-        .unwrap()
-        .text
-        .contains("Off"));
+    assert!(
+        world
+            .get_component_for_entity::<TextComponent>(button)
+            .unwrap()
+            .text
+            .contains("Off")
+    );
     world
         .get_resource_mut::<EventChannel<UIClick>>()
         .unwrap()
         .push_event(UIClick {
             entity: button,
             position: glam::Vec2::ZERO,
+            button: MouseButton::Left,
         });
     let mut click = example::click_settings.into_system();
     click.initialize(&mut world);
     click.run_and_apply(&mut world);
     assert_eq!(world.get_resource::<PropertyCommits>().unwrap().0.len(), 1);
     apply_property_commits(&mut world);
-    assert!(world
-        .get_resource::<PropertyCommits>()
-        .unwrap()
-        .0
-        .is_empty());
+    assert!(
+        world
+            .get_resource::<PropertyCommits>()
+            .unwrap()
+            .0
+            .is_empty()
+    );
     assert!(
         world
             .get_component_for_entity::<Container>(a)
@@ -334,11 +342,13 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
     let mut refresh = example::refresh_settings.into_system();
     refresh.initialize(&mut world);
     refresh.run_and_apply(&mut world);
-    assert!(world
-        .get_component_for_entity::<TextComponent>(button)
-        .unwrap()
-        .text
-        .contains("On"));
+    assert!(
+        world
+            .get_component_for_entity::<TextComponent>(button)
+            .unwrap()
+            .text
+            .contains("On")
+    );
 }
 
 #[test]

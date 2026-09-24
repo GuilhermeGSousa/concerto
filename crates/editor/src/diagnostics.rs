@@ -4,17 +4,17 @@
 //! them. They are also what proves the dock's tabbing: this panel shares the
 //! bottom slot with Content.
 use app::{
-    schedule_groups::{LateUpdate, Startup},
     App, Plugin,
+    schedule_groups::{LateUpdate, Startup},
 };
-use ecs::{command::CommandQueue, Component, Query, Res, ResMut, Resource};
+use ecs::{Component, Query, Res, ResMut, Resource, command::CommandQueue};
 use essential::time::Time;
 use taffy::FlexDirection;
 use ui::{
+    UIRenderDiagnostics,
     node::{UILayoutDiagnostics, UINode},
     text::{FontFamily, TextComponent},
     theme::UITheme,
-    UIRenderDiagnostics,
 };
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};

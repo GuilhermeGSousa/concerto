@@ -6,6 +6,7 @@ use ecs::{
     query::Query,
     resource::Resource,
 };
+use window::input::MouseButton;
 
 use crate::{interaction::UIClick, material::UIMaterial};
 
@@ -54,6 +55,9 @@ pub(crate) fn toggle_checkboxes(
     mut writer: EventWriter<UICheckboxChanged>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         if let Some(mut checkbox) = checkboxes.get_entity(click.entity) {
             checkbox.checked = !checkbox.checked;
             writer.write(UICheckboxChanged {

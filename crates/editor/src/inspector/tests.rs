@@ -1,8 +1,8 @@
 use super::*;
 use ecs::{
+    IntoSystem, System, World,
     component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
-    IntoSystem, System, World,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,6 @@ pub(super) fn update(world: &mut World) {
     for mut system in [
         collect_inspector_data.into_system(),
         sync_inspected_components.into_system(),
-        order_inspector_children.into_system(),
         build_property_widgets.into_system(),
     ] {
         system.initialize(world);
@@ -25,7 +24,6 @@ fn inspector_presentation_systems_do_not_request_exclusive_access() {
     for system in [
         collect_inspector_data.into_system(),
         sync_inspected_components.into_system(),
-        order_inspector_children.into_system(),
         build_property_widgets.into_system(),
     ] {
         let mut meta = ecs::system::meta::SystemMetadata::default();
@@ -36,36 +34,32 @@ fn inspector_presentation_systems_do_not_request_exclusive_access() {
 }
 
 #[test]
-fn metadata_tracks_live_names_children_and_removal_without_changing_selection() {
+fn metadata_tracks_selection_and_despawn_without_spurious_changes() {
     let (mut world, target, _) = world();
     let mut collect = collect_inspector_data.into_system();
     collect.initialize(&mut world);
     collect.run_and_apply(&mut world);
+    let tick = world.resource_changed_tick::<InspectorData>();
+    assert_eq!(
+        world.get_resource::<InspectorData>().unwrap().entity,
+        Some(target)
+    );
     world.tick();
     collect.run_and_apply(&mut world);
-    let mut unchanged = (|data: Res<InspectorData>| {
-        use ecs::query::change_detection::DetectChanges;
-        assert!(!data.has_changed());
-    })
-    .into_system();
-    unchanged.initialize(&mut world);
-    unchanged.run_and_apply(&mut world);
-    world.insert(Name::new("Renamed"), target);
-    let child = world.spawn(());
-    world.entity_mut(target).add_child(child);
-    collect.run_and_apply(&mut world);
-    let data = world.get_resource::<InspectorData>().unwrap();
-    assert!(data.heading.starts_with("Renamed"));
-    assert!(data.heading.ends_with("1 children"));
+    assert_eq!(world.resource_changed_tick::<InspectorData>(), tick);
     world.despawn(target);
     collect.run_and_apply(&mut world);
-    let data = world.get_resource::<InspectorData>().unwrap();
-    assert!(data.entity.is_none());
-    assert_eq!(data.heading, "Selection is no longer in the world.");
+    assert!(
+        world
+            .get_resource::<InspectorData>()
+            .unwrap()
+            .entity
+            .is_none()
+    );
 }
 
 #[test]
-fn deferred_reconciliation_makes_new_bodies_visible_and_consumes_order_requests() {
+fn deferred_row_creation_makes_new_bodies_visible() {
     let (mut world, _, _) = world();
     update(&mut world);
     let row = rows(&mut world)[0].0;
@@ -78,13 +72,6 @@ fn deferred_reconciliation_makes_new_bodies_visible_and_consumes_order_requests(
             .get_component_for_entity::<UINode>(body)
             .unwrap()
             .visible
-    );
-    assert_eq!(
-        world
-            .query::<&sync::PendingChildOrder, ()>()
-            .iter(&mut world)
-            .count(),
-        0
     );
 }
 
@@ -136,7 +123,7 @@ fn world() -> (World, Entity, Entity) {
     selection.select_entity(entity);
     world.insert_resource(selection);
     world.insert_resource(InspectorData::default());
-    let stack = world.spawn((UINode::default(), ComponentStack));
+    let stack = world.spawn((UINode::default(), ComponentStack::default()));
     (world, entity, stack)
 }
 
@@ -190,62 +177,49 @@ fn lists_editable_and_scene_components_as_queryable_cards_and_hides_plumbing() {
     assert_eq!(names, ["Tag", "Transform"]);
     assert_eq!(cards(&mut world).len(), 2);
     assert_eq!(rows(&mut world).len(), 3);
-    assert!(rows(&mut world)
-        .iter()
-        .all(|(_, row)| row.component == TypeId::of::<Transform>()));
+    assert!(
+        rows(&mut world)
+            .iter()
+            .all(|(_, row)| row.component == TypeId::of::<Transform>())
+    );
 }
 
 #[test]
-fn adding_and_removing_a_component_keeps_other_cards_rows_and_edit_buffers() {
-    use ui::text_input::UITextInput;
+fn structural_changes_rebuild_the_entire_stack_once() {
     let (mut world, entity, stack) = world();
     update(&mut world);
-    let original_card = cards(&mut world)[0].0;
-    let original_rows: Vec<_> = rows(&mut world).iter().map(|(entity, _)| *entity).collect();
-    let mut inputs = world.query::<Entity, ecs::query::filter::With<UITextInput>>();
-    let field = inputs.iter(&mut world).next().unwrap();
-    world
-        .get_component_for_entity_mut::<UITextInput>(field)
-        .unwrap()
-        .value = "unfinished edit".into();
+    let old_card = cards(&mut world)[0].0;
+    let old_rows = rows(&mut world);
     world.register_component_type::<Tag>();
     world.insert(Tag, entity);
     update(&mut world);
-    let children: Vec<_> = world
-        .get_component_for_entity::<Children>(stack)
-        .unwrap()
+    assert!(!world.entity_is_valid(old_card));
+    assert!(old_rows.iter().all(|(row, _)| !world.entity_is_valid(*row)));
+    let children = world.get_component_for_entity::<Children>(stack).unwrap();
+    let names: Vec<_> = children
         .iter()
-        .copied()
+        .map(|&child| {
+            world
+                .get_component_for_entity::<InspectedComponent>(child)
+                .unwrap()
+                .name
+        })
         .collect();
-    assert_eq!(
-        children[1], original_card,
-        "new Tag card is inserted before existing Transform"
-    );
-    assert!(original_rows.iter().all(|&row| world.entity_is_valid(row)));
-    assert_eq!(
-        world
-            .get_component_for_entity::<UITextInput>(field)
-            .unwrap()
-            .value,
-        "unfinished edit"
-    );
-    let tag_card = cards(&mut world)
-        .iter()
-        .find(|(_, card)| card.type_id == TypeId::of::<Tag>())
-        .unwrap()
-        .0;
+    assert_eq!(names, ["Tag", "Transform"]);
+    let before = cards(&mut world);
+    update(&mut world);
+    assert!(before.iter().all(|(card, _)| world.entity_is_valid(*card)));
     world.remove_component::<Tag>(entity);
     update(&mut world);
-    assert!(!world.entity_is_valid(tag_card));
-    assert_eq!(cards(&mut world)[0].0, original_card);
-    assert!(original_rows.iter().all(|&row| world.entity_is_valid(row)));
-    assert_eq!(
-        world
-            .get_component_for_entity::<UITextInput>(field)
-            .unwrap()
-            .value,
-        "unfinished edit"
-    );
+    assert!(before.iter().all(|(card, _)| !world.entity_is_valid(*card)));
+    assert_eq!(cards(&mut world).len(), 1);
+
+    let old = cards(&mut world)[0].0;
+    world.insert(Plumbing, entity);
+    world.remove_component::<Plumbing>(entity);
+    update(&mut world);
+    assert!(!world.entity_is_valid(old));
+    assert_eq!(cards(&mut world).len(), 1);
 }
 
 struct WholeTransform;
@@ -277,7 +251,7 @@ fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
 }
 
 #[test]
-fn values_refresh_in_place_and_registering_an_adapter_rebuilds_the_cards_rows() {
+fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
     let (mut world, entity, _) = world();
     update(&mut world);
     let original_card = cards(&mut world)[0].0;
@@ -288,14 +262,17 @@ fn values_refresh_in_place_and_registering_an_adapter_rebuilds_the_cards_rows() 
         .translation
         .x = 8.0;
     update(&mut world);
-    let translation = original_rows
+    let translation = rows(&mut world)
         .iter()
         .find(|(_, row)| row.path.name() == "translation")
         .unwrap()
         .0;
-    assert!(original_rows
-        .iter()
-        .all(|(entity, _)| world.entity_is_valid(*entity)));
+    assert!(
+        original_rows
+            .iter()
+            .all(|(entity, _)| !world.entity_is_valid(*entity))
+    );
+    assert!(world.entity_is_valid(original_card));
     assert!(matches!(
         world
             .get_component_for_entity::<PropertyRowValue>(translation)
@@ -305,26 +282,31 @@ fn values_refresh_in_place_and_registering_an_adapter_rebuilds_the_cards_rows() 
     ));
     registry_mut(&mut world).register_property_editor::<Vec3, _>(numeric::NumericFields);
     update(&mut world);
-    // Rows carry the registry's change tick, so any registration rebuilds them
-    // all; the card itself is keyed by component and survives.
-    assert!(world.entity_is_valid(original_card));
-    assert!(original_rows
-        .iter()
-        .all(|(entity, _)| !world.entity_is_valid(*entity)));
+    assert!(!world.entity_is_valid(original_card));
+    assert!(
+        original_rows
+            .iter()
+            .all(|(entity, _)| !world.entity_is_valid(*entity))
+    );
     let original_rows = rows(&mut world);
+    let original_card = cards(&mut world)[0].0;
     registry_mut(&mut world).register_property_editor::<Transform, _>(WholeTransform);
     update(&mut world);
-    assert_eq!(cards(&mut world)[0].0, original_card);
-    assert!(original_rows
-        .iter()
-        .all(|(entity, _)| !world.entity_is_valid(*entity)));
+    assert!(!world.entity_is_valid(original_card));
+    assert!(
+        original_rows
+            .iter()
+            .all(|(entity, _)| !world.entity_is_valid(*entity))
+    );
     let root_rows = rows(&mut world);
     assert_eq!(root_rows.len(), 1);
     assert_eq!(root_rows[0].1.path, PropertyPath::default());
     let mut texts = world.query::<&TextComponent, ()>();
-    assert!(texts
-        .iter(&mut world)
-        .any(|text| text.text == "Whole transform"));
+    assert!(
+        texts
+            .iter(&mut world)
+            .any(|text| text.text == "Whole transform")
+    );
 }
 
 #[test]
@@ -352,12 +334,16 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
         .unwrap()
         .select_entity(b);
     update(&mut world);
-    assert!(original_cards
-        .iter()
-        .all(|(entity, _)| !world.entity_is_valid(*entity)));
-    assert!(original_rows
-        .iter()
-        .all(|(entity, _)| !world.entity_is_valid(*entity)));
+    assert!(
+        original_cards
+            .iter()
+            .all(|(entity, _)| !world.entity_is_valid(*entity))
+    );
+    assert!(
+        original_rows
+            .iter()
+            .all(|(entity, _)| !world.entity_is_valid(*entity))
+    );
     apply_property_commit(&mut world, commit).unwrap();
     assert_eq!(
         world
@@ -407,35 +393,10 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     assert_eq!(all_rows.len(), 1);
     assert!(!all_rows[0].1.has_editor());
     let mut texts = world.query::<&TextComponent, ()>();
-    assert!(texts
-        .iter(&mut world)
-        .any(|text| text.text == "Unsupported type"));
-}
-
-#[test]
-fn panel_count_comes_from_card_entities() {
-    let (mut world, entity, _) = world();
-    let label = world.spawn((Label::Count, TextComponent::default()));
-    update(&mut world);
-    let mut refresh = refresh_inspector.into_system();
-    refresh.initialize(&mut world);
-    refresh.run_and_apply(&mut world);
-    assert_eq!(
-        world
-            .get_component_for_entity::<TextComponent>(label)
-            .unwrap()
-            .text,
-        "COMPONENTS  1"
-    );
-    world.remove_component::<Transform>(entity);
-    update(&mut world);
-    refresh.run_and_apply(&mut world);
-    assert_eq!(
-        world
-            .get_component_for_entity::<TextComponent>(label)
-            .unwrap()
-            .text,
-        ""
+    assert!(
+        texts
+            .iter(&mut world)
+            .any(|text| text.text == "Unsupported type")
     );
 }
 
@@ -449,7 +410,7 @@ fn labels_capitalise_the_field_name() {
 }
 
 #[test]
-fn row_reordering_preserves_widgets_and_removed_rows_are_despawned() {
+fn changed_property_layout_recreates_rows_in_visitor_order() {
     use editable::{Editable, PropertyVisitor, PropertyVisitorMut};
     #[derive(Component)]
     struct Dynamic {
@@ -520,23 +481,33 @@ fn row_reordering_preserves_widgets_and_removed_rows_are_despawned() {
         .unwrap()
         .reverse = true;
     update(&mut world);
-    assert_eq!(
-        world
-            .get_component_for_entity::<Children>(body)
-            .unwrap()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>(),
-        [b, a]
-    );
-    assert!(world.entity_is_valid(a) && world.entity_is_valid(b));
+    assert!(!world.entity_is_valid(a) && !world.entity_is_valid(b));
+    let reordered: Vec<_> = world
+        .get_component_for_entity::<Children>(body)
+        .unwrap()
+        .iter()
+        .copied()
+        .collect();
+    let names: Vec<_> = reordered
+        .iter()
+        .map(|&row| {
+            world
+                .get_component_for_entity::<PropertyRow>(row)
+                .unwrap()
+                .path
+                .name()
+        })
+        .collect();
+    assert_eq!(names, ["b", "a"]);
     world
         .get_component_for_entity_mut::<Dynamic>(target)
         .unwrap()
         .show_b = false;
     update(&mut world);
-    assert!(world.entity_is_valid(a));
-    assert!(!world.entity_is_valid(b));
+    assert!(reordered.iter().all(|&row| !world.entity_is_valid(row)));
+    let remaining = rows(&mut world);
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0].1.path.name(), "a");
     assert_eq!(
         world
             .get_component_for_entity::<Children>(body)
@@ -544,7 +515,7 @@ fn row_reordering_preserves_widgets_and_removed_rows_are_despawned() {
             .iter()
             .copied()
             .collect::<Vec<_>>(),
-        [a]
+        [remaining[0].0]
     );
 }
 
@@ -584,4 +555,144 @@ fn snapshots_are_released_when_their_card_is_despawned() {
         2,
         "no resource retained the removed row's snapshot"
     );
+}
+
+#[test]
+fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct Counting(Arc<AtomicUsize>);
+    impl PropertyEditor<Transform> for Counting {
+        type Snapshot = Vec3;
+        type Edit = ();
+        fn snapshot(&self, value: &Transform) -> Vec3 {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            value.translation
+        }
+        fn build(&self, _: &mut CommandQueue, _: Entity, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &()) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+    let (mut world, target, _) = world();
+    let count = Arc::new(AtomicUsize::new(0));
+    registry_mut(&mut world).register_property_editor::<Transform, _>(Counting(count.clone()));
+    update(&mut world);
+    update(&mut world);
+    let settled = count.load(Ordering::Relaxed);
+    let row = rows(&mut world)[0].0;
+    let row_tick = world.current_tick();
+    for _ in 0..3 {
+        update(&mut world);
+    }
+    assert_eq!(count.load(Ordering::Relaxed), settled);
+    assert!(!world.has_component_changed_since(row, TypeId::of::<PropertyRowValue>(), row_tick));
+
+    let mut sync = sync_inspected_components.into_system();
+    sync.initialize(&mut world);
+    world
+        .get_component_for_entity_mut::<Transform>(target)
+        .unwrap()
+        .translation
+        .x = 1.0;
+    sync.run_and_apply(&mut world);
+    world
+        .get_component_for_entity_mut::<Transform>(target)
+        .unwrap()
+        .translation
+        .x = 2.0;
+    world.tick();
+    update(&mut world);
+    assert!(!world.entity_is_valid(row));
+    let row = rows(&mut world)[0].0;
+    assert_eq!(
+        world
+            .get_component_for_entity::<PropertyRowValue>(row)
+            .unwrap()
+            .snapshot::<Transform, Counting>(),
+        Some(&Vec3::new(2.0, 0.0, 0.0))
+    );
+
+    world
+        .get_component_for_entity_mut::<Transform>(target)
+        .unwrap()
+        .translation
+        .x = 3.0;
+    for _ in 0..3 {
+        world.tick();
+    }
+    let before = count.load(Ordering::Relaxed);
+    update(&mut world);
+    assert_eq!(count.load(Ordering::Relaxed), before + 1);
+    assert!(!world.entity_is_valid(row));
+    let row = rows(&mut world)[0].0;
+    assert_eq!(
+        world
+            .get_component_for_entity::<PropertyRowValue>(row)
+            .unwrap()
+            .snapshot::<Transform, Counting>(),
+        Some(&Vec3::new(3.0, 0.0, 0.0))
+    );
+
+    update(&mut world);
+    let before = count.load(Ordering::Relaxed);
+    world.spawn(Transform::IDENTITY);
+    update(&mut world);
+    assert_eq!(count.load(Ordering::Relaxed), before);
+}
+
+#[test]
+fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
+    let (mut world, target, stack) = world();
+    update(&mut world);
+    let old_card = cards(&mut world)[0].0;
+    world.despawn(stack);
+    update(&mut world);
+    assert!(!world.entity_is_valid(old_card));
+    let stack = world.spawn((UINode::default(), ComponentStack::default()));
+    update(&mut world);
+    assert_eq!(cards(&mut world).len(), 1);
+    assert_eq!(rows(&mut world).len(), 3);
+    assert_eq!(
+        world
+            .get_component_for_entity::<ComponentStack>(stack)
+            .unwrap()
+            .target,
+        Some(target)
+    );
+    world.despawn(target);
+    update(&mut world);
+    assert!(cards(&mut world).is_empty());
+    assert!(rows(&mut world).is_empty());
+    assert_eq!(
+        world
+            .get_component_for_entity::<ComponentStack>(stack)
+            .unwrap()
+            .target,
+        None
+    );
+    let since = world.current_tick();
+    update(&mut world);
+    assert!(!world.has_component_changed_since(stack, TypeId::of::<ComponentStack>(), since));
+}
+
+#[test]
+fn inspector_access_only_blocks_component_and_declared_resource_writes() {
+    use ecs::system::{access::SystemAccess, meta::SystemMetadata};
+    let system = sync_inspected_components.into_system();
+    let mut access = SystemAccess::default();
+    system.fill_access(&mut SystemMetadata::default(), &mut access);
+    let mut unrelated_resource = SystemAccess::default();
+    unrelated_resource.write_resource::<PropertyCommits>();
+    assert!(SystemAccess::are_disjoint(&access, &unrelated_resource));
+    assert!(SystemAccess::are_disjoint(&unrelated_resource, &access));
+    let mut registry = SystemAccess::default();
+    registry.write_resource::<InspectorRegistry>();
+    assert!(!SystemAccess::are_disjoint(&access, &registry));
+    let mut component = SystemAccess::default();
+    component.write_component::<Transform>();
+    assert!(!SystemAccess::are_disjoint(&access, &component));
+    assert!(!SystemAccess::are_disjoint(&component, &access));
 }

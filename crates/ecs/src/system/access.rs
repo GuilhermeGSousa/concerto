@@ -9,6 +9,7 @@ pub struct SystemAccess {
     resource_reads: HashSet<TypeId>,
     resource_writes: HashSet<TypeId>,
     reads_all: bool,
+    reads_all_components: bool,
     writes_all: bool,
     needs_apply: bool,
 }
@@ -28,6 +29,10 @@ impl SystemAccess {
 
     pub fn write_resource<T: Resource>(&mut self) {
         self.resource_writes.insert(TypeId::of::<T>());
+    }
+
+    pub fn read_all_components(&mut self) {
+        self.reads_all_components = true;
     }
 
     pub fn read_world(&mut self) {
@@ -62,6 +67,12 @@ impl SystemAccess {
 
         // Other reads all and self writes any
         if b.reads_all && (!a.component_writes.is_empty() || !a.resource_writes.is_empty()) {
+            return false;
+        }
+
+        if (a.reads_all_components && !b.component_writes.is_empty())
+            || (b.reads_all_components && !a.component_writes.is_empty())
+        {
             return false;
         }
 
@@ -104,6 +115,7 @@ impl SystemAccess {
         self.resource_reads.extend(other.resource_reads);
         self.resource_writes.extend(other.resource_writes);
         self.reads_all |= other.reads_all;
+        self.reads_all_components |= other.reads_all_components;
         self.writes_all |= other.writes_all;
         self.needs_apply |= other.needs_apply;
     }

@@ -2,7 +2,11 @@ use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
     component::{Component, bundle::ComponentBundle},
-    entity::{Entity, entity_store::EntityStore, hierarchy::ChildOf},
+    entity::{
+        Entity,
+        entity_store::EntityStore,
+        hierarchy::{ChildOf, DespawnChildren},
+    },
     resource::Resource,
     system::{input::SystemInput, meta::SystemMetadata},
     world::World,
@@ -44,6 +48,13 @@ impl<'a> EntityCommandQueue<'a> {
         self.command_queue.entity(child)
     }
 
+    pub fn despawn_children(mut self) -> Self {
+        self.command_queue.push(DespawnChildren {
+            parent: self.entity,
+        });
+        self
+    }
+
     pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T) {
         self.command_queue.insert(component, self.entity);
     }
@@ -79,7 +90,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
     pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> EntityCommandQueue<'_> {
         let spawned_entity = self.entities.alloc();
         self.queue_state
-            .add_command(SpawnCommand::new(components, spawned_entity));
+            .push(SpawnCommand::new(components, spawned_entity));
 
         EntityCommandQueue {
             entity: spawned_entity,
@@ -102,16 +113,15 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 
     pub fn despawn(&mut self, entity: Entity) {
-        self.queue_state.add_command(DespawnCommand::new(entity));
+        self.queue_state.push(DespawnCommand::new(entity));
     }
 
     pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.queue_state
-            .add_command(InsertCommand { component, entity });
+        self.queue_state.push(InsertCommand { component, entity });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {
-        self.queue_state.add_command(RemoveCommand::<T> {
+        self.queue_state.push(RemoveCommand::<T> {
             entity,
             marker: PhantomData,
         });
@@ -122,13 +132,12 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 
     /// Queues a command that is not part of this queue's typed API.
-    pub(crate) fn queue<C: Command + 'static>(&mut self, command: C) {
-        self.queue_state.add_command(command);
+    pub(crate) fn push<C: Command + 'static>(&mut self, command: C) {
+        self.queue_state.push(command);
     }
 
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
-        self.queue_state
-            .add_command(InsertResource::<T>::new(resource));
+        self.queue_state.push(InsertResource::<T>::new(resource));
     }
 
     pub fn insert_from_json(
@@ -137,7 +146,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
         component_data: String,
         entity: Entity,
     ) {
-        self.queue_state.add_command(InsertErasedCommand::new(
+        self.queue_state.push(InsertErasedCommand::new(
             component_name,
             component_data,
             entity,
@@ -154,7 +163,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
         entity: Entity,
         node_entities: std::sync::Arc<[Entity]>,
     ) {
-        self.queue_state.add_command(ApplySceneComponentCommand {
+        self.queue_state.push(ApplySceneComponentCommand {
             type_name,
             data,
             entity,
@@ -202,7 +211,7 @@ impl CommandQueueState {
         }
     }
 
-    pub fn add_command<C: Command + 'static>(&mut self, command: C) {
+    pub fn push<C: Command + 'static>(&mut self, command: C) {
         let offset = self.bytes.len();
         self.bytes.reserve(size_of::<C>());
 

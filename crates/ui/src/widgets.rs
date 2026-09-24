@@ -8,6 +8,7 @@ use ecs::{
     query::Query,
     resource::Res,
 };
+use window::input::MouseButton;
 
 use crate::{
     interaction::{HoveredNode, Interactable, UIClick, UIInteractionStyle},
@@ -29,16 +30,6 @@ pub struct UISearchField;
 #[derive(Component)]
 pub struct UITooltip {
     pub target: Entity,
-}
-
-#[derive(Component, Default)]
-pub struct UIPopupMenu {
-    pub open: bool,
-}
-
-#[derive(Component)]
-pub struct UIPopupTrigger {
-    pub menu: Entity,
 }
 
 #[derive(Component)]
@@ -123,6 +114,9 @@ pub(crate) fn update_widgets(
     mut tab_events: EventWriter<UITabChanged>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         if let Some(mut section) = collapsibles.get_entity(click.entity) {
             section.expanded = !section.expanded;
             if let Some(mut node) = nodes.get_entity(section.content) {
@@ -166,22 +160,5 @@ pub(crate) fn update_tooltips(
 ) {
     for (tooltip, mut node) in tooltips.iter() {
         node.visible = **hovered == Some(tooltip.target);
-    }
-}
-
-pub(crate) fn update_popup_menus(
-    mut clicks: EventReader<UIClick>,
-    triggers: Query<&UIPopupTrigger>,
-    menus: Query<(&mut UIPopupMenu, &mut UINode)>,
-) {
-    for click in clicks.read() {
-        let Some(trigger) = triggers.get_entity(click.entity) else {
-            continue;
-        };
-        let Some((mut menu, mut node)) = menus.get_entity(trigger.menu) else {
-            continue;
-        };
-        menu.open = !menu.open;
-        node.visible = menu.open;
     }
 }

@@ -3,15 +3,15 @@
 //! an editor application with the UI plugin to enable its clickable widget.
 use std::any::TypeId;
 
-use app::{schedule_groups::LateUpdate, App};
+use app::{App, schedule_groups::LateUpdate};
 use ecs::{
-    command::CommandQueue, events::event_reader::EventReader, Component, Entity, Query, ResMut,
-    World,
+    Component, Entity, Query, ResMut, World, command::CommandQueue,
+    events::event_reader::EventReader,
 };
 use editable::Editable;
 use editor::inspector::{
-    apply_property_commit, EditError, EditableApp, InspectorRegistry, PropertyCommit,
-    PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
+    EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyRow, PropertyRowValue, apply_property_commit,
 };
 use ui::{
     interaction::{Interactable, UIClick},
@@ -20,6 +20,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use window::input::MouseButton;
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
 #[derive(Component, Editable)]
@@ -112,6 +113,9 @@ pub fn click_settings(
     mut commits: ResMut<PropertyCommits>,
 ) {
     for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
         let Some(button) = buttons.get_entity(click.entity) else {
             continue;
         };

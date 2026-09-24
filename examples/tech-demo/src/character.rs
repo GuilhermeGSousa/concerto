@@ -176,15 +176,6 @@ pub(crate) fn setup_character_animations(
                         );
                 },
             )
-            // .state(
-            //     "jump_start",
-            //     server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(
-            //         AnimationClipNode::new(_jump_start).with_play_mode(PlayOnce),
-            //     ))),
-            //     |transition| {
-            //         transition.to("air", AnimationFSMTrigger::OnAnimationEnd, 0.1);
-            //     },
-            // )
             .state(
                 "air",
                 server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(
