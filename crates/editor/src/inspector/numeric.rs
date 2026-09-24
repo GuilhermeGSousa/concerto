@@ -517,10 +517,10 @@ mod tests {
     #[test]
     fn transform_numeric_widget_submit_refresh_and_cancel_smoke_test() {
         use super::super::{InspectorRegistry, Property, apply_property_commits};
-        use concerto_core::transform::Transform;
         use concerto_ecs::{
             IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel,
         };
+        use concerto_foundation::transform::Transform;
         use concerto_ui::{
             focus::{FocusedWidget, UIFocusLost},
             text_input::{UITextInputCancelled, UITextInputSubmitted},

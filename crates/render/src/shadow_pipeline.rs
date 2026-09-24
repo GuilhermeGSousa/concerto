@@ -1,6 +1,6 @@
 use concerto_app::{schedule_groups::Render, Plugin};
-use concerto_core::transform::GlobalTransformRaw;
 use concerto_ecs::{IntoSystemConfig, Resource};
+use concerto_foundation::transform::GlobalTransformRaw;
 use concerto_mesh::Vertex;
 use wgpu::{
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, DepthBiasState,

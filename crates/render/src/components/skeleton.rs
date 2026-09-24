@@ -5,13 +5,13 @@ use crate::{
     layouts::SkeletonLayout, queue::RenderQueue,
 };
 use concerto_app::extractor::Extracted;
-use concerto_core::{assets::asset_store::AssetStore, transform::GlobalTransform};
 use concerto_ecs::{
     command::CommandQueue,
     component::{Component, ComponentLifecycleCallback},
     query::Query,
     resource::{Res, ResMut, Resource},
 };
+use concerto_foundation::{assets::asset_store::AssetStore, transform::GlobalTransform};
 use concerto_mesh::skeleton::SkeletonComponent;
 use encase::UniformBuffer;
 use glam::Mat4;

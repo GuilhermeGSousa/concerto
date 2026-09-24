@@ -3,7 +3,7 @@
 //! (it requires thread primitives the toolchains do not provide), so web
 //! builds use the Rapier backend instead.
 
-use concerto_core::transform::Transform;
+use concerto_foundation::transform::Transform;
 use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 

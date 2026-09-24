@@ -1,5 +1,5 @@
 use concerto_app::plugins::Plugin;
-use concerto_core::assets::asset_server::AssetServer;
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_render::{MaterialPlugin, assets::mesh::Mesh};
 
 use crate::{SKYBOX_INDICES, SKYBOX_VERTICES, SkyboxCube, material::SkyboxMaterial};

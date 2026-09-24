@@ -1,4 +1,4 @@
-use concerto_core::transform::GlobalTransformRaw;
+use concerto_foundation::transform::GlobalTransformRaw;
 use std::mem;
 
 use crate::assets::vertex::VertexBufferLayout;

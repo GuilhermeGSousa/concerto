@@ -9,11 +9,11 @@
 //! suite today. This covers the same code path minus the task-pool wrapper.
 use std::path::{Path, PathBuf};
 
-use concerto_core::assets::content::{
+use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset, AssetRegistry,
 };
-use concerto_core::assets::utils::load_content_asset_bytes;
-use concerto_core::assets::{Asset, ContentAssetRoot};
+use concerto_foundation::assets::utils::load_content_asset_bytes;
+use concerto_foundation::assets::{Asset, ContentAssetRoot};
 use concerto_mesh::mesh::Mesh;
 use concerto_scene::scene::{Scene, SceneNode};
 

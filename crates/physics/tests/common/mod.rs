@@ -1,10 +1,10 @@
 //! Shared setup for the physics integration tests.
 #![allow(dead_code)] // not every test file uses every helper
 
-use concerto_core::transform::Transform;
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::system::schedule::Schedule;
 use concerto_ecs::world::World;
+use concerto_foundation::transform::Transform;
 use concerto_physics::collider::{register_colliders, Collider};
 use concerto_physics::physics_state::PhysicsState;
 

@@ -1,10 +1,10 @@
 //! The on-disk framing for game-ready content assets: magic, a
 //! length-prefixed bincode header, then the payload verbatim.
-use concerto_core::assets::content::{
+use concerto_foundation::assets::content::{
     read_content_asset, write_content_asset, ContentAssetHeader, CONTENT_ASSET_MAGIC,
     CONTENT_FORMAT_VERSION,
 };
-use concerto_core::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 
 fn header() -> ContentAssetHeader {
     ContentAssetHeader {

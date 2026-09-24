@@ -1,8 +1,8 @@
-use concerto_core::{
+use concerto_ecs::{Entity, Query, Res, ResMut, Resource, With};
+use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform},
 };
-use concerto_ecs::{Entity, Query, Res, ResMut, Resource, With};
 use concerto_render::components::camera::Camera;
 use glam::{Quat, Vec3};
 
@@ -273,10 +273,10 @@ fn normalize(rotation: Quat) -> Quat {
 
 #[cfg(test)]
 mod tests {
-    use concerto_core::{time::Time, transform::Transform};
     use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
+    use concerto_foundation::{time::Time, transform::Transform};
     use concerto_render::components::camera::Camera;
     use glam::Vec3;
 

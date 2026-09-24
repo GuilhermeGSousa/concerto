@@ -7,8 +7,8 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_core::time::Time;
 use concerto_ecs::{Component, Query, Res, ResMut, Resource, command::CommandQueue};
+use concerto_foundation::time::Time;
 use concerto_ui::{
     UIRenderDiagnostics,
     node::{UILayoutDiagnostics, UINode},

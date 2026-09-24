@@ -12,7 +12,7 @@ use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
-use concerto_core::transform::Transform;
+use concerto_foundation::transform::Transform;
 use concerto_mesh::Mesh;
 use glam::Vec3;
 

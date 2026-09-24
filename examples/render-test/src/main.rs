@@ -1,4 +1,4 @@
-use concerto::{asset_id, core::assets::AssetId};
+use concerto::{asset_id, foundation::assets::AssetId};
 use concerto::{
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     DefaultPlugins,
@@ -8,8 +8,8 @@ use concerto_app::{
     App,
 };
 use concerto_color::Color;
-use concerto_core::{assets::asset_server::AssetServer, time::Time, transform::Transform};
 use concerto_ecs::{command::CommandQueue, query::Query, resource::Res, Component, With};
+use concerto_foundation::{assets::asset_server::AssetServer, time::Time, transform::Transform};
 use concerto_render::components::light::{Light, LightType};
 use glam::{Quat, Vec3};
 
@@ -45,11 +45,11 @@ use concerto::{
     window::input::{Input, MouseButton},
 };
 #[cfg(not(feature = "terminal"))]
-use concerto_core::transform::GlobalTransform;
-#[cfg(not(feature = "terminal"))]
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
 #[cfg(not(feature = "terminal"))]
 use concerto_ecs::{resource::ResMut, Entity};
+#[cfg(not(feature = "terminal"))]
+use concerto_foundation::transform::GlobalTransform;
 #[cfg(not(feature = "terminal"))]
 use concerto_gameplay::{movement::first_person_player_fly, player::spawn_first_person_player};
 #[cfg(not(feature = "terminal"))]

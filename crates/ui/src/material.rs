@@ -1,6 +1,6 @@
 use concerto_color::{Color, LinearRgba};
-use concerto_core::assets::{Asset, handle::AssetHandle};
 use concerto_ecs::component::Component;
+use concerto_foundation::assets::{Asset, handle::AssetHandle};
 use concerto_render::{AsBindGroup, assets::texture::Texture, assets::vertex::VertexBufferLayout};
 
 use crate::vertex::UIVertex;

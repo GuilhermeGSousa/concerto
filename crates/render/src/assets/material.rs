@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use concerto_color::{Color, LinearRgba};
-use concerto_core::assets::{
+use concerto_foundation::assets::{
     asset_server::{AssetLoadContext, AssetServer},
     handle::AssetHandle,
     Asset, AssetId, LoadableAsset,
@@ -538,7 +538,7 @@ pub trait Material: AsBindGroup + Asset + Send + Sync + 'static {
         Self: Sized,
     {
         use crate::assets::vertex::{Vertex, VertexBufferLayout};
-        use concerto_core::transform::GlobalTransformRaw;
+        use concerto_foundation::transform::GlobalTransformRaw;
         vec![Vertex::describe(), GlobalTransformRaw::describe()]
     }
 

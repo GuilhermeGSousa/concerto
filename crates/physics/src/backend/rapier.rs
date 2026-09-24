@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use concerto_core::transform::Transform;
+use concerto_foundation::transform::Transform;
 use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 use log::warn;

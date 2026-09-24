@@ -1,5 +1,5 @@
 [package]
-name = "concerto-core-macros"
+name = "concerto-foundation-macros"
 version = "0.1.0"
 edition = "2021"
 description.workspace = true

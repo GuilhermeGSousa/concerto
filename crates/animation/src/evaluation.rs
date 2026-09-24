@@ -1,4 +1,4 @@
-use concerto_core::assets::asset_store::AssetStore;
+use concerto_foundation::assets::asset_store::AssetStore;
 
 use crate::{
     blackboard::AnimationBlackboard, clip::AnimationClip, graph::AnimationGraph,

@@ -1,4 +1,4 @@
-use concerto_core::assets::{Asset, LoadableAsset};
+use concerto_foundation::assets::{Asset, LoadableAsset};
 
 pub use wgpu_types::TextureFormat;
 

@@ -1,7 +1,7 @@
-use concerto::{asset_id, core::assets::AssetId};
+use concerto::{asset_id, foundation::assets::AssetId};
 use concerto::{
-    core::{assets::asset_server::AssetServer, transform::Transform},
     ecs::{CommandQueue, Res},
+    foundation::{assets::asset_server::AssetServer, transform::Transform},
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
 };
 

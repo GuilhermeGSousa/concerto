@@ -12,12 +12,12 @@ use concerto::{
         schedule_groups::{Startup, Update},
         App,
     },
-    core::{
+    director::VirtualCamera,
+    ecs::{command::CommandQueue, component::Component, query::Query, resource::Res},
+    foundation::{
         assets::asset_server::AssetServer,
         transform::{GlobalTransform, Transform},
     },
-    director::VirtualCamera,
-    ecs::{command::CommandQueue, component::Component, query::Query, resource::Res},
     mesh::MeshComponent,
     physics::{
         collider::Collider, physics_state::PhysicsState, rigid_body::RigidBody, shape::MeshCollider,

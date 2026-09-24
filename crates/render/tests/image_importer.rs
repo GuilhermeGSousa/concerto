@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use concerto_asset_import::{ImportContext, Importer};
-use concerto_core::assets::Asset;
+use concerto_foundation::assets::Asset;
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::importers::image_importer::ImageImporter;
 

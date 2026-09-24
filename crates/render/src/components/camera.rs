@@ -1,6 +1,6 @@
 use concerto_app::extractor::Extracted;
 use concerto_color::{Color, LinearRgba};
-use concerto_core::{
+use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     transform::GlobalTransform,
 };

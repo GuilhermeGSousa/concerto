@@ -3,14 +3,14 @@
 use std::{path::PathBuf, thread::JoinHandle};
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_core::{
-    assets::{Asset, AssetId, content::read_content_asset},
-    transform::Transform,
-};
 use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
+};
+use concerto_foundation::{
+    assets::{Asset, AssetId, content::read_content_asset},
+    transform::Transform,
 };
 use concerto_scene::{scene::Scene, spawner::spawn_scene};
 
@@ -225,7 +225,7 @@ mod tests {
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
     use crate::project::AssetEntry;
-    use concerto_core::assets::content::{
+    use concerto_foundation::assets::content::{
         AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
         write_content_asset,
     };

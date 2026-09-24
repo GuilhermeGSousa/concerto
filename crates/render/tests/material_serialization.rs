@@ -1,7 +1,7 @@
 //! Covers StandardMaterial round-tripping directly through bincode (no DTO)
 //! and reporting its texture references for import-time validation.
 use concerto_color::Color;
-use concerto_core::assets::{handle::AssetHandle, Asset, AssetId};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::Texture;
 

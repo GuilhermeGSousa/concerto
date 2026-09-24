@@ -1,7 +1,7 @@
 //! Ground probing (`PhysicsState::probe_ground`) and body velocity control.
 
-use concerto_core::transform::Transform;
 use concerto_ecs::world::World;
+use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 mod common;
 use common::{physics_world, register_bodies};

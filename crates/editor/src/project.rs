@@ -1,10 +1,10 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_core::assets::{
+use concerto_ecs::{ResMut, Resource};
+use concerto_foundation::assets::{
     AssetId,
     asset_server::AssetServer,
     content::{AssetRegistry, ImportProvenance, read_content_asset_header},
 };
-use concerto_ecs::{ResMut, Resource};
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
@@ -250,7 +250,7 @@ fn process_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_core::assets::content::{
+    use concerto_foundation::assets::content::{
         CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset,
     };
     #[test]

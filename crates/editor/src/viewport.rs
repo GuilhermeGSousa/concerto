@@ -4,16 +4,16 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_color::Color;
-use concerto_core::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
-    time::Time,
-    transform::{GlobalTransform, Transform},
-};
 use concerto_ecs::entity::hierarchy::Children;
 use concerto_ecs::system::NonSendMarker;
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
+};
+use concerto_foundation::{
+    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+    time::Time,
+    transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::{Mesh, MeshComponent, mesh::Aabb};
 use concerto_render::{

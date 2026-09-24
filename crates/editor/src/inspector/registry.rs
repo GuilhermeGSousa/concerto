@@ -395,7 +395,7 @@ mod tests {
         numeric::{NumericEdit, NumericFields},
     };
     use super::*;
-    use concerto_core::transform::Transform;
+    use concerto_foundation::transform::Transform;
     use glam::Vec3;
 
     fn world() -> (World, Entity) {
@@ -535,8 +535,8 @@ mod tests {
 
     #[test]
     fn commits_are_visible_to_transform_propagation_in_the_same_tick() {
-        use concerto_core::transform::{GlobalTransform, systems::update_simple_entities};
         use concerto_ecs::{IntoSystem, System};
+        use concerto_foundation::transform::{GlobalTransform, systems::update_simple_entities};
         let mut registry = InspectorRegistry::default();
         registry.register_component::<Transform>();
         let mut world = World::default();

@@ -1,7 +1,9 @@
-use concerto_core::assets::{asset_server::AssetServer, handle::AssetHandle, Asset, LoadableAsset};
 use concerto_ecs::{
     component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext},
     Component, Entity,
+};
+use concerto_foundation::assets::{
+    asset_server::AssetServer, handle::AssetHandle, Asset, LoadableAsset,
 };
 use glam::Mat4;
 use serde::{Deserialize, Serialize};

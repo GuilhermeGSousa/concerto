@@ -73,7 +73,7 @@ impl SpringValue for Quat {
 /// exactly where one 16 ms step does.
 ///
 /// ```
-/// use concerto_core::math::Spring;
+/// use concerto_foundation::math::Spring;
 /// use glam::Vec3;
 ///
 /// let mut position = Spring::critically_damped(Vec3::ZERO, 8.0);

@@ -1,5 +1,5 @@
-use concerto_core::transform::Transform;
 use concerto_ecs::{CommandQueue, Component, ResMut};
+use concerto_foundation::transform::Transform;
 use concerto_render::components::{camera::Camera, render_entity::SyncWithRenderWorld};
 
 use crate::{director::CameraDirector, virtual_camera::VirtualCamera};

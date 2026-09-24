@@ -12,7 +12,7 @@ use concerto_ecs::{
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
-use concerto_core::transform::GlobalTransform;
+use concerto_foundation::transform::GlobalTransform;
 use encase::{ShaderSize, ShaderType, UniformBuffer};
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};

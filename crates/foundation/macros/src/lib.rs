@@ -7,7 +7,7 @@ extern crate quote;
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, Data, DeriveInput, Fields};
 
-/// Implementation detail of concerto-core's hygienic `asset_id!` wrapper.
+/// Implementation detail of concerto-foundation's hygienic `asset_id!` wrapper.
 #[proc_macro]
 pub fn asset_id_bytes(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as syn::LitStr);

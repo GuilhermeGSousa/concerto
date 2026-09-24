@@ -1,5 +1,5 @@
-use concerto_core::time::Time;
 use concerto_ecs::World;
+use concerto_foundation::time::Time;
 
 use crate::{
     schedule_groups::{First, FixedUpdate, LateFixedUpdate, LateUpdate, Main, Update},

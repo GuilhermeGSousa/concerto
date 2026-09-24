@@ -1,4 +1,4 @@
-pub use concerto_core_macros::AsAny;
+pub use concerto_foundation_macros::AsAny;
 
 use std::any::Any;
 

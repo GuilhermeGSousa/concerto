@@ -3,8 +3,8 @@
 
 use concerto::{
     animation::{player::AnimationPlayer, root::AnimationRootBone},
-    core::transform::GlobalTransform,
     ecs::{command::CommandQueue, component::Component, query::Query, With},
+    foundation::transform::GlobalTransform,
     mesh::skeleton::SkeletonComponent,
     scene::spawner::SceneSpawnerComponent,
     ui::{

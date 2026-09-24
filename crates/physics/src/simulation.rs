@@ -1,5 +1,5 @@
-use concerto_core::transform::Transform;
 use concerto_ecs::{query::Query, resource::ResMut};
+use concerto_foundation::transform::Transform;
 
 use crate::{
     body::BodyId, interpolation::TransformInterpolation, physics_pipeline::PhysicsPipeline,
@@ -32,11 +32,11 @@ pub fn step_simulation(
 
 #[cfg(test)]
 mod tests {
-    use concerto_core::time::Time;
-    use concerto_core::transform::Transform;
     use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
+    use concerto_foundation::time::Time;
+    use concerto_foundation::transform::Transform;
     use glam::Vec3;
 
     use crate::collider::{register_colliders, Collider};

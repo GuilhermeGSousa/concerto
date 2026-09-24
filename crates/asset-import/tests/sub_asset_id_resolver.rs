@@ -4,7 +4,7 @@
 use std::path::PathBuf;
 
 use concerto_asset_import::{ImportContext, SubAssetIdResolver};
-use concerto_core::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Thing;

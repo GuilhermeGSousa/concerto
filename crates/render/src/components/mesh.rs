@@ -1,6 +1,6 @@
 use concerto_app::extractor::Extracted;
-use concerto_core::{assets::AssetId, transform::GlobalTransform};
 use concerto_ecs::{component::Component, query::Query, resource::Res, CommandQueue};
+use concerto_foundation::{assets::AssetId, transform::GlobalTransform};
 use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
 use glam::Mat4;
 use wgpu::util::DeviceExt;

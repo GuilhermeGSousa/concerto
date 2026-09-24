@@ -2,10 +2,10 @@ use concerto_animation::clip::AnimationClip;
 use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{AnimationClipNode, AnimationNodeKind};
-use concerto_core::assets::AssetId;
-use concerto_core::assets::asset_server::AssetServer;
-use concerto_core::assets::asset_store::AssetStore;
-use concerto_core::assets::handle::AssetHandle;
+use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::asset_store::AssetStore;
+use concerto_foundation::assets::handle::AssetHandle;
 
 #[test]
 fn animation_graph_round_trips_through_bincode() {

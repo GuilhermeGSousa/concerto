@@ -2,7 +2,7 @@
 //! fall under gravity and come to rest on top of the floor. Bodies are created
 //! by spawning `Collider` components — never directly.
 
-use concerto_core::transform::Transform;
+use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 mod common;
 use common::{physics_world, register_bodies};

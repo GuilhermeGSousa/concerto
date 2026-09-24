@@ -5,7 +5,7 @@
 mod common;
 use common::{physics_world, register_bodies};
 
-use concerto_core::transform::Transform;
+use concerto_foundation::transform::Transform;
 use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
 use concerto_physics::physics_state::PhysicsState;

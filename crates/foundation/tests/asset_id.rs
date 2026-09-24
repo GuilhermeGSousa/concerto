@@ -1,5 +1,5 @@
 //! Legacy path hashing and the persistent UUID representation used by macros.
-use concerto_core::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 
 #[test]
 fn uuid_bytes_can_be_embedded_as_a_constant() {

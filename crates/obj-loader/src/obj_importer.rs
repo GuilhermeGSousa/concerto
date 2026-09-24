@@ -8,10 +8,10 @@ use std::path::Path;
 
 use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
 use concerto_color::Color;
-use concerto_core::assets::AssetId;
-use concerto_core::assets::handle::AssetHandle;
-use concerto_core::transform::Transform;
 use concerto_ecs::component::scene::SceneComponent;
+use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::vertex::Vertex;
 use concerto_render::assets::material::StandardMaterial;

@@ -3,8 +3,8 @@ pub mod plugin;
 
 use derive_more::Deref;
 
-use concerto_core::assets::handle::AssetHandle;
 use concerto_ecs::resource::Resource;
+use concerto_foundation::assets::handle::AssetHandle;
 use concerto_render::assets::{mesh::Mesh, vertex::Vertex};
 
 pub(crate) const SKYBOX_VERTICES: [Vertex; 8] = [

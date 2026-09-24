@@ -16,7 +16,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 profiling = "1"
 concerto-ecs = { path = "../ecs" }
-concerto-core = { path = "../core" }
+concerto-foundation = { path = "../foundation" }
 getrandom = { version = "0.2", features = ["js"] }
 uuid = { version = "1.18.1", features = ["v4", "js"] }
 cfg-if = "1"

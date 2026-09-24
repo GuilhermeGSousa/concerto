@@ -1,10 +1,10 @@
 use std::path::PathBuf;
 
-pub use concerto_core_macros::Asset;
+pub use concerto_foundation_macros::Asset;
 
 pub use crate::asset_id;
 #[doc(hidden)]
-pub use concerto_core_macros::asset_id_bytes as __asset_id_bytes;
+pub use concerto_foundation_macros::asset_id_bytes as __asset_id_bytes;
 
 /// Read a content asset's persistent UUID at compile time.
 ///

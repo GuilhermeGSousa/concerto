@@ -1,10 +1,10 @@
 pub use concerto_animation as animation;
 pub use concerto_app as app;
 pub use concerto_color as color;
-pub use concerto_core as core;
-pub use concerto_core::asset_id;
 pub use concerto_director as director;
 pub use concerto_ecs as ecs;
+pub use concerto_foundation as foundation;
+pub use concerto_foundation::asset_id;
 pub use concerto_gameplay as gameplay;
 use concerto_gameplay::GameplayPlugin;
 pub use concerto_mesh as mesh;

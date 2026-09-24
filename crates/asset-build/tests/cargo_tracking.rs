@@ -75,12 +75,12 @@ edition = "2021"
 [workspace]
 [dependencies]
 concerto-asset-format = {{ path = {:?} }}
-concerto-core-macros = {{ path = {:?} }}
+concerto-foundation-macros = {{ path = {:?} }}
 [build-dependencies]
 concerto-asset-build = {{ path = {:?} }}
 "#,
             crates.join("asset-format"),
-            crates.join("core/macros"),
+            crates.join("foundation/macros"),
             crates.join("asset-build"),
         ),
     )
@@ -92,7 +92,7 @@ concerto-asset-build = {{ path = {:?} }}
     .unwrap();
     std::fs::write(root.join("src/main.rs"), r#"
 use concerto_asset_format::AssetId;
-const ID: AssetId = AssetId::from_bytes(concerto_core_macros::asset_id_bytes!("content/fixture.gasset"));
+const ID: AssetId = AssetId::from_bytes(concerto_foundation_macros::asset_id_bytes!("content/fixture.gasset"));
 fn main() { println!("{}", ID.simple_hex()); }
 "#).unwrap();
 

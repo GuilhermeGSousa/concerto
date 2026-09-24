@@ -1,4 +1,4 @@
-use concerto::{asset_id, core::assets::AssetId};
+use concerto::{asset_id, foundation::assets::AssetId};
 use std::f32::consts::PI;
 
 use concerto::animation::clip::AnimationClip;
@@ -7,10 +7,10 @@ use concerto::animation::node::AnimationPlayMode::PlayOnce;
 use concerto::animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto::animation::node::{AnimationClipNode, AnimationNodeKind};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
-use concerto::core::transform::Transform;
 use concerto::director::VirtualCamera;
 use concerto::ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto::ecs::{Entity, Query, ResMut, With, Without};
+use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraPivot, EntityFollow};
 use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
@@ -22,8 +22,8 @@ use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
-    core::assets::asset_server::AssetServer,
     ecs::{CommandQueue, Component, Res},
+    foundation::assets::asset_server::AssetServer,
 };
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};

@@ -45,7 +45,7 @@ warnings = "deny"
 profiling = "1"
 concerto-app = { path = "crates/app" }
 concerto-animation = { path = "crates/animation" }
-concerto-core = { path = "crates/core" }
+concerto-foundation = { path = "crates/foundation" }
 concerto-render = { path = "crates/render" }
 concerto-director = { path = "crates/director" }
 concerto-mesh = { path = "crates/mesh" }

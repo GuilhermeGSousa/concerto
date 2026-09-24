@@ -16,7 +16,7 @@ use concerto_ecs::{
 use log::info;
 use runner::AppExit;
 
-use concerto_core::assets::{
+use concerto_foundation::assets::{
     asset_server::AssetServer, asset_store::AssetStore, handle::AssetLifetimeEvent, Asset,
 };
 

@@ -22,7 +22,7 @@ force-rapier = ["dep:rapier3d"]
 profiling = "1"
 log = "0.4.27"
 concerto-app = { path = "../app" }
-concerto-core = { path = "../core" }
+concerto-foundation = { path = "../foundation" }
 concerto-mesh = { path = "../mesh" }
 concerto-ecs = { path = "../ecs" }
 glam = { version = "0.30.1" }

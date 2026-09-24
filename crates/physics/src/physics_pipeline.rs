@@ -1,5 +1,5 @@
-use concerto_core::time::Time;
 use concerto_ecs::resource::Resource;
+use concerto_foundation::time::Time;
 
 use crate::backend::PhysicsBackend;
 use crate::physics_state::PhysicsState;

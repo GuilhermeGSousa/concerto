@@ -1,8 +1,8 @@
 //! `utils::load_registry` — the async, ContentAssetRoot-aware counterpart to
 //! `AssetRegistry::load` that `AssetServer::resolve_by_id` uses at runtime.
-use concerto_core::assets::content::AssetRegistry;
-use concerto_core::assets::utils::load_registry;
-use concerto_core::assets::{AssetId, ContentAssetRoot};
+use concerto_foundation::assets::content::AssetRegistry;
+use concerto_foundation::assets::utils::load_registry;
+use concerto_foundation::assets::{AssetId, ContentAssetRoot};
 
 #[test]
 fn loads_a_registry_written_by_asset_registry_save() {

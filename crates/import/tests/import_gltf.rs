@@ -2,11 +2,11 @@
 //! content-tree paths, not `<source>#<sub>`.
 use std::path::{Path, PathBuf};
 
-use concerto_core::assets::content::{
+use concerto_ecs::component::Component;
+use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, AssetRegistry, ImportProvenance,
 };
-use concerto_core::assets::{Asset, AssetId};
-use concerto_ecs::component::Component;
+use concerto_foundation::assets::{Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
 use concerto_scene::scene::Scene;
 

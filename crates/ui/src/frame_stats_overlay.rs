@@ -3,13 +3,13 @@ use concerto_app::{
     schedule_groups::{Startup, Update},
 };
 use concerto_color::Color;
-use concerto_core::time::{FrameStats, Time};
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     query::{Query, filter::With},
     resource::{Res, ResMut, Resource},
 };
+use concerto_foundation::time::{FrameStats, Time};
 
 use crate::{
     material::UIMaterial,

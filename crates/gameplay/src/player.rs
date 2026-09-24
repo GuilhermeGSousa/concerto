@@ -1,6 +1,6 @@
-use concerto_core::transform::Transform;
 use concerto_director::VirtualCamera;
 use concerto_ecs::{CommandQueue, Component, component::bundle::ComponentBundle};
+use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 
 #[derive(Component)]

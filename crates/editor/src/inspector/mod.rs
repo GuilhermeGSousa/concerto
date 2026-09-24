@@ -33,7 +33,7 @@ mod sync;
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
-use concerto_core::transform::Transform;
+use concerto_foundation::transform::Transform;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields,
     select_numeric_field_on_focus,

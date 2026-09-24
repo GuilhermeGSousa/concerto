@@ -1,4 +1,4 @@
-use concerto_core::assets::{Asset, handle::AssetHandle};
+use concerto_foundation::assets::{Asset, handle::AssetHandle};
 
 use concerto_render::{
     AsBindGroup,

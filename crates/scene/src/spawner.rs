@@ -1,5 +1,3 @@
-use concerto_core::assets::{asset_store::AssetStore, handle::AssetHandle};
-use concerto_core::transform::Transform;
 use concerto_ecs::{
     command::CommandQueue,
     component::{name::Name, Component},
@@ -7,6 +5,8 @@ use concerto_ecs::{
     query::Query,
     resource::Res,
 };
+use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_foundation::transform::Transform;
 
 use crate::scene::Scene;
 

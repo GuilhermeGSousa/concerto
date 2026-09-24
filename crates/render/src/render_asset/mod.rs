@@ -5,11 +5,11 @@ pub mod render_window;
 use std::collections::HashMap;
 
 use concerto_app::{extractor::Extracted, plugins::Plugin, schedule_groups::Extract};
-use concerto_core::assets::{asset_store::AssetStore, Asset, AssetId};
 use concerto_ecs::{
     resource::{Res, ResMut, Resource},
     system::input::{StaticSystemInput, SystemInput, SystemInputData},
 };
+use concerto_foundation::assets::{asset_store::AssetStore, Asset, AssetId};
 
 pub enum AssetPreparationError {
     NotReady,

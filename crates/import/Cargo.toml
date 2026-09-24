@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 concerto-asset-import = { path = "../asset-import" }
-concerto-core = { path = "../core" }
+concerto-foundation = { path = "../foundation" }
 concerto-gltf-loader = { path = "../gltf-loader" }
 concerto-obj-loader = { path = "../obj-loader" }
 concerto-render = { path = "../render" }

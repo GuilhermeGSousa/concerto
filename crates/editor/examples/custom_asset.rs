@@ -1,14 +1,6 @@
 //! A downstream asset editor. Run with `cargo run -p editor --example custom_asset`.
 use anyhow::Result;
 use concerto_app::schedule_groups::Update;
-use concerto_core::assets::{
-    Asset, AssetId,
-    asset_server::AssetServer,
-    content::{
-        AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
-        read_content_asset, write_content_asset,
-    },
-};
 use concerto_ecs::{
     Component, Entity, IntoSystem, Query, Res,
     command::{CommandQueue, EntityCommandQueue},
@@ -21,6 +13,14 @@ use concerto_editor::{
         process_editor_commands,
     },
     project::{AssetEntry, Project, ProjectState},
+};
+use concerto_foundation::assets::{
+    Asset, AssetId,
+    asset_server::AssetServer,
+    content::{
+        AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
+        read_content_asset, write_content_asset,
+    },
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]

@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 concerto-app = { path = "../app" }
-concerto-core = { path = "../core" }
+concerto-foundation = { path = "../foundation" }
 concerto-ecs = { path = "../ecs" }
 concerto-render = { path = "../render" }
 glam = { version = "0.30.1" }

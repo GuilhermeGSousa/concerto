@@ -1,10 +1,10 @@
 //! `AssetRegistry` load/save/get/insert/remove/iter, and `save_content_asset`
 //! upserting it.
-use concerto_core::assets::content::{
+use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset, write_content_asset,
     AssetRegistry, ContentAssetHeader, CONTENT_FORMAT_VERSION,
 };
-use concerto_core::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId};
 use serde::{Deserialize, Serialize};
 
 fn temp_root(tag: &str) -> std::path::PathBuf {

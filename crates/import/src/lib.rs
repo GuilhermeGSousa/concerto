@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
 use concerto_asset_import::{ImportContext, Importer, SubAssetIdResolver};
-use concerto_core::assets::content::{
+use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, AssetRegistry, ContentAssetHeader,
     ImportProvenance, CONTENT_FORMAT_VERSION, REGISTRY_FILE_NAME,
 };
-use concerto_core::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 
 pub mod config;
 pub mod metadata;

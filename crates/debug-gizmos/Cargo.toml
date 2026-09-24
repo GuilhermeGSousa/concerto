@@ -11,7 +11,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 concerto-app = { path = "../app" }
-concerto-core = { path = "../core" }
+concerto-foundation = { path = "../foundation" }
 concerto-ecs = { path = "../ecs" }
 concerto-render = { path = "../render" }
 concerto-color = { path = "../color" }

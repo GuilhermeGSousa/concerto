@@ -1,11 +1,11 @@
 use concerto_color::Color;
-use concerto_core::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore},
-    transform::Transform,
-};
 use concerto_ecs::{
     component::{ComponentLifecycleCallback, ComponentLifecycleContext},
     Changed, Component, Query, ResMut,
+};
+use concerto_foundation::{
+    assets::{asset_server::AssetServer, asset_store::AssetStore},
+    transform::Transform,
 };
 use concerto_mesh::{MeshComponent, Vertex};
 use concerto_render::MaterialComponent;

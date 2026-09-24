@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use concerto_core::{assets::handle::AssetHandle, utils::AsAny};
+use concerto_foundation::{assets::handle::AssetHandle, utils::AsAny};
 use uuid::Uuid;
 
 use crate::{

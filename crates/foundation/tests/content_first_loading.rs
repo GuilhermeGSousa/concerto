@@ -1,9 +1,9 @@
 //! load_content_asset_bytes reads a content asset at <root>/<address>.
-use concerto_core::assets::content::{
+use concerto_foundation::assets::content::{
     write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION,
 };
-use concerto_core::assets::utils::load_content_asset_bytes;
-use concerto_core::assets::{AssetId, ContentAssetRoot};
+use concerto_foundation::assets::utils::load_content_asset_bytes;
+use concerto_foundation::assets::{AssetId, ContentAssetRoot};
 use serde::{Deserialize, Serialize};
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
@@ -123,7 +123,7 @@ struct StandInMesh {
 #[test]
 fn a_cooked_payload_deserializes_as_its_asset_type() {
     // AssetServer performs this same validated read followed by bincode
-    // deserialization. A stand-in avoids making `concerto-core` depend on `concerto-mesh`.
+    // deserialization. A stand-in avoids making `concerto-foundation` depend on `concerto-mesh`.
     let dir = temp_root("cooked-payload");
     let address = "content/x/m.gasset";
     let id = AssetId::from_path(address);

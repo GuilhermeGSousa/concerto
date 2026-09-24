@@ -1,11 +1,11 @@
 //! Contextual panel hosts and input transitions for asset editors.
-use concerto_core::assets::Asset;
 use concerto_ecs::{
     Changed, Entity, Query, Res, ResMut, Without,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     query::change_detection::DetectChanges,
 };
+use concerto_foundation::assets::Asset;
 use concerto_ui::{
     focus::FocusedWidget,
     interaction::{HoveredNode, Interactable, UIInputState},
@@ -184,7 +184,7 @@ mod tests {
     use crate::asset_editor::{
         AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
-    use concerto_core::assets::{Asset, AssetId, content::ImportProvenance};
+    use concerto_foundation::assets::{Asset, AssetId, content::ImportProvenance};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]

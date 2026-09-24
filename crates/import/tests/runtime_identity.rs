@@ -1,14 +1,14 @@
 //! Imported UUIDs survive UUID loading, handle serialization, and content moves.
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use concerto_core::assets::{
+use concerto_ecs::World;
+use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
     content::read_content_asset_header,
     handle::AssetHandle,
     AssetId, ContentAssetRoot,
 };
-use concerto_ecs::World;
 use concerto_mesh::mesh::Mesh;
 
 struct Project(PathBuf);

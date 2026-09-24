@@ -18,7 +18,7 @@ terminal = ["dep:concerto-terminal-renderer", "dep:ratatui"]
 concerto = { path = "../.." }
 concerto-app = { path = "../../crates/app" }
 concerto-ecs = { path = "../../crates/ecs" }
-concerto-core = { path = "../../crates/core" }
+concerto-foundation = { path = "../../crates/foundation" }
 concerto-color = { path = "../../crates/color" }
 concerto-render = { path = "../../crates/render" }
 concerto-debug-gizmos = { path = "../../crates/debug-gizmos" }

@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use concerto_app::extractor::Extracted;
-use concerto_core::assets::handle::AssetHandle;
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
@@ -14,6 +13,7 @@ use concerto_ecs::{
     query::{Query, filter::Without},
     resource::{Res, Resource},
 };
+use concerto_foundation::assets::handle::AssetHandle;
 use concerto_render::{
     assets::{material::AsBindGroup, texture::Texture},
     components::render_entity::{RenderEntity, SyncWithRenderWorld},

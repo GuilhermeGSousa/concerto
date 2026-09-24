@@ -9,7 +9,7 @@ use crate::{
     node::{AnimationNodeInstance, AnimationNodeKind},
 };
 
-use concerto_core::{assets::handle::AssetHandle, utils::AsAny};
+use concerto_foundation::{assets::handle::AssetHandle, utils::AsAny};
 use derive_more::Deref;
 use uuid::Uuid;
 

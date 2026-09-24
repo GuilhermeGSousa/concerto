@@ -1,8 +1,8 @@
 //! Covers Scene/SceneNode round-tripping directly through bincode and
 //! reporting the assets its component payloads reference for import-time
 //! validation.
-use concerto_core::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_ecs::component::Component;
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;

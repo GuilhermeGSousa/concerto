@@ -1,7 +1,7 @@
 //! save_content_asset writes a content asset into a project tree, minting
 //! its id on first save and reusing it on re-save.
-use concerto_core::assets::content::{read_content_asset, save_content_asset};
-use concerto_core::assets::{Asset, AssetId};
+use concerto_foundation::assets::content::{read_content_asset, save_content_asset};
+use concerto_foundation::assets::{Asset, AssetId};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
 struct Widget {

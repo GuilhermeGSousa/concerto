@@ -4,11 +4,6 @@ use concerto::{
         graph::AnimationGraph,
         player::{AnimationHandleComponent, AnimationPlayer},
     },
-    core::{
-        assets::{asset_server::AssetServer, handle::AssetHandle},
-        time::Time,
-        transform::Transform,
-    },
     ecs::{
         command::CommandQueue,
         component::Component,
@@ -16,11 +11,16 @@ use concerto::{
         query::{filter::Without, Query},
         resource::Res,
     },
+    foundation::{
+        assets::{asset_server::AssetServer, handle::AssetHandle},
+        time::Time,
+        transform::Transform,
+    },
     render::components::{light::LightType, Light},
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     window::input::Input,
 };
-use concerto::{asset_id, core::assets::AssetId};
+use concerto::{asset_id, foundation::assets::AssetId};
 use concerto_color::Color;
 use glam::{Quat, Vec2, Vec3};
 use winit::keyboard::{KeyCode, PhysicalKey};

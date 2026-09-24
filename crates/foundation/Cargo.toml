@@ -1,5 +1,5 @@
 [package]
-name = "concerto-core"
+name = "concerto-foundation"
 version = "0.1.0"
 edition = "2021"
 description.workspace = true
@@ -24,7 +24,7 @@ log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
 toml = "0.8"
-concerto-core-macros = { path = "macros" }
+concerto-foundation-macros = { path = "macros" }
 derive_more = { version = "2", features = ["full"] }
 
 [dev-dependencies]

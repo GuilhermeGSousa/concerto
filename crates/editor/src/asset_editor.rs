@@ -6,12 +6,12 @@
 
 use anyhow::{Result, bail};
 use concerto_app::App;
-use concerto_core::assets::Asset;
 use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
 };
+use concerto_foundation::assets::Asset;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::project::AssetEntry;
@@ -281,7 +281,7 @@ mod tests {
                 super::finish_asset_request(&mut doc, generation, project, result)
             })
     }
-    use concerto_core::assets::AssetId;
+    use concerto_foundation::assets::AssetId;
 
     #[derive(serde::Serialize, serde::Deserialize)]
     struct TestAsset;
@@ -308,7 +308,7 @@ mod tests {
             kind: "TestAsset".into(),
             display_name: path.into(),
             folder: String::new(),
-            provenance: concerto_core::assets::content::ImportProvenance {
+            provenance: concerto_foundation::assets::content::ImportProvenance {
                 source: path.into(),
                 sub_asset: String::new(),
             },

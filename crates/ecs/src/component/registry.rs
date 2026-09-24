@@ -39,7 +39,7 @@ pub struct TypeInfo {
 }
 
 impl TypeInfo {
-    /// The canonical full type path, e.g. `concerto_core::transform::Transform`.
+    /// The canonical full type path, e.g. `concerto_foundation::transform::Transform`.
     pub fn name(&self) -> &'static str {
         self.name
     }

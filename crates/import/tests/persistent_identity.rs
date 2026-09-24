@@ -2,11 +2,11 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use concerto_core::assets::content::{
+use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, write_content_asset, AssetRegistry,
     ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
-use concerto_core::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 use concerto_scene::scene::Scene;
 
 struct Project(PathBuf);

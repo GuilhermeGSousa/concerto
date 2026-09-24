@@ -2,7 +2,7 @@
 //! any handle (regardless of variant) serializes to its bare AssetId, and
 //! deserializing always produces a Weak handle (never a live Strong one,
 //! since deserialization has no AssetServer to resolve against).
-use concerto_core::assets::{handle::AssetHandle, Asset, AssetId};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct FakeAsset;

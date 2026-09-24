@@ -24,7 +24,7 @@ use taffy::FlexDirection;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
 use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
-use concerto_core::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 
 pub const PANEL_ID: &str = "concerto.curiosities";
 

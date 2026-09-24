@@ -1,4 +1,4 @@
-pub use concerto_core_macros::Blendable;
+pub use concerto_foundation_macros::Blendable;
 use glam::{Quat, Vec3, Vec3A};
 
 pub trait Blendable {
