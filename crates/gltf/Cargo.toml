@@ -1,5 +1,5 @@
 [package]
-name = "concerto-obj-loader"
+name = "concerto-gltf"
 version.workspace = true
 edition = "2024"
 description.workspace = true
@@ -8,18 +8,23 @@ license.workspace = true
 
 [dependencies]
 concerto-app.workspace = true
+concerto-animation.workspace = true
 concerto-asset-import.workspace = true
 concerto-color.workspace = true
 concerto-foundation.workspace = true
 concerto-mesh.workspace = true
 concerto-ecs.workspace = true
 concerto-render.workspace = true
+concerto-physics.workspace = true
 concerto-scene.workspace = true
-tobj = { version = "4.0.3", default-features = false }
+gltf = { version = "1.4.1", features = ["KHR_lights_punctual", "extras"] }
 anyhow = "1.0.97"
 bincode = "1.3"
 glam = { version = "0.30.1" }
+log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
+uuid = { version = "1.18.1", features = ["v4", "js"] }
+serde_json = "1.0"
 
 [dependencies.image]
 version = "0.25.5"

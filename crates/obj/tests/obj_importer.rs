@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use concerto_asset_import::{ImportContext, Importer};
-use concerto_obj_loader::obj_importer::ObjImporter;
+use concerto_obj::obj_importer::ObjImporter;
 use concerto_scene::scene::Scene;
 
 #[test]

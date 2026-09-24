@@ -55,8 +55,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
     std::fs::create_dir_all(project.0.join("assets")).unwrap();
     let source = project.0.join("assets/triangle.gltf");
     std::fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../gltf-loader/tests/fixtures/triangle.gltf"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../gltf/tests/fixtures/triangle.gltf"),
         &source,
     )
     .unwrap();
