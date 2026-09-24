@@ -1,13 +1,13 @@
 [package]
 name = "concerto-asset-import"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-concerto-foundation = { path = "../foundation" }
+concerto-foundation.workspace = true
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
 anyhow = "1.0.97"

@@ -1,20 +1,20 @@
 [package]
 name = "concerto-obj-loader"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description.workspace = true
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-concerto-app = { path = "../app" }
-concerto-asset-import = { path = "../asset-import" }
-concerto-color = { path = "../color" }
-concerto-foundation = { path = "../foundation" }
-concerto-mesh = { path = "../mesh" }
-concerto-ecs = { path = "../ecs" }
-concerto-render = { path = "../render" }
-concerto-scene = { path = "../scene" }
+concerto-app.workspace = true
+concerto-asset-import.workspace = true
+concerto-color.workspace = true
+concerto-foundation.workspace = true
+concerto-mesh.workspace = true
+concerto-ecs.workspace = true
+concerto-render.workspace = true
+concerto-scene.workspace = true
 tobj = { version = "4.0.3", default-features = false }
 anyhow = "1.0.97"
 bincode = "1.3"

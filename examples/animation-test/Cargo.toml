@@ -2,6 +2,7 @@
 name = "animation-test"
 version = "0.1.0"
 edition = "2021"
+publish = false
 description.workspace = true
 repository.workspace = true
 license.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "concerto-ui-egui"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
@@ -10,10 +10,10 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-concerto-app = { path = "../app" }
-concerto-ecs = { path = "../ecs" }
-concerto-render = { path = "../render" }
-concerto-window = { path = "../window" }
+concerto-app.workspace = true
+concerto-ecs.workspace = true
+concerto-render.workspace = true
+concerto-window.workspace = true
 egui = { version = "0.31.1", default-features = false }
 egui-winit = { version = "0.31.1", default-features = false }
 egui-wgpu = { version = "0.31.1", default-features = false }

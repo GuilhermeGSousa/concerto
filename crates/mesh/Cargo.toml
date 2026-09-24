@@ -1,6 +1,6 @@
 [package]
 name = "concerto-mesh"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
@@ -10,10 +10,10 @@ license.workspace = true
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-concerto-foundation = { path = "../foundation" }
+concerto-foundation.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
 glam = { version = "0.30.1", features = ["serde"] }
-concerto-ecs = { path = "../ecs" }
+concerto-ecs.workspace = true
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"

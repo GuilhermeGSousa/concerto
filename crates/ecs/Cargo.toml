@@ -1,6 +1,6 @@
 [package]
 name = "concerto-ecs"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description.workspace = true
 repository.workspace = true
@@ -15,8 +15,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 profiling = "1"
-concerto-tasks = { path = "../tasks", optional = true }
-concerto-ecs-macros = { path = "macros" }
+concerto-tasks = { workspace = true, optional = true }
+concerto-ecs-macros.workspace = true
 any_vec = "0.14.0"
 anymap3 = "1.0.1"
 typle = "0.10.6"

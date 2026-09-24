@@ -1,16 +1,16 @@
 [package]
 name = "concerto-skybox"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 description.workspace = true
 repository.workspace = true
 license.workspace = true
 
 [dependencies]
-concerto-app = { path = "../app" }
-concerto-foundation = { path = "../foundation" }
-concerto-ecs = { path = "../ecs" }
-concerto-render = { path = "../render" }
+concerto-app.workspace = true
+concerto-foundation.workspace = true
+concerto-ecs.workspace = true
+concerto-render.workspace = true
 glam = { version = "0.30.1" }
 bytemuck = { version = "1.22.0", features = ["derive"] }
 env_logger = "0.11.6"

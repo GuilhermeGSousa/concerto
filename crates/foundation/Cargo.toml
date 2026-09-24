@@ -1,6 +1,6 @@
 [package]
 name = "concerto-foundation"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
@@ -11,10 +11,10 @@ build = "build.rs"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-concerto-asset-format = { path = "../asset-format" }
-concerto-editable = { path = "../editable" }
-concerto-ecs = { path = "../ecs" }
-concerto-tasks = { path = "../tasks" }
+concerto-asset-format.workspace = true
+concerto-editable.workspace = true
+concerto-ecs.workspace = true
+concerto-tasks.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }
 glam = { version = "0.30.1", features = ["serde"] }
 cfg-if = "1"
@@ -24,7 +24,7 @@ log = "0.4.27"
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
 toml = "0.8"
-concerto-foundation-macros = { path = "macros" }
+concerto-foundation-macros.workspace = true
 derive_more = { version = "2", features = ["full"] }
 
 [dev-dependencies]
