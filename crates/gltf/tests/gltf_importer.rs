@@ -7,7 +7,7 @@ use std::path::Path;
 use concerto_asset_import::{ImportContext, Importer};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::AssetId;
-use concerto_gltf_loader::gltf_importer::GltfImporter;
+use concerto_gltf::gltf_importer::GltfImporter;
 use concerto_mesh::{SkeletonComponent, mesh::MeshComponent};
 use concerto_scene::scene::{Scene, SceneNode};
 

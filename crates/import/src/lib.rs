@@ -21,8 +21,8 @@ use metadata::{sidecar_path, OutputMetadata, SourceMetadata};
 fn registered_importers() -> Vec<Box<dyn Importer>> {
     vec![
         Box::new(concerto_render::importers::image_importer::ImageImporter),
-        Box::new(concerto_gltf_loader::gltf_importer::GltfImporter),
-        Box::new(concerto_obj_loader::obj_importer::ObjImporter),
+        Box::new(concerto_gltf::gltf_importer::GltfImporter),
+        Box::new(concerto_obj::obj_importer::ObjImporter),
     ]
 }
 

@@ -26,8 +26,7 @@ impl Project {
         let source = self.path(relative);
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../gltf-loader/tests/fixtures/triangle.gltf"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../gltf/tests/fixtures/triangle.gltf"),
             &source,
         )
         .unwrap();

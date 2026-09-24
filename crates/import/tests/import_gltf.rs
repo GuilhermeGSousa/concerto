@@ -14,7 +14,7 @@ fn fixture(project_root: &Path) -> PathBuf {
     let destination = project_root.join("assets/triangle.gltf");
     std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../gltf-loader/tests/fixtures/triangle.gltf")
+        .join("../gltf/tests/fixtures/triangle.gltf")
         .canonicalize()
         .expect("fixture exists");
     std::fs::copy(source, &destination).unwrap();

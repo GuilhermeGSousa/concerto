@@ -58,11 +58,11 @@ concerto-editor = { path = "crates/editor", version = "0.1.0" }
 concerto-foundation = { path = "crates/foundation", version = "0.1.0" }
 concerto-foundation-macros = { path = "crates/foundation/macros", version = "0.1.0" }
 concerto-gameplay = { path = "crates/gameplay", version = "0.1.0" }
-concerto-gltf-loader = { path = "crates/gltf-loader", version = "0.1.0" }
+concerto-gltf = { path = "crates/gltf", version = "0.1.0" }
 concerto-import = { path = "crates/import", version = "0.1.0" }
 concerto-jolt-ffi = { path = "crates/jolt-ffi", version = "0.1.0" }
 concerto-mesh = { path = "crates/mesh", version = "0.1.0" }
-concerto-obj-loader = { path = "crates/obj-loader", version = "0.1.0" }
+concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
 concerto-render-macros = { path = "crates/render/macros", version = "0.1.0" }

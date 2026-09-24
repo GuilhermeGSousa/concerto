@@ -9,8 +9,8 @@ license.workspace = true
 [dependencies]
 concerto-asset-import.workspace = true
 concerto-foundation.workspace = true
-concerto-gltf-loader.workspace = true
-concerto-obj-loader.workspace = true
+concerto-gltf.workspace = true
+concerto-obj.workspace = true
 concerto-render.workspace = true
 anyhow = "1.0.97"
 env_logger = "0.11.6"
