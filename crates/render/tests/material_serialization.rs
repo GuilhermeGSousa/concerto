@@ -1,9 +1,9 @@
 //! Covers StandardMaterial round-tripping directly through bincode (no DTO)
 //! and reporting its texture references for import-time validation.
-use color::Color;
-use essential::assets::{handle::AssetHandle, Asset, AssetId};
-use render::assets::material::StandardMaterial;
-use render::assets::texture::Texture;
+use concerto_color::Color;
+use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
+use concerto_render::assets::material::StandardMaterial;
+use concerto_render::assets::texture::Texture;
 
 #[test]
 fn round_trips_through_bincode_with_weak_texture_handles() {

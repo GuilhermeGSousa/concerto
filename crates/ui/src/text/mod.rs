@@ -1,15 +1,15 @@
-use app::extractor::Extracted;
-use color::Color;
-use ecs::{
+use concerto_app::extractor::Extracted;
+use concerto_color::Color;
+use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     query::Query,
     resource::{Res, ResMut},
 };
+use concerto_render::components::render_entity::RenderEntity;
+use concerto_window::plugin::Window;
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, Weight, Wrap};
-use render::components::render_entity::RenderEntity;
 use std::hash::{Hash, Hasher};
-use window::plugin::Window;
 
 use crate::{
     node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem, theme::UITheme,

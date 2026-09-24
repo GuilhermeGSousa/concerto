@@ -2,10 +2,10 @@
 //! whether structural changes made *inside* callbacks (inserts, removals,
 //! despawns) leave every other entity's location intact.
 
-use ecs::component::{Component, ComponentLifecycleCallback};
-use ecs::entity::Entity;
-use ecs::resource::Resource;
-use ecs::world::World;
+use concerto_ecs::component::{Component, ComponentLifecycleCallback};
+use concerto_ecs::entity::Entity;
+use concerto_ecs::resource::Resource;
+use concerto_ecs::world::World;
 
 #[derive(Component)]
 struct Value(i32);

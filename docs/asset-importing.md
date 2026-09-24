@@ -30,8 +30,8 @@ assets/hero.glb.import.toml       (persistent source/output identities)
 
 ```sh
 cd examples/tech-demo
-cargo run -p import -- assets/forest.glb
-cargo run -p import -- assets/UAL1.glb
+cargo run -p concerto-import -- assets/forest.glb
+cargo run -p concerto-import -- assets/UAL1.glb
 ```
 
 Run from the directory that owns the `content/` tree — that directory is
@@ -57,7 +57,7 @@ imported assets/UAL1.glb -> 126 assets
 ### Flags
 
 ```
-import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]
+concerto-import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]
 ```
 
 - `--config <content.toml>` — load config from an explicit file; its parent
@@ -146,7 +146,7 @@ u32   header length, little-endian
       payload — the asset's own bincode encoding, verbatim
 ```
 
-`ContentAssetHeader` (see `essential::assets::content`):
+`ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
 | Field            | Meaning                                                        |
 |------------------|---------------------------------------------------------------|
@@ -217,7 +217,7 @@ in `index.html` ships the tree, dotfiles (`.registry.toml`) included.
 Use `asset_id!` for references written in game code:
 
 ```rust
-use game_engine::{asset_id, essential::assets::AssetId};
+use concerto::{asset_id, foundation::assets::AssetId};
 
 const HERO: AssetId = asset_id!("content/hero/scene.gasset");
 
@@ -229,7 +229,7 @@ reads the `.gasset` header, and emits the UUID's 16 bytes as a constant. It does
 not embed the file payload, import source assets, read the registry, or perform
 a runtime path lookup. Missing files, malformed headers, and unsupported file
 versions are compile errors at the macro invocation. It is also available as
-`essential::asset_id!` and `essential::assets::asset_id!`.
+`concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
 Register the package's content directory for stable Rust build tracking:
 
@@ -288,7 +288,7 @@ Some assets have no DCC source — a `Scene` assembled in an editor, for
 instance. `save_content_asset` writes one directly:
 
 ```rust
-use essential::assets::content::save_content_asset;
+use concerto_foundation::assets::content::save_content_asset;
 
 save_content_asset(&scene, project_root, "content/levels/intro.gasset")?;
 ```

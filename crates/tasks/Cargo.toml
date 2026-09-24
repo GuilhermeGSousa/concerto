@@ -1,7 +1,10 @@
 [package]
-name = "tasks"
-version = "0.1.0"
+name = "concerto-tasks"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
 profiling = "1"

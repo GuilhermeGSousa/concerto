@@ -1,13 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
-use ecs::{
+use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     events::event_reader::EventReader,
     CommandQueue, Component, Entity, Query, Res, ResMut, Resource, With, Without,
 };
-use essential::assets::{asset_store::AssetStore, handle::AssetLifetimeEvent, AssetId};
+use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetLifetimeEvent, AssetId};
+use concerto_mesh::{Mesh, MeshComponent};
 use log::warn;
-use mesh::{Mesh, MeshComponent};
 use serde::Serialize;
 
 use crate::{

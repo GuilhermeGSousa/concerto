@@ -2,8 +2,8 @@ use std::path::PathBuf;
 
 use anyhow::bail;
 
-use import::config::{project_root_of, ContentConfig};
-use import::import_source;
+use concerto_import::config::{project_root_of, ContentConfig};
+use concerto_import::import_source;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -26,7 +26,7 @@ fn main() -> anyhow::Result<()> {
 
     let Some(source) = source else {
         eprintln!(
-            "usage: import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]"
+            "usage: concerto-import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]"
         );
         std::process::exit(2);
     };

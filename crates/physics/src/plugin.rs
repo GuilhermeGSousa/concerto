@@ -1,4 +1,4 @@
-use app::{
+use concerto_app::{
     plugins::Plugin,
     schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate, Update},
 };
@@ -19,7 +19,7 @@ use crate::{
 pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.register_scene_component::<MeshCollider>();
         app.insert_resource(PhysicsPipeline::new())
             .insert_resource(PhysicsState::new())

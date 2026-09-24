@@ -1,11 +1,11 @@
 use std::marker::PhantomData;
 
-use app::{
+use concerto_app::{
     extractor::Extracted,
     plugins::Plugin,
     schedule_groups::{Extract, Render},
 };
-use ecs::{
+use concerto_ecs::{
     command::CommandQueue,
     query::Query,
     resource::{Res, ResMut, Resource},
@@ -362,7 +362,7 @@ impl<M: Material> MaterialPlugin<M> {
 }
 
 impl<M: Material> Plugin for MaterialPlugin<M> {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         if self.pipeline_only {
             // Pipeline-only: no asset store, no render-asset preparation, no
             // mesh rendering systems.  Only the pipeline resource is created
@@ -382,7 +382,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             .add_render_system(Render, material_renderpass::<M>);
     }
 
-    fn finish(&self, app: &mut app::App) {
+    fn finish(&self, app: &mut concerto_app::App) {
         let device = app
             .render()
             .get_resource::<RenderDevice>()

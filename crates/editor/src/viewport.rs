@@ -1,23 +1,22 @@
 //! Texture-backed editor viewport and fly navigation.
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup, Update},
 };
-use color::Color;
-use ecs::entity::hierarchy::Children;
-use ecs::system::NonSendMarker;
-use ecs::{
+use concerto_color::Color;
+use concerto_ecs::entity::hierarchy::Children;
+use concerto_ecs::system::NonSendMarker;
+use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
 };
-use essential::{
+use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     time::Time,
     transform::{GlobalTransform, Transform},
 };
-use glam::{Quat, Vec3};
-use mesh::{Mesh, MeshComponent, mesh::Aabb};
-use render::{
+use concerto_mesh::{Mesh, MeshComponent, mesh::Aabb};
+use concerto_render::{
     assets::texture::Texture,
     components::{
         camera::{Camera, RenderTarget},
@@ -25,21 +24,22 @@ use render::{
         render_entity::SyncWithRenderWorld,
     },
 };
-use std::collections::HashSet;
-use ui::{
+use concerto_ui::{
     UIViewport,
     interaction::{HoveredNode, Interactable},
     material::UIMaterial,
     node::{UILayout, UINode},
     transform::UIValue,
 };
-use window::{
+use concerto_window::{
     input::{
         Input, KeyCode, MouseButton, PhysicalKey,
         actions::{ActionFired, ActionMap},
     },
     winit_events::WindowEvent,
 };
+use glam::{Quat, Vec3};
+use std::collections::HashSet;
 
 use crate::actions::{FrameAll, FrameSelected, ViewportContext};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
@@ -145,7 +145,7 @@ impl Plugin for ViewportPlugin {
     }
 }
 
-pub const PANEL_ID: &str = "rabbithole.scene";
+pub const PANEL_ID: &str = "concerto.scene";
 
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, viewport: Res<EditorViewport>) {
     if let Some(body) = registry.body(PANEL_ID) {
@@ -201,7 +201,7 @@ fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<F
     // Both of these draw, so both have to reach the render world; without the
     // marker they exist only in the main world and are silently never drawn.
     cmd.spawn((
-        world_grid::WorldGrid {
+        concerto_world_grid::WorldGrid {
             line_color: GRID_LINES,
             surface_color: GROUND,
             ..Default::default()
@@ -250,7 +250,7 @@ fn navigate(
     _: NonSendMarker,
     input: Res<Input>,
     time: Res<Time>,
-    window: Res<window::plugin::Window>,
+    window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
     regions: Query<&ViewportRegion>,
     cameras: Query<(&EditorCamera, &mut Transform)>,
@@ -326,7 +326,7 @@ fn speed_scale(input: &Input) -> f32 {
 
 /// Confines the pointer while looking around, so a long turn does not end with
 /// the cursor outside the window and the view stuck.
-fn capture_pointer(window: &window::plugin::Window, capture: bool) {
+fn capture_pointer(window: &concerto_window::plugin::Window, capture: bool) {
     let handle = &window.window_handle;
     handle.set_cursor_visible(!capture);
     let mode = if capture {
@@ -487,7 +487,7 @@ fn sync_viewport_size(
     cameras: Query<(&EditorCamera, &mut Camera)>,
     viewport: Res<EditorViewport>,
     mut textures: ResMut<AssetStore<Texture>>,
-    window: Res<window::plugin::Window>,
+    window: Res<concerto_window::plugin::Window>,
 ) {
     let Some((_, layout)) = layouts.iter().next() else {
         return;

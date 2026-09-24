@@ -1,14 +1,14 @@
 #![allow(clippy::items_after_test_module, clippy::too_many_arguments)]
 
-use ecs::{
+use concerto_ecs::{
     query::Query,
     resource::{Res, ResMut},
 };
-use glyphon::{Resolution, TextArea, TextBounds};
-use render::{
+use concerto_render::{
     MaterialPipeline, device::RenderDevice, queue::RenderQueue,
     render_asset::render_window::RenderWindow,
 };
+use glyphon::{Resolution, TextArea, TextBounds};
 use wgpu::MultisampleState;
 
 use crate::{

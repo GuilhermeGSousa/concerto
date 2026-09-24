@@ -1,11 +1,11 @@
-use ecs::{
+use concerto_ecs::{
     component::Component,
     entity::Entity,
     events::{Event, event_writer::EventWriter},
     query::Query,
     resource::{Res, ResMut, Resource},
 };
-use window::input::{Input, InputState, KeyCode, PhysicalKey};
+use concerto_window::input::{Input, InputState, KeyCode, PhysicalKey};
 
 use crate::{focus::FocusedWidget, text::TextComponent};
 
@@ -91,7 +91,7 @@ pub struct TextInputResource;
 pub(crate) fn update_text_inputs(
     mut focused: ResMut<FocusedWidget>,
     input: Res<Input>,
-    mut clipboard: ResMut<window::plugin::WindowClipboard>,
+    mut clipboard: ResMut<concerto_window::plugin::WindowClipboard>,
     text_inputs: Query<(Entity, &mut UITextInput, &mut TextComponent)>,
     mut writer: EventWriter<UITextInputChanged>,
     mut submitted: EventWriter<UITextInputSubmitted>,

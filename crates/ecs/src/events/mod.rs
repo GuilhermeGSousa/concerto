@@ -3,7 +3,7 @@ pub mod event_cursor;
 pub mod event_reader;
 pub mod event_writer;
 
-pub use ecs_macros::Event;
+pub use concerto_ecs_macros::Event;
 
 /// Marker trait for messages that can be sent between systems.
 ///
@@ -19,7 +19,7 @@ pub use ecs_macros::Event;
 ///
 /// # Example
 /// ```ignore
-/// use ecs::events::Event;
+/// use concerto_ecs::events::Event;
 ///
 /// #[derive(Event)]
 /// struct PlayerDied { score: u32 }

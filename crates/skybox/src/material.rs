@@ -1,6 +1,6 @@
-use essential::assets::{Asset, handle::AssetHandle};
+use concerto_foundation::assets::{Asset, handle::AssetHandle};
 
-use render::{
+use concerto_render::{
     AsBindGroup,
     assets::{
         texture::Texture,

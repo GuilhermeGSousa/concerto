@@ -20,7 +20,7 @@ pub mod viewport;
 pub mod window_chrome;
 mod workspace;
 
-use app::{App, Plugin};
+use concerto_app::{App, Plugin};
 use std::path::PathBuf;
 
 pub struct EditorPlugin {
@@ -47,14 +47,20 @@ impl Plugin for EditorPlugin {
         app.insert_resource(asset_editor::AssetEditorCommands::default());
         app.insert_resource(asset_editor::ActiveEditor::default());
         app.add_system(
-            app::schedule_groups::Update,
+            concerto_app::schedule_groups::Update,
             asset_editor::process_editor_commands,
         );
         app.register_plugin(scene::ScenePlugin);
-        app.add_system(app::schedule_groups::Update, workspace::create_editor_hosts);
-        app.add_system(app::schedule_groups::Update, workspace::sync_workspace);
         app.add_system(
-            app::schedule_groups::Update,
+            concerto_app::schedule_groups::Update,
+            workspace::create_editor_hosts,
+        );
+        app.add_system(
+            concerto_app::schedule_groups::Update,
+            workspace::sync_workspace,
+        );
+        app.add_system(
+            concerto_app::schedule_groups::Update,
             workspace::reset_workspace_input,
         );
         app.register_plugin(viewport::ViewportPlugin);

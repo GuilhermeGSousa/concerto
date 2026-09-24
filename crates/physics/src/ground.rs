@@ -1,4 +1,4 @@
-use ecs::{component::Component, entity::Entity, query::Query, resource::Res};
+use concerto_ecs::{component::Component, entity::Entity, query::Query, resource::Res};
 use glam::Vec3;
 
 use crate::{body::BodyId, physics_state::PhysicsState};

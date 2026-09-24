@@ -1,4 +1,4 @@
-use ecs::Entity;
+use concerto_ecs::Entity;
 use glam::Vec3;
 
 use crate::body::BodyId;

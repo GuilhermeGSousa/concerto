@@ -3,9 +3,9 @@ use std::{
     sync::Arc,
 };
 
-use ecs::{Component, Entity, Resource, command::CommandQueue, component::Tick};
-use editable::{Editable, PropertyPath};
-use ui::theme::UITheme;
+use concerto_ecs::{Component, Entity, Resource, command::CommandQueue, component::Tick};
+use concerto_editable::{Editable, PropertyPath};
+use concerto_ui::theme::UITheme;
 
 /// A rejected edit leaves the target unchanged. Type mismatches and stale
 /// registrations are reported without invoking the adapter.

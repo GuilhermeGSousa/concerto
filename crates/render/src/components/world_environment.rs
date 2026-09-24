@@ -1,5 +1,5 @@
-use color::{Color, LinearRgba};
-use ecs::resource::Resource;
+use concerto_color::{Color, LinearRgba};
+use concerto_ecs::resource::Resource;
 use encase::ShaderType;
 
 // TODO: Actually use this

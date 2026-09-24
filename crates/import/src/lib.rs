@@ -5,12 +5,12 @@ use std::path::{Component, Path};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
-use asset_import::{ImportContext, Importer, SubAssetIdResolver};
-use essential::assets::content::{
+use concerto_asset_import::{ImportContext, Importer, SubAssetIdResolver};
+use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, AssetRegistry, ContentAssetHeader,
     ImportProvenance, CONTENT_FORMAT_VERSION, REGISTRY_FILE_NAME,
 };
-use essential::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 
 pub mod config;
 pub mod metadata;
@@ -20,9 +20,9 @@ use metadata::{sidecar_path, OutputMetadata, SourceMetadata};
 
 fn registered_importers() -> Vec<Box<dyn Importer>> {
     vec![
-        Box::new(render::importers::image_importer::ImageImporter),
-        Box::new(gltf_loader::gltf_importer::GltfImporter),
-        Box::new(obj_loader::obj_importer::ObjImporter),
+        Box::new(concerto_render::importers::image_importer::ImageImporter),
+        Box::new(concerto_gltf::gltf_importer::GltfImporter),
+        Box::new(concerto_obj::obj_importer::ObjImporter),
     ]
 }
 

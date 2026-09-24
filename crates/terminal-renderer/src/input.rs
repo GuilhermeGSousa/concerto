@@ -1,6 +1,6 @@
 use std::{collections::HashSet, time::Duration};
 
-use ecs::{
+use concerto_ecs::{
     events::event_writer::EventWriter,
     resource::{ResMut, Resource},
 };

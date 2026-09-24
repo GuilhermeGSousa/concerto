@@ -7,15 +7,14 @@
 //!
 //! Run it with `cargo run -p physics-test` (requires a display/GPU).
 
-use color::Color;
-use game_engine::{
+use concerto::{
     app::{
         schedule_groups::{Startup, Update},
         App,
     },
     director::VirtualCamera,
     ecs::{command::CommandQueue, component::Component, query::Query, resource::Res},
-    essential::{
+    foundation::{
         assets::asset_server::AssetServer,
         transform::{GlobalTransform, Transform},
     },
@@ -36,6 +35,7 @@ use game_engine::{
     world_grid::WorldGrid,
     DefaultPlugins,
 };
+use concerto_color::Color;
 use glam::{Quat, Vec3};
 
 const SPHERE_RADIUS: f32 = 1.0;

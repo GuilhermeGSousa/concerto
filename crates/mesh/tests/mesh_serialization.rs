@@ -1,7 +1,7 @@
 //! Covers Mesh/Vertex round-tripping through bincode directly (no DTO).
+use concerto_mesh::mesh::Mesh;
+use concerto_mesh::vertex::Vertex;
 use glam::{Mat4, Vec3};
-use mesh::mesh::Mesh;
-use mesh::vertex::Vertex;
 
 fn sample_vertex(x: f32) -> Vertex {
     Vertex {

@@ -1,5 +1,5 @@
+use concerto_ecs::resource::Resource;
 use derive_more::{Deref, DerefMut};
-use ecs::resource::Resource;
 
 /// One [`glyphon::TextRenderer`] per z-layer that carries text this frame.
 ///

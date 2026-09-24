@@ -1,5 +1,4 @@
-use color::Color;
-use game_engine::{
+use concerto::{
     app::{
         schedule_groups::{Startup, Update},
         App,
@@ -8,11 +7,12 @@ use game_engine::{
     render::components::light::{Light, LightType},
     DefaultPlugins,
 };
-use gameplay::{movement::first_person_player_fly, player::spawn_first_person_player};
+use concerto_color::Color;
+use concerto_gameplay::{movement::first_person_player_fly, player::spawn_first_person_player};
 use glam::Vec3;
 
-use debug_gizmos::DebugGizmosPlugin;
-use world_grid::WorldGrid;
+use concerto_debug_gizmos::DebugGizmosPlugin;
+use concerto_world_grid::WorldGrid;
 
 use crate::demo_overlay::{draw_entity_gizmos, spawn_overlay, update_overlay};
 use crate::movement_animation::{setup_animations, spawn_character, update_movement};

@@ -9,17 +9,20 @@ inherits = "release"
 debug = true
 strip = false
 
-[profile.profiling.package.jolt-ffi]
+[profile.profiling.package.concerto-jolt-ffi]
 debug = true
 
 [package]
-name = "game-engine"
-version = "0.1.0"
+name = "concerto"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [features]
 default = ["multithreaded"]
-multithreaded = ["app/multithreaded"]
+multithreaded = ["concerto-app/multithreaded"]
 # Enables the Tracy backend for all `profiling` spans (engine + wgpu
 # internals). Native only — never enable for wasm builds.
 tracy = ["profiling/profile-with-tracy"]
@@ -30,31 +33,73 @@ crate-type = ["cdylib", "rlib"]
 [workspace]
 members = ["crates/*", "examples/*"]
 
+[workspace.package]
+version = "0.1.0"
+description = "A game engine for character-driven, high-fidelity cinematic games."
+repository = "https://github.com/GuilhermeGSousa/game-engine"
+license = "MIT"
+
+# Internal crates. `version` is required to publish and must match
+# `workspace.package.version`.
+[workspace.dependencies]
+concerto-animation = { path = "crates/animation", version = "0.1.0" }
+concerto-app = { path = "crates/app", version = "0.1.0" }
+concerto-asset-build = { path = "crates/asset-build", version = "0.1.0" }
+concerto-asset-format = { path = "crates/asset-format", version = "0.1.0" }
+concerto-asset-import = { path = "crates/asset-import", version = "0.1.0" }
+concerto-color = { path = "crates/color", version = "0.1.0" }
+concerto-debug-gizmos = { path = "crates/debug-gizmos", version = "0.1.0" }
+concerto-director = { path = "crates/director", version = "0.1.0" }
+concerto-ecs = { path = "crates/ecs", version = "0.1.0" }
+concerto-ecs-macros = { path = "crates/ecs/macros", version = "0.1.0" }
+concerto-editable = { path = "crates/editable", version = "0.1.0" }
+concerto-editable-macros = { path = "crates/editable/macros", version = "0.1.0" }
+concerto-editor = { path = "crates/editor", version = "0.1.0" }
+concerto-foundation = { path = "crates/foundation", version = "0.1.0" }
+concerto-foundation-macros = { path = "crates/foundation/macros", version = "0.1.0" }
+concerto-gameplay = { path = "crates/gameplay", version = "0.1.0" }
+concerto-gltf = { path = "crates/gltf", version = "0.1.0" }
+concerto-import = { path = "crates/import", version = "0.1.0" }
+concerto-jolt-ffi = { path = "crates/jolt-ffi", version = "0.1.0" }
+concerto-mesh = { path = "crates/mesh", version = "0.1.0" }
+concerto-obj = { path = "crates/obj", version = "0.1.0" }
+concerto-physics = { path = "crates/physics", version = "0.1.0" }
+concerto-render = { path = "crates/render", version = "0.1.0" }
+concerto-render-macros = { path = "crates/render/macros", version = "0.1.0" }
+concerto-scene = { path = "crates/scene", version = "0.1.0" }
+concerto-skybox = { path = "crates/skybox", version = "0.1.0" }
+concerto-tasks = { path = "crates/tasks", version = "0.1.0" }
+concerto-terminal-renderer = { path = "crates/terminal-renderer", version = "0.1.0" }
+concerto-ui = { path = "crates/ui", version = "0.1.0" }
+concerto-ui-egui = { path = "crates/ui-egui", version = "0.1.0" }
+concerto-window = { path = "crates/window", version = "0.1.0" }
+concerto-world-grid = { path = "crates/world-grid", version = "0.1.0" }
+
 [lints.rust]
 warnings = "deny"
 
 [dependencies]
 profiling = "1"
-app = { path = "crates/app" }
-animation = { path = "crates/animation" }
-essential = { path = "crates/essential" }
-render = { path = "crates/render" }
-director = { path = "crates/director" }
-mesh = { path = "crates/mesh" }
-gameplay = { path = "crates/gameplay" }
-window = { path = "crates/window" }
-ecs = { path = "crates/ecs" }
-color = { path = "crates/color" }
-ui = { path = "crates/ui" }
-scene = { path = "crates/scene" }
-skybox = { path = "crates/skybox" }
-world-grid = { path = "crates/world-grid" }
+concerto-app.workspace = true
+concerto-animation.workspace = true
+concerto-foundation.workspace = true
+concerto-render.workspace = true
+concerto-director.workspace = true
+concerto-mesh.workspace = true
+concerto-gameplay.workspace = true
+concerto-window.workspace = true
+concerto-ecs.workspace = true
+concerto-color.workspace = true
+concerto-ui.workspace = true
+concerto-scene.workspace = true
+concerto-skybox.workspace = true
+concerto-world-grid.workspace = true
 # Physics runs everywhere: Jolt natively, Rapier on the web (Jolt's C++
 # requires thread primitives that wasm32 toolchains do not provide).
-physics = { path = "crates/physics" }
+concerto-physics.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { version = "24.0.1", features = ["webgl"] }
 
-[profile.dev.package.jolt-ffi]
+[profile.dev.package.concerto-jolt-ffi]
 opt-level = 3

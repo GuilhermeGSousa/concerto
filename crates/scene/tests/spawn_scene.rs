@@ -4,20 +4,22 @@
 //! `spawner_expands_nodes_and_upgrades_weak_handles` case additionally
 //! drives the real system with a wired `AssetServer`, so the Weak->Strong
 //! mesh-handle upgrade in `MeshComponent::apply` is exercised for real.
-use ecs::component::name::Name;
-use ecs::component::Component;
-use ecs::entity::hierarchy::{ChildOf, Children};
-use ecs::{IntoSystem, Res, ResMut, Resource, System, World};
-use essential::assets::asset_server::AssetServer;
-use essential::assets::asset_store::AssetStore;
-use essential::assets::handle::AssetHandle;
-use essential::assets::AssetId;
-use essential::transform::Transform;
+use concerto_ecs::component::name::Name;
+use concerto_ecs::component::Component;
+use concerto_ecs::entity::hierarchy::{ChildOf, Children};
+use concerto_ecs::{IntoSystem, Res, ResMut, Resource, System, World};
+use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::asset_store::AssetStore;
+use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::assets::AssetId;
+use concerto_foundation::transform::Transform;
+use concerto_mesh::mesh::{Mesh, MeshComponent};
+use concerto_render::components::camera::Camera;
+use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
+use concerto_scene::spawner::{
+    spawn_scene, spawn_scene_components, SceneSpawnerComponent, SpawnedScene,
+};
 use glam::Vec3;
-use mesh::mesh::{Mesh, MeshComponent};
-use render::components::camera::Camera;
-use scene::scene::{Scene, SceneNode, SerializedComponent};
-use scene::spawner::{spawn_scene, spawn_scene_components, SceneSpawnerComponent, SpawnedScene};
 
 fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) -> SceneNode {
     SceneNode {
@@ -50,13 +52,13 @@ fn mesh_component(id: AssetId) -> SerializedComponent {
 struct SceneFixture(Scene);
 
 #[derive(Resource)]
-struct SpawnParent(ecs::Entity);
+struct SpawnParent(concerto_ecs::Entity);
 
 #[derive(Resource, Default)]
 struct SpawnOutput(Option<SpawnedScene>);
 
 fn spawn_fixture_scene(
-    mut cmd: ecs::command::CommandQueue,
+    mut cmd: concerto_ecs::command::CommandQueue,
     fixture: Res<SceneFixture>,
     parent: Res<SpawnParent>,
     mut output: ResMut<SpawnOutput>,

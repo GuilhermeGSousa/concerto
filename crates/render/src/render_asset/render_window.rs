@@ -1,4 +1,4 @@
-use ecs::resource::Resource;
+use concerto_ecs::resource::Resource;
 use wgpu::{TextureView, TextureViewDescriptor};
 
 #[derive(Resource)]

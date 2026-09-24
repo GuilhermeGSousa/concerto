@@ -1,7 +1,7 @@
-use game_engine::{asset_id, essential::assets::AssetId};
-use game_engine::{
+use concerto::{asset_id, foundation::assets::AssetId};
+use concerto::{
     ecs::{CommandQueue, Res},
-    essential::{assets::asset_server::AssetServer, transform::Transform},
+    foundation::{assets::asset_server::AssetServer, transform::Transform},
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
 };
 

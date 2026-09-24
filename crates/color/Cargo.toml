@@ -1,7 +1,10 @@
 [package]
-name = "color"
-version = "0.1.0"
+name = "concerto-color"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["rlib"]

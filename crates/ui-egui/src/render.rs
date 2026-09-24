@@ -1,13 +1,13 @@
-use ecs::resource::{Res, ResMut};
+use concerto_ecs::resource::{Res, ResMut};
+use concerto_render::{
+    device::RenderDevice, queue::RenderQueue, render_asset::render_window::RenderWindow,
+    resources::RenderContext,
+};
+use concerto_window::plugin::Window;
 use egui_wgpu::{
     wgpu::{self, StoreOp},
     ScreenDescriptor,
 };
-use render::{
-    device::RenderDevice, queue::RenderQueue, render_asset::render_window::RenderWindow,
-    resources::RenderContext,
-};
-use window::plugin::Window;
 
 use crate::resources::UIRenderer;
 

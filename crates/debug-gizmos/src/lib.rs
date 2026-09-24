@@ -5,8 +5,8 @@
 //! shapes for the current frame:
 //!
 //! ```ignore
-//! use debug_gizmos::DebugGizmos;
-//! use color::LinearRgba;
+//! use concerto_debug_gizmos::DebugGizmos;
+//! use concerto_color::LinearRgba;
 //! use glam::Vec3;
 //!
 //! fn draw(mut gizmos: DebugGizmos) {

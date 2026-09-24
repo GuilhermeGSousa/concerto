@@ -2,19 +2,19 @@
 //! content-tree paths, not `<source>#<sub>`.
 use std::path::{Path, PathBuf};
 
-use ecs::component::Component;
-use essential::assets::content::{
+use concerto_ecs::component::Component;
+use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, AssetRegistry, ImportProvenance,
 };
-use essential::assets::{Asset, AssetId};
-use mesh::mesh::MeshComponent;
-use scene::scene::Scene;
+use concerto_foundation::assets::{Asset, AssetId};
+use concerto_mesh::mesh::MeshComponent;
+use concerto_scene::scene::Scene;
 
 fn fixture(project_root: &Path) -> PathBuf {
     let destination = project_root.join("assets/triangle.gltf");
     std::fs::create_dir_all(destination.parent().unwrap()).unwrap();
     let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../gltf-loader/tests/fixtures/triangle.gltf")
+        .join("../gltf/tests/fixtures/triangle.gltf")
         .canonicalize()
         .expect("fixture exists");
     std::fs::copy(source, &destination).unwrap();
@@ -27,7 +27,7 @@ fn writes_content_assets_with_content_path_cross_references() {
     std::fs::create_dir_all(&project_root).unwrap();
 
     let written =
-        import::import_source(&fixture(&project_root), &project_root, &Default::default())
+        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("import succeeds");
 
     for expected in [
@@ -90,7 +90,7 @@ fn import_upserts_the_registry_for_every_written_asset() {
     std::fs::create_dir_all(&project_root).unwrap();
 
     let written =
-        import::import_source(&fixture(&project_root), &project_root, &Default::default())
+        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("import succeeds");
 
     let registry = AssetRegistry::load(&project_root).expect("registry loads");
@@ -116,12 +116,14 @@ fn re_importing_reuses_the_ids_already_on_disk() {
     let _ = std::fs::remove_dir_all(&project_root);
     std::fs::create_dir_all(&project_root).unwrap();
 
-    let first = import::import_source(&fixture(&project_root), &project_root, &Default::default())
-        .expect("first import");
+    let first =
+        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
+            .expect("first import");
     let ids_before: Vec<AssetId> = first.iter().map(|asset| asset.asset_id).collect();
 
-    let second = import::import_source(&fixture(&project_root), &project_root, &Default::default())
-        .expect("second import");
+    let second =
+        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
+            .expect("second import");
     let ids_after: Vec<AssetId> = second.iter().map(|asset| asset.asset_id).collect();
 
     assert_eq!(
@@ -146,7 +148,7 @@ fn import_writes_a_registry_rebuilt_from_the_tree() {
     stale.save(&project_root).unwrap();
 
     let written =
-        import::import_source(&fixture(&project_root), &project_root, &Default::default())
+        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("import");
 
     let registry = AssetRegistry::load(&project_root).expect("registry loads");

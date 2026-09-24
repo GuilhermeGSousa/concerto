@@ -1,19 +1,22 @@
 [package]
-name = "ecs"
-version = "0.1.0"
+name = "concerto-ecs"
+version.workspace = true
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [features]
 default = ["multithreaded"]
-multithreaded = ["dep:tasks", "dep:fixedbitset", "dep:concurrent-queue"]
+multithreaded = ["dep:concerto-tasks", "dep:fixedbitset", "dep:concurrent-queue"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 profiling = "1"
-tasks = { path = "../tasks", optional = true }
-ecs-macros = { path = "macros" }
+concerto-tasks = { workspace = true, optional = true }
+concerto-ecs-macros.workspace = true
 any_vec = "0.14.0"
 anymap3 = "1.0.1"
 typle = "0.10.6"

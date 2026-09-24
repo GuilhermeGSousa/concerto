@@ -1,11 +1,11 @@
-# Rabbithole editor
+# Concerto editor
 
 The engine-native editor uses the engine's ECS, renderer, assets, scene, and UI
 crates. It opens imported content and allows temporary inspector edits. It does
 not import or save assets; importing belongs to the `import` CLI.
 
 ```sh
-cargo run -p editor -- --project examples/render-test
+cargo run -p concerto-editor -- --project examples/render-test
 ```
 
 Add `--decorated` to use the window manager's title bar.
@@ -44,7 +44,7 @@ includes registration, a non-Clone domain type, click handling, snapshot refresh
 and validation. Run its headless demonstration with:
 
 ```sh
-cargo run -p editor --example custom_property
+cargo run -p concerto-editor --example custom_property
 ```
 
 ## Custom asset editors
@@ -75,7 +75,7 @@ rejects invalid input without mutation, and registers through the public API.
 Run its headless smoke test with:
 
 ```sh
-cargo run -p editor --example custom_asset
+cargo run -p concerto-editor --example custom_asset
 ```
 
 The example uses a synchronous ECS loading system for clarity. Asynchronous

@@ -1,4 +1,4 @@
-use game_engine::{
+use concerto::{
     DefaultPlugins,
     app::{
         App,

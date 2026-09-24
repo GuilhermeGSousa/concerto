@@ -1,13 +1,13 @@
-use app::{
+use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateUpdate, Render},
 };
-use ecs::IntoSystemConfig;
-use glyphon::{Cache, SwashCache, Viewport};
-use render::{
+use concerto_ecs::IntoSystemConfig;
+use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
     resources::RenderContext,
 };
+use glyphon::{Cache, SwashCache, Viewport};
 
 use crate::{
     anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
@@ -52,24 +52,31 @@ use crate::{
 pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.register_plugin(MaterialPlugin::<UIMaterial>::pipeline_only());
 
         {
             let actions = app
-                .get_resource_mut::<window::input::actions::ActionMap>()
+                .get_resource_mut::<concerto_window::input::actions::ActionMap>()
                 .expect("WindowPlugin must be registered before UIPlugin");
             actions.bind_global(
                 UIFocusNext,
-                window::input::actions::Shortcut::key(window::input::KeyCode::Tab),
+                concerto_window::input::actions::Shortcut::key(
+                    concerto_window::input::KeyCode::Tab,
+                ),
             );
             actions.bind_global(
                 UIFocusPrevious,
-                window::input::actions::Shortcut::key(window::input::KeyCode::Tab).with_shift(),
+                concerto_window::input::actions::Shortcut::key(
+                    concerto_window::input::KeyCode::Tab,
+                )
+                .with_shift(),
             );
             actions.bind_global(
                 UIDismissPanel,
-                window::input::actions::Shortcut::key(window::input::KeyCode::Escape),
+                concerto_window::input::actions::Shortcut::key(
+                    concerto_window::input::KeyCode::Escape,
+                ),
             );
         }
 
@@ -135,7 +142,7 @@ impl Plugin for UIPlugin {
             .add_system(Render, ui_renderpass);
     }
 
-    fn finish(&self, app: &mut app::App) {
+    fn finish(&self, app: &mut concerto_app::App) {
         let device = app
             .render()
             .get_resource::<RenderDevice>()

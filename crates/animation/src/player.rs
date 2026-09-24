@@ -1,10 +1,10 @@
 use std::ops::Deref;
 
-use ecs::{
+use concerto_ecs::{
     component::{Component, scene::SceneEntityRef},
     query::Query,
 };
-use essential::{
+use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::Transform,
 };

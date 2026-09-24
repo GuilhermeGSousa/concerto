@@ -1,12 +1,12 @@
-use color::Color;
-use ecs::{
+use concerto_color::Color;
+use concerto_ecs::{
     component::Component,
     entity::Entity,
     events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::Query,
     resource::Resource,
 };
-use window::input::MouseButton;
+use concerto_window::input::MouseButton;
 
 use crate::{interaction::UIClick, material::UIMaterial};
 

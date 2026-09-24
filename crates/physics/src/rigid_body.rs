@@ -1,6 +1,6 @@
 use std::ops::BitOr;
 
-use ecs::component::Component;
+use concerto_ecs::component::Component;
 
 /// Bitmask of the degrees of freedom a dynamic body may use (combine with
 /// `|`). Restricting a body to [`AllowedDofs::TRANSLATION`] keeps it from

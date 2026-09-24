@@ -1,15 +1,15 @@
 //! Imported UUIDs survive UUID loading, handle serialization, and content moves.
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use ecs::World;
-use essential::assets::{
+use concerto_ecs::World;
+use concerto_foundation::assets::{
     asset_server::{handle_asset_load_events, AssetServer},
     asset_store::AssetStore,
     content::read_content_asset_header,
     handle::AssetHandle,
     AssetId, ContentAssetRoot,
 };
-use mesh::mesh::Mesh;
+use concerto_mesh::mesh::Mesh;
 
 struct Project(PathBuf);
 
@@ -55,12 +55,12 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
     std::fs::create_dir_all(project.0.join("assets")).unwrap();
     let source = project.0.join("assets/triangle.gltf");
     std::fs::copy(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../gltf-loader/tests/fixtures/triangle.gltf"),
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../gltf/tests/fixtures/triangle.gltf"),
         &source,
     )
     .unwrap();
-    let imported = import::import_source(&source, &project.0, &Default::default()).unwrap();
+    let imported =
+        concerto_import::import_source(&source, &project.0, &Default::default()).unwrap();
     let address = &imported
         .iter()
         .find(|a| a.sub_asset_name == "mesh/0")
@@ -81,7 +81,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
 
     let moved_address = "content/relocated_mesh.gasset";
     std::fs::rename(project.0.join(address), project.0.join(moved_address)).unwrap();
-    import::import_source(&source, &project.0, &Default::default()).unwrap();
+    concerto_import::import_source(&source, &project.0, &Default::default()).unwrap();
     assert!(!project.0.join(address).exists());
 
     let restored: AssetHandle<Mesh> = bincode::deserialize(&serialized).unwrap();

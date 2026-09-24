@@ -1,4 +1,4 @@
-extern crate self as editable;
+extern crate self as concerto_editable;
 
 mod leaves;
 mod property;
@@ -9,22 +9,22 @@ use std::any::Any;
 /// field in declaration order. Every field must itself be `Editable`.
 ///
 /// ```compile_fail
-/// #[derive(editable::Editable)]
+/// #[derive(concerto_editable::Editable)]
 /// struct Tuple(f32);
 /// ```
 ///
 /// ```compile_fail
-/// #[derive(editable::Editable)]
+/// #[derive(concerto_editable::Editable)]
 /// enum Choice { A, B }
 /// ```
 ///
 /// ```compile_fail
 /// struct Opaque;
 ///
-/// #[derive(editable::Editable)]
+/// #[derive(concerto_editable::Editable)]
 /// struct HasOpaque { inner: Opaque }
 /// ```
-pub use editable_macros::Editable;
+pub use concerto_editable_macros::Editable;
 pub use property::{PathError, PropertyPath, with_property, with_property_mut};
 
 /// Structural access to a value. Opaque values use the default empty visitors;

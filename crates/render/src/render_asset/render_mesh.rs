@@ -1,4 +1,4 @@
-use ecs::resource::Res;
+use concerto_ecs::resource::Res;
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -20,7 +20,7 @@ impl RenderAsset for RenderMesh {
 
     fn prepare_asset(
         source_asset: &Self::SourceAsset,
-        params: &mut ecs::system::input::SystemInputData<Self::PreparationParams>,
+        params: &mut concerto_ecs::system::input::SystemInputData<Self::PreparationParams>,
     ) -> Result<Self, AssetPreparationError> {
         let (context,) = params;
 

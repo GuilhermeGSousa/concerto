@@ -1,8 +1,20 @@
 [package]
-name = "jolt-ffi"
-version = "0.1.0"
+name = "concerto-jolt-ffi"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 links = "jolt"
+# Ship only what build.rs compiles: the full JoltPhysics checkout (assets,
+# samples, docs) is over crates.io's 10 MB crate size limit.
+include = [
+    "/src",
+    "/csrc",
+    "/build.rs",
+    "/vendor/JoltPhysics/Jolt",
+    "/vendor/JoltPhysics/LICENSE",
+]
 
 [build-dependencies]
 cc = { version = "1", features = ["parallel"] }

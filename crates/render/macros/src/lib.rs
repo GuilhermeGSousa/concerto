@@ -324,7 +324,7 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
                                     resource: wgpu::BindingResource::TextureView(&tex.view),
                                 });
                             } else {
-                                return Err(render::render_asset::AssetPreparationError::NotReady);
+                                return Err(concerto_render::render_asset::AssetPreparationError::NotReady);
                             }
                         } else {
                             entries.push(wgpu::BindGroupEntry {
@@ -362,7 +362,7 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
                                         resource: wgpu::BindingResource::Sampler(&tex.sampler),
                                     });
                                 } else {
-                                    return Err(render::render_asset::AssetPreparationError::NotReady);
+                                    return Err(concerto_render::render_asset::AssetPreparationError::NotReady);
                                 }
                             } else {
                                 entries.push(wgpu::BindGroupEntry {
@@ -407,10 +407,10 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
         fn create_bind_group(
             &self,
             device: &wgpu::Device,
-            render_textures: &render::render_asset::RenderAssets<render::render_asset::render_texture::RenderTexture>,
-            dummy_texture: &render::render_asset::render_texture::DummyRenderTexture,
+            render_textures: &concerto_render::render_asset::RenderAssets<concerto_render::render_asset::render_texture::RenderTexture>,
+            dummy_texture: &concerto_render::render_asset::render_texture::DummyRenderTexture,
             layout: &wgpu::BindGroupLayout,
-        ) -> Result<wgpu::BindGroup, render::render_asset::AssetPreparationError> {
+        ) -> Result<wgpu::BindGroup, concerto_render::render_asset::AssetPreparationError> {
             use wgpu::util::DeviceExt;
             let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
             #(#entry_stmts)*
@@ -539,7 +539,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
         .unwrap_or_default();
 
     quote! {
-        impl render::assets::material::Material for #name {
+        impl concerto_render::assets::material::Material for #name {
             #camera_fn
             #lighting_fn
             #skeleton_fn
@@ -590,12 +590,12 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
     let mat_attr = parse_material_attr(&input.attrs);
 
     let vertex_shader_expr = match mat_attr.vertex_shader {
-        Some(ref expr) => quote! { render::assets::material::ShaderRef::Source(#expr) },
-        None => quote! { render::assets::material::ShaderRef::Default },
+        Some(ref expr) => quote! { concerto_render::assets::material::ShaderRef::Source(#expr) },
+        None => quote! { concerto_render::assets::material::ShaderRef::Default },
     };
     let fragment_shader_expr = match mat_attr.fragment_shader {
-        Some(ref expr) => quote! { render::assets::material::ShaderRef::Source(#expr) },
-        None => quote! { render::assets::material::ShaderRef::Default },
+        Some(ref expr) => quote! { concerto_render::assets::material::ShaderRef::Source(#expr) },
+        None => quote! { concerto_render::assets::material::ShaderRef::Default },
     };
 
     let named_fields = match &input.data {
@@ -625,12 +625,12 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
     let material_impl = gen_material_impl(name, &mat_attr);
 
     let expanded = quote! {
-        impl render::assets::material::AsBindGroup for #name {
-            fn vertex_shader() -> render::assets::material::ShaderRef {
+        impl concerto_render::assets::material::AsBindGroup for #name {
+            fn vertex_shader() -> concerto_render::assets::material::ShaderRef {
                 #vertex_shader_expr
             }
 
-            fn fragment_shader() -> render::assets::material::ShaderRef {
+            fn fragment_shader() -> concerto_render::assets::material::ShaderRef {
                 #fragment_shader_expr
             }
 

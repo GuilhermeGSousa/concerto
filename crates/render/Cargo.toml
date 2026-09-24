@@ -1,20 +1,23 @@
 [package]
-name = "render"
-version = "0.1.0"
+name = "concerto-render"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 profiling = "1"
-app = { path = "../app" }
-color = { path = "../color" }
-essential = { path = "../essential" }
-ecs = { path = "../ecs" }
-mesh = { path = "../mesh" }
-window = { path = "../window" }
-render-macros = { path = "macros" }
+concerto-app.workspace = true
+concerto-color.workspace = true
+concerto-foundation.workspace = true
+concerto-ecs.workspace = true
+concerto-mesh.workspace = true
+concerto-window.workspace = true
+concerto-render-macros.workspace = true
 bitflags = "2.9.1"
 encase = { version = "0.11.1", features = ["glam"] }
 glam = { version = "0.30.1" }
@@ -35,7 +38,7 @@ anyhow = "1.0.97"
 winit = { version = "0.30" }
 offset-allocator = { version = "0.2.0" }
 derive_more = { version = "2", features = ["full"] }
-asset-import = { path = "../asset-import" }
+concerto-asset-import.workspace = true
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
 

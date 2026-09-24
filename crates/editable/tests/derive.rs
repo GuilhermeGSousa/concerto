@@ -1,6 +1,6 @@
 use std::any::{Any, TypeId};
 
-use editable::{
+use concerto_editable::{
     Editable, PathError, PropertyPath, PropertyVisitor, with_property, with_property_mut,
 };
 use glam::{Quat, Vec3};

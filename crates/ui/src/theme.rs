@@ -1,7 +1,7 @@
-use color::Color;
-use ecs::resource::Resource;
+use concerto_color::Color;
+use concerto_ecs::resource::Resource;
 
-/// Semantic colors and metrics for the Rabbithole editor's Nocturne UI.
+/// Semantic colors and metrics for the Concerto editor's Nocturne UI.
 ///
 /// Applications can replace this resource to reskin reusable UI without
 /// coupling widgets to editor-specific concepts.

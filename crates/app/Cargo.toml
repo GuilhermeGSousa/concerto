@@ -1,19 +1,22 @@
 [package]
-name = "app"
-version = "0.1.0"
+name = "concerto-app"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [features]
 default = ["multithreaded"]
-multithreaded = ["ecs/multithreaded"]
+multithreaded = ["concerto-ecs/multithreaded"]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 profiling = "1"
-ecs = { path = "../ecs" }
-essential = { path = "../essential" }
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
 getrandom = { version = "0.2", features = ["js"] }
 uuid = { version = "1.18.1", features = ["v4", "js"] }
 cfg-if = "1"

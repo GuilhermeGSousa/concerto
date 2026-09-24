@@ -1,38 +1,38 @@
-pub use animation;
-pub use app;
-pub use color;
-pub use director;
-pub use ecs;
-pub use essential;
-pub use essential::asset_id;
-pub use gameplay;
-use gameplay::GameplayPlugin;
-pub use mesh;
-pub use physics;
-pub use render;
-pub use scene;
-pub use skybox;
-pub use ui;
-pub use window;
-pub use world_grid;
+pub use concerto_animation as animation;
+pub use concerto_app as app;
+pub use concerto_color as color;
+pub use concerto_director as director;
+pub use concerto_ecs as ecs;
+pub use concerto_foundation as foundation;
+pub use concerto_foundation::asset_id;
+pub use concerto_gameplay as gameplay;
+use concerto_gameplay::GameplayPlugin;
+pub use concerto_mesh as mesh;
+pub use concerto_physics as physics;
+pub use concerto_render as render;
+pub use concerto_scene as scene;
+pub use concerto_skybox as skybox;
+pub use concerto_ui as ui;
+pub use concerto_window as window;
+pub use concerto_world_grid as world_grid;
 
-use animation::plugin::AnimationPlugin;
-use app::{
+use concerto_animation::plugin::AnimationPlugin;
+use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     App, Plugin,
 };
-use director::CameraDirectorPlugin;
-use physics::plugin::PhysicsPlugin;
-use render::{
+use concerto_director::CameraDirectorPlugin;
+use concerto_physics::plugin::PhysicsPlugin;
+use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
     shadow_pipeline::ShadowPipelinePlugin, MaterialPlugin,
 };
-use scene::plugin::ScenePlugin;
-use skybox::plugin::SkyboxPlugin;
-use ui::plugin::UIPlugin;
-use window::plugin::WindowPlugin;
-use world_grid::plugin::WorldGridPlugin;
+use concerto_scene::plugin::ScenePlugin;
+use concerto_skybox::plugin::SkyboxPlugin;
+use concerto_ui::plugin::UIPlugin;
+use concerto_window::plugin::WindowPlugin;
+use concerto_world_grid::plugin::WorldGridPlugin;
 
 /// Registers all standard engine plugins in the conventional order.
 #[derive(Default)]

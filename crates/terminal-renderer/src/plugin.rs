@@ -1,9 +1,9 @@
-use app::{
+use concerto_app::{
     plugins::Plugin,
     schedule_groups::{LateRender, Update},
 };
-use ecs::IntoSystemConfig;
-use render::{device::RenderDevice, systems::render::finish_render};
+use concerto_ecs::IntoSystemConfig;
+use concerto_render::{device::RenderDevice, systems::render::finish_render};
 
 use crate::{
     frame::TerminalFrame,
@@ -17,7 +17,7 @@ use crate::{
 pub struct TerminalRendererPlugin;
 
 impl Plugin for TerminalRendererPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.set_runner(terminal_runner);
         app.add_system(Update, poll_terminal_input);
         app.add_system(LateRender, readback_terminal_frame.after(finish_render));
@@ -29,7 +29,7 @@ impl Plugin for TerminalRendererPlugin {
         app.insert_resource(TerminalContext::new(ratatui::init()));
     }
 
-    fn finish(&self, app: &mut app::App) {
+    fn finish(&self, app: &mut concerto_app::App) {
         let state = {
             let device = app.get_resource::<RenderDevice>().expect(
                 "RenderDevice not found — make sure RenderPlugin is registered before TerminalRendererPlugin",

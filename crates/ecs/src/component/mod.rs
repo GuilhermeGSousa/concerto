@@ -8,7 +8,7 @@ pub mod name;
 pub mod registry;
 pub mod scene;
 
-pub use ecs_macros::Component;
+pub use concerto_ecs_macros::Component;
 
 use crate::{entity::Entity, world::RestrictedWorld};
 
@@ -42,7 +42,7 @@ pub struct ComponentLifecycleContext {
 ///
 /// # Example
 /// ```
-/// use ecs::component::Component;
+/// use concerto_ecs::component::Component;
 ///
 /// #[derive(Component)]
 /// struct Velocity {

@@ -1,5 +1,5 @@
-use ecs::component::scene::SceneComponent;
-use essential::assets::{Asset, AssetId, LoadableAsset};
+use concerto_ecs::component::scene::SceneComponent;
+use concerto_foundation::assets::{Asset, AssetId, LoadableAsset};
 use serde::{Deserialize, Serialize};
 
 /// One component's serialized payload: the registry key it was registered under

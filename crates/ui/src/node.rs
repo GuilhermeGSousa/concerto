@@ -2,8 +2,8 @@
 
 use std::collections::HashMap;
 
-use app::extractor::Extracted;
-use ecs::{
+use concerto_app::extractor::Extracted;
+use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     entity::{
@@ -13,10 +13,8 @@ use ecs::{
     query::{Query, filter::Without},
     resource::{Res, Resource},
 };
-use essential::assets::handle::AssetHandle;
-use glam::Vec2;
-use log::warn;
-use render::{
+use concerto_foundation::assets::handle::AssetHandle;
+use concerto_render::{
     assets::{material::AsBindGroup, texture::Texture},
     components::render_entity::{RenderEntity, SyncWithRenderWorld},
     device::RenderDevice,
@@ -25,13 +23,15 @@ use render::{
         render_texture::{DummyRenderTexture, RenderTexture},
     },
 };
+use concerto_window::plugin::Window;
+use glam::Vec2;
+use log::warn;
 pub use taffy::{AlignContent, AlignItems, FlexDirection, Overflow, Position};
 use taffy::{
     AvailableSpace, Dimension, Display, LengthPercentage, LengthPercentageAuto, NodeId, Point,
     Rect, Size, Style, TaffyTree,
 };
 use wgpu::{Buffer, util::DeviceExt};
-use window::plugin::Window;
 
 use crate::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack},
@@ -506,9 +506,9 @@ pub(crate) fn compute_ui_nodes(
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
-    mut engine: ecs::resource::ResMut<UILayoutEngine>,
-    mut measurer: ecs::resource::ResMut<UITextMeasure>,
-    mut diagnostics: ecs::resource::ResMut<UILayoutDiagnostics>,
+    mut engine: concerto_ecs::resource::ResMut<UILayoutEngine>,
+    mut measurer: concerto_ecs::resource::ResMut<UITextMeasure>,
+    mut diagnostics: concerto_ecs::resource::ResMut<UILayoutDiagnostics>,
     mut cmd: CommandQueue,
 ) {
     let logical_size = window.logical_size();
@@ -1148,7 +1148,7 @@ pub(crate) fn extract_ui_materials(
     device: Res<RenderDevice>,
     render_textures: Res<RenderAssets<RenderTexture>>,
     dummy_texture: Res<DummyRenderTexture>,
-    ui_pipeline: Res<render::MaterialPipeline<UIMaterial>>,
+    ui_pipeline: Res<concerto_render::MaterialPipeline<UIMaterial>>,
     render_materials: Query<&RenderUIMaterial>,
     diagnostics: Res<UIRenderDiagnostics>,
     mut cmd: CommandQueue,
@@ -1651,7 +1651,7 @@ mod tests {
     #[test]
     fn the_rotation_slot_is_part_of_the_material_signature() {
         use crate::material::UIMaterial;
-        let mut material = UIMaterial::flat(color::Color::WHITE);
+        let mut material = UIMaterial::flat(concerto_color::Color::WHITE);
         let textures = RenderAssets::<RenderTexture>::new();
         let before = material_signature(&material, &textures);
 

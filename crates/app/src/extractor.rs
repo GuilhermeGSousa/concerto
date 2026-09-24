@@ -1,10 +1,10 @@
 use std::mem;
 
-use derive_more::{Deref, DerefMut};
-use ecs::{
+use concerto_ecs::{
     system::input::{ReadOnlySystemInput, SystemInput, SystemInputData},
     Resource, World,
 };
+use derive_more::{Deref, DerefMut};
 
 use crate::schedule_groups::Extract;
 
@@ -58,7 +58,7 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
 
     fn get_data<'world, 'state>(
         state: &'state mut Self::State,
-        world: ecs::world::UnsafeWorldCell<'world>,
+        world: concerto_ecs::world::UnsafeWorldCell<'world>,
     ) -> Self::Data<'world, 'state> {
         let main_world = world
             .world()
@@ -69,8 +69,8 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
     }
 
     fn fill_access(
-        _meta: &mut ecs::system::meta::SystemMetadata,
-        access: &mut ecs::system::access::SystemAccess,
+        _meta: &mut concerto_ecs::system::meta::SystemMetadata,
+        access: &mut concerto_ecs::system::access::SystemAccess,
     ) {
         access.read_resource::<MainWorld>();
     }

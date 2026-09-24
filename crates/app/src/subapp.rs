@@ -1,4 +1,4 @@
-use ecs::{
+use concerto_ecs::{
     component::scene::SceneComponent,
     system::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules},
     IntoSystemConfig, Resource, World,

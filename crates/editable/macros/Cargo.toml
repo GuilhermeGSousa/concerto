@@ -1,7 +1,10 @@
 [package]
-name = "editable-macros"
-version = "0.1.0"
+name = "concerto-editable-macros"
+version.workspace = true
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 proc-macro = true

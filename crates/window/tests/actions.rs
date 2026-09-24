@@ -1,8 +1,8 @@
 //! Covers binding resolution: which action a key press means depends on the
 //! context stack, and typing into a widget must never fire one.
-use window::input::actions::{ActionLabel, ActionMap, Modifiers, Shortcut};
-use window::input::KeyCode;
-use window::{define_action, define_context};
+use concerto_window::input::actions::{ActionLabel, ActionMap, Modifiers, Shortcut};
+use concerto_window::input::KeyCode;
+use concerto_window::{define_action, define_context};
 
 define_action!(Save);
 define_action!(FrameSelected);

@@ -2,19 +2,19 @@
 //! say.
 //!
 //! Everything with content of its own is a panel; this is what is left.
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use ecs::{Component, Query, Res, command::CommandQueue};
-use taffy::FlexDirection;
-use ui::{
+use concerto_ecs::{Component, Query, Res, command::CommandQueue};
+use concerto_ui::{
     material::UIMaterial,
     node::{UINode, UIRect},
     text::TextComponent,
     theme::UITheme,
     transform::UIValue,
 };
+use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{MEDIUM, glyph, icon};
@@ -23,8 +23,8 @@ use crate::project::ProjectState;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
 
-pub const BRAND_ID: &str = "rabbithole.brand";
-pub const CHATTER_ID: &str = "rabbithole.chatter";
+pub const BRAND_ID: &str = "concerto.brand";
+pub const CHATTER_ID: &str = "concerto.chatter";
 
 pub struct ShellPlugin;
 
@@ -32,7 +32,7 @@ impl Plugin for ShellPlugin {
     fn build(&self, app: &mut App) {
         app.add_panel(PanelDescriptor {
             id: BRAND_ID,
-            title: "Rabbithole",
+            title: "Concerto",
             region: Region::Brand,
         });
         app.add_panel(PanelDescriptor {
@@ -118,7 +118,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                 UINode::default(),
                 TextComponent {
                     font_weight: MEDIUM,
-                    ..text(&theme, "Rabbithole")
+                    ..text(&theme, "Concerto")
                 },
             ))
             .entity();
@@ -141,7 +141,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                     ..Default::default()
                 },
                 TabStrip,
-                ui::interaction::Interactable,
+                concerto_ui::interaction::Interactable,
                 crate::window_chrome::WindowChromeControl,
                 TabScroll::default(),
             ))
@@ -156,7 +156,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                     flex_shrink: 0.0,
                     height: UIValue::Px(30.0),
                     position: taffy::Position::Absolute,
-                    inset: ui::node::UIInset {
+                    inset: concerto_ui::node::UIInset {
                         left: UIValue::Px(0.0),
                         top: UIValue::Px(0.0),
                         ..Default::default()

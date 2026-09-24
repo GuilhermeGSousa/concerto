@@ -1,4 +1,4 @@
-use ecs::system::schedule::ScheduleLabel;
+use concerto_ecs::system::schedule::ScheduleLabel;
 
 macro_rules! define_schedule_label {
     ($(#[$meta:meta])* $label_trait_name:ident) => {

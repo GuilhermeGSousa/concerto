@@ -1,8 +1,8 @@
 //! Covers the two shapes SceneComponent must support: a type that inserts
 //! itself, and a type that expands into other components (including onto a
 //! different entity) without ever inserting one of itself.
-use ecs::component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext};
-use ecs::{Component, Entity, World};
+use concerto_ecs::component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext};
+use concerto_ecs::{Component, Entity, World};
 use serde::{Deserialize, Serialize};
 
 #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]

@@ -9,10 +9,10 @@
 
 use std::sync::Arc;
 
-use essential::transform::Transform;
+use concerto_foundation::transform::Transform;
+use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 use log::warn;
-use mesh::Mesh;
 use rapier3d::parry::bounding_volume::BoundingVolume;
 use rapier3d::parry::query::{ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher};
 use rapier3d::prelude::{

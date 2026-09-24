@@ -1,4 +1,4 @@
-use ecs::{Component, IntoSystem, Query, System, World};
+use concerto_ecs::{Component, IntoSystem, Query, System, World};
 use std::any::TypeId;
 
 #[derive(Component)]

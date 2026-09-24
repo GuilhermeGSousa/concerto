@@ -1,18 +1,21 @@
 [package]
-name = "ui"
-version = "0.1.0"
+name = "concerto-ui"
+version.workspace = true
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-app = { path = "../app" }
-color = { path = "../color" }
-essential = { path = "../essential" }
-ecs = { path = "../ecs" }
-render = { path = "../render" }
-window = { path = "../window" }
+concerto-app.workspace = true
+concerto-color.workspace = true
+concerto-foundation.workspace = true
+concerto-ecs.workspace = true
+concerto-render.workspace = true
+concerto-window.workspace = true
 wgpu = { version = "24.0.1", default-features = false, features = [
     "wgsl",
     "metal",

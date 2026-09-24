@@ -1,12 +1,12 @@
 use bytemuck::{Pod, Zeroable};
-use color::{Color, LinearRgba};
-use essential::assets::{
+use concerto_color::{Color, LinearRgba};
+use concerto_foundation::assets::{
     asset_server::{AssetLoadContext, AssetServer},
     handle::AssetHandle,
     Asset, AssetId, LoadableAsset,
 };
+use concerto_render_macros::AsBindGroup;
 use glam::Vec3;
-use render_macros::AsBindGroup;
 
 use crate::{
     assets::texture::Texture,
@@ -47,7 +47,7 @@ pub enum ShaderRef {
 /// # Example (manual implementation)
 ///
 /// ```rust,ignore
-/// use render::assets::material::{AsBindGroup, ShaderRef};
+/// use concerto_render::assets::material::{AsBindGroup, ShaderRef};
 ///
 /// pub struct MyMaterial {
 ///     pub tint: [f32; 4],
@@ -538,7 +538,7 @@ pub trait Material: AsBindGroup + Asset + Send + Sync + 'static {
         Self: Sized,
     {
         use crate::assets::vertex::{Vertex, VertexBufferLayout};
-        use essential::transform::GlobalTransformRaw;
+        use concerto_foundation::transform::GlobalTransformRaw;
         vec![Vertex::describe(), GlobalTransformRaw::describe()]
     }
 

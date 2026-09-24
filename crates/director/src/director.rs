@@ -1,10 +1,10 @@
-use ecs::{Entity, Query, Res, ResMut, Resource, With};
-use essential::{
+use concerto_ecs::{Entity, Query, Res, ResMut, Resource, With};
+use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform},
 };
+use concerto_render::components::camera::Camera;
 use glam::{Quat, Vec3};
-use render::components::camera::Camera;
 
 use crate::{
     main_camera::MainCamera,
@@ -273,12 +273,12 @@ fn normalize(rotation: Quat) -> Quat {
 
 #[cfg(test)]
 mod tests {
-    use ecs::system::executor::single_thread::SingleThreadedExecutor;
-    use ecs::system::schedule::Schedule;
-    use ecs::world::World;
-    use essential::{time::Time, transform::Transform};
+    use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
+    use concerto_ecs::system::schedule::Schedule;
+    use concerto_ecs::world::World;
+    use concerto_foundation::{time::Time, transform::Transform};
+    use concerto_render::components::camera::Camera;
     use glam::Vec3;
-    use render::components::camera::Camera;
 
     use super::{CameraDirector, drive_main_camera};
     use crate::{
@@ -288,8 +288,8 @@ mod tests {
 
     struct Fixture {
         world: World,
-        main_camera: ecs::Entity,
-        schedule: ecs::system::schedule::CompiledSchedule,
+        main_camera: concerto_ecs::Entity,
+        schedule: concerto_ecs::system::schedule::CompiledSchedule,
     }
 
     impl Fixture {
@@ -319,12 +319,12 @@ mod tests {
             }
         }
 
-        fn spawn_vcam(&mut self, vcam: VirtualCamera, at: Vec3) -> ecs::Entity {
+        fn spawn_vcam(&mut self, vcam: VirtualCamera, at: Vec3) -> concerto_ecs::Entity {
             self.world.spawn((vcam, Transform::from_translation(at)))
         }
 
         /// The only way out of the stack short of despawning.
-        fn remove_vcam(&mut self, vcam: ecs::Entity) {
+        fn remove_vcam(&mut self, vcam: concerto_ecs::Entity) {
             self.world.remove_component::<VirtualCamera>(vcam);
         }
 
@@ -342,7 +342,7 @@ mod tests {
             self.world.get_resource_mut::<CameraDirector>().unwrap()
         }
 
-        fn stacked_cameras(&mut self) -> Vec<ecs::Entity> {
+        fn stacked_cameras(&mut self) -> Vec<concerto_ecs::Entity> {
             self.director()
                 .stack()
                 .iter()

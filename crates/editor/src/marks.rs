@@ -5,8 +5,8 @@
 //! camera — which is quieter than a pictogram and reads at the size a list row
 //! actually gives it. Each mark is one node: the shape is the node's material,
 //! not a glyph, so it costs no font lookup and scales with the theme.
-use color::Color;
-use ui::{
+use concerto_color::Color;
+use concerto_ui::{
     material::UIMaterial,
     node::{UINode, UIRect},
     theme::UITheme,

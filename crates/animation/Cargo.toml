@@ -1,13 +1,16 @@
 [package]
-name = "animation"
-version = "0.1.0"
+name = "concerto-animation"
+version.workspace = true
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-app = { path = "../app" }
-essential = { path = "../essential" }
-ecs = { path = "../ecs" }
-mesh = { path = "../mesh" }
+concerto-app.workspace = true
+concerto-foundation.workspace = true
+concerto-ecs.workspace = true
+concerto-mesh.workspace = true
 glam = { version = "0.30.1", features = ["serde"] }
 uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 petgraph = { version = "0.8", features = ["serde-1"] }

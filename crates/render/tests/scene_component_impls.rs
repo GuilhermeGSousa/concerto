@@ -8,10 +8,10 @@
 //! `load::<Mesh>` panics inside a unit test. With no server present the
 //! impl leaves the handle `Weak`, and the property under test — that the
 //! referenced `AssetId` survives `apply` — still holds.
-use ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use ecs::World;
-use essential::assets::{handle::AssetHandle, AssetId};
-use mesh::mesh::{Mesh, MeshComponent};
+use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
+use concerto_ecs::World;
+use concerto_foundation::assets::{handle::AssetHandle, AssetId};
+use concerto_mesh::mesh::{Mesh, MeshComponent};
 
 #[test]
 fn mesh_component_apply_inserts_the_component_preserving_its_asset_id() {
@@ -42,7 +42,7 @@ fn mesh_component_apply_inserts_the_component_preserving_its_asset_id() {
 
 #[test]
 fn transform_apply_inserts_itself_unchanged() {
-    use essential::transform::Transform;
+    use concerto_foundation::transform::Transform;
     use glam::Vec3;
 
     let mut world = World::default();

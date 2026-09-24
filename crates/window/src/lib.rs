@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use app::{plugins::PluginsState, App};
-use ecs::events::event_channel::EventChannel;
+use concerto_app::{plugins::PluginsState, App};
+use concerto_ecs::events::event_channel::EventChannel;
 use input::Input;
 use plugin::{Window, WindowGesture, WindowGestureRegion};
 use winit::{

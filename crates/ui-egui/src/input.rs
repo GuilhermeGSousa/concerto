@@ -1,8 +1,8 @@
-use ecs::{
+use concerto_ecs::{
     events::event_reader::EventReader,
     resource::{Res, ResMut},
 };
-use window::{plugin::Window, winit_events::WindowEvent};
+use concerto_window::{plugin::Window, winit_events::WindowEvent};
 
 use crate::resources::UIRenderer;
 

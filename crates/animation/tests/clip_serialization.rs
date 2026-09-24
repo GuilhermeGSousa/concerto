@@ -1,6 +1,6 @@
 //! Covers AnimationClip round-tripping through bincode so it can be imported
 //! as a standalone sub-asset addressable as "file.gltf#animation/0".
-use animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use glam::Vec3;
 use uuid::Uuid;
 
@@ -36,8 +36,8 @@ fn animation_clip_round_trips_through_bincode() {
 
 #[test]
 fn skeleton_round_trips_through_bincode() {
+    use concerto_mesh::skeleton::Skeleton;
     use glam::Mat4;
-    use mesh::skeleton::Skeleton;
 
     let skeleton = Skeleton::from(vec![Mat4::IDENTITY, Mat4::from_translation(Vec3::X)]);
     let bytes = bincode::serialize(&skeleton).expect("Skeleton must serialize");

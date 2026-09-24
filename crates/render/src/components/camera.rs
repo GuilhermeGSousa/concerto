@@ -1,12 +1,12 @@
-use app::extractor::Extracted;
-use color::{Color, LinearRgba};
-use encase::{ShaderType, UniformBuffer};
-use essential::{
+use concerto_app::extractor::Extracted;
+use concerto_color::{Color, LinearRgba};
+use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     transform::GlobalTransform,
 };
+use encase::{ShaderType, UniformBuffer};
 
-use ecs::{
+use concerto_ecs::{
     command::CommandQueue,
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
@@ -14,10 +14,10 @@ use ecs::{
     resource::{Res, ResMut},
     Entity,
 };
+use concerto_window::plugin::Window;
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
-use window::plugin::Window;
 
 use crate::{
     assets::texture::Texture,

@@ -2,20 +2,20 @@
 #[path = "../examples/custom_property.rs"]
 mod example;
 
-use app::App;
-use ecs::{
+use concerto_app::App;
+use concerto_ecs::{
     Component, Entity, IntoSystem, Res, ResMut, Resource, System, World, command::CommandQueue,
     events::event_channel::EventChannel,
 };
-use editable::{Editable, PropertyPath};
-use editor::inspector::{
+use concerto_editable::{Editable, PropertyPath};
+use concerto_editor::inspector::{
     EditError, InspectorRegistry, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRowValue, apply_property_commit, apply_property_commits,
 };
+use concerto_ui::{interaction::UIClick, text::TextComponent, theme::UITheme};
+use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
-use ui::{interaction::UIClick, text::TextComponent, theme::UITheme};
-use window::input::MouseButton;
 
 #[derive(Component, Editable)]
 struct Container {
@@ -114,7 +114,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
 #[test]
 fn commits_use_captured_entity_and_live_value_and_validate_before_mutation() {
     let (mut world, a, b) = world();
-    let mut selection = editor::selection::Selection::default();
+    let mut selection = concerto_editor::selection::Selection::default();
     selection.select_entity(b);
     world.insert_resource(selection);
     let toggle = commit(&world, a, SettingEdit::Toggle);

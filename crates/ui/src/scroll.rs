@@ -1,5 +1,5 @@
 //! Scroll, virtual-list, and fixed split-pane behavior.
-use ecs::{
+use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
@@ -7,8 +7,8 @@ use ecs::{
     query::{Query, filter::Added},
     resource::Res,
 };
-use window::input::MouseButton;
-use window::winit_events::WindowEvent;
+use concerto_window::input::MouseButton;
+use concerto_window::winit_events::WindowEvent;
 use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::{

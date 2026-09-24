@@ -1,13 +1,13 @@
 //! Event lifetime must be a property of the frame, not of the order in which
 //! plugins happened to call `register_event`.
 
-use app::{
+use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::TimePlugin,
     schedule_groups::{LateUpdate, Update},
     App,
 };
-use ecs::{
+use concerto_ecs::{
     events::{event_reader::EventReader, event_writer::EventWriter, Event},
     resource::{ResMut, Resource},
 };
@@ -62,7 +62,7 @@ fn run_frames_reading_every_frame(order: RegistrationOrder, frames: usize) -> Ve
 fn run_with<M>(
     order: RegistrationOrder,
     frames: usize,
-    reader: impl ecs::IntoSystemConfig<M> + Copy + 'static,
+    reader: impl concerto_ecs::IntoSystemConfig<M> + Copy + 'static,
 ) -> Vec<usize> {
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin);

@@ -1,5 +1,7 @@
-use ecs::entity::hierarchy::{ChildOf, Children};
-use ecs::{Component, Entity, World, component::ComponentLifecycleCallback, resource::Resource};
+use concerto_ecs::entity::hierarchy::{ChildOf, Children};
+use concerto_ecs::{
+    Component, Entity, World, component::ComponentLifecycleCallback, resource::Resource,
+};
 
 #[derive(Component)]
 struct Marker;

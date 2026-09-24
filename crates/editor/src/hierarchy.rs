@@ -7,17 +7,15 @@ use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
 use crate::scene::{SceneRoot, SceneState};
 use crate::selection::Selection;
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use ecs::{
+use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue, component::name::Name,
     entity::hierarchy::Children, events::event_reader::EventReader,
 };
-use std::collections::HashSet;
-use taffy::FlexDirection;
-use ui::{
+use concerto_ui::{
     focus::{FocusedWidget, UIFocusable},
     interaction::{Interactable, UIClick, UIDisabled},
     material::UIMaterial,
@@ -28,10 +26,12 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
-use window::input::MouseButton;
-use window::input::actions::{ActionFired, ActionMap};
+use concerto_window::input::MouseButton;
+use concerto_window::input::actions::{ActionFired, ActionMap};
+use std::collections::HashSet;
+use taffy::FlexDirection;
 
-pub const PANEL_ID: &str = "rabbithole.warren";
+pub const PANEL_ID: &str = "concerto.warren";
 
 /// Height of one tree row, in logical pixels. The scroll area measures the
 /// tree in these units, so it must match the row nodes exactly.
@@ -327,7 +327,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 },
                 TextComponent {
                     color: theme.text_muted,
-                    font_family: ui::text::FontFamily::Monospace,
+                    font_family: concerto_ui::text::FontFamily::Monospace,
                     font_size: 10.0,
                     line_height: theme.line_height(10.0),
                     wrap: false,
@@ -664,9 +664,9 @@ fn entity_mark(
     entity: Entity,
     has_children: bool,
     roots: &Query<&SceneRoot>,
-    cameras: &Query<&render::components::camera::Camera>,
-    lights: &Query<&render::components::light::Light>,
-    meshes: &Query<&mesh::MeshComponent>,
+    cameras: &Query<&concerto_render::components::camera::Camera>,
+    lights: &Query<&concerto_render::components::light::Light>,
+    meshes: &Query<&concerto_mesh::MeshComponent>,
 ) -> Mark {
     if roots.get_entity(entity).is_some() {
         Mark::Group
@@ -690,9 +690,9 @@ fn render_marks(
     selection: Res<Selection>,
     theme: Res<UITheme>,
     roots: Query<&SceneRoot>,
-    cameras: Query<&render::components::camera::Camera>,
-    lights: Query<&render::components::light::Light>,
-    meshes: Query<&mesh::MeshComponent>,
+    cameras: Query<&concerto_render::components::camera::Camera>,
+    lights: Query<&concerto_render::components::light::Light>,
+    meshes: Query<&concerto_mesh::MeshComponent>,
     slots: Query<(&MarkSlot, &mut UINode, &mut UIMaterial)>,
     rows: Query<(&RowSlot, &mut UIMaterial)>,
 ) {

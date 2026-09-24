@@ -1,13 +1,13 @@
-use app::plugins::Plugin;
-use essential::assets::asset_server::AssetServer;
-use render::{MaterialPlugin, assets::mesh::Mesh};
+use concerto_app::plugins::Plugin;
+use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_render::{MaterialPlugin, assets::mesh::Mesh};
 
 use crate::{SKYBOX_INDICES, SKYBOX_VERTICES, SkyboxCube, material::SkyboxMaterial};
 
 pub struct SkyboxPlugin;
 
 impl Plugin for SkyboxPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         // Setup skybox
         let skybox_cube = Mesh {
             vertices: SKYBOX_VERTICES.to_vec(),

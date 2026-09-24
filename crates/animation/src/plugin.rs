@@ -1,4 +1,4 @@
-use app::{plugins::Plugin, schedule_groups::LateUpdate};
+use concerto_app::{plugins::Plugin, schedule_groups::LateUpdate};
 
 use crate::{
     clip::AnimationClip,
@@ -12,7 +12,7 @@ use crate::{
 pub struct AnimationPlugin;
 
 impl Plugin for AnimationPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.register_asset::<AnimationClip>();
         app.register_asset::<AnimationGraph>();
 

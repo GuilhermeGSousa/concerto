@@ -1,29 +1,29 @@
-use game_engine::{asset_id, essential::assets::AssetId};
+use concerto::{asset_id, foundation::assets::AssetId};
 use std::f32::consts::PI;
 
-use game_engine::animation::clip::AnimationClip;
-use game_engine::animation::graph::AnimationGraph;
-use game_engine::animation::node::AnimationPlayMode::PlayOnce;
-use game_engine::animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
-use game_engine::animation::node::{AnimationClipNode, AnimationNodeKind};
-use game_engine::animation::player::{AnimationHandleComponent, AnimationPlayer};
-use game_engine::director::VirtualCamera;
-use game_engine::ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use game_engine::ecs::{Entity, Query, ResMut, With, Without};
-use game_engine::essential::transform::Transform;
-use game_engine::gameplay::camera::{CameraPivot, EntityFollow};
-use game_engine::physics::body::BodyId;
-use game_engine::physics::collider::{Collider, ColliderOffset};
-use game_engine::physics::ground::GroundProbe;
-use game_engine::physics::movement::CharacterMovement;
-use game_engine::physics::physics_state::PhysicsState;
-use game_engine::physics::rigid_body::MotionType::Dynamic;
-use game_engine::physics::rigid_body::{AllowedDofs, RigidBody};
-use game_engine::scene::{scene::Scene, spawner::SceneSpawnerComponent};
-use game_engine::window::input::{Input, KeyCode, PhysicalKey};
-use game_engine::{
+use concerto::animation::clip::AnimationClip;
+use concerto::animation::graph::AnimationGraph;
+use concerto::animation::node::AnimationPlayMode::PlayOnce;
+use concerto::animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
+use concerto::animation::node::{AnimationClipNode, AnimationNodeKind};
+use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
+use concerto::director::VirtualCamera;
+use concerto::ecs::component::scene::{SceneComponent, SceneSpawnContext};
+use concerto::ecs::{Entity, Query, ResMut, With, Without};
+use concerto::foundation::transform::Transform;
+use concerto::gameplay::camera::{CameraPivot, EntityFollow};
+use concerto::physics::body::BodyId;
+use concerto::physics::collider::{Collider, ColliderOffset};
+use concerto::physics::ground::GroundProbe;
+use concerto::physics::movement::CharacterMovement;
+use concerto::physics::physics_state::PhysicsState;
+use concerto::physics::rigid_body::MotionType::Dynamic;
+use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
+use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
+use concerto::window::input::{Input, KeyCode, PhysicalKey};
+use concerto::{
     ecs::{CommandQueue, Component, Res},
-    essential::assets::asset_server::AssetServer,
+    foundation::assets::asset_server::AssetServer,
 };
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};

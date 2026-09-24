@@ -5,13 +5,13 @@
 mod common;
 use common::{physics_world, register_bodies};
 
-use essential::transform::Transform;
+use concerto_foundation::transform::Transform;
+use concerto_physics::body::BodyId;
+use concerto_physics::collider::Collider;
+use concerto_physics::physics_pipeline::PhysicsPipeline;
+use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::rigid_body::RigidBody;
 use glam::Vec3;
-use physics::body::BodyId;
-use physics::collider::Collider;
-use physics::physics_pipeline::PhysicsPipeline;
-use physics::physics_state::PhysicsState;
-use physics::rigid_body::RigidBody;
 
 #[test]
 fn despawned_collider_stops_colliding() {

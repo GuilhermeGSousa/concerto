@@ -1,5 +1,5 @@
-use ecs::{query::Query, resource::ResMut};
-use essential::transform::Transform;
+use concerto_ecs::{query::Query, resource::ResMut};
+use concerto_foundation::transform::Transform;
 
 use crate::{
     body::BodyId, interpolation::TransformInterpolation, physics_pipeline::PhysicsPipeline,
@@ -32,11 +32,11 @@ pub fn step_simulation(
 
 #[cfg(test)]
 mod tests {
-    use ecs::system::executor::single_thread::SingleThreadedExecutor;
-    use ecs::system::schedule::Schedule;
-    use ecs::world::World;
-    use essential::time::Time;
-    use essential::transform::Transform;
+    use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
+    use concerto_ecs::system::schedule::Schedule;
+    use concerto_ecs::world::World;
+    use concerto_foundation::time::Time;
+    use concerto_foundation::transform::Transform;
     use glam::Vec3;
 
     use crate::collider::{register_colliders, Collider};
@@ -49,17 +49,17 @@ mod tests {
 
     /// A flat quad in the XZ plane, with `indices` spelled out by the caller
     /// so a test can choose the winding.
-    fn plane_mesh(half_extent: f32, indices: Vec<u32>) -> mesh::Mesh {
+    fn plane_mesh(half_extent: f32, indices: Vec<u32>) -> concerto_mesh::Mesh {
         let corners = [
             [-half_extent, 0.0, -half_extent],
             [half_extent, 0.0, -half_extent],
             [half_extent, 0.0, half_extent],
             [-half_extent, 0.0, half_extent],
         ];
-        mesh::Mesh {
+        concerto_mesh::Mesh {
             vertices: corners
                 .into_iter()
-                .map(|pos_coords| mesh::vertex::Vertex {
+                .map(|pos_coords| concerto_mesh::vertex::Vertex {
                     pos_coords,
                     normal: [0.0, 1.0, 0.0],
                     ..Default::default()
@@ -69,7 +69,7 @@ mod tests {
         }
     }
 
-    fn drop_sphere_onto(mesh: mesh::Mesh) -> f32 {
+    fn drop_sphere_onto(mesh: concerto_mesh::Mesh) -> f32 {
         let mut world = World::new();
         world.register_component::<Collider>();
         // Inserts the GlobalTransform that `register_colliders` reads.

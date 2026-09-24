@@ -4,7 +4,7 @@
 //! That is what lets one key mean different things in different panels, lets a
 //! text field swallow plain letters without every system checking focus, and
 //! lets bindings live in one table instead of scattered through the code.
-use ecs::{define_label, events::Event, intern::Interned, resource::Resource};
+use concerto_ecs::{define_label, events::Event, intern::Interned, resource::Resource};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::input::Input;
@@ -270,9 +270,9 @@ impl ActionMap {
 
 /// Turns this frame's key presses into [`ActionFired`] events.
 pub(crate) fn resolve_actions(
-    input: ecs::resource::Res<Input>,
-    map: ecs::resource::Res<ActionMap>,
-    mut writer: ecs::events::event_writer::EventWriter<ActionFired>,
+    input: concerto_ecs::resource::Res<Input>,
+    map: concerto_ecs::resource::Res<ActionMap>,
+    mut writer: concerto_ecs::events::event_writer::EventWriter<ActionFired>,
 ) {
     let modifiers = Modifiers::from_input(&input);
     for key in input.just_pressed_keys() {

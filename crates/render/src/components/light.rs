@@ -1,7 +1,6 @@
-use app::extractor::Extracted;
-use color::{Color, LinearRgba};
-use derive_more::Deref;
-use ecs::{
+use concerto_app::extractor::Extracted;
+use concerto_color::{Color, LinearRgba};
+use concerto_ecs::{
     command::CommandQueue,
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
@@ -10,10 +9,11 @@ use ecs::{
     resource::{Res, Resource},
     Changed,
 };
+use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
+use concerto_foundation::transform::GlobalTransform;
 use encase::{ShaderSize, ShaderType, UniformBuffer};
-use essential::transform::GlobalTransform;
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};
 
@@ -134,7 +134,10 @@ impl RenderLightSlot {
 // `Changed<RenderLight>` filter would never pick the write up otherwise.
 // `pub(crate)`: also called from `RenderShadowCasterSlot::on_remove`
 // (components/shadows.rs).
-pub(crate) fn push_render_light_to_gpu(world: &ecs::world::RestrictedWorld<'_>, entity: Entity) {
+pub(crate) fn push_render_light_to_gpu(
+    world: &concerto_ecs::world::RestrictedWorld<'_>,
+    entity: Entity,
+) {
     if let (Some(render_light), Some(render_light_slot), Some(lights), Some(queue)) = (
         world.get_component_for_entity::<RenderLight>(entity),
         world.get_component_for_entity::<RenderLightSlot>(entity),
@@ -173,7 +176,7 @@ impl RenderLight {
 }
 
 impl Component for RenderLight {
-    fn on_add() -> Option<ecs::component::ComponentLifecycleCallback> {
+    fn on_add() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let slot = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
                 lights.push_light(context.entity);
@@ -243,7 +246,7 @@ impl Component for RenderLight {
         })
     }
 
-    fn on_remove() -> Option<ecs::component::ComponentLifecycleCallback> {
+    fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let Some(&slot) = world.get_component_for_entity::<RenderLightSlot>(context.entity)
             else {

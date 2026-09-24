@@ -1,5 +1,5 @@
-use ecs::World;
-use essential::time::Time;
+use concerto_ecs::World;
+use concerto_foundation::time::Time;
 
 use crate::{
     schedule_groups::{First, FixedUpdate, LateFixedUpdate, LateUpdate, Main, Update},
@@ -60,7 +60,7 @@ impl Plugin for MainSchedulePlugin {
 
         #[cfg(all(feature = "multithreaded", not(target_arch = "wasm32")))]
         {
-            use ecs::system::executor::multi_thread::MainThreadExecutor;
+            use concerto_ecs::system::executor::multi_thread::MainThreadExecutor;
             app.insert_resource(MainThreadExecutor::default());
         }
     }

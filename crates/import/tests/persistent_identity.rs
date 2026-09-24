@@ -2,12 +2,12 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use essential::assets::content::{
+use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, write_content_asset, AssetRegistry,
     ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
-use essential::assets::AssetId;
-use scene::scene::Scene;
+use concerto_foundation::assets::AssetId;
+use concerto_scene::scene::Scene;
 
 struct Project(PathBuf);
 
@@ -26,16 +26,16 @@ impl Project {
         let source = self.path(relative);
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
         std::fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("../gltf-loader/tests/fixtures/triangle.gltf"),
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../gltf/tests/fixtures/triangle.gltf"),
             &source,
         )
         .unwrap();
         source
     }
 
-    fn import(&self, source: &Path) -> Vec<import::ImportedAsset> {
-        import::import_source(source, &self.0, &Default::default()).expect("import succeeds")
+    fn import(&self, source: &Path) -> Vec<concerto_import::ImportedAsset> {
+        concerto_import::import_source(source, &self.0, &Default::default())
+            .expect("import succeeds")
     }
 
     /// Compare the complete project so failures cannot hide a modified sidecar,
@@ -73,7 +73,7 @@ fn sidecar(source: &Path) -> PathBuf {
     ))
 }
 
-fn output<'a>(assets: &'a [import::ImportedAsset], sub_asset: &str) -> &'a str {
+fn output<'a>(assets: &'a [concerto_import::ImportedAsset], sub_asset: &str) -> &'a str {
     &assets
         .iter()
         .find(|a| a.sub_asset_name == sub_asset)
@@ -227,7 +227,7 @@ fn an_output_owned_by_another_source_rejects_import_before_any_writes() {
     .unwrap();
     let before = project.snapshot();
 
-    assert!(import::import_source(&source, &project.0, &Default::default()).is_err());
+    assert!(concerto_import::import_source(&source, &project.0, &Default::default()).is_err());
     assert_eq!(
         project.snapshot(),
         before,
@@ -244,7 +244,7 @@ fn a_corrupt_existing_header_fails_without_modifying_content_or_metadata() {
     rename_node(&source, "Should not be imported");
     let before = project.snapshot();
 
-    assert!(import::import_source(&source, &project.0, &Default::default()).is_err());
+    assert!(concerto_import::import_source(&source, &project.0, &Default::default()).is_err());
     assert_eq!(
         project.snapshot(),
         before,
@@ -307,7 +307,7 @@ fn copying_a_sidecar_cannot_claim_another_live_sources_outputs() {
     std::fs::copy(sidecar(&original), sidecar(&copied)).unwrap();
     let before = project.snapshot();
 
-    assert!(import::import_source(&copied, &project.0, &Default::default()).is_err());
+    assert!(concerto_import::import_source(&copied, &project.0, &Default::default()).is_err());
     assert_eq!(project.snapshot(), before);
 }
 

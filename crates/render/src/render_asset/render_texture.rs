@@ -4,7 +4,7 @@ use crate::{
     queue::RenderQueue,
     render_asset::{AssetPreparationError, RenderAsset},
 };
-use ecs::{
+use concerto_ecs::{
     resource::{Res, Resource},
     system::input::SystemInputData,
 };

@@ -1,4 +1,4 @@
-use app::{plugins::PluginsState, runner::AppExit, App};
+use concerto_app::{plugins::PluginsState, runner::AppExit, App};
 
 use ratatui::crossterm::event;
 

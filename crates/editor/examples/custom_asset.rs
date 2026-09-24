@@ -1,12 +1,12 @@
 //! A downstream asset editor. Run with `cargo run -p editor --example custom_asset`.
 use anyhow::Result;
-use app::schedule_groups::Update;
-use ecs::{
+use concerto_app::schedule_groups::Update;
+use concerto_ecs::{
     Component, Entity, IntoSystem, Query, Res,
     command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::{ChildOf, Children},
 };
-use editor::{
+use concerto_editor::{
     asset_editor::{
         ActiveEditor, AssetEditor, AssetEditorAppExt, AssetEditorCommand, AssetEditorCommands,
         AssetEditorRegistry, EditorDocument, asset_request_is_current, finish_asset_request,
@@ -14,7 +14,7 @@ use editor::{
     },
     project::{AssetEntry, Project, ProjectState},
 };
-use essential::assets::{
+use concerto_foundation::assets::{
     Asset, AssetId,
     asset_server::AssetServer,
     content::{
@@ -116,7 +116,7 @@ pub fn load_dialogue(
     }
 }
 
-pub fn register(app: &mut app::App) -> Result<()> {
+pub fn register(app: &mut concerto_app::App) -> Result<()> {
     app.register_asset::<Dialogue>();
     app.register_asset_editor::<Dialogue>(DialogueEditor)?;
     app.add_system(Update, load_dialogue);
@@ -135,7 +135,7 @@ pub fn smoke_test() -> Result<()> {
 }
 
 fn smoke_test_at(root: &std::path::Path) -> Result<()> {
-    let mut app = app::App::new();
+    let mut app = concerto_app::App::new();
     app.insert_resource(AssetServer::new());
     app.insert_resource(AssetEditorRegistry::default());
     app.insert_resource(AssetEditorCommands::default());

@@ -1,7 +1,7 @@
 //! Covers ImportContext's sub-asset emission, same-file reference-ID
 //! computation, and dependency tracking.
-use asset_import::ImportContext;
-use essential::assets::{Asset, AssetId};
+use concerto_asset_import::ImportContext;
+use concerto_foundation::assets::{Asset, AssetId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]

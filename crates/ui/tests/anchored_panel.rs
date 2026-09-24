@@ -1,16 +1,16 @@
 //! Covers where an anchored panel lands.
 use std::collections::HashMap;
 
-use ecs::entity::hierarchy::ChildOf;
-use ecs::events::event_channel::EventChannel;
-use ecs::{IntoSystem, System, World, entity::Entity};
-use glam::Vec2;
-use ui::anchor::{
+use concerto_ecs::entity::hierarchy::ChildOf;
+use concerto_ecs::events::event_channel::EventChannel;
+use concerto_ecs::{IntoSystem, System, World, entity::Entity};
+use concerto_ui::anchor::{
     PanelRects, UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack,
     panels_to_close, place, track_panel_stack,
 };
-use ui::focus::{FocusedWidget, UIFocusLost};
-use ui::node::{UIBox, UINode};
+use concerto_ui::focus::{FocusedWidget, UIFocusLost};
+use concerto_ui::node::{UIBox, UINode};
+use glam::Vec2;
 
 const WINDOW: Vec2 = Vec2::new(1000.0, 800.0);
 

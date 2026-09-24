@@ -9,10 +9,9 @@
 //! memory mean something.
 use std::collections::HashMap;
 
-use app::{App, Plugin, schedule_groups::Startup};
-use ecs::{Entity, Res, ResMut, Resource, command::CommandQueue, system::NonSendMarker};
-use taffy::{FlexDirection, Position};
-use ui::{
+use concerto_app::{App, Plugin, schedule_groups::Startup};
+use concerto_ecs::{Entity, Res, ResMut, Resource, command::CommandQueue, system::NonSendMarker};
+use concerto_ui::{
     interaction::Interactable,
     material::UIMaterial,
     node::{UIInset, UINode, UIRect},
@@ -20,6 +19,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use taffy::{FlexDirection, Position};
 
 /// Where a panel sits over the scene.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -148,9 +148,9 @@ fn build_dock(
     mut cmd: CommandQueue,
     mut registry: ResMut<PanelRegistry>,
     theme: Res<UITheme>,
-    window: Res<window::plugin::Window>,
+    window: Res<concerto_window::plugin::Window>,
 ) {
-    window.window_handle.set_title("Rabbithole");
+    window.window_handle.set_title("Concerto");
     window
         .window_handle
         .set_min_inner_size(Some(winit::dpi::PhysicalSize::new(900, 600)));
@@ -337,7 +337,7 @@ fn fill_region(
 
 #[cfg(test)]
 mod tests {
-    use ecs::{IntoSystem, System, World};
+    use concerto_ecs::{IntoSystem, System, World};
 
     use super::*;
 
@@ -426,6 +426,6 @@ mod tests {
     #[test]
     fn bodies_are_unknown_until_the_dock_has_built() {
         let registry = PanelRegistry::default();
-        assert_eq!(registry.body("rabbithole.warren"), None);
+        assert_eq!(registry.body("concerto.warren"), None);
     }
 }

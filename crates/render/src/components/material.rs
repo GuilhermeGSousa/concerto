@@ -1,9 +1,11 @@
 use std::marker::PhantomData;
 
-use ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use ecs::component::Component;
-use ecs::Entity;
-use essential::assets::{asset_server::AssetServer, handle::AssetHandle, AssetId, LoadableAsset};
+use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
+use concerto_ecs::component::Component;
+use concerto_ecs::Entity;
+use concerto_foundation::assets::{
+    asset_server::AssetServer, handle::AssetHandle, AssetId, LoadableAsset,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::{assets::material::StandardMaterial, Material};

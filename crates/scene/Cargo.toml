@@ -1,15 +1,18 @@
 [package]
-name = "scene"
-version = "0.1.0"
+name = "concerto-scene"
+version.workspace = true
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-app = { path = "../app" }
-essential = { path = "../essential" }
-ecs = { path = "../ecs" }
-mesh = { path = "../mesh" }
-render = { path = "../render" }
-animation = { path = "../animation" }
+concerto-app.workspace = true
+concerto-foundation.workspace = true
+concerto-ecs.workspace = true
+concerto-mesh.workspace = true
+concerto-render.workspace = true
+concerto-animation.workspace = true
 anyhow = "1.0.97"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0"

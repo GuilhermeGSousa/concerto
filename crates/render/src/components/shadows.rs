@@ -1,12 +1,12 @@
 use std::marker::PhantomData;
 
-use derive_more::Deref;
-use ecs::{
+use concerto_ecs::{
     component::Component,
     entity::Entity,
     resource::{Res, ResMut, Resource},
     Changed, Query,
 };
+use derive_more::Deref;
 use encase::{ShaderSize, UniformBuffer};
 use glam::{Mat4, Vec3};
 use wgpu::{
@@ -58,7 +58,7 @@ impl RenderShadowCasterSlot {
 }
 
 impl Component for RenderShadowCasterSlot {
-    fn on_remove() -> Option<ecs::component::ComponentLifecycleCallback> {
+    fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let Some(&slot) =
                 world.get_component_for_entity::<RenderShadowCasterSlot>(context.entity)

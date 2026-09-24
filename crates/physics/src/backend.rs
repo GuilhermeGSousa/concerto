@@ -12,9 +12,9 @@ use std::error::Error;
 use std::fmt::{Debug, Display};
 use std::hash::Hash;
 
-use essential::transform::Transform;
+use concerto_foundation::transform::Transform;
+use concerto_mesh::Mesh;
 use glam::Vec3;
-use mesh::Mesh;
 
 use crate::aabb::Aabb;
 use crate::collider::{Collider, ColliderOffset};

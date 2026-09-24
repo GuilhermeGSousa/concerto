@@ -1,5 +1,5 @@
-use color::Color;
-use ecs::{
+use concerto_color::Color;
+use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
@@ -10,7 +10,7 @@ use ecs::{
     },
     resource::{Res, Resource},
 };
-use window::input::{Input, InputState, MouseButton};
+use concerto_window::input::{Input, InputState, MouseButton};
 
 use crate::{
     interaction::HoveredNode,
@@ -100,7 +100,7 @@ pub(crate) fn setup_slider_visuals(
 pub(crate) fn update_slider_drag(
     sliders: Query<(Entity, &mut UISlider, &UILayout)>,
     input: Res<Input>,
-    window: Res<window::plugin::Window>,
+    window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
     mut writer: EventWriter<UISliderChanged>,
 ) {

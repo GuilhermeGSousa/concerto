@@ -1,17 +1,16 @@
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup, Update},
 };
-use ecs::{
+use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource,
     command::CommandQueue,
     entity::{EntityStructuralVersion, hierarchy::Children},
 };
 use std::any::TypeId;
 
-use editable::PropertyPath;
-use taffy::FlexDirection;
-use ui::{
+use concerto_editable::PropertyPath;
+use concerto_ui::{
     interaction::{Interactable, UIDisabled},
     material::UIMaterial,
     node::{UILayout, UINode, UIRect},
@@ -20,6 +19,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::scene::SceneRoot;
@@ -33,7 +33,7 @@ mod sync;
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
-use essential::transform::Transform;
+use concerto_foundation::transform::Transform;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields,
     select_numeric_field_on_focus,
@@ -45,7 +45,7 @@ pub use rows::{
     PropertyRowValue,
 };
 
-pub const PANEL_ID: &str = "rabbithole.ecs";
+pub const PANEL_ID: &str = "concerto.ecs";
 
 /// Panel metadata. Component cards and property rows own inspection state in ECS.
 #[derive(Resource, Default, PartialEq)]
@@ -72,7 +72,7 @@ struct DetailsView;
 struct ComponentStack {
     target: Option<Entity>,
     structural_version: Option<EntityStructuralVersion>,
-    registry_tick: Option<ecs::component::Tick>,
+    registry_tick: Option<concerto_ecs::component::Tick>,
 }
 
 pub struct InspectorPlugin;

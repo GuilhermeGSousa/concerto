@@ -35,7 +35,7 @@ pub struct SystemIndex(usize);
 ///
 /// # Example
 /// ```
-/// use ecs::{Schedule, World, Component, Query};
+/// use concerto_ecs::{Schedule, World, Component, Query};
 ///
 /// #[derive(Component)]
 /// struct Velocity(f32);
@@ -70,7 +70,7 @@ impl Schedule {
     /// [`.after()`](IntoSystemConfig::after) / [`.before()`](IntoSystemConfig::before):
     ///
     /// ```
-    /// # use ecs::{Schedule, IntoSystemConfig};
+    /// # use concerto_ecs::{Schedule, IntoSystemConfig};
     /// # fn a() {} fn b() {} fn c() {}
     /// let mut schedule = Schedule::new();
     /// schedule

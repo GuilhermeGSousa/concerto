@@ -1,5 +1,5 @@
-use app::{Plugin, schedule_groups::Render};
-use render::{device::RenderDevice, layouts::CameraLayout, resources::RenderContext};
+use concerto_app::{Plugin, schedule_groups::Render};
+use concerto_render::{device::RenderDevice, layouts::CameraLayout, resources::RenderContext};
 
 use crate::{pipeline::GizmoPipeline, render::render_gizmos, storage::GizmoStorage};
 
@@ -14,12 +14,12 @@ use crate::{pipeline::GizmoPipeline, render::render_gizmos, storage::GizmoStorag
 pub struct DebugGizmosPlugin;
 
 impl Plugin for DebugGizmosPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.insert_resource(GizmoStorage::default());
         app.add_system(Render, render_gizmos);
     }
 
-    fn finish(&self, app: &mut app::App) {
+    fn finish(&self, app: &mut concerto_app::App) {
         let surface_format = app
             .render()
             .get_resource::<RenderContext>()

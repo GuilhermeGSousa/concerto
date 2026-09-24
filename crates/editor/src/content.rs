@@ -1,14 +1,13 @@
 //! The project's asset catalogue, as a docked panel.
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use ecs::{
+use concerto_ecs::{
     Component, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
 };
-use taffy::FlexDirection;
-use ui::{
+use concerto_ui::{
     focus::UIFocusable,
     interaction::{Interactable, UIClick, UIInteractionStyle},
     material::UIMaterial,
@@ -19,14 +18,15 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
-use window::input::MouseButton;
+use concerto_window::input::MouseButton;
+use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
 use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
-use essential::assets::AssetId;
+use concerto_foundation::assets::AssetId;
 
-pub const PANEL_ID: &str = "rabbithole.curiosities";
+pub const PANEL_ID: &str = "concerto.curiosities";
 
 /// Height of one asset row, in logical pixels. The scroll area measures the
 /// catalogue in these units, so it must match the row nodes exactly.
