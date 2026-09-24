@@ -1,6 +1,6 @@
 [package]
 name = "concerto-physics"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
@@ -21,15 +21,15 @@ force-rapier = ["dep:rapier3d"]
 [dependencies]
 profiling = "1"
 log = "0.4.27"
-concerto-app = { path = "../app" }
-concerto-foundation = { path = "../foundation" }
-concerto-mesh = { path = "../mesh" }
-concerto-ecs = { path = "../ecs" }
+concerto-app.workspace = true
+concerto-foundation.workspace = true
+concerto-mesh.workspace = true
+concerto-ecs.workspace = true
 glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-concerto-jolt-ffi = { path = "../jolt-ffi", optional = true }
+concerto-jolt-ffi = { workspace = true, optional = true }
 rapier3d = { version = "0.34", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

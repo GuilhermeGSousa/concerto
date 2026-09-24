@@ -1,11 +1,11 @@
 [package]
 name = "concerto-asset-build"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
 license.workspace = true
 
 [dev-dependencies]
-concerto-asset-format = { path = "../asset-format" }
+concerto-asset-format.workspace = true
 tempfile = "3"

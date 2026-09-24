@@ -1,6 +1,6 @@
 [package]
 name = "concerto-app"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description.workspace = true
 repository.workspace = true
@@ -15,8 +15,8 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 profiling = "1"
-concerto-ecs = { path = "../ecs" }
-concerto-foundation = { path = "../foundation" }
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
 getrandom = { version = "0.2", features = ["js"] }
 uuid = { version = "1.18.1", features = ["v4", "js"] }
 cfg-if = "1"
