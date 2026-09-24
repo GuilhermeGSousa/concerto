@@ -36,7 +36,7 @@ members = ["crates/*", "examples/*"]
 [workspace.package]
 version = "0.1.0"
 description = "A game engine for character-driven, high-fidelity cinematic games."
-repository = "https://github.com/GuilhermeGSousa/game-engine"
+repository = "https://github.com/GuilhermeGSousa/concerto"
 license = "MIT"
 
 # Internal crates. `version` is required to publish and must match
