@@ -1,5 +1,4 @@
-//! Covers where an anchored panel lands: the side it prefers, the side it
-//! settles for near a window edge, and the point a context menu opens at.
+//! Covers where an anchored panel lands.
 use std::collections::HashMap;
 
 use ecs::entity::hierarchy::ChildOf;
@@ -53,7 +52,6 @@ fn a_panel_that_fits_sits_on_the_side_it_asked_for() {
 
 #[test]
 fn a_panel_with_no_room_below_flips_above() {
-    // A trigger near the bottom edge: 760 + 30 + 4 + 160 is well past 800.
     let trigger = anchor(Vec2::new(100.0, 760.0), Vec2::new(120.0, 30.0));
     let placement = place(
         trigger,
@@ -75,7 +73,6 @@ fn a_panel_with_no_room_below_flips_above() {
 
 #[test]
 fn a_panel_that_fits_on_neither_side_stays_on_the_one_it_asked_for() {
-    // 400 tall in an 800 window with the anchor dead centre: neither side fits.
     let trigger = anchor(Vec2::new(100.0, 380.0), Vec2::new(120.0, 30.0));
     let placement = place(
         trigger,
@@ -184,8 +181,6 @@ fn a_side_anchor_aligns_on_the_vertical_axis() {
 
 #[test]
 fn a_context_menu_opens_at_the_cursor() {
-    // A Point target is a zero-size anchor, so below-start is exactly the
-    // cursor plus the gap — the standard context-menu offset.
     let cursor = anchor(Vec2::new(520.0, 240.0), Vec2::ZERO);
     let placement = place(
         cursor,
@@ -199,7 +194,6 @@ fn a_context_menu_opens_at_the_cursor() {
 
 #[test]
 fn a_left_anchored_panel_sits_past_the_anchors_left_edge() {
-    // `Left` is the one side with no other coverage.
     let trigger = anchor(Vec2::new(500.0, 200.0), Vec2::new(120.0, 30.0));
     let placement = place(
         trigger,
@@ -217,7 +211,6 @@ fn a_left_anchored_panel_sits_past_the_anchors_left_edge() {
 
 #[test]
 fn an_end_aligned_panel_near_the_edge_is_still_shifted_inside() {
-    // Alignment and shift are separate steps; nothing pinned them together.
     let trigger = anchor(Vec2::new(940.0, 100.0), Vec2::new(40.0, 30.0));
     let placement = place(
         trigger,
@@ -235,14 +228,11 @@ fn an_end_aligned_panel_near_the_edge_is_still_shifted_inside() {
     );
 }
 
-/// Entities have no public raw constructor — generations are `NonZero` — so a
-/// throwaway world mints the distinct ids these tests compare.
 fn entities(count: usize) -> Vec<Entity> {
     let mut world = World::default();
     (0..count).map(|_| world.spawn(UINode::default())).collect()
 }
 
-/// A menu at 100,100 and a submenu at 300,120, each with a trigger.
 fn two_deep(ids: &[Entity]) -> Vec<PanelRects> {
     vec![
         PanelRects {
@@ -279,7 +269,6 @@ fn a_press_in_the_deepest_panel_closes_nothing() {
 fn a_press_back_in_the_parent_closes_only_the_submenu() {
     let ids = entities(2);
     let stack = two_deep(&ids);
-    // 150,260 is inside the parent panel but below its submenu row.
     let closing = panels_to_close(&stack, Vec2::new(150.0, 260.0));
     assert_eq!(closing.len(), 1);
     assert_eq!(
@@ -290,8 +279,6 @@ fn a_press_back_in_the_parent_closes_only_the_submenu() {
 
 #[test]
 fn a_press_on_a_panels_own_trigger_does_not_close_that_panel() {
-    // Otherwise the press would dismiss the menu and the caller's toggle
-    // would immediately reopen it, and the trigger could never close it.
     let ids = entities(2);
     let stack = two_deep(&ids);
     let closing = panels_to_close(&stack, Vec2::new(150.0, 70.0));
@@ -316,11 +303,6 @@ fn a_press_on_the_submenus_row_leaves_both_open() {
 
 #[test]
 fn a_standalone_panel_with_no_owner_closes_only_on_a_press_outside_it() {
-    // A panel opened without a trigger — `UIAnchoredPanel::default()` has
-    // `owner: None` — is a legitimate standalone overlay, not a bug. A
-    // missing owner must be "never exempt", not "always exempt": inside its
-    // own rect still keeps it open, but outside it, it has nothing left to
-    // fall back on and must close like any other panel.
     let ids = entities(1);
     let stack = vec![PanelRects {
         panel: ids[0],
@@ -342,9 +324,6 @@ fn a_standalone_panel_with_no_owner_closes_only_on_a_press_outside_it() {
     );
 }
 
-/// A world with everything `track_panel_stack` reads: the stack it rebuilds,
-/// the focus it clears out of a panel it hides, and the channel that clearing
-/// announces itself on.
 fn stack_world() -> World {
     let mut world = World::default();
     world.insert_resource(UIPanelStack::default());
@@ -359,7 +338,6 @@ fn run(world: &mut World) {
     system.run_and_apply(world);
 }
 
-/// A visible node standing in for a trigger or a menu row.
 fn node(world: &mut World) -> Entity {
     world.spawn(UINode::default())
 }
@@ -427,7 +405,6 @@ fn a_submenu_nests_under_the_panel_its_owner_lives_in() {
         UIAnchorTarget::Node { entity: trigger },
     );
 
-    // The row that opens the submenu is a child of the menu.
     let row = node(&mut world);
     world.insert(ChildOf::new(menu), row);
     let submenu = open_panel(&mut world, row, UIAnchorTarget::Node { entity: row });
@@ -445,16 +422,6 @@ fn a_submenu_nests_under_the_panel_its_owner_lives_in() {
 
 #[test]
 fn a_context_menu_at_a_point_nests_by_its_owner_too() {
-    // The regression the owner field exists to prevent: a point-anchored menu
-    // opened from a row inside another panel must not read as top-level.
-    //
-    // A depth-blind (target-keyed) implementation would still pass a naive
-    // version of this test: with everything at depth 0, the (depth, spawn
-    // order) tie-break alone produces [menu, context] and layer 201, since
-    // layer is UI_PANEL_LAYER + stack index, not depth. A second top-level
-    // panel spawned after `context` makes depth observable: keyed off owner,
-    // `context` sits deeper than `top2` and must sort after it regardless of
-    // spawn order, landing on layer 202, not 201.
     let mut world = stack_world();
     let trigger = node(&mut world);
     let menu = open_panel(
@@ -527,7 +494,6 @@ fn closing_a_parent_closes_the_submenu_under_it() {
 
 #[test]
 fn a_panel_whose_owner_is_hidden_closes_itself() {
-    // A context menu on a row that scrolled out of existence should go with it.
     let mut world = stack_world();
     let row = node(&mut world);
     let menu = open_panel(
@@ -548,10 +514,6 @@ fn a_panel_whose_owner_is_hidden_closes_itself() {
 
     assert!(!visible(&world, menu), "the thing it was about is gone");
 
-    // The closure must be latched onto UIAnchoredPanel::open, not just
-    // UINode::visible: otherwise the row reappearing makes the menu pop back
-    // open on its own, at whatever stale position it last had, without the
-    // user ever asking for it again.
     world
         .get_component_for_entity_mut::<UINode>(row)
         .unwrap()
@@ -573,8 +535,6 @@ fn a_panel_whose_owner_is_hidden_closes_itself() {
 
 #[test]
 fn a_panel_spawned_before_its_first_layout_stays_open() {
-    // Absence of UILayout is the normal state of a fresh entity, not
-    // staleness — treating it as staleness would close every new panel.
     let mut world = stack_world();
     let trigger = node(&mut world);
     let menu = open_panel(
@@ -618,8 +578,6 @@ fn a_node_target_anchors_to_the_rect_it_was_laid_out_at() {
 
 #[test]
 fn a_node_target_with_no_rect_has_nothing_to_anchor_to() {
-    // Hidden, or hidden by an ancestor, or gone: the caller must leave the
-    // panel where it is rather than place it against the window origin.
     let mut world = World::default();
     let trigger = node(&mut world);
 
@@ -631,12 +589,6 @@ fn a_node_target_with_no_rect_has_nothing_to_anchor_to() {
 
 #[test]
 fn a_dropdown_that_named_no_owner_is_still_exempt_from_its_own_trigger() {
-    // `UIAnchoredPanel::default()` has `owner: None`, so the obvious way to
-    // write a dropdown — set `target` to the trigger and leave the rest —
-    // used to get no press exemption at all: the second click on the trigger
-    // read as an outside press, dismissal closed the panel and the caller's
-    // toggle reopened it, so the menu could never be closed by its own
-    // button. A `Node` target stands in for the missing owner.
     let mut world = World::default();
     let trigger = node(&mut world);
     let spec = UIAnchoredPanel {
@@ -660,8 +612,6 @@ fn a_dropdown_that_named_no_owner_is_still_exempt_from_its_own_trigger() {
 
 #[test]
 fn an_owned_panel_keeps_exempting_its_owner_not_its_target() {
-    // The fallback must not disturb a caller that does set `owner`: a context
-    // menu is placed at a point but belongs to the row under it.
     let mut world = World::default();
     let row = node(&mut world);
     let spec = UIAnchoredPanel {
@@ -677,17 +627,11 @@ fn an_owned_panel_keeps_exempting_its_owner_not_its_target() {
 
 #[test]
 fn a_standalone_overlay_exempts_nothing() {
-    // No owner and no node to fall back on: a press outside it closes it,
-    // which is what makes a bare overlay dismissable at all.
     assert_eq!(UIAnchoredPanel::default().press_exempt_entity(), None);
 }
 
 #[test]
 fn a_panel_whose_owner_is_hidden_by_an_ancestor_closes_itself() {
-    // The trigger's own `visible` is still true, but the layout pass records
-    // no anchor rect for anything under a hidden ancestor, so the panel would
-    // otherwise keep its last `UILayout` and hang over the screen at a stale
-    // position with the section it belongs to collapsed out of sight.
     let mut world = stack_world();
     let section = node(&mut world);
     let trigger = node(&mut world);
@@ -737,8 +681,6 @@ fn a_panel_whose_owner_was_despawned_closes_itself() {
 
 #[test]
 fn a_panel_whose_node_target_was_despawned_closes_itself() {
-    // Separate from the owner case: a panel is closed for having nothing to
-    // anchor to, not only for having nothing to be about.
     let mut world = stack_world();
     let owner = node(&mut world);
     let trigger = node(&mut world);
@@ -757,10 +699,6 @@ fn a_panel_whose_node_target_was_despawned_closes_itself() {
 
 #[test]
 fn hiding_a_panel_takes_the_focus_inside_it_away() {
-    // `update_focus` only reassigns focus on a left press, so a field left
-    // focused inside a dismissed panel keeps it until the next click: text
-    // capture stays on, swallowing every bare-letter shortcut, and Escape
-    // keeps being deferred to a field nobody can see.
     let mut world = stack_world();
     let trigger = node(&mut world);
     let menu = open_panel(
@@ -796,8 +734,6 @@ fn hiding_a_panel_takes_the_focus_inside_it_away() {
 
 #[test]
 fn focus_outside_every_panel_is_left_alone() {
-    // The inspector field a menu was opened from must not lose focus when
-    // that menu closes.
     let mut world = stack_world();
     let trigger = node(&mut world);
     let menu = open_panel(

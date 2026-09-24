@@ -225,8 +225,6 @@ fn collect_typed<T: Component + Editable>(
     })
 }
 
-/// The inspector's runtime data source. No general component/resource access
-/// escapes this input; adapters can only snapshot registered editable components.
 pub(super) struct InspectionSource<'w> {
     components: ComponentMetadata<'w>,
     registry: Res<'w, InspectorRegistry>,

@@ -6,9 +6,7 @@ use crate::{
     world::{UnsafeWorldCell, World},
 };
 
-/// Read-only access to runtime-selected components and entity metadata.
-/// Resources and mutation are deliberately unavailable. Prefer typed queries
-/// when the component types are known statically.
+/// Read-only, runtime-selected access to components and entity metadata.
 pub struct ComponentMetadata<'w> {
     world: UnsafeWorldCell<'w>,
 }

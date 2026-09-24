@@ -447,11 +447,6 @@ pub(crate) struct UILayoutEngine {
     scale_factor: f64,
 }
 
-/// Everything `place` reads off one panel, kept between passes.
-///
-/// A panel that moves without changing any style — a context menu reopened at
-/// a new cursor position, or one re-pointed from `Below` to `Right` — would
-/// otherwise be filtered out by the early-out and stay where it was.
 #[derive(Clone, Copy, PartialEq)]
 struct PanelPlacementSnapshot {
     entity: Entity,
@@ -508,8 +503,6 @@ pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
     ui_roots: Query<(Entity, &UINode, Option<&Children>), Without<ChildOf>>,
     texts: Query<&crate::text::TextComponent>,
-    // Mutable so the placement sweep below can write `resolved_side` back
-    // onto the panel it just placed; every other use here only reads.
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
@@ -565,12 +558,6 @@ pub(crate) fn compute_ui_nodes(
         .collect::<Vec<_>>();
     panel_snapshot.sort_by_key(|panel| (panel.entity.index(), panel.entity.generation()));
 
-    // The panel STACK's order is not snapshotted directly. It does not need
-    // to be only because `track_panel_stack` derives each panel's `z_index`
-    // from its index in the stack, and `z_index` travels in the cloned
-    // `UINode` inside `style_snapshot` — so a reorder always shows up as a
-    // style change. If layer assignment ever stops being index-derived, the
-    // stack has to be snapshotted here instead.
     let hierarchy_changed = engine.hierarchy_signature != signature;
     if hierarchy_changed {
         diagnostics.tree_rebuilds += 1;
@@ -646,16 +633,8 @@ pub(crate) fn compute_ui_nodes(
         size: logical_size,
     };
     let mut sequence = 0_i64;
-    // Every laid-out rect, so the panel sweep can anchor to a node however
-    // deep in another tree it sits.
     let mut anchor_rects: HashMap<Entity, UIBox> = HashMap::new();
     for (entity, root_node, children) in ui_roots.iter() {
-        // Only OPEN panels are deferred: the second sweep walks the stack,
-        // which lists nothing else, so skipping a closed panel here would
-        // leave it with whatever UILayout it last had — and a stale rect is
-        // exactly what keeps a dismissed menu painting and taking clicks.
-        // `track_panel_stack` latches `open` to false for everything it
-        // drops, so "open" and "in the stack" cannot disagree.
         if panel_stack.open().contains(&entity) {
             continue;
         }
@@ -705,9 +684,6 @@ pub(crate) fn compute_ui_nodes(
         }
     }
 
-    // Panels are placed in stack order so a submenu's owner already has a
-    // rect by the time the submenu is placed. Placing them last also puts
-    // them above their same-layer neighbours in `sequence`.
     for panel_entity in panel_stack.open() {
         let Some((_, mut panel)) = panels.get_entity(*panel_entity) else {
             continue;
@@ -724,14 +700,10 @@ pub(crate) fn compute_ui_nodes(
         let size = Vec2::new(layout.size.width, layout.size.height);
 
         let Some(anchor) = panel.target.anchor_box(&anchor_rects) else {
-            // Anchored to something not laid out this pass; leave it where it
-            // is rather than snapping it to the origin.
             continue;
         };
 
         let placement = crate::anchor::place(anchor, size, logical_size, &panel);
-        // Crate-written output: whatever side the caller asked for in
-        // `side`, this is the side `place` actually settled on after flip.
         panel.resolved_side = placement.side;
         let rect = UIBox {
             min: placement.origin,
@@ -963,11 +935,6 @@ fn write_absolute_positions(
             ),
             child_entity,
         );
-        // A node under a hidden ancestor is still walked and still has a
-        // Taffy layout, but that layout is the collapsed one its ancestor
-        // left behind. Recording it would let a panel anchor to a rect that
-        // is nowhere near where the user last saw the node, so only nodes
-        // that are actually on screen become anchors.
         let visible = inherited_visible && node.visible;
         if visible {
             anchor_rects.insert(child_entity, rect);
@@ -1009,12 +976,6 @@ fn node_clip(rect: UIBox, inherited: UIBox, node: &UINode) -> UIBox {
     }
 }
 
-/// The layer a node paints on, given the one it inherits.
-///
-/// `max` rather than a sum: the editor already repeats a layer on every node
-/// of a subtree by hand, so summing would turn a 71 under a 70 into a 141 and
-/// break every call site that does it. Taking the larger of the two leaves
-/// those untouched while still letting a container lift everything inside it.
 fn effective_layer(inherited: i32, own: i32) -> i32 {
     inherited.max(own)
 }
@@ -1802,21 +1763,13 @@ mod tests {
 
     #[test]
     fn a_child_paints_on_its_parents_layer_unless_it_asks_for_more() {
-        // A floating panel lifts its whole subtree: a menu row that never
-        // mentions z_index must not paint back down at layer 0.
         assert_eq!(effective_layer(200, 0), 200);
-        // And a child that asks for more still gets it, which is what the
-        // editor's tab close button (71 under a 70 strip) relies on.
         assert_eq!(effective_layer(70, 71), 71);
-        // A child asking for less keeps its parent's layer rather than
-        // dropping below the panel it lives in.
         assert_eq!(effective_layer(70, 10), 70);
     }
 
     #[test]
     fn paint_order_packs_the_layer_above_the_sequence() {
-        // The renderer recovers the layer with an arithmetic shift, so the
-        // sequence must never bleed into it.
         assert_eq!(paint_order(3, 0) >> 32, 3);
         assert_eq!(paint_order(3, i32::MAX as i64) >> 32, 3);
         assert!(paint_order(3, 1) > paint_order(3, 0));

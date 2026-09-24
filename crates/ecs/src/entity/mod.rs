@@ -73,8 +73,6 @@ impl EntityLocation {
 }
 
 /// An opaque version of an entity's component set; compare only for the same entity handle.
-/// Wraps after 65,536 changes, so a full cycle between observations is indistinguishable
-/// from no change.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct EntityStructuralVersion(u16);
 

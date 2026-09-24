@@ -1,13 +1,10 @@
-//! Reconciles the live target with card/row entities. Snapshots only live on rows;
-//! collection creates temporary values which are moved into those components.
+//! Reconciles the live target with card/row entities.
 use super::*;
 
 use super::registry::InspectionSource;
 use ecs::{component::Tick, query::filter::With};
 
-/// A component card in the inspector's UI hierarchy. Query this component to
-/// discover which live world component a card inspects. Its child property rows
-/// own the snapshots and widget state.
+/// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
 pub struct InspectedComponent {
     pub entity: Entity,
@@ -17,13 +14,9 @@ pub struct InspectedComponent {
     last_read_tick: Option<Tick>,
 }
 
-/// Widget creation is deferred to a regular system with a CommandQueue, keeping
-/// the adapter API independent of the read-only reflection pass.
 #[derive(Component)]
 pub(super) struct BuildPropertyWidget;
 
-/// Runtime snapshots come from a scoped source; presentation reads use typed
-/// queries. Every presentation change is a deferred ECS command.
 pub(super) fn sync_inspected_components(
     source: InspectionSource,
     data: Res<InspectorData>,
@@ -99,7 +92,6 @@ fn refresh_card(
     for property in properties {
         spawn_row(cmd, &card, property, theme);
     }
-    // The inclusive boundary also catches writes later in this same frame.
     card.last_read_tick = Some(source.current_tick());
     cmd.insert(card, entity);
 }

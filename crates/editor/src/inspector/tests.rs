@@ -214,7 +214,6 @@ fn structural_changes_rebuild_the_entire_stack_once() {
     assert!(before.iter().all(|(card, _)| !world.entity_is_valid(*card)));
     assert_eq!(cards(&mut world).len(), 1);
 
-    // Returning to the same archetype still counts as a structural change.
     let old = cards(&mut world)[0].0;
     world.insert(Plumbing, entity);
     world.remove_component::<Plumbing>(entity);
@@ -581,7 +580,7 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
     let count = Arc::new(AtomicUsize::new(0));
     registry_mut(&mut world).register_property_editor::<Transform, _>(Counting(count.clone()));
     update(&mut world);
-    update(&mut world); // Inclusive last-read boundary permits one catch-up read.
+    update(&mut world);
     let settled = count.load(Ordering::Relaxed);
     let row = rows(&mut world)[0].0;
     let row_tick = world.current_tick();
@@ -591,7 +590,6 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
     assert_eq!(count.load(Ordering::Relaxed), settled);
     assert!(!world.has_component_changed_since(row, TypeId::of::<PropertyRowValue>(), row_tick));
 
-    // Read first, then mutate later in that same tick.
     let mut sync = sync_inspected_components.into_system();
     sync.initialize(&mut world);
     world
@@ -638,7 +636,6 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
         Some(&Vec3::new(3.0, 0.0, 0.0))
     );
 
-    // An unrelated entity's writes must not trigger snapshots for the selection.
     update(&mut world);
     let before = count.load(Ordering::Relaxed);
     world.spawn(Transform::IDENTITY);
@@ -652,7 +649,7 @@ fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
     update(&mut world);
     let old_card = cards(&mut world)[0].0;
     world.despawn(stack);
-    update(&mut world); // No panel is present.
+    update(&mut world);
     assert!(!world.entity_is_valid(old_card));
     let stack = world.spawn((UINode::default(), ComponentStack::default()));
     update(&mut world);

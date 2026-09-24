@@ -206,12 +206,6 @@ pub(crate) fn update_text_inputs(
                 }
                 Some(Finish::Cancel) => {
                     cancelled.write(UITextInputCancelled { entity });
-                    // A cancelled field gives up focus itself: otherwise
-                    // `dismiss_panels`'s "a focused text field owns the
-                    // first Escape" guard stays true forever, and Escape can
-                    // never reach a panel that contains this field. Editor
-                    // widgets (e.g. `cancel_numeric_fields`) may also clear
-                    // this on the same event; doing it twice is harmless.
                     if **focused == Some(entity) {
                         **focused = None;
                     }

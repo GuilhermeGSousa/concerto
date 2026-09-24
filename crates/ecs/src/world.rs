@@ -171,11 +171,7 @@ impl World {
         self.flush_commands();
     }
 
-    /// Version of a live entity's component set. Changes on spawn and component
-    /// addition/removal, including multiple changes within one frame. Value
-    /// edits, replacements, and storage row swaps leave it unchanged.
-    /// Compare versions only for the same entity handle. Stale or reserved,
-    /// not-yet-spawned handles return `None`.
+    /// Version of a live entity's component set, or `None` if `entity` is not live.
     pub fn structural_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
         self.entity_store.structural_version(entity)
     }

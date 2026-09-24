@@ -34,7 +34,7 @@ fn row_swaps_and_recycled_handles_do_not_report_false_changes() {
     let first = world.spawn(A(1));
     let second = world.spawn(A(2));
     let version = world.structural_version(second);
-    world.insert(B, first); // Swaps second into first's old row.
+    world.insert(B, first);
     assert_eq!(world.structural_version(second), version);
     world.remove_component::<B>(first);
     world.despawn(first);

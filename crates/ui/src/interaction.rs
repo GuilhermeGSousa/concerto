@@ -19,8 +19,7 @@ use crate::{material::UIMaterial, node::UILayout};
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct HoveredNode(Option<Entity>);
 
-/// Shared pointer routing state. Captured widgets continue receiving drag and
-/// release events after the pointer leaves their bounds.
+/// Shared pointer routing state.
 #[derive(Resource, Default)]
 pub struct UIInputState {
     pub hovered: Option<Entity>,
@@ -35,8 +34,6 @@ impl UIInputState {
             MouseButton::Left => Some(&mut self.left),
             MouseButton::Right => Some(&mut self.right),
             MouseButton::Middle => Some(&mut self.middle),
-            // Back, Forward and Other route nothing: no widget asks for them,
-            // and a capture slot per possible button would be a map.
             _ => None,
         }
     }
@@ -60,18 +57,7 @@ impl UIInputState {
         self.capture(button).and_then(|capture| capture.captured)
     }
 
-    /// Test-only escape hatch: forces a button's capture without going
-    /// through `advance_capture`.
-    ///
-    /// Downstream crates' tests (e.g. `editor::workspace`) need to put a
-    /// widget "mid-capture" to exercise focus/capture handling around
-    /// unrelated state resets, without wiring up a fake press-and-hold
-    /// through `Input`. `captured` used to be a public field they could
-    /// assign directly; this is the narrow equivalent now that capture
-    /// lives per button behind private `ButtonCapture` slots. `#[doc(hidden)]`
-    /// because it is a test seam, not part of the intended production API —
-    /// `pub(crate)` isn't enough since it must be reachable from other
-    /// crates' test modules.
+    /// Test-only escape hatch: forces a button's capture without going through `advance_capture`.
     #[doc(hidden)]
     pub fn set_captured(&mut self, button: MouseButton, entity: Option<Entity>) {
         if let Some(capture) = self.capture_mut(button) {
@@ -80,10 +66,6 @@ impl UIInputState {
     }
 }
 
-/// Press-and-capture state for a single mouse button.
-///
-/// Per button rather than shared: a right-click that opens a menu must not
-/// cancel a left-button drag that is still in progress.
 #[derive(Default)]
 struct ButtonCapture {
     pressed: Option<Entity>,
@@ -93,7 +75,6 @@ struct ButtonCapture {
     dragged: bool,
 }
 
-/// What one button's transition produced this frame.
 struct CaptureOutcome {
     down: Option<Entity>,
     up: Option<Entity>,
@@ -114,15 +95,8 @@ impl CaptureOutcome {
     }
 }
 
-/// How far the pointer may travel between press and release and still count
-/// as a click rather than a drag, in logical pixels.
 const DRAG_THRESHOLD: f32 = 4.0;
 
-/// Advances one button's capture by a frame and reports what it produced.
-///
-/// Split out of the system because the system needs `Res<Window>` to find the
-/// cursor and therefore cannot be run in a test, while every rule worth
-/// getting right lives here.
 fn advance_capture(
     capture: &mut ButtonCapture,
     state: InputState,
@@ -304,8 +278,6 @@ pub(crate) fn update_ui_interaction(
     **hovered = hit;
     state.hovered = hit;
 
-    // Left first, so a widget that reacts to both buttons sees the primary
-    // one in the order a reader expects.
     for button in [MouseButton::Left, MouseButton::Right, MouseButton::Middle] {
         let input_state = input.get_mouse_button_state(button);
         let Some(capture) = state.capture_mut(button) else {
@@ -388,8 +360,6 @@ mod tests {
     use ecs::{World, entity::Entity};
     use window::input::{InputState, MouseButton};
 
-    /// Entities have no public raw constructor — generations are `NonZero` —
-    /// so a throwaway world mints the distinct ids these tests compare.
     fn entities(count: usize) -> Vec<Entity> {
         let mut world = World::default();
         (0..count).map(|_| world.spawn(Interactable)).collect()
@@ -470,8 +440,6 @@ mod tests {
 
     #[test]
     fn each_button_captures_independently() {
-        // A right-click opening a context menu must not cancel a left-button
-        // drag that is still in progress.
         let ids = entities(2);
         let mut state = UIInputState::default();
         let handle = Some(ids[0]);
