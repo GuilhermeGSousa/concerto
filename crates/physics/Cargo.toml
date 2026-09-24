@@ -1,14 +1,17 @@
 [package]
-name = "physics"
+name = "concerto-physics"
 version = "0.1.0"
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [features]
 default = ["jolt"]
 # The Jolt backend, the native default. Inert on wasm targets, where
 # `jolt-ffi` (C++ that cannot target wasm32) is never a dependency and the
 # Rapier backend is always used.
-jolt = ["dep:jolt-ffi"]
+jolt = ["dep:concerto-jolt-ffi"]
 # Use the Rapier backend on native targets too, so the wasm backend can be
 # built, tested, and debugged without a browser (and without the C++
 # toolchain and submodule Jolt needs):
@@ -18,15 +21,15 @@ force-rapier = ["dep:rapier3d"]
 [dependencies]
 profiling = "1"
 log = "0.4.27"
-app = { path = "../app" }
-essential = { path = "../essential" }
-mesh = { path = "../mesh" }
-ecs = { path = "../ecs" }
+concerto-app = { path = "../app" }
+concerto-core = { path = "../core" }
+concerto-mesh = { path = "../mesh" }
+concerto-ecs = { path = "../ecs" }
 glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-jolt-ffi = { path = "../jolt-ffi", optional = true }
+concerto-jolt-ffi = { path = "../jolt-ffi", optional = true }
 rapier3d = { version = "0.34", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

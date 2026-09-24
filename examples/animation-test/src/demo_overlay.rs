@@ -1,12 +1,10 @@
 //! On-screen debug overlay (load state + current FSM state) and one-shot debug-gizmo
 //! markers for the important entities (spawner, skinned mesh, root bone).
 
-use color::Color;
-use debug_gizmos::DebugGizmos;
-use game_engine::{
+use concerto::{
     animation::{player::AnimationPlayer, root::AnimationRootBone},
+    core::transform::GlobalTransform,
     ecs::{command::CommandQueue, component::Component, query::Query, With},
-    essential::transform::GlobalTransform,
     mesh::skeleton::SkeletonComponent,
     scene::spawner::SceneSpawnerComponent,
     ui::{
@@ -15,6 +13,8 @@ use game_engine::{
         transform::UIValue,
     },
 };
+use concerto_color::Color;
+use concerto_debug_gizmos::DebugGizmos;
 
 use crate::movement_animation::AnimatedCharacter;
 

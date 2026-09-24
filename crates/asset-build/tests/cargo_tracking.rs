@@ -3,7 +3,9 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use asset_format::{write_content_asset, AssetId, ContentAssetHeader, CONTENT_FORMAT_VERSION};
+use concerto_asset_format::{
+    write_content_asset, AssetId, ContentAssetHeader, CONTENT_FORMAT_VERSION,
+};
 
 fn cargo(project: &Path) -> Output {
     Command::new(env!("CARGO"))
@@ -11,7 +13,7 @@ fn cargo(project: &Path) -> Output {
         .current_dir(project)
         // A separate target avoids contention with the parent cargo test.
         .env("CARGO_TARGET_DIR", project.join("target"))
-        .env_remove("GAME_ENGINE_ASSET_ROOT")
+        .env_remove("CONCERTO_ASSET_ROOT")
         .output()
         .expect("run Cargo fixture")
 }
@@ -72,25 +74,25 @@ version = "0.0.0"
 edition = "2021"
 [workspace]
 [dependencies]
-asset-format = {{ path = {:?} }}
-essential-macros = {{ path = {:?} }}
+concerto-asset-format = {{ path = {:?} }}
+concerto-core-macros = {{ path = {:?} }}
 [build-dependencies]
-asset-build = {{ path = {:?} }}
+concerto-asset-build = {{ path = {:?} }}
 "#,
             crates.join("asset-format"),
-            crates.join("essential/macros"),
+            crates.join("core/macros"),
             crates.join("asset-build"),
         ),
     )
     .unwrap();
     std::fs::write(
         root.join("build.rs"),
-        "fn main() { asset_build::track_assets(\"content\").unwrap(); }",
+        "fn main() { concerto_asset_build::track_assets(\"content\").unwrap(); }",
     )
     .unwrap();
     std::fs::write(root.join("src/main.rs"), r#"
-use asset_format::AssetId;
-const ID: AssetId = AssetId::from_bytes(essential_macros::asset_id_bytes!("content/fixture.gasset"));
+use concerto_asset_format::AssetId;
+const ID: AssetId = AssetId::from_bytes(concerto_core_macros::asset_id_bytes!("content/fixture.gasset"));
 fn main() { println!("{}", ID.simple_hex()); }
 "#).unwrap();
 

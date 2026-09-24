@@ -1,14 +1,14 @@
-use color::Color;
-use ecs::{
-    component::{ComponentLifecycleCallback, ComponentLifecycleContext},
-    Changed, Component, Query, ResMut,
-};
-use essential::{
+use concerto_color::Color;
+use concerto_core::{
     assets::{asset_server::AssetServer, asset_store::AssetStore},
     transform::Transform,
 };
-use mesh::{MeshComponent, Vertex};
-use render::MaterialComponent;
+use concerto_ecs::{
+    component::{ComponentLifecycleCallback, ComponentLifecycleContext},
+    Changed, Component, Query, ResMut,
+};
+use concerto_mesh::{MeshComponent, Vertex};
+use concerto_render::MaterialComponent;
 
 use crate::material::{WorldGridMaterial, WorldGridUniform};
 
@@ -39,13 +39,13 @@ impl Component for WorldGrid {
         Some(world_grid_on_add)
     }
 
-    fn on_remove() -> Option<ecs::component::ComponentLifecycleCallback> {
+    fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         None
     }
 }
 
 fn world_grid_on_add(
-    mut world: ecs::world::RestrictedWorld<'_>,
+    mut world: concerto_ecs::world::RestrictedWorld<'_>,
     context: ComponentLifecycleContext,
 ) {
     let grid = world
@@ -63,7 +63,7 @@ fn world_grid_on_add(
 
     let (mesh_handle, material_handle) = {
         let asset_server = world.get_resource::<AssetServer>().unwrap();
-        let mesh = render::assets::mesh::Mesh {
+        let mesh = concerto_render::assets::mesh::Mesh {
             vertices: vec![Vertex::default(); 3],
             indices: vec![0, 1, 2],
         };

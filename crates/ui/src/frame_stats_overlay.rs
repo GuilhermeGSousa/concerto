@@ -1,15 +1,15 @@
-use app::{
+use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Startup, Update},
 };
-use color::Color;
-use ecs::{
+use concerto_color::Color;
+use concerto_core::time::{FrameStats, Time};
+use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     query::{Query, filter::With},
     resource::{Res, ResMut, Resource},
 };
-use essential::time::{FrameStats, Time};
 
 use crate::{
     material::UIMaterial,
@@ -36,7 +36,7 @@ struct OverlayRefreshTimer(f32);
 pub struct FrameStatsOverlayPlugin;
 
 impl Plugin for FrameStatsOverlayPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.insert_resource(OverlayRefreshTimer(0.0));
         app.add_system(Startup, spawn_overlay);
         app.add_system(Update, update_overlay_text);

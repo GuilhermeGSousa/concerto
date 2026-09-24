@@ -3,14 +3,13 @@
 //! Tabs are deliberately just views over editor document entities.  The
 //! document owns the asset and its state; this module owns the small amount of
 //! chrome needed to activate or close it.
-use app::{App, Plugin, schedule_groups::LateUpdate};
-use ecs::query::filter::With;
-use ecs::{
+use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
+use concerto_ecs::query::filter::With;
+use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, command::CommandQueue, entity::hierarchy::ChildOf,
     events::event_reader::EventReader,
 };
-use taffy::FlexDirection;
-use ui::{
+use concerto_ui::{
     interaction::HoveredNode,
     interaction::{Interactable, UIClick, UIInteractionStyle},
     material::UIMaterial,
@@ -19,8 +18,9 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
-use window::input::MouseButton;
-use window::winit_events::WindowEvent;
+use concerto_window::input::MouseButton;
+use concerto_window::winit_events::WindowEvent;
+use taffy::FlexDirection;
 use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::window_chrome::WindowChromeControl;
@@ -70,7 +70,7 @@ impl Plugin for TabsPlugin {
 }
 
 fn handle_tab_clicks(
-    mut clicks: ecs::events::event_reader::EventReader<UIClick>,
+    mut clicks: concerto_ecs::events::event_reader::EventReader<UIClick>,
     tabs: Query<&EditorTab>,
     closes: Query<&EditorTabClose>,
     mut commands: ResMut<AssetEditorCommands>,

@@ -1,17 +1,17 @@
 //! Ground probing (`PhysicsState::probe_ground`) and body velocity control.
 
-use ecs::world::World;
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
+use concerto_ecs::world::World;
 use glam::{Quat, Vec3};
 mod common;
 use common::{physics_world, register_bodies};
 
-use physics::body::BodyId;
-use physics::collider::Collider;
-use physics::ground::GroundState;
-use physics::physics_pipeline::PhysicsPipeline;
-use physics::physics_state::PhysicsState;
-use physics::rigid_body::{AllowedDofs, MotionType, RigidBody};
+use concerto_physics::body::BodyId;
+use concerto_physics::collider::Collider;
+use concerto_physics::ground::GroundState;
+use concerto_physics::physics_pipeline::PhysicsPipeline;
+use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
 const MAX_SEPARATION: f32 = 0.05;
 const MAX_SLOPE: f32 = std::f32::consts::PI * 50.0 / 180.0;

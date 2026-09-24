@@ -3,8 +3,8 @@
 //! without the importers knowing which pipeline they run under.
 use std::path::PathBuf;
 
-use asset_import::{ImportContext, SubAssetIdResolver};
-use essential::assets::{Asset, AssetId};
+use concerto_asset_import::{ImportContext, SubAssetIdResolver};
+use concerto_core::assets::{Asset, AssetId};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct Thing;

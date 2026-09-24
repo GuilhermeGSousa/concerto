@@ -1,5 +1,5 @@
-use ecs::resource::Resource;
-use essential::time::Time;
+use concerto_core::time::Time;
+use concerto_ecs::resource::Resource;
 
 use crate::backend::PhysicsBackend;
 use crate::physics_state::PhysicsState;

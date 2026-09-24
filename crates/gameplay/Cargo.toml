@@ -1,13 +1,16 @@
 [package]
-name = "gameplay"
+name = "concerto-gameplay"
 version = "0.1.0"
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-app = { path = "../app" }
-director = { path = "../director" }
-essential = { path = "../essential" }
-render = { path = "../render" }
-window = { path = "../window" }
-ecs = { path = "../ecs" }
+concerto-app = { path = "../app" }
+concerto-director = { path = "../director" }
+concerto-core = { path = "../core" }
+concerto-render = { path = "../render" }
+concerto-window = { path = "../window" }
+concerto-ecs = { path = "../ecs" }
 glam = { version = "0.30.1" }

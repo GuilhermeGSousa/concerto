@@ -1,6 +1,6 @@
 pub mod actions;
 use cfg_if::cfg_if;
-use ecs::resource::Resource;
+use concerto_ecs::resource::Resource;
 use glam::Vec2;
 use std::collections::HashMap;
 use winit::event::ElementState;

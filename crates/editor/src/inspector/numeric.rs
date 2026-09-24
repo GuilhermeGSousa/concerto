@@ -1,9 +1,8 @@
-use ecs::{
+use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
 };
-use editable::Editable;
-use glam::{EulerRot, Quat, Vec3};
-use ui::{
+use concerto_editable::Editable;
+use concerto_ui::{
     focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
     interaction::Interactable,
     material::UIMaterial,
@@ -13,6 +12,7 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
+use glam::{EulerRot, Quat, Vec3};
 
 use crate::inspector::rows::{
     EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
@@ -517,13 +517,15 @@ mod tests {
     #[test]
     fn transform_numeric_widget_submit_refresh_and_cancel_smoke_test() {
         use super::super::{InspectorRegistry, Property, apply_property_commits};
-        use ecs::{IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel};
-        use essential::transform::Transform;
-        use std::any::TypeId;
-        use ui::{
+        use concerto_core::transform::Transform;
+        use concerto_ecs::{
+            IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel,
+        };
+        use concerto_ui::{
             focus::{FocusedWidget, UIFocusLost},
             text_input::{UITextInputCancelled, UITextInputSubmitted},
         };
+        use std::any::TypeId;
 
         #[derive(Resource)]
         struct Build {

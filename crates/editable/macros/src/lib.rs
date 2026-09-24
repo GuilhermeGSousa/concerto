@@ -33,12 +33,12 @@ pub fn derive_editable(input: TokenStream) -> TokenStream {
 
     let (impl_generics, type_generics, where_clause) = ast.generics.split_for_impl();
     quote! {
-        impl #impl_generics ::editable::Editable for #name #type_generics #where_clause {
-            fn visit(&self, visitor: &mut dyn ::editable::PropertyVisitor) {
+        impl #impl_generics ::concerto_editable::Editable for #name #type_generics #where_clause {
+            fn visit(&self, visitor: &mut dyn ::concerto_editable::PropertyVisitor) {
                 #(#visits)*
             }
 
-            fn visit_mut(&mut self, visitor: &mut dyn ::editable::PropertyVisitorMut) {
+            fn visit_mut(&mut self, visitor: &mut dyn ::concerto_editable::PropertyVisitorMut) {
                 #(#visits_mut)*
             }
         }

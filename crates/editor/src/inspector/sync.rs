@@ -2,7 +2,7 @@
 use super::*;
 
 use super::registry::InspectionSource;
-use ecs::{component::Tick, query::filter::With};
+use concerto_ecs::{component::Tick, query::filter::With};
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]

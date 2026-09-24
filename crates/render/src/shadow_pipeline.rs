@@ -1,7 +1,7 @@
-use app::{schedule_groups::Render, Plugin};
-use ecs::{IntoSystemConfig, Resource};
-use essential::transform::GlobalTransformRaw;
-use mesh::Vertex;
+use concerto_app::{schedule_groups::Render, Plugin};
+use concerto_core::transform::GlobalTransformRaw;
+use concerto_ecs::{IntoSystemConfig, Resource};
+use concerto_mesh::Vertex;
 use wgpu::{
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, DepthBiasState,
     DepthStencilState, MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
@@ -25,12 +25,12 @@ pub(crate) struct ShadowPipeline {
 pub struct ShadowPipelinePlugin;
 
 impl Plugin for ShadowPipelinePlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.render_mut()
             .add_system(Render, render_shadow_maps.after(update_shadow_view_proj));
     }
 
-    fn finish(&self, app: &mut app::App) {
+    fn finish(&self, app: &mut concerto_app::App) {
         let device = app
             .render()
             .get_resource::<RenderDevice>()

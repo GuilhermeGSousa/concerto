@@ -1,4 +1,4 @@
-use ecs::component::Component;
+use concerto_ecs::component::Component;
 use glam::Vec3;
 
 #[derive(Component, Default)]

@@ -12,7 +12,7 @@ pub mod transition;
 
 #[cfg(test)]
 mod tests {
-    use essential::assets::{
+    use concerto_core::assets::{
         Asset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use uuid::Uuid;

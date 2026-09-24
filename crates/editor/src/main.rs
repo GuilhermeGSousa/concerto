@@ -1,17 +1,17 @@
-use app::{
+use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
-use debug_gizmos::DebugGizmosPlugin;
-use editor::EditorPlugin;
-use render::{
+use concerto_debug_gizmos::DebugGizmosPlugin;
+use concerto_editor::EditorPlugin;
+use concerto_render::{
     assets::material::StandardMaterial, material_plugin::MaterialPlugin,
     shadow_pipeline::ShadowPipelinePlugin,
 };
 
 fn main() -> anyhow::Result<()> {
-    const USAGE: &str = "Usage: editor [--project <directory>] [--decorated]";
+    const USAGE: &str = "Usage: concerto-editor [--project <directory>] [--decorated]";
     let mut project = None;
     let mut decorated = false;
     let mut args = std::env::args_os().skip(1);
@@ -37,19 +37,19 @@ fn main() -> anyhow::Result<()> {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
-        .register_plugin(window::plugin::WindowPlugin)
+        .register_plugin(concerto_window::plugin::WindowPlugin)
         .register_plugin(TransformPlugin)
-        .register_plugin(render::plugin::RenderPlugin)
+        .register_plugin(concerto_render::plugin::RenderPlugin)
         .register_plugin(DebugGizmosPlugin)
         .register_plugin(ShadowPipelinePlugin)
         .register_plugin(MaterialPlugin::<StandardMaterial>::default())
-        .register_plugin(world_grid::plugin::WorldGridPlugin)
-        .register_plugin(scene::plugin::ScenePlugin)
+        .register_plugin(concerto_world_grid::plugin::WorldGridPlugin)
+        .register_plugin(concerto_scene::plugin::ScenePlugin)
         .register_plugin(EditorPlugin { project, decorated })
         // Last: systems run in registration order, and the UI's layout pass is
         // the end of that order. Registering it before the panels would lay out
         // what they built on the previous frame.
-        .register_plugin(ui::plugin::UIPlugin);
+        .register_plugin(concerto_ui::plugin::UIPlugin);
     app.run();
     Ok(())
 }

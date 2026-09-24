@@ -1,22 +1,33 @@
-use app::{
-    schedule_groups::{Startup, Update},
-    App,
-};
-use color::Color;
-use ecs::{command::CommandQueue, query::Query, resource::Res, Component, With};
-use essential::{assets::asset_server::AssetServer, time::Time, transform::Transform};
-use game_engine::{asset_id, essential::assets::AssetId};
-use game_engine::{
+use concerto::{asset_id, core::assets::AssetId};
+use concerto::{
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
     DefaultPlugins,
 };
+use concerto_app::{
+    schedule_groups::{Startup, Update},
+    App,
+};
+use concerto_color::Color;
+use concerto_core::{assets::asset_server::AssetServer, time::Time, transform::Transform};
+use concerto_ecs::{command::CommandQueue, query::Query, resource::Res, Component, With};
+use concerto_render::components::light::{Light, LightType};
 use glam::{Quat, Vec3};
-use render::components::light::{Light, LightType};
 
 #[cfg(feature = "terminal")]
-use app::schedule_groups::LateRender;
+use concerto_app::schedule_groups::LateRender;
 #[cfg(feature = "terminal")]
-use ecs::{resource::ResMut, IntoSystemConfig};
+use concerto_ecs::{resource::ResMut, IntoSystemConfig};
+#[cfg(feature = "terminal")]
+use concerto_render::{
+    assets::texture::Texture,
+    components::camera::{Camera, RenderTarget},
+    wgpu,
+};
+#[cfg(feature = "terminal")]
+use concerto_terminal_renderer::{
+    frame::TerminalFrame, terminal::TerminalContext, TerminalInput, TerminalOutput,
+    TerminalRendererPlugin,
+};
 #[cfg(feature = "terminal")]
 use ratatui::{
     crossterm::event::KeyCode,
@@ -24,26 +35,9 @@ use ratatui::{
     style::Stylize,
     text::{Line as TextLine, Span},
 };
-#[cfg(feature = "terminal")]
-use render::{
-    assets::texture::Texture,
-    components::camera::{Camera, RenderTarget},
-    wgpu,
-};
-#[cfg(feature = "terminal")]
-use terminal_renderer::{
-    frame::TerminalFrame, terminal::TerminalContext, TerminalInput, TerminalOutput,
-    TerminalRendererPlugin,
-};
 
 #[cfg(not(feature = "terminal"))]
-use debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
-#[cfg(not(feature = "terminal"))]
-use ecs::{resource::ResMut, Entity};
-#[cfg(not(feature = "terminal"))]
-use essential::transform::GlobalTransform;
-#[cfg(not(feature = "terminal"))]
-use game_engine::{
+use concerto::{
     mesh::MeshComponent,
     physics::{
         body::BodyId, collider::Collider, physics_state::PhysicsState, rigid_body::RigidBody,
@@ -51,9 +45,15 @@ use game_engine::{
     window::input::{Input, MouseButton},
 };
 #[cfg(not(feature = "terminal"))]
-use gameplay::{movement::first_person_player_fly, player::spawn_first_person_player};
+use concerto_core::transform::GlobalTransform;
 #[cfg(not(feature = "terminal"))]
-use render::{
+use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
+#[cfg(not(feature = "terminal"))]
+use concerto_ecs::{resource::ResMut, Entity};
+#[cfg(not(feature = "terminal"))]
+use concerto_gameplay::{movement::first_person_player_fly, player::spawn_first_person_player};
+#[cfg(not(feature = "terminal"))]
+use concerto_render::{
     assets::{material::StandardMaterial, mesh::Mesh, vertex::Vertex},
     components::camera::Camera,
     MaterialComponent,
@@ -100,7 +100,7 @@ fn main() {
 
     #[cfg(not(feature = "terminal"))]
     {
-        use game_engine::ui::frame_stats_overlay::FrameStatsOverlayPlugin;
+        use concerto::ui::frame_stats_overlay::FrameStatsOverlayPlugin;
 
         app.register_plugin(DefaultPlugins::default())
             .register_plugin(FrameStatsOverlayPlugin)

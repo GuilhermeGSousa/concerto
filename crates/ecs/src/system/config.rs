@@ -11,7 +11,7 @@ use crate::system::{BoxedSystem, IntoSystem};
 ///
 /// # Example
 /// ```
-/// use ecs::{Schedule, IntoSystemConfig};
+/// use concerto_ecs::{Schedule, IntoSystemConfig};
 ///
 /// fn system_a() {}
 /// fn system_b() {}
@@ -59,7 +59,7 @@ impl SystemConfig {
 /// The default `.after()` and `.before()` methods allow fluent chaining:
 ///
 /// ```
-/// # use ecs::{Schedule, IntoSystemConfig};
+/// # use concerto_ecs::{Schedule, IntoSystemConfig};
 /// # fn a() {} fn b() {} fn c() {}
 /// let mut schedule = Schedule::new();
 /// schedule.add_system(a.after(b).before(c));

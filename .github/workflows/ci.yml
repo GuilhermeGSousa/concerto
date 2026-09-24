@@ -94,7 +94,7 @@ jobs:
             ${{ runner.os }}-cargo-rapier-
 
       - name: Run physics tests against the Rapier backend
-        run: cargo test -p physics --no-default-features --features force-rapier
+        run: cargo test -p concerto-physics --no-default-features --features force-rapier
 
   clippy_check:
     name: Clippy
@@ -125,7 +125,7 @@ jobs:
       - name: Run clippy
         run: cargo clippy -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
       - name: Run clippy on the Rapier physics backend
-        run: cargo clippy -p physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+        run: cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
         
   format:
     name: Format

@@ -2,11 +2,11 @@
 //!
 //! Panels react to actions, never to keys. Rebinding is a change to the table
 //! below (or to `ActionMap` at runtime) rather than a hunt through systems.
-use app::{App, Plugin, schedule_groups::Startup};
-use ecs::ResMut;
-use window::input::KeyCode;
-use window::input::actions::{ActionMap, Shortcut};
-use window::{define_action, define_context};
+use concerto_app::{App, Plugin, schedule_groups::Startup};
+use concerto_ecs::ResMut;
+use concerto_window::input::KeyCode;
+use concerto_window::input::actions::{ActionMap, Shortcut};
+use concerto_window::{define_action, define_context};
 
 define_action!(
     /// Frame the current selection in the viewport.

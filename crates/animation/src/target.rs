@@ -1,4 +1,5 @@
-use ecs::{
+use concerto_core::{assets::asset_store::AssetStore, time::Time, transform::Transform};
+use concerto_ecs::{
     Entity,
     command::CommandQueue,
     query::{
@@ -7,8 +8,7 @@ use ecs::{
     },
     resource::Res,
 };
-use essential::{assets::asset_store::AssetStore, time::Time, transform::Transform};
-use mesh::skeleton::SkeletonComponent;
+use concerto_mesh::skeleton::SkeletonComponent;
 
 use crate::{
     clip::AnimationClip,
@@ -80,9 +80,9 @@ pub(crate) fn initialize_animation_players(
 
 #[cfg(test)]
 mod tests {
-    use ecs::{IntoSystem, System, World, component::scene::SceneEntityRef};
-    use essential::assets::{AssetId, handle::AssetHandle};
-    use mesh::skeleton::{Skeleton, SkeletonComponent};
+    use concerto_core::assets::{AssetId, handle::AssetHandle};
+    use concerto_ecs::{IntoSystem, System, World, component::scene::SceneEntityRef};
+    use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 
     use super::initialize_skeletons;
     use crate::{player::AnimationPlayer, root::AnimationRootBone};

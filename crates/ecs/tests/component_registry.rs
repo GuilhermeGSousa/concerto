@@ -1,8 +1,8 @@
 //! Covers the serde component registry: a registered type deserializes from
 //! JSON and is applied; an unregistered type name is reported rather than
 //! panicking.
-use ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use ecs::{Component, Entity, World};
+use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
+use concerto_ecs::{Component, Entity, World};
 use serde::{Deserialize, Serialize};
 
 #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]

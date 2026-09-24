@@ -5,11 +5,11 @@
 mod common;
 use common::{physics_world, register_bodies};
 
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
+use concerto_physics::body::BodyId;
+use concerto_physics::collider::Collider;
+use concerto_physics::physics_state::PhysicsState;
 use glam::Vec3;
-use physics::body::BodyId;
-use physics::collider::Collider;
-use physics::physics_state::PhysicsState;
 
 #[test]
 fn body_id_tracks_component_lifecycle() {

@@ -5,13 +5,13 @@ use std::{
 
 use crate::Resource;
 
-use concurrent_queue::ConcurrentQueue;
-use fixedbitset::FixedBitSet;
-use tasks::{
+use concerto_tasks::{
     compute_pool::ComputeTaskPool,
     task_pool::{ScopedTaskPool, TaskPool},
     thread_executor::ThreadExecutor,
 };
+use concurrent_queue::ConcurrentQueue;
+use fixedbitset::FixedBitSet;
 
 use crate::{
     World,

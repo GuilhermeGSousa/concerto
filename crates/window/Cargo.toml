@@ -1,15 +1,18 @@
 [package]
-name = "window"
+name = "concerto-window"
 version = "0.1.0"
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 profiling = "1"
-app = { path = "../app" }
-ecs = { path = "../ecs" }
+concerto-app = { path = "../app" }
+concerto-ecs = { path = "../ecs" }
 cfg-if = "1"
 winit = { version = "0.30"}
 glam = { version = "0.30.1" }

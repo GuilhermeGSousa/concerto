@@ -1,4 +1,4 @@
-use ecs::{CommandQueue, Component, IntoSystem, System, World};
+use concerto_ecs::{CommandQueue, Component, IntoSystem, System, World};
 
 #[derive(Component)]
 struct A(u32);

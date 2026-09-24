@@ -1,4 +1,4 @@
-use ecs::resource::{ResMut, Resource};
+use concerto_ecs::resource::{ResMut, Resource};
 use glam::Vec2;
 use std::sync::Arc;
 
@@ -10,7 +10,7 @@ use crate::{
     winit_events::WindowEvent,
     ApplicationWindowHandler,
 };
-use app::{
+use concerto_app::{
     plugins::{Plugin, PluginsState},
     runner::AppExit,
     schedule_groups::{LateUpdate, Main},
@@ -224,7 +224,7 @@ impl Plugin for WindowPlugin {
             .expect("Failed to build event loop");
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let mut win_attr = WinitWindow::default_attributes().with_title("winit example");
+        let mut win_attr = WinitWindow::default_attributes().with_title("Concerto");
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -255,10 +255,10 @@ impl Plugin for WindowPlugin {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use app::{
+    use concerto_app::{
         main_schedule::MainSchedulePlugin, plugins::TimePlugin, schedule_groups::LateUpdate,
     };
-    use ecs::{Res, ResMut, Resource};
+    use concerto_ecs::{Res, ResMut, Resource};
     use winit::event::{ElementState, MouseButton};
 
     #[derive(Resource, Default)]

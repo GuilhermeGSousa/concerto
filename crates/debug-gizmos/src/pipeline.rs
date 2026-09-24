@@ -1,5 +1,5 @@
-use ecs::resource::Resource;
-use render::layouts::CameraLayout;
+use concerto_ecs::resource::Resource;
+use concerto_render::layouts::CameraLayout;
 
 use crate::vertex::GizmoVertex;
 

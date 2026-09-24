@@ -3,7 +3,7 @@
 #![allow(clippy::too_many_arguments)]
 use std::collections::{HashMap, HashSet};
 
-use ecs::{
+use concerto_ecs::{
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
     events::{event_reader::EventReader, event_writer::EventWriter},
@@ -11,11 +11,11 @@ use ecs::{
     resource::{Res, ResMut, Resource},
     system::input::SystemLocal,
 };
+use concerto_window::define_action;
+use concerto_window::input::{Input, InputState, MouseButton, actions::ActionFired};
+use concerto_window::plugin::Window;
 use glam::Vec2;
 use log::warn;
-use window::define_action;
-use window::input::{Input, InputState, MouseButton, actions::ActionFired};
-use window::plugin::Window;
 
 use crate::{
     focus::{FocusedWidget, UIFocusLost},
@@ -402,8 +402,8 @@ impl MisusedPanels {
     }
 }
 
-impl ecs::world::FromWorld for MisusedPanels {
-    fn from_world(_: &ecs::world::World) -> Self {
+impl concerto_ecs::world::FromWorld for MisusedPanels {
+    fn from_world(_: &concerto_ecs::world::World) -> Self {
         Self::default()
     }
 }

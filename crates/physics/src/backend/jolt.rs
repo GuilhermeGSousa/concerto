@@ -3,9 +3,9 @@
 //! (it requires thread primitives the toolchains do not provide), so web
 //! builds use the Rapier backend instead.
 
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
+use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
-use mesh::Mesh;
 
 use crate::aabb::Aabb;
 use crate::backend::{MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit};
@@ -26,7 +26,7 @@ const SHAPE_DENSITY: f32 = 1000.0; // water
 /// collision-layer interfaces it was initialised with (all held together on
 /// the C++ side of the `jolt-ffi` shim).
 pub struct JoltBackend {
-    world: *mut jolt_ffi::JoltWorld,
+    world: *mut concerto_jolt_ffi::JoltWorld,
 }
 
 // SAFETY: `JoltBackend` holds a raw pointer into Jolt, which is not inherently
@@ -42,7 +42,7 @@ unsafe impl Sync for JoltBackend {}
 /// Shapes are immutable and refcounted, so a single handle can back any
 /// number of bodies; each body takes its own reference, so dropping this
 /// never invalidates a shape still in use.
-pub struct ShapeHandle(*mut jolt_ffi::JoltShape);
+pub struct ShapeHandle(*mut concerto_jolt_ffi::JoltShape);
 
 // SAFETY: a Jolt shape is immutable once built, so there is nothing to race
 // on when it is read from several threads. The only mutable state is
@@ -52,7 +52,7 @@ unsafe impl Send for ShapeHandle {}
 unsafe impl Sync for ShapeHandle {}
 
 impl ShapeHandle {
-    fn as_ptr(&self) -> *const jolt_ffi::JoltShape {
+    fn as_ptr(&self) -> *const concerto_jolt_ffi::JoltShape {
         self.0
     }
 }
@@ -62,7 +62,7 @@ impl Drop for ShapeHandle {
         // SAFETY: the pointer came from a `jolt_create_*_shape` call, which
         // transferred one reference, and this is the only release of it.
         unsafe {
-            jolt_ffi::jolt_shape_destroy(self.0);
+            concerto_jolt_ffi::jolt_shape_destroy(self.0);
         }
     }
 }
@@ -70,7 +70,7 @@ impl Drop for ShapeHandle {
 /// Per-step scratch: a temporary allocator and a job system thread pool
 /// (owned together on the C++ side of the `jolt-ffi` shim).
 pub struct Stepper {
-    stepper: *mut jolt_ffi::JoltStepper,
+    stepper: *mut concerto_jolt_ffi::JoltStepper,
 }
 
 // SAFETY: like `JoltBackend`, this holds a raw Jolt pointer; the scheduler
@@ -79,32 +79,32 @@ pub struct Stepper {
 unsafe impl Send for Stepper {}
 unsafe impl Sync for Stepper {}
 
-fn to_jolt_dofs(dofs: AllowedDofs) -> jolt_ffi::JoltAllowedDofs {
+fn to_jolt_dofs(dofs: AllowedDofs) -> concerto_jolt_ffi::JoltAllowedDofs {
     let mut jolt_dofs = 0;
     for (axis, jolt_axis) in [
         (
             AllowedDofs::TRANSLATION_X,
-            jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_X,
+            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_X,
         ),
         (
             AllowedDofs::TRANSLATION_Y,
-            jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Y,
+            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Y,
         ),
         (
             AllowedDofs::TRANSLATION_Z,
-            jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Z,
+            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_TRANSLATION_Z,
         ),
         (
             AllowedDofs::ROTATION_X,
-            jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_X,
+            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_X,
         ),
         (
             AllowedDofs::ROTATION_Y,
-            jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Y,
+            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Y,
         ),
         (
             AllowedDofs::ROTATION_Z,
-            jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Z,
+            concerto_jolt_ffi::JOLT_ALLOWED_DOFS_ROTATION_Z,
         ),
     ] {
         if dofs.contains(axis) {
@@ -115,7 +115,7 @@ fn to_jolt_dofs(dofs: AllowedDofs) -> jolt_ffi::JoltAllowedDofs {
 }
 
 impl PhysicsBackend for JoltBackend {
-    type BodyHandle = jolt_ffi::JoltBodyId;
+    type BodyHandle = concerto_jolt_ffi::JoltBodyId;
     type ShapeHandle = ShapeHandle;
 
     type Stepper = Stepper;
@@ -124,7 +124,7 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `jolt_world_create` performs Jolt's process-global init
         // (idempotent) and returns an owned world, freed in `Drop`.
         let world = unsafe {
-            jolt_ffi::jolt_world_create(
+            concerto_jolt_ffi::jolt_world_create(
                 MAX_BODIES,
                 NUM_BODY_MUTEXES,
                 MAX_BODY_PAIRS,
@@ -142,7 +142,7 @@ impl PhysicsBackend for JoltBackend {
         // 32 MiB of scratch, sized to comfortably hold the body-pair and
         // contact-constraint buffers Jolt allocates each step for the maxima
         // configured in `new`.
-        let stepper = unsafe { jolt_ffi::jolt_stepper_create(32 * 1024 * 1024) };
+        let stepper = unsafe { concerto_jolt_ffi::jolt_stepper_create(32 * 1024 * 1024) };
 
         Stepper { stepper }
     }
@@ -150,7 +150,7 @@ impl PhysicsBackend for JoltBackend {
     fn step(&mut self, stepper: &mut Stepper, delta_time: f32) {
         // SAFETY: both pointers are valid and exclusively borrowed.
         unsafe {
-            jolt_ffi::jolt_world_step(self.world, stepper.stepper, delta_time, 1);
+            concerto_jolt_ffi::jolt_world_step(self.world, stepper.stepper, delta_time, 1);
         }
     }
 
@@ -166,38 +166,53 @@ impl PhysicsBackend for JoltBackend {
         let scale = transform.scale.to_array();
         let motion_type = match rigid_body {
             Some(rb) => match rb.motion_type {
-                MotionType::Dynamic => jolt_ffi::JOLT_MOTION_TYPE_DYNAMIC,
-                MotionType::Kinematic => jolt_ffi::JOLT_MOTION_TYPE_KINEMATIC,
+                MotionType::Dynamic => concerto_jolt_ffi::JOLT_MOTION_TYPE_DYNAMIC,
+                MotionType::Kinematic => concerto_jolt_ffi::JOLT_MOTION_TYPE_KINEMATIC,
             },
-            None => jolt_ffi::JOLT_MOTION_TYPE_STATIC,
+            None => concerto_jolt_ffi::JOLT_MOTION_TYPE_STATIC,
         };
         // SAFETY: `self.world` is a valid world; the position/half-extent
         // arrays are valid xyz triples and the rotation a valid xyzw
         // quaternion. The settings are created, used, and destroyed within
         // this call.
         unsafe {
-            let settings = jolt_ffi::jolt_body_creation_settings_create();
-            jolt_ffi::jolt_body_creation_settings_set_position(settings, position.as_ptr());
-            jolt_ffi::jolt_body_creation_settings_set_rotation(settings, rotation.as_ptr());
-            jolt_ffi::jolt_body_creation_settings_set_motion_type(settings, motion_type);
+            let settings = concerto_jolt_ffi::jolt_body_creation_settings_create();
+            concerto_jolt_ffi::jolt_body_creation_settings_set_position(
+                settings,
+                position.as_ptr(),
+            );
+            concerto_jolt_ffi::jolt_body_creation_settings_set_rotation(
+                settings,
+                rotation.as_ptr(),
+            );
+            concerto_jolt_ffi::jolt_body_creation_settings_set_motion_type(settings, motion_type);
             if let Some(rigid_body) = rigid_body {
-                jolt_ffi::jolt_body_creation_settings_set_allowed_dofs(
+                concerto_jolt_ffi::jolt_body_creation_settings_set_allowed_dofs(
                     settings,
                     to_jolt_dofs(rigid_body.allowed_dofs),
                 );
             }
             if let Some(offset) = offset {
                 let offset = offset.0.to_array();
-                jolt_ffi::jolt_body_creation_settings_set_shape_offset(settings, offset.as_ptr());
+                concerto_jolt_ffi::jolt_body_creation_settings_set_shape_offset(
+                    settings,
+                    offset.as_ptr(),
+                );
             }
             // Shapes are shared between bodies, so an entity's scale cannot be
             // baked into the geometry: it goes on the body instead.
-            jolt_ffi::jolt_body_creation_settings_set_shape_scale(settings, scale.as_ptr());
+            concerto_jolt_ffi::jolt_body_creation_settings_set_shape_scale(
+                settings,
+                scale.as_ptr(),
+            );
             // The body takes its own reference, so the collider keeps owning
             // the shape and may share it with any number of other bodies.
-            jolt_ffi::jolt_body_creation_settings_set_shape(settings, collider.shape().0.as_ptr());
-            let id = jolt_ffi::jolt_body_create(self.world, settings);
-            jolt_ffi::jolt_body_creation_settings_destroy(settings);
+            concerto_jolt_ffi::jolt_body_creation_settings_set_shape(
+                settings,
+                collider.shape().0.as_ptr(),
+            );
+            let id = concerto_jolt_ffi::jolt_body_create(self.world, settings);
+            concerto_jolt_ffi::jolt_body_creation_settings_destroy(settings);
             id
         }
     }
@@ -207,7 +222,7 @@ impl PhysicsBackend for JoltBackend {
         // destroyed (`Collider`'s lifecycle guarantees one destroy per
         // create).
         unsafe {
-            jolt_ffi::jolt_body_destroy(self.world, body);
+            concerto_jolt_ffi::jolt_body_destroy(self.world, body);
         }
     }
 
@@ -217,7 +232,7 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `body` is a valid body id within this world, and the output
         // buffers have the sizes the shim writes (xyz and xyzw).
         unsafe {
-            jolt_ffi::jolt_body_get_transform(
+            concerto_jolt_ffi::jolt_body_get_transform(
                 self.world,
                 body,
                 position.as_mut_ptr(),
@@ -233,7 +248,11 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `body` is a body in this world and the out-buffer is a
         // valid xyz triple.
         unsafe {
-            jolt_ffi::jolt_body_get_linear_velocity(self.world, body, velocity.as_mut_ptr());
+            concerto_jolt_ffi::jolt_body_get_linear_velocity(
+                self.world,
+                body,
+                velocity.as_mut_ptr(),
+            );
         }
         Vec3::from(velocity)
     }
@@ -243,21 +262,21 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `body` is a body in this world; `velocity` is a valid xyz
         // triple.
         unsafe {
-            jolt_ffi::jolt_body_set_linear_velocity(self.world, body, velocity.as_ptr());
+            concerto_jolt_ffi::jolt_body_set_linear_velocity(self.world, body, velocity.as_ptr());
         }
     }
 
     fn add_impulse(&mut self, body: Self::BodyHandle, impulse: Vec3) {
         // SAFETY: `body` is a body in this world; the array a valid triple.
         unsafe {
-            jolt_ffi::jolt_body_add_impulse(self.world, body, impulse.to_array().as_ptr());
+            concerto_jolt_ffi::jolt_body_add_impulse(self.world, body, impulse.to_array().as_ptr());
         }
     }
 
     fn add_impulse_at(&mut self, body: Self::BodyHandle, impulse: Vec3, position: Vec3) {
         // SAFETY: `body` is a body in this world; the arrays valid triples.
         unsafe {
-            jolt_ffi::jolt_body_add_impulse_at(
+            concerto_jolt_ffi::jolt_body_add_impulse_at(
                 self.world,
                 body,
                 impulse.to_array().as_ptr(),
@@ -269,14 +288,14 @@ impl PhysicsBackend for JoltBackend {
     fn add_force(&mut self, body: Self::BodyHandle, force: Vec3) {
         // SAFETY: `body` is a body in this world; the array a valid triple.
         unsafe {
-            jolt_ffi::jolt_body_add_force(self.world, body, force.to_array().as_ptr());
+            concerto_jolt_ffi::jolt_body_add_force(self.world, body, force.to_array().as_ptr());
         }
     }
 
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3) {
         // SAFETY: `body` is a body in this world; the arrays valid triples.
         unsafe {
-            jolt_ffi::jolt_body_add_force_at(
+            concerto_jolt_ffi::jolt_body_add_force_at(
                 self.world,
                 body,
                 force.to_array().as_ptr(),
@@ -288,7 +307,7 @@ impl PhysicsBackend for JoltBackend {
     fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>> {
         let origin_array = origin.to_array();
         let direction_array = direction.to_array();
-        let mut hit = jolt_ffi::JoltRayHit {
+        let mut hit = concerto_jolt_ffi::JoltRayHit {
             body: 0,
             fraction: 0.0,
             normal: [0.0; 3],
@@ -297,7 +316,7 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: the input arrays are valid xyz triples and `hit` is a valid
         // out-buffer; the shim only writes it when returning true.
         let did_hit = unsafe {
-            jolt_ffi::jolt_world_cast_ray(
+            concerto_jolt_ffi::jolt_world_cast_ray(
                 self.world,
                 origin_array.as_ptr(),
                 direction_array.as_ptr(),
@@ -317,8 +336,8 @@ impl PhysicsBackend for JoltBackend {
         body: Self::BodyHandle,
         max_separation: f32,
     ) -> Option<RawGroundHit<Self::BodyHandle>> {
-        let mut result = jolt_ffi::JoltGroundProbeResult {
-            state: jolt_ffi::JOLT_GROUND_STATE_IN_AIR,
+        let mut result = concerto_jolt_ffi::JoltGroundProbeResult {
+            state: concerto_jolt_ffi::JOLT_GROUND_STATE_IN_AIR,
             body: 0,
             position: [0.0; 3],
             normal: [0.0; 3],
@@ -331,10 +350,16 @@ impl PhysicsBackend for JoltBackend {
         // that now happens in the facade — pass 0 and use only the
         // contact-vs-in-air distinction.
         unsafe {
-            jolt_ffi::jolt_body_probe_ground(self.world, body, max_separation, 0.0, &mut result);
+            concerto_jolt_ffi::jolt_body_probe_ground(
+                self.world,
+                body,
+                max_separation,
+                0.0,
+                &mut result,
+            );
         }
 
-        (result.state != jolt_ffi::JOLT_GROUND_STATE_IN_AIR).then(|| RawGroundHit {
+        (result.state != concerto_jolt_ffi::JOLT_GROUND_STATE_IN_AIR).then(|| RawGroundHit {
             body: result.body,
             point: Vec3::from(result.position),
             normal: Vec3::from(result.normal),
@@ -348,7 +373,7 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `shape` is a live handle; both out-buffers are valid xyz
         // triples the shim always fills.
         unsafe {
-            jolt_ffi::jolt_shape_get_local_bounds(
+            concerto_jolt_ffi::jolt_shape_get_local_bounds(
                 shape.as_ptr(),
                 min.as_mut_ptr(),
                 max.as_mut_ptr(),
@@ -360,7 +385,7 @@ impl PhysicsBackend for JoltBackend {
     fn create_sphere_shape(radius: f32) -> Self::ShapeHandle {
         // SAFETY: the constructor allocates a shape and transfers one
         // reference, released by `ShapeHandle::drop`.
-        ShapeHandle(unsafe { jolt_ffi::jolt_create_sphere_shape(radius, SHAPE_DENSITY) })
+        ShapeHandle(unsafe { concerto_jolt_ffi::jolt_create_sphere_shape(radius, SHAPE_DENSITY) })
     }
 
     fn create_cuboid_shape(width: f32, height: f32, length: f32) -> Self::ShapeHandle {
@@ -368,14 +393,14 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `half_extents` is a valid xyz triple, read during the call
         // only; the returned reference is released by `ShapeHandle::drop`.
         ShapeHandle(unsafe {
-            jolt_ffi::jolt_create_box_shape(half_extents.as_ptr(), SHAPE_DENSITY)
+            concerto_jolt_ffi::jolt_create_box_shape(half_extents.as_ptr(), SHAPE_DENSITY)
         })
     }
 
     fn create_capsule_shape(half_height: f32, radius: f32) -> Self::ShapeHandle {
         // SAFETY: as `create_sphere_shape`.
         ShapeHandle(unsafe {
-            jolt_ffi::jolt_create_capsule_shape(half_height, radius, SHAPE_DENSITY)
+            concerto_jolt_ffi::jolt_create_capsule_shape(half_height, radius, SHAPE_DENSITY)
         })
     }
 
@@ -392,7 +417,7 @@ impl PhysicsBackend for JoltBackend {
         // SAFETY: `positions` holds `mesh.vertices.len()` xyz triples and
         // `mesh.indices` `len()` indices; both are read during the call only.
         let shape = unsafe {
-            jolt_ffi::jolt_create_mesh_shape(
+            concerto_jolt_ffi::jolt_create_mesh_shape(
                 positions.as_ptr(),
                 mesh.vertices.len() as u32,
                 mesh.indices.as_ptr(),
@@ -413,7 +438,7 @@ impl Drop for JoltBackend {
         // SAFETY: `self.world` was created in `new` and is destroyed exactly
         // once here.
         unsafe {
-            jolt_ffi::jolt_world_destroy(self.world);
+            concerto_jolt_ffi::jolt_world_destroy(self.world);
         }
     }
 }
@@ -423,7 +448,7 @@ impl Drop for Stepper {
         // SAFETY: the stepper was created in `new_stepper` and is freed once
         // here.
         unsafe {
-            jolt_ffi::jolt_stepper_destroy(self.stepper);
+            concerto_jolt_ffi::jolt_stepper_destroy(self.stepper);
         }
     }
 }

@@ -1,5 +1,5 @@
+use concerto_ecs::resource::Resource;
 use derive_more::Deref;
-use ecs::resource::Resource;
 use wgpu::BindGroupLayoutDescriptor;
 
 /// Bind-group layout for the camera uniform (`@group(1) @binding(0)` in the

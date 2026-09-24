@@ -1,4 +1,4 @@
-use ecs::Resource;
+use concerto_ecs::Resource;
 
 use derive_more::{Deref, DerefMut, From};
 

@@ -1,5 +1,5 @@
-use color::Color;
-use ecs::resource::Resource;
+use concerto_color::Color;
+use concerto_ecs::resource::Resource;
 use glam::Vec3;
 
 use crate::vertex::GizmoVertex;

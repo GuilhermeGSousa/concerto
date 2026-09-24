@@ -1,5 +1,5 @@
 use bytemuck::{Pod, Zeroable};
-use color::Color;
+use concerto_color::Color;
 use glam::Vec3;
 
 /// A single vertex of a gizmo line list.

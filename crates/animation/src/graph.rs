@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Deref};
 
-use essential::assets::{Asset, handle::AssetHandle};
+use concerto_core::assets::{Asset, handle::AssetHandle};
 use log::warn;
 use petgraph::{
     Direction::Outgoing,

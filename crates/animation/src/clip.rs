@@ -1,6 +1,6 @@
 use std::collections::{HashMap, hash_map::Keys};
 
-use essential::assets::{Asset, LoadableAsset};
+use concerto_core::assets::{Asset, LoadableAsset};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

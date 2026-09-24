@@ -1,16 +1,16 @@
-use derive_more::{Deref, DerefMut};
-use ecs::{
+use concerto_ecs::{
     component::Component,
     entity::Entity,
     events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
 };
-use window::define_action;
-use window::input::{
+use concerto_window::define_action;
+use concerto_window::input::{
     Input, InputState, MouseButton,
     actions::{ActionFired, ActionMap},
 };
+use derive_more::{Deref, DerefMut};
 
 use crate::{
     interaction::{HoveredNode, Interactable, UIDisabled},
@@ -42,7 +42,7 @@ pub struct UIFocusable;
 /// input (e.g. [`UITextInput`](crate::text_input::UITextInput)) read this resource to decide
 /// whether to consume typed characters.
 #[derive(Resource, Deref, DerefMut, Default)]
-pub struct FocusedWidget(Option<ecs::entity::Entity>);
+pub struct FocusedWidget(Option<concerto_ecs::entity::Entity>);
 
 #[derive(Event)]
 pub struct UIFocusGained(pub Entity);

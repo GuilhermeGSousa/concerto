@@ -35,7 +35,7 @@ use crate::{component::Tick, system::meta::SystemMetadata};
 ///
 /// # Example
 /// ```
-/// use ecs::{World, Component};
+/// use concerto_ecs::{World, Component};
 ///
 /// #[derive(Component)]
 /// struct Health(f32);

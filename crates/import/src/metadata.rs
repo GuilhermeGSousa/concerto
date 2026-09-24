@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::path::{Component, Path, PathBuf};
 
 use anyhow::{bail, Context};
-use essential::assets::AssetId;
+use concerto_core::assets::AssetId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

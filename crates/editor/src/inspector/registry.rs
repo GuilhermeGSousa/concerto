@@ -5,9 +5,11 @@ use std::{
     sync::Arc,
 };
 
-use app::App;
-use ecs::{Component, Entity, ResMut, Resource, World, command::CommandQueue, component::Tick};
-use ecs::{
+use concerto_app::App;
+use concerto_ecs::{
+    Component, Entity, ResMut, Resource, World, command::CommandQueue, component::Tick,
+};
+use concerto_ecs::{
     Res,
     entity::EntityStructuralVersion,
     system::{
@@ -17,8 +19,8 @@ use ecs::{
     },
     world::UnsafeWorldCell,
 };
-use editable::{Editable, PropertyPath, PropertyVisitor, with_property_mut};
-use ui::theme::UITheme;
+use concerto_editable::{Editable, PropertyPath, PropertyVisitor, with_property_mut};
+use concerto_ui::theme::UITheme;
 
 use super::rows::{
     EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
@@ -393,7 +395,7 @@ mod tests {
         numeric::{NumericEdit, NumericFields},
     };
     use super::*;
-    use essential::transform::Transform;
+    use concerto_core::transform::Transform;
     use glam::Vec3;
 
     fn world() -> (World, Entity) {
@@ -533,8 +535,8 @@ mod tests {
 
     #[test]
     fn commits_are_visible_to_transform_propagation_in_the_same_tick() {
-        use ecs::{IntoSystem, System};
-        use essential::transform::{GlobalTransform, systems::update_simple_entities};
+        use concerto_core::transform::{GlobalTransform, systems::update_simple_entities};
+        use concerto_ecs::{IntoSystem, System};
         let mut registry = InspectorRegistry::default();
         registry.register_component::<Transform>();
         let mut world = World::default();

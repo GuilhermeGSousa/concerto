@@ -1,19 +1,19 @@
 //! Contextual panel hosts and input transitions for asset editors.
-use ecs::{
+use concerto_core::assets::Asset;
+use concerto_ecs::{
     Changed, Entity, Query, Res, ResMut, Without,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     query::change_detection::DetectChanges,
 };
-use essential::assets::Asset;
-use ui::{
+use concerto_ui::{
     focus::FocusedWidget,
     interaction::{HoveredNode, Interactable, UIInputState},
     material::UIMaterial,
     node::UINode,
     theme::UITheme,
 };
-use window::input::actions::ActionMap;
+use concerto_window::input::actions::ActionMap;
 
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, EditorHosts, EditorOwned},
@@ -34,7 +34,7 @@ pub(crate) fn create_editor_hosts(
     let bases = panel_bodies(&registry);
     for (editor, doc) in documents.iter() {
         let mut hosts = [None; 3];
-        if doc.asset_type != scene::scene::Scene::name() {
+        if doc.asset_type != concerto_scene::scene::Scene::name() {
             for (index, base) in bases.iter().copied().enumerate() {
                 let Some((node, parent)) = base.and_then(|base| nodes.get_entity(base)) else {
                     continue;
@@ -98,7 +98,7 @@ pub(crate) fn sync_workspace(
     let scene = active
         .0
         .and_then(|entity| documents.get_entity(entity))
-        .is_none_or(|doc| doc.asset_type == scene::scene::Scene::name());
+        .is_none_or(|doc| doc.asset_type == concerto_scene::scene::Scene::name());
     let bases = panel_bodies(&registry);
     for entity in bases.into_iter().flatten() {
         set_visible(&nodes, entity, scene);
@@ -165,8 +165,8 @@ pub(crate) fn reset_workspace_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecs::{IntoSystem, System, World};
-    use window::input::MouseButton;
+    use concerto_ecs::{IntoSystem, System, World};
+    use concerto_window::input::MouseButton;
     fn process_editor_commands(world: &mut World) {
         let mut system = crate::asset_editor::process_editor_commands.into_system();
         system.initialize(world);
@@ -184,7 +184,7 @@ mod tests {
     use crate::asset_editor::{
         AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
-    use essential::assets::{Asset, AssetId, content::ImportProvenance};
+    use concerto_core::assets::{Asset, AssetId, content::ImportProvenance};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize)]
@@ -218,8 +218,8 @@ mod tests {
             super::sync_workspace.into_system(),
             super::reset_workspace_input.into_system(),
         ] {
-            let mut meta = ecs::system::meta::SystemMetadata::default();
-            let mut access = ecs::system::access::SystemAccess::default();
+            let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
+            let mut access = concerto_ecs::system::access::SystemAccess::default();
             system.fill_access(&mut meta, &mut access);
             assert!(!access.is_exclusive());
         }

@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use ecs::resource::Resource;
+use concerto_ecs::resource::Resource;
 
 #[derive(Resource)]
 pub struct RenderQueue {

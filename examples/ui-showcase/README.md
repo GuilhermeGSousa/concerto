@@ -1,4 +1,4 @@
-# Wonderland UI Showcase
+# Concerto UI Showcase
 
 Run the standalone showcase without a project or imported content:
 

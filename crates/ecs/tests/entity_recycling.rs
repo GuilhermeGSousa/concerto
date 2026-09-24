@@ -1,4 +1,4 @@
-use ecs::{Component, IntoSystem, System, World, command::CommandQueue};
+use concerto_ecs::{Component, IntoSystem, System, World, command::CommandQueue};
 
 #[derive(Component)]
 struct Marker;

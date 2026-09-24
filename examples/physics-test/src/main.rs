@@ -7,18 +7,17 @@
 //!
 //! Run it with `cargo run -p physics-test` (requires a display/GPU).
 
-use color::Color;
-use game_engine::{
+use concerto::{
     app::{
         schedule_groups::{Startup, Update},
         App,
     },
-    director::VirtualCamera,
-    ecs::{command::CommandQueue, component::Component, query::Query, resource::Res},
-    essential::{
+    core::{
         assets::asset_server::AssetServer,
         transform::{GlobalTransform, Transform},
     },
+    director::VirtualCamera,
+    ecs::{command::CommandQueue, component::Component, query::Query, resource::Res},
     mesh::MeshComponent,
     physics::{
         collider::Collider, physics_state::PhysicsState, rigid_body::RigidBody, shape::MeshCollider,
@@ -36,6 +35,7 @@ use game_engine::{
     world_grid::WorldGrid,
     DefaultPlugins,
 };
+use concerto_color::Color;
 use glam::{Quat, Vec3};
 
 const SPHERE_RADIUS: f32 = 1.0;

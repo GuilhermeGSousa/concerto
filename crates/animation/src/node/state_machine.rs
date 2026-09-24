@@ -9,8 +9,8 @@ use crate::{
     node::{AnimationNodeInstance, AnimationNodeKind},
 };
 
+use concerto_core::{assets::handle::AssetHandle, utils::AsAny};
 use derive_more::Deref;
-use essential::{assets::handle::AssetHandle, utils::AsAny};
 use uuid::Uuid;
 
 pub struct AnimationFSMStateDefinition<'a> {

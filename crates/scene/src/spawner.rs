@@ -1,12 +1,12 @@
-use ecs::{
+use concerto_core::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_core::transform::Transform;
+use concerto_ecs::{
     command::CommandQueue,
     component::{name::Name, Component},
     entity::Entity,
     query::Query,
     resource::Res,
 };
-use essential::assets::{asset_store::AssetStore, handle::AssetHandle};
-use essential::transform::Transform;
 
 use crate::scene::Scene;
 

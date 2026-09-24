@@ -1,10 +1,10 @@
 //! Covers ImageImporter emitting a serialized Texture from a raw image file.
 use std::path::Path;
 
-use asset_import::{ImportContext, Importer};
-use essential::assets::Asset;
-use render::assets::texture::{Texture, TextureFormat, TextureKind};
-use render::importers::image_importer::ImageImporter;
+use concerto_asset_import::{ImportContext, Importer};
+use concerto_core::assets::Asset;
+use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
+use concerto_render::importers::image_importer::ImageImporter;
 
 fn write_test_png(path: &Path) {
     let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([255, 0, 0, 255]));

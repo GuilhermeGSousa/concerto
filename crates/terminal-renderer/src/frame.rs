@@ -1,4 +1,4 @@
-use ecs::Resource;
+use concerto_ecs::Resource;
 use ratatui::{
     style::Style,
     widgets::{Block, Borders, Widget},

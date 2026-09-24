@@ -3,12 +3,15 @@
 //! `UITabStrip` already tracked which tab was selected, but nothing acted on
 //! it, so a strip with several panels rendered all of them on top of each
 //! other. This is what the editor's dock stands on.
-use ecs::{IntoSystem, System, World};
-use ui::node::UINode;
-use ui::widgets::{UITabBody, UITabStrip, sync_tab_bodies};
+use concerto_ecs::{IntoSystem, System, World};
+use concerto_ui::node::UINode;
+use concerto_ui::widgets::{UITabBody, UITabStrip, sync_tab_bodies};
 
 /// Spawns a strip with `count` bodies and returns the strip and its bodies.
-fn strip_with_bodies(world: &mut World, count: usize) -> (ecs::Entity, Vec<ecs::Entity>) {
+fn strip_with_bodies(
+    world: &mut World,
+    count: usize,
+) -> (concerto_ecs::Entity, Vec<concerto_ecs::Entity>) {
     let strip = world.spawn(UITabStrip::default());
     let bodies = (0..count)
         .map(|index| world.spawn((UINode::default(), UITabBody { strip, index })))
@@ -22,7 +25,7 @@ fn run(world: &mut World) {
     system.run_and_apply(world);
 }
 
-fn visible(world: &World, entity: ecs::Entity) -> bool {
+fn visible(world: &World, entity: concerto_ecs::Entity) -> bool {
     world
         .get_component_for_entity::<UINode>(entity)
         .expect("body must still have its node")

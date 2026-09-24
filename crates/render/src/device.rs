@@ -1,6 +1,6 @@
 use std::ops::Deref;
 
-use ecs::resource::Resource;
+use concerto_ecs::resource::Resource;
 use wgpu::{CommandEncoder, CommandEncoderDescriptor};
 
 use crate::queue::RenderQueue;

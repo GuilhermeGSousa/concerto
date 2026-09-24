@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use ecs::events::Event;
+use concerto_ecs::events::Event;
 
 #[derive(Event)]
 pub struct WindowEvent(winit::event::WindowEvent);

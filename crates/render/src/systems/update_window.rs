@@ -1,12 +1,12 @@
 use std::ops::Deref;
 
-use app::extractor::Extracted;
-use ecs::{
+use concerto_app::extractor::Extracted;
+use concerto_ecs::{
     events::event_reader::EventReader,
     query::{change_detection::DetectChanges, Query},
     resource::{Res, ResMut},
 };
-use window::{plugin::Window, winit_events::WindowEvent};
+use concerto_window::{plugin::Window, winit_events::WindowEvent};
 
 use crate::{
     components::camera::RenderCamera,

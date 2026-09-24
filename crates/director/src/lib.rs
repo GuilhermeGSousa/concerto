@@ -32,7 +32,7 @@ pub mod director;
 pub mod main_camera;
 pub mod virtual_camera;
 
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{Startup, Update},
 };

@@ -1,17 +1,17 @@
 #![allow(clippy::too_many_arguments)]
 
-use color::Color;
-use derive_more::{Deref, DerefMut};
-use ecs::events::event_writer::EventWriter;
-use ecs::{
+use concerto_color::Color;
+use concerto_ecs::events::event_writer::EventWriter;
+use concerto_ecs::{
     component::Component,
     entity::Entity,
     events::Event,
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
 };
+use concerto_window::input::{Input, InputState, MouseButton};
+use derive_more::{Deref, DerefMut};
 use glam::Vec2;
-use window::input::{Input, InputState, MouseButton};
 
 use crate::{material::UIMaterial, node::UILayout};
 
@@ -237,7 +237,7 @@ pub struct UIPointerLeave {
 pub(crate) fn update_ui_interaction(
     computed_nodes: Query<(Entity, &UILayout, &Interactable), Without<UIDisabled>>,
     input: Res<Input>,
-    window: Res<window::plugin::Window>,
+    window: Res<concerto_window::plugin::Window>,
     mut hovered: ResMut<HoveredNode>,
     mut state: ResMut<UIInputState>,
     mut click_writer: EventWriter<UIClick>,
@@ -357,8 +357,8 @@ mod tests {
     use glam::Vec2;
 
     use super::{ButtonCapture, Interactable, UIInputState, advance_capture};
-    use ecs::{World, entity::Entity};
-    use window::input::{InputState, MouseButton};
+    use concerto_ecs::{World, entity::Entity};
+    use concerto_window::input::{InputState, MouseButton};
 
     fn entities(count: usize) -> Vec<Entity> {
         let mut world = World::default();

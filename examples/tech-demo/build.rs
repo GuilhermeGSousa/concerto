@@ -15,7 +15,7 @@ use fs_extra::dir::CopyOptions;
 fn main() -> anyhow::Result<()> {
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR")?).canonicalize()?;
     let content_path = manifest_dir.join("content");
-    asset_build::track_assets("content")?;
+    concerto_asset_build::track_assets("content")?;
 
     if !content_path.exists() {
         return Ok(());

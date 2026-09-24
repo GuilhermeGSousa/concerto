@@ -2,17 +2,17 @@
 //! Temporary inspector changes live in ECS; this editor never saves them.
 use std::{path::PathBuf, thread::JoinHandle};
 
-use app::{App, Plugin, schedule_groups::Update};
-use ecs::{
+use concerto_app::{App, Plugin, schedule_groups::Update};
+use concerto_core::{
+    assets::{Asset, AssetId, content::read_content_asset},
+    transform::Transform,
+};
+use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
 };
-use essential::{
-    assets::{Asset, AssetId, content::read_content_asset},
-    transform::Transform,
-};
-use scene::{scene::Scene, spawner::spawn_scene};
+use concerto_scene::{scene::Scene, spawner::spawn_scene};
 
 use crate::{
     asset_editor::{
@@ -203,7 +203,7 @@ fn update_scenes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecs::{IntoSystem, System, World};
+    use concerto_ecs::{IntoSystem, System, World};
     fn process_editor_commands(world: &mut World) {
         let mut system = crate::asset_editor::process_editor_commands.into_system();
         system.initialize(world);
@@ -225,7 +225,7 @@ mod tests {
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
     };
     use crate::project::AssetEntry;
-    use essential::assets::content::{
+    use concerto_core::assets::content::{
         AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
         write_content_asset,
     };
@@ -245,7 +245,7 @@ mod tests {
         }
     }
     fn fixture(root: &std::path::Path, asset: &AssetEntry) {
-        let mut node = scene::scene::SceneNode {
+        let mut node = concerto_scene::scene::SceneNode {
             name: asset.display_name.clone(),
             children: vec![],
             components: vec![],

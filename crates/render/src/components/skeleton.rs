@@ -4,17 +4,17 @@ use crate::{
     assets::skeleton::Skeleton, components::render_entity::RenderEntity, device::RenderDevice,
     layouts::SkeletonLayout, queue::RenderQueue,
 };
-use app::extractor::Extracted;
-use ecs::{
+use concerto_app::extractor::Extracted;
+use concerto_core::{assets::asset_store::AssetStore, transform::GlobalTransform};
+use concerto_ecs::{
     command::CommandQueue,
     component::{Component, ComponentLifecycleCallback},
     query::Query,
     resource::{Res, ResMut, Resource},
 };
+use concerto_mesh::skeleton::SkeletonComponent;
 use encase::UniformBuffer;
-use essential::{assets::asset_store::AssetStore, transform::GlobalTransform};
 use glam::Mat4;
-use mesh::skeleton::SkeletonComponent;
 use wgpu::{BindGroupDescriptor, BufferDescriptor, Device, Queue};
 
 const MAX_SKELETON_BONES: usize = 256;

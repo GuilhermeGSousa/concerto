@@ -1,4 +1,4 @@
-use ecs::resource::{Res, ResMut};
+use concerto_ecs::resource::{Res, ResMut};
 
 use crate::{device::RenderDevice, queue::RenderQueue, render_asset::render_window::RenderWindow};
 

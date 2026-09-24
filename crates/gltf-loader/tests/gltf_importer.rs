@@ -4,12 +4,12 @@
 //! through serialized component payloads.
 use std::path::Path;
 
-use asset_import::{ImportContext, Importer};
-use ecs::component::Component;
-use essential::assets::AssetId;
-use gltf_loader::gltf_importer::GltfImporter;
-use mesh::{SkeletonComponent, mesh::MeshComponent};
-use scene::scene::{Scene, SceneNode};
+use concerto_asset_import::{ImportContext, Importer};
+use concerto_core::assets::AssetId;
+use concerto_ecs::component::Component;
+use concerto_gltf_loader::gltf_importer::GltfImporter;
+use concerto_mesh::{SkeletonComponent, mesh::MeshComponent};
+use concerto_scene::scene::{Scene, SceneNode};
 
 /// The `AssetId` the node's `MeshComponent` payload points at, if it has one.
 fn mesh_handle_id(node: &SceneNode) -> Option<AssetId> {
@@ -322,7 +322,8 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
         .iter()
         .find(|s| s.name == "animation/0")
         .unwrap();
-    let clip: animation::clip::AnimationClip = bincode::deserialize(&clip_entry.bytes).unwrap();
+    let clip: concerto_animation::clip::AnimationClip =
+        bincode::deserialize(&clip_entry.bytes).unwrap();
     assert!(
         clip.target_ids()
             .any(|id| source_skel.bone_ids.contains(id)),

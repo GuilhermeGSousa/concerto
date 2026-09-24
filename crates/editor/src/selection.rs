@@ -2,8 +2,8 @@
 //!
 //! Panels never reference each other: the hierarchy and viewport write here,
 //! the inspector and viewport read. That is what makes a panel removable.
-use ecs::{entity::Entity, resource::Resource};
-use essential::assets::AssetId;
+use concerto_core::assets::AssetId;
+use concerto_ecs::{entity::Entity, resource::Resource};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SelectionKind {
@@ -73,7 +73,7 @@ impl Selection {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecs::World;
+    use concerto_ecs::World;
 
     #[test]
     fn clearing_a_different_entity_leaves_the_selection_alone() {

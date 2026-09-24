@@ -1,10 +1,10 @@
-use app::extractor::extract as extract_main_world;
-use derive_more::Deref;
-use ecs::{
+use concerto_app::extractor::extract as extract_main_world;
+use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     Entity, With, Without, World,
 };
+use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
 /// Marks a main-world entity as needing a mirror entity in the render world.
@@ -75,7 +75,7 @@ fn despawn_stale_render_entities(main: &mut World, render: &mut World) {
 
 #[cfg(test)]
 mod tests {
-    use ecs::World;
+    use concerto_ecs::World;
 
     use super::*;
 

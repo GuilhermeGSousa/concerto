@@ -1,14 +1,14 @@
 //! Small themed widget building blocks. These components describe interaction
 //! without introducing editor concepts into the UI crate.
-use color::Color;
-use ecs::{
+use concerto_color::Color;
+use concerto_ecs::{
     component::Component,
     entity::Entity,
     events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::Query,
     resource::Res,
 };
-use window::input::MouseButton;
+use concerto_window::input::MouseButton;
 
 use crate::{
     interaction::{HoveredNode, Interactable, UIClick, UIInteractionStyle},
@@ -74,7 +74,7 @@ pub struct UITabChanged {
     pub selected: usize,
 }
 
-/// Standard compact Wonderland button visuals. Callers add their own action
+/// Standard compact Concerto button visuals. Callers add their own action
 /// component and optional `TextComponent` to the returned bundle.
 pub fn button(
     theme: &UITheme,

@@ -4,12 +4,12 @@ pub mod render_window;
 
 use std::collections::HashMap;
 
-use app::{extractor::Extracted, plugins::Plugin, schedule_groups::Extract};
-use ecs::{
+use concerto_app::{extractor::Extracted, plugins::Plugin, schedule_groups::Extract};
+use concerto_core::assets::{asset_store::AssetStore, Asset, AssetId};
+use concerto_ecs::{
     resource::{Res, ResMut, Resource},
     system::input::{StaticSystemInput, SystemInput, SystemInputData},
 };
-use essential::assets::{asset_store::AssetStore, Asset, AssetId};
 
 pub enum AssetPreparationError {
     NotReady,
@@ -89,7 +89,7 @@ impl<A: RenderAsset> Default for RenderAssetPlugin<A> {
 }
 
 impl<A: RenderAsset + 'static> Plugin for RenderAssetPlugin<A> {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.render_mut().insert_resource(RenderAssets::<A>::new());
         app.add_render_system(Extract, prepare_render_asset::<A>);
     }

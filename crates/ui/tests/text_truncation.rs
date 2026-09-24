@@ -1,6 +1,6 @@
 //! Covers ellipsis truncation: a name too long for its box is cut where it
 //! actually stops fitting, not where a character count guesses.
-use ui::text::{TextComponent, truncate_for_test};
+use concerto_ui::text::{TextComponent, truncate_for_test};
 
 const METRICS: (f32, f32) = (14.0, 20.0);
 

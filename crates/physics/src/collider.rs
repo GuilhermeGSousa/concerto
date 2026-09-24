@@ -1,7 +1,7 @@
-use ecs::component::{Component, ComponentLifecycleCallback};
-use ecs::{CommandQueue, Entity, Query, ResMut, Without};
+use concerto_ecs::component::{Component, ComponentLifecycleCallback};
+use concerto_ecs::{CommandQueue, Entity, Query, ResMut, Without};
 
-use essential::transform::GlobalTransform;
+use concerto_core::transform::GlobalTransform;
 use glam::Vec3;
 
 use crate::body::BodyId;

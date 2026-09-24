@@ -1,11 +1,11 @@
-use app::{plugins::Plugin, schedule_groups::Update, App};
+use concerto_app::{plugins::Plugin, schedule_groups::Update, App};
 
-use essential::transform::Transform;
-use mesh::{mesh::MeshComponent, SkeletonComponent};
-use render::components::camera::Camera;
-use render::components::light::Light;
-use render::components::material::MaterialComponent;
-use render::components::render_entity::SyncWithRenderWorld;
+use concerto_core::transform::Transform;
+use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
+use concerto_render::components::camera::Camera;
+use concerto_render::components::light::Light;
+use concerto_render::components::material::MaterialComponent;
+use concerto_render::components::render_entity::SyncWithRenderWorld;
 
 use crate::scene::Scene;
 use crate::spawner::spawn_scene_components;

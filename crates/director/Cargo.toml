@@ -1,13 +1,16 @@
 [package]
-name = "director"
+name = "concerto-director"
 version = "0.1.0"
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-app = { path = "../app" }
-essential = { path = "../essential" }
-render = { path = "../render" }
-ecs = { path = "../ecs" }
+concerto-app = { path = "../app" }
+concerto-core = { path = "../core" }
+concerto-render = { path = "../render" }
+concerto-ecs = { path = "../ecs" }
 glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 log = "0.4.27"

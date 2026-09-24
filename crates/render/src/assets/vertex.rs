@@ -1,6 +1,6 @@
 use std::mem;
 
-pub use mesh::Vertex;
+pub use concerto_mesh::Vertex;
 
 pub trait VertexBufferLayout {
     fn describe() -> wgpu::VertexBufferLayout<'static>;

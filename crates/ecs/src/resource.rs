@@ -3,7 +3,7 @@ use std::{
     ops::{Deref, DerefMut},
 };
 
-pub use ecs_macros::Resource;
+pub use concerto_ecs_macros::Resource;
 
 use crate::{
     World,
@@ -24,7 +24,7 @@ pub type ResourceId = TypeId;
 ///
 /// # Example
 /// ```
-/// use ecs::resource::Resource;
+/// use concerto_ecs::resource::Resource;
 ///
 /// #[derive(Resource)]
 /// struct Score(u32);

@@ -6,18 +6,18 @@
 
 use std::path::Path;
 
-use asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
-use color::Color;
-use ecs::component::scene::SceneComponent;
-use essential::assets::AssetId;
-use essential::assets::handle::AssetHandle;
-use essential::transform::Transform;
-use mesh::mesh::{Mesh, MeshComponent};
-use mesh::vertex::Vertex;
-use render::assets::material::StandardMaterial;
-use render::components::material::MaterialComponent;
-use render::components::render_entity::SyncWithRenderWorld;
-use scene::scene::{Scene, SceneNode};
+use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
+use concerto_color::Color;
+use concerto_core::assets::AssetId;
+use concerto_core::assets::handle::AssetHandle;
+use concerto_core::transform::Transform;
+use concerto_ecs::component::scene::SceneComponent;
+use concerto_mesh::mesh::{Mesh, MeshComponent};
+use concerto_mesh::vertex::Vertex;
+use concerto_render::assets::material::StandardMaterial;
+use concerto_render::components::material::MaterialComponent;
+use concerto_render::components::render_entity::SyncWithRenderWorld;
+use concerto_scene::scene::{Scene, SceneNode};
 use serde::Serialize;
 
 pub struct ObjImporter;

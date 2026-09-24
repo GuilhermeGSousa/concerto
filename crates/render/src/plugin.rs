@@ -28,12 +28,12 @@ use crate::{
         update_window,
     },
 };
-use app::{
+use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateRender, LateUpdate, Render, RenderMain, Update},
 };
-use color::Color;
-use ecs::{resource::Resource, IntoSystemConfig, World};
+use concerto_color::Color;
+use concerto_ecs::{resource::Resource, IntoSystemConfig, World};
 use std::sync::{Arc, Mutex};
 use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
 
@@ -130,7 +130,7 @@ impl RenderPlugin {
 }
 
 impl Plugin for RenderPlugin {
-    fn build(&self, app: &mut app::App) {
+    fn build(&self, app: &mut concerto_app::App) {
         app.render_mut()
             .set_update_schedule(RenderMain)
             .add_system(RenderMain, render_main);
@@ -140,10 +140,14 @@ impl Plugin for RenderPlugin {
             future_render_resources_wrapper.clone(),
         ));
 
-        let is_windowed = app.get_resource::<window::plugin::Window>().is_some();
+        let is_windowed = app
+            .get_resource::<concerto_window::plugin::Window>()
+            .is_some();
 
         if is_windowed {
-            let window = app.get_resource::<window::plugin::Window>().unwrap();
+            let window = app
+                .get_resource::<concerto_window::plugin::Window>()
+                .unwrap();
             let window_handle = Arc::clone(&window.window_handle);
 
             let async_init = async move {
@@ -189,7 +193,7 @@ impl Plugin for RenderPlugin {
             .add_render_system(LateRender, present_window.after(finish_render));
     }
 
-    fn ready(&self, app: &app::App) -> bool {
+    fn ready(&self, app: &concerto_app::App) -> bool {
         app.get_resource::<FutureRenderResources>()
             .and_then(|future_render_resources| {
                 future_render_resources
@@ -201,7 +205,7 @@ impl Plugin for RenderPlugin {
             .unwrap_or(true)
     }
 
-    fn finish(&self, app: &mut app::App) {
+    fn finish(&self, app: &mut concerto_app::App) {
         let RenderResources {
             device,
             queue,
@@ -226,7 +230,9 @@ impl Plugin for RenderPlugin {
                 .copied()
                 .unwrap_or(surface_caps.formats[0]);
 
-            let window = app.get_resource::<window::plugin::Window>().unwrap();
+            let window = app
+                .get_resource::<concerto_window::plugin::Window>()
+                .unwrap();
             let size = window.size();
 
             let config = wgpu::SurfaceConfiguration {

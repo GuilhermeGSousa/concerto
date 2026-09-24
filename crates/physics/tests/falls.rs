@@ -2,17 +2,17 @@
 //! fall under gravity and come to rest on top of the floor. Bodies are created
 //! by spawning `Collider` components — never directly.
 
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
 use glam::{Quat, Vec3};
 mod common;
 use common::{physics_world, register_bodies};
 
-use physics::body::BodyId;
-use physics::collider::{Collider, ColliderOffset};
-use physics::ground::GroundState;
-use physics::physics_pipeline::PhysicsPipeline;
-use physics::physics_state::PhysicsState;
-use physics::rigid_body::{AllowedDofs, RigidBody};
+use concerto_physics::body::BodyId;
+use concerto_physics::collider::{Collider, ColliderOffset};
+use concerto_physics::ground::GroundState;
+use concerto_physics::physics_pipeline::PhysicsPipeline;
+use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::rigid_body::{AllowedDofs, RigidBody};
 
 #[test]
 fn sphere_falls_and_rests_on_floor() {

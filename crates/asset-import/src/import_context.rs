@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use essential::assets::{Asset, AssetId};
+use concerto_core::assets::{Asset, AssetId};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DependencyEntry {

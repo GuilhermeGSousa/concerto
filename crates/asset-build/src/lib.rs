@@ -6,7 +6,7 @@ use std::path::Path;
 ///
 /// ```no_run
 /// fn main() -> std::io::Result<()> {
-///     asset_build::track_assets("content")
+///     concerto_asset_build::track_assets("content")
 /// }
 /// ```
 ///
@@ -30,6 +30,6 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
         ));
     }
     println!("cargo:rerun-if-changed={directory}");
-    println!("cargo:rustc-env=GAME_ENGINE_ASSET_ROOT={directory}");
+    println!("cargo:rustc-env=CONCERTO_ASSET_ROOT={directory}");
     Ok(())
 }

@@ -6,8 +6,8 @@
 //! `build`: a face added later is invisible to both.
 use std::borrow::Cow;
 
-use app::App;
-use ecs::resource::Resource;
+use concerto_app::App;
+use concerto_ecs::resource::Resource;
 use glyphon::FontSystem;
 
 /// Font faces to load into every UI font system.

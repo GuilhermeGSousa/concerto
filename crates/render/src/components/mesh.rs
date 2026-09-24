@@ -1,8 +1,8 @@
-use app::extractor::Extracted;
-use ecs::{component::Component, query::Query, resource::Res, CommandQueue};
-use essential::{assets::AssetId, transform::GlobalTransform};
+use concerto_app::extractor::Extracted;
+use concerto_core::{assets::AssetId, transform::GlobalTransform};
+use concerto_ecs::{component::Component, query::Query, resource::Res, CommandQueue};
+use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
 use glam::Mat4;
-use mesh::{mesh::MeshComponent, SkeletonComponent};
 use wgpu::util::DeviceExt;
 
 use crate::{components::render_entity::RenderEntity, device::RenderDevice, queue::RenderQueue};

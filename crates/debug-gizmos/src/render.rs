@@ -1,8 +1,8 @@
-use ecs::{
+use concerto_ecs::{
     query::Query,
     resource::{Res, ResMut},
 };
-use render::{
+use concerto_render::{
     components::camera::RenderCamera, device::RenderDevice,
     render_asset::render_window::RenderWindow,
 };
@@ -13,7 +13,7 @@ use crate::{pipeline::GizmoPipeline, storage::GizmoStorage};
 /// Uploads all gizmos buffered this frame and draws them once per camera, then
 /// clears the storage so the next frame starts empty (immediate mode).
 ///
-/// Runs in [`Render`](app::schedule_groups::Render).
+/// Runs in [`Render`](concerto_app::schedule_groups::Render).
 /// It records into the shared frame encoder after the material passes, so
 /// gizmos are drawn on top of the scene.
 pub(crate) fn render_gizmos(

@@ -1,4 +1,4 @@
-use ecs::{
+use concerto_ecs::{
     World,
     component::{Component, ComponentLifecycleCallback},
     entity::hierarchy::{ChildOf, Children},

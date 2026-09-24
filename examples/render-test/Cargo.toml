@@ -2,26 +2,29 @@
 name = "render-test"
 version = "0.1.0"
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "render-test"
 path = "src/main.rs"
 
 [features]
-tracy = ["game-engine/tracy"]
-terminal = ["dep:terminal-renderer", "dep:ratatui"]
+tracy = ["concerto/tracy"]
+terminal = ["dep:concerto-terminal-renderer", "dep:ratatui"]
 
 [dependencies]
-game-engine = { path = "../.." }
-app = { path = "../../crates/app" }
-ecs = { path = "../../crates/ecs" }
-essential = { path = "../../crates/essential" }
-color = { path = "../../crates/color" }
-render = { path = "../../crates/render" }
-debug-gizmos = { path = "../../crates/debug-gizmos" }
-world-grid = { path = "../../crates/world-grid" }
-terminal-renderer = { path = "../../crates/terminal-renderer", optional = true }
-gameplay = { path = "../../crates/gameplay" }
+concerto = { path = "../.." }
+concerto-app = { path = "../../crates/app" }
+concerto-ecs = { path = "../../crates/ecs" }
+concerto-core = { path = "../../crates/core" }
+concerto-color = { path = "../../crates/color" }
+concerto-render = { path = "../../crates/render" }
+concerto-debug-gizmos = { path = "../../crates/debug-gizmos" }
+concerto-world-grid = { path = "../../crates/world-grid" }
+concerto-terminal-renderer = { path = "../../crates/terminal-renderer", optional = true }
+concerto-gameplay = { path = "../../crates/gameplay" }
 glam = "0.30.1"
 ratatui = { version = "0.30.0", optional = true }
 cfg-if = "1.0.0"
@@ -35,6 +38,6 @@ console_log = "1.0.0"
 log = "0.4.27"
 
 [build-dependencies]
-asset-build = { path = "../../crates/asset-build" }
+concerto-asset-build = { path = "../../crates/asset-build" }
 anyhow = "1.0.97"
 fs_extra = "1.3.0"

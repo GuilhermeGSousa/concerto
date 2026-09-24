@@ -3,10 +3,10 @@
 //! Inter carries the text — it is what the Nocturne design system asks for —
 //! and Phosphor carries the icons, as glyphs rather than images so they shape,
 //! measure and clip exactly like any other text.
-use app::{App, Plugin};
-use ui::text::fonts::UIFontsApp;
-use ui::text::{FontFamily, TextComponent};
-use ui::theme::UITheme;
+use concerto_app::{App, Plugin};
+use concerto_ui::text::fonts::UIFontsApp;
+use concerto_ui::text::{FontFamily, TextComponent};
+use concerto_ui::theme::UITheme;
 
 /// Family name Inter's faces share; weight picks between them.
 pub const INTER: &str = "Inter";

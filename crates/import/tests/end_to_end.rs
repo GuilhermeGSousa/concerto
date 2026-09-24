@@ -9,13 +9,13 @@
 //! suite today. This covers the same code path minus the task-pool wrapper.
 use std::path::{Path, PathBuf};
 
-use essential::assets::content::{
+use concerto_core::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset, AssetRegistry,
 };
-use essential::assets::utils::load_content_asset_bytes;
-use essential::assets::{Asset, ContentAssetRoot};
-use mesh::mesh::Mesh;
-use scene::scene::{Scene, SceneNode};
+use concerto_core::assets::utils::load_content_asset_bytes;
+use concerto_core::assets::{Asset, ContentAssetRoot};
+use concerto_mesh::mesh::Mesh;
+use concerto_scene::scene::{Scene, SceneNode};
 
 fn fixture(project_root: &Path) -> PathBuf {
     let destination = project_root.join("assets/triangle.gltf");
@@ -32,7 +32,7 @@ fn fixture(project_root: &Path) -> PathBuf {
 fn imported_content_assets_load_back_as_their_type() {
     let root = std::env::temp_dir().join(format!("content-e2e-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    import::import_source(&fixture(&root), &root, &Default::default()).expect("import");
+    concerto_import::import_source(&fixture(&root), &root, &Default::default()).expect("import");
 
     let address = "content/triangle/mesh_0.gasset";
     let bytes = pollster::block_on(load_content_asset_bytes(
@@ -100,8 +100,8 @@ fn a_baked_reference_resolves_to_the_minted_id_of_its_target() {
     let root = std::env::temp_dir().join(format!("content-minted-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
-    let written =
-        import::import_source(&fixture(&root), &root, &Default::default()).expect("import");
+    let written = concerto_import::import_source(&fixture(&root), &root, &Default::default())
+        .expect("import");
 
     let scene_address = &written
         .iter()

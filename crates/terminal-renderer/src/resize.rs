@@ -1,9 +1,9 @@
-use ecs::{
+use concerto_ecs::{
     events::event_reader::EventReader,
     resource::{Res, ResMut},
     Event, Query, With,
 };
-use render::{
+use concerto_render::{
     components::camera::RenderCamera, components::render_entity::RenderEntity,
     device::RenderDevice, resources::RenderContext,
 };

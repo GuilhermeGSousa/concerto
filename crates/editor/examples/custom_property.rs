@@ -3,24 +3,24 @@
 //! an editor application with the UI plugin to enable its clickable widget.
 use std::any::TypeId;
 
-use app::{App, schedule_groups::LateUpdate};
-use ecs::{
+use concerto_app::{App, schedule_groups::LateUpdate};
+use concerto_ecs::{
     Component, Entity, Query, ResMut, World, command::CommandQueue,
     events::event_reader::EventReader,
 };
-use editable::Editable;
-use editor::inspector::{
+use concerto_editable::Editable;
+use concerto_editor::inspector::{
     EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRow, PropertyRowValue, apply_property_commit,
 };
-use ui::{
+use concerto_ui::{
     interaction::{Interactable, UIClick},
     node::UINode,
     text::TextComponent,
     theme::UITheme,
     transform::UIValue,
 };
-use window::input::MouseButton;
+use concerto_window::input::MouseButton;
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
 #[derive(Component, Editable)]

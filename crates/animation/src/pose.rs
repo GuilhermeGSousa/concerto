@@ -1,4 +1,4 @@
-use essential::blend::Blendable;
+use concerto_core::blend::Blendable;
 use glam::{Quat, Vec3};
 
 #[derive(Clone)]

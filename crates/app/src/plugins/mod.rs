@@ -1,9 +1,9 @@
-use essential::assets::asset_server::{handle_asset_load_events, AssetServer};
-use essential::assets::handle::AssetLifetimeEvent;
-use essential::time::{FrameStats, Time};
+use concerto_core::assets::asset_server::{handle_asset_load_events, AssetServer};
+use concerto_core::assets::handle::AssetLifetimeEvent;
+use concerto_core::time::{FrameStats, Time};
 
-use ecs::resource::{Res, ResMut};
-use essential::transform::systems::{propagate_global_transforms, update_simple_entities};
+use concerto_core::transform::systems::{propagate_global_transforms, update_simple_entities};
+use concerto_ecs::resource::{Res, ResMut};
 
 use crate::schedule_groups::{LateUpdate, Update};
 use crate::App;
@@ -113,7 +113,7 @@ impl Plugin for TransformPlugin {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use essential::assets::{content::AssetRegistry, AssetId, ContentAssetRoot};
+    use concerto_core::assets::{content::AssetRegistry, AssetId, ContentAssetRoot};
     use std::time::{Duration, Instant};
 
     fn temp_root() -> std::path::PathBuf {

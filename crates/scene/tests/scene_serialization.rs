@@ -1,12 +1,12 @@
 //! Covers Scene/SceneNode round-tripping directly through bincode and
 //! reporting the assets its component payloads reference for import-time
 //! validation.
-use ecs::component::Component;
-use essential::assets::{handle::AssetHandle, Asset, AssetId};
-use mesh::mesh::MeshComponent;
-use render::assets::material::StandardMaterial;
-use render::components::material::MaterialComponent;
-use scene::scene::{Scene, SceneNode, SerializedComponent};
+use concerto_core::assets::{handle::AssetHandle, Asset, AssetId};
+use concerto_ecs::component::Component;
+use concerto_mesh::mesh::MeshComponent;
+use concerto_render::assets::material::StandardMaterial;
+use concerto_render::components::material::MaterialComponent;
+use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 
 fn component<T: serde::Serialize + Component>(value: &T) -> SerializedComponent {
     SerializedComponent {

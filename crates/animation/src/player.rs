@@ -1,12 +1,12 @@
 use std::ops::Deref;
 
-use ecs::{
-    component::{Component, scene::SceneEntityRef},
-    query::Query,
-};
-use essential::{
+use concerto_core::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::Transform,
+};
+use concerto_ecs::{
+    component::{Component, scene::SceneEntityRef},
+    query::Query,
 };
 use glam::Vec2;
 use uuid::Uuid;

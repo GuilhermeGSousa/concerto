@@ -3,8 +3,8 @@
 //!
 //! This is what lets a tool inspect the live world instead of a parallel copy
 //! of the scene file it was spawned from.
-use ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use ecs::{Component, Entity, World};
+use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
+use concerto_ecs::{Component, Entity, World};
 use serde::{Deserialize, Serialize};
 
 #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]

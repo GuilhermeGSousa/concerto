@@ -1,17 +1,20 @@
 [package]
-name = "debug-gizmos"
+name = "concerto-debug-gizmos"
 version = "0.1.0"
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-app = { path = "../app" }
-essential = { path = "../essential" }
-ecs = { path = "../ecs" }
-render = { path = "../render" }
-color = { path = "../color" }
+concerto-app = { path = "../app" }
+concerto-core = { path = "../core" }
+concerto-ecs = { path = "../ecs" }
+concerto-render = { path = "../render" }
+concerto-color = { path = "../color" }
 glam = { version = "0.30.1" }
 bytemuck = { version = "1.22.0", features = ["derive"] }
 wgpu = { version = "24.0.1", default-features = false, features = [

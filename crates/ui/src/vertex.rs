@@ -1,6 +1,6 @@
 use std::mem;
 
-use render::assets::vertex::VertexBufferLayout;
+use concerto_render::assets::vertex::VertexBufferLayout;
 
 pub(crate) const QUAD_INDICES: [u16; 6] = [0, 2, 3, 0, 1, 2];
 

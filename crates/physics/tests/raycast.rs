@@ -2,16 +2,16 @@
 //! hit point, surface normal, and the entity owning the hit `Collider`; rays
 //! that miss report nothing.
 
-use ecs::entity::Entity;
-use ecs::world::World;
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
+use concerto_ecs::entity::Entity;
+use concerto_ecs::world::World;
 use glam::Vec3;
 mod common;
 use common::{physics_world, register_bodies};
 
-use physics::collider::Collider;
-use physics::physics_state::PhysicsState;
-use physics::rigid_body::RigidBody;
+use concerto_physics::collider::Collider;
+use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::rigid_body::RigidBody;
 
 /// A world with one dynamic unit sphere centred at (0, 5, 0).
 fn world_with_sphere() -> (World, Entity) {

@@ -2,9 +2,9 @@
 //! and scene sub-assets, reusing the same Scene shape as glTF.
 use std::path::Path;
 
-use asset_import::{ImportContext, Importer};
-use obj_loader::obj_importer::ObjImporter;
-use scene::scene::Scene;
+use concerto_asset_import::{ImportContext, Importer};
+use concerto_obj_loader::obj_importer::ObjImporter;
+use concerto_scene::scene::Scene;
 
 #[test]
 fn import_emits_mesh_material_and_flat_scene() {

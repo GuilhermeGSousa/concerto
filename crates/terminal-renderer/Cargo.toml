@@ -1,12 +1,15 @@
 [package]
-name = "terminal-renderer"
+name = "concerto-terminal-renderer"
 version = "0.1.0"
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-app = { path = "../app" }
-ecs = { path = "../ecs" }
-render = { path = "../render" }
+concerto-app = { path = "../app" }
+concerto-ecs = { path = "../ecs" }
+concerto-render = { path = "../render" }
 wgpu = { version = "24.0.1", default-features = false, features = [
     "wgsl",
     "metal",

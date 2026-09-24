@@ -1,10 +1,10 @@
-use color::Color;
-use ecs::{
+use concerto_color::Color;
+use concerto_core::transform::Transform;
+use concerto_ecs::{
     resource::ResMut,
     system::{access::SystemAccess, input::SystemInput},
     world::UnsafeWorldCell,
 };
-use essential::transform::Transform;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::storage::GizmoStorage;
@@ -20,8 +20,8 @@ const DEFAULT_CIRCLE_SEGMENTS: usize = 32;
 /// drawn, so calls are typically issued every frame:
 ///
 /// ```ignore
-/// use debug_gizmos::DebugGizmos;
-/// use color::LinearRgba;
+/// use concerto_debug_gizmos::DebugGizmos;
+/// use concerto_color::LinearRgba;
 /// use glam::Vec3;
 ///
 /// fn draw_debug(mut gizmos: DebugGizmos) {
@@ -215,7 +215,7 @@ impl<'w> SystemInput for DebugGizmos<'w> {
     type State = ();
     type Data<'world, 'state> = DebugGizmos<'world>;
 
-    fn init_state(_world: &mut ecs::World) -> Self::State {}
+    fn init_state(_world: &mut concerto_ecs::World) -> Self::State {}
 
     fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
@@ -226,7 +226,10 @@ impl<'w> SystemInput for DebugGizmos<'w> {
         }
     }
 
-    fn fill_access(_meta: &mut ecs::system::meta::SystemMetadata, access: &mut SystemAccess) {
+    fn fill_access(
+        _meta: &mut concerto_ecs::system::meta::SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
         access.write_resource::<GizmoStorage>();
     }
 }

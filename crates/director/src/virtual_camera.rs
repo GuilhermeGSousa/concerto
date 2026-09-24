@@ -1,10 +1,10 @@
-use ecs::Entity;
-use ecs::component::{
+use concerto_ecs::Entity;
+use concerto_ecs::component::{
     Component, ComponentLifecycleCallback,
     scene::{SceneComponent, SceneSpawnContext},
 };
+use concerto_render::components::camera::Camera;
 use glam::{Quat, Vec3};
-use render::components::camera::Camera;
 use serde::{Deserialize, Serialize};
 
 use crate::director::CameraDirector;
@@ -228,9 +228,9 @@ impl CameraPose {
 
 #[cfg(test)]
 mod tests {
-    use ecs::system::executor::single_thread::SingleThreadedExecutor;
-    use ecs::system::schedule::Schedule;
-    use ecs::{CommandQueue, Component, Entity, Res, Resource, world::World};
+    use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
+    use concerto_ecs::system::schedule::Schedule;
+    use concerto_ecs::{CommandQueue, Component, Entity, Res, Resource, world::World};
 
     use super::VirtualCamera;
     use crate::director::CameraDirector;

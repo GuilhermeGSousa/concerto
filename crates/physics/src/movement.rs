@@ -1,5 +1,5 @@
-use ecs::{Component, Query, ResMut};
-use essential::{math::Spring, time::Time};
+use concerto_core::{math::Spring, time::Time};
+use concerto_ecs::{Component, Query, ResMut};
 use glam::Vec3;
 
 use crate::{body::BodyId, physics_state::PhysicsState};

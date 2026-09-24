@@ -1,7 +1,7 @@
 //! The UI showcase: every `ui` primitive on one screen.
 #![allow(clippy::too_many_arguments)]
 
-use game_engine::{
+use concerto::{
     DefaultPlugins,
     app::{
         App,
@@ -118,7 +118,7 @@ fn spawn_showcase(
     theme: Res<UITheme>,
     window: Res<Window>,
 ) {
-    window.window_handle.set_title("Wonderland UI Showcase");
+    window.window_handle.set_title("Concerto UI Showcase");
 
     let _ = window.request_inner_size(Vec2::new(1100.0, 700.0));
     window.set_min_inner_size(Some(Vec2::new(900.0, 700.0)));
@@ -145,7 +145,7 @@ fn spawn_showcase(
                 ..Default::default()
             },
             label(
-                "WONDERLAND  /  UI SHOWCASE\nLooking Glass foundations and layout",
+                "CONCERTO  /  UI SHOWCASE\nLooking Glass foundations and layout",
                 18.0,
             ),
         ))
@@ -472,7 +472,7 @@ fn spawn_showcase(
                 min_height: UIValue::Px(56.0),
                 flex_direction: FlexDirection::Column,
                 padding: UIRect::all(theme.spacing_sm),
-                overflow_y: game_engine::ui::node::Overflow::Hidden,
+                overflow_y: concerto::ui::node::Overflow::Hidden,
                 ..Default::default()
             },
             UIMaterial::flat(theme.surface_raised),
@@ -666,7 +666,7 @@ fn drive_panels(
 fn update_diagnostics(
     window: Res<Window>,
     diagnostics: Res<UILayoutDiagnostics>,
-    text: Query<&mut TextComponent, game_engine::ecs::With<Diagnostics>>,
+    text: Query<&mut TextComponent, concerto::ecs::With<Diagnostics>>,
     input: Res<UIInputState>,
     focus: Res<FocusedWidget>,
     lists: Query<&UIVirtualList>,

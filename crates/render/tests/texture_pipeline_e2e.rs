@@ -1,11 +1,13 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
-use asset_import::{ImportContext, Importer};
-use essential::assets::content::{write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION};
-use essential::assets::utils::load_content_asset_bytes;
-use essential::assets::{Asset, ContentAssetRoot};
-use render::assets::texture::{Texture, TextureFormat, TextureKind};
-use render::importers::image_importer::ImageImporter;
+use concerto_asset_import::{ImportContext, Importer};
+use concerto_core::assets::content::{
+    write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION,
+};
+use concerto_core::assets::utils::load_content_asset_bytes;
+use concerto_core::assets::{Asset, ContentAssetRoot};
+use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
+use concerto_render::importers::image_importer::ImageImporter;
 
 #[test]
 fn an_imported_texture_is_reachable_at_its_conventional_address() {

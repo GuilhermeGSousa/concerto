@@ -1,23 +1,23 @@
 //! Exercise the real tab systems without a window or GPU.
-use app::{App, schedule_groups::LateUpdate};
-use ecs::{
+use concerto_app::{App, schedule_groups::LateUpdate};
+use concerto_ecs::{
     Entity, World,
     entity::hierarchy::{ChildOf, Children},
     events::event_channel::EventChannel,
 };
-use editor::{
+use concerto_editor::{
     asset_editor::{ActiveEditor, AssetEditorCommand, AssetEditorCommands, EditorDocument},
     tabs::{EditorTab, EditorTabClose, TabScroll, TabStrip, TabStripContent, TabsPlugin},
 };
-use glam::Vec2;
-use ui::{
+use concerto_ui::{
     interaction::{HoveredNode, UIClick, UIInteractionStyle},
     node::{UIBox, UILayout, UINode},
     theme::UITheme,
     transform::UIValue,
 };
-use window::input::MouseButton;
-use window::winit_events::WindowEvent;
+use concerto_window::input::MouseButton;
+use concerto_window::winit_events::WindowEvent;
+use glam::Vec2;
 
 fn layout(x: f32, width: f32) -> UILayout {
     let rect = UIBox {

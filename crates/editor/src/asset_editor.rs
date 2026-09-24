@@ -5,13 +5,13 @@
 //! type replaces the document's contents instead of creating another world.
 
 use anyhow::{Result, bail};
-use app::App;
-use ecs::{
+use concerto_app::App;
+use concerto_core::assets::Asset;
+use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
 };
-use essential::assets::Asset;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::project::AssetEntry;
@@ -259,7 +259,7 @@ pub fn process_editor_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecs::{IntoSystem, System, World};
+    use concerto_ecs::{IntoSystem, System, World};
     fn process_editor_commands(world: &mut World) {
         let mut system = super::process_editor_commands.into_system();
         system.initialize(world);
@@ -281,7 +281,7 @@ mod tests {
                 super::finish_asset_request(&mut doc, generation, project, result)
             })
     }
-    use essential::assets::AssetId;
+    use concerto_core::assets::AssetId;
 
     #[derive(serde::Serialize, serde::Deserialize)]
     struct TestAsset;
@@ -308,7 +308,7 @@ mod tests {
             kind: "TestAsset".into(),
             display_name: path.into(),
             folder: String::new(),
-            provenance: essential::assets::content::ImportProvenance {
+            provenance: concerto_core::assets::content::ImportProvenance {
                 source: path.into(),
                 sub_asset: String::new(),
             },
@@ -348,7 +348,7 @@ mod tests {
             .push_back(AssetEditorCommand::Activate(e));
         process_editor_commands(&mut w);
         let mut check = (|active: Res<ActiveEditor>| {
-            use ecs::query::change_detection::DetectChanges;
+            use concerto_ecs::query::change_detection::DetectChanges;
             assert!(!active.has_changed());
         })
         .into_system();
@@ -359,8 +359,8 @@ mod tests {
     #[test]
     fn lifecycle_declares_scoped_access_and_batches_deferred_spawns() {
         let system = super::process_editor_commands.into_system();
-        let mut meta = ecs::system::meta::SystemMetadata::default();
-        let mut access = ecs::system::access::SystemAccess::default();
+        let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
+        let mut access = concerto_ecs::system::access::SystemAccess::default();
         system.fill_access(&mut meta, &mut access);
         assert!(!access.is_exclusive());
         assert!(access.needs_apply());

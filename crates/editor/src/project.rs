@@ -1,10 +1,10 @@
-use app::{App, Plugin, schedule_groups::Update};
-use ecs::{ResMut, Resource};
-use essential::assets::{
+use concerto_app::{App, Plugin, schedule_groups::Update};
+use concerto_core::assets::{
     AssetId,
     asset_server::AssetServer,
     content::{AssetRegistry, ImportProvenance, read_content_asset_header},
 };
+use concerto_ecs::{ResMut, Resource};
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
@@ -183,7 +183,7 @@ fn process_commands(
     mut commands: ResMut<EditorCommands>,
     mut state: ResMut<ProjectState>,
     mut documents: ResMut<crate::asset_editor::AssetEditorCommands>,
-    asset_server: ecs::Res<AssetServer>,
+    asset_server: concerto_ecs::Res<AssetServer>,
 ) {
     if state.job.as_ref().is_some_and(|j| j.is_finished()) {
         let result = state
@@ -250,7 +250,7 @@ fn process_commands(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use essential::assets::content::{
+    use concerto_core::assets::content::{
         CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset,
     };
     #[test]

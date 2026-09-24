@@ -1,7 +1,7 @@
 use bytemuck::{Pod, Zeroable};
-use color::LinearRgba;
-use essential::assets::Asset;
-use render::AsBindGroup;
+use concerto_color::LinearRgba;
+use concerto_core::assets::Asset;
+use concerto_render::AsBindGroup;
 
 #[repr(C)]
 #[derive(Copy, Clone, Pod, Zeroable, serde::Serialize, serde::Deserialize)]

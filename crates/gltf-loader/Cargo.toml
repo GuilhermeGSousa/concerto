@@ -1,19 +1,22 @@
 [package]
-name = "gltf-loader"
+name = "concerto-gltf-loader"
 version = "0.1.0"
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-app = { path = "../app" }
-animation = { path = "../animation" }
-asset-import = { path = "../asset-import" }
-color = { path = "../color" }
-essential = { path = "../essential" }
-mesh = { path = "../mesh" }
-ecs = { path = "../ecs" }
-render = { path = "../render" }
-physics = { path = "../physics" }
-scene = { path = "../scene" }
+concerto-app = { path = "../app" }
+concerto-animation = { path = "../animation" }
+concerto-asset-import = { path = "../asset-import" }
+concerto-color = { path = "../color" }
+concerto-core = { path = "../core" }
+concerto-mesh = { path = "../mesh" }
+concerto-ecs = { path = "../ecs" }
+concerto-render = { path = "../render" }
+concerto-physics = { path = "../physics" }
+concerto-scene = { path = "../scene" }
 gltf = { version = "1.4.1", features = ["KHR_lights_punctual", "extras"] }
 anyhow = "1.0.97"
 bincode = "1.3"

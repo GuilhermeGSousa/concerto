@@ -1,6 +1,6 @@
 use std::any::Any;
 
-use essential::{
+use concerto_core::{
     assets::handle::AssetHandle,
     geometry::delauney::{TriangulatedPoint2D, Triangulation2D},
     utils::AsAny,

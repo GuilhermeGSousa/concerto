@@ -1,8 +1,8 @@
-use ecs::{
+use concerto_ecs::{
     resource::{Res, Resource},
     Component, Query, ResMut,
 };
-use render::{components::camera::RenderCamera, device::RenderDevice, queue::RenderQueue};
+use concerto_render::{components::camera::RenderCamera, device::RenderDevice, queue::RenderQueue};
 
 use crate::{
     ascii::{padded_bytes_per_row, pixels_to_ascii_into},

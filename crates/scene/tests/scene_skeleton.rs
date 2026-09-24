@@ -1,7 +1,7 @@
-use ecs::component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext};
-use ecs::World;
-use essential::assets::{handle::AssetHandle, AssetId};
-use mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_core::assets::{handle::AssetHandle, AssetId};
+use concerto_ecs::component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext};
+use concerto_ecs::World;
+use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use uuid::Uuid;
 
 fn authored_skeleton(root: Option<SceneEntityRef>) -> SkeletonComponent {

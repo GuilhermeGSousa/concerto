@@ -1,7 +1,10 @@
 [package]
-name = "jolt-ffi"
+name = "concerto-jolt-ffi"
 version = "0.1.0"
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 links = "jolt"
 
 [build-dependencies]

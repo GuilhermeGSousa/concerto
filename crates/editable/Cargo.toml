@@ -1,8 +1,11 @@
 [package]
-name = "editable"
+name = "concerto-editable"
 version = "0.1.0"
 edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [dependencies]
-editable-macros = { path = "macros" }
+concerto-editable-macros = { path = "macros" }
 glam = "0.30.1"

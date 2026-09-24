@@ -1,4 +1,4 @@
-use ecs::Component;
+use concerto_ecs::Component;
 
 use crate::backend::PhysicsBackend;
 use crate::ActiveBackend;

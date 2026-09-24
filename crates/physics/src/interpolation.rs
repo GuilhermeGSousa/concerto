@@ -1,5 +1,5 @@
-use ecs::{query::Query, resource::Res, Component};
-use essential::{time::Time, transform::Transform};
+use concerto_core::{time::Time, transform::Transform};
+use concerto_ecs::{query::Query, resource::Res, Component};
 use glam::{Quat, Vec3};
 
 /// The last two fixed-step poses of a physics body.
@@ -62,10 +62,10 @@ pub(crate) fn interpolate_body_transforms(
 
 #[cfg(test)]
 mod tests {
-    use ecs::system::executor::single_thread::SingleThreadedExecutor;
-    use ecs::system::schedule::Schedule;
-    use ecs::world::World;
-    use essential::{time::Time, transform::Transform};
+    use concerto_core::{time::Time, transform::Transform};
+    use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
+    use concerto_ecs::system::schedule::Schedule;
+    use concerto_ecs::world::World;
     use glam::Vec3;
 
     use crate::collider::{register_colliders, Collider};

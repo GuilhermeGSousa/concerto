@@ -1,18 +1,21 @@
 [package]
-name = "world-grid"
+name = "concerto-world-grid"
 version = "0.1.0"
 edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-app      = { path = "../app" }
-ecs      = { path = "../ecs" }
-essential = { path = "../essential" }
-render   = { path = "../render" }
-mesh     = { path = "../mesh" }
-color    = { path = "../color" }
+concerto-app      = { path = "../app" }
+concerto-ecs      = { path = "../ecs" }
+concerto-core = { path = "../core" }
+concerto-render   = { path = "../render" }
+concerto-mesh     = { path = "../mesh" }
+concerto-color    = { path = "../color" }
 bytemuck = { version = "1.22.0", features = ["derive"] }
 serde    = { version = "1", features = ["derive"] }
 wgpu     = { version = "24.0.1", default-features = false, features = [

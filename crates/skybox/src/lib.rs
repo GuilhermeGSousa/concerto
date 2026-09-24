@@ -3,9 +3,9 @@ pub mod plugin;
 
 use derive_more::Deref;
 
-use ecs::resource::Resource;
-use essential::assets::handle::AssetHandle;
-use render::assets::{mesh::Mesh, vertex::Vertex};
+use concerto_core::assets::handle::AssetHandle;
+use concerto_ecs::resource::Resource;
+use concerto_render::assets::{mesh::Mesh, vertex::Vertex};
 
 pub(crate) const SKYBOX_VERTICES: [Vertex; 8] = [
     // Front

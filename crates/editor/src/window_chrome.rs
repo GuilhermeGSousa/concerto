@@ -5,17 +5,16 @@
 //! resizing are started by the event loop the moment the button goes down
 //! (see [`WindowGestureRegion`]); all this module does is publish where the
 //! frame's edges and title band currently are.
-use app::{
+use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use color::Color;
-use ecs::{
+use concerto_color::Color;
+use concerto_ecs::{
     Component, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
 };
-use taffy::{FlexDirection, Position};
-use ui::{
+use concerto_ui::{
     interaction::{Interactable, UIClick, UIInteractionStyle},
     material::UIMaterial,
     node::{UIInset, UILayout, UINode, UIRect},
@@ -23,14 +22,17 @@ use ui::{
     theme::UITheme,
     transform::UIValue,
 };
-use window::input::MouseButton;
-use window::plugin::{CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone};
+use concerto_window::input::MouseButton;
+use concerto_window::plugin::{
+    CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
+};
+use taffy::{FlexDirection, Position};
 use winit::window::ResizeDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region, TOP_STRIP};
 use crate::fonts::{glyph, icon};
 
-pub const PANEL_ID: &str = "rabbithole.window";
+pub const PANEL_ID: &str = "concerto.window";
 
 /// Width of the invisible strip along each window edge that starts a resize.
 const GRIP: f32 = 6.0;

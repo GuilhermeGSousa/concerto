@@ -1,5 +1,5 @@
 use super::*;
-use ecs::{
+use concerto_ecs::{
     IntoSystem, System, World,
     component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
@@ -26,8 +26,8 @@ fn inspector_presentation_systems_do_not_request_exclusive_access() {
         sync_inspected_components.into_system(),
         build_property_widgets.into_system(),
     ] {
-        let mut meta = ecs::system::meta::SystemMetadata::default();
-        let mut access = ecs::system::access::SystemAccess::default();
+        let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
+        let mut access = concerto_ecs::system::access::SystemAccess::default();
         system.fill_access(&mut meta, &mut access);
         assert!(!access.is_exclusive());
     }
@@ -64,7 +64,7 @@ fn deferred_row_creation_makes_new_bodies_visible() {
     update(&mut world);
     let row = rows(&mut world)[0].0;
     let body = world
-        .get_component_for_entity::<ecs::entity::hierarchy::ChildOf>(row)
+        .get_component_for_entity::<concerto_ecs::entity::hierarchy::ChildOf>(row)
         .unwrap()
         .parent();
     assert!(
@@ -97,7 +97,7 @@ fn alternating_selections_keep_showing_their_properties() {
             "selecting {target:?} built no property rows"
         );
         let body = world
-            .get_component_for_entity::<ecs::entity::hierarchy::ChildOf>(rows[0].0)
+            .get_component_for_entity::<concerto_ecs::entity::hierarchy::ChildOf>(rows[0].0)
             .unwrap()
             .parent();
         assert!(
@@ -366,13 +366,13 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     update(&mut world);
     assert!(cards(&mut world).is_empty());
     assert!(rows(&mut world).is_empty());
-    let mut inputs = world.query::<&ui::text_input::UITextInput, ()>();
+    let mut inputs = world.query::<&concerto_ui::text_input::UITextInput, ()>();
     assert_eq!(inputs.iter(&mut world).count(), 0);
 }
 
 #[test]
 fn unsupported_values_build_an_explicit_read_only_row() {
-    #[derive(Component, editable::Editable)]
+    #[derive(Component, concerto_editable::Editable)]
     struct Unsupported {
         title: String,
     }
@@ -411,7 +411,7 @@ fn labels_capitalise_the_field_name() {
 
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
-    use editable::{Editable, PropertyVisitor, PropertyVisitorMut};
+    use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
     #[derive(Component)]
     struct Dynamic {
         reverse: bool,
@@ -464,7 +464,7 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
         .unwrap()
         .0;
     let body = world
-        .get_component_for_entity::<ecs::entity::hierarchy::ChildOf>(a)
+        .get_component_for_entity::<concerto_ecs::entity::hierarchy::ChildOf>(a)
         .unwrap()
         .parent();
     assert_eq!(
@@ -680,7 +680,7 @@ fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
 
 #[test]
 fn inspector_access_only_blocks_component_and_declared_resource_writes() {
-    use ecs::system::{access::SystemAccess, meta::SystemMetadata};
+    use concerto_ecs::system::{access::SystemAccess, meta::SystemMetadata};
     let system = sync_inspected_components.into_system();
     let mut access = SystemAccess::default();
     system.fill_access(&mut SystemMetadata::default(), &mut access);

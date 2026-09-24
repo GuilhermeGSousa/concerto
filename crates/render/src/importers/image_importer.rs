@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use asset_import::{ImportContext, ImportError, Importer};
+use concerto_asset_import::{ImportContext, ImportError, Importer};
 use image::GenericImageView;
 
 use crate::assets::texture::{Texture, TextureKind};

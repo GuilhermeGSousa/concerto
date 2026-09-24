@@ -1,0 +1,15 @@
+[package]
+name = "concerto-core-macros"
+version = "0.1.0"
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+concerto-asset-format = { path = "../../asset-format" }
+syn = "2.0.11"
+quote = "1.0.37"

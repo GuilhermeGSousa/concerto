@@ -1,1 +1,1 @@
-pub use mesh::Skeleton;
+pub use concerto_mesh::Skeleton;

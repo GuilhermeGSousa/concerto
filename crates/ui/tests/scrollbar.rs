@@ -1,6 +1,6 @@
 //! Covers scrollbar thumb geometry: where the thumb sits and how big it is for
 //! a given scroll offset, and when the bar should not be shown at all.
-use ui::scroll::{ThumbGeometry, thumb_geometry};
+use concerto_ui::scroll::{ThumbGeometry, thumb_geometry};
 
 const TRACK: f32 = 200.0;
 

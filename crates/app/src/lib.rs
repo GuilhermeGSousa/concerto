@@ -1,8 +1,8 @@
 #[cfg(all(feature = "multithreaded", not(target_arch = "wasm32")))]
-use ecs::system::executor::multi_thread::MultiThreadedExecutor;
+use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
-use ecs::system::executor::single_thread::SingleThreadedExecutor;
-use ecs::{
+use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
+use concerto_ecs::{
     component::scene::SceneComponent,
     events::{
         event_channel::{update_event_channel, EventChannel},
@@ -16,7 +16,7 @@ use ecs::{
 use log::info;
 use runner::AppExit;
 
-use essential::assets::{
+use concerto_core::assets::{
     asset_server::AssetServer, asset_store::AssetStore, handle::AssetLifetimeEvent, Asset,
 };
 
@@ -61,8 +61,8 @@ fn compile(schedules: Schedules, world: &mut World) -> CompiledSchedules {
 ///
 /// # Typical setup
 /// ```ignore
-/// use app::App;
-/// use app::plugins::TimePlugin;
+/// use concerto_app::App;
+/// use concerto_app::plugins::TimePlugin;
 ///
 /// let mut app = App::empty();
 /// app.register_plugin(TimePlugin);
@@ -319,7 +319,7 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ecs::events::{event_channel::EventChannel, event_reader::EventReader};
+    use concerto_ecs::events::{event_channel::EventChannel, event_reader::EventReader};
 
     #[derive(Event)]
     struct ExternalEvent;

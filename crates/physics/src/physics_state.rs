@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use ecs::entity::Entity;
-use ecs::resource::Resource;
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
+use concerto_ecs::entity::Entity;
+use concerto_ecs::resource::Resource;
 use glam::Vec3;
 
 use crate::backend::PhysicsBackend;

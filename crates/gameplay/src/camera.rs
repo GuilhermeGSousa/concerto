@@ -1,7 +1,7 @@
-use ecs::{Component, Entity, Query, Res, Resource};
-use essential::transform::Transform;
+use concerto_core::transform::Transform;
+use concerto_ecs::{Component, Entity, Query, Res, Resource};
+use concerto_window::input::Input;
 use glam::{Quat, Vec3};
-use window::input::Input;
 
 #[derive(Resource)]
 pub struct CameraSettings {
