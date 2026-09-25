@@ -21,6 +21,7 @@ use crate::{
     world::World,
 };
 use derive_more::{Deref, From};
+use fixedbitset::FixedBitSet;
 use petgraph::{
     Direction,
     algo::toposort,
@@ -259,15 +260,15 @@ impl Schedule {
             let owner = format!("set `{:?}`", set_config.set);
             for target in &set_config.after {
                 for source in resolve(target, &by_type, &by_set, &owner) {
-                    for member in members {
-                        explicit.add(source, *member, &owner);
+                    for member in members.ones() {
+                        explicit.add(source, member, &owner);
                     }
                 }
             }
             for target in &set_config.before {
                 for sink in resolve(target, &by_type, &by_set, &owner) {
-                    for member in members {
-                        explicit.add(*member, sink, &owner);
+                    for member in members.ones() {
+                        explicit.add(member, sink, &owner);
                     }
                 }
             }
@@ -311,60 +312,57 @@ impl Schedule {
         self.configs = configs;
     }
 
-    fn index_by_type(&self) -> HashMap<TypeId, Vec<usize>> {
-        let mut index: HashMap<TypeId, Vec<usize>> = HashMap::new();
+    fn index_by_type(&self) -> HashMap<TypeId, FixedBitSet> {
+        let mut index: HashMap<TypeId, FixedBitSet> = HashMap::new();
         for (position, system) in self.systems.iter().enumerate() {
             if is_sync_point(system.as_ref()) {
                 continue;
             }
             index
                 .entry(system.system_type())
-                .or_default()
-                .push(position);
+                .or_insert_with(|| FixedBitSet::with_capacity(self.systems.len()))
+                .insert(position);
         }
         index
     }
 
-    fn index_by_set(&self) -> HashMap<InternedSystemSet, Vec<usize>> {
-        let mut index: HashMap<InternedSystemSet, Vec<usize>> = HashMap::new();
+    fn index_by_set(&self) -> HashMap<InternedSystemSet, FixedBitSet> {
+        let mut index: HashMap<InternedSystemSet, FixedBitSet> = HashMap::new();
         for (position, config) in self.configs.iter().enumerate() {
             for set in &config.sets {
-                let members = index.entry(*set).or_default();
-                if !members.contains(&position) {
-                    members.push(position);
-                }
+                index
+                    .entry(*set)
+                    .or_insert_with(|| FixedBitSet::with_capacity(self.systems.len()))
+                    .insert(position);
             }
         }
         index
     }
 }
 
-fn resolve(
+fn resolve<'a>(
     target: &DependencyTarget,
-    by_type: &HashMap<TypeId, Vec<usize>>,
-    by_set: &HashMap<InternedSystemSet, Vec<usize>>,
+    by_type: &'a HashMap<TypeId, FixedBitSet>,
+    by_set: &'a HashMap<InternedSystemSet, FixedBitSet>,
     owner: &str,
-) -> Vec<usize> {
-    match target {
-        DependencyTarget::System { id, name } => match by_type.get(id) {
-            Some(matches) => {
-                if matches.len() > 1 {
-                    log::warn!(
-                        "{owner} is ordered against `{name}`, which is registered {} times in this schedule; ordering against all copies",
-                        matches.len()
-                    );
-                }
-                matches.clone()
-            }
-            None => {
-                log::warn!(
+) -> impl Iterator<Item = usize> + use<'a> {
+    let targets = match target {
+        DependencyTarget::System { id, name } => {
+            let matches = by_type.get(id);
+            match matches.map(|matches| matches.count_ones(..)) {
+                None => log::warn!(
                     "{owner} is ordered against `{name}`, which is not in this schedule; the constraint is ignored"
-                );
-                Vec::new()
+                ),
+                Some(count) if count > 1 => log::warn!(
+                    "{owner} is ordered against `{name}`, which is registered {count} times in this schedule; ordering against all copies"
+                ),
+                Some(_) => {}
             }
-        },
-        DependencyTarget::Set(set) => by_set.get(set).cloned().unwrap_or_default(),
-    }
+            matches
+        }
+        DependencyTarget::Set(set) => by_set.get(set),
+    };
+    targets.into_iter().flat_map(FixedBitSet::ones)
 }
 
 struct ExplicitEdges<'a> {
