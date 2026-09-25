@@ -1,0 +1,23 @@
+use concerto_ecs::SystemSet;
+
+/// The ordered phases of the UI frame in `LateUpdate`, from input to post-layout.
+///
+/// Public so other crates can order their systems against UI without naming its
+/// systems.
+#[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+pub enum UiSet {
+    /// Pointer hit testing, focus and text capture.
+    Input,
+    /// Widget behaviour driven by this frame's input.
+    Widgets,
+    /// One-off construction of widget visuals.
+    Setup,
+    /// Projecting widget state onto their visual nodes.
+    Project,
+    /// Syncing widget state into materials.
+    Materials,
+    /// Computing layout.
+    Layout,
+    /// Work that needs this frame's layout.
+    PostLayout,
+}
