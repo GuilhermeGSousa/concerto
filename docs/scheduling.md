@@ -4,6 +4,19 @@ Systems live in named schedules (`Update`, `LateUpdate`, `Render`, ...). Within 
 schedule, their order comes from explicit constraints and, where there are none,
 from registration order. This page covers the API for both.
 
+## Imports
+
+The examples below assume these traits are in scope:
+
+```rust
+use concerto_ecs::{IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, system::IntoSetConfig};
+```
+
+- `IntoSystemConfig` gives a single system `.after`, `.before` and `.in_set`.
+- `IntoSystemConfigs` gives a tuple of systems `.in_set` and `.chain`.
+- `IntoSetConfig` gives a set `.after` and `.before`.
+- `IntoSetConfigs` gives a tuple of sets `.chain`.
+
 ## Adding systems
 
 ```rust
@@ -64,7 +77,7 @@ app.configure_sets(
     LateUpdate,
     (UiSet::Input, UiSet::Widgets, UiSet::Layout).chain(),
 );
-app.configure_sets(LateUpdate, UiSet::Layout.after(TransformSet::Propagate));
+app.configure_sets(LateUpdate, UiSet::Materials.after(UiSet::Input).before(UiSet::Layout));
 ```
 
 A set constrained with `A.before(B)` orders every member of `A` before every
@@ -105,7 +118,7 @@ way.
 ## The "constraint is ignored" warning
 
 ```
-`b` is ordered against `a`, which is not in this schedule; the constraint is ignored
+`my_game::b` is ordered against `my_game::a`, which is not in this schedule; the constraint is ignored
 ```
 
 The system a constraint names is not registered in that schedule. The usual
