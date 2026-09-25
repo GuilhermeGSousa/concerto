@@ -40,6 +40,7 @@ use concerto_ecs::{
 use std::sync::{Arc, Mutex};
 use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
 
+#[doc(hidden)]
 pub struct RenderResources {
     pub device: Device,
     pub queue: Queue,
@@ -68,6 +69,28 @@ fn render_main(world: &mut World) {
     }
 }
 
+/// Sets up the renderer: the GPU device and queue, the render world's
+/// [`RenderMain`] schedule, per-frame extraction of cameras, meshes, lights and
+/// skeletons, and presentation.
+///
+/// Renders to the window when a [`Window`](concerto_window::plugin::Window) resource
+/// exists at build time, and offscreen otherwise. Core systems are ordered with
+/// [`RenderSet`].
+///
+/// # Panics
+///
+/// Panics during [`build`](Plugin::build) if no GPU adapter or device is available.
+///
+/// # Examples
+///
+/// ```no_run
+/// use concerto_app::App;
+/// use concerto_render::plugin::RenderPlugin;
+///
+/// let mut app = App::new();
+/// app.register_plugin(RenderPlugin);
+/// app.run();
+/// ```
 pub struct RenderPlugin;
 
 impl RenderPlugin {

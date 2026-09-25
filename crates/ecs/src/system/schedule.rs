@@ -30,13 +30,14 @@ use petgraph::{
 
 pub use concerto_ecs_macros::ScheduleLabel;
 
+#[doc(hidden)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deref, From)]
 pub struct SystemNodeIndex(NodeIndex);
 
+#[doc(hidden)]
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deref, From)]
 pub struct SystemIndex(usize);
 
-/// A system's set memberships and ordering constraints, kept until [`Schedule::compile`].
 #[derive(Default)]
 struct NodeConfig {
     sets: Vec<InternedSystemSet>,
@@ -53,21 +54,32 @@ struct NodeConfig {
 /// registered later.
 ///
 /// Systems with conflicting data access and no explicit constraint between them run
-/// in registration order.
+/// in registration order. An explicit constraint always wins over registration order.
 ///
-/// # Example
+/// # Examples
+///
 /// ```
-/// use concerto_ecs::{Schedule, World, Component, Query};
+/// use concerto_ecs::{
+///     Component, Query, Schedule, World,
+///     system::executor::single_thread::SingleThreadedExecutor,
+/// };
 ///
 /// #[derive(Component)]
 /// struct Velocity(f32);
 ///
 /// fn apply_velocity(query: Query<&Velocity>) {
-///     for v in query.iter() { /* ... */ }
+///     for velocity in query.iter() {
+///         println!("{}", velocity.0);
+///     }
 /// }
 ///
 /// let mut schedule = Schedule::new();
 /// schedule.add_system(apply_velocity);
+///
+/// let mut world = World::new();
+/// schedule
+///     .compile::<SingleThreadedExecutor>(&mut world)
+///     .run(&mut world);
 /// ```
 #[derive(Default)]
 pub struct Schedule {
@@ -78,15 +90,29 @@ pub struct Schedule {
 
 impl Schedule {
     /// Creates an empty schedule.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::Schedule;
+    ///
+    /// let schedule = Schedule::new();
+    /// ```
     pub fn new() -> Schedule {
         Self::default()
     }
 
-    /// Adds a system (or [`SystemConfig`](crate::system::config::SystemConfig)) to the schedule.
+    /// Adds a system or [`SystemConfig`](crate::SystemConfig) to the schedule.
+    ///
+    /// # Examples
     ///
     /// ```
-    /// # use concerto_ecs::{Schedule, IntoSystemConfig};
-    /// # fn a() {} fn b() {} fn c() {}
+    /// use concerto_ecs::{IntoSystemConfig, Schedule};
+    ///
+    /// fn a() {}
+    /// fn b() {}
+    /// fn c() {}
+    ///
     /// let mut schedule = Schedule::new();
     /// schedule
     ///     .add_system(a)
@@ -104,11 +130,17 @@ impl Schedule {
         self
     }
 
-    /// Adds several systems to the schedule.
+    /// Adds several systems to the schedule, in order.
+    ///
+    /// # Examples
     ///
     /// ```
-    /// # use concerto_ecs::{Schedule, IntoSystemConfigs};
-    /// # fn a() {} fn b() {} fn c() {}
+    /// use concerto_ecs::{IntoSystemConfigs, Schedule};
+    ///
+    /// fn a() {}
+    /// fn b() {}
+    /// fn c() {}
+    ///
     /// let mut schedule = Schedule::new();
     /// schedule.add_systems((a, b, c).chain());
     /// ```
@@ -119,14 +151,61 @@ impl Schedule {
         self
     }
 
-    /// Declares ordering constraints on sets in this schedule.
+    /// Adds ordering constraints between sets in this schedule.
     ///
-    /// Configuring the same set more than once accumulates its constraints.
+    /// Configuring the same set more than once accumulates its constraints, so
+    /// several plugins can constrain a shared set without coordinating.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{IntoSetConfigs, Schedule, SystemSet, system::IntoSetConfig};
+    ///
+    /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+    /// enum Frame {
+    ///     Input,
+    ///     Simulate,
+    ///     Present,
+    /// }
+    ///
+    /// let mut schedule = Schedule::new();
+    /// schedule
+    ///     .configure_sets((Frame::Input, Frame::Simulate).chain())
+    ///     .configure_sets(Frame::Present.after(Frame::Simulate));
+    /// ```
     pub fn configure_sets(&mut self, configs: impl IntoSetConfigs) -> &mut Self {
         self.set_configs.extend(configs.into_set_configs());
         self
     }
 
+    /// Resolves every constraint, initializes the systems against `world` and returns
+    /// a schedule ready to run on executor `T`.
+    ///
+    /// A system constraint whose target is not in this schedule is dropped and logged
+    /// with [`log::warn!`]. A set with no members is dropped silently.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the explicit constraints contain a cycle, naming the systems on it.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     IntoSystemConfig, Schedule, World,
+    ///     system::executor::single_thread::SingleThreadedExecutor,
+    /// };
+    ///
+    /// fn first() {}
+    /// fn second() {}
+    ///
+    /// let mut schedule = Schedule::new();
+    /// schedule.add_system(second.after(first)).add_system(first);
+    ///
+    /// let mut world = World::new();
+    /// let mut compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+    /// compiled.run(&mut world);
+    /// ```
     pub fn compile<T: SystemExecutor + 'static>(mut self, world: &mut World) -> CompiledSchedule {
         self.insert_sync_points();
 
@@ -209,7 +288,6 @@ impl Schedule {
         }
     }
 
-    /// Inserts a sync point after every system that has deferred work to apply.
     fn insert_sync_points(&mut self) {
         let mut systems = Vec::with_capacity(self.systems.len());
         let mut configs = Vec::with_capacity(self.configs.len());
@@ -261,7 +339,6 @@ impl Schedule {
     }
 }
 
-/// Resolves an ordering target to the positions of the systems it names.
 fn resolve(
     target: &DependencyTarget,
     by_type: &HashMap<TypeId, Vec<usize>>,
@@ -290,7 +367,6 @@ fn resolve(
     }
 }
 
-/// Adds explicit ordering edges, panicking on any edge that would close a cycle.
 struct ExplicitEdges<'a> {
     graph: &'a mut SystemDependencyGraph,
     nodes: &'a [SystemNodeIndex],
@@ -324,7 +400,6 @@ impl ExplicitEdges<'_> {
         self.graph.node_weight(*self.nodes[index]).unwrap().name
     }
 
-    /// Finds a path of explicit edges from `from` to `to`, as system positions.
     fn path(&self, from: usize, to: usize) -> Vec<usize> {
         let mut previous: HashMap<NodeIndex, NodeIndex> = HashMap::new();
         let mut queue = VecDeque::from([*self.nodes[from]]);
@@ -353,8 +428,6 @@ impl ExplicitEdges<'_> {
     }
 }
 
-/// Orders every pair of access-conflicting systems by registration order, unless an
-/// explicit constraint already orders them the other way.
 fn add_implicit_edges(
     graph: &mut SystemDependencyGraph,
     nodes: &[SystemNodeIndex],
@@ -427,14 +500,60 @@ impl fmt::Debug for Schedule {
     }
 }
 
+/// A [`Schedule`] with its ordering resolved, ready to run.
+///
+/// Created by [`Schedule::compile`]. Its [`Debug`](fmt::Debug) output is the
+/// dependency graph in Graphviz DOT format.
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{Schedule, World, system::executor::single_thread::SingleThreadedExecutor};
+///
+/// fn tick() {}
+///
+/// let mut schedule = Schedule::new();
+/// schedule.add_system(tick);
+///
+/// let mut world = World::new();
+/// let mut compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+/// println!("{compiled:?}");
+/// ```
 pub struct CompiledSchedule {
     executor: Box<dyn SystemExecutor>,
     compiled_data: CompiledScheduleData,
     graph: SystemDependencyGraph,
 }
 
-// No constructor methods here! Get this by compiling a schedule
 impl CompiledSchedule {
+    /// Runs every system once, in dependency order, against `world`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     ResMut, Resource, Schedule, World,
+    ///     system::executor::single_thread::SingleThreadedExecutor,
+    /// };
+    ///
+    /// #[derive(Resource, Default)]
+    /// struct Frames(u32);
+    ///
+    /// fn count(mut frames: ResMut<Frames>) {
+    ///     frames.0 += 1;
+    /// }
+    ///
+    /// let mut world = World::new();
+    /// world.insert_resource(Frames::default());
+    ///
+    /// let mut schedule = Schedule::new();
+    /// schedule.add_system(count);
+    /// let mut compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+    ///
+    /// compiled.run(&mut world);
+    /// compiled.run(&mut world);
+    /// assert_eq!(world.get_resource::<Frames>().map(|frames| frames.0), Some(2));
+    /// ```
     pub fn run(&mut self, world: &mut World) {
         self.executor.run(&mut self.compiled_data, world);
     }
@@ -450,26 +569,113 @@ impl fmt::Debug for CompiledSchedule {
     }
 }
 
+/// The resolved systems and dependency graph a [`SystemExecutor`] runs.
+///
+/// Every vector except `sorted_systems` is indexed by a system's position in
+/// `systems`. Only needed when implementing a custom [`SystemExecutor`].
 pub struct CompiledScheduleData {
+    /// The initialized systems, including inserted sync points.
     pub systems: Vec<BoxedSystem>,
+    /// Positions into `systems` in a valid topological order.
     pub sorted_systems: Vec<usize>,
+    /// How many systems must finish before each system may start.
     pub dependency_count: Vec<usize>,
+    /// For each system, the positions of the systems waiting on it.
     pub dependants: Vec<Vec<usize>>,
+    /// The data each system reads and writes.
     pub system_access: Vec<SystemAccess>,
+    /// Scheduling metadata for each system, such as whether it must run on the main thread.
     pub system_meta: Vec<SystemMetadata>,
 }
 
-define_label!(ScheduleLabel);
+define_label!(
+    /// A name for a [`Schedule`] stored in [`Schedules`].
+    ///
+    /// Implement it with `#[derive(ScheduleLabel)]`, which requires `Clone`, `Eq`,
+    /// `Hash` and `Debug`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::system::schedule::{ScheduleLabel, Schedules};
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn tick() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_system(Update, tick);
+    /// ```
+    ScheduleLabel
+);
 
+/// A cheap, copyable handle to a [`ScheduleLabel`], compared by identity.
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::system::schedule::{InternedScheduleLabel, ScheduleLabel};
+///
+/// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+/// struct Update;
+///
+/// let label: InternedScheduleLabel = Update.intern();
+/// assert_eq!(label, Update.intern());
+/// ```
 pub type InternedScheduleLabel = Interned<dyn ScheduleLabel>;
 
+/// Every [`Schedule`] of a world, keyed by [`ScheduleLabel`], before compilation.
+///
+/// A schedule is created the first time a label is used.
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{
+///     World,
+///     system::{
+///         executor::single_thread::SingleThreadedExecutor,
+///         schedule::{ScheduleLabel, Schedules},
+///     },
+/// };
+///
+/// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+/// struct Update;
+///
+/// fn tick() {}
+///
+/// let mut schedules = Schedules::default();
+/// schedules.add_system(Update, tick);
+///
+/// let mut world = World::new();
+/// let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+/// world.insert_resource(compiled);
+/// world.run_schedule(Update);
+/// ```
 #[derive(Resource, Default, Debug)]
 pub struct Schedules {
     schedules: HashMap<InternedScheduleLabel, Schedule>,
 }
 
 impl Schedules {
-    /// Registers a system in the schedule identified by `update_group`.
+    /// Adds a system to the schedule labelled `update_group`.
+    ///
+    /// See [`Schedule::add_system`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::system::schedule::{ScheduleLabel, Schedules};
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn tick() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_system(Update, tick);
+    /// ```
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -481,7 +687,24 @@ impl Schedules {
             .add_system(system);
     }
 
-    /// Registers several systems in the schedule identified by `update_group`.
+    /// Adds several systems to the schedule labelled `update_group`.
+    ///
+    /// See [`Schedule::add_systems`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{IntoSystemConfigs, system::schedule::{ScheduleLabel, Schedules}};
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn read_input() {}
+    /// fn move_player() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_systems(Update, (read_input, move_player).chain());
+    /// ```
     pub fn add_systems<M>(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -493,7 +716,30 @@ impl Schedules {
             .add_systems(systems);
     }
 
-    /// Declares ordering constraints on sets in the schedule identified by `update_group`.
+    /// Adds ordering constraints between sets in the schedule labelled `update_group`.
+    ///
+    /// See [`Schedule::configure_sets`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     IntoSetConfigs, SystemSet,
+    ///     system::schedule::{ScheduleLabel, Schedules},
+    /// };
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
+    /// enum Frame {
+    ///     Input,
+    ///     Simulate,
+    /// }
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.configure_sets(Update, (Frame::Input, Frame::Simulate).chain());
+    /// ```
     pub fn configure_sets(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -505,6 +751,35 @@ impl Schedules {
             .configure_sets(configs);
     }
 
+    /// Compiles every schedule for executor `T`. See [`Schedule::compile`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if any schedule's explicit constraints contain a cycle.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     World,
+    ///     system::{
+    ///         executor::single_thread::SingleThreadedExecutor,
+    ///         schedule::{ScheduleLabel, Schedules},
+    ///     },
+    /// };
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn tick() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_system(Update, tick);
+    ///
+    /// let mut world = World::new();
+    /// let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+    /// assert!(compiled.get(Update).is_some());
+    /// ```
     pub fn compile<T: SystemExecutor + 'static>(self, world: &mut World) -> CompiledSchedules {
         CompiledSchedules {
             compiled_schedules: self
@@ -515,20 +790,128 @@ impl Schedules {
         }
     }
 }
+
+/// Every [`CompiledSchedule`] of a world, keyed by [`ScheduleLabel`].
+///
+/// Created by [`Schedules::compile`]. Stored as a resource, it is what
+/// [`World::run_schedule`] looks schedules up in.
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{
+///     World,
+///     system::{
+///         executor::single_thread::SingleThreadedExecutor,
+///         schedule::{ScheduleLabel, Schedules},
+///     },
+/// };
+///
+/// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+/// struct Update;
+///
+/// fn tick() {}
+///
+/// let mut schedules = Schedules::default();
+/// schedules.add_system(Update, tick);
+///
+/// let mut world = World::new();
+/// let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+/// world.insert_resource(compiled);
+/// world.run_schedule(Update);
+/// ```
 #[derive(Resource, Debug, Default)]
 pub struct CompiledSchedules {
     compiled_schedules: HashMap<InternedScheduleLabel, CompiledSchedule>,
 }
 
 impl CompiledSchedules {
+    /// Returns the schedule labelled `label`, if one was compiled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     World,
+    ///     system::{
+    ///         executor::single_thread::SingleThreadedExecutor,
+    ///         schedule::{ScheduleLabel, Schedules},
+    ///     },
+    /// };
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn tick() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_system(Update, tick);
+    ///
+    /// let mut world = World::new();
+    /// let mut compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+    /// assert!(compiled.get(Update).is_some());
+    /// ```
     pub fn get(&self, label: impl ScheduleLabel) -> Option<&CompiledSchedule> {
         self.compiled_schedules.get(&label.intern())
     }
 
+    /// Returns the schedule labelled `label` mutably, if one was compiled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     World,
+    ///     system::{
+    ///         executor::single_thread::SingleThreadedExecutor,
+    ///         schedule::{ScheduleLabel, Schedules},
+    ///     },
+    /// };
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn tick() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_system(Update, tick);
+    ///
+    /// let mut world = World::new();
+    /// let mut compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+    /// if let Some(update) = compiled.get_mut(Update) {
+    ///     update.run(&mut world);
+    /// }
+    /// ```
     pub fn get_mut(&mut self, label: impl ScheduleLabel) -> Option<&mut CompiledSchedule> {
         self.compiled_schedules.get_mut(&label.intern())
     }
 
+    /// Removes and returns the schedule labelled `label`, if one was compiled.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{
+    ///     World,
+    ///     system::{
+    ///         executor::single_thread::SingleThreadedExecutor,
+    ///         schedule::{ScheduleLabel, Schedules},
+    ///     },
+    /// };
+    ///
+    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    /// struct Update;
+    ///
+    /// fn tick() {}
+    ///
+    /// let mut schedules = Schedules::default();
+    /// schedules.add_system(Update, tick);
+    ///
+    /// let mut world = World::new();
+    /// let mut compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+    /// assert!(compiled.remove(Update).is_some());
+    /// assert!(compiled.get(Update).is_none());
+    /// ```
     pub fn remove(&mut self, label: impl ScheduleLabel) -> Option<CompiledSchedule> {
         self.compiled_schedules.remove(&label.intern())
     }

@@ -1,33 +1,81 @@
-//! Core Entity Component System (ECS) implementation.
+//! The entity component system at the core of Concerto.
 //!
-//! This crate provides the fundamental building blocks for the game engine's
-//! data-oriented architecture:
+//! - [`World`] holds every entity, component and resource.
+//! - [`Entity`] is a lightweight handle to a game object.
+//! - [`Component`] is data attached to entities; derive it with `#[derive(Component)]`.
+//! - [`Resource`] is data shared across the world; derive it with `#[derive(Resource)]`.
+//! - [`Query`] iterates the entities that have a given set of components.
+//! - [`Event`] is a message passed between systems; derive it with `#[derive(Event)]`.
+//! - [`Schedule`] runs systems in an order given by explicit constraints, named
+//!   [`SystemSet`]s and, where neither applies, registration order.
 //!
-//! - [`World`] — the central container holding all entities, components, and resources.
-//! - [`Entity`] — a lightweight handle representing a game object.
-//! - [`Component`] — trait for data attached to entities; derive with `#[derive(Component)]`.
-//! - [`Resource`] — trait for globally-shared data; derive with `#[derive(Resource)]`.
-//! - [`Query`] — type-safe iterator over entities matching a set of components.
-//! - [`Event`] — trait for messages passed between systems; derive with `#[derive(Event)]`.
-//! - [`Schedule`] — ordered collection of systems run each frame.
+//! # Examples
+//!
+//! ```
+//! use concerto_ecs::{
+//!     Component, IntoSystemConfig, Query, Schedule, World,
+//!     system::executor::single_thread::SingleThreadedExecutor,
+//! };
+//!
+//! #[derive(Component)]
+//! struct Position(f32);
+//!
+//! #[derive(Component)]
+//! struct Velocity(f32);
+//!
+//! fn integrate(query: Query<(&mut Position, &Velocity)>) {
+//!     for (mut position, velocity) in query.iter() {
+//!         position.0 += velocity.0;
+//!     }
+//! }
+//!
+//! fn report(query: Query<&Position>) {
+//!     for position in query.iter() {
+//!         println!("{}", position.0);
+//!     }
+//! }
+//!
+//! let mut world = World::new();
+//! world.spawn((Position(0.0), Velocity(1.0)));
+//!
+//! let mut schedule = Schedule::new();
+//! schedule.add_system(report.after(integrate)).add_system(integrate);
+//! schedule
+//!     .compile::<SingleThreadedExecutor>(&mut world)
+//!     .run(&mut world);
+//! ```
 
+/// Storage grouping entities that share the same component types.
 pub mod archetype;
+/// Deferred world mutations queued by systems.
 pub mod command;
+/// Identifiers derived from sets of component types.
 pub mod common;
+/// Components and their registration.
 pub mod component;
+/// Entities, entity handles and hierarchies.
 pub mod entity;
+/// Events passed between systems.
 pub mod events;
+/// Interning of values into cheap, copyable handles.
 pub mod intern;
+/// Support for label traits such as [`SystemSet`].
 pub mod label;
+/// Queries over entities and their components.
 pub mod query;
+/// Resources shared across a world.
 pub mod resource;
+/// Systems, schedules and their ordering.
 pub mod system;
+/// Column storage for component data.
 pub mod table;
+/// Hashers keyed by `TypeId` and cells shareable across threads.
 pub mod utilities;
+/// Hashers with a fixed seed.
 pub mod utils;
+/// The [`World`] and access to it.
 pub mod world;
 
-// Commonly-used re-exports so downstream crates don't need to know the module layout.
 pub use command::CommandQueue;
 pub use component::Component;
 pub use entity::{Entity, EntityWorldMut};
@@ -112,7 +160,6 @@ mod tests {
         cmd.spawn((Position { x: 0.0, y: 0.0 }, Health));
     }
 
-    /// Counts live instances so migrations can be checked for leaks and double-drops.
     static TRACKED_LIVE: AtomicIsize = AtomicIsize::new(0);
 
     #[derive(Component)]
@@ -131,10 +178,6 @@ mod tests {
         }
     }
 
-    /// Runs `body` with the live-instance counter zeroed, and asserts it balances afterwards.
-    ///
-    /// The counter is process-global, so these tests must not run concurrently with each
-    /// other; they are serialised by taking a mutex.
     fn assert_no_leaked_components(body: impl FnOnce()) {
         static SERIALISE: Mutex<()> = Mutex::new(());
         let _guard = SERIALISE.lock().unwrap_or_else(|err| err.into_inner());
@@ -585,7 +628,6 @@ mod tests {
         }
     }
 
-    /// Compiles the write / buffer-swap / read schedules used by the event tests.
     fn event_schedules(
         world: &mut World,
     ) -> (CompiledSchedule, CompiledSchedule, CompiledSchedule) {

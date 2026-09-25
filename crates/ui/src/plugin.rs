@@ -50,6 +50,31 @@ use crate::{
     },
 };
 
+/// Registers the UI: its resources and events, the `LateUpdate` systems ordered by
+/// [`UiSet`], and the render-world systems that draw it.
+///
+/// Register it after [`WindowPlugin`](concerto_window::plugin::WindowPlugin) and
+/// [`RenderPlugin`](concerto_render::plugin::RenderPlugin).
+///
+/// # Panics
+///
+/// Panics during [`build`](Plugin::build) if `WindowPlugin` is not registered, and during
+/// [`finish`](Plugin::finish) if `RenderPlugin` is not.
+///
+/// # Examples
+///
+/// ```no_run
+/// use concerto_app::App;
+/// use concerto_render::plugin::RenderPlugin;
+/// use concerto_ui::plugin::UIPlugin;
+/// use concerto_window::plugin::WindowPlugin;
+///
+/// let mut app = App::new();
+/// app.register_plugin(WindowPlugin)
+///     .register_plugin(RenderPlugin)
+///     .register_plugin(UIPlugin);
+/// app.run();
+/// ```
 pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
@@ -140,12 +165,6 @@ impl Plugin for UIPlugin {
                 update_widgets,
                 sync_tab_bodies,
                 update_tooltips,
-            )
-                .in_set(UiSet::Widgets),
-        );
-        app.add_systems(
-            LateUpdate,
-            (
                 update_scroll_areas,
                 update_virtual_lists.after(update_scroll_areas),
                 update_split_panes,

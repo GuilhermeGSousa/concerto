@@ -14,6 +14,27 @@ use crate::{
     terminal::TerminalContext,
 };
 
+/// Renders the camera tagged [`TerminalOutput`](crate::TerminalOutput) as ASCII in
+/// the terminal, and replaces the app's runner with a terminal event loop that exits
+/// on Esc.
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if `RenderDevice` is not in the main world.
+/// Since the render world was split out this is always the case, so the plugin does
+/// not currently work; see
+/// `docs/superpowers/specs/2026-09-25-terminal-renderer-split-worlds.md`.
+///
+/// # Examples
+///
+/// ```no_run
+/// use concerto_app::App;
+/// use concerto_terminal_renderer::TerminalRendererPlugin;
+///
+/// let mut app = App::new();
+/// app.register_plugin(TerminalRendererPlugin);
+/// app.run();
+/// ```
 pub struct TerminalRendererPlugin;
 
 impl Plugin for TerminalRendererPlugin {

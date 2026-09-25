@@ -11,7 +11,7 @@ app.add_system(Update, my_system);
 app.add_systems(Update, (a, b, c));
 ```
 
-`add_systems` takes a tuple of up to eight systems or configs, a `SystemConfig`,
+`add_systems` takes a tuple of up to twelve systems or configs, a `SystemConfig`,
 or a `Vec<SystemConfig>`. The render subapp has the same pair:
 `add_render_system` and `add_render_systems`.
 

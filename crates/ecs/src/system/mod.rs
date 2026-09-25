@@ -1,11 +1,18 @@
+/// Tracking of the data each system reads and writes.
 pub mod access;
+/// Ordering constraints and set membership for systems.
 pub mod config;
+/// Strategies for running a compiled schedule.
 pub mod executor;
 mod graph;
+/// Parameters a system function can take.
 pub mod input;
+/// Scheduling metadata for systems.
 pub mod meta;
 mod reachability;
+/// Schedules and their compilation.
 pub mod schedule;
+/// Named groups of systems.
 pub mod set;
 mod sync_point;
 
@@ -13,7 +20,7 @@ use std::any::TypeId;
 
 pub use config::{
     AlreadyConfigured, DependencyTarget, IntoDependencyTarget, IntoSystemConfig, IntoSystemConfigs,
-    SetTarget, SystemConfig, SystemTarget,
+    SystemConfig,
 };
 pub use set::{InternedSystemSet, IntoSetConfig, IntoSetConfigs, SetConfig, SystemSet};
 
@@ -25,48 +32,96 @@ use crate::{
     world::{UnsafeWorldCell, World},
 };
 
-/// Type alias for a boxed, type-erased system.
+/// A boxed, type-erased [`System`].
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{IntoSystem, system::BoxedSystem};
+///
+/// fn tick() {}
+///
+/// let system: BoxedSystem = tick.into_system();
+/// assert!(system.name().ends_with("tick"));
+/// ```
 pub type BoxedSystem = Box<dyn System>;
 
-/// Core trait implemented by all executable systems.
+/// A unit of work a [`Schedule`](crate::Schedule) runs against a [`World`].
 ///
-/// In normal use you don't implement this directly — plain Rust functions whose
-/// parameters implement [`SystemInput`] automatically implement [`IntoSystem`], which
-/// wraps them in a [`FunctionSystem`] that implements `System`.
+/// Plain functions whose parameters implement [`SystemInput`] are converted into
+/// systems by [`IntoSystem`], so this trait rarely needs implementing by hand.
 ///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{
+///     System, World,
+///     system::{access::SystemAccess, meta::SystemMetadata},
+///     world::UnsafeWorldCell,
+/// };
+///
+/// struct Noop;
+///
+/// impl System for Noop {
+///     fn name(&self) -> &'static str {
+///         "Noop"
+///     }
+///
+///     fn initialize(&mut self, _world: &mut World) {}
+///
+///     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
+///
+///     unsafe fn run_unsafe(&mut self, _world: UnsafeWorldCell) {}
+///
+///     fn apply(&mut self, _world: &mut World) {}
+/// }
+///
+/// let mut world = World::new();
+/// let mut system = Noop;
+/// system.initialize(&mut world);
+/// system.run_and_apply(&mut world);
+/// ```
 pub trait System: Send + Sync + 'static {
     /// Returns the fully-qualified name of the underlying function or type.
     fn name(&self) -> &'static str;
 
+    /// Returns a [`TypeId`] identifying this system, used to name it as an ordering target.
+    ///
+    /// Defaults to the type implementing `System`; function systems return an id
+    /// unique to their function.
     fn system_type(&self) -> TypeId {
         TypeId::of::<Self>()
     }
 
+    /// Prepares the system's cached state. Called once before the first run.
     fn initialize(&mut self, world: &mut World);
 
-    /// Describes which components and resources this system reads or writes.
+    /// Records which components and resources this system reads or writes.
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    /// Executes the system against the world, then applies any deferred commands.
+    /// Runs the system against the world, then applies its deferred commands.
     fn run_and_apply(&mut self, world: &mut World) {
         self.run(world);
         self.apply(world);
     }
 
-    /// Executes the system without applying deferred commands.
+    /// Runs the system without applying its deferred commands.
     fn run(&mut self, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
         unsafe { self.run_unsafe(world_cell) };
     }
 
-    /// Unsafe version of run made to be used by multithreaded executors
+    /// Runs the system through a shared world cell, for executors that run systems in
+    /// parallel.
+    ///
     /// # Safety
     ///
-    /// It is up to the user to ensure that no other system that isn't disjoint from this one
-    /// is running simultaneously on this world
+    /// No other system whose access conflicts with this one may run on the same
+    /// world at the same time.
     unsafe fn run_unsafe(&mut self, world: UnsafeWorldCell);
 
-    /// Applies any deferred mutations (e.g. spawned entities from [`CommandQueue`](crate::command::CommandQueue)).
+    /// Applies deferred mutations, such as entities spawned through a
+    /// [`CommandQueue`](crate::CommandQueue).
     fn apply(&mut self, world: &mut World);
 }
 
@@ -96,7 +151,6 @@ impl System for BoxedSystem {
     }
 }
 
-/// Wraps a plain function (or closure) and its cached input state into a [`System`].
 pub(crate) struct FunctionSystem<F, Input: SystemInput> {
     pub func: F,
     system_state: Option<Input::State>,
@@ -159,16 +213,32 @@ where
     }
 }
 
-/// Conversion trait that turns a compatible function or closure into a [`ScheduledSystem`].
+/// Converts a function, closure or [`System`] into a [`BoxedSystem`].
 ///
-/// Implemented automatically for functions whose parameters implement [`SystemInput`],
-/// and for any type that already implements [`System`].
+/// Implemented for functions and closures of up to twelve parameters that each
+/// implement [`SystemInput`], and for every type implementing [`System`].
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{IntoSystem, Res, Resource};
+///
+/// #[derive(Resource)]
+/// struct Gravity(f32);
+///
+/// fn report(gravity: Res<Gravity>) {
+///     println!("{}", gravity.0);
+/// }
+///
+/// let system = report.into_system();
+/// assert!(system.name().ends_with("report"));
+/// ```
 pub trait IntoSystem<Marker> {
-    /// Wraps `self` in a [`ScheduledSystem`] ready to be added to a [`Schedule`](schedule::Schedule).
+    /// Boxes `self` as a system ready to be added to a [`Schedule`](crate::Schedule).
     fn into_system(self) -> BoxedSystem;
 }
 
-/// Marker used by the blanket [`IntoSystem`] impl for types that already implement [`System`].
+#[doc(hidden)]
 pub struct AlreadySystem;
 
 impl<S: System + 'static> IntoSystem<AlreadySystem> for S {
@@ -191,6 +261,21 @@ where
     }
 }
 
+/// A system parameter that pins the system to the main thread.
+///
+/// Take it in systems that touch data which must not leave the main thread, such as
+/// window handles.
+///
+/// # Examples
+///
+/// ```
+/// use concerto_ecs::{Schedule, system::NonSendMarker};
+///
+/// fn poll_window(_main_thread: NonSendMarker) {}
+///
+/// let mut schedule = Schedule::new();
+/// schedule.add_system(poll_window);
+/// ```
 pub struct NonSendMarker;
 
 impl SystemInput for NonSendMarker {

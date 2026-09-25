@@ -2,8 +2,24 @@ use concerto_ecs::SystemSet;
 
 /// The ordered phases of the UI frame in `LateUpdate`, from input to post-layout.
 ///
-/// Public so other crates can order their systems against UI without naming its
+/// Order systems against these sets to run relative to the UI without naming its
 /// systems.
+///
+/// # Examples
+///
+/// ```
+/// use concerto_app::{App, schedule_groups::LateUpdate};
+/// use concerto_ecs::IntoSystemConfig;
+/// use concerto_ui::sets::UiSet;
+///
+/// fn update_inventory_panel() {}
+///
+/// let mut app = App::new();
+/// app.add_system(
+///     LateUpdate,
+///     update_inventory_panel.after(UiSet::Input).before(UiSet::Layout),
+/// );
+/// ```
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum UiSet {
     /// Pointer hit testing, focus and text capture.

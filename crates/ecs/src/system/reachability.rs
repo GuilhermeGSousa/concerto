@@ -1,4 +1,3 @@
-/// Transitive reachability over a growing DAG, backed by one bitset per node.
 pub(crate) struct Reachability {
     node_count: usize,
     words_per_node: usize,
@@ -19,7 +18,6 @@ impl Reachability {
         self.bits[from * self.words_per_node + to / 64] & (1 << (to % 64)) != 0
     }
 
-    /// Records `from -> to`, propagating `to`'s descendants to every ancestor of `from`.
     pub(crate) fn add_edge(&mut self, from: usize, to: usize) {
         if self.reaches(from, to) {
             return;
@@ -39,7 +37,6 @@ impl Reachability {
         }
     }
 
-    /// Records `from -> to` unless it would close a cycle; returns whether it was recorded.
     pub(crate) fn try_add_edge(&mut self, from: usize, to: usize) -> bool {
         if from == to || self.reaches(to, from) {
             return false;

@@ -23,6 +23,26 @@ pub(crate) struct ShadowPipeline {
     pub(crate) bind_group_layout: wgpu::BindGroupLayout,
 }
 
+/// Renders shadow maps for lights, in [`RenderSet::Shadows`].
+///
+/// Register it after [`RenderPlugin`](crate::plugin::RenderPlugin).
+///
+/// # Panics
+///
+/// Panics during [`finish`](Plugin::finish) if [`RenderPlugin`](crate::plugin::RenderPlugin)
+/// is not registered.
+///
+/// # Examples
+///
+/// ```no_run
+/// use concerto_app::App;
+/// use concerto_render::{plugin::RenderPlugin, shadow_pipeline::ShadowPipelinePlugin};
+///
+/// let mut app = App::new();
+/// app.register_plugin(RenderPlugin)
+///     .register_plugin(ShadowPipelinePlugin);
+/// app.run();
+/// ```
 pub struct ShadowPipelinePlugin;
 
 impl Plugin for ShadowPipelinePlugin {
