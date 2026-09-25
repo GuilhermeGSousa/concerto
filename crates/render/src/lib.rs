@@ -12,6 +12,7 @@ pub mod plugin;
 pub mod queue;
 pub mod render_asset;
 pub mod resources;
+pub mod sets;
 pub mod shadow_pipeline;
 pub mod systems;
 pub mod wgpu_wrapper;

@@ -14,6 +14,7 @@ use crate::{
     components::shadows::{render_shadow_maps, update_shadow_view_proj},
     device::RenderDevice,
     layouts::SkeletonLayout,
+    sets::RenderSet,
 };
 
 #[derive(Resource)]
@@ -26,8 +27,12 @@ pub struct ShadowPipelinePlugin;
 
 impl Plugin for ShadowPipelinePlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.render_mut()
-            .add_system(Render, render_shadow_maps.after(update_shadow_view_proj));
+        app.render_mut().add_system(
+            Render,
+            render_shadow_maps
+                .in_set(RenderSet::Shadows)
+                .after(update_shadow_view_proj),
+        );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
