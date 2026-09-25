@@ -37,7 +37,10 @@ pub use query::{
     filter::{Added, Changed, Or, With, Without},
 };
 pub use resource::{Res, ResMut, Resource};
-pub use system::{IntoSystem, IntoSystemConfig, System, SystemConfig, schedule::Schedule};
+pub use system::{
+    IntoSetConfigs, IntoSystem, IntoSystemConfig, IntoSystemConfigs, System, SystemConfig,
+    SystemSet, schedule::Schedule,
+};
 pub use world::World;
 
 #[cfg(test)]

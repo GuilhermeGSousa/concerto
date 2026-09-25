@@ -11,7 +11,7 @@ use concerto_ecs::{
     },
     resource::{ResMut, Resource},
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
-    IntoSystemConfig, World,
+    IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, World,
 };
 use log::info;
 use runner::AppExit;
@@ -159,6 +159,50 @@ impl App {
             .expect("Schedules resource not found on render subapp!")
             .add_system(update_group, system);
 
+        self
+    }
+
+    /// Registers several systems in the schedule identified by `update_group`.
+    pub fn add_systems<M>(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        systems: impl IntoSystemConfigs<M>,
+    ) -> &mut Self {
+        self.main_mut().add_systems(update_group, systems);
+        self
+    }
+
+    /// Registers several systems in the schedule identified by `update_group`, on
+    /// the render subapp.
+    pub fn add_render_systems<M>(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        systems: impl IntoSystemConfigs<M>,
+    ) -> &mut Self {
+        self.subapps.render_mut().add_systems(update_group, systems);
+        self
+    }
+
+    /// Declares ordering constraints on sets in the schedule identified by `update_group`.
+    pub fn configure_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfigs,
+    ) -> &mut Self {
+        self.main_mut().configure_sets(update_group, configs);
+        self
+    }
+
+    /// Declares ordering constraints on sets in the schedule identified by
+    /// `update_group`, on the render subapp.
+    pub fn configure_render_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfigs,
+    ) -> &mut Self {
+        self.subapps
+            .render_mut()
+            .configure_sets(update_group, configs);
         self
     }
 

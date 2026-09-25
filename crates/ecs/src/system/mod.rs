@@ -4,12 +4,18 @@ pub mod executor;
 mod graph;
 pub mod input;
 pub mod meta;
+mod reachability;
 pub mod schedule;
+pub mod set;
 mod sync_point;
 
 use std::any::TypeId;
 
-pub use config::{AlreadyConfigured, IntoSystemConfig, SystemConfig};
+pub use config::{
+    AlreadyConfigured, DependencyTarget, IntoDependencyTarget, IntoSystemConfig, IntoSystemConfigs,
+    SetTarget, SystemConfig, SystemTarget,
+};
+pub use set::{InternedSystemSet, IntoSetConfig, IntoSetConfigs, SetConfig, SystemSet};
 
 use input::SystemInput;
 use typle::typle;

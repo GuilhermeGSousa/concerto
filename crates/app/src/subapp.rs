@@ -1,7 +1,7 @@
 use concerto_ecs::{
     component::scene::SceneComponent,
     system::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules},
-    IntoSystemConfig, Resource, World,
+    IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, Resource, World,
 };
 
 use crate::{extractor::ExtractFn, schedule_groups::Startup};
@@ -97,6 +97,28 @@ impl SubApp {
         self.get_resource_mut::<Schedules>()
             .expect("Schedules resource not found!")
             .add_system(update_group, system);
+        self
+    }
+
+    pub fn add_systems<M>(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        systems: impl IntoSystemConfigs<M>,
+    ) -> &mut Self {
+        self.get_resource_mut::<Schedules>()
+            .expect("Schedules resource not found!")
+            .add_systems(update_group, systems);
+        self
+    }
+
+    pub fn configure_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfigs,
+    ) -> &mut Self {
+        self.get_resource_mut::<Schedules>()
+            .expect("Schedules resource not found!")
+            .configure_sets(update_group, configs);
         self
     }
 

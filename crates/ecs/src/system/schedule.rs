@@ -1,4 +1,8 @@
-use std::{any::TypeId, collections::HashMap, fmt};
+use std::{
+    any::TypeId,
+    collections::{HashMap, VecDeque},
+    fmt,
+};
 
 use crate::{
     Resource, System, define_label,
@@ -6,10 +10,12 @@ use crate::{
     system::{
         BoxedSystem,
         access::SystemAccess,
-        config::{IntoSystemConfig, SystemConfig},
+        config::{DependencyTarget, IntoSystemConfig, IntoSystemConfigs},
         executor::SystemExecutor,
         graph::{SystemDependencyGraph, SystemNode},
         meta::SystemMetadata,
+        reachability::Reachability,
+        set::{InternedSystemSet, IntoSetConfigs, SetConfig},
         sync_point::SyncPoint,
     },
     world::World,
@@ -22,16 +28,32 @@ use petgraph::{
     graph::NodeIndex,
 };
 
+pub use concerto_ecs_macros::ScheduleLabel;
+
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deref, From)]
 pub struct SystemNodeIndex(NodeIndex);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deref, From)]
 pub struct SystemIndex(usize);
 
-/// An ordered list of systems that are executed sequentially each time [`run`](Schedule::run) is called.
+/// A system's set memberships and ordering constraints, kept until [`Schedule::compile`].
+#[derive(Default)]
+struct NodeConfig {
+    sets: Vec<InternedSystemSet>,
+    after: Vec<DependencyTarget>,
+    before: Vec<DependencyTarget>,
+}
+
+/// A collection of systems and the ordering constraints between them.
 ///
-/// Systems are added with [`add_system`](Schedule::add_system) (appended to the end) or
-/// [`add_system_first`](Schedule::add_system_first) (prepended to the front).
+/// Systems are added with [`add_system`](Schedule::add_system) or
+/// [`add_systems`](Schedule::add_systems), and sets are ordered with
+/// [`configure_sets`](Schedule::configure_sets). Nothing is resolved until
+/// [`compile`](Schedule::compile), so a constraint may name a system or set that is
+/// registered later.
+///
+/// Systems with conflicting data access and no explicit constraint between them run
+/// in registration order.
 ///
 /// # Example
 /// ```
@@ -49,25 +71,18 @@ pub struct SystemIndex(usize);
 /// ```
 #[derive(Default)]
 pub struct Schedule {
-    system_ids: Vec<SystemNodeIndex>,
     systems: Vec<BoxedSystem>,
-    graph: SystemDependencyGraph,
+    configs: Vec<NodeConfig>,
+    set_configs: Vec<SetConfig>,
 }
 
 impl Schedule {
     /// Creates an empty schedule.
     pub fn new() -> Schedule {
-        Self {
-            system_ids: Vec::new(),
-            systems: Vec::new(),
-            graph: SystemDependencyGraph::new(),
-        }
+        Self::default()
     }
 
-    /// Appends a system (or [`SystemConfig`]) to the schedule.
-    ///
-    /// Accepts bare system functions as well as configured systems built with
-    /// [`.after()`](IntoSystemConfig::after) / [`.before()`](IntoSystemConfig::before):
+    /// Adds a system (or [`SystemConfig`](crate::system::config::SystemConfig)) to the schedule.
     ///
     /// ```
     /// # use concerto_ecs::{Schedule, IntoSystemConfig};
@@ -79,142 +94,336 @@ impl Schedule {
     ///     .add_system(c.after(b).before(a));
     /// ```
     pub fn add_system<M>(&mut self, system: impl IntoSystemConfig<M> + 'static) -> &mut Self {
-        self.add_config(system.into_config());
+        let config = system.into_config();
+        self.systems.push(config.system);
+        self.configs.push(NodeConfig {
+            sets: config.sets,
+            after: config.after,
+            before: config.before,
+        });
         self
     }
 
-    /// Registers a [`SystemConfig`] into the graph, recursively registering owned dep
-    /// systems first, then wiring explicit ordering edges.  Returns the [`NodeIndex`] of
-    /// the newly registered system (used internally for edge wiring in recursive calls).
-    fn add_config(&mut self, config: SystemConfig) -> SystemNodeIndex {
-        let after_indices: Vec<SystemNodeIndex> = config
-            .after
-            .into_iter()
-            .map(|dep| self.add_config(dep))
-            .collect();
-
-        let before_indices: Vec<SystemNodeIndex> = config
-            .before
-            .into_iter()
-            .map(|dep| self.add_config(dep))
-            .collect();
-
-        let name = config.system.name();
-        let mut access = SystemAccess::default();
-        let mut metadata = SystemMetadata::default();
-        config.system.fill_access(&mut metadata, &mut access);
-
-        let node_idx: SystemNodeIndex = self
-            .graph
-            .add_node(SystemNode::new(
-                self.systems.len().into(),
-                access.clone(),
-                metadata,
-                name,
-            ))
-            .into();
-
-        // Implicit edges from access-pattern conflicts.
-        for node_index in &self.system_ids {
-            if let Some(other_system) = self.graph.node_weight(**node_index)
-                && !SystemAccess::are_disjoint(&access, other_system.access())
-            {
-                self.graph.add_edge(**node_index, *node_idx, ());
-            }
+    /// Adds several systems to the schedule.
+    ///
+    /// ```
+    /// # use concerto_ecs::{Schedule, IntoSystemConfigs};
+    /// # fn a() {} fn b() {} fn c() {}
+    /// let mut schedule = Schedule::new();
+    /// schedule.add_systems((a, b, c).chain());
+    /// ```
+    pub fn add_systems<M>(&mut self, systems: impl IntoSystemConfigs<M>) -> &mut Self {
+        for config in systems.into_configs() {
+            self.add_system(config);
         }
+        self
+    }
 
-        // Explicit ordering edges.
-        for dep_idx in after_indices {
-            self.graph.add_edge(*dep_idx, *node_idx, ());
-        }
-        for dep_idx in before_indices {
-            self.graph.add_edge(*node_idx, *dep_idx, ());
-        }
-
-        let needs_sync = access.needs_apply() && !is_sync_point(&config.system);
-
-        self.system_ids.push(node_idx);
-        self.systems.push(config.system);
-
-        if needs_sync {
-            self.add_sync_point();
-        }
-
-        node_idx
+    /// Declares ordering constraints on sets in this schedule.
+    ///
+    /// Configuring the same set more than once accumulates its constraints.
+    pub fn configure_sets(&mut self, configs: impl IntoSetConfigs) -> &mut Self {
+        self.set_configs.extend(configs.into_set_configs());
+        self
     }
 
     pub fn compile<T: SystemExecutor + 'static>(mut self, world: &mut World) -> CompiledSchedule {
-        let dependency_count: Vec<usize> = self
-            .system_ids
+        self.insert_sync_points();
+
+        let mut graph = SystemDependencyGraph::new();
+        let nodes: Vec<SystemNodeIndex> = self
+            .systems
             .iter()
-            .map(|idx| {
-                self.graph
-                    .neighbors_directed(**idx, Direction::Incoming)
-                    .count()
+            .enumerate()
+            .map(|(index, system)| {
+                let mut access = SystemAccess::default();
+                let mut metadata = SystemMetadata::default();
+                system.fill_access(&mut metadata, &mut access);
+                graph
+                    .add_node(SystemNode::new(
+                        index.into(),
+                        access,
+                        metadata,
+                        system.name(),
+                    ))
+                    .into()
             })
             .collect();
 
-        let dependants = self
-            .system_ids
-            .iter()
-            .map(|idx| {
-                self.graph
-                    .neighbors_directed(**idx, Direction::Outgoing)
-                    .map(|node_index| *self.graph.node_weight(node_index).unwrap().index())
-                    .collect()
-            })
-            .collect();
+        let by_type = self.index_by_type();
+        let by_set = self.index_by_set();
+        let mut reachability = Reachability::new(self.systems.len());
+        let mut explicit = ExplicitEdges {
+            graph: &mut graph,
+            nodes: &nodes,
+            reachability: &mut reachability,
+        };
 
-        let system_access: Vec<SystemAccess> = self
-            .system_ids
-            .iter()
-            .map(|idx| self.graph.node_weight(**idx).unwrap().access().clone())
-            .collect();
+        for (index, config) in self.configs.iter().enumerate() {
+            let owner = format!("`{}`", self.systems[index].name());
+            for target in &config.after {
+                for source in resolve(target, &by_type, &by_set, &owner) {
+                    explicit.add(source, index, &owner);
+                }
+            }
+            for target in &config.before {
+                for sink in resolve(target, &by_type, &by_set, &owner) {
+                    explicit.add(index, sink, &owner);
+                }
+            }
+        }
 
-        let system_meta: Vec<SystemMetadata> = self
-            .system_ids
-            .iter()
-            .map(|idx| self.graph.node_weight(**idx).unwrap().meta().clone())
-            .collect();
+        for set_config in &self.set_configs {
+            let Some(members) = by_set.get(&set_config.set) else {
+                continue;
+            };
+            let owner = format!("set `{:?}`", set_config.set);
+            for target in &set_config.after {
+                for source in resolve(target, &by_type, &by_set, &owner) {
+                    for member in members {
+                        explicit.add(source, *member, &owner);
+                    }
+                }
+            }
+            for target in &set_config.before {
+                for sink in resolve(target, &by_type, &by_set, &owner) {
+                    for member in members {
+                        explicit.add(*member, sink, &owner);
+                    }
+                }
+            }
+        }
 
-        let sorted_systems = toposort(&self.graph, None)
-            .expect("Cycle detected in schedule — check your .after()/.before() constraints")
-            .into_iter()
-            .map(|node_index| *self.graph.node_weight(node_index).unwrap().index())
-            .collect::<Vec<_>>();
+        add_implicit_edges(&mut graph, &nodes, &mut reachability);
 
         self.systems
             .iter_mut()
             .for_each(|system| system.initialize(world));
 
-        let compiled_data = CompiledScheduleData {
-            systems: self.systems,
-            sorted_systems,
-            dependency_count,
-            dependants,
-            system_access,
-            system_meta,
-        };
+        let compiled_data = build_compiled_data(self.systems, &graph, &nodes);
 
         CompiledSchedule {
             executor: Box::new(T::init(&compiled_data)),
             compiled_data,
-            graph: self.graph,
+            graph,
         }
     }
 
-    fn add_sync_point(&mut self) {
-        self.add_system(SyncPoint);
+    /// Inserts a sync point after every system that has deferred work to apply.
+    fn insert_sync_points(&mut self) {
+        let mut systems = Vec::with_capacity(self.systems.len());
+        let mut configs = Vec::with_capacity(self.configs.len());
+
+        for (system, config) in self.systems.drain(..).zip(self.configs.drain(..)) {
+            let mut access = SystemAccess::default();
+            let mut metadata = SystemMetadata::default();
+            system.fill_access(&mut metadata, &mut access);
+            let needs_sync = access.needs_apply() && !is_sync_point(system.as_ref());
+
+            systems.push(system);
+            configs.push(config);
+
+            if needs_sync {
+                systems.push(Box::new(SyncPoint));
+                configs.push(NodeConfig::default());
+            }
+        }
+
+        self.systems = systems;
+        self.configs = configs;
+    }
+
+    fn index_by_type(&self) -> HashMap<TypeId, Vec<usize>> {
+        let mut index: HashMap<TypeId, Vec<usize>> = HashMap::new();
+        for (position, system) in self.systems.iter().enumerate() {
+            if is_sync_point(system.as_ref()) {
+                continue;
+            }
+            index
+                .entry(system.system_type())
+                .or_default()
+                .push(position);
+        }
+        index
+    }
+
+    fn index_by_set(&self) -> HashMap<InternedSystemSet, Vec<usize>> {
+        let mut index: HashMap<InternedSystemSet, Vec<usize>> = HashMap::new();
+        for (position, config) in self.configs.iter().enumerate() {
+            for set in &config.sets {
+                let members = index.entry(*set).or_default();
+                if !members.contains(&position) {
+                    members.push(position);
+                }
+            }
+        }
+        index
+    }
+}
+
+/// Resolves an ordering target to the positions of the systems it names.
+fn resolve(
+    target: &DependencyTarget,
+    by_type: &HashMap<TypeId, Vec<usize>>,
+    by_set: &HashMap<InternedSystemSet, Vec<usize>>,
+    owner: &str,
+) -> Vec<usize> {
+    match target {
+        DependencyTarget::System { id, name } => match by_type.get(id) {
+            Some(matches) => {
+                if matches.len() > 1 {
+                    log::warn!(
+                        "{owner} is ordered against `{name}`, which is registered {} times in this schedule; ordering against all copies",
+                        matches.len()
+                    );
+                }
+                matches.clone()
+            }
+            None => {
+                log::warn!(
+                    "{owner} is ordered against `{name}`, which is not in this schedule; the constraint is ignored"
+                );
+                Vec::new()
+            }
+        },
+        DependencyTarget::Set(set) => by_set.get(set).cloned().unwrap_or_default(),
+    }
+}
+
+/// Adds explicit ordering edges, panicking on any edge that would close a cycle.
+struct ExplicitEdges<'a> {
+    graph: &'a mut SystemDependencyGraph,
+    nodes: &'a [SystemNodeIndex],
+    reachability: &'a mut Reachability,
+}
+
+impl ExplicitEdges<'_> {
+    fn add(&mut self, from: usize, to: usize, owner: &str) {
+        if from == to {
+            return;
+        }
+        if self.reachability.reaches(to, from) {
+            let path = self
+                .path(to, from)
+                .into_iter()
+                .map(|index| format!("`{}`", self.name(index)))
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            panic!(
+                "Cycle in schedule ordering: {owner} requires `{}` to run before `{}`, but other constraints already order {path}",
+                self.name(from),
+                self.name(to),
+            );
+        }
+        self.graph
+            .update_edge(*self.nodes[from], *self.nodes[to], ());
+        self.reachability.add_edge(from, to);
+    }
+
+    fn name(&self, index: usize) -> &'static str {
+        self.graph.node_weight(*self.nodes[index]).unwrap().name
+    }
+
+    /// Finds a path of explicit edges from `from` to `to`, as system positions.
+    fn path(&self, from: usize, to: usize) -> Vec<usize> {
+        let mut previous: HashMap<NodeIndex, NodeIndex> = HashMap::new();
+        let mut queue = VecDeque::from([*self.nodes[from]]);
+        let target = *self.nodes[to];
+
+        while let Some(node) = queue.pop_front() {
+            if node == target {
+                break;
+            }
+            for next in self.graph.neighbors_directed(node, Direction::Outgoing) {
+                if next != *self.nodes[from] && !previous.contains_key(&next) {
+                    previous.insert(next, node);
+                    queue.push_back(next);
+                }
+            }
+        }
+
+        let mut path = vec![target];
+        while let Some(node) = previous.get(path.last().unwrap()) {
+            path.push(*node);
+        }
+        path.into_iter()
+            .rev()
+            .map(|node| *self.graph.node_weight(node).unwrap().index())
+            .collect()
+    }
+}
+
+/// Orders every pair of access-conflicting systems by registration order, unless an
+/// explicit constraint already orders them the other way.
+fn add_implicit_edges(
+    graph: &mut SystemDependencyGraph,
+    nodes: &[SystemNodeIndex],
+    reachability: &mut Reachability,
+) {
+    for later in 0..nodes.len() {
+        for earlier in 0..later {
+            let conflicts = !SystemAccess::are_disjoint(
+                graph.node_weight(*nodes[earlier]).unwrap().access(),
+                graph.node_weight(*nodes[later]).unwrap().access(),
+            );
+            if conflicts && reachability.try_add_edge(earlier, later) {
+                graph.update_edge(*nodes[earlier], *nodes[later], ());
+            }
+        }
+    }
+}
+
+fn build_compiled_data(
+    systems: Vec<BoxedSystem>,
+    graph: &SystemDependencyGraph,
+    nodes: &[SystemNodeIndex],
+) -> CompiledScheduleData {
+    let dependency_count: Vec<usize> = nodes
+        .iter()
+        .map(|idx| graph.neighbors_directed(**idx, Direction::Incoming).count())
+        .collect();
+
+    let dependants = nodes
+        .iter()
+        .map(|idx| {
+            graph
+                .neighbors_directed(**idx, Direction::Outgoing)
+                .map(|node_index| *graph.node_weight(node_index).unwrap().index())
+                .collect()
+        })
+        .collect();
+
+    let system_access: Vec<SystemAccess> = nodes
+        .iter()
+        .map(|idx| graph.node_weight(**idx).unwrap().access().clone())
+        .collect();
+
+    let system_meta: Vec<SystemMetadata> = nodes
+        .iter()
+        .map(|idx| graph.node_weight(**idx).unwrap().meta().clone())
+        .collect();
+
+    let sorted_systems = toposort(graph, None)
+        .expect("schedule graph is acyclic by construction")
+        .into_iter()
+        .map(|node_index| *graph.node_weight(node_index).unwrap().index())
+        .collect::<Vec<_>>();
+
+    CompiledScheduleData {
+        systems,
+        sorted_systems,
+        dependency_count,
+        dependants,
+        system_access,
+        system_meta,
     }
 }
 
 impl fmt::Debug for Schedule {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{:?}",
-            Dot::with_config(&self.graph, &[Config::EdgeNoLabel])
-        )
+        f.debug_list()
+            .entries(self.systems.iter().map(|system| system.name()))
+            .finish()
     }
 }
 
@@ -272,6 +481,30 @@ impl Schedules {
             .add_system(system);
     }
 
+    /// Registers several systems in the schedule identified by `update_group`.
+    pub fn add_systems<M>(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        systems: impl IntoSystemConfigs<M>,
+    ) {
+        self.schedules
+            .entry(update_group.intern())
+            .or_default()
+            .add_systems(systems);
+    }
+
+    /// Declares ordering constraints on sets in the schedule identified by `update_group`.
+    pub fn configure_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfigs,
+    ) {
+        self.schedules
+            .entry(update_group.intern())
+            .or_default()
+            .configure_sets(configs);
+    }
+
     pub fn compile<T: SystemExecutor + 'static>(self, world: &mut World) -> CompiledSchedules {
         CompiledSchedules {
             compiled_schedules: self
@@ -317,13 +550,10 @@ mod tests {
     };
     use petgraph::graph::NodeIndex;
 
-    // ── Existing tests ────────────────────────────────────────────────────────
-
     #[test]
     fn schedule_new() {
         let schedule = Schedule::new();
-        assert_eq!(schedule.graph.node_count(), 0);
-        assert_eq!(schedule.system_ids.len(), 0);
+        assert_eq!(schedule.systems.len(), 0);
     }
 
     #[test]
@@ -331,16 +561,7 @@ mod tests {
         let mut schedule = Schedule::new();
         schedule.add_system(|| {}).add_system(|| {});
 
-        assert_eq!(schedule.graph.node_count(), 2);
-        assert_eq!(schedule.system_ids.len(), 2);
-    }
-
-    #[test]
-    fn system_dependency_graph_creation() {
-        let mut schedule = Schedule::new();
-        schedule.add_system(|| {});
-
-        assert_eq!(schedule.graph.node_count(), 1);
+        assert_eq!(schedule.systems.len(), 2);
     }
 
     #[test]
@@ -351,9 +572,7 @@ mod tests {
             .add_system(|| {})
             .add_system(|| {});
 
-        assert_eq!(schedule.graph.node_count(), 3);
-        assert_eq!(schedule.system_ids.len(), 3);
-        assert_eq!(schedule.graph.node_count(), 3);
+        assert_eq!(schedule.systems.len(), 3);
     }
 
     #[test]
@@ -370,124 +589,131 @@ mod tests {
             .run(&mut world);
     }
 
-    // ── Graph structure tests ─────────────────────────────────────────────────
-    //
-    // These tests use zero-parameter (data-disjoint) functions so that only
-    // explicit ordering edges appear in the graph.
-
     #[test]
-    fn after_registers_dep_and_main() {
+    fn a_constraint_does_not_register_its_target() {
         fn dep() {}
         fn main_sys() {}
 
         let mut schedule = Schedule::new();
         schedule.add_system(main_sys.after(dep));
 
-        // Both systems must be present in the graph.
-        assert_eq!(schedule.graph.node_count(), 2);
-        assert_eq!(schedule.system_ids.len(), 2);
+        assert_eq!(schedule.systems.len(), 1);
     }
 
     #[test]
-    fn after_creates_dep_to_main_edge() {
-        fn dep() {}
-        fn main_sys() {}
+    fn a_system_added_twice_is_two_nodes() {
+        fn sys() {}
 
         let mut schedule = Schedule::new();
-        schedule.add_system(main_sys.after(dep));
+        schedule.add_system(sys).add_system(sys);
 
-        // dep is registered first → NodeIndex(0); main second → NodeIndex(1).
-        // The explicit ordering edge must run dep before main: 0 → 1.
-        assert_eq!(schedule.graph.edge_count(), 1);
+        assert_eq!(schedule.systems.len(), 2);
+    }
+
+    #[test]
+    fn after_and_before_produce_one_edge_each() {
+        fn sys_a() {}
+        fn sys_b() {}
+        fn sys_c() {}
+
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(sys_c)
+            .add_system(sys_b.after(sys_a).before(sys_c))
+            .add_system(sys_a);
+
+        let mut world = World::new();
+        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+
+        assert_eq!(compiled.graph.node_count(), 3);
+        assert_eq!(compiled.graph.edge_count(), 2);
         assert!(
-            schedule
+            compiled
                 .graph
-                .contains_edge(NodeIndex::new(0), NodeIndex::new(1))
+                .contains_edge(NodeIndex::new(2), NodeIndex::new(1))
         );
-    }
-
-    #[test]
-    fn before_registers_dep_and_main() {
-        fn main_sys() {}
-        fn dep() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(main_sys.before(dep));
-
-        assert_eq!(schedule.graph.node_count(), 2);
-        assert_eq!(schedule.system_ids.len(), 2);
-    }
-
-    #[test]
-    fn before_creates_main_to_dep_edge() {
-        fn main_sys() {}
-        fn dep() {}
-
-        let mut schedule = Schedule::new();
-        schedule.add_system(main_sys.before(dep));
-
-        // dep is registered first (as a "before" dep) → NodeIndex(0).
-        // main is registered second → NodeIndex(1).
-        // The explicit ordering edge must run main before dep: 1 → 0.
-        assert_eq!(schedule.graph.edge_count(), 1);
         assert!(
-            schedule
+            compiled
                 .graph
                 .contains_edge(NodeIndex::new(1), NodeIndex::new(0))
         );
     }
 
     #[test]
-    fn after_before_chain_has_correct_edges() {
-        fn sys_a() {}
-        fn sys_b() {} // main: a → b → c
-        fn sys_c() {}
+    fn a_self_referential_constraint_does_not_deadlock_compile() {
+        fn sys() {}
 
         let mut schedule = Schedule::new();
-        // Registration order in add_config:
-        //   1. after  deps → sys_a : NodeIndex(0)
-        //   2. before deps → sys_c : NodeIndex(1)
-        //   3. main   sys_b        : NodeIndex(2)
-        //   edges: 0→2 (a before b) and 2→1 (b before c)
-        schedule.add_system(sys_b.after(sys_a).before(sys_c));
+        schedule.add_system(sys.after(sys));
 
-        assert_eq!(schedule.graph.node_count(), 3);
-        assert_eq!(schedule.graph.edge_count(), 2);
-        assert!(
-            schedule
-                .graph
-                .contains_edge(NodeIndex::new(0), NodeIndex::new(2))
-        ); // a → b
-        assert!(
-            schedule
-                .graph
-                .contains_edge(NodeIndex::new(2), NodeIndex::new(1))
-        ); // b → c
+        let mut world = World::new();
+        schedule
+            .compile::<SingleThreadedExecutor>(&mut world)
+            .run(&mut world);
     }
 
     #[test]
-    fn nested_after_chain_has_correct_edges() {
-        fn sys_a() {}
-        fn sys_b() {}
-        fn sys_c() {}
+    #[should_panic(expected = "Cycle in schedule ordering")]
+    fn contradicting_explicit_constraints_panic() {
+        fn a() {}
+        fn b() {}
 
         let mut schedule = Schedule::new();
-        // c.after(b.after(a)):  a → b → c
-        // Registration order (depth-first): sys_a(0), sys_b(1), sys_c(2)
-        // Edges: 0→1, 1→2
-        schedule.add_system(sys_c.after(sys_b.after(sys_a)));
+        schedule.add_system(a.before(b));
+        schedule.add_system(b.before(a));
 
-        assert_eq!(schedule.graph.node_count(), 3);
-        assert_eq!(schedule.graph.edge_count(), 2);
-        assert!(
-            schedule
-                .graph
-                .contains_edge(NodeIndex::new(0), NodeIndex::new(1))
-        );
-        assert!(
-            schedule
-                .graph
-                .contains_edge(NodeIndex::new(1), NodeIndex::new(2))
+        let mut world = World::new();
+        let _ = schedule.compile::<SingleThreadedExecutor>(&mut world);
+    }
+
+    #[test]
+    fn a_cycle_panic_names_both_systems() {
+        fn cycle_a() {}
+        fn cycle_b() {}
+
+        let result = std::panic::catch_unwind(|| {
+            let mut schedule = Schedule::new();
+            schedule.add_system(cycle_a.before(cycle_b));
+            schedule.add_system(cycle_b.before(cycle_a));
+
+            let mut world = World::new();
+            let _ = schedule.compile::<SingleThreadedExecutor>(&mut world);
+        });
+
+        let payload = result.unwrap_err();
+        let message = payload.downcast_ref::<String>().unwrap();
+        assert!(message.contains("cycle_a"), "{message}");
+        assert!(message.contains("cycle_b"), "{message}");
+    }
+
+    #[test]
+    fn an_explicit_constraint_across_a_sync_point_compiles() {
+        use crate::command::CommandQueue;
+        use crate::resource::ResMut;
+
+        #[derive(crate::Resource, Default)]
+        struct Order(Vec<&'static str>);
+
+        fn deferred(_commands: CommandQueue, mut order: ResMut<Order>) {
+            order.0.push("deferred");
+        }
+        fn reader(mut order: ResMut<Order>) {
+            order.0.push("reader");
+        }
+
+        let mut schedule = Schedule::new();
+        schedule.add_system(deferred);
+        schedule.add_system(reader.before(deferred));
+
+        let mut world = World::new();
+        world.insert_resource(Order::default());
+        schedule
+            .compile::<SingleThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        assert_eq!(
+            world.get_resource::<Order>().unwrap().0,
+            vec!["reader", "deferred"]
         );
     }
 
