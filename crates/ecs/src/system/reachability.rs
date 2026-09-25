@@ -1,21 +1,18 @@
+use fixedbitset::FixedBitSet;
+
 pub(crate) struct Reachability {
-    node_count: usize,
-    words_per_node: usize,
-    bits: Vec<u64>,
+    descendants: Vec<FixedBitSet>,
 }
 
 impl Reachability {
     pub(crate) fn new(node_count: usize) -> Self {
-        let words_per_node = node_count.div_ceil(64);
         Self {
-            node_count,
-            words_per_node,
-            bits: vec![0; node_count * words_per_node],
+            descendants: vec![FixedBitSet::with_capacity(node_count); node_count],
         }
     }
 
     pub(crate) fn reaches(&self, from: usize, to: usize) -> bool {
-        self.bits[from * self.words_per_node + to / 64] & (1 << (to % 64)) != 0
+        self.descendants[from].contains(to)
     }
 
     pub(crate) fn add_edge(&mut self, from: usize, to: usize) {
@@ -23,16 +20,12 @@ impl Reachability {
             return;
         }
 
-        let mut closure: Vec<u64> =
-            self.bits[to * self.words_per_node..(to + 1) * self.words_per_node].to_vec();
-        closure[to / 64] |= 1 << (to % 64);
+        let mut closure = self.descendants[to].clone();
+        closure.insert(to);
 
-        for node in 0..self.node_count {
+        for node in 0..self.descendants.len() {
             if node == from || self.reaches(node, from) {
-                let base = node * self.words_per_node;
-                for (word, bits) in closure.iter().enumerate() {
-                    self.bits[base + word] |= bits;
-                }
+                self.descendants[node].union_with(&closure);
             }
         }
     }
