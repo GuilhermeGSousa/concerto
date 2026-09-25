@@ -10,12 +10,12 @@ use crate::{
     system::{
         BoxedSystem,
         access::SystemAccess,
-        config::{DependencyTarget, IntoSystemConfig, IntoSystemConfigs},
+        config::{DependencyTarget, IntoSystemConfig, NodeConfig},
         executor::SystemExecutor,
         graph::{SystemDependencyGraph, SystemNode},
         meta::SystemMetadata,
         reachability::Reachability,
-        set::{InternedSystemSet, IntoSetConfigs, SetConfig},
+        set::{InternedSystemSet, IntoSetConfig, SetEntry},
         sync_point::SyncPoint,
     },
     world::World,
@@ -39,17 +39,9 @@ pub struct SystemNodeIndex(NodeIndex);
 #[derive(Clone, Copy, Eq, Hash, PartialEq, Deref, From)]
 pub struct SystemIndex(usize);
 
-#[derive(Default)]
-struct NodeConfig {
-    sets: Vec<InternedSystemSet>,
-    after: Vec<DependencyTarget>,
-    before: Vec<DependencyTarget>,
-}
-
 /// A collection of systems and the ordering constraints between them.
 ///
-/// Systems are added with [`add_system`](Schedule::add_system) or
-/// [`add_systems`](Schedule::add_systems), and sets are ordered with
+/// Systems are added with [`add_system`](Schedule::add_system), and sets are ordered with
 /// [`configure_sets`](Schedule::configure_sets). Nothing is resolved until
 /// [`compile`](Schedule::compile), so a constraint may name a system or set that is
 /// registered later.
@@ -86,7 +78,7 @@ struct NodeConfig {
 pub struct Schedule {
     systems: Vec<BoxedSystem>,
     configs: Vec<NodeConfig>,
-    set_configs: Vec<SetConfig>,
+    set_configs: Vec<SetEntry>,
 }
 
 impl Schedule {
@@ -103,7 +95,8 @@ impl Schedule {
         Self::default()
     }
 
-    /// Adds a system or [`SystemConfig`](crate::SystemConfig) to the schedule.
+    /// Adds a system, a tuple of systems, or a [`SystemConfig`](crate::SystemConfig) to
+    /// the schedule. The systems in a tuple are registered in order.
     ///
     /// # Examples
     ///
@@ -113,41 +106,20 @@ impl Schedule {
     /// fn a() {}
     /// fn b() {}
     /// fn c() {}
+    /// fn d() {}
     ///
     /// let mut schedule = Schedule::new();
     /// schedule
     ///     .add_system(a)
     ///     .add_system(b.after(a))
-    ///     .add_system(c.after(b).before(a));
+    ///     .add_system((c, d).chain().after(b));
     /// ```
-    pub fn add_system<M>(&mut self, system: impl IntoSystemConfig<M> + 'static) -> &mut Self {
-        let config = system.into_config();
-        self.systems.push(config.system);
-        self.configs.push(NodeConfig {
-            sets: config.sets,
-            after: config.after,
-            before: config.before,
-        });
-        self
-    }
-
-    /// Adds several systems to the schedule, in order.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_ecs::{IntoSystemConfigs, Schedule};
-    ///
-    /// fn a() {}
-    /// fn b() {}
-    /// fn c() {}
-    ///
-    /// let mut schedule = Schedule::new();
-    /// schedule.add_systems((a, b, c).chain());
-    /// ```
-    pub fn add_systems<M>(&mut self, systems: impl IntoSystemConfigs<M>) -> &mut Self {
-        for config in systems.into_configs() {
-            self.add_system(config);
+    pub fn add_system<M>(&mut self, system: impl IntoSystemConfig<M>) -> &mut Self {
+        let mut entries = Vec::new();
+        system.into_config().into_entries(&mut entries);
+        for entry in entries {
+            self.systems.push(entry.system);
+            self.configs.push(entry.config);
         }
         self
     }
@@ -160,7 +132,7 @@ impl Schedule {
     /// # Examples
     ///
     /// ```
-    /// use concerto_ecs::{IntoSetConfigs, Schedule, SystemSet, system::IntoSetConfig};
+    /// use concerto_ecs::{IntoSetConfig, Schedule, SystemSet};
     ///
     /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
     /// enum Frame {
@@ -174,8 +146,10 @@ impl Schedule {
     ///     .configure_sets((Frame::Input, Frame::Simulate).chain())
     ///     .configure_sets(Frame::Present.after(Frame::Simulate));
     /// ```
-    pub fn configure_sets(&mut self, configs: impl IntoSetConfigs) -> &mut Self {
-        self.set_configs.extend(configs.into_set_configs());
+    pub fn configure_sets(&mut self, configs: impl IntoSetConfig) -> &mut Self {
+        configs
+            .into_set_config()
+            .into_entries(&mut self.set_configs);
         self
     }
 
@@ -657,7 +631,8 @@ pub struct Schedules {
 }
 
 impl Schedules {
-    /// Adds a system to the schedule labelled `update_group`.
+    /// Adds a system, a tuple of systems, or a [`SystemConfig`](crate::SystemConfig) to
+    /// the schedule labelled `update_group`.
     ///
     /// See [`Schedule::add_system`].
     ///
@@ -677,41 +652,12 @@ impl Schedules {
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
-        system: impl IntoSystemConfig<M> + 'static,
+        system: impl IntoSystemConfig<M>,
     ) {
         self.schedules
             .entry(update_group.intern())
             .or_default()
             .add_system(system);
-    }
-
-    /// Adds several systems to the schedule labelled `update_group`.
-    ///
-    /// See [`Schedule::add_systems`].
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_ecs::{IntoSystemConfigs, system::schedule::{ScheduleLabel, Schedules}};
-    ///
-    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-    /// struct Update;
-    ///
-    /// fn read_input() {}
-    /// fn move_player() {}
-    ///
-    /// let mut schedules = Schedules::default();
-    /// schedules.add_systems(Update, (read_input, move_player).chain());
-    /// ```
-    pub fn add_systems<M>(
-        &mut self,
-        update_group: impl ScheduleLabel,
-        systems: impl IntoSystemConfigs<M>,
-    ) {
-        self.schedules
-            .entry(update_group.intern())
-            .or_default()
-            .add_systems(systems);
     }
 
     /// Adds ordering constraints between sets in the schedule labelled `update_group`.
@@ -722,7 +668,7 @@ impl Schedules {
     ///
     /// ```
     /// use concerto_ecs::{
-    ///     IntoSetConfigs, SystemSet,
+    ///     IntoSetConfig, SystemSet,
     ///     system::schedule::{ScheduleLabel, Schedules},
     /// };
     ///
@@ -741,7 +687,7 @@ impl Schedules {
     pub fn configure_sets(
         &mut self,
         update_group: impl ScheduleLabel,
-        configs: impl IntoSetConfigs,
+        configs: impl IntoSetConfig,
     ) {
         self.schedules
             .entry(update_group.intern())
@@ -989,6 +935,55 @@ mod tests {
         schedule.add_system(sys).add_system(sys);
 
         assert_eq!(schedule.systems.len(), 2);
+    }
+
+    #[test]
+    fn chain_adds_one_edge_between_consecutive_systems() {
+        fn sys_a() {}
+        fn sys_b() {}
+        fn sys_c() {}
+
+        let mut schedule = Schedule::new();
+        schedule.add_system((sys_a, sys_b, sys_c).chain());
+
+        let mut world = World::new();
+        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+
+        assert_eq!(compiled.graph.edge_count(), 2);
+        assert!(
+            compiled
+                .graph
+                .contains_edge(NodeIndex::new(0), NodeIndex::new(1))
+        );
+        assert!(
+            compiled
+                .graph
+                .contains_edge(NodeIndex::new(1), NodeIndex::new(2))
+        );
+    }
+
+    #[test]
+    fn chaining_a_nested_group_orders_it_as_a_unit() {
+        fn sys_a() {}
+        fn sys_b() {}
+        fn sys_c() {}
+        fn sys_d() {}
+
+        let mut schedule = Schedule::new();
+        schedule.add_system((sys_a, (sys_b, sys_c), sys_d).chain());
+
+        let mut world = World::new();
+        let compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+
+        let edges = [(0, 1), (0, 2), (1, 3), (2, 3)];
+        assert_eq!(compiled.graph.edge_count(), edges.len());
+        for (from, to) in edges {
+            assert!(
+                compiled
+                    .graph
+                    .contains_edge(NodeIndex::new(from), NodeIndex::new(to))
+            );
+        }
     }
 
     #[test]

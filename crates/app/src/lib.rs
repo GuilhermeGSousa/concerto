@@ -40,7 +40,7 @@ use concerto_ecs::{
     },
     resource::{ResMut, Resource},
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
-    IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, World,
+    IntoSetConfig, IntoSystemConfig, World,
 };
 use log::info;
 use runner::AppExit;
@@ -232,7 +232,9 @@ impl App {
         self
     }
 
-    /// Adds a system to the main world's schedule labelled `update_group`.
+    /// Adds a system, a tuple of systems, or a
+    /// [`SystemConfig`](concerto_ecs::SystemConfig) to the main world's schedule
+    /// labelled `update_group`.
     ///
     /// See [`Schedule::add_system`](concerto_ecs::Schedule::add_system).
     ///
@@ -245,16 +247,20 @@ impl App {
     ///
     /// ```
     /// use concerto_app::{App, schedule_groups::Update};
+    /// use concerto_ecs::IntoSystemConfig;
     ///
     /// fn tick() {}
+    /// fn read_input() {}
+    /// fn move_player() {}
     ///
     /// let mut app = App::new();
-    /// app.add_system(Update, tick);
+    /// app.add_system(Update, tick)
+    ///     .add_system(Update, (read_input, move_player).chain());
     /// ```
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
-        system: impl IntoSystemConfig<M> + 'static,
+        system: impl IntoSystemConfig<M>,
     ) -> &mut Self {
         self.get_resource_mut::<Schedules>()
             .expect("Schedules resource not found!")
@@ -263,8 +269,9 @@ impl App {
         self
     }
 
-    /// Adds a system to the render world's schedule labelled `update_group`, such as
-    /// [`Extract`](schedule_groups::Extract).
+    /// Adds a system, a tuple of systems, or a
+    /// [`SystemConfig`](concerto_ecs::SystemConfig) to the render world's schedule
+    /// labelled `update_group`, such as [`Extract`](schedule_groups::Extract).
     ///
     /// # Panics
     ///
@@ -275,16 +282,18 @@ impl App {
     ///
     /// ```
     /// use concerto_app::{App, schedule_groups::Render};
+    /// use concerto_ecs::IntoSystemConfig;
     ///
+    /// fn prepare() {}
     /// fn draw() {}
     ///
     /// let mut app = App::new();
-    /// app.add_render_system(Render, draw);
+    /// app.add_render_system(Render, (prepare, draw).chain());
     /// ```
     pub fn add_render_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
-        system: impl IntoSystemConfig<M> + 'static,
+        system: impl IntoSystemConfig<M>,
     ) -> &mut Self {
         self.subapps
             .render_mut()
@@ -292,64 +301,6 @@ impl App {
             .expect("Schedules resource not found on render subapp!")
             .add_system(update_group, system);
 
-        self
-    }
-
-    /// Adds several systems to the main world's schedule labelled `update_group`.
-    ///
-    /// See [`Schedule::add_systems`](concerto_ecs::Schedule::add_systems).
-    ///
-    /// # Panics
-    ///
-    /// Panics if called after [`finish_plugin_build`](App::finish_plugin_build), once the
-    /// schedules have been compiled.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::{App, schedule_groups::Update};
-    /// use concerto_ecs::IntoSystemConfigs;
-    ///
-    /// fn read_input() {}
-    /// fn move_player() {}
-    ///
-    /// let mut app = App::new();
-    /// app.add_systems(Update, (read_input, move_player).chain());
-    /// ```
-    pub fn add_systems<M>(
-        &mut self,
-        update_group: impl ScheduleLabel,
-        systems: impl IntoSystemConfigs<M>,
-    ) -> &mut Self {
-        self.main_mut().add_systems(update_group, systems);
-        self
-    }
-
-    /// Adds several systems to the render world's schedule labelled `update_group`.
-    ///
-    /// # Panics
-    ///
-    /// Panics if called after [`finish_plugin_build`](App::finish_plugin_build), once the
-    /// schedules have been compiled.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::{App, schedule_groups::Render};
-    /// use concerto_ecs::IntoSystemConfigs;
-    ///
-    /// fn prepare() {}
-    /// fn draw() {}
-    ///
-    /// let mut app = App::new();
-    /// app.add_render_systems(Render, (prepare, draw).chain());
-    /// ```
-    pub fn add_render_systems<M>(
-        &mut self,
-        update_group: impl ScheduleLabel,
-        systems: impl IntoSystemConfigs<M>,
-    ) -> &mut Self {
-        self.subapps.render_mut().add_systems(update_group, systems);
         self
     }
 
@@ -367,7 +318,7 @@ impl App {
     ///
     /// ```
     /// use concerto_app::{App, schedule_groups::Update};
-    /// use concerto_ecs::{IntoSetConfigs, SystemSet};
+    /// use concerto_ecs::{IntoSetConfig, SystemSet};
     ///
     /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
     /// enum Phase {
@@ -381,7 +332,7 @@ impl App {
     pub fn configure_sets(
         &mut self,
         update_group: impl ScheduleLabel,
-        configs: impl IntoSetConfigs,
+        configs: impl IntoSetConfig,
     ) -> &mut Self {
         self.main_mut().configure_sets(update_group, configs);
         self
@@ -399,7 +350,7 @@ impl App {
     ///
     /// ```
     /// use concerto_app::{App, schedule_groups::Render};
-    /// use concerto_ecs::{IntoSetConfigs, SystemSet};
+    /// use concerto_ecs::{IntoSetConfig, SystemSet};
     ///
     /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
     /// enum Phase {
@@ -413,7 +364,7 @@ impl App {
     pub fn configure_render_sets(
         &mut self,
         update_group: impl ScheduleLabel,
-        configs: impl IntoSetConfigs,
+        configs: impl IntoSetConfig,
     ) -> &mut Self {
         self.subapps
             .render_mut()

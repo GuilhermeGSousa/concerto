@@ -1,5 +1,5 @@
 use concerto_ecs::{
-    IntoSetConfigs, IntoSystemConfig, Resource, Schedule, World, resource::ResMut,
+    IntoSetConfig, IntoSystemConfig, Resource, Schedule, World, resource::ResMut,
     system::executor::single_thread::SingleThreadedExecutor,
 };
 use concerto_ui::sets::UiSet;

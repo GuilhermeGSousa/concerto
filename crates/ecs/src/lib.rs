@@ -86,8 +86,8 @@ pub use query::{
 };
 pub use resource::{Res, ResMut, Resource};
 pub use system::{
-    IntoSetConfigs, IntoSystem, IntoSystemConfig, IntoSystemConfigs, System, SystemConfig,
-    SystemSet, schedule::Schedule,
+    IntoSetConfig, IntoSystem, IntoSystemConfig, System, SystemConfig, SystemSet,
+    schedule::Schedule,
 };
 pub use world::World;
 

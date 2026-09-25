@@ -2,7 +2,7 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateUpdate, Render},
 };
-use concerto_ecs::{IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs};
+use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
     resources::RenderContext,
@@ -147,7 +147,7 @@ impl Plugin for UIPlugin {
                 .chain(),
         );
 
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (
                 update_ui_interaction,
@@ -156,7 +156,7 @@ impl Plugin for UIPlugin {
             )
                 .in_set(UiSet::Input),
         );
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (
                 toggle_checkboxes,
@@ -173,15 +173,15 @@ impl Plugin for UIPlugin {
             )
                 .in_set(UiSet::Widgets),
         );
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (setup_slider_visuals, setup_scrollbars).in_set(UiSet::Setup),
         );
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (sync_slider_fill, sync_scroll_content, sync_split_panes).in_set(UiSet::Project),
         );
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (
                 sync_checkbox_material,
@@ -190,7 +190,7 @@ impl Plugin for UIPlugin {
             )
                 .in_set(UiSet::Materials),
         );
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (
                 track_panel_stack,
@@ -199,7 +199,7 @@ impl Plugin for UIPlugin {
             )
                 .in_set(UiSet::Layout),
         );
-        app.add_systems(
+        app.add_system(
             LateUpdate,
             (sync_scrollbar_tracks, sync_scrollbar_thumbs).in_set(UiSet::PostLayout),
         );

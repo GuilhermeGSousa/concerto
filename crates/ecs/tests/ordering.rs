@@ -1,7 +1,6 @@
 use concerto_ecs::{
-    IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, Resource, Schedule, SystemSet, World,
-    resource::ResMut,
-    system::{IntoSetConfig, executor::single_thread::SingleThreadedExecutor},
+    IntoSetConfig, IntoSystemConfig, Resource, Schedule, SystemSet, World, resource::ResMut,
+    system::executor::single_thread::SingleThreadedExecutor,
 };
 
 #[derive(Resource, Default)]
@@ -134,7 +133,7 @@ fn a_system_can_be_ordered_before_a_set() {
 fn a_system_can_be_ordered_after_a_set() {
     let mut schedule = Schedule::new();
     schedule.add_system(second.after(Phase::Early));
-    schedule.add_systems((first, third).in_set(Phase::Early));
+    schedule.add_system((first, third).in_set(Phase::Early));
 
     let order = run(schedule);
     assert_eq!(order.last(), Some(&"second"));
@@ -176,20 +175,46 @@ fn a_cycle_created_by_set_expansion_panics() {
 fn a_tuple_of_systems_can_join_one_set() {
     let mut schedule = Schedule::new();
     schedule.configure_sets((Phase::Early, Phase::Late).chain());
-    schedule.add_systems((second, third).in_set(Phase::Late));
-    schedule.add_systems(first.in_set(Phase::Early));
+    schedule.add_system((second, third).in_set(Phase::Late));
+    schedule.add_system(first.in_set(Phase::Early));
 
     let order = run(schedule);
     assert_eq!(order, vec!["first", "second", "third"]);
 }
 
 #[test]
-fn chain_orders_a_tuple_against_registration_order() {
+fn chain_orders_a_vec_of_systems() {
     let mut schedule = Schedule::new();
-    let configs: Vec<_> = (second, first).chain().into_iter().rev().collect();
-    schedule.add_systems(configs);
+    schedule.add_system(
+        vec![
+            third.into_config(),
+            second.into_config(),
+            first.into_config(),
+        ]
+        .chain(),
+    );
 
-    assert_eq!(run(schedule), vec!["second", "first"]);
+    assert_eq!(run(schedule), vec!["third", "second", "first"]);
+}
+
+#[test]
+fn a_chained_group_orders_against_a_system_registered_before_it() {
+    let mut schedule = Schedule::new();
+    schedule.add_system(third);
+    schedule.add_system((first, second).chain().before(third));
+
+    assert_eq!(run(schedule), vec!["first", "second", "third"]);
+}
+
+#[test]
+fn a_tuple_of_sets_can_be_ordered_as_one() {
+    let mut schedule = Schedule::new();
+    schedule.configure_sets((Phase::Late, Phase::Unused).after(Phase::Early));
+    schedule.add_system(second.in_set(Phase::Late));
+    schedule.add_system(third.in_set(Phase::Unused));
+    schedule.add_system(first.in_set(Phase::Early));
+
+    assert_eq!(run(schedule).first(), Some(&"first"));
 }
 
 #[test]

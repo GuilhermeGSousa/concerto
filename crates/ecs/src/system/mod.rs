@@ -19,10 +19,9 @@ mod sync_point;
 use std::any::TypeId;
 
 pub use config::{
-    AlreadyConfigured, DependencyTarget, IntoDependencyTarget, IntoSystemConfig, IntoSystemConfigs,
-    SystemConfig,
+    AlreadyConfigured, DependencyTarget, IntoDependencyTarget, IntoSystemConfig, SystemConfig,
 };
-pub use set::{InternedSystemSet, IntoSetConfig, IntoSetConfigs, SetConfig, SystemSet};
+pub use set::{InternedSystemSet, IntoSetConfig, SetConfig, SystemSet};
 
 use input::SystemInput;
 use typle::typle;

@@ -9,24 +9,23 @@ from registration order. This page covers the API for both.
 The examples below assume these traits are in scope:
 
 ```rust
-use concerto_ecs::{IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, system::IntoSetConfig};
+use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 ```
 
-- `IntoSystemConfig` gives a single system `.after`, `.before` and `.in_set`.
-- `IntoSystemConfigs` gives a tuple of systems `.in_set` and `.chain`.
-- `IntoSetConfig` gives a set `.after` and `.before`.
-- `IntoSetConfigs` gives a tuple of sets `.chain`.
+- `IntoSystemConfig` gives a system, or a tuple of systems, `.after`, `.before`,
+  `.in_set` and `.chain`.
+- `IntoSetConfig` gives a set, or a tuple of sets, `.after`, `.before` and `.chain`.
 
 ## Adding systems
 
 ```rust
 app.add_system(Update, my_system);
-app.add_systems(Update, (a, b, c));
+app.add_system(Update, (a, b, c));
 ```
 
-`add_systems` takes a tuple of up to twelve systems or configs, a `SystemConfig`,
-or a `Vec<SystemConfig>`. The render subapp has the same pair:
-`add_render_system` and `add_render_systems`.
+`add_system` takes a system, a `SystemConfig`, a `Vec<SystemConfig>`, or a tuple of
+up to twelve of any of these, nested as deeply as needed. The render subapp has
+`add_render_system`.
 
 ## Ordering one system after another
 
@@ -41,10 +40,12 @@ Someone has to add `a` to the same schedule, and it runs once no matter how many
 constraints name it. The target may be registered before or after the constraint:
 nothing is resolved until the schedule compiles.
 
-`.chain()` orders a tuple of systems pairwise:
+`.chain()` orders a tuple of systems pairwise, and `.after`, `.before` and `.in_set`
+on a tuple apply to every system in it. A nested tuple is chained as a unit, so here
+both movement systems run after `read_input` and before `update_camera`:
 
 ```rust
-app.add_systems(Update, (read_input, move_player, update_camera).chain());
+app.add_system(Update, (read_input, (move_player, move_enemies), update_camera).chain());
 ```
 
 ## Declaring a set
@@ -88,7 +89,7 @@ Sets are configured per schedule; the render subapp uses `configure_render_sets`
 ## Joining a set
 
 ```rust
-app.add_systems(LateUpdate, (update_widgets, update_tooltips).in_set(UiSet::Widgets));
+app.add_system(LateUpdate, (update_widgets, update_tooltips).in_set(UiSet::Widgets));
 app.add_system(LateUpdate, compute_ui_nodes.in_set(UiSet::Layout));
 ```
 
@@ -96,7 +97,7 @@ A system may belong to several sets. Constraints on the system itself still appl
 alongside its sets':
 
 ```rust
-app.add_systems(
+app.add_system(
     LateUpdate,
     (track_panel_stack, compute_ui_nodes.after(track_panel_stack)).in_set(UiSet::Layout),
 );
@@ -144,3 +145,7 @@ a separate warning.
 - Sets are flat: a set cannot contain another set.
 - Closures run fine but cannot be ordering targets — there is no way to name
   them again. Use a named `fn` for anything that needs to be referenced.
+- The same goes for function pointers: every `fn(ResMut<Score>)` pointer shares one
+  type, so they cannot be told apart. This is why `Vec<SystemConfig>` is accepted but
+  a `Vec` of bare functions is not — collecting functions into a `Vec` coerces them
+  to pointers. Call `.into_config()` on each before collecting.

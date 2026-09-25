@@ -81,16 +81,36 @@ impl<S: SystemSet> IntoDependencyTarget<SetTarget> for S {
     }
 }
 
-/// A system bundled with its set memberships and ordering constraints.
+#[derive(Default)]
+pub(crate) struct NodeConfig {
+    pub(crate) sets: Vec<InternedSystemSet>,
+    pub(crate) after: Vec<DependencyTarget>,
+    pub(crate) before: Vec<DependencyTarget>,
+}
+
+pub(crate) struct SystemEntry {
+    pub(crate) system: BoxedSystem,
+    pub(crate) config: NodeConfig,
+}
+
+enum SystemNode {
+    Single(SystemEntry),
+    Group(Vec<SystemConfig>),
+}
+
+/// One system or a group of systems, with their set memberships and ordering
+/// constraints.
 ///
-/// Created by calling [`after`](IntoSystemConfig::after),
-/// [`before`](IntoSystemConfig::before) or [`in_set`](IntoSystemConfig::in_set)
-/// on a system function, and passed to
+/// Created by [`IntoSystemConfig::into_config`], usually implicitly by calling
+/// [`after`](IntoSystemConfig::after), [`before`](IntoSystemConfig::before),
+/// [`in_set`](IntoSystemConfig::in_set) or [`chain`](IntoSystemConfig::chain) on a
+/// system or a tuple of systems, and passed to
 /// [`Schedule::add_system`](crate::Schedule::add_system).
 ///
 /// Ordering targets are references: `a.after(b)` orders `a` after the `b` registered
 /// in the same schedule and does not register `b`. A target that is not in the
-/// schedule is ignored with a warning when the schedule compiles.
+/// schedule is ignored with a warning when the schedule compiles. Constraints on a
+/// group apply to every system in it.
 ///
 /// # Examples
 ///
@@ -107,15 +127,10 @@ impl<S: SystemSet> IntoDependencyTarget<SetTarget> for S {
 ///     .add_system(system_c)
 ///     .add_system(system_a.after(system_b).before(system_c));
 /// ```
-pub struct SystemConfig {
-    pub(crate) system: BoxedSystem,
-    pub(crate) sets: Vec<InternedSystemSet>,
-    pub(crate) after: Vec<DependencyTarget>,
-    pub(crate) before: Vec<DependencyTarget>,
-}
+pub struct SystemConfig(SystemNode);
 
 impl SystemConfig {
-    /// Orders this system after `target`, a system or a [`SystemSet`].
+    /// Orders every system in this config after `target`, a system or a [`SystemSet`].
     ///
     /// # Examples
     ///
@@ -133,11 +148,12 @@ impl SystemConfig {
     ///     .add_system(animate.after(load).after(spawn));
     /// ```
     pub fn after<M>(mut self, target: impl IntoDependencyTarget<M>) -> Self {
-        self.after.push(target.into_target());
+        let target = target.into_target();
+        self.for_each_entry(&mut |entry| entry.config.after.push(target));
         self
     }
 
-    /// Orders this system before `target`, a system or a [`SystemSet`].
+    /// Orders every system in this config before `target`, a system or a [`SystemSet`].
     ///
     /// # Examples
     ///
@@ -155,11 +171,12 @@ impl SystemConfig {
     ///     .add_system(input.before(movement).before(render));
     /// ```
     pub fn before<M>(mut self, target: impl IntoDependencyTarget<M>) -> Self {
-        self.before.push(target.into_target());
+        let target = target.into_target();
+        self.for_each_entry(&mut |entry| entry.config.before.push(target));
         self
     }
 
-    /// Adds this system to `set`. A system may belong to several sets.
+    /// Adds every system in this config to `set`. A system may belong to several sets.
     ///
     /// # Examples
     ///
@@ -173,21 +190,95 @@ impl SystemConfig {
     /// }
     ///
     /// fn integrate() {}
+    /// fn collide() {}
     ///
     /// let mut schedule = Schedule::new();
-    /// schedule.add_system(integrate.in_set(Phase::Simulate).in_set(Phase::Debug));
+    /// schedule
+    ///     .add_system(integrate.in_set(Phase::Simulate).in_set(Phase::Debug))
+    ///     .add_system((integrate, collide).in_set(Phase::Simulate));
     /// ```
     pub fn in_set(mut self, set: impl SystemSet) -> Self {
-        self.sets.push(set.intern());
+        let set = set.intern();
+        self.for_each_entry(&mut |entry| entry.config.sets.push(set));
         self
+    }
+
+    /// Orders the children of a group so each runs before the next.
+    ///
+    /// When a child is itself a group, every system in it runs before every system in
+    /// the next child. Does nothing on a single system.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use concerto_ecs::{IntoSystemConfig, Schedule};
+    ///
+    /// fn read_input() {}
+    /// fn move_player() {}
+    /// fn move_enemies() {}
+    /// fn update_camera() {}
+    ///
+    /// let mut schedule = Schedule::new();
+    /// schedule.add_system((read_input, (move_player, move_enemies), update_camera).chain());
+    /// ```
+    pub fn chain(mut self) -> Self {
+        if let SystemNode::Group(children) = &mut self.0 {
+            for index in 1..children.len() {
+                let mut previous = Vec::new();
+                children[index - 1].collect_targets(&mut previous);
+                children[index].for_each_entry(&mut |entry| entry.config.after.extend(&previous));
+            }
+        }
+        self
+    }
+
+    pub(crate) fn into_entries(self, entries: &mut Vec<SystemEntry>) {
+        match self.0 {
+            SystemNode::Single(entry) => entries.push(entry),
+            SystemNode::Group(children) => {
+                for child in children {
+                    child.into_entries(entries);
+                }
+            }
+        }
+    }
+
+    fn for_each_entry(&mut self, f: &mut impl FnMut(&mut SystemEntry)) {
+        match &mut self.0 {
+            SystemNode::Single(entry) => f(entry),
+            SystemNode::Group(children) => {
+                for child in children {
+                    child.for_each_entry(f);
+                }
+            }
+        }
+    }
+
+    fn collect_targets(&self, targets: &mut Vec<DependencyTarget>) {
+        match &self.0 {
+            SystemNode::Single(entry) => targets.push(DependencyTarget::System {
+                id: entry.system.system_type(),
+                name: entry.system.name(),
+            }),
+            SystemNode::Group(children) => {
+                for child in children {
+                    child.collect_targets(targets);
+                }
+            }
+        }
     }
 }
 
-/// Converts a system function or [`SystemConfig`] into a [`SystemConfig`].
+/// Converts a system, a [`SystemConfig`], or a group of them into a [`SystemConfig`].
 ///
 /// Implemented for every function whose parameters implement
-/// [`SystemInput`](crate::system::input::SystemInput), and for [`SystemConfig`]
-/// itself. The provided methods start a configuration from a bare function.
+/// [`SystemInput`](crate::system::input::SystemInput), for [`SystemConfig`], for
+/// `Vec<SystemConfig>` and for tuples of up to twelve elements that implement this
+/// trait. The provided methods start a configuration from any of them.
+///
+/// A `Vec` holds converted configs rather than bare functions because a `Vec` of
+/// functions coerces them to one function-pointer type, and systems that share a
+/// type cannot be told apart as ordering targets.
 ///
 /// # Examples
 ///
@@ -196,38 +287,42 @@ impl SystemConfig {
 ///
 /// fn a() {}
 /// fn b() {}
+/// fn c() {}
 ///
 /// let mut schedule = Schedule::new();
-/// schedule.add_system(a).add_system(b.after(a));
+/// schedule.add_system(a).add_system((b, c).after(a));
 /// ```
 pub trait IntoSystemConfig<Marker>: Sized {
-    /// Wraps `self` into a [`SystemConfig`] with no constraints.
+    /// Wraps `self` into a [`SystemConfig`].
     fn into_config(self) -> SystemConfig;
 
-    /// Orders this system after `target`. See [`SystemConfig::after`].
+    /// Orders every system after `target`. See [`SystemConfig::after`].
     fn after<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().after(target)
     }
 
-    /// Orders this system before `target`. See [`SystemConfig::before`].
+    /// Orders every system before `target`. See [`SystemConfig::before`].
     fn before<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().before(target)
     }
 
-    /// Adds this system to `set`. See [`SystemConfig::in_set`].
+    /// Adds every system to `set`. See [`SystemConfig::in_set`].
     fn in_set(self, set: impl SystemSet) -> SystemConfig {
         self.into_config().in_set(set)
+    }
+
+    /// Orders the elements so each runs before the next. See [`SystemConfig::chain`].
+    fn chain(self) -> SystemConfig {
+        self.into_config().chain()
     }
 }
 
 impl<M, F: IntoSystem<M> + 'static> IntoSystemConfig<M> for F {
     fn into_config(self) -> SystemConfig {
-        SystemConfig {
+        SystemConfig(SystemNode::Single(SystemEntry {
             system: self.into_system(),
-            sets: Vec::new(),
-            after: Vec::new(),
-            before: Vec::new(),
-        }
+            config: NodeConfig::default(),
+        }))
     }
 }
 
@@ -240,117 +335,31 @@ impl IntoSystemConfig<AlreadyConfigured> for SystemConfig {
     }
 }
 
-/// Several systems, optionally grouped into a set or chained in order.
-///
-/// Implemented for tuples of up to twelve systems or configs, for
-/// `Vec<SystemConfig>` and for [`SystemConfig`]. A lone system function goes
-/// through [`IntoSystemConfig`] instead.
-///
-/// # Examples
-///
-/// ```
-/// use concerto_ecs::{IntoSystemConfigs, Schedule};
-///
-/// fn read_input() {}
-/// fn move_player() {}
-///
-/// let mut schedule = Schedule::new();
-/// schedule.add_systems((read_input, move_player));
-/// ```
-pub trait IntoSystemConfigs<Marker> {
-    /// Returns one [`SystemConfig`] per system, in order.
-    fn into_configs(self) -> Vec<SystemConfig>;
-
-    /// Adds every system to `set`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_ecs::{IntoSystemConfigs, Schedule, SystemSet};
-    ///
-    /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
-    /// struct Gameplay;
-    ///
-    /// fn spawn_enemies() {}
-    /// fn update_score() {}
-    ///
-    /// let mut schedule = Schedule::new();
-    /// schedule.add_systems((spawn_enemies, update_score).in_set(Gameplay));
-    /// ```
-    fn in_set(self, set: impl SystemSet) -> Vec<SystemConfig>
-    where
-        Self: Sized,
-    {
-        let interned = set.intern();
-        let mut configs = self.into_configs();
-        for config in &mut configs {
-            config.sets.push(interned);
-        }
-        configs
-    }
-
-    /// Orders the systems so each runs before the next.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_ecs::{IntoSystemConfigs, Schedule};
-    ///
-    /// fn read_input() {}
-    /// fn move_player() {}
-    /// fn update_camera() {}
-    ///
-    /// let mut schedule = Schedule::new();
-    /// schedule.add_systems((read_input, move_player, update_camera).chain());
-    /// ```
-    fn chain(self) -> Vec<SystemConfig>
-    where
-        Self: Sized,
-    {
-        let mut configs = self.into_configs();
-        for index in 1..configs.len() {
-            let previous = &configs[index - 1].system;
-            let previous = DependencyTarget::System {
-                id: previous.system_type(),
-                name: previous.name(),
-            };
-            configs[index].after.push(previous);
-        }
-        configs
-    }
-}
-
-#[doc(hidden)]
-pub struct SingleConfig;
-
-impl IntoSystemConfigs<SingleConfig> for SystemConfig {
-    fn into_configs(self) -> Vec<SystemConfig> {
-        vec![self]
-    }
-}
-
 #[doc(hidden)]
 pub struct ConfigVec;
 
-impl IntoSystemConfigs<ConfigVec> for Vec<SystemConfig> {
-    fn into_configs(self) -> Vec<SystemConfig> {
-        self
+impl IntoSystemConfig<ConfigVec> for Vec<SystemConfig> {
+    fn into_config(self) -> SystemConfig {
+        SystemConfig(SystemNode::Group(self))
     }
 }
 
+#[doc(hidden)]
+pub struct ConfigTuple<M>(M);
+
 #[allow(unused_mut)]
 #[typle(Tuple for 0..=12)]
-impl<T, M> IntoSystemConfigs<M> for T
+impl<T, M> IntoSystemConfig<ConfigTuple<M>> for T
 where
     T: Tuple,
     M: Tuple,
     typle_bound!(i in .. => T<{i}>): IntoSystemConfig<M<{ i }>>,
 {
-    fn into_configs(self) -> Vec<SystemConfig> {
-        let mut configs = Vec::with_capacity(T::LEN);
+    fn into_config(self) -> SystemConfig {
+        let mut children = Vec::with_capacity(T::LEN);
         for typle_index!(i) in 0..T::LEN {
-            configs.push(self[[i]].into_config());
+            children.push(self[[i]].into_config());
         }
-        configs
+        SystemConfig(SystemNode::Group(children))
     }
 }

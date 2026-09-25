@@ -34,9 +34,7 @@ use concerto_app::{
     schedule_groups::{Extract, LateRender, LateUpdate, Render, RenderMain, Update},
 };
 use concerto_color::Color;
-use concerto_ecs::{
-    resource::Resource, IntoSetConfigs, IntoSystemConfig, IntoSystemConfigs, World,
-};
+use concerto_ecs::{resource::Resource, IntoSetConfig, IntoSystemConfig, World};
 use std::sync::{Arc, Mutex};
 use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
 
@@ -218,7 +216,7 @@ impl Plugin for RenderPlugin {
         )
         .add_render_system(Render, clear_cameras)
         .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))
-        .add_render_systems(
+        .add_render_system(
             Render,
             (update_shadow_view_proj, resize_shadow_maps).in_set(RenderSet::Shadows),
         )

@@ -1,5 +1,5 @@
 use concerto_ecs::{
-    resource::ResMut, system::executor::single_thread::SingleThreadedExecutor, IntoSetConfigs,
+    resource::ResMut, system::executor::single_thread::SingleThreadedExecutor, IntoSetConfig,
     IntoSystemConfig, Resource, Schedule, World,
 };
 use concerto_render::sets::RenderSet;
