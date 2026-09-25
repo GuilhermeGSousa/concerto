@@ -1,6 +1,6 @@
 # System Scheduling API — Design
 
-**Status:** approved, ready for an implementation plan
+**Status:** implemented (see `docs/scheduling.md`)
 **Touches:** `crates/ecs` (system/config, system/schedule, macros), `crates/app`,
 `crates/render`, `crates/ui`
 
