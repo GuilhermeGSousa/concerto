@@ -43,6 +43,11 @@ pub struct Light {
     pub intensity: f32,
     pub shadowmaps_enabled: bool,
     pub light_type: LightType,
+    /// Distance at which a point or spot light's contribution smoothly
+    /// reaches zero. `0.0` means unbounded (pure inverse-square falloff).
+    /// Ignored by directional lights.
+    #[serde(default)]
+    pub range: f32,
 }
 
 impl SceneComponent for Light {
@@ -58,6 +63,7 @@ impl Light {
             intensity: 1.0,
             shadowmaps_enabled: false,
             light_type: LightType::Point,
+            range: 0.0,
         }
     }
 
@@ -67,6 +73,7 @@ impl Light {
             intensity: 1.0,
             shadowmaps_enabled: false,
             light_type: LightType::Spot { cone_angle },
+            range: 0.0,
         }
     }
 
@@ -76,6 +83,7 @@ impl Light {
             intensity: 1.0,
             shadowmaps_enabled: false,
             light_type: LightType::Directional,
+            range: 0.0,
         }
     }
 
@@ -86,6 +94,12 @@ impl Light {
 
     pub fn with_color(mut self, color: Color) -> Self {
         self.color = color;
+        self
+    }
+
+    /// Limits the light's reach; see [`Light::range`].
+    pub fn with_range(mut self, range: f32) -> Self {
+        self.range = range.max(0.0);
         self
     }
 
@@ -159,6 +173,8 @@ pub struct RenderLight {
     // Spotlight
     pub(crate) cos_cone_angle: f32,
     pub(crate) shadow_layer: i32,
+    /// `0.0` for unbounded.
+    pub(crate) range: f32,
 }
 
 impl RenderLight {
@@ -171,6 +187,7 @@ impl RenderLight {
             light_type: 0,
             cos_cone_angle: 0.0,
             shadow_layer: -1,
+            range: 0.0,
         }
     }
 }
@@ -376,6 +393,7 @@ pub(crate) fn extract_lights(
             render_light.intensity = light.intensity;
             render_light.light_type = light.light_type.index();
             render_light.cos_cone_angle = cos_cone_angle;
+            render_light.range = light.range;
             continue;
         }
 
@@ -386,6 +404,7 @@ pub(crate) fn extract_lights(
             direction: -local_z,
             light_type: light.light_type.index(),
             cos_cone_angle,
+            range: light.range,
             shadow_layer: if light.shadowmaps_enabled {
                 SHADOW_LAYER_REQUESTED
             } else {

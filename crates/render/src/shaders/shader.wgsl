@@ -38,6 +38,8 @@ struct Light {
     light_type: u32,
     cos_cone_angle: f32,
     shadow_layer: i32,
+    // 0 = unbounded; otherwise the distance where the light fades to nothing.
+    range: f32,
 };
 
 struct Lights {
@@ -261,6 +263,13 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         if light_type != DIRECTIONAL_LIGHT {
             let light_distance_sq = dot(light_delta, light_delta);
             attenuation = 1.0 / max(light_distance_sq, 1e-4);
+            if light.range > 0.0 {
+                // Smooth window (1 - (d/r)^4)^2: reaches exactly zero at the
+                // range without a visible edge.
+                let ratio = light_distance_sq / (light.range * light.range);
+                let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
+                attenuation *= window * window;
+            }
         }
         if light_type == SPOT_LIGHT {
             let cone_dir = normalize(light.direction.xyz);
