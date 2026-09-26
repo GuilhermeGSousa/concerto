@@ -57,6 +57,9 @@ const POSES: &[(Menace, AssetId, f32)] = &[
 pub struct Pose {
     pub menace: Menace,
     pub graph: AssetHandle<AnimationGraph>,
+    /// The clip the pose samples. A mannequin is only frozen into a pose once
+    /// this has loaded; before that it would freeze in its bind pose.
+    pub clip: AssetHandle<AnimationClip>,
 }
 
 #[derive(Resource, Default)]
@@ -83,21 +86,26 @@ impl PoseLibrary {
     pub fn graph(&self, index: usize) -> Option<AssetHandle<AnimationGraph>> {
         self.poses.get(index).map(|p| p.graph.clone())
     }
+
+    pub fn clip(&self, index: usize) -> Option<&AssetHandle<AnimationClip>> {
+        self.poses.get(index).map(|p| &p.clip)
+    }
 }
 
 pub fn build_pose_library(server: Res<AssetServer>, mut library: ResMut<PoseLibrary>) {
-    let still = |clip: AssetId, time: f32| {
-        let node = AnimationClipNode::new(server.load::<AnimationClip>(clip))
-            .with_play_mode(AnimationPlayMode::PlayOnce)
-            .with_start_time(time)
-            .with_play_rate(0.0);
-        server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(node)))
-    };
     library.poses = POSES
         .iter()
-        .map(|&(menace, clip, time)| Pose {
-            menace,
-            graph: still(clip, time),
+        .map(|&(menace, clip, time)| {
+            let clip = server.load::<AnimationClip>(clip);
+            let node = AnimationClipNode::new(clip.clone())
+                .with_play_mode(AnimationPlayMode::PlayOnce)
+                .with_start_time(time)
+                .with_play_rate(0.0);
+            Pose {
+                menace,
+                graph: server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(node))),
+                clip,
+            }
         })
         .collect();
     let lunge = AnimationClipNode::new(server.load::<AnimationClip>(content::PUSH_ENTER))

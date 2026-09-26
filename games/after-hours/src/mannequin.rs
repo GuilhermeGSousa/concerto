@@ -5,14 +5,17 @@
 //! seen does not move.** "Seen" is computed conservatively in
 //! [`is_observed`], against both this frame's and last frame's eye.
 use concerto::{
-    animation::player::{AnimationHandleComponent, AnimationPlayer},
+    animation::{
+        clip::AnimationClip,
+        player::{AnimationHandleComponent, AnimationPlayer},
+    },
     audio::Audio,
     ecs::{
         CommandQueue, Component, Entity, Query, Res, ResMut, Resource, With, Without,
         entity::hierarchy::{ChildOf, Children},
     },
     foundation::{
-        assets::{asset_server::AssetServer, handle::AssetHandle},
+        assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
         time::Time,
         transform::Transform,
     },
@@ -217,6 +220,7 @@ pub fn apply_poses(
     mannequins: Query<&mut Mannequin>,
     anim_players: Query<&mut AnimationPlayer>,
     library: Res<PoseLibrary>,
+    clips: Res<AssetStore<AnimationClip>>,
     mut cmd: CommandQueue,
 ) {
     for mut mannequin in mannequins.iter() {
@@ -235,7 +239,13 @@ pub fn apply_poses(
             mannequin.pose = Some(wanted);
             mannequin.settle = SETTLE_FRAMES;
         }
-        if mannequin.settle > 0 {
+        // Hold off counting until the pose's clip has downloaded: freezing
+        // before then would leave the mannequin in its bind pose for good.
+        let clip_ready = mannequin
+            .pose
+            .and_then(|pose| library.clip(pose))
+            .is_none_or(|clip| clips.get(clip).is_some());
+        if mannequin.settle > 0 && clip_ready {
             mannequin.settle -= 1;
             if mannequin.settle == 0 {
                 player.set_paused(true);
