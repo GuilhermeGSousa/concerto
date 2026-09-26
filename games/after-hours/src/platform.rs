@@ -27,6 +27,15 @@ mod imp {
             .is_some_and(|q| q.trim_start_matches('?').split('&').any(|f| f == flag))
     }
 
+    /// The value of `name=value` in the page URL's query, if present.
+    pub fn debug_value(name: &str) -> Option<String> {
+        let query = web_sys::window()?.location().search().ok()?;
+        query
+            .trim_start_matches('?')
+            .split('&')
+            .find_map(|f| f.strip_prefix(name)?.strip_prefix('=').map(str::to_string))
+    }
+
     pub fn pointer_locked() -> bool {
         debug_flag("nolock") || document().and_then(|d| d.pointer_lock_element()).is_some()
     }
@@ -71,6 +80,12 @@ mod imp {
         std::env::var("AFTER_HOURS_DEBUG").is_ok_and(|v| v.split(',').any(|f| f == flag))
     }
 
+    pub fn debug_value(name: &str) -> Option<String> {
+        let all = std::env::var("AFTER_HOURS_DEBUG").ok()?;
+        all.split(',')
+            .find_map(|f| f.strip_prefix(name)?.strip_prefix('=').map(str::to_string))
+    }
+
     pub fn pointer_locked() -> bool {
         debug_flag("nolock") || LOCKED.load(Ordering::Relaxed)
     }
@@ -88,7 +103,7 @@ mod imp {
     }
 }
 
-pub use imp::{debug_flag, load_best, pointer_locked, save_best};
+pub use imp::{debug_flag, debug_value, load_best, pointer_locked, save_best};
 
 /// What the cursor should be doing, remembered so it is only changed on
 /// transitions.

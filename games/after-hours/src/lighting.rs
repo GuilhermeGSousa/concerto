@@ -7,6 +7,12 @@ use glam::Vec3;
 /// faintly than this can move without the player seeing it.
 pub const VISIBLE_IRRADIANCE: f32 = 0.035;
 
+/// The store's ambient light (shader units: a factor on albedo).
+pub const AMBIENT_LIGHT: f32 = 0.004;
+/// The ambient term expressed as irradiance, for comparison with lights (the
+/// shader divides a light's diffuse contribution by pi; ambient it does not).
+pub const AMBIENT_IRRADIANCE: f32 = AMBIENT_LIGHT * std::f32::consts::PI;
+
 /// Inverse-square falloff with the shader's smooth range window,
 /// `(1 - (d/r)^4)^2`. A `range` of 0 is unbounded.
 pub fn falloff(distance_sq: f32, range: f32) -> f32 {
@@ -50,10 +56,11 @@ pub struct SpotLight {
 
 /// Unshadowed irradiance (up to the shared BRDF factor) at `point`.
 pub fn irradiance(point: Vec3, points: &[PointLight], spot: Option<&SpotLight>) -> f32 {
-    let mut total: f32 = points
-        .iter()
-        .map(|l| l.intensity * falloff((point - l.position).length_squared(), l.range))
-        .sum();
+    let mut total: f32 = AMBIENT_IRRADIANCE
+        + points
+            .iter()
+            .map(|l| l.intensity * falloff((point - l.position).length_squared(), l.range))
+            .sum::<f32>();
     if let Some(spot) = spot {
         let to_point = point - spot.position;
         let cos = to_point.normalize_or_zero().dot(spot.direction);
@@ -80,6 +87,11 @@ mod tests {
     fn spot_cone_is_hard_outside_and_full_on_axis() {
         assert_eq!(cone(0.0, 0.4), 0.0);
         assert!((cone(1.0, 0.4) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn ambient_alone_is_too_dark_to_see() {
+        assert!(irradiance(Vec3::ZERO, &[], None) < VISIBLE_IRRADIANCE);
     }
 
     #[test]

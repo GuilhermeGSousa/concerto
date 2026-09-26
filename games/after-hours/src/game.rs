@@ -1,4 +1,4 @@
-//! Run-level state: which screen is up, the wave, the score.
+//! Run-level state: which screen is up, which night, how far you have got.
 use concerto::ecs::Resource;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,6 +54,12 @@ impl Game {
 
     pub fn set_phase(&mut self, phase: Phase) {
         if self.phase != phase {
+            log::info!(
+                "phase: {:?} -> {:?} (night {})",
+                self.phase,
+                phase,
+                self.night
+            );
             self.phase = phase;
             self.phase_time = 0.0;
         }

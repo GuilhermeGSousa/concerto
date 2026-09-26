@@ -20,6 +20,7 @@ use glam::{Quat, Vec2, Vec3};
 use crate::{
     body::{Mover, flat},
     game::{Game, Rand},
+    lighting,
     sfx::{Sfx, Sounds},
     store::StoreEntity,
 };
@@ -46,6 +47,9 @@ pub const FOG: Fog = Fog {
     density: 0.085,
     start: 4.0,
 };
+/// Ambient light: next to nothing, so unlit means unseen. The observation
+/// rule counts it (see `lighting::AMBIENT_IRRADIANCE`).
+pub const AMBIENT: f32 = lighting::AMBIENT_LIGHT;
 /// Largest mouse movement, in pixels per axis, accepted in one frame.
 const MAX_LOOK_STEP: f32 = 250.0;
 
@@ -367,6 +371,7 @@ pub fn place_camera(
         camera.zfar = 80.0;
         camera.clear_color = Color::BLACK;
         camera.fog = Some(FOG);
+        camera.ambient = Some(Color::rgba(AMBIENT, AMBIENT, AMBIENT, 1.0));
         eye.aspect = camera.aspect;
     }
     if eye.valid {

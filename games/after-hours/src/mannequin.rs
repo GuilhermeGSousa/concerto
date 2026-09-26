@@ -297,6 +297,28 @@ fn line_of_sight(sight: &Sight, from: Vec3, point: Vec3, owner: Entity) -> bool 
     hit.point.distance(start) >= distance - 0.4 - 0.05
 }
 
+/// Per sample point: (in view of the current eye, fogged irradiance, line of
+/// sight). For the debug trace.
+pub fn explain_observation(sight: &Sight, owner: Entity, feet: Vec3) -> Vec<(bool, f32, bool)> {
+    [0.35, 1.1, 1.65]
+        .map(|h| feet + Vec3::Y * h)
+        .into_iter()
+        .map(|point| {
+            let fog = FOG.amount((point - sight.eye.position).length());
+            (
+                in_view(
+                    sight.eye.position,
+                    sight.eye.rotation,
+                    sight.eye.aspect,
+                    point,
+                ),
+                lighting::irradiance(point, sight.lights, sight.flashlight.as_ref()) * (1.0 - fog),
+                line_of_sight(sight, sight.eye.position, point, owner),
+            )
+        })
+        .collect()
+}
+
 /// Whether any part of the mannequin at `feet` can be seen from either eye.
 pub fn is_observed(sight: &Sight, owner: Entity, feet: Vec3) -> bool {
     if !sight.eye.valid {
@@ -434,6 +456,17 @@ pub fn hunt(
             }
         }
         mannequin.observed = is_observed(&sight, entity, feet);
+        if mannequin.observed
+            && crate::platform::debug_flag("trace")
+            && (feet - eye.position).length() > 12.0
+            && rand.unit() < 0.02
+        {
+            log::info!(
+                "trace: far observation at {feet:?} from {:?}: {:?}",
+                eye.position,
+                explain_observation(&sight, entity, feet)
+            );
+        }
         if mannequin.observed
             || !live
             || !mannequin.is_hunting()

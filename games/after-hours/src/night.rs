@@ -157,6 +157,7 @@ pub fn rebuild_night(
         return;
     }
     state.rebuild = None;
+    log::info!("building {kind:?} night {} seed {}", game.night, game.seed);
     for entity in stale.iter() {
         cmd.despawn(entity);
     }
@@ -188,7 +189,15 @@ pub fn rebuild_night(
         .map(|n| n.center() - start.center())
         .unwrap_or(Vec3::Z);
     let yaw = (-toward.x).atan2(-toward.z);
-    player::spawn_player(&mut cmd, start.center() + Vec3::new(-0.8, 0.05, -0.8), yaw);
+    // `?escape` (debug): start at the open staff exit to test the escape flow.
+    let debug_escape = kind == Rebuild::Night && platform::debug_flag("escape");
+    let feet = if debug_escape {
+        let (cell, dir) = level.exit;
+        cell.center() + dir.vector() * (CELL * 0.5 - 1.6) + Vec3::Y * 0.05
+    } else {
+        start.center() + Vec3::new(-0.8, 0.05, -0.8)
+    };
+    player::spawn_player(&mut cmd, feet, yaw);
 
     let spawn = |cells: &[level::Cell], kind: Kind, cmd: &mut CommandQueue, rand: &mut Rand| {
         for (i, &cell) in cells.iter().enumerate() {
@@ -221,7 +230,7 @@ pub fn rebuild_night(
 
     state.exit = Some(built.exit);
     state.keys_total = level.keys.len();
-    state.unlocked = false;
+    state.unlocked = debug_escape;
     state.wake_timer = WAKE_INTERVAL;
     state.heartbeat_timer = 0.0;
     state.chime_timer = 4.0;
@@ -266,7 +275,10 @@ pub fn advance_phases(
             if game.phase_time > 0.5 && clicked(&input) {
                 sounds.play(&mut audio, Sfx::Click, 0.6);
                 game.night = 1;
-                game.seed = rand.next_u32() as u64 ^ 0xa11_0005;
+                // `?seed=N` (debug) makes the first night reproducible.
+                game.seed = platform::debug_value("seed")
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(rand.next_u32() as u64 ^ 0xa11_0005);
                 start_night(&mut game, &mut state, &mut audio, &mut sounds);
             }
         }
