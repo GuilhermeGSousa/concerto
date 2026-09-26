@@ -328,10 +328,6 @@ impl World {
         &self.entity_store
     }
 
-    pub(crate) fn entity_store_mut(&mut self) -> &mut EntityStore {
-        &mut self.entity_store
-    }
-
     /// Returns a shared reference to the component of type `T` on `entity`, or `None` if absent.
     pub fn get_component_for_entity<T: Component>(&self, entity: Entity) -> Option<&T> {
         self.entity_store
@@ -584,7 +580,7 @@ impl World {
     }
 
     pub(crate) fn make_command_queue<'world>(&'world mut self) -> CommandQueue<'world, 'world> {
-        CommandQueue::for_callbacks(&mut self.command_queue, &mut self.entity_store)
+        CommandQueue::for_callbacks(&mut self.command_queue, &self.entity_store)
     }
 
     /// Appends `commands` to the pending queue and runs everything in it.

@@ -66,11 +66,11 @@ impl<'a> EntityCommandQueue<'a> {
 
 pub struct CommandQueue<'world, 'state> {
     queue_state: &'state mut CommandQueueState,
-    entities: &'world mut EntityStore,
+    entities: &'world EntityStore,
 }
 
 impl<'w, 's> CommandQueue<'w, 's> {
-    pub(crate) fn new(state: &'s mut CommandQueueState, entities: &'w mut EntityStore) -> Self {
+    pub(crate) fn new(state: &'s mut CommandQueueState, entities: &'w EntityStore) -> Self {
         Self {
             queue_state: state,
             entities,
@@ -79,7 +79,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
 
     pub(crate) fn for_callbacks(
         state: &'s mut CommandQueueState,
-        entities: &'w mut EntityStore,
+        entities: &'w EntityStore,
     ) -> Self {
         Self {
             queue_state: state,
@@ -88,7 +88,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
     }
 
     pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> EntityCommandQueue<'_> {
-        let spawned_entity = self.entities.alloc();
+        let spawned_entity = self.entities.reserve();
         self.queue_state
             .push(SpawnCommand::new(components, spawned_entity));
 
@@ -96,7 +96,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
             entity: spawned_entity,
             command_queue: CommandQueue {
                 queue_state: &mut *self.queue_state,
-                entities: &mut *self.entities,
+                entities: self.entities,
             },
         }
     }
@@ -107,7 +107,7 @@ impl<'w, 's> CommandQueue<'w, 's> {
             entity,
             command_queue: CommandQueue {
                 queue_state: &mut *self.queue_state,
-                entities: &mut *self.entities,
+                entities: self.entities,
             },
         }
     }
@@ -322,7 +322,7 @@ impl SystemInput for CommandQueue<'_, '_> {
         state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
     ) -> Self::Data<'world, 'state> {
-        CommandQueue::new(state, world.world_mut().entity_store_mut())
+        CommandQueue::new(state, world.world().entity_store())
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
