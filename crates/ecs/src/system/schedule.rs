@@ -104,7 +104,7 @@ impl Schedule {
     ///
     /// Panics if the explicit constraints contain a cycle.
     pub fn compile<T: SystemExecutor + 'static>(mut self, world: &mut World) -> CompiledSchedule {
-        self.insert_sync_points();
+        self.setup_systems_for_compilation();
 
         let mut graph = SystemDependencyGraph::new();
         let nodes: Vec<SystemNodeIndex> = self
@@ -185,7 +185,7 @@ impl Schedule {
         }
     }
 
-    fn insert_sync_points(&mut self) {
+    fn setup_systems_for_compilation(&mut self) {
         let mut systems = Vec::with_capacity(self.systems.len());
         let mut configs = Vec::with_capacity(self.configs.len());
 
