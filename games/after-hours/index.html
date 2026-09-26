@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base data-trunk-public-url />
+    <title>AFTER HOURS</title>
+    <style type="text/css">
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas:focus {
+            outline: none;
+        }
+
+        #loading {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #8a877f;
+            font: 14px/1.4 "DejaVu Sans Mono", Menlo, Consolas, monospace;
+            letter-spacing: 0.2em;
+            pointer-events: none;
+        }
+    </style>
+</head>
+
+<body data-want-lock="0">
+    <div id="loading">OPENING THE STORE…</div>
+    <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
+    <script>
+        // Browsers only grant pointer lock inside a user gesture, so the game
+        // flags when it wants the mouse and this handler takes it on click.
+        function canvas() { return document.querySelector("canvas"); }
+        document.addEventListener("mousedown", function () {
+            var c = canvas();
+            if (!c) return;
+            c.focus();
+            if (document.body.dataset.wantLock === "1" && !document.pointerLockElement) {
+                try {
+                    var request = c.requestPointerLock({ unadjustedMovement: true });
+                    if (request && request.catch) request.catch(function () { c.requestPointerLock(); });
+                } catch (e) {
+                    c.requestPointerLock();
+                }
+            }
+        });
+        document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+        // Hide the loading line once the engine has put its canvas up.
+        new MutationObserver(function (_, observer) {
+            var c = canvas();
+            if (c) {
+                c.setAttribute("tabindex", "0");
+                document.getElementById("loading").remove();
+                observer.disconnect();
+            }
+        }).observe(document.body, { childList: true, subtree: true });
+    </script>
+</body>
+
+</html>

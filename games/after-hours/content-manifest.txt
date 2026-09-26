@@ -1,0 +1,44 @@
+# Content AFTER HOURS ships, drawn from the shared UAL1 mannequin import in
+# examples/tech-demo/content/UAL1. Each line is `CONST_NAME file`: build.rs
+# turns it into `pub const CONST_NAME: AssetId` and stages only these files
+# (plus a matching registry) next to the binary; stage-content.sh does the
+# same for the Trunk web build. Only list what the game uses — every clip is
+# download size on itch.io.
+
+# Mannequin scene and its dependencies.
+MANNEQUIN_SCENE scene.gasset
+MANNEQUIN_MESH_0 mesh_0.gasset
+MANNEQUIN_MESH_1 mesh_1.gasset
+MANNEQUIN_MATERIAL_0 material_0.gasset
+MANNEQUIN_MATERIAL_1 material_1.gasset
+MANNEQUIN_SKELETON skeleton_0.gasset
+
+# Pose sources. Mannequins never animate on screen: each pose is one frame
+# of one of these clips (see poses.rs), from "on display" to "reaching for you".
+IDLE animation_53.gasset
+IDLE_TALKING animation_57.gasset
+COUNTER_SHOW animation_16.gasset
+IDLE_PAPER animation_54.gasset
+IDLE_SCISSORS animation_56.gasset
+WALK_FORMAL animation_118.gasset
+DRINK animation_41.gasset
+INTERACT animation_60.gasset
+IDLE_LOOK_AROUND animation_52.gasset
+CRYING animation_35.gasset
+IDLE_TIRED animation_58.gasset
+WALK animation_119.gasset
+IDLE_TORCH animation_59.gasset
+GROUNDSIT_IDLE animation_46.gasset
+CROUCH_IDLE animation_32.gasset
+PICKUP_KNEELING animation_75.gasset
+DANCE animation_36.gasset
+PUSH_LOOP animation_89.gasset
+PUSH_ENTER animation_87.gasset
+PUNCH_CROSS animation_83.gasset
+SWORD_ATTACK animation_111.gasset
+CRAWL_FWD animation_20.gasset
+SPRINT animation_108.gasset
+SPELL_DOUBLE_ENTER animation_98.gasset
+HIT_HEAD animation_48.gasset
+COUNTER_ANGRY animation_11.gasset
+JOG_FWD animation_67.gasset
