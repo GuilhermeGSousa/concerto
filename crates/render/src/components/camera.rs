@@ -15,7 +15,7 @@ use concerto_ecs::{
     Entity,
 };
 use concerto_window::plugin::Window;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
@@ -65,6 +65,28 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
+    /// Distance fog for everything this camera draws with the standard
+    /// material. `None` (the default) is no fog.
+    #[serde(default)]
+    pub fog: Option<Fog>,
+}
+
+/// Exponential-squared distance fog: beyond `start`, surfaces fade toward
+/// `color` as `1 - exp(-(density * (distance - start))^2)`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Fog {
+    pub color: Color,
+    pub density: f32,
+    pub start: f32,
+}
+
+impl Fog {
+    /// How much of a surface at `distance` is replaced by fog, `0..=1`.
+    /// Matches the shader, so gameplay can ask what the player can see.
+    pub fn amount(&self, distance: f32) -> f32 {
+        let d = (distance - self.start).max(0.0) * self.density;
+        1.0 - (-(d * d)).exp()
+    }
 }
 
 impl SceneComponent for Camera {
@@ -103,6 +125,7 @@ impl Default for Camera {
             zfar: 100.0,
             clear_color: Color::rgba(0.118, 0.831, 0.922, 1.0),
             render_target: RenderTarget::main_window(),
+            fog: None,
         }
     }
 }
@@ -112,6 +135,11 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
+    // Appended so shaders that declare only the fields above stay valid.
+    /// rgb, and a = 1 when fog is enabled.
+    fog_color: Vec4,
+    /// x = density, y = start distance.
+    fog_params: Vec4,
 }
 
 impl CameraUniform {
@@ -119,12 +147,25 @@ impl CameraUniform {
         Self {
             view_pos: Vec3::ZERO,
             view_proj: Mat4::IDENTITY,
+            fog_color: Vec4::ZERO,
+            fog_params: Vec4::ZERO,
         }
     }
 
     pub fn update_view_proj(&mut self, camera: &Camera, transform: &GlobalTransform) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
+        match camera.fog {
+            Some(fog) => {
+                let c = fog.color.to_linear();
+                self.fog_color = Vec4::new(c.r, c.g, c.b, 1.0);
+                self.fog_params = Vec4::new(fog.density, fog.start, 0.0, 0.0);
+            }
+            None => {
+                self.fog_color = Vec4::ZERO;
+                self.fog_params = Vec4::ZERO;
+            }
+        }
     }
 }
 

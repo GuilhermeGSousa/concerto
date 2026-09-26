@@ -61,6 +61,10 @@ struct ShadowViewProjs {
 struct CameraUniform {
     view_pos: vec3<f32>,
     view_proj: mat4x4<f32>,
+    // rgb + enabled flag in a.
+    fog_color: vec4<f32>,
+    // x = density, y = start distance.
+    fog_params: vec4<f32>,
 };
 
 struct VertexInput {
@@ -306,7 +310,15 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     }
 
     let ambient = AMBIENT_INTENSITY * base_color.rgb * occlusion;
-    let color = ambient + total_light + emissive;
+    var color = ambient + total_light + emissive;
+
+    // Exponential-squared distance fog, in linear space before tonemapping.
+    if camera.fog_color.a > 0.0 {
+        let fog_distance = max(length(camera.view_pos - in.world_position) - camera.fog_params.y, 0.0);
+        let fog_depth = fog_distance * camera.fog_params.x;
+        let fog_amount = 1.0 - exp(-(fog_depth * fog_depth));
+        color = mix(color, camera.fog_color.rgb, fog_amount);
+    }
 
     // Tone map to LDR; the sRGB surface format applies gamma encoding.
     return vec4<f32>(aces_tonemap(color), base_color.a);
