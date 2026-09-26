@@ -82,7 +82,6 @@ pub struct App {
 }
 
 impl App {
-    /// Creates an app with no plugins and a runner that returns immediately.
     pub fn new() -> App {
         Self {
             runner: Box::new(runner::run_once),
@@ -122,7 +121,6 @@ impl App {
         self
     }
 
-    /// Hands control to the runner.
     pub fn run(mut self) {
         let runner = std::mem::replace(&mut self.runner, Box::new(run_once));
         (runner)(self);
@@ -193,7 +191,6 @@ impl App {
         self
     }
 
-    /// Inserts a resource into the main world.
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
         self
@@ -205,17 +202,14 @@ impl App {
         self
     }
 
-    /// Removes a resource from the main world.
     pub fn remove_resource<R: Resource>(&mut self) -> Option<R> {
         self.main_mut().remove_resource()
     }
 
-    /// Returns a resource of the main world.
     pub fn get_resource<R: Resource>(&self) -> Option<&R> {
         self.main().get_resource()
     }
 
-    /// Returns a resource of the main world mutably.
     pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
         self.main_mut().get_resource_mut()
     }
@@ -241,22 +235,18 @@ impl App {
         profiling::finish_frame!();
     }
 
-    /// Returns the main sub-app.
     pub fn main(&self) -> &SubApp {
         self.subapps.main()
     }
 
-    /// Returns the main sub-app mutably.
     pub fn main_mut(&mut self) -> &mut SubApp {
         self.subapps.main_mut()
     }
 
-    /// Returns the render sub-app.
     pub fn render(&self) -> &SubApp {
         self.subapps.render()
     }
 
-    /// Returns the render sub-app mutably.
     pub fn render_mut(&mut self) -> &mut SubApp {
         self.subapps.render_mut()
     }

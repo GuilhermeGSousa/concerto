@@ -72,7 +72,6 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// Creates an empty schedule.
     pub fn new() -> Schedule {
         Self::default()
     }
@@ -403,7 +402,6 @@ pub struct CompiledSchedule {
 }
 
 impl CompiledSchedule {
-    /// Runs every system once, in dependency order.
     pub fn run(&mut self, world: &mut World) {
         self.executor.run(&mut self.compiled_data, world);
     }
@@ -440,7 +438,6 @@ define_label!(
     ScheduleLabel
 );
 
-/// An interned [`ScheduleLabel`], cheap to copy and compare.
 pub type InternedScheduleLabel = Interned<dyn ScheduleLabel>;
 
 /// Every uncompiled [`Schedule`] of a world, keyed by [`ScheduleLabel`].
@@ -497,17 +494,14 @@ pub struct CompiledSchedules {
 }
 
 impl CompiledSchedules {
-    /// Returns the schedule labelled `label`.
     pub fn get(&self, label: impl ScheduleLabel) -> Option<&CompiledSchedule> {
         self.compiled_schedules.get(&label.intern())
     }
 
-    /// Returns the schedule labelled `label` mutably.
     pub fn get_mut(&mut self, label: impl ScheduleLabel) -> Option<&mut CompiledSchedule> {
         self.compiled_schedules.get_mut(&label.intern())
     }
 
-    /// Removes and returns the schedule labelled `label`.
     pub fn remove(&mut self, label: impl ScheduleLabel) -> Option<CompiledSchedule> {
         self.compiled_schedules.remove(&label.intern())
     }

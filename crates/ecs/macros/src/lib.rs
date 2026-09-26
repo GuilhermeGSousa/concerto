@@ -8,7 +8,6 @@ extern crate quote;
 
 use proc_macro::TokenStream;
 
-/// Implements `Component`.
 #[proc_macro_derive(Component)]
 pub fn component(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -24,7 +23,6 @@ fn impl_component(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
-/// Implements `Resource`.
 #[proc_macro_derive(Resource)]
 pub fn resource(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -45,7 +43,6 @@ fn impl_resource(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
-/// Implements `Event`.
 #[proc_macro_derive(Event)]
 pub fn event(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
@@ -63,14 +60,12 @@ fn impl_event(ast: &syn::DeriveInput) -> TokenStream {
     gen.into()
 }
 
-/// Implements `SystemSet`; the type must also be `Clone`, `Eq`, `Hash` and `Debug`.
 #[proc_macro_derive(SystemSet)]
 pub fn system_set(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_label(&ast, quote!(SystemSet))
 }
 
-/// Implements `ScheduleLabel`; the type must also be `Clone`, `Eq`, `Hash` and `Debug`.
 #[proc_macro_derive(ScheduleLabel)]
 pub fn schedule_label(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();

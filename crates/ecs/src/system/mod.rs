@@ -24,14 +24,12 @@ use crate::{
     world::{UnsafeWorldCell, World},
 };
 
-/// A boxed, type-erased [`System`].
 pub type BoxedSystem = Box<dyn System>;
 
 /// A unit of work a [`Schedule`](crate::Schedule) runs against a [`World`].
 ///
 /// Functions become systems through [`IntoSystem`]; implementing this directly is rarely needed.
 pub trait System: Send + Sync + 'static {
-    /// Returns the fully-qualified name of the underlying function or type.
     fn name(&self) -> &'static str;
 
     /// Returns the id used to name this system as an ordering target.
@@ -39,19 +37,15 @@ pub trait System: Send + Sync + 'static {
         TypeId::of::<Self>()
     }
 
-    /// Prepares the system's state; called once before the first run.
     fn initialize(&mut self, world: &mut World);
 
-    /// Records which components and resources this system reads or writes.
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    /// Runs the system, then applies its deferred commands.
     fn run_and_apply(&mut self, world: &mut World) {
         self.run(world);
         self.apply(world);
     }
 
-    /// Runs the system without applying its deferred commands.
     fn run(&mut self, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
         unsafe { self.run_unsafe(world_cell) };
@@ -64,7 +58,6 @@ pub trait System: Send + Sync + 'static {
     /// No system with conflicting access may run on the same world at the same time.
     unsafe fn run_unsafe(&mut self, world: UnsafeWorldCell);
 
-    /// Applies deferred mutations, such as commands queued by the system.
     fn apply(&mut self, world: &mut World);
 }
 
@@ -158,7 +151,6 @@ where
 
 /// Converts a function, closure or [`System`] into a [`BoxedSystem`].
 pub trait IntoSystem<Marker> {
-    /// Boxes `self` as a system.
     fn into_system(self) -> BoxedSystem;
 }
 

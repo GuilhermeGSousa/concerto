@@ -70,23 +70,19 @@ impl Default for SubApp {
 }
 
 impl SubApp {
-    /// Inserts a resource into this world.
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.world.insert_resource(value);
         self
     }
 
-    /// Removes a resource from this world.
     pub fn remove_resource<R: Resource>(&mut self) -> Option<R> {
         self.world.remove_resource::<R>()
     }
 
-    /// Returns a resource of this world.
     pub fn get_resource<R: Resource>(&self) -> Option<&R> {
         self.world.get_resource::<R>()
     }
 
-    /// Returns a resource of this world mutably.
     pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
         self.world.get_resource_mut::<R>()
     }
@@ -134,12 +130,10 @@ impl SubApp {
         self
     }
 
-    /// Returns this sub-app's world.
     pub fn world(&self) -> &World {
         &self.world
     }
 
-    /// Returns this sub-app's world mutably.
     pub fn world_mut(&mut self) -> &mut World {
         &mut self.world
     }

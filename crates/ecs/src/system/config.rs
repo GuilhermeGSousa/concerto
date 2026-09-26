@@ -24,7 +24,6 @@ pub struct SetTarget;
 
 /// Converts a system function or a [`SystemSet`] into a [`DependencyTarget`].
 pub trait IntoDependencyTarget<Marker> {
-    /// Returns the target this value refers to.
     fn into_target(self) -> DependencyTarget;
 }
 
@@ -160,25 +159,20 @@ impl SystemConfig {
 /// A `Vec` must hold configs rather than bare functions: collecting functions coerces them
 /// to one function-pointer type, which cannot be told apart as an ordering target.
 pub trait IntoSystemConfig<Marker>: Sized {
-    /// Wraps `self` into a [`SystemConfig`].
     fn into_config(self) -> SystemConfig;
 
-    /// See [`SystemConfig::after`].
     fn after<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().after(target)
     }
 
-    /// See [`SystemConfig::before`].
     fn before<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().before(target)
     }
 
-    /// See [`SystemConfig::in_set`].
     fn in_set(self, set: impl SystemSet) -> SystemConfig {
         self.into_config().in_set(set)
     }
 
-    /// See [`SystemConfig::chain`].
     fn chain(self) -> SystemConfig {
         self.into_config().chain()
     }
