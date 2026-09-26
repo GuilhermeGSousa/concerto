@@ -1,0 +1,90 @@
+name: AFTER HOURS web build
+
+# Builds the browser release of games/after-hours and uploads it as an
+# artifact (a zip ready for itch.io's "HTML" upload). On a version tag, or a
+# manual run with "publish" ticked, it also pushes the build to itch.io with
+# butler — provided the repository has:
+#   - secret   BUTLER_API_KEY  (https://itch.io/user/settings/api-keys)
+#   - variable ITCH_TARGET     e.g. "your-itch-username/after-hours"
+# Without them the publish step is skipped and the artifact is still built.
+
+on:
+  push:
+    tags: ["after-hours-v*"]
+  pull_request:
+    paths:
+      - "games/after-hours/**"
+      - "crates/**"
+      - ".github/workflows/after-hours-web.yml"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Push this build to itch.io"
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  TRUNK_VERSION: v0.21.14
+
+jobs:
+  web:
+    name: Build web release
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      # No submodules: the web build uses the pure-Rust Rapier physics backend.
+      - uses: actions/checkout@v4
+
+      - name: Install stable Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Cargo registry and build artefacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-after-hours-web-${{ hashFiles('**/Cargo.lock', '**/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-after-hours-web-
+
+      - name: Install Trunk
+        run: |
+          curl -sSfL "https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}/trunk-x86_64-unknown-linux-gnu.tar.gz" \
+            | tar -xz -C /usr/local/bin trunk
+          trunk --version
+
+      - name: Build release
+        working-directory: games/after-hours
+        # Relative asset URLs so the game works from itch.io's sub-path.
+        run: trunk build --release --public-url ./
+
+      - name: Package
+        working-directory: games/after-hours/dist
+        run: zip -r -9 ../after-hours-web.zip .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: after-hours-web
+          path: games/after-hours/after-hours-web.zip
+
+      - name: Publish to itch.io
+        if: >-
+          (startsWith(github.ref, 'refs/tags/after-hours-v') || inputs.publish)
+          && vars.ITCH_TARGET != ''
+        env:
+          BUTLER_API_KEY: ${{ secrets.BUTLER_API_KEY }}
+        run: |
+          if [ -z "$BUTLER_API_KEY" ]; then
+            echo "BUTLER_API_KEY is not set; skipping publish."
+            exit 0
+          fi
+          curl -sSfL -o butler.zip https://broth.itch.zone/butler/linux-amd64/LATEST/archive/default
+          unzip -q butler.zip -d butler && chmod +x butler/butler
+          version="${GITHUB_REF_NAME#after-hours-v}"
+          ./butler/butler push games/after-hours/dist "${{ vars.ITCH_TARGET }}:html5" \
+            --userversion "${version:-$GITHUB_SHA}"

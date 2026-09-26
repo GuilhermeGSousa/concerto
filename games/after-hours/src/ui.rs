@@ -46,9 +46,11 @@ pub enum Label {
     Clock,
     Message,
     DeadDetail,
+    EscapedTitle,
     EscapedDetail,
     EscapedPrompt,
     PauseHint,
+    Settings,
 }
 
 #[derive(Component)]
@@ -61,6 +63,8 @@ pub struct StaminaFill;
 pub struct Fade;
 
 const BAR_WIDTH: f32 = 140.0;
+/// The last night of the "week"; after it the game carries on endlessly.
+pub const FINAL_NIGHT: u32 = 5;
 
 fn text(value: &str, size: f32, color: Color) -> TextComponent {
     TextComponent {
@@ -194,6 +198,7 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     );
     spacer(&mut cmd, title, 24.0);
     line(&mut cmd, title, CONTROLS, 12.0, DIM, None);
+    line(&mut cmd, title, "", 12.0, DIM, Some(Label::Settings));
     line(&mut cmd, title, "", 12.0, DIM, Some(Label::Best));
 
     // Night card.
@@ -356,6 +361,8 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     line(&mut cmd, pause, "", 16.0, DIM, Some(Label::PauseHint));
     spacer(&mut cmd, pause, 20.0);
     line(&mut cmd, pause, CONTROLS, 12.0, DIM, None);
+    spacer(&mut cmd, pause, 14.0);
+    line(&mut cmd, pause, "", 12.0, DIM, Some(Label::Settings));
 
     // Caught.
     let dead = cmd
@@ -385,7 +392,14 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
             Screen::Escaped,
         ))
         .entity();
-    line(&mut cmd, escaped, "YOU MADE IT OUT", 44.0, GREEN, None);
+    line(
+        &mut cmd,
+        escaped,
+        "YOU MADE IT OUT",
+        44.0,
+        GREEN,
+        Some(Label::EscapedTitle),
+    );
     line(&mut cmd, escaped, "", 15.0, DIM, Some(Label::EscapedDetail));
     spacer(&mut cmd, escaped, 30.0);
     line(
@@ -436,6 +450,7 @@ pub fn update_ui(
     flashlights: Query<&Flashlight>,
     game: Res<Game>,
     state: Res<NightState>,
+    settings: Res<crate::player::Settings>,
 ) {
     let shown = if crate::platform::debug_flag("noui") {
         None
@@ -501,12 +516,37 @@ pub fn update_ui(
                 ),
                 None,
             ),
+            Label::EscapedTitle => (
+                if game.night == FINAL_NIGHT {
+                    "YOU SURVIVED THE WEEK".into()
+                } else {
+                    "YOU MADE IT OUT".into()
+                },
+                None,
+            ),
+            Label::Settings => (
+                format!(
+                    "[ ] look speed {:.2}    - = volume {:.0}%    I invert look: {}",
+                    settings.sensitivity_scale(),
+                    settings.volume * 100.0,
+                    if settings.invert_y { "on" } else { "off" }
+                ),
+                None,
+            ),
+            Label::EscapedDetail if game.night == FINAL_NIGHT => (
+                "five nights. the store opens at nine.\nthe mannequins will be back in the window by then.".into(),
+                None,
+            ),
             Label::EscapedDetail => (
                 format!(
                     "night {} survived · clocked out at {}",
                     game.night,
                     night::clock_text(game.night_time)
                 ),
+                None,
+            ),
+            Label::EscapedPrompt if game.night >= FINAL_NIGHT => (
+                format!("[ click to keep working nights: night {} ]", game.night + 1),
                 None,
             ),
             Label::EscapedPrompt => (

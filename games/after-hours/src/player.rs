@@ -53,19 +53,89 @@ pub const AMBIENT: f32 = lighting::AMBIENT_LIGHT;
 /// Largest mouse movement, in pixels per axis, accepted in one frame.
 const MAX_LOOK_STEP: f32 = 250.0;
 
-#[derive(Resource)]
+#[derive(Resource, Clone, Copy, PartialEq)]
 pub struct Settings {
     /// Radians per pixel of mouse movement.
     pub sensitivity: f32,
     pub invert_y: bool,
+    /// Master volume, 0..=1.
+    pub volume: f32,
 }
+
+const DEFAULT_SENSITIVITY: f32 = 0.0022;
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            sensitivity: 0.0022,
+            sensitivity: DEFAULT_SENSITIVITY,
             invert_y: false,
+            volume: 0.8,
         }
+    }
+}
+
+impl Settings {
+    /// Saved settings, or the defaults.
+    pub fn load() -> Self {
+        let mut settings = Self::default();
+        let get = |key: &str| crate::platform::load(key).and_then(|v| v.parse::<f32>().ok());
+        if let Some(v) = get("sensitivity") {
+            settings.sensitivity = v.clamp(0.0003, 0.012);
+        }
+        if let Some(v) = get("volume") {
+            settings.volume = v.clamp(0.0, 1.0);
+        }
+        settings.invert_y = crate::platform::load("invert-y").is_some_and(|v| v == "1");
+        settings
+    }
+
+    fn save(&self) {
+        crate::platform::save("sensitivity", &self.sensitivity.to_string());
+        crate::platform::save("volume", &self.volume.to_string());
+        crate::platform::save("invert-y", if self.invert_y { "1" } else { "0" });
+    }
+
+    /// Sensitivity relative to the default, for display.
+    pub fn sensitivity_scale(&self) -> f32 {
+        self.sensitivity / DEFAULT_SENSITIVITY
+    }
+}
+
+/// On the title and pause screens: `[` / `]` sensitivity, `-` / `=` volume,
+/// `I` invert look. Saved as they change.
+pub fn adjust_settings(
+    mut settings: ResMut<Settings>,
+    input: Res<Input>,
+    game: Res<Game>,
+    mut audio: ResMut<Audio>,
+    mut sounds: ResMut<Sounds>,
+) {
+    let menu = game.paused || matches!(game.phase, crate::game::Phase::Title);
+    let before = *settings;
+    if menu {
+        let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
+        if pressed(KeyCode::BracketRight) {
+            settings.sensitivity = (settings.sensitivity * 1.15).min(0.012);
+        }
+        if pressed(KeyCode::BracketLeft) {
+            settings.sensitivity = (settings.sensitivity / 1.15).max(0.0003);
+        }
+        if pressed(KeyCode::Equal) || pressed(KeyCode::NumpadAdd) {
+            settings.volume = (settings.volume + 0.1).min(1.0);
+        }
+        if pressed(KeyCode::Minus) || pressed(KeyCode::NumpadSubtract) {
+            settings.volume = (settings.volume - 0.1).max(0.0);
+        }
+        if pressed(KeyCode::KeyI) {
+            settings.invert_y = !settings.invert_y;
+        }
+    }
+    if *settings != before {
+        settings.save();
+        sounds.play(&mut audio, Sfx::Click, 0.5);
+    }
+    if (audio.master_volume() - settings.volume).abs() > f32::EPSILON {
+        audio.set_master_volume(settings.volume);
     }
 }
 

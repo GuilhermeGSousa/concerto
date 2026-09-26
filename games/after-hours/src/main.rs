@@ -69,7 +69,7 @@ fn main() {
         .insert_resource(mannequin::CurrentLevel::default())
         .insert_resource(mannequin::Flow::default())
         .insert_resource(player::Eye::default())
-        .insert_resource(player::Settings::default())
+        .insert_resource(player::Settings::load())
         .insert_resource(scare::Caught::default())
         .insert_resource(scare::CameraOverride::default())
         .insert_resource(platform::CursorState::default());
@@ -89,6 +89,7 @@ fn main() {
         Update,
         (
             night::advance_phases,
+            player::adjust_settings,
             night::rebuild_night,
             night::title_drift,
             player::control_player,

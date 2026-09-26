@@ -55,26 +55,29 @@ mod imp {
         web_sys::window()?.local_storage().ok().flatten()
     }
 
-    pub fn load_best() -> u32 {
-        storage()
-            .and_then(|s| s.get_item("after-hours.best-night").ok().flatten())
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(1)
+    pub fn load(key: &str) -> Option<String> {
+        storage()?
+            .get_item(&format!("after-hours.{key}"))
+            .ok()
+            .flatten()
     }
 
-    pub fn save_best(night: u32) {
+    pub fn save(key: &str, value: &str) {
         if let Some(s) = storage() {
-            let _ = s.set_item("after-hours.best-night", &night.to_string());
+            let _ = s.set_item(&format!("after-hours.{key}"), value);
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
-    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     static LOCKED: AtomicBool = AtomicBool::new(false);
-    static BEST: AtomicU32 = AtomicU32::new(1);
+    // Natively, progress lasts for the session only for now.
+    static STORE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
     pub fn debug_flag(flag: &str) -> bool {
         std::env::var("AFTER_HOURS_DEBUG").is_ok_and(|v| v.split(',').any(|f| f == flag))
@@ -94,16 +97,29 @@ mod imp {
         LOCKED.store(locked, Ordering::Relaxed);
     }
 
-    pub fn load_best() -> u32 {
-        BEST.load(Ordering::Relaxed)
+    pub fn load(key: &str) -> Option<String> {
+        STORE.lock().ok()?.as_ref()?.get(key).cloned()
     }
 
-    pub fn save_best(night: u32) {
-        BEST.store(night, Ordering::Relaxed);
+    pub fn save(key: &str, value: &str) {
+        if let Ok(mut store) = STORE.lock() {
+            store
+                .get_or_insert_with(HashMap::new)
+                .insert(key.to_string(), value.to_string());
+        }
     }
 }
 
-pub use imp::{debug_flag, debug_value, load_best, pointer_locked, save_best};
+pub use imp::{debug_flag, debug_value, load, pointer_locked, save};
+
+/// Furthest night reached, across sessions (1 if none).
+pub fn load_best() -> u32 {
+    load("best-night").and_then(|v| v.parse().ok()).unwrap_or(1)
+}
+
+pub fn save_best(night: u32) {
+    save("best-night", &night.to_string());
+}
 
 /// What the cursor should be doing, remembered so it is only changed on
 /// transitions.
