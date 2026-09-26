@@ -45,6 +45,7 @@ pub struct AnimationPlayer {
     graph_instance: AnimationGraphInstance,
     blackboard: AnimationBlackboard,
     pose_pool: PosePool,
+    paused: bool,
 }
 
 impl AnimationPlayer {
@@ -53,7 +54,19 @@ impl AnimationPlayer {
             graph_instance: AnimationGraphInstance::default(),
             blackboard: AnimationBlackboard::default(),
             pose_pool: PosePool::new(bone_count),
+            paused: false,
         }
+    }
+
+    /// Freezes the player: its graph stops advancing and its bones are no
+    /// longer posed, so they hold (and can be edited from) their last pose.
+    /// A paused player costs nothing per frame.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
+    pub fn is_paused(&self) -> bool {
+        self.paused
     }
 
     pub fn play(&mut self, node_index: &AnimationNodeIndex) {

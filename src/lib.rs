@@ -1,5 +1,6 @@
 pub use concerto_animation as animation;
 pub use concerto_app as app;
+pub use concerto_audio as audio;
 pub use concerto_color as color;
 pub use concerto_director as director;
 pub use concerto_ecs as ecs;
@@ -22,6 +23,7 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     App, Plugin,
 };
+use concerto_audio::AudioPlugin;
 use concerto_director::CameraDirectorPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
 use concerto_render::{
@@ -71,7 +73,7 @@ impl Plugin for DefaultPlugins {
             .register_plugin(GameplayPlugin);
 
         if !self.headless {
-            app.register_plugin(UIPlugin);
+            app.register_plugin(UIPlugin).register_plugin(AudioPlugin);
         }
     }
 }

@@ -13,24 +13,51 @@ use crate::time::instant::Instant;
 pub struct Time {
     last_update: Instant,
     delta: Duration,
+    real_delta: Duration,
+    time_scale: f32,
     fixed_overstep: Duration,
     accumulated_fixed_time: Duration,
 }
 
 impl Time {
     const FIXED_DELTA_TIME: Duration = Duration::from_millis(33);
+    /// Longest frame the simulation will advance by. A stall (a breakpoint, a
+    /// backgrounded browser tab) otherwise arrives as one huge step that the
+    /// fixed-step loop then has to catch up on all at once.
+    const MAX_DELTA_TIME: Duration = Duration::from_millis(250);
 
     pub fn new() -> Self {
         Self {
             last_update: Instant::now(),
             delta: Duration::default(),
+            real_delta: Duration::default(),
+            time_scale: 1.0,
             fixed_overstep: Duration::default(),
             accumulated_fixed_time: Duration::default(),
         }
     }
 
+    /// Game time elapsed over the last frame: wall time scaled by
+    /// [`time_scale`](Self::time_scale). Everything that simulates (physics,
+    /// animation, gameplay) should advance by this.
     pub fn delta(&self) -> Duration {
         self.delta
+    }
+
+    /// Unscaled wall time elapsed over the last frame, for things that must keep
+    /// running while game time is slowed or paused (menus, camera shake).
+    pub fn real_delta(&self) -> Duration {
+        self.real_delta
+    }
+
+    pub fn time_scale(&self) -> f32 {
+        self.time_scale
+    }
+
+    /// Scales how fast game time passes: `1.0` is real time, `0.0` pauses,
+    /// values in between give slow motion. Takes effect from the next frame.
+    pub fn set_time_scale(&mut self, time_scale: f32) {
+        self.time_scale = time_scale.max(0.0);
     }
 
     pub fn accumulate_fixed_time(&mut self) {
@@ -49,8 +76,10 @@ impl Time {
     }
 
     pub fn update(&mut self) {
-        self.delta = Instant::now() - self.last_update;
-        self.last_update = Instant::now();
+        let now = Instant::now();
+        self.real_delta = (now - self.last_update).min(Self::MAX_DELTA_TIME);
+        self.delta = self.real_delta.mul_f32(self.time_scale);
+        self.last_update = now;
     }
 
     pub fn fixed_delta_time() -> Duration {
