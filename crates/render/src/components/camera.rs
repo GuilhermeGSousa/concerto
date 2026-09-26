@@ -69,6 +69,11 @@ pub struct Camera {
     /// material. `None` (the default) is no fog.
     #[serde(default)]
     pub fog: Option<Fog>,
+    /// Ambient light for surfaces this camera draws with the standard
+    /// material, as a colour multiplied by each surface's albedo. `None`
+    /// keeps the built-in default (a dim 3% white).
+    #[serde(default)]
+    pub ambient: Option<Color>,
 }
 
 /// Exponential-squared distance fog: beyond `start`, surfaces fade toward
@@ -126,6 +131,7 @@ impl Default for Camera {
             clear_color: Color::rgba(0.118, 0.831, 0.922, 1.0),
             render_target: RenderTarget::main_window(),
             fog: None,
+            ambient: None,
         }
     }
 }
@@ -140,6 +146,8 @@ pub struct CameraUniform {
     fog_color: Vec4,
     /// x = density, y = start distance.
     fog_params: Vec4,
+    /// rgb, and a = 1 to override the shader's default ambient.
+    ambient: Vec4,
 }
 
 impl CameraUniform {
@@ -149,6 +157,7 @@ impl CameraUniform {
             view_proj: Mat4::IDENTITY,
             fog_color: Vec4::ZERO,
             fog_params: Vec4::ZERO,
+            ambient: Vec4::ZERO,
         }
     }
 
@@ -166,6 +175,13 @@ impl CameraUniform {
                 self.fog_params = Vec4::ZERO;
             }
         }
+        self.ambient = match camera.ambient {
+            Some(color) => {
+                let c = color.to_linear();
+                Vec4::new(c.r, c.g, c.b, 1.0)
+            }
+            None => Vec4::ZERO,
+        };
     }
 }
 

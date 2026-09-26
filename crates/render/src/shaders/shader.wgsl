@@ -65,6 +65,8 @@ struct CameraUniform {
     fog_color: vec4<f32>,
     // x = density, y = start distance.
     fog_params: vec4<f32>,
+    // rgb + override flag in a (0 = use AMBIENT_INTENSITY).
+    ambient: vec4<f32>,
 };
 
 struct VertexInput {
@@ -309,7 +311,8 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         total_light += (kd * diffuse_color / PI + specular) * radiance * NdotL;
     }
 
-    let ambient = AMBIENT_INTENSITY * base_color.rgb * occlusion;
+    let ambient_light = select(vec3<f32>(AMBIENT_INTENSITY), camera.ambient.rgb, camera.ambient.a > 0.0);
+    let ambient = ambient_light * base_color.rgb * occlusion;
     var color = ambient + total_light + emissive;
 
     // Exponential-squared distance fog, in linear space before tonemapping.
