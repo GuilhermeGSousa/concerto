@@ -1,6 +1,6 @@
 # Command Flushing and Graph Reduction — Design Plan
 
-**Status:** brainstorm; open questions below must be settled before an implementation plan
+**Status:** brainstorm; phase 0 done. Open questions below must be settled before an implementation plan for phases 2 and 3
 **Touches:** `crates/ecs` (command, system/schedule, system/access, executors),
 every crate that takes `CommandQueue` (38 files, 89 system parameters)
 **Constraint:** determinism is non-negotiable. For a given schedule, which commands
@@ -53,26 +53,29 @@ are cheap but free to remove.
   system registered before it in the same schedule.** Anything that changes when
   commands are applied changes this contract, so it must be migrated deliberately.
 
-## Phase 0 — Fix the command queue's undeclared access (existing bug)
+## Phase 0 — Fix the command queue's undeclared access (existing bug) — done
 
-`CommandQueue::get_data` hands the system `&mut EntityStore` so it can allocate
-entities, but `fill_access` declares only `needs_apply`. Queries read the entity
+`CommandQueue::get_data` handed the system `&mut EntityStore` so it could allocate
+entities, but `fill_access` declared only `needs_apply`. Queries read the entity
 store (`find_location` in `query/mod.rs` and `query/filter.rs`). In a schedule
-`[query_system, command_system]` nothing orders the two: they are disjoint, and the
-sync point is only inserted *after* `command_system`. They can run concurrently
-while `EntityStore::alloc` pushes to `metadata`, which may reallocate: a data race.
+`[query_system, command_system]` nothing ordered the two, so they could run
+concurrently while `EntityStore::alloc` pushed to `metadata`, which may reallocate:
+a data race.
 
-Options:
-1. Declare the entity store as written by `CommandQueue` and read by queries. This
-   is simple, but serializes every command system with every query, which is most
-   of the schedule.
-2. Make allocation a reservation that is safe to run in parallel, like Bevy's
-   `Entities::reserve_entity`: an atomic cursor over free-list and fresh indices,
-   with `metadata` growing only when commands are applied. Queries never see a
-   reserved-but-unapplied entity, so no access needs to be declared.
+**Fix:** reservation, as in Bevy's `Entities::reserve_entity`. It is safe to use from
+several threads without a lock.
+- `EntityStore::reserve(&self)` hands out an entity with one atomic decrement of a
+  free cursor. Positive cursor values index into the free list; zero or negative
+  values count fresh indices past `metadata`.
+- `EntityStore::flush(&mut self)` makes reservations real: it trims the free list
+  and grows `metadata`. Every `&mut` method flushes first.
+- `CommandQueue` now holds `&EntityStore`, so no `&mut` aliases the store during
+  parallel execution. Readers stay lock-free: a reserved entity is simply not found
+  until its spawn command is applied.
 
-**Recommendation: option 2.** This phase is required before any of the following
-phases, because they remove the barriers that currently hide the race.
+A `Mutex` or `RwLock` would also have fixed the race, but every
+`Query::get_entity` would then take a lock, and parallel queries would all contend
+on the same counter.
 
 ## Phase 1 — Transitive reduction
 
