@@ -222,7 +222,15 @@ impl Plugin for WindowPlugin {
         let event_loop = event_loop_builder
             .build()
             .expect("Failed to build event loop");
-        event_loop.set_control_flow(ControlFlow::Poll);
+        // Frames are driven by redraw requests (see `RedrawRequested`), which
+        // browsers pace with requestAnimationFrame. `Poll` on the web would add
+        // a second loop spinning through scheduler tasks as fast as it can,
+        // costing most of the main thread's time for nothing.
+        event_loop.set_control_flow(if cfg!(target_arch = "wasm32") {
+            ControlFlow::Wait
+        } else {
+            ControlFlow::Poll
+        });
 
         let mut win_attr = WinitWindow::default_attributes().with_title("Concerto");
 

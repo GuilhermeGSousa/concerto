@@ -1,5 +1,4 @@
 pub mod actions;
-use cfg_if::cfg_if;
 use concerto_ecs::resource::Resource;
 use glam::Vec2;
 use std::collections::HashMap;
@@ -23,8 +22,6 @@ pub struct Input {
     mouse_delta: Vec2,
     mouse_position: Vec2,
     typed_chars: Vec<char>,
-    #[cfg(target_arch = "wasm32")]
-    previous_mouse_delta: Vec2,
 }
 
 impl Input {
@@ -35,8 +32,6 @@ impl Input {
             mouse_delta: Vec2::ZERO,
             mouse_position: Vec2::ZERO,
             typed_chars: Vec::new(),
-            #[cfg(target_arch = "wasm32")]
-            previous_mouse_delta: Vec2::ZERO,
         }
     }
 
@@ -187,19 +182,12 @@ impl Input {
         }
     }
 
+    /// Adds one raw mouse-motion event. Several can arrive per frame (high
+    /// polling-rate mice, or a slow frame), so they accumulate until
+    /// [`update`](Self::update) clears them. Every platform, the web included,
+    /// reports relative motion here (`movementX/Y` in browsers).
     pub fn update_mouse_delta(&mut self, delta: (f64, f64)) {
-        let delta = Vec2::new(delta.0 as f32, delta.1 as f32);
-
-        cfg_if! {
-            if #[cfg(target_arch = "wasm32")] {
-                self.mouse_delta = delta - self.previous_mouse_delta;
-                self.previous_mouse_delta = delta;
-            }
-            else
-            {
-                self.mouse_delta = delta;
-            }
-        }
+        self.mouse_delta += Vec2::new(delta.0 as f32, delta.1 as f32);
     }
 }
 
