@@ -52,8 +52,8 @@ pub struct CeilingLight {
 /// Reach of a ceiling fixture. Lights fade smoothly to nothing here, so a
 /// working tube lights its own aisle and a little of the next, and the rest
 /// of the floor is genuinely dark.
-pub const CEILING_LIGHT_RANGE: f32 = 7.0;
-pub const CEILING_LIGHT_INTENSITY: f32 = 9.0;
+pub const CEILING_LIGHT_RANGE: f32 = 6.5;
+pub const CEILING_LIGHT_INTENSITY: f32 = 7.0;
 
 #[derive(Component)]
 pub struct KeyPickup {

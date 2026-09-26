@@ -9,7 +9,10 @@ use concerto::{
         collider::{Collider, ColliderOffset},
         rigid_body::{AllowedDofs, MotionType, RigidBody},
     },
-    render::components::{camera::Camera, light::Light},
+    render::components::{
+        camera::{Camera, Fog},
+        light::Light,
+    },
     window::input::{Input, KeyCode, PhysicalKey},
 };
 use glam::{Quat, Vec2, Vec3};
@@ -37,6 +40,12 @@ pub const FLASHLIGHT_INTENSITY: f32 = 26.0;
 /// Where the torch sits relative to the eye (held low and to the right).
 pub const FLASHLIGHT_OFFSET: Vec3 = Vec3::new(0.18, -0.22, -0.1);
 pub const FOV_Y: f32 = 1.2;
+/// Darkness swallowing the far end of every aisle.
+pub const FOG: Fog = Fog {
+    color: Color::BLACK,
+    density: 0.085,
+    start: 4.0,
+};
 /// Largest mouse movement, in pixels per axis, accepted in one frame.
 const MAX_LOOK_STEP: f32 = 250.0;
 
@@ -357,6 +366,7 @@ pub fn place_camera(
         camera.znear = 0.05;
         camera.zfar = 80.0;
         camera.clear_color = Color::BLACK;
+        camera.fog = Some(FOG);
         eye.aspect = camera.aspect;
     }
     if eye.valid {

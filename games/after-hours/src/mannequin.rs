@@ -30,7 +30,7 @@ use crate::{
     lighting::{self, PointLight, SpotLight},
     palette::PaletteSlot,
     player::{
-        Eye, FLASHLIGHT_CONE, FLASHLIGHT_OFFSET, FLASHLIGHT_RANGE, FOV_Y, Flashlight, Player,
+        Eye, FLASHLIGHT_CONE, FLASHLIGHT_OFFSET, FLASHLIGHT_RANGE, FOG, FOV_Y, Flashlight, Player,
     },
     poses::{Menace, PoseLibrary},
     sfx::{Sfx, Sounds},
@@ -271,7 +271,9 @@ fn is_lit(sight: &Sight, point: Vec3) -> bool {
     if (point - sight.eye.position).length() < NEAR_SIGHT {
         return true;
     }
-    lighting::irradiance(point, sight.lights, sight.flashlight.as_ref())
+    // What the fog swallows is as good as dark.
+    let fog = FOG.amount((point - sight.eye.position).length());
+    lighting::irradiance(point, sight.lights, sight.flashlight.as_ref()) * (1.0 - fog)
         >= lighting::VISIBLE_IRRADIANCE
 }
 

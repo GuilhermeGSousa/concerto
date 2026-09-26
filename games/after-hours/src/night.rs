@@ -48,18 +48,18 @@ pub fn plan(night: u32, seed: u64) -> NightPlan {
     #[rustfmt::skip]
     let table: [(i32, usize, usize, usize, f32, f32, f32, f32); 5] = [
         // size keys hunters decoys lit  speed first_wake spacing
-        (7,  3, 2, 6,  0.7, 3.5, 25.0, 30.0),
-        (8,  3, 3, 7,  0.6, 4.0, 18.0, 22.0),
-        (8,  4, 4, 8,  0.5, 4.5, 12.0, 18.0),
-        (9,  4, 5, 9,  0.4, 5.0, 8.0, 14.0),
-        (10, 5, 6, 10, 0.3, 5.5, 5.0, 10.0),
+        (7,  3, 2, 6,  0.45, 3.5, 25.0, 30.0),
+        (8,  3, 3, 7,  0.35, 4.0, 18.0, 22.0),
+        (8,  4, 4, 8,  0.3,  4.5, 12.0, 18.0),
+        (9,  4, 5, 9,  0.25, 5.0, 8.0, 14.0),
+        (10, 5, 6, 10, 0.2,  5.5, 5.0, 10.0),
     ];
     let (size, keys, hunters, decoys, lit, speed, first_wake, wake_spacing) =
         if n as usize <= table.len() {
             table[n as usize - 1]
         } else {
             let extra = (n as usize - table.len()).min(6);
-            (10, 5, 6 + extra, 10, 0.25, 6.0, 3.0, 8.0)
+            (10, 5, 6 + extra, 10, 0.15, 6.0, 3.0, 8.0)
         };
     NightPlan {
         spec: LevelSpec {
@@ -69,7 +69,7 @@ pub fn plan(night: u32, seed: u64) -> NightPlan {
             hunters,
             decoys,
             lit_fraction: lit,
-            max_lights: 16,
+            max_lights: 12,
             seed,
         },
         hunter_speed: speed,

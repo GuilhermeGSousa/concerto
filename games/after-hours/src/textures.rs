@@ -103,7 +103,7 @@ pub fn floor() -> Texture {
 /// Suspended ceiling panels with a dark grid and pinholes.
 pub fn ceiling() -> Texture {
     paint(128, |u, v| {
-        let base = [0.72, 0.71, 0.68];
+        let base = [0.5, 0.49, 0.47];
         let stain = (fbm(u, v, 2, 4, 5) - 0.6).max(0.0) * 2.5;
         let pin = value_noise(u * 64.0, v * 64.0, 64, 17);
         let mut color = mix(base, [0.45, 0.38, 0.28], stain);
