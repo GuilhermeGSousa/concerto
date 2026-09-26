@@ -52,27 +52,7 @@ impl SubApps {
     }
 }
 
-/// One world with its own schedules, such as the main or the render world of an
-/// [`App`](crate::App).
-///
-/// A new `SubApp` has an empty [`Schedules`] resource. Its update schedule, set with
-/// [`set_update_schedule`](SubApp::set_update_schedule), runs once per
-/// [`update`](SubApp::update).
-///
-/// # Examples
-///
-/// ```
-/// use concerto_app::subapp::SubApp;
-/// use concerto_ecs::system::schedule::ScheduleLabel;
-///
-/// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-/// struct Tick;
-///
-/// fn count() {}
-///
-/// let mut sub_app = SubApp::default();
-/// sub_app.add_system(Tick, count).set_update_schedule(Tick);
-/// ```
+/// One world with its own schedules, such as the main or render world of an [`App`](crate::App).
 pub struct SubApp {
     world: World,
     update_schedule: Option<InternedScheduleLabel>,
@@ -90,129 +70,34 @@ impl Default for SubApp {
 }
 
 impl SubApp {
-    /// Inserts a resource into this world, replacing any of the same type.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::Resource;
-    ///
-    /// #[derive(Resource)]
-    /// struct Score(u64);
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.insert_resource(Score(0));
-    /// ```
+    /// Inserts a resource into this world.
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.world.insert_resource(value);
         self
     }
 
-    /// Removes a resource from this world and returns it, if present.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::Resource;
-    ///
-    /// #[derive(Resource)]
-    /// struct Score(u64);
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.insert_resource(Score(0));
-    ///
-    /// assert_eq!(sub_app.remove_resource::<Score>().map(|score| score.0), Some(0));
-    /// ```
+    /// Removes a resource from this world.
     pub fn remove_resource<R: Resource>(&mut self) -> Option<R> {
         self.world.remove_resource::<R>()
     }
 
-    /// Returns a resource of this world, if present.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::Resource;
-    ///
-    /// #[derive(Resource)]
-    /// struct Score(u64);
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.insert_resource(Score(0));
-    ///
-    /// assert_eq!(sub_app.get_resource::<Score>().map(|score| score.0), Some(0));
-    /// ```
+    /// Returns a resource of this world.
     pub fn get_resource<R: Resource>(&self) -> Option<&R> {
         self.world.get_resource::<R>()
     }
 
-    /// Returns a resource of this world mutably, if present.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::Resource;
-    ///
-    /// #[derive(Resource)]
-    /// struct Score(u64);
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.insert_resource(Score(0));
-    ///
-    /// if let Some(score) = sub_app.get_resource_mut::<Score>() {
-    ///     score.0 += 10;
-    /// }
-    /// ```
+    /// Returns a resource of this world mutably.
     pub fn get_resource_mut<R: Resource>(&mut self) -> Option<&mut R> {
         self.world.get_resource_mut::<R>()
     }
 
-    /// Registers a [`SceneComponent`] so serialized scenes can spawn it by type name.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_foundation::transform::Transform;
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.register_scene_component::<Transform>();
-    /// ```
+    /// Registers a [`SceneComponent`] so scenes can spawn it by type name.
     pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {
         self.world.register_component_type::<T>();
         self
     }
 
-    /// Adds a system, a tuple of systems, or a
-    /// [`SystemConfig`](concerto_ecs::SystemConfig) to this world's schedule labelled
-    /// `update_group`.
-    ///
-    /// See [`Schedule::add_system`](concerto_ecs::Schedule::add_system).
-    ///
-    /// # Panics
-    ///
-    /// Panics if this world's [`Schedules`] have already been compiled.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::{IntoSystemConfig, system::schedule::ScheduleLabel};
-    ///
-    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-    /// struct Tick;
-    ///
-    /// fn count() {}
-    /// fn read() {}
-    /// fn write() {}
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.add_system(Tick, count).add_system(Tick, (read, write).chain());
-    /// ```
+    /// Adds systems to this world's `update_group` schedule. Panics once the schedules have been compiled.
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -224,33 +109,7 @@ impl SubApp {
         self
     }
 
-    /// Adds ordering constraints between sets in this world's schedule labelled
-    /// `update_group`.
-    ///
-    /// See [`Schedule::configure_sets`](concerto_ecs::Schedule::configure_sets).
-    ///
-    /// # Panics
-    ///
-    /// Panics if this world's [`Schedules`] have already been compiled.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::{IntoSetConfig, SystemSet, system::schedule::ScheduleLabel};
-    ///
-    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-    /// struct Tick;
-    ///
-    /// #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
-    /// enum Phase {
-    ///     Read,
-    ///     Write,
-    /// }
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.configure_sets(Tick, (Phase::Read, Phase::Write).chain());
-    /// ```
+    /// Adds ordering constraints between sets in this world's `update_group` schedule. Panics once the schedules have been compiled.
     pub fn configure_sets(
         &mut self,
         update_group: impl ScheduleLabel,
@@ -262,19 +121,7 @@ impl SubApp {
         self
     }
 
-    /// Runs this world's update schedule.
-    ///
-    /// Does nothing if no update schedule is set or it has not been compiled into
-    /// this world's [`CompiledSchedules`](concerto_ecs::system::schedule::CompiledSchedules).
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.update();
-    /// ```
+    /// Runs the update schedule, if one is set and compiled.
     pub fn update(&mut self) {
         if let Some(label) = self.update_schedule {
             self.world.run_schedule(label);
@@ -282,48 +129,17 @@ impl SubApp {
     }
 
     /// Sets the schedule [`update`](SubApp::update) runs.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    /// use concerto_ecs::system::schedule::ScheduleLabel;
-    ///
-    /// #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
-    /// struct Tick;
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// sub_app.set_update_schedule(Tick);
-    /// ```
     pub fn set_update_schedule(&mut self, label: impl ScheduleLabel) -> &mut Self {
         self.update_schedule = Some(label.intern());
         self
     }
 
-    /// Returns this sub-application's world.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    ///
-    /// let sub_app = SubApp::default();
-    /// let world = sub_app.world();
-    /// ```
+    /// Returns this sub-app's world.
     pub fn world(&self) -> &World {
         &self.world
     }
 
-    /// Returns this sub-application's world mutably.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// use concerto_app::subapp::SubApp;
-    ///
-    /// let mut sub_app = SubApp::default();
-    /// let world = sub_app.world_mut();
-    /// ```
+    /// Returns this sub-app's world mutably.
     pub fn world_mut(&mut self) -> &mut World {
         &mut self.world
     }

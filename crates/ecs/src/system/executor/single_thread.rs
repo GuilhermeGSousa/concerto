@@ -3,24 +3,7 @@ use crate::{
     system::{executor::SystemExecutor, schedule::CompiledScheduleData},
 };
 
-/// A [`SystemExecutor`] that runs every system on the calling thread, one at a time,
-/// in dependency order.
-///
-/// # Examples
-///
-/// ```
-/// use concerto_ecs::{Schedule, World, system::executor::single_thread::SingleThreadedExecutor};
-///
-/// fn tick() {}
-///
-/// let mut schedule = Schedule::new();
-/// schedule.add_system(tick);
-///
-/// let mut world = World::new();
-/// schedule
-///     .compile::<SingleThreadedExecutor>(&mut world)
-///     .run(&mut world);
-/// ```
+/// Runs every system on the calling thread, one at a time, in dependency order.
 pub struct SingleThreadedExecutor {}
 
 impl SystemExecutor for SingleThreadedExecutor {

@@ -1,14 +1,5 @@
 //! The entity component system at the core of Concerto.
 //!
-//! - [`World`] holds every entity, component and resource.
-//! - [`Entity`] is a lightweight handle to a game object.
-//! - [`Component`] is data attached to entities; derive it with `#[derive(Component)]`.
-//! - [`Resource`] is data shared across the world; derive it with `#[derive(Resource)]`.
-//! - [`Query`] iterates the entities that have a given set of components.
-//! - [`Event`] is a message passed between systems; derive it with `#[derive(Event)]`.
-//! - [`Schedule`] runs systems in an order given by explicit constraints, named
-//!   [`SystemSet`]s and, where neither applies, registration order.
-//!
 //! # Examples
 //!
 //! ```
@@ -29,51 +20,30 @@
 //!     }
 //! }
 //!
-//! fn report(query: Query<&Position>) {
-//!     for position in query.iter() {
-//!         println!("{}", position.0);
-//!     }
-//! }
-//!
 //! let mut world = World::new();
 //! world.spawn((Position(0.0), Velocity(1.0)));
 //!
 //! let mut schedule = Schedule::new();
-//! schedule.add_system(report.after(integrate)).add_system(integrate);
+//! schedule.add_system(integrate);
 //! schedule
 //!     .compile::<SingleThreadedExecutor>(&mut world)
 //!     .run(&mut world);
 //! ```
 
-/// Storage grouping entities that share the same component types.
 pub mod archetype;
-/// Deferred world mutations queued by systems.
 pub mod command;
-/// Identifiers derived from sets of component types.
 pub mod common;
-/// Components and their registration.
 pub mod component;
-/// Entities, entity handles and hierarchies.
 pub mod entity;
-/// Events passed between systems.
 pub mod events;
-/// Interning of values into cheap, copyable handles.
 pub mod intern;
-/// Support for label traits such as [`SystemSet`].
 pub mod label;
-/// Queries over entities and their components.
 pub mod query;
-/// Resources shared across a world.
 pub mod resource;
-/// Systems, schedules and their ordering.
 pub mod system;
-/// Column storage for component data.
 pub mod table;
-/// Hashers keyed by `TypeId` and cells shareable across threads.
 pub mod utilities;
-/// Hashers with a fixed seed.
 pub mod utils;
-/// The [`World`] and access to it.
 pub mod world;
 
 pub use command::CommandQueue;

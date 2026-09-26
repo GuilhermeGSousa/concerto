@@ -1,18 +1,11 @@
-/// Tracking of the data each system reads and writes.
 pub mod access;
-/// Ordering constraints and set membership for systems.
 pub mod config;
-/// Strategies for running a compiled schedule.
 pub mod executor;
 mod graph;
-/// Parameters a system function can take.
 pub mod input;
-/// Scheduling metadata for systems.
 pub mod meta;
 mod reachability;
-/// Schedules and their compilation.
 pub mod schedule;
-/// Named groups of systems.
 pub mod set;
 mod sync_point;
 
@@ -32,73 +25,27 @@ use crate::{
 };
 
 /// A boxed, type-erased [`System`].
-///
-/// # Examples
-///
-/// ```
-/// use concerto_ecs::{IntoSystem, system::BoxedSystem};
-///
-/// fn tick() {}
-///
-/// let system: BoxedSystem = tick.into_system();
-/// assert!(system.name().ends_with("tick"));
-/// ```
 pub type BoxedSystem = Box<dyn System>;
 
 /// A unit of work a [`Schedule`](crate::Schedule) runs against a [`World`].
 ///
-/// Plain functions whose parameters implement [`SystemInput`] are converted into
-/// systems by [`IntoSystem`], so this trait rarely needs implementing by hand.
-///
-/// # Examples
-///
-/// ```
-/// use concerto_ecs::{
-///     System, World,
-///     system::{access::SystemAccess, meta::SystemMetadata},
-///     world::UnsafeWorldCell,
-/// };
-///
-/// struct Noop;
-///
-/// impl System for Noop {
-///     fn name(&self) -> &'static str {
-///         "Noop"
-///     }
-///
-///     fn initialize(&mut self, _world: &mut World) {}
-///
-///     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
-///
-///     unsafe fn run_unsafe(&mut self, _world: UnsafeWorldCell) {}
-///
-///     fn apply(&mut self, _world: &mut World) {}
-/// }
-///
-/// let mut world = World::new();
-/// let mut system = Noop;
-/// system.initialize(&mut world);
-/// system.run_and_apply(&mut world);
-/// ```
+/// Functions become systems through [`IntoSystem`]; implementing this directly is rarely needed.
 pub trait System: Send + Sync + 'static {
     /// Returns the fully-qualified name of the underlying function or type.
     fn name(&self) -> &'static str;
 
-    /// Returns a [`TypeId`] identifying this system, used to name it as an ordering target.
-    ///
-    /// Defaults to the type implementing `System`; function systems return an id
-    /// unique to their function.
+    /// Returns the id used to name this system as an ordering target.
     fn system_type(&self) -> TypeId {
         TypeId::of::<Self>()
     }
 
-    /// Prepares the system's cached state. Called once before the first run.
+    /// Prepares the system's state; called once before the first run.
     fn initialize(&mut self, world: &mut World);
 
     /// Records which components and resources this system reads or writes.
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    /// Runs the system against the world, then applies its deferred commands.
+    /// Runs the system, then applies its deferred commands.
     fn run_and_apply(&mut self, world: &mut World) {
         self.run(world);
         self.apply(world);
@@ -110,17 +57,14 @@ pub trait System: Send + Sync + 'static {
         unsafe { self.run_unsafe(world_cell) };
     }
 
-    /// Runs the system through a shared world cell, for executors that run systems in
-    /// parallel.
+    /// Runs the system through a shared world cell, for parallel executors.
     ///
     /// # Safety
     ///
-    /// No other system whose access conflicts with this one may run on the same
-    /// world at the same time.
+    /// No system with conflicting access may run on the same world at the same time.
     unsafe fn run_unsafe(&mut self, world: UnsafeWorldCell);
 
-    /// Applies deferred mutations, such as entities spawned through a
-    /// [`CommandQueue`](crate::CommandQueue).
+    /// Applies deferred mutations, such as commands queued by the system.
     fn apply(&mut self, world: &mut World);
 }
 
@@ -213,27 +157,8 @@ where
 }
 
 /// Converts a function, closure or [`System`] into a [`BoxedSystem`].
-///
-/// Implemented for functions and closures of up to twelve parameters that each
-/// implement [`SystemInput`], and for every type implementing [`System`].
-///
-/// # Examples
-///
-/// ```
-/// use concerto_ecs::{IntoSystem, Res, Resource};
-///
-/// #[derive(Resource)]
-/// struct Gravity(f32);
-///
-/// fn report(gravity: Res<Gravity>) {
-///     println!("{}", gravity.0);
-/// }
-///
-/// let system = report.into_system();
-/// assert!(system.name().ends_with("report"));
-/// ```
 pub trait IntoSystem<Marker> {
-    /// Boxes `self` as a system ready to be added to a [`Schedule`](crate::Schedule).
+    /// Boxes `self` as a system.
     fn into_system(self) -> BoxedSystem;
 }
 
@@ -261,20 +186,6 @@ where
 }
 
 /// A system parameter that pins the system to the main thread.
-///
-/// Take it in systems that touch data which must not leave the main thread, such as
-/// window handles.
-///
-/// # Examples
-///
-/// ```
-/// use concerto_ecs::{Schedule, system::NonSendMarker};
-///
-/// fn poll_window(_main_thread: NonSendMarker) {}
-///
-/// let mut schedule = Schedule::new();
-/// schedule.add_system(poll_window);
-/// ```
 pub struct NonSendMarker;
 
 impl SystemInput for NonSendMarker {
