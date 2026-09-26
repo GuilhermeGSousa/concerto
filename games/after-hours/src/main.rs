@@ -15,6 +15,7 @@ mod content;
 mod debug;
 mod game;
 mod level;
+mod lighting;
 mod mannequin;
 mod meshes;
 mod night;

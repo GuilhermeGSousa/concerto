@@ -4,6 +4,7 @@
 //! - `nolock`: treat the pointer as locked, so play never pauses.
 //! - `noui`: hide every screen, for clean screenshots.
 //! - `trace`: log the camera, player and mannequin state once a second.
+//! - `poses`: replace the title store with a lit gallery of every pose.
 use concerto::{
     director::MainCamera,
     ecs::{Query, Res, ResMut, Resource, With},
@@ -60,4 +61,64 @@ pub fn trace(
             );
         }
     }
+}
+
+/// `?poses`: lays every pose out in rows before the camera, numbered left to
+/// right, front row first. Returns whether it did.
+pub fn pose_gallery(
+    cmd: &mut concerto::ecs::CommandQueue,
+    server: &concerto::foundation::assets::asset_server::AssetServer,
+    palette: &crate::palette::Palette,
+    library: &crate::poses::PoseLibrary,
+) -> bool {
+    use concerto::{physics::collider::Collider, render::components::light::Light};
+    use glam::Vec3;
+
+    // `poses` shows everything; `poses0`..`poses2` one row (one menace tier
+    // of nine) each, larger and all in the white finish.
+    let row_filter = (0..3).find(|r| platform::debug_flag(&format!("poses{r}")));
+    if !platform::debug_flag("poses") && row_filter.is_none() {
+        return false;
+    }
+    cmd.spawn((
+        crate::store::StoreEntity,
+        Collider::cuboid(40.0, 0.5, 40.0),
+        Transform::from_translation(Vec3::new(0.0, -0.5, 0.0)),
+    ));
+    cmd.spawn((
+        crate::store::StoreEntity,
+        Light::directional_light().with_intensity(3.0),
+        Transform::from_rotation(glam::Quat::from_rotation_x(-0.6)),
+    ));
+    // The player spawns at the origin facing -Z; rows run across X.
+    crate::player::spawn_player(cmd, Vec3::new(0.0, 0.05, 0.0), 0.0);
+    let per_row = 9;
+    for (i, _) in library.poses.iter().enumerate() {
+        if row_filter.is_some_and(|r| i / per_row != r) {
+            continue;
+        }
+        let row = if row_filter.is_some() {
+            0.0
+        } else {
+            (i / per_row) as f32
+        };
+        let col = (i % per_row) as f32 - (per_row as f32 - 1.0) * 0.5;
+        let feet = Vec3::new(col * 1.4, 0.0, -5.0 - row * 3.2);
+        crate::mannequin::spawn_mannequin(
+            cmd,
+            server,
+            feet,
+            0.0,
+            crate::mannequin::Kind::Decoy,
+            0.0,
+            if row_filter.is_some() {
+                0
+            } else {
+                (i / per_row) % palette.finishes.len()
+            },
+            i,
+            0.0,
+        );
+    }
+    true
 }

@@ -25,6 +25,9 @@ pub enum Sfx {
     Heartbeat,
     Click,
     NightStart,
+    /// A faint music-box note from the nearest key (or the unlocked exit),
+    /// so the maze can be navigated by ear.
+    Chime,
 }
 
 #[derive(Resource, Default)]
@@ -344,6 +347,18 @@ fn build(sfx: Sfx) -> Mix {
             );
             mix
         }
+        Sfx::Chime => {
+            let mut mix = Mix::new(1.6);
+            for (ratio, vol, decay) in [(1.0, 0.6, 2.5), (2.0, 0.2, 4.0), (3.01, 0.12, 5.0)] {
+                mix.add(
+                    0.0,
+                    Tone::new(Wave::Sine, midi(83) * ratio, 1.5)
+                        .decay(decay)
+                        .volume(vol),
+                );
+            }
+            mix
+        }
         Sfx::NightStart => {
             // A distant store PA chime, slightly out of tune.
             let mut mix = Mix::new(2.6);
@@ -416,7 +431,8 @@ fn ambience() -> Mix {
     mix
 }
 
-pub const ALL: [Sfx; 14] = [
+pub const ALL: [Sfx; 15] = [
+    Sfx::Chime,
     Sfx::Footstep,
     Sfx::FlashlightClick,
     Sfx::FlashlightDie,

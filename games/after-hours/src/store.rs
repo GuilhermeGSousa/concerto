@@ -49,8 +49,11 @@ pub struct CeilingLight {
     pub panel: Entity,
 }
 
-/// Radius of floor a working ceiling light illuminates well enough to see by.
-pub const LIGHT_POOL: f32 = 3.2;
+/// Reach of a ceiling fixture. Lights fade smoothly to nothing here, so a
+/// working tube lights its own aisle and a little of the next, and the rest
+/// of the floor is genuinely dark.
+pub const CEILING_LIGHT_RANGE: f32 = 7.0;
+pub const CEILING_LIGHT_INTENSITY: f32 = 9.0;
 
 #[derive(Component)]
 pub struct KeyPickup {
@@ -279,7 +282,7 @@ pub fn build_store(
         );
         if working {
             let flickers = rand.unit() < 0.3 && cell != level.start;
-            let intensity = 11.0;
+            let intensity = CEILING_LIGHT_INTENSITY;
             cmd.spawn((
                 StoreEntity,
                 CeilingLight {
@@ -294,7 +297,8 @@ pub fn build_store(
                 },
                 Light::point_light()
                     .with_color(Color::srgba(0.85, 0.95, 1.0, 1.0))
-                    .with_intensity(intensity),
+                    .with_intensity(intensity)
+                    .with_range(CEILING_LIGHT_RANGE),
                 Transform::from_translation(pos - Vec3::Y * 0.3),
             ));
         }
@@ -314,7 +318,8 @@ pub fn build_store(
             .spawn((
                 Light::point_light()
                     .with_color(Color::srgba(1.0, 0.8, 0.35, 1.0))
-                    .with_intensity(1.2),
+                    .with_intensity(1.2)
+                    .with_range(2.5),
                 Transform::IDENTITY,
             ))
             .entity();
@@ -395,7 +400,8 @@ pub fn build_store(
             },
             Light::point_light()
                 .with_color(Color::srgba(1.0, 0.2, 0.15, 1.0))
-                .with_intensity(2.5),
+                .with_intensity(2.5)
+                .with_range(5.0),
             Transform::from_translation(door_center + Vec3::Y * 2.3 - dir.vector() * 0.6),
         ))
         .entity();

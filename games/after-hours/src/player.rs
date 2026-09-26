@@ -31,7 +31,11 @@ const BATTERY_SECONDS: f32 = 150.0;
 /// Below this charge the light starts to stutter.
 const LOW_BATTERY: f32 = 0.22;
 pub const FLASHLIGHT_CONE: f32 = 0.42;
-pub const FLASHLIGHT_RANGE: f32 = 15.0;
+pub const FLASHLIGHT_RANGE: f32 = 16.0;
+/// Light at the brightest battery level.
+pub const FLASHLIGHT_INTENSITY: f32 = 26.0;
+/// Where the torch sits relative to the eye (held low and to the right).
+pub const FLASHLIGHT_OFFSET: Vec3 = Vec3::new(0.18, -0.22, -0.1);
 pub const FOV_Y: f32 = 1.2;
 /// Largest mouse movement, in pixels per axis, accepted in one frame.
 const MAX_LOOK_STEP: f32 = 250.0;
@@ -78,6 +82,8 @@ pub struct Flashlight {
     pub emitting: bool,
     flicker_timer: f32,
     flicker_off: f32,
+    /// The intensity actually emitted this frame.
+    pub intensity: f32,
 }
 
 impl Flashlight {
@@ -123,11 +129,13 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
                 emitting: true,
                 flicker_timer: 0.0,
                 flicker_off: 0.0,
+                intensity: 0.0,
             },
             {
                 let light = Light::spot_light(FLASHLIGHT_CONE)
                     .with_color(Color::srgba(1.0, 0.93, 0.8, 1.0))
-                    .with_intensity(0.0);
+                    .with_intensity(0.0)
+                    .with_range(FLASHLIGHT_RANGE);
                 if crate::platform::debug_flag("noshadow") {
                     light
                 } else {
@@ -136,7 +144,7 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
             },
             // Held low and to the right, like a real torch; shadows then
             // fall visibly behind things instead of hiding right behind them.
-            Transform::from_translation(Vec3::new(0.18, -0.22, -0.1)),
+            Transform::from_translation(FLASHLIGHT_OFFSET),
         ))
         .entity();
     cmd.add_child(head, flashlight);
@@ -305,11 +313,12 @@ pub fn update_flashlight(
             flashlight.switched_on && flashlight.battery > 0.0 && flashlight.flicker_off <= 0.0;
         // Dims as the battery drains.
         let strength = 0.45 + 0.55 * (flashlight.battery / 0.5).min(1.0);
-        light.intensity = if flashlight.emitting {
-            26.0 * strength
+        flashlight.intensity = if flashlight.emitting {
+            FLASHLIGHT_INTENSITY * strength
         } else {
             0.0
         };
+        light.intensity = flashlight.intensity;
     }
 }
 

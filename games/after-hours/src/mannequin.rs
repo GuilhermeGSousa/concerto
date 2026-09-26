@@ -17,7 +17,7 @@ use concerto::{
         transform::Transform,
     },
     physics::physics_state::PhysicsState,
-    render::{MaterialComponent, assets::material::StandardMaterial},
+    render::{MaterialComponent, assets::material::StandardMaterial, components::light::Light},
     scene::{scene::Scene, spawner::SceneSpawnerComponent},
 };
 use glam::{Quat, Vec3};
@@ -27,11 +27,14 @@ use crate::{
     content,
     game::{Game, Rand},
     level::{CELL, Cell, Level},
+    lighting::{self, PointLight, SpotLight},
     palette::PaletteSlot,
-    player::{Eye, FLASHLIGHT_CONE, FLASHLIGHT_RANGE, FOV_Y, Flashlight, Player},
+    player::{
+        Eye, FLASHLIGHT_CONE, FLASHLIGHT_OFFSET, FLASHLIGHT_RANGE, FOV_Y, Flashlight, Player,
+    },
     poses::{Menace, PoseLibrary},
     sfx::{Sfx, Sounds},
-    store::{CeilingLight, LIGHT_POOL, StoreEntity},
+    store::{CeilingLight, StoreEntity},
 };
 
 /// Mannequins have no physics body: the physics engine interpolates bodies
@@ -51,6 +54,11 @@ const NEAR_SIGHT: f32 = 2.6;
 const VIEW_MARGIN: f32 = 0.12;
 /// Frames a new pose is left unpaused so it gets evaluated onto the bones.
 const SETTLE_FRAMES: u8 = 3;
+/// Beyond this many cells of walking distance, hunters only stalk.
+const STALK_CELLS: i32 = 3;
+const STALK_SPEED: f32 = 0.55;
+/// A dormant hunter wakes at once if the player comes this close (cells).
+const WAKE_CELLS: i32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -78,15 +86,19 @@ pub struct Mannequin {
     creak_timer: f32,
     pub speed: f32,
     pub yaw: f32,
+    /// Seconds before a hunter starts hunting. Walking right up to it wakes
+    /// it early.
+    dormant: f32,
 }
 
 impl Mannequin {
     pub fn is_hunting(&self) -> bool {
-        self.kind == Kind::Hunter
+        self.kind == Kind::Hunter && self.dormant <= 0.0
     }
 
     pub fn wake(&mut self) {
         self.kind = Kind::Hunter;
+        self.dormant = 0.0;
     }
 
     pub fn anim_entity(&self) -> Option<Entity> {
@@ -108,6 +120,7 @@ pub fn spawn_mannequin(
     speed: f32,
     finish: usize,
     pose: usize,
+    dormant: f32,
 ) -> Entity {
     let visual = cmd
         .spawn((
@@ -133,6 +146,7 @@ pub fn spawn_mannequin(
                 creak_timer: 0.0,
                 speed,
                 yaw,
+                dormant,
             },
             Transform::from_translation(feet),
         ))
@@ -233,8 +247,8 @@ pub fn apply_poses(
 /// Lighting and eye state the observation test needs, gathered once a frame.
 pub struct Sight<'a> {
     pub eye: &'a Eye,
-    pub flashlight_on: bool,
-    pub lights: &'a [Vec3],
+    pub flashlight: Option<SpotLight>,
+    pub lights: &'a [PointLight],
     pub physics: &'a PhysicsState,
 }
 
@@ -251,22 +265,14 @@ fn in_view(position: Vec3, rotation: Quat, aspect: f32, point: Vec3) -> bool {
     local.y.abs() <= depth * tan_v && local.x.abs() <= depth * tan_h.tan()
 }
 
+/// Whether `point` is bright enough on screen to make out, using the same
+/// falloff the renderer uses. Up close you can see shapes even in the dark.
 fn is_lit(sight: &Sight, point: Vec3) -> bool {
-    let to_point = point - sight.eye.position;
-    let distance = to_point.length();
-    if distance < NEAR_SIGHT {
+    if (point - sight.eye.position).length() < NEAR_SIGHT {
         return true;
     }
-    if sight.flashlight_on && distance < FLASHLIGHT_RANGE {
-        let cos = to_point.normalize_or_zero().dot(sight.eye.forward());
-        if cos >= (FLASHLIGHT_CONE + 0.08).cos() {
-            return true;
-        }
-    }
-    sight
-        .lights
-        .iter()
-        .any(|light| flat(*light - point).length() < LIGHT_POOL)
+    lighting::irradiance(point, sight.lights, sight.flashlight.as_ref())
+        >= lighting::VISIBLE_IRRADIANCE
 }
 
 fn line_of_sight(sight: &Sight, from: Vec3, point: Vec3, owner: Entity) -> bool {
@@ -357,7 +363,7 @@ pub fn hunt(
     mannequins: Query<(Entity, &mut Mannequin, &mut Transform), Without<Player>>,
     players: Query<&Transform, With<Player>>,
     flashlights: Query<&Flashlight>,
-    ceiling_lights: Query<(&CeilingLight, &Transform), Without<Mannequin>>,
+    ceiling_lights: Query<(&Light, &Transform), (With<CeilingLight>, Without<Mannequin>)>,
     (eye, physics): (Res<Eye>, Res<PhysicsState>),
     (level, mut flow, library): (Res<CurrentLevel>, ResMut<Flow>, Res<PoseLibrary>),
     (mut game, mut caught): (ResMut<Game>, ResMut<crate::scare::Caught>),
@@ -380,15 +386,28 @@ pub fn hunt(
         flow.distances = level.distances(player_cell);
     }
 
-    let lights: Vec<Vec3> = ceiling_lights
+    let lights: Vec<PointLight> = ceiling_lights
         .iter()
-        .filter(|(light, _)| light.on)
-        .map(|(_, t)| t.translation)
+        .filter(|(light, ..)| light.intensity > 0.0)
+        .map(|(light, t)| PointLight {
+            position: t.translation,
+            intensity: light.intensity,
+            range: light.range,
+        })
         .collect();
-    let flashlight_on = flashlights.iter().any(|f| f.is_emitting());
+    let flashlight = flashlights
+        .iter()
+        .find(|f| f.is_emitting())
+        .map(|f| SpotLight {
+            position: eye.position + eye.rotation * FLASHLIGHT_OFFSET,
+            direction: eye.forward(),
+            intensity: f.intensity,
+            range: FLASHLIGHT_RANGE,
+            cone: FLASHLIGHT_CONE,
+        });
     let sight = Sight {
         eye: &eye,
-        flashlight_on,
+        flashlight,
         lights: &lights,
         physics: &physics,
     };
@@ -400,6 +419,18 @@ pub fn hunt(
 
     for (entity, mut mannequin, mut transform) in mannequins.iter() {
         let feet = transform.translation;
+        let cell = Cell::from_world(feet);
+        let cells_away = if level.contains(cell) && !flow.distances.is_empty() {
+            level.distance(&flow.distances, cell)
+        } else {
+            i32::MAX
+        };
+        if live && mannequin.kind == Kind::Hunter && mannequin.dormant > 0.0 {
+            mannequin.dormant -= dt;
+            if cells_away <= WAKE_CELLS {
+                mannequin.dormant = 0.0;
+            }
+        }
         mannequin.observed = is_observed(&sight, entity, feet);
         if mannequin.observed
             || !live
@@ -457,7 +488,12 @@ pub fn hunt(
                 }
             }
         }
-        let step = (mannequin.speed * dt).min((distance - CATCH_DISTANCE * 0.8).max(0.0));
+        let speed = if cells_away > STALK_CELLS {
+            mannequin.speed * STALK_SPEED
+        } else {
+            mannequin.speed
+        };
+        let step = (speed * dt).min((distance - CATCH_DISTANCE * 0.8).max(0.0));
         transform.translation = feet + dir.normalize_or_zero() * step;
         mannequin.yaw = yaw_toward(to_player);
 

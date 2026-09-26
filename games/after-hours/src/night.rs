@@ -37,24 +37,30 @@ const CLOCK_RATE: f32 = 0.5;
 pub struct NightPlan {
     pub spec: LevelSpec,
     pub hunter_speed: f32,
+    /// Seconds before the first hunter wakes, and between later ones.
+    pub first_wake: f32,
+    pub wake_spacing: f32,
 }
 
 /// The difficulty curve (see DESIGN.md).
 pub fn plan(night: u32, seed: u64) -> NightPlan {
     let n = night.max(1);
-    let table: [(i32, usize, usize, usize, f32, f32); 5] = [
-        (7, 3, 2, 6, 0.7, 3.5),
-        (8, 3, 3, 7, 0.6, 4.0),
-        (8, 4, 4, 8, 0.5, 4.5),
-        (9, 4, 5, 9, 0.4, 5.0),
-        (10, 5, 6, 10, 0.3, 5.5),
+    #[rustfmt::skip]
+    let table: [(i32, usize, usize, usize, f32, f32, f32, f32); 5] = [
+        // size keys hunters decoys lit  speed first_wake spacing
+        (7,  3, 2, 6,  0.7, 3.5, 25.0, 30.0),
+        (8,  3, 3, 7,  0.6, 4.0, 18.0, 22.0),
+        (8,  4, 4, 8,  0.5, 4.5, 12.0, 18.0),
+        (9,  4, 5, 9,  0.4, 5.0, 8.0, 14.0),
+        (10, 5, 6, 10, 0.3, 5.5, 5.0, 10.0),
     ];
-    let (size, keys, hunters, decoys, lit, speed) = if n as usize <= table.len() {
-        table[n as usize - 1]
-    } else {
-        let extra = (n as usize - table.len()).min(6);
-        (10, 5, 6 + extra, 10, 0.25, 6.0)
-    };
+    let (size, keys, hunters, decoys, lit, speed, first_wake, wake_spacing) =
+        if n as usize <= table.len() {
+            table[n as usize - 1]
+        } else {
+            let extra = (n as usize - table.len()).min(6);
+            (10, 5, 6 + extra, 10, 0.25, 6.0, 3.0, 8.0)
+        };
     NightPlan {
         spec: LevelSpec {
             size,
@@ -67,6 +73,8 @@ pub fn plan(night: u32, seed: u64) -> NightPlan {
             seed,
         },
         hunter_speed: speed,
+        first_wake,
+        wake_spacing,
     }
 }
 
@@ -77,6 +85,7 @@ pub struct NightState {
     pub unlocked: bool,
     wake_timer: f32,
     heartbeat_timer: f32,
+    chime_timer: f32,
     /// A line of text for the HUD, and how long it has left.
     pub message: Option<(String, f32)>,
     ambience_on: bool,
@@ -164,6 +173,11 @@ pub fn rebuild_night(
     };
     let plan = plan(night, seed);
     let level = level::generate(&plan.spec);
+    if kind == Rebuild::Title && crate::debug::pose_gallery(&mut cmd, &server, palette, &library) {
+        state.exit = None;
+        current.0 = Some(level);
+        return;
+    }
     let built = store::build_store(&mut cmd, &server, palette, &level, seed);
 
     // Face into the store from the start cell.
@@ -177,7 +191,7 @@ pub fn rebuild_night(
     player::spawn_player(&mut cmd, start.center() + Vec3::new(-0.8, 0.05, -0.8), yaw);
 
     let spawn = |cells: &[level::Cell], kind: Kind, cmd: &mut CommandQueue, rand: &mut Rand| {
-        for &cell in cells {
+        for (i, &cell) in cells.iter().enumerate() {
             let jitter = Vec3::new(rand.range(-1.0, 1.0), 0.0, rand.range(-1.0, 1.0));
             let feet = cell.center() + jitter;
             // On display: facing the aisle, not you. Yet.
@@ -192,6 +206,8 @@ pub fn rebuild_night(
                 plan.hunter_speed,
                 rand.index(palette.finishes.len()),
                 pose,
+                // Hunters wake one by one; the first gives you a head start.
+                plan.first_wake + i as f32 * plan.wake_spacing,
             );
         }
     };
@@ -208,6 +224,7 @@ pub fn rebuild_night(
     state.unlocked = false;
     state.wake_timer = WAKE_INTERVAL;
     state.heartbeat_timer = 0.0;
+    state.chime_timer = 4.0;
     state.message = None;
     current.0 = Some(level);
     *flow = Flow::default();
@@ -423,6 +440,9 @@ pub fn objectives(
 pub fn night_clock(
     mannequins: Query<(&mut Mannequin, &Transform), Without<Player>>,
     players: Query<&Transform, With<Player>>,
+    keys: Query<&KeyPickup>,
+    exits: Query<&ExitDoor>,
+    eye: Res<Eye>,
     mut state: ResMut<NightState>,
     game: Res<Game>,
     time: Res<Time>,
@@ -455,6 +475,29 @@ pub fn night_clock(
     let Some(player) = players.iter().next() else {
         return;
     };
+
+    // Guidance by ear: the nearest key (or the open exit) chimes now and then.
+    state.chime_timer -= dt;
+    if state.chime_timer <= 0.0 {
+        state.chime_timer = rand.range(5.0, 8.0);
+        let source = if state.unlocked {
+            exits
+                .iter()
+                .next()
+                .map(|door| door.threshold + Vec3::Y * 1.5)
+        } else {
+            keys.iter().map(|key| key.base).min_by(|a, b| {
+                a.distance_squared(player.translation)
+                    .total_cmp(&b.distance_squared(player.translation))
+            })
+        };
+        if let Some(point) = source {
+            let (volume, pan) = mannequin::spatialize(&eye, point);
+            // Never quite silent, so a far key can still be found.
+            sounds.play_at(&mut audio, Sfx::Chime, (volume * 0.5).max(0.07), pan);
+        }
+    }
+
     let nearest = mannequins
         .iter()
         .filter(|(m, _)| m.is_hunting())
