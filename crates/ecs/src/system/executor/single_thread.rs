@@ -3,6 +3,7 @@ use crate::{
     system::{executor::SystemExecutor, schedule::CompiledScheduleData},
 };
 
+/// Runs every system on the calling thread, one at a time, in dependency order.
 pub struct SingleThreadedExecutor {}
 
 impl SystemExecutor for SingleThreadedExecutor {
@@ -38,9 +39,8 @@ mod tests {
     // considered data-disjoint and produce no implicit ordering edge — so only the
     // explicit .after() / .before() constraints determine the run order.
     //
-    // This also exercises the toposort bug-fix: .before() inserts the dep node
-    // first in system_ids (insertion order = wrong), and only the toposort
-    // produces the correct execution order.
+    // Each test registers systems against the required order, so only the
+    // toposort produces the correct execution order.
 
     #[derive(Resource)]
     struct ExecLog(Arc<Mutex<Vec<u8>>>);
@@ -67,8 +67,7 @@ mod tests {
         let mut schedule = Schedule::new();
         // push_2 must run after push_1
         schedule.add_system(push_2.after(push_1));
-
-        print!("{schedule:?}");
+        schedule.add_system(push_1);
 
         schedule
             .compile::<SingleThreadedExecutor>(&mut world)
@@ -91,10 +90,8 @@ mod tests {
         world.insert_resource(ExecLog(Arc::clone(&shared)));
 
         let mut schedule = Schedule::new();
-        // push_1 must run before push_2.
-        // push_2 is registered first (as the "before" dep → NodeIndex 0),
-        // then push_1 (main → NodeIndex 1).  Insertion order would run
-        // push_2 first — only the toposort fix produces the correct [1, 2] result.
+        // push_1 must run before push_2, but push_2 is registered first.
+        schedule.add_system(push_2);
         schedule.add_system(push_1.before(push_2));
         schedule
             .compile::<SingleThreadedExecutor>(&mut world)
@@ -120,8 +117,10 @@ mod tests {
         world.insert_resource(ExecLog(Arc::clone(&shared)));
 
         let mut schedule = Schedule::new();
-        // push_3.after(push_2.after(push_1)):  1 → 2 → 3
-        schedule.add_system(push_3.after(push_2.after(push_1)));
+        // 1 → 2 → 3, registered in reverse.
+        schedule.add_system(push_3.after(push_2));
+        schedule.add_system(push_2.after(push_1));
+        schedule.add_system(push_1);
         schedule
             .compile::<SingleThreadedExecutor>(&mut world)
             .run(&mut world);

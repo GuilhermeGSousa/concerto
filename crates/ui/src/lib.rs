@@ -1,3 +1,20 @@
+//! The retained-mode UI of Concerto.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! use concerto_app::App;
+//! use concerto_render::plugin::RenderPlugin;
+//! use concerto_ui::plugin::UIPlugin;
+//! use concerto_window::plugin::WindowPlugin;
+//!
+//! let mut app = App::new();
+//! app.register_plugin(WindowPlugin)
+//!     .register_plugin(RenderPlugin)
+//!     .register_plugin(UIPlugin);
+//! app.run();
+//! ```
+
 pub mod anchor;
 pub mod checkbox;
 pub mod focus;
@@ -8,6 +25,7 @@ pub mod node;
 pub mod plugin;
 pub mod render;
 pub mod scroll;
+pub mod sets;
 pub mod slider;
 pub mod text;
 pub mod text_input;

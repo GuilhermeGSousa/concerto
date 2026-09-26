@@ -2,7 +2,7 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateUpdate, Render},
 };
-use concerto_ecs::IntoSystemConfig;
+use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
     resources::RenderContext,
@@ -32,6 +32,7 @@ use crate::{
         sync_scrollbar_tracks, sync_split_panes, update_scroll_areas, update_split_panes,
         update_virtual_lists,
     },
+    sets::UiSet,
     slider::{UISliderChanged, setup_slider_visuals, sync_slider_fill, update_slider_drag},
     text::{
         extract_text_nodes,
@@ -49,6 +50,11 @@ use crate::{
     },
 };
 
+/// Registers the UI's resources, events and systems, ordered by [`UiSet`] in `LateUpdate`.
+///
+/// # Panics
+///
+/// Panics if `WindowPlugin` and `RenderPlugin` are not registered before it.
 pub struct UIPlugin;
 
 impl Plugin for UIPlugin {
@@ -107,31 +113,76 @@ impl Plugin for UIPlugin {
         app.register_event::<UICollapsibleChanged>();
         app.register_event::<UITabChanged>();
 
-        app.add_system(LateUpdate, update_focus.after(update_ui_interaction));
-        app.add_system(LateUpdate, sync_text_capture);
-        app.add_system(LateUpdate, toggle_checkboxes);
-        app.add_system(LateUpdate, dismiss_panels.after(update_text_inputs));
-        app.add_system(LateUpdate, update_widgets);
-        app.add_system(LateUpdate, sync_tab_bodies);
-        app.add_system(LateUpdate, update_tooltips);
-        app.add_system(LateUpdate, update_scroll_areas);
-        app.add_system(LateUpdate, update_virtual_lists);
-        app.add_system(LateUpdate, update_split_panes);
-        app.add_system(LateUpdate, update_slider_drag);
-        app.add_system(LateUpdate, drag_scrollbar_thumbs);
-        app.add_system(LateUpdate, setup_slider_visuals);
-        app.add_system(LateUpdate, setup_scrollbars);
-        app.add_system(LateUpdate, sync_slider_fill);
-        app.add_system(LateUpdate, sync_scroll_content);
-        app.add_system(LateUpdate, sync_split_panes);
-        app.add_system(LateUpdate, sync_checkbox_material);
-        app.add_system(LateUpdate, sync_viewport_textures);
-        app.add_system(LateUpdate, apply_interaction_styles);
+        app.configure_sets(
+            LateUpdate,
+            (
+                UiSet::Input,
+                UiSet::Widgets,
+                UiSet::Setup,
+                UiSet::Project,
+                UiSet::Materials,
+                UiSet::Layout,
+                UiSet::PostLayout,
+            )
+                .chain(),
+        );
 
-        app.add_system(LateUpdate, compute_ui_nodes.after(track_panel_stack));
-        app.add_system(LateUpdate, sync_material_params);
-        app.add_system(LateUpdate, sync_scrollbar_tracks);
-        app.add_system(LateUpdate, sync_scrollbar_thumbs);
+        app.add_system(
+            LateUpdate,
+            (
+                update_ui_interaction,
+                update_focus.after(update_ui_interaction),
+                sync_text_capture,
+            )
+                .in_set(UiSet::Input),
+        );
+        app.add_system(
+            LateUpdate,
+            (
+                toggle_checkboxes,
+                update_text_inputs,
+                dismiss_panels.after(update_text_inputs),
+                update_widgets,
+                sync_tab_bodies,
+                update_tooltips,
+                update_scroll_areas,
+                update_virtual_lists.after(update_scroll_areas),
+                update_split_panes,
+                update_slider_drag,
+                drag_scrollbar_thumbs,
+            )
+                .in_set(UiSet::Widgets),
+        );
+        app.add_system(
+            LateUpdate,
+            (setup_slider_visuals, setup_scrollbars).in_set(UiSet::Setup),
+        );
+        app.add_system(
+            LateUpdate,
+            (sync_slider_fill, sync_scroll_content, sync_split_panes).in_set(UiSet::Project),
+        );
+        app.add_system(
+            LateUpdate,
+            (
+                sync_checkbox_material,
+                sync_viewport_textures,
+                apply_interaction_styles,
+            )
+                .in_set(UiSet::Materials),
+        );
+        app.add_system(
+            LateUpdate,
+            (
+                track_panel_stack,
+                compute_ui_nodes.after(track_panel_stack),
+                sync_material_params,
+            )
+                .in_set(UiSet::Layout),
+        );
+        app.add_system(
+            LateUpdate,
+            (sync_scrollbar_tracks, sync_scrollbar_thumbs).in_set(UiSet::PostLayout),
+        );
 
         app.render_mut()
             .add_system(Extract, extract_ui_nodes)

@@ -23,6 +23,7 @@ use crate::{
         RenderAssetPlugin,
     },
     resources::RenderContext,
+    sets::RenderSet,
     systems::{
         render::{finish_render, present_window},
         update_window,
@@ -33,10 +34,11 @@ use concerto_app::{
     schedule_groups::{Extract, LateRender, LateUpdate, Render, RenderMain, Update},
 };
 use concerto_color::Color;
-use concerto_ecs::{resource::Resource, IntoSystemConfig, World};
+use concerto_ecs::{resource::Resource, IntoSetConfig, IntoSystemConfig, World};
 use std::sync::{Arc, Mutex};
 use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
 
+#[doc(hidden)]
 pub struct RenderResources {
     pub device: Device,
     pub queue: Queue,
@@ -65,6 +67,14 @@ fn render_main(world: &mut World) {
     }
 }
 
+/// Sets up the GPU, the render world's schedules, extraction and presentation.
+///
+/// Renders to the window if a [`Window`](concerto_window::plugin::Window) exists at build
+/// time, and offscreen otherwise.
+///
+/// # Panics
+///
+/// Panics during [`build`](Plugin::build) if no GPU adapter or device is available.
 pub struct RenderPlugin;
 
 impl RenderPlugin {
@@ -186,11 +196,23 @@ impl Plugin for RenderPlugin {
                 .add_render_system(Render, update_window::update_render_window);
         }
 
-        app.add_render_system(Render, clear_cameras)
-            .add_render_system(Render, update_changed_lights)
-            .add_render_system(Render, update_shadow_view_proj.after(update_changed_lights))
-            .add_render_system(Render, resize_shadow_maps.after(update_changed_lights))
-            .add_render_system(LateRender, present_window.after(finish_render));
+        app.configure_render_sets(
+            Render,
+            (RenderSet::Lights, RenderSet::Shadows, RenderSet::Draw).chain(),
+        )
+        .add_render_system(Render, clear_cameras)
+        .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))
+        .add_render_system(
+            Render,
+            (update_shadow_view_proj, resize_shadow_maps).in_set(RenderSet::Shadows),
+        )
+        .add_render_system(LateRender, finish_render)
+        .add_render_system(
+            LateRender,
+            present_window
+                .in_set(RenderSet::Present)
+                .after(finish_render),
+        );
     }
 
     fn ready(&self, app: &concerto_app::App) -> bool {

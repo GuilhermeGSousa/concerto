@@ -1,3 +1,24 @@
+//! The application shell of Concerto: plugins, schedules and the frame loop.
+//!
+//! # Examples
+//!
+//! ```
+//! use concerto_app::{
+//!     App, main_schedule::MainSchedulePlugin, plugins::TimePlugin, schedule_groups::Update,
+//! };
+//!
+//! fn greet() {
+//!     println!("hello");
+//! }
+//!
+//! let mut app = App::new();
+//! app.register_plugin(MainSchedulePlugin)
+//!     .register_plugin(TimePlugin)
+//!     .add_system(Update, greet);
+//! app.finish_plugin_build();
+//! app.update();
+//! ```
+
 #[cfg(all(feature = "multithreaded", not(target_arch = "wasm32")))]
 use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
@@ -11,7 +32,7 @@ use concerto_ecs::{
     },
     resource::{ResMut, Resource},
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
-    IntoSystemConfig, World,
+    IntoSetConfig, IntoSystemConfig, World,
 };
 use log::info;
 use runner::AppExit;
@@ -34,7 +55,6 @@ pub mod runner;
 pub mod schedule_groups;
 pub mod subapp;
 
-// Re-export the most commonly needed types so users don't have to know the module layout.
 pub use plugins::Plugin;
 
 pub(crate) struct HokeyPokeyPlugin;
@@ -53,21 +73,7 @@ fn compile(schedules: Schedules, world: &mut World) -> CompiledSchedules {
     }
 }
 
-/// The top-level container for the game engine.
-///
-/// An `App` owns a [`World`], a set of per-group [`Schedule`]s, and a list of
-/// [`Plugin`]s.  Call [`run`](App::run) to hand control over to the configured
-/// runner (typically the window event loop).
-///
-/// # Typical setup
-/// ```ignore
-/// use concerto_app::App;
-/// use concerto_app::plugins::TimePlugin;
-///
-/// let mut app = App::empty();
-/// app.register_plugin(TimePlugin);
-/// app.run();
-/// ```
+/// The top-level container: the main and render [`SubApp`]s and the registered [`Plugin`]s.
 pub struct App {
     runner: runner::RunnerFn,
     subapps: SubApps,
@@ -85,10 +91,7 @@ impl App {
         }
     }
 
-    /// Builds and registers a [`Plugin`].
-    ///
-    /// Calls [`Plugin::build`] immediately, then stores the plugin so that
-    /// [`Plugin::ready`] and [`Plugin::finish`] can be polled later.
+    /// Builds `plugin` immediately and keeps it for [`Plugin::ready`] and [`Plugin::finish`].
     pub fn register_plugin(&mut self, plugin: impl Plugin + 'static) -> &mut Self {
         info!("Registering plugin: {}", plugin.name());
         plugin.build(self);
@@ -96,9 +99,7 @@ impl App {
         self
     }
 
-    /// Registers an asset type, creating its [`AssetStore`] and wiring up the tracking system.
-    ///
-    /// Requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin) to already be registered.
+    /// Registers an asset type and the system that tracks its handles; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
     pub fn register_asset<A: Asset>(&mut self) -> &mut Self {
         let asset_store = AssetStore::<A>::new();
         let asset_server = self
@@ -120,23 +121,22 @@ impl App {
         self
     }
 
-    /// Hands control to the configured runner function, consuming the app.
     pub fn run(mut self) {
         let runner = std::mem::replace(&mut self.runner, Box::new(run_once));
         (runner)(self);
     }
 
-    /// Replaces the default runner with a custom one (e.g. a window event loop).
+    /// Replaces the runner, for example with a window event loop.
     pub fn set_runner(&mut self, f: impl FnOnce(App) -> AppExit + 'static) -> &mut Self {
         self.runner = Box::new(f);
         self
     }
 
-    /// Registers a system in the schedule identified by `update_group`.
+    /// Adds systems to the main world's `update_group` schedule. Panics once the schedules have been compiled.
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
-        system: impl IntoSystemConfig<M> + 'static,
+        system: impl IntoSystemConfig<M>,
     ) -> &mut Self {
         self.get_resource_mut::<Schedules>()
             .expect("Schedules resource not found!")
@@ -145,13 +145,11 @@ impl App {
         self
     }
 
-    /// Registers a system in the schedule identified by `update_group`, on the
-    /// render subapp rather than the main one (e.g. systems meant to run in
-    /// the [`Extract`](schedule_groups::Extract) schedule).
+    /// Adds systems to the render world's `update_group` schedule. Panics once the schedules have been compiled.
     pub fn add_render_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
-        system: impl IntoSystemConfig<M> + 'static,
+        system: impl IntoSystemConfig<M>,
     ) -> &mut Self {
         self.subapps
             .render_mut()
@@ -162,11 +160,29 @@ impl App {
         self
     }
 
-    /// Registers an event type, creating its [`EventChannel`] resource and the system that
-    /// advances its double buffer once per frame.
-    ///
-    /// Call this once per event type before any system uses [`EventWriter`] or [`EventReader`].
-    /// Without it nothing swaps the buffers and they grow forever.
+    /// Adds ordering constraints between sets in the main world's `update_group` schedule. Panics once the schedules have been compiled.
+    pub fn configure_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfig,
+    ) -> &mut Self {
+        self.main_mut().configure_sets(update_group, configs);
+        self
+    }
+
+    /// Adds ordering constraints between sets in the render world's `update_group` schedule. Panics once the schedules have been compiled.
+    pub fn configure_render_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfig,
+    ) -> &mut Self {
+        self.subapps
+            .render_mut()
+            .configure_sets(update_group, configs);
+        self
+    }
+
+    /// Registers an event type; without this its buffers are never swapped and grow forever.
     pub fn register_event<T: Event + 'static>(&mut self) -> &mut Self {
         let event_channel = EventChannel::<T>::new();
 
@@ -175,15 +191,12 @@ impl App {
         self
     }
 
-    /// Inserts a resource into the main world (replacing any existing one of the same type).
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
         self
     }
 
-    /// Registers a [`SceneComponent`] so serialized scenes and glTF `extras` can
-    /// spawn it from JSON by type name (see [`CommandQueue`] and
-    /// `World::apply_scene_component`).
+    /// Registers a [`SceneComponent`] so scenes can spawn it by type name.
     pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {
         self.main_mut().register_scene_component::<T>();
         self
@@ -201,6 +214,7 @@ impl App {
         self.main_mut().get_resource_mut()
     }
 
+    /// Replaces resource `R` with the one `f` builds from it, if `R` is present.
     pub fn with_resource<R: Resource, F, T: Resource>(&mut self, f: F)
     where
         F: FnOnce(R) -> T,
@@ -212,15 +226,12 @@ impl App {
         self.insert_resource(output);
     }
 
-    /// Runs all per-frame schedules: FixedUpdate (as many times as needed), Update,
-    /// LateUpdate, Render, LateRender.  Also advances the world tick at the end.
+    /// Runs one frame: main world, extraction, then render world.
     pub fn update(&mut self) {
         profiling::scope!("App::update");
 
         self.subapps.update();
 
-        // The frame ends here: present_window has already run (LateRender),
-        // and this also marks frames for the headless runner.
         profiling::finish_frame!();
     }
 
@@ -240,9 +251,7 @@ impl App {
         self.subapps.render_mut()
     }
 
-    /// Polls each plugin's [`ready`](Plugin::ready) method and transitions the state machine.
-    ///
-    /// Returns the current [`PluginsState`].
+    /// Polls every plugin's [`ready`](Plugin::ready) and returns the resulting state.
     pub fn plugin_state(&mut self) -> PluginsState {
         let next_state = match self.plugin_state {
             PluginsState::Building => {
@@ -260,9 +269,11 @@ impl App {
         next_state
     }
 
-    /// Calls [`Plugin::finish`] on every registered plugin, then runs the `Startup` schedule.
+    /// Finishes every plugin, compiles the schedules and runs [`Startup`](schedule_groups::Startup).
     ///
-    /// Should be called once after all plugins have been registered and all async work is ready.
+    /// # Panics
+    ///
+    /// Panics if called twice, or if any schedule's explicit constraints contain a cycle.
     pub fn finish_plugin_build(&mut self) {
         let mut hokeypokey: Box<dyn Plugin> = Box::new(HokeyPokeyPlugin);
         let mut i = 0;
@@ -305,6 +316,7 @@ impl App {
             .insert_resource(compiled_schedules);
     }
 
+    /// Sets the function that copies main-world data into the render world each frame.
     pub fn set_extract_fn(&mut self, extract_fn: impl FnMut(&mut World, &mut World) + 'static) {
         self.subapps.set_extract_fn(extract_fn);
     }

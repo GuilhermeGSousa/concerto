@@ -1,11 +1,12 @@
 use concerto_ecs::{
     component::scene::SceneComponent,
     system::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules},
-    IntoSystemConfig, Resource, World,
+    IntoSetConfig, IntoSystemConfig, Resource, World,
 };
 
 use crate::{extractor::ExtractFn, schedule_groups::Startup};
 
+#[doc(hidden)]
 #[derive(Default)]
 pub struct SubApps {
     main: SubApp,
@@ -51,6 +52,7 @@ impl SubApps {
     }
 }
 
+/// One world with its own schedules, such as the main or render world of an [`App`](crate::App).
 pub struct SubApp {
     world: World,
     update_schedule: Option<InternedScheduleLabel>,
@@ -72,6 +74,7 @@ impl SubApp {
         self.world.insert_resource(value);
         self
     }
+
     pub fn remove_resource<R: Resource>(&mut self) -> Option<R> {
         self.world.remove_resource::<R>()
     }
@@ -84,15 +87,17 @@ impl SubApp {
         self.world.get_resource_mut::<R>()
     }
 
+    /// Registers a [`SceneComponent`] so scenes can spawn it by type name.
     pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {
         self.world.register_component_type::<T>();
         self
     }
 
+    /// Adds systems to this world's `update_group` schedule. Panics once the schedules have been compiled.
     pub fn add_system<M>(
         &mut self,
         update_group: impl ScheduleLabel,
-        system: impl IntoSystemConfig<M> + 'static,
+        system: impl IntoSystemConfig<M>,
     ) -> &mut Self {
         self.get_resource_mut::<Schedules>()
             .expect("Schedules resource not found!")
@@ -100,12 +105,26 @@ impl SubApp {
         self
     }
 
+    /// Adds ordering constraints between sets in this world's `update_group` schedule. Panics once the schedules have been compiled.
+    pub fn configure_sets(
+        &mut self,
+        update_group: impl ScheduleLabel,
+        configs: impl IntoSetConfig,
+    ) -> &mut Self {
+        self.get_resource_mut::<Schedules>()
+            .expect("Schedules resource not found!")
+            .configure_sets(update_group, configs);
+        self
+    }
+
+    /// Runs the update schedule, if one is set and compiled.
     pub fn update(&mut self) {
         if let Some(label) = self.update_schedule {
             self.world.run_schedule(label);
         }
     }
 
+    /// Sets the schedule [`update`](SubApp::update) runs.
     pub fn set_update_schedule(&mut self, label: impl ScheduleLabel) -> &mut Self {
         self.update_schedule = Some(label.intern());
         self

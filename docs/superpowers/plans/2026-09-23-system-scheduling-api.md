@@ -45,7 +45,7 @@ These are the cases the spec implies but does not enumerate. Each has a test att
 - Consumes: `crate::define_label!` from `crates/ecs/src/label.rs:33`, `crate::intern::Interned`.
 - Produces: `ecs::system::set::{SystemSet, InternedSystemSet}`, re-exported as `ecs::SystemSet`; `#[derive(SystemSet)]` and `#[derive(ScheduleLabel)]` from `ecs_macros`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `crates/ecs/tests/system_set.rs`:
 
@@ -81,12 +81,12 @@ fn different_types_with_the_same_shape_intern_differently() {
 
 The `PartialEq for dyn SystemSet` that the third test relies on comes from `define_label!` (`crates/ecs/src/label.rs:59`), via the blanket `DynEq`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ecs --test system_set`
 Expected: FAIL — `cannot find derive macro `SystemSet``.
 
-- [ ] **Step 3: Add the label trait**
+- [x] **Step 3: Add the label trait**
 
 Create `crates/ecs/src/system/set.rs`:
 
@@ -112,7 +112,7 @@ pub use system::{
 };
 ```
 
-- [ ] **Step 4: Add the derive macros**
+- [x] **Step 4: Add the derive macros**
 
 Append to `crates/ecs/macros/src/lib.rs`:
 
@@ -147,12 +147,12 @@ fn impl_label(ast: &syn::DeriveInput, trait_name: proc_macro2::TokenStream) -> T
 
 The derive names the trait unqualified, so users must have `SystemSet` / `ScheduleLabel` in scope where they derive. That matches how `#[derive(Component)]` already works in this crate.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `cargo test -p ecs --test system_set`
 Expected: PASS (3 tests).
 
-- [ ] **Step 6: Use the derive in `app`**
+- [x] **Step 6: Use the derive in `app`**
 
 Replace the body of `crates/app/src/schedule_groups.rs` with:
 
@@ -182,12 +182,12 @@ define_schedule_label!(LateRender);
 
 Confirm `ecs_macros` is a dependency of `app`; if not, add `ecs-macros = { path = "../ecs/macros" }` to `crates/app/Cargo.toml`. Prefer re-exporting from `ecs` if `ecs` already re-exports its derives — check `crates/ecs/src/lib.rs` for `pub use ecs_macros::*` and use `ecs::ScheduleLabel` if so.
 
-- [ ] **Step 7: Verify the workspace builds and tests pass**
+- [x] **Step 7: Verify the workspace builds and tests pass**
 
 Run: `cargo build --workspace && cargo test --workspace`
 Expected: PASS, no warnings.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add crates/ecs/src/system/set.rs crates/ecs/src/system/mod.rs crates/ecs/src/lib.rs \
@@ -210,7 +210,7 @@ git commit -m "Add SystemSet label and SystemSet/ScheduleLabel derives"
 
 This is a pure data structure with no ECS dependencies, which is why it is its own task: Task 3 depends on it being right.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `crates/ecs/src/system/reachability.rs` (the file will not exist yet — create it with only this test module for now):
 
@@ -277,12 +277,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ecs reachability`
 Expected: FAIL — `cannot find type `Reachability``. Add `mod reachability;` to `crates/ecs/src/system/mod.rs` first if the module is not compiled at all.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 Prepend to `crates/ecs/src/system/reachability.rs`:
 
@@ -342,12 +342,12 @@ impl Reachability {
 
 Add `mod reachability;` to the module list at the top of `crates/ecs/src/system/mod.rs`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test -p ecs reachability`
 Expected: PASS (7 tests).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add crates/ecs/src/system/reachability.rs crates/ecs/src/system/mod.rs
@@ -374,7 +374,7 @@ This is the core change. After it, `.after`/`.before` reference systems instead 
   - `SystemConfig { system: BoxedSystem, sets: Vec<InternedSystemSet>, after: Vec<DependencyTarget>, before: Vec<DependencyTarget> }` (fields `pub(crate)`)
   - `IntoSystemConfig::after<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig`, same for `before`, plus `in_set(self, set: impl SystemSet) -> SystemConfig`
 
-- [ ] **Step 1: Write the failing integration test**
+- [x] **Step 1: Write the failing integration test**
 
 Create `crates/ecs/tests/ordering.rs`:
 
@@ -447,12 +447,12 @@ fn an_explicit_constraint_beats_registration_order() {
 
 `a_referenced_system_runs_once` and `a_constraint_can_name_a_system_registered_later` are the two that fail against today's code, for different reasons.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ecs --test ordering`
 Expected: FAIL. `a_referenced_system_runs_once` gives `["first", "first", "second"]` (the duplicate), and `an_explicit_constraint_beats_registration_order` panics with the cycle `expect`.
 
-- [ ] **Step 3: Rewrite `config.rs`**
+- [x] **Step 3: Rewrite `config.rs`**
 
 Replace the contents of `crates/ecs/src/system/config.rs` with:
 
@@ -567,7 +567,7 @@ Note `System::system_type()` is already on the `System` trait (`crates/ecs/src/s
 
 In `crates/ecs/src/system/mod.rs`, extend the `pub use config::...` line to include `DependencyTarget, IntoDependencyTarget, SetTarget, SystemTarget`.
 
-- [ ] **Step 4: Rewrite `Schedule` registration**
+- [x] **Step 4: Rewrite `Schedule` registration**
 
 In `crates/ecs/src/system/schedule.rs`, replace the `Schedule` struct, `add_system`, `add_config` and `add_sync_point` with:
 
@@ -622,7 +622,7 @@ impl fmt::Debug for Schedule {
 }
 ```
 
-- [ ] **Step 5: Write the two-pass `compile`**
+- [x] **Step 5: Write the two-pass `compile`**
 
 Replace `Schedule::compile` in `crates/ecs/src/system/schedule.rs` with the following. `resolve_sets` is a stub here returning an empty map — Task 4 fills it in.
 
@@ -780,7 +780,7 @@ impl Schedule {
 
 Add the imports these need at the top of `schedule.rs`: `crate::system::{reachability::Reachability, set::InternedSystemSet, config::DependencyTarget, sync_point::SyncPoint}` and `std::any::TypeId` (already present).
 
-- [ ] **Step 6: Write `resolve` with the warning path**
+- [x] **Step 6: Write `resolve` with the warning path**
 
 Add to `crates/ecs/src/system/schedule.rs`:
 
@@ -826,7 +826,7 @@ fn index_by_set(&self) -> HashMap<InternedSystemSet, Vec<usize>> {
 
 Task 4 replaces it. Add `log` to `crates/ecs/Cargo.toml` if it is not already a dependency.
 
-- [ ] **Step 7: Replace the graph-structure unit tests**
+- [x] **Step 7: Replace the graph-structure unit tests**
 
 In `crates/ecs/src/system/schedule.rs`'s `mod tests`, the tests `after_registers_dep_and_main`, `after_creates_dep_to_main_edge`, `before_registers_dep_and_main`, `before_creates_main_to_dep_edge`, `after_before_chain_has_correct_edges` and `nested_after_chain_has_correct_edges` all assert the old auto-registration behaviour and must be deleted — they assert the bug. `schedule_new`, `system_dependency_graph_creation` and `multiple_systems_added` reference `schedule.graph`, which no longer exists before compile; rewrite them against `schedule.systems.len()`.
 
@@ -907,12 +907,12 @@ fn a_constraint_orders_against_every_copy_of_a_twice_added_target() {
 
 `a_constraint_orders_against_every_copy_of_a_twice_added_target` is Review Focus item 2: `second` must follow *both* copies, not just the first one `resolve` happened to find.
 
-- [ ] **Step 8: Run the tests**
+- [x] **Step 8: Run the tests**
 
 Run: `cargo test -p ecs`
 Expected: PASS, including all four tests in `tests/ordering.rs`.
 
-- [ ] **Step 9: Fix the call sites that used owned deps**
+- [x] **Step 9: Fix the call sites that used owned deps**
 
 `cargo build --workspace` will now fail wherever a `.after` argument was relied on to register its target. The audit found these, and they need no change in signature (they still compile — the target is resolved by reference), but verify each still has its target registered in the *same* schedule:
 
@@ -925,7 +925,7 @@ Run the build and read any warning about an ignored constraint; each one is a re
 Run: `cargo build --workspace && cargo test --workspace`
 Expected: PASS.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add crates/ecs/src/system/config.rs crates/ecs/src/system/schedule.rs \
@@ -951,7 +951,7 @@ git commit -m "Order systems by reference and build the schedule graph in compil
   - `pub trait IntoSetConfigs { fn into_set_configs(self) -> Vec<SetConfig>; fn chain(self) -> Vec<SetConfig>; }` implemented for `SetConfig`, for any `SystemSet`, and for tuples of 2..=12 sets
   - `Schedule::configure_sets(&mut self, configs: impl IntoSetConfigs)`, `Schedules::configure_sets(label, configs)`, `App::configure_sets(label, configs)`, `App::configure_render_sets(label, configs)`, `SubApp::configure_sets(label, configs)`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `crates/ecs/tests/ordering.rs`:
 
@@ -1022,12 +1022,12 @@ fn a_cycle_created_by_set_expansion_panics() {
 
 `a_system_in_a_set_is_not_self_ordered_by_that_set` is Review Focus item 4 via sets: `first` is in both sets, so expansion produces `first -> first`, which `add_explicit_edge` must drop rather than panic on.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ecs --test ordering`
 Expected: FAIL — `no method named `configure_sets``.
 
-- [ ] **Step 3: Add `SetConfig` and `IntoSetConfigs`**
+- [x] **Step 3: Add `SetConfig` and `IntoSetConfigs`**
 
 Append to `crates/ecs/src/system/set.rs`:
 
@@ -1145,7 +1145,7 @@ impl<S: SystemSet> IntoSetConfigs for S {
 
 If that collides with the `SetConfig` impl under coherence (it will not — `SetConfig` does not implement `SystemSet`), keep both.
 
-- [ ] **Step 4: Store and resolve set memberships**
+- [x] **Step 4: Store and resolve set memberships**
 
 In `crates/ecs/src/system/schedule.rs`, add `set_configs: Vec<SetConfig>` to `Schedule`, initialise it to `Vec::new()` in `Schedule::new` (the `#[derive(Default)]` covers `Default`), and add:
 
@@ -1201,7 +1201,7 @@ for set_config in &self.set_configs {
 
 `add_explicit_edge`'s panic message is unchanged. A set-expanded cycle still names the two systems that actually conflict, which is what a reader needs in order to fix it, and it is what `a_cycle_created_by_set_expansion_panics` asserts.
 
-- [ ] **Step 5: Plumb `configure_sets` through `Schedules`, `SubApp` and `App`**
+- [x] **Step 5: Plumb `configure_sets` through `Schedules`, `SubApp` and `App`**
 
 In `crates/ecs/src/system/schedule.rs`, on `Schedules`:
 
@@ -1233,17 +1233,17 @@ pub fn configure_sets(
 
 In `crates/app/src/lib.rs`, mirroring `App::add_system` and `App::add_render_system`, add `App::configure_sets` (delegating to `self.main_mut()`) and `App::configure_render_sets` (delegating to `self.subapps.render_mut()`).
 
-- [ ] **Step 6: Run the tests**
+- [x] **Step 6: Run the tests**
 
 Run: `cargo test -p ecs --test ordering`
 Expected: PASS (all nine tests).
 
-- [ ] **Step 7: Verify the workspace**
+- [x] **Step 7: Verify the workspace**
 
 Run: `cargo build --workspace && cargo test --workspace`
 Expected: PASS, no warnings.
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```bash
 git add crates/ecs/src/system/set.rs crates/ecs/src/system/schedule.rs \
@@ -1267,7 +1267,7 @@ git commit -m "Add system sets and configure_sets"
 
 Tuple impls use a declarative macro over arities rather than `typle`, because each element carries its own `IntoSystemConfig` marker type and `typle` does not express a second parallel marker tuple cleanly.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `crates/ecs/tests/ordering.rs`:
 
@@ -1298,12 +1298,12 @@ fn chain_orders_a_tuple_against_registration_order() {
 
 `chain_orders_a_tuple_against_registration_order` is the load-bearing one. `.chain()` says `second` runs before `first`; `rev()` then registers them in the opposite order, so registration order alone would give `["first", "second"]`. Only a real chain edge gives `["second", "first"]`. It also exercises `IntoSystemConfigs for Vec<SystemConfig>`.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ecs --test ordering`
 Expected: FAIL — `no method named `add_systems``.
 
-- [ ] **Step 3: Implement `IntoSystemConfigs`**
+- [x] **Step 3: Implement `IntoSystemConfigs`**
 
 Append to `crates/ecs/src/system/config.rs`:
 
@@ -1387,7 +1387,7 @@ Seven arities (2..=8) cover every migration in Tasks 6 and 7; add more only if a
 
 `.chain()` exists on both `IntoSystemConfigs` and `IntoSetConfigs`. Sets and systems are distinct types, so there is no ambiguity at a call site, but both traits must be in scope where each is used.
 
-- [ ] **Step 4: Add `add_systems` at each layer**
+- [x] **Step 4: Add `add_systems` at each layer**
 
 `Schedule::add_systems`:
 
@@ -1405,17 +1405,17 @@ pub fn add_systems<M>(&mut self, systems: impl IntoSystemConfigs<M>) -> &mut Sel
 
 Keep `add_system` everywhere — it is used in roughly a hundred places and there is no reason to churn them.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
 Run: `cargo test -p ecs --test ordering`
 Expected: PASS.
 
-- [ ] **Step 6: Verify the workspace**
+- [x] **Step 6: Verify the workspace**
 
 Run: `cargo build --workspace && cargo test --workspace`
 Expected: PASS, no warnings.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add crates/ecs/src/system/config.rs crates/ecs/src/system/schedule.rs \
@@ -1441,7 +1441,7 @@ git commit -m "Add add_systems for tuples with in_set and chain"
 
 This task removes the duplicate executions: `update_changed_lights` currently runs three times per frame and `update_shadow_view_proj` twice.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `crates/render/tests/render_sets.rs`:
 
@@ -1491,12 +1491,12 @@ fn the_shadow_chain_runs_each_system_once_in_order() {
 
 This mirrors the real wiring (including the cross-plugin `.after` that `ShadowPipelinePlugin` performs) with stand-in systems, so it does not need a GPU.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p render --test render_sets`
 Expected: FAIL — `could not find `sets` in `render``.
 
-- [ ] **Step 3: Declare the sets**
+- [x] **Step 3: Declare the sets**
 
 Create `crates/render/src/sets.rs`:
 
@@ -1515,12 +1515,12 @@ pub enum RenderSet {
 
 Add `pub mod sets;` to `crates/render/src/lib.rs`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test -p render --test render_sets`
 Expected: PASS.
 
-- [ ] **Step 5: Rewire `RenderPlugin`**
+- [x] **Step 5: Rewire `RenderPlugin`**
 
 In `crates/render/src/plugin.rs`, replace lines 186-189:
 
@@ -1541,7 +1541,7 @@ app.configure_render_sets(
 
 `update_changed_lights` is now registered exactly once, and the `.after(update_changed_lights)` on both shadow systems is expressed by the `Lights -> Shadows` chain instead.
 
-- [ ] **Step 6: Rewire `ShadowPipelinePlugin`**
+- [x] **Step 6: Rewire `ShadowPipelinePlugin`**
 
 In `crates/render/src/shadow_pipeline.rs`, replace the `build` body's `add_system` call:
 
@@ -1556,11 +1556,11 @@ app.render_mut().add_system(
 
 `update_shadow_view_proj` is no longer re-registered here; the `.after` now references the copy `RenderPlugin` added. Update the imports: `update_shadow_view_proj` is still needed as an ordering target, so the `use` stays.
 
-- [ ] **Step 7: Rewire `terminal-renderer`**
+- [x] **Step 7: Rewire `terminal-renderer`**
 
 In `crates/terminal-renderer/src/plugin.rs:23`, `readback_terminal_frame.after(finish_render)` keeps its shape — it now references `finish_render` rather than registering a second copy. Add `.in_set(RenderSet::Present)` so it is ordered with `present_window` rather than incidentally. Add `render` to `crates/terminal-renderer/Cargo.toml` dependencies if it is not already there.
 
-- [ ] **Step 8: Verify no constraint was dropped**
+- [x] **Step 8: Verify no constraint was dropped**
 
 Run: `cargo build --workspace 2>&1 | grep -i "ignored"` and `RUST_LOG=warn cargo run -p render-test 2>&1 | grep -i "constraint is ignored"`
 Expected: no output. A warning here means an ordering target is missing from its schedule — fix it before continuing.
@@ -1569,7 +1569,7 @@ Expected: no output. A warning here means an ordering target is missing from its
 
 Run: `cargo run -p render-test` (or the editor: `cargo run -p editor`) and confirm the scene, its lighting and its shadows look the same as on `master`. If `docs/profiling.md` describes a Tracy capture workflow, take one and confirm `update_changed_lights` and `update_shadow_view_proj` each appear once per frame rather than three and two times.
 
-- [ ] **Step 10: Run the workspace tests and commit**
+- [x] **Step 10: Run the workspace tests and commit**
 
 ```bash
 cargo build --workspace && cargo test --workspace
@@ -1595,7 +1595,7 @@ git commit -m "Order render systems with RenderSet and stop duplicating light an
 
 UI's systems stay in `LateUpdate`. The change is that their order is declared by sets rather than implied by line order.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `crates/ui/tests/ui_sets.rs`:
 
@@ -1645,12 +1645,12 @@ fn a_consumer_can_slot_between_ui_sets_without_naming_a_ui_system() {
 
 This is the test for the thing the whole design exists to enable: ordering against `ui` from outside `ui`, without touching a private function and without depending on plugin registration order.
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p ui --test ui_sets`
 Expected: FAIL — `could not find `sets` in `ui``.
 
-- [ ] **Step 3: Declare the sets**
+- [x] **Step 3: Declare the sets**
 
 Create `crates/ui/src/sets.rs`:
 
@@ -1672,12 +1672,12 @@ pub enum UiSet {
 
 Add `pub mod sets;` to `crates/ui/src/lib.rs`.
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `cargo test -p ui --test ui_sets`
 Expected: PASS.
 
-- [ ] **Step 5: Rewire `UIPlugin`**
+- [x] **Step 5: Rewire `UIPlugin`**
 
 In `crates/ui/src/plugin.rs`, replace the whole block at lines 101-146 — including the long explanatory comment, which the sets now express — with:
 
@@ -1756,7 +1756,7 @@ app.add_systems(
 );
 ```
 
-- [ ] **Step 6: Verify no constraint was dropped**
+- [x] **Step 6: Verify no constraint was dropped**
 
 Run: `RUST_LOG=warn cargo run -p editor 2>&1 | grep -i "constraint is ignored"`
 Expected: no output.
@@ -1765,7 +1765,7 @@ Expected: no output.
 
 Run: `cargo run -p editor` and exercise the widgets the sets order: click a checkbox, drag a slider, scroll a scroll area (the content must move in the same frame), drag a split pane, open a popup menu, focus a text input and type. Each must behave as it does on `master`. If a change in behaviour appears, it means a within-set ordering the old line order provided was lost — find it and pin it with an explicit `.after`.
 
-- [ ] **Step 8: Run the workspace tests and commit**
+- [x] **Step 8: Run the workspace tests and commit**
 
 ```bash
 cargo build --workspace && cargo test --workspace
@@ -1785,7 +1785,7 @@ git commit -m "Order UI systems with UiSet instead of registration order"
 - Consumes: the finished API.
 - Produces: nothing code depends on.
 
-- [ ] **Step 1: Write the document**
+- [x] **Step 1: Write the document**
 
 Create `docs/scheduling.md` with exactly these sections, each carrying a compiling example lifted from the tests written in Tasks 3-7:
 
@@ -1798,11 +1798,11 @@ Create `docs/scheduling.md` with exactly these sections, each carrying a compili
 7. *The "constraint is ignored" warning* — what it means (the named system is not in that schedule), the two usual causes (the plugin was not registered; the target is in a different schedule), and that a set with no members is silent by design.
 8. *Rules* — unconstrained conflicting systems still run in registration order; sets are flat; closures cannot be ordering targets.
 
-- [ ] **Step 2: Check it against the code**
+- [x] **Step 2: Check it against the code**
 
 Copy each example into `crates/ecs/tests/ordering.rs` temporarily and run `cargo test -p ecs --test ordering`; revert the file afterwards. A doc example that does not compile is worse than no document.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add docs/scheduling.md plans/ecs-todo.md

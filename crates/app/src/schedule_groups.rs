@@ -1,27 +1,45 @@
 use concerto_ecs::system::schedule::ScheduleLabel;
 
-macro_rules! define_schedule_label {
-    ($(#[$meta:meta])* $label_trait_name:ident) => {
-        $(#[$meta])*
-        #[derive(Clone, PartialEq, Eq, Hash, Debug)]
-        pub struct $label_trait_name;
+/// The main world's frame: [`First`], fixed updates, [`Update`], then [`LateUpdate`].
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Main;
 
-        impl ScheduleLabel for $label_trait_name {
-            fn dyn_clone(&self) -> Box<dyn ScheduleLabel> {
-                Box::new(self.clone())
-            }
-        }
-    };
-}
+/// The render world's frame: [`Render`], then [`LateRender`].
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct RenderMain;
 
-define_schedule_label!(Main);
-define_schedule_label!(RenderMain);
-define_schedule_label!(Startup);
-define_schedule_label!(First);
-define_schedule_label!(Update);
-define_schedule_label!(FixedUpdate);
-define_schedule_label!(LateUpdate);
-define_schedule_label!(LateFixedUpdate);
-define_schedule_label!(Extract);
-define_schedule_label!(Render);
-define_schedule_label!(LateRender);
+/// Runs once in each world after every plugin has finished.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Startup;
+
+/// Runs first each frame in the main world; event buffers are swapped here.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct First;
+
+/// Runs once per frame in the main world.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Update;
+
+/// Runs once per fixed timestep in the main world.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct FixedUpdate;
+
+/// Runs once per frame in the main world, after [`Update`].
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct LateUpdate;
+
+/// Runs after each [`FixedUpdate`] step.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct LateFixedUpdate;
+
+/// Runs in the render world to copy data out of the main world.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Extract;
+
+/// Runs once per frame in the render world, after [`Extract`].
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Render;
+
+/// Runs after [`Render`]; the frame is finished and presented here.
+#[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct LateRender;

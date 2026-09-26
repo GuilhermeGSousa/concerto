@@ -1,15 +1,34 @@
-//! Core Entity Component System (ECS) implementation.
+//! The entity component system at the core of Concerto.
 //!
-//! This crate provides the fundamental building blocks for the game engine's
-//! data-oriented architecture:
+//! # Examples
 //!
-//! - [`World`] — the central container holding all entities, components, and resources.
-//! - [`Entity`] — a lightweight handle representing a game object.
-//! - [`Component`] — trait for data attached to entities; derive with `#[derive(Component)]`.
-//! - [`Resource`] — trait for globally-shared data; derive with `#[derive(Resource)]`.
-//! - [`Query`] — type-safe iterator over entities matching a set of components.
-//! - [`Event`] — trait for messages passed between systems; derive with `#[derive(Event)]`.
-//! - [`Schedule`] — ordered collection of systems run each frame.
+//! ```
+//! use concerto_ecs::{
+//!     Component, IntoSystemConfig, Query, Schedule, World,
+//!     system::executor::single_thread::SingleThreadedExecutor,
+//! };
+//!
+//! #[derive(Component)]
+//! struct Position(f32);
+//!
+//! #[derive(Component)]
+//! struct Velocity(f32);
+//!
+//! fn integrate(query: Query<(&mut Position, &Velocity)>) {
+//!     for (mut position, velocity) in query.iter() {
+//!         position.0 += velocity.0;
+//!     }
+//! }
+//!
+//! let mut world = World::new();
+//! world.spawn((Position(0.0), Velocity(1.0)));
+//!
+//! let mut schedule = Schedule::new();
+//! schedule.add_system(integrate);
+//! schedule
+//!     .compile::<SingleThreadedExecutor>(&mut world)
+//!     .run(&mut world);
+//! ```
 
 pub mod archetype;
 pub mod command;
@@ -27,7 +46,6 @@ pub mod utilities;
 pub mod utils;
 pub mod world;
 
-// Commonly-used re-exports so downstream crates don't need to know the module layout.
 pub use command::CommandQueue;
 pub use component::Component;
 pub use entity::{Entity, EntityWorldMut};
@@ -37,7 +55,10 @@ pub use query::{
     filter::{Added, Changed, Or, With, Without},
 };
 pub use resource::{Res, ResMut, Resource};
-pub use system::{IntoSystem, IntoSystemConfig, System, SystemConfig, schedule::Schedule};
+pub use system::{
+    IntoSetConfig, IntoSystem, IntoSystemConfig, System, SystemConfig, SystemSet,
+    schedule::Schedule,
+};
 pub use world::World;
 
 #[cfg(test)]
@@ -109,7 +130,6 @@ mod tests {
         cmd.spawn((Position { x: 0.0, y: 0.0 }, Health));
     }
 
-    /// Counts live instances so migrations can be checked for leaks and double-drops.
     static TRACKED_LIVE: AtomicIsize = AtomicIsize::new(0);
 
     #[derive(Component)]
@@ -128,10 +148,6 @@ mod tests {
         }
     }
 
-    /// Runs `body` with the live-instance counter zeroed, and asserts it balances afterwards.
-    ///
-    /// The counter is process-global, so these tests must not run concurrently with each
-    /// other; they are serialised by taking a mutex.
     fn assert_no_leaked_components(body: impl FnOnce()) {
         static SERIALISE: Mutex<()> = Mutex::new(());
         let _guard = SERIALISE.lock().unwrap_or_else(|err| err.into_inner());
@@ -582,7 +598,6 @@ mod tests {
         }
     }
 
-    /// Compiles the write / buffer-swap / read schedules used by the event tests.
     fn event_schedules(
         world: &mut World,
     ) -> (CompiledSchedule, CompiledSchedule, CompiledSchedule) {
