@@ -70,6 +70,19 @@ use crate::{
 
 pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl");
 
+/// Adapts a WGSL source to what this platform can compile. WebGL2 has no
+/// cube-map arrays, so there any point-shadow binding becomes a single cube
+/// (matching `POINT_SHADOW_VIEW_DIMENSION`).
+fn platform_shader_source(source: &str) -> std::borrow::Cow<'_, str> {
+    if cfg!(target_arch = "wasm32") && source.contains("texture_depth_cube_array") {
+        source
+            .replace("texture_depth_cube_array", "texture_depth_cube")
+            .into()
+    } else {
+        source.into()
+    }
+}
+
 // ─── MaterialPipeline ─────────────────────────────────────────────────────────
 
 // Stores the wgpu render pipeline and material bind-group layout for `M`.
@@ -138,11 +151,10 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
-// mirror. Upserts like the other extract systems: an entity whose render
-// mirror already carries `RenderMaterialComponent<M>` is left alone (this
-// matches the old `Added`-gated behaviour — swapping a material handle after
-// the fact was never picked up either), so this only ever creates, never
-// updates.
+// mirror. Upserts like the other extract systems: a mirror that already names
+// the same material asset is left alone, and one naming a different asset is
+// replaced, so swapping the handle on a live entity (a hit flash, a
+// highlight) takes effect on the next frame.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     render_materials: Query<&RenderMaterialComponent<M>>,
@@ -151,7 +163,10 @@ pub(crate) fn extract_materials<M: Material>(
     for (material, render_entity) in materials.iter() {
         let render_entity = **render_entity;
 
-        if render_materials.get_entity(render_entity).is_some() {
+        if render_materials
+            .get_entity(render_entity)
+            .is_some_and(|existing| existing.material_asset_id == material.handle.id())
+        {
             continue;
         }
 
@@ -430,22 +445,22 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         });
 
         // Resolve shader sources (fall back to the built-in Phong shader).
-        let vs_src: &str = match M::vertex_shader() {
+        let vs_src = platform_shader_source(match M::vertex_shader() {
             ShaderRef::Default => DEFAULT_SHADER_SOURCE,
             ShaderRef::Source(src) => src,
-        };
-        let fs_src: &str = match M::fragment_shader() {
+        });
+        let fs_src = platform_shader_source(match M::fragment_shader() {
             ShaderRef::Default => DEFAULT_SHADER_SOURCE,
             ShaderRef::Source(src) => src,
-        };
+        });
 
         let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Material VS"),
-            source: wgpu::ShaderSource::Wgsl(vs_src.into()),
+            source: wgpu::ShaderSource::Wgsl(vs_src),
         });
         let fs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Material FS"),
-            source: wgpu::ShaderSource::Wgsl(fs_src.into()),
+            source: wgpu::ShaderSource::Wgsl(fs_src),
         });
 
         // Use the vertex layouts from the material trait.

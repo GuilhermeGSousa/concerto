@@ -36,7 +36,7 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_ecs::{resource::Resource, IntoSetConfig, IntoSystemConfig, World};
 use std::sync::{Arc, Mutex};
-use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
+use wgpu::{Adapter, Device, Instance, MemoryHints, Queue};
 
 #[doc(hidden)]
 pub struct RenderResources {
@@ -115,9 +115,13 @@ impl RenderPlugin {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY,
+                    required_features: wgpu::Features::empty(),
+                    // On the web, ask for exactly what the adapter offers: fixed
+                    // WebGL2 defaults over-ask on some devices (e.g. 8 colour
+                    // attachments where the browser allows 6), which fails the
+                    // whole device request.
                     required_limits: if cfg!(target_arch = "wasm32") {
-                        Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                        adapter.limits()
                     } else {
                         wgpu::Limits::default()
                     },

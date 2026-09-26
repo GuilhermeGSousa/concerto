@@ -105,7 +105,13 @@ impl Plugin for ShadowPipelinePlugin {
                 bias: DepthBiasState {
                     constant: 0,
                     slope_scale: 1.0,
-                    clamp: 100.0,
+                    // WebGL2 cannot clamp depth bias (DEPTH_BIAS_CLAMP); 0
+                    // means "unclamped", which every backend accepts.
+                    clamp: if cfg!(target_arch = "wasm32") {
+                        0.0
+                    } else {
+                        100.0
+                    },
                 },
             }),
             multisample: MultisampleState {

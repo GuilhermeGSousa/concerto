@@ -113,11 +113,34 @@ impl Component for RenderShadowCasterSlot {
 // per caster. Everything else — slot allocation, swap-remove compaction,
 // grow/shrink-with-hysteresis — is identical between them, so that's all
 // implemented once against this trait instead of twice.
+//
+// WebGL2 constraints: the GL backend infers a texture's type from its layer
+// count (1 → 2D, 6 on a square texture → cube, larger multiples of 6 → cube
+// array) and WebGL2 has no cube arrays at all. So on wasm the spot/directional
+// array is padded to a layer count that always reads as a 2D array, and point
+// shadows are limited to a single cube bound as `Cube` (see
+// `POINT_SHADOW_VIEW_DIMENSION`, which the layout and shader follow).
 pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
     const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension;
     const LABEL: &'static str;
+    /// Most casters the pool will hold.
+    const MAX_CASTERS: u32;
+
+    /// Texture layers to allocate for `view_count` views.
+    fn physical_layers(view_count: u32) -> u32 {
+        view_count
+    }
 }
+
+/// How point-light shadow maps are bound: a cube array natively, a single
+/// cube on WebGL2 (which has no cube arrays).
+pub(crate) const POINT_SHADOW_VIEW_DIMENSION: wgpu::TextureViewDimension =
+    if cfg!(target_arch = "wasm32") {
+        wgpu::TextureViewDimension::Cube
+    } else {
+        wgpu::TextureViewDimension::CubeArray
+    };
 
 pub(crate) struct SpotDirectionalShadowKind;
 
@@ -125,14 +148,38 @@ impl ShadowMapKind for SpotDirectionalShadowKind {
     const VIEWS_PER_CASTER: u32 = 1;
     const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = wgpu::TextureViewDimension::D2Array;
     const LABEL: &'static str = "spot_directional_shadow_maps";
+    const MAX_CASTERS: u32 = MAX_SHADOW_CASTERS;
+
+    fn physical_layers(view_count: u32) -> u32 {
+        if cfg!(target_arch = "wasm32") {
+            gl_array_layers(view_count)
+        } else {
+            view_count
+        }
+    }
+}
+
+/// The smallest layer count ≥ `view_count` that the GL backend treats as a
+/// 2D array rather than a single texture or a cube map.
+pub(crate) fn gl_array_layers(view_count: u32) -> u32 {
+    let mut layers = view_count.max(2);
+    while layers.is_multiple_of(6) {
+        layers += 1;
+    }
+    layers
 }
 
 pub(crate) struct PointShadowKind;
 
 impl ShadowMapKind for PointShadowKind {
     const VIEWS_PER_CASTER: u32 = 6;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = wgpu::TextureViewDimension::CubeArray;
+    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = POINT_SHADOW_VIEW_DIMENSION;
     const LABEL: &'static str = "point_shadow_maps";
+    const MAX_CASTERS: u32 = if cfg!(target_arch = "wasm32") {
+        1
+    } else {
+        MAX_SHADOW_CASTERS
+    };
 }
 
 // Slot-allocated shadow-map depth texture — see `ShadowMapKind` for what
@@ -191,7 +238,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
             size: wgpu::Extent3d {
                 width: SHADOW_MAP_SIZE,
                 height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: view_count,
+                depth_or_array_layers: K::physical_layers(view_count),
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -222,16 +269,20 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // views aren't separate GPU allocations, so building a fresh one here on
     // demand (rather than caching it) is cheap.
     pub(crate) fn array_view(&self) -> wgpu::TextureView {
+        // A single cube (WebGL2) views exactly its six faces.
+        let array_layer_count =
+            (K::ARRAY_VIEW_DIMENSION == wgpu::TextureViewDimension::Cube).then_some(6);
         self.texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(K::LABEL),
             dimension: Some(K::ARRAY_VIEW_DIMENSION),
+            array_layer_count,
             ..Default::default()
         })
     }
 
     // `None` once all `MAX_SHADOW_CASTERS` casters are in use.
     pub(crate) fn push_caster(&mut self, entity: Entity) -> Option<u32> {
-        if self.slots.len() as u32 >= MAX_SHADOW_CASTERS {
+        if self.slots.len() as u32 >= K::MAX_CASTERS {
             return None;
         }
         self.slots.push(entity);
@@ -620,6 +671,23 @@ pub(crate) fn render_shadow_maps(
                 render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod webgl_layer_tests {
+    use super::gl_array_layers;
+
+    #[test]
+    fn gl_array_layers_never_reads_as_2d_or_cube() {
+        for views in 0..40 {
+            let layers = gl_array_layers(views);
+            assert!(layers >= views.max(2));
+            assert!(
+                !layers.is_multiple_of(6),
+                "{views} views -> {layers} layers reads as a cube"
+            );
         }
     }
 }

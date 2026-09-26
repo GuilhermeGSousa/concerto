@@ -4,8 +4,11 @@ use concerto_ecs::{
     component::Component,
     Entity, With, Without, World,
 };
+use concerto_mesh::mesh::MeshComponent;
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
+
+use crate::components::{camera::Camera, light::Light};
 
 /// Marks a main-world entity as needing a mirror entity in the render world.
 #[derive(Component, Serialize, Deserialize)]
@@ -48,12 +51,35 @@ fn sync_render_entities(main: &mut World, render: &mut World) {
     despawn_stale_render_entities(main, render);
 }
 
-fn spawn_new_render_entities(main: &mut World, render: &mut World) {
-    for main_entity in main
+/// Main-world entities that need a render-world mirror but lack one: those
+/// explicitly marked [`SyncWithRenderWorld`], plus anything the renderer draws
+/// or renders from — meshes, lights and cameras — however it was spawned.
+/// Without the implicit cases, geometry spawned from code (rather than from a
+/// scene, which carries the marker) would silently never be drawn.
+fn entities_needing_render_mirror(main: &mut World) -> Vec<Entity> {
+    let mut entities = main
         .query::<Entity, (With<SyncWithRenderWorld>, Without<RenderEntity>)>()
         .iter(main)
-        .collect::<Vec<_>>()
-    {
+        .collect::<Vec<_>>();
+    entities.extend(
+        main.query::<Entity, (With<MeshComponent>, Without<RenderEntity>)>()
+            .iter(main),
+    );
+    entities.extend(
+        main.query::<Entity, (With<Light>, Without<RenderEntity>)>()
+            .iter(main),
+    );
+    entities.extend(
+        main.query::<Entity, (With<Camera>, Without<RenderEntity>)>()
+            .iter(main),
+    );
+    let mut seen = std::collections::HashSet::new();
+    entities.retain(|entity| seen.insert(*entity));
+    entities
+}
+
+fn spawn_new_render_entities(main: &mut World, render: &mut World) {
+    for main_entity in entities_needing_render_mirror(main) {
         let render_entity = render.spawn(MainEntity::new(main_entity));
         main.insert(RenderEntity::new(render_entity), main_entity);
     }

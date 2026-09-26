@@ -113,7 +113,7 @@ impl LightingLayout {
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        view_dimension: crate::components::shadows::POINT_SHADOW_VIEW_DIMENSION,
                         multisampled: false,
                     },
                     count: None,
