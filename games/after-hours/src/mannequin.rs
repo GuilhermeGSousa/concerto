@@ -401,7 +401,11 @@ pub fn hunt(
     for (entity, mut mannequin, mut transform) in mannequins.iter() {
         let feet = transform.translation;
         mannequin.observed = is_observed(&sight, entity, feet);
-        if mannequin.observed || !live || !mannequin.is_hunting() {
+        if mannequin.observed
+            || !live
+            || !mannequin.is_hunting()
+            || crate::platform::debug_flag("nohunt")
+        {
             mannequin.unseen_for = 0.0;
             mannequin.moving = false;
             continue;

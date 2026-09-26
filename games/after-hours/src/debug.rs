@@ -17,20 +17,31 @@ pub struct TraceFrame(u64);
 
 pub fn trace(
     cameras: Query<&GlobalTransform, With<MainCamera>>,
-    players: Query<&Transform, With<Player>>,
+    players: Query<(&Transform, &crate::body::Mover), With<Player>>,
+    input: Res<concerto::window::input::Input>,
     mannequins: Query<(&Mannequin, &Transform)>,
     game: Res<Game>,
     mut frame: ResMut<TraceFrame>,
 ) {
     frame.0 += 1;
-    if !frame.0.is_multiple_of(60) || !platform::debug_flag("trace") {
+    if !platform::debug_flag("trace") {
+        return;
+    }
+    let delta = input.mouse_delta();
+    if delta != glam::Vec2::ZERO {
+        log::info!("trace: mouse delta {delta:?}");
+    }
+    if !frame.0.is_multiple_of(12) {
         return;
     }
     let camera = cameras
         .iter()
         .next()
         .map(|g| (g.translation(), g.rotation()));
-    let player = players.iter().next().map(|t| t.translation);
+    let player = players
+        .iter()
+        .next()
+        .map(|(t, m)| (t.translation, m.desired, m.velocity()));
     log::info!(
         "trace: phase={:?} paused={} night={} t={:.1} camera={:?} player={:?}",
         game.phase,

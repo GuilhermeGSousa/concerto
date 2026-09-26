@@ -40,7 +40,8 @@
 
 <body data-want-lock="0">
     <div id="loading">OPENING THE STORE…</div>
-    <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
+    <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z"
+        data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
     <script>
         // Browsers only grant pointer lock inside a user gesture, so the game
         // flags when it wants the mouse and this handler takes it on click.

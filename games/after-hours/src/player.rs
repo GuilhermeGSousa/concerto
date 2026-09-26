@@ -12,7 +12,7 @@ use concerto::{
     render::components::{camera::Camera, light::Light},
     window::input::{Input, KeyCode, PhysicalKey},
 };
-use glam::{Quat, Vec3};
+use glam::{Quat, Vec2, Vec3};
 
 use crate::{
     body::{Mover, flat},
@@ -33,6 +33,8 @@ const LOW_BATTERY: f32 = 0.22;
 pub const FLASHLIGHT_CONE: f32 = 0.42;
 pub const FLASHLIGHT_RANGE: f32 = 15.0;
 pub const FOV_Y: f32 = 1.2;
+/// Largest mouse movement, in pixels per axis, accepted in one frame.
+const MAX_LOOK_STEP: f32 = 250.0;
 
 #[derive(Resource)]
 pub struct Settings {
@@ -190,7 +192,11 @@ pub fn control_player(
             continue;
         }
 
-        let delta = input.mouse_delta();
+        // Browsers can deliver one wild jump as the pointer lock engages;
+        // no real flick moves this far in a single frame.
+        let delta = input
+            .mouse_delta()
+            .clamp(Vec2::splat(-MAX_LOOK_STEP), Vec2::splat(MAX_LOOK_STEP));
         let invert = if settings.invert_y { -1.0 } else { 1.0 };
         player.yaw -= delta.x * settings.sensitivity;
         player.pitch = (player.pitch - delta.y * settings.sensitivity * invert).clamp(-1.35, 1.35);
