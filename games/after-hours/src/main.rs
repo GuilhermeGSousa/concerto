@@ -50,7 +50,10 @@ fn main() {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
             std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Info).expect("Couldn't initialize logger");
+            // Quiet by default for players; `?trace` brings back the phase and
+            // frame-time logs automated tests rely on.
+            let level = if platform::debug_flag("trace") { log::Level::Info } else { log::Level::Warn };
+            console_log::init_with_level(level).expect("Couldn't initialize logger");
         } else {
             env_logger::init();
         }

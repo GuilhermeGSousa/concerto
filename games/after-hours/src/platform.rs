@@ -40,6 +40,13 @@ mod imp {
         debug_flag("nolock") || document().and_then(|d| d.pointer_lock_element()).is_some()
     }
 
+    /// Tells the page the game is on screen, so it can drop its loading text.
+    pub fn mark_ready() {
+        if let Some(body) = document().and_then(|d| d.body()) {
+            let _ = body.dataset().set("ready", "1");
+        }
+    }
+
     pub fn want_lock(want: bool) {
         if let Some(body) = document().and_then(|d| d.body()) {
             let _ = body.dataset().set("wantLock", if want { "1" } else { "0" });
@@ -93,6 +100,8 @@ mod imp {
         debug_flag("nolock") || LOCKED.load(Ordering::Relaxed)
     }
 
+    pub fn mark_ready() {}
+
     pub fn set_locked(locked: bool) {
         LOCKED.store(locked, Ordering::Relaxed);
     }
@@ -110,7 +119,7 @@ mod imp {
     }
 }
 
-pub use imp::{debug_flag, debug_value, load, pointer_locked, save};
+pub use imp::{debug_flag, debug_value, load, mark_ready, pointer_locked, save};
 
 /// Furthest night reached, across sessions (1 if none).
 pub fn load_best() -> u32 {

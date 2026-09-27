@@ -195,6 +195,8 @@ pub fn dress_mannequins(
         };
         mannequin.anim = Some(player);
         cmd.insert(Dressed, player);
+        // The first dressed mannequin means the content has arrived.
+        crate::platform::mark_ready();
 
         let finish = &palette.finishes[mannequin.finish % palette.finishes.len()];
         let mut stack = vec![mannequin.visual];
