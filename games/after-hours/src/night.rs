@@ -839,6 +839,23 @@ mod tests {
     }
 
     #[test]
+    fn every_night_generates_a_complete_house() {
+        for night in 1..9 {
+            for seed in 0..150 {
+                let plan = plan(night, seed);
+                let level = level::generate(&plan.spec);
+                assert_eq!(
+                    level.lots.len(),
+                    plan.spec.lots,
+                    "night {night} seed {seed}"
+                );
+                assert_eq!(level.figures.len(), plan.spec.figures);
+                assert!(level.figures.len() > plan.possessed);
+            }
+        }
+    }
+
+    #[test]
     fn nights_build_up_slowly() {
         let first = plan(1, 0);
         assert_eq!(first.possessed, 0);

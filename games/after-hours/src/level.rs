@@ -267,9 +267,7 @@ impl Level {
                 }
                 let door = if (WallSpot { cell: c, dir }) == self.exit {
                     true
-                } else if outer {
-                    false
-                } else if !self.is_open(c, dir) {
+                } else if outer || !self.is_open(c, dir) {
                     false
                 } else if self.is_door(c, dir) {
                     true

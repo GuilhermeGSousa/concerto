@@ -23,6 +23,8 @@ pub enum Sfx {
     Knock,
     /// A candle going out.
     Snuff,
+    /// A wooden joint settling: a figure has turned.
+    Joint,
     Escape,
     /// The jumpscare hit.
     Stinger,
@@ -56,6 +58,7 @@ impl Sounds {
         match sfx {
             Sfx::Footstep => 1.0 + spread * 0.2,
             Sfx::Creak => 1.0 + spread * 0.5,
+            Sfx::Joint => 1.0 + spread * 0.4,
             Sfx::Flicker => 1.0 + spread * 0.3,
             _ => 1.0,
         }
@@ -253,6 +256,28 @@ fn build(sfx: Sfx) -> Mix {
                         .volume(0.6),
                 );
             }
+            mix
+        }
+        Sfx::Joint => {
+            let mut mix = Mix::with_seed(0.3, 61);
+            mix.add(
+                0.0,
+                Tone::new(Wave::Sine, 640.0, 0.05)
+                    .sweep(420.0)
+                    .decay(6.0)
+                    .volume(0.6),
+            )
+            .add(
+                0.0,
+                Tone::new(Wave::Noise, 0.0, 0.03)
+                    .lowpass(3500.0, 1200.0)
+                    .decay(5.0)
+                    .volume(0.5),
+            )
+            .add(
+                0.06,
+                Tone::new(Wave::Sine, 380.0, 0.04).decay(6.0).volume(0.3),
+            );
             mix
         }
         Sfx::Snuff => {
@@ -455,7 +480,7 @@ fn ambience() -> Mix {
     mix
 }
 
-pub const ALL: [Sfx; 17] = [
+pub const ALL: [Sfx; 18] = [
     Sfx::Chime,
     Sfx::Footstep,
     Sfx::FlashlightClick,
@@ -467,6 +492,7 @@ pub const ALL: [Sfx; 17] = [
     Sfx::Page,
     Sfx::Knock,
     Sfx::Snuff,
+    Sfx::Joint,
     Sfx::Escape,
     Sfx::Stinger,
     Sfx::DeathDrone,

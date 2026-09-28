@@ -707,7 +707,7 @@ pub fn hunt(
                     mannequin.yaw = facing;
                     if distance < CELL * 2.5 {
                         let (volume, pan) = spatialize(&eye, feet + Vec3::Y * 1.6);
-                        sounds.play_at(&mut audio, Sfx::Click, volume * 0.25, pan);
+                        sounds.play_at(&mut audio, Sfx::Joint, volume * 0.35, pan);
                     }
                 }
                 mannequin.fidget -= dt;
@@ -770,6 +770,8 @@ pub fn hunt(
             mannequin.yaw = yaw_toward(to_player);
             mannequin.mood_time = 0.0;
             if mannequin.one_shot {
+                let (volume, pan) = spatialize(&eye, feet + Vec3::Y * 1.6);
+                sounds.play_at(&mut audio, Sfx::Joint, volume * 0.5, pan);
                 mannequin.one_shot = false;
                 mannequin.kind = Kind::Inert;
                 mannequin.mood = Mood::Still;
@@ -874,6 +876,72 @@ pub fn block_player(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn house(seed: u64) -> Level {
+        crate::level::generate(&crate::level::LevelSpec {
+            size: 7,
+            lots: 4,
+            oil: 2,
+            figures: 8,
+            lit_fraction: 0.3,
+            max_lights: 12,
+            loop_doors: 0.35,
+            bedroom: true,
+            seed,
+        })
+    }
+
+    #[test]
+    fn stalkers_wait_near_but_not_on_top_of_you_and_behind_you() {
+        for seed in 0..30 {
+            let level = house(seed);
+            let player_cell = level.start;
+            let flow = Flow {
+                target: Some(player_cell),
+                distances: level.distances(player_cell),
+            };
+            let eye = Eye {
+                rotation: Quat::IDENTITY,
+                valid: true,
+                ..Default::default()
+            };
+            let mut rand = Rand::new(seed);
+            let taken = vec![player_cell];
+            let Some(cell) =
+                stalk_cell(&level, &flow, &eye, player_cell.center(), &taken, &mut rand)
+            else {
+                continue;
+            };
+            let steps = level.distance(&flow.distances, cell);
+            assert!((2..=3).contains(&steps), "stalk cell {steps} steps away");
+            let blocked = vec![player_cell, cell];
+            if let Some(other) = stalk_cell(
+                &level,
+                &flow,
+                &eye,
+                player_cell.center(),
+                &blocked,
+                &mut rand,
+            ) {
+                assert!(other.manhattan(cell) >= 2, "two stalkers crowd one spot");
+            }
+        }
+    }
+
+    #[test]
+    fn retreats_go_far_away() {
+        for seed in 0..30 {
+            let level = house(seed);
+            let flow = Flow {
+                target: Some(level.start),
+                distances: level.distances(level.start),
+            };
+            let mut rand = Rand::new(seed);
+            if let Some(cell) = retreat_cell(&level, &flow, &[level.start], &mut rand) {
+                assert!(level.distance(&flow.distances, cell) >= 4);
+            }
+        }
+    }
 
     #[test]
     fn view_test_matches_the_camera() {
