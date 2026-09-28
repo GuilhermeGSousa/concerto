@@ -37,7 +37,12 @@ mod imp {
     }
 
     pub fn pointer_locked() -> bool {
-        debug_flag("nolock") || document().and_then(|d| d.pointer_lock_element()).is_some()
+        debug_flag("nolock")
+            || document().and_then(|d| d.pointer_lock_element()).is_some()
+            || document()
+                .and_then(|d| d.body())
+                .and_then(|b| b.dataset().get("lockFailed"))
+                .is_some_and(|v| v == "1")
     }
 
     /// Tells the page the game is on screen, so it can drop its loading text.

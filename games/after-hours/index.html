@@ -74,20 +74,21 @@
             }
         };
 
-        // Browsers only grant pointer lock inside a user gesture, so the game
-        // flags when it wants the mouse and this handler takes it on click.
-        document.addEventListener("mousedown", function () {
+        // Pointer lock needs a user gesture. winit cancels pointerdown, which
+        // suppresses mousedown, so this must listen to pointerdown.
+        document.addEventListener("pointerdown", function () {
             var c = canvas();
             if (!c) return;
             c.focus();
-            if (document.body.dataset.wantLock === "1" && !document.pointerLockElement) {
-                try {
-                    var request = c.requestPointerLock({ unadjustedMovement: true });
-                    if (request && request.catch) request.catch(function () { c.requestPointerLock(); });
-                } catch (e) {
-                    c.requestPointerLock();
-                }
+            if (document.body.dataset.wantLock === "1" && !document.pointerLockElement
+                && document.body.dataset.lockFailed !== "1") {
+                var request = c.requestPointerLock();
+                if (request && request.catch) request.catch(function () {});
             }
+        }, true);
+        // If the browser refuses the lock, play on with a free cursor.
+        document.addEventListener("pointerlockerror", function () {
+            document.body.dataset.lockFailed = "1";
         });
         document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
