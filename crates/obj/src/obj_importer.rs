@@ -1,8 +1,8 @@
 //! Offline importer that relocates the runtime `OBJLoader`/`MTLLoader` parsing
 //! into the import pipeline. A single `.obj` (plus the `.mtl` named in its
-//! first `mtllib` line) is split into independently-imported `mesh/*`, a single
-//! `material/<mtl stem>`, and one flat `scene` sub-asset, cross-referenced by
-//! stable `AssetId`.
+//! first `mtllib` line) is split into one `mesh/0` holding a primitive per OBJ
+//! model, a single `material/<mtl stem>`, and a one-node `scene` sub-asset,
+//! cross-referenced by stable `AssetId`.
 
 use std::path::Path;
 
@@ -13,6 +13,7 @@ use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
+use concerto_mesh::primitive::Primitive;
 use concerto_mesh::vertex::Vertex;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
@@ -43,42 +44,45 @@ impl Importer for ObjImporter {
 
         let mtl_stem = import_material(source_path, ctx)?;
 
-        for (index, model) in models.iter().enumerate() {
-            let mesh = build_mesh(&model.mesh);
-            ctx.emit(&format!("mesh/{index}"), &mesh)?;
-        }
+        let mesh = Mesh {
+            primitives: models
+                .iter()
+                .map(|model| build_primitive(&model.mesh))
+                .collect(),
+        };
+        ctx.emit("mesh/0", &mesh)?;
 
-        let mut nodes: Vec<SceneNode> = Vec::with_capacity(models.len());
         let mut referenced_assets: Vec<AssetId> = Vec::new();
-        for (index, model) in models.iter().enumerate() {
-            let mut node = SceneNode {
-                name: model.name.clone(),
-                children: vec![],
-                components: Vec::new(),
-            };
-            push_node_component(&mut node, &Transform::default())?;
+        let mut node = SceneNode {
+            name: source_path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "mesh".to_string()),
+            children: vec![],
+            components: Vec::new(),
+        };
+        push_node_component(&mut node, &Transform::default())?;
 
-            let mesh_id = ctx.sub_asset_id(&format!("mesh/{index}"));
+        let mesh_id = ctx.sub_asset_id("mesh/0");
+        push_node_component(
+            &mut node,
+            &MeshComponent {
+                handle: AssetHandle::weak(mesh_id),
+            },
+        )?;
+        referenced_assets.push(mesh_id);
+
+        if let Some(stem) = mtl_stem.as_ref() {
+            let material_id = ctx.sub_asset_id(&format!("material/{stem}"));
             push_node_component(
                 &mut node,
-                &MeshComponent {
-                    handle: AssetHandle::weak(mesh_id),
-                },
+                &MaterialComponent::<StandardMaterial>::all(AssetHandle::weak(material_id)),
             )?;
-            referenced_assets.push(mesh_id);
-
-            if let Some(stem) = mtl_stem.as_ref() {
-                let material_id = ctx.sub_asset_id(&format!("material/{stem}"));
-                push_node_component(
-                    &mut node,
-                    &MaterialComponent::<StandardMaterial>::all(AssetHandle::weak(material_id)),
-                )?;
-                referenced_assets.push(material_id);
-            }
-
-            push_node_component(&mut node, &SyncWithRenderWorld)?;
-            nodes.push(node);
+            referenced_assets.push(material_id);
         }
+
+        push_node_component(&mut node, &SyncWithRenderWorld)?;
+        let nodes = vec![node];
 
         ctx.emit(
             "scene",
@@ -198,7 +202,7 @@ fn track_texture_dependency(ctx: &mut ImportContext, mtl_dir: &Path, texture_nam
 /// the runtime `OBJLoader::load` mesh path. `single_index` + `triangulate`
 /// guarantee `positions`/`texcoords`/`normals` are parallel per-vertex arrays
 /// and `indices` are triangle lists.
-fn build_mesh(mesh_data: &tobj::Mesh) -> Mesh {
+fn build_primitive(mesh_data: &tobj::Mesh) -> Primitive {
     let mut requires_normal_computation = false;
 
     let vertices = (0..mesh_data.positions.len() / 3)
@@ -239,12 +243,15 @@ fn build_mesh(mesh_data: &tobj::Mesh) -> Mesh {
         })
         .collect::<Vec<_>>();
 
-    let mut mesh = Mesh::single(vertices, mesh_data.indices.clone());
+    let mut primitive = Primitive {
+        vertices,
+        indices: mesh_data.indices.clone(),
+    };
 
     if requires_normal_computation {
-        mesh.compute_normals();
+        primitive.compute_normals();
     }
-    mesh.compute_tangents();
+    primitive.compute_tangents();
 
-    mesh
+    primitive
 }

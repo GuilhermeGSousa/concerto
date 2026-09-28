@@ -51,7 +51,7 @@ imported assets/UAL1.glb -> 126 assets
 | Extensions           | Importer        | Emits                                              |
 |----------------------|-----------------|---------------------------------------------------|
 | `.gltf` `.glb`       | `GltfImporter`  | `mesh/<name>`, `material/*`, `texture/*`, `skeleton/*`, `animation/*`, `scene` |
-| `.obj` (+ its `.mtl`)| `ObjImporter`   | `mesh/*`, one `material/<mtl stem>`, `scene`       |
+| `.obj` (+ its `.mtl`)| `ObjImporter`   | one `mesh/0` (a primitive per model), one `material/<mtl stem>`, `scene` |
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 
 A glTF mesh imports as one `Mesh` holding all of its primitives, named after
