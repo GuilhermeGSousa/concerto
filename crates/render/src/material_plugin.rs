@@ -10,14 +10,16 @@ use concerto_ecs::{
     query::Query,
     resource::{Res, ResMut, Resource},
     system::input::SystemInputData,
+    IntoSystemConfig,
 };
 
 use crate::{
-    assets::material::ShaderRef,
+    assets::material::{ShaderRef, StandardMaterial},
     components::{
         camera::RenderCamera,
+        fallback_material::{insert_fallback_material, ClaimedSlots, UsesFallbackMaterial},
         material::{MaterialComponent, RenderMaterialComponent},
-        mesh::RenderMeshInstance,
+        mesh::{extract_meshes, RenderMeshInstance},
         render_entity::RenderEntity,
         shadows::RenderLighting,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -137,36 +139,49 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
-// Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
-// mirror, resolving the slot the render instance draws. Upserts like the
-// other extract systems: an entity whose render mirror already carries
-// `RenderMaterialComponent<M>` is left alone (this matches the old
-// `Added`-gated behaviour — swapping a material handle after the fact was
-// never picked up either), so this only ever creates, never updates.
+// Extracts every `MaterialComponent<M>` into a `RenderMaterialComponent<M>` on
+// each render instance whose primitive slot its binding covers. Every covered
+// slot is recorded in `ClaimedSlots`, whether or not it changed, so the
+// fallback pass in `Render` knows which instances nothing claimed. An
+// instance already drawing with the fallback swaps it out for this material.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     render_meshes: Query<&RenderMeshInstance>,
     render_materials: Query<&RenderMaterialComponent<M>>,
+    fallback_users: Query<&UsesFallbackMaterial>,
+    mut claimed: ResMut<ClaimedSlots>,
     mut cmd: CommandQueue,
 ) {
     for (material, render_entity) in materials.iter() {
-        let render_entity = **render_entity;
+        let entity = **render_entity;
 
-        if render_materials.get_entity(render_entity).is_some() {
-            continue;
-        }
-
-        let Some(instance) = render_meshes.get_entity(render_entity) else {
+        let Some(instance) = render_meshes.get_entity(entity) else {
             continue;
         };
         let Some(handle) = material.binding.slot(instance.primitive) else {
             continue;
         };
 
-        cmd.insert(
-            RenderMaterialComponent::<M>::new(handle.id()),
-            render_entity,
-        );
+        if claimed.claim(entity) {
+            log::warn!(
+                "primitive slot {} is claimed by more than one material type; it will draw once per type",
+                instance.primitive
+            );
+        }
+
+        let uses_fallback = fallback_users.get_entity(entity).is_some();
+        let is_current = render_materials
+            .get_entity(entity)
+            .is_some_and(|current| current.material_asset_id == handle.id());
+        if is_current && !uses_fallback {
+            continue;
+        }
+
+        if uses_fallback {
+            cmd.remove::<RenderMaterialComponent<StandardMaterial>>(entity);
+            cmd.remove::<UsesFallbackMaterial>(entity);
+        }
+        cmd.insert(RenderMaterialComponent::<M>::new(handle.id()), entity);
     }
 }
 
@@ -390,8 +405,11 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // handled by the shared extract_meshes system already registered by
         // RenderPlugin, which iterates over all entities with RenderEntity
         // regardless of material type.
-        app.add_render_system(Extract, extract_materials::<M>)
-            .add_render_system(Render, material_renderpass::<M>);
+        app.add_render_system(Extract, extract_materials::<M>.after(extract_meshes))
+            .add_render_system(
+                Render,
+                material_renderpass::<M>.after(insert_fallback_material),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

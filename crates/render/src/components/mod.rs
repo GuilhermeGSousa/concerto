@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod fallback_material;
 pub mod light;
 pub mod material;
 pub mod render_entity;

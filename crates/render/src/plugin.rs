@@ -1,7 +1,11 @@
 use crate::{
-    assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
+    assets::{material::StandardMaterial, mesh::Mesh, skeleton::Skeleton, texture::Texture},
     components::{
         camera::{extract_cameras, sync_camera_aspect},
+        fallback_material::{
+            fallback_material_asset, insert_fallback_material, ClaimedSlots, FallbackMaterial,
+            RenderFallbackMaterial,
+        },
         light::{extract_lights, update_changed_lights, RenderLights},
         mesh::extract_meshes,
         render_entity::extract,
@@ -35,6 +39,9 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{resource::Resource, IntoSetConfig, IntoSystemConfig, World};
+use concerto_foundation::assets::{
+    asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+};
 use std::sync::{Arc, Mutex};
 use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
 
@@ -201,6 +208,7 @@ impl Plugin for RenderPlugin {
             (RenderSet::Lights, RenderSet::Shadows, RenderSet::Draw).chain(),
         )
         .add_render_system(Render, clear_cameras)
+        .add_render_system(Render, insert_fallback_material.before(RenderSet::Lights))
         .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))
         .add_render_system(
             Render,
@@ -284,6 +292,16 @@ impl Plugin for RenderPlugin {
             }
         };
 
+        let fallback_material = app
+            .get_resource::<AssetStore<StandardMaterial>>()
+            .and_then(|_| app.get_resource::<AssetServer>())
+            .map(|server| server.add(fallback_material_asset()));
+        let render_fallback_material =
+            RenderFallbackMaterial(fallback_material.as_ref().map(AssetHandle::id));
+        if let Some(handle) = fallback_material {
+            app.insert_resource(FallbackMaterial(handle));
+        }
+
         let camera_layouts = CameraLayout::new(&device);
 
         let skeleton_layout = SkeletonLayout::new(&device);
@@ -325,6 +343,8 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
+            .insert_resource(render_fallback_material)
+            .insert_resource(ClaimedSlots::default())
             .insert_resource(WorldEnvironment::new(Color::rgba(0.1, 0.1, 0.1, 0.1)));
     }
 }
