@@ -1,5 +1,4 @@
-//! Covers the multi-primitive `Mesh` container: construction, bounds union,
-//! and the merged geometry used by colliders and GPU upload.
+//! Covers the multi-primitive `Mesh` container.
 use concerto_mesh::mesh::Mesh;
 use concerto_mesh::primitive::Primitive;
 use concerto_mesh::vertex::Vertex;

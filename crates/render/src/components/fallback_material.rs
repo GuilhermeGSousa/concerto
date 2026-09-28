@@ -26,8 +26,7 @@ pub fn fallback_material_asset() -> StandardMaterial {
 #[derive(Resource)]
 pub struct FallbackMaterial(pub AssetHandle<StandardMaterial>);
 
-/// Render-world id of the fallback material, or `None` when the app renders
-/// no `StandardMaterial` to draw it with.
+/// Render-world id of the fallback material; `None` when `StandardMaterial` is not rendered.
 #[derive(Resource)]
 pub struct RenderFallbackMaterial(pub Option<AssetId>);
 
@@ -43,8 +42,7 @@ pub struct ClaimedSlots {
 }
 
 impl ClaimedSlots {
-    /// Records a claim, returning `true` the first time another material type
-    /// is found to have claimed the same entity in the same frame.
+    /// Records a claim; `true` the first time a second material type claims `entity` in one frame.
     pub fn claim(&mut self, entity: Entity) -> bool {
         !self.claimed.insert(entity) && self.reported.insert(entity)
     }
@@ -55,7 +53,6 @@ impl ClaimedSlots {
     }
 }
 
-/// Gives every mesh instance no material claimed this frame the fallback.
 pub(crate) fn insert_fallback_material(
     instances: Query<Entity, With<RenderMeshInstance>>,
     fallback_users: Query<&UsesFallbackMaterial>,

@@ -30,8 +30,6 @@ pub struct RenderSkeletonComponent {
     pub(crate) offset: u32,
 }
 
-/// On a render-world primitive entity: the skin slot it draws from, owned by
-/// the `RenderSkeletonComponent` on its owner mirror.
 #[derive(Component)]
 pub(crate) struct RenderSkinOffset {
     pub(crate) offset: u32,

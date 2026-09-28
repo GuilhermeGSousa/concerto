@@ -58,11 +58,7 @@ impl Mesh {
         }
     }
 
-    /// The union of every primitive's local-space bounds, or `None` when no
-    /// primitive has vertices.
-    ///
-    /// Callers that inspect the same loaded asset repeatedly should cache this
-    /// value by asset id.
+    /// Union of every primitive's local-space bounds; `None` when no primitive has vertices.
     pub fn local_aabb(&self) -> Option<Aabb> {
         self.primitives
             .iter()
@@ -73,8 +69,7 @@ impl Mesh {
             })
     }
 
-    /// Every primitive concatenated into one vertex and index list, with each
-    /// primitive's indices offset by the vertices preceding it.
+    /// All primitives concatenated, each one's indices offset by the vertices before it.
     pub fn merged_geometry(&self) -> (Vec<Vertex>, Vec<u32>) {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();

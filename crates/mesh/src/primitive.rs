@@ -4,8 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::mesh::Aabb;
 use crate::vertex::Vertex;
 
-/// One drawable unit of a [`crate::mesh::Mesh`]: geometry for a single draw
-/// call, paired at render time with the material in the matching slot.
+/// Geometry for one draw call, drawn with the material in the matching slot.
 #[derive(Default, Clone, Serialize, Deserialize)]
 pub struct Primitive {
     pub vertices: Vec<Vertex>,

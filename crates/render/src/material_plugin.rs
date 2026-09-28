@@ -139,12 +139,6 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
-// Extracts every `MaterialComponent<M>` into a `RenderMaterialComponent<M>` on
-// each primitive entity of the owner's `RenderMeshFanout` whose slot its
-// binding covers. Every covered
-// slot is recorded in `ClaimedSlots`, whether or not it changed, so the
-// fallback pass in `Render` knows which instances nothing claimed. An
-// instance already drawing with the fallback swaps it out for this material.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     fanouts: Query<&RenderMeshFanout>,

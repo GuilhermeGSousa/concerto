@@ -24,8 +24,7 @@ pub(crate) struct RenderMeshInstance {
     pub(crate) transform: wgpu::Buffer,
 }
 
-/// On an owner render entity: the per-primitive entities standing in for its
-/// mesh, and which mesh they were built from.
+/// On an owner render entity: one render entity per primitive of `mesh_asset_id`.
 #[derive(Component)]
 pub struct RenderMeshFanout {
     pub mesh_asset_id: AssetId,
@@ -46,11 +45,6 @@ pub fn fanout_is_stale(
     }
 }
 
-// Mirrors every `MeshComponent` as one render entity per primitive of its
-// loaded mesh, listed in a `RenderMeshFanout` on the owner mirror. Waits for
-// the mesh asset to load, and rebuilds the primitive entities when the handle
-// or primitive count changes. Primitive entities carry `MainEntity`, so they
-// are despawned with their main entity like any other mirror.
 pub(crate) fn extract_meshes(
     meshes: Extracted<
         Query<(

@@ -1,5 +1,4 @@
 //! Covers the primitive range table `RenderMesh` builds from a `Mesh`.
-//! Split out from `prepare_asset` so it runs without a GPU device.
 use concerto_mesh::mesh::Mesh;
 use concerto_mesh::primitive::Primitive;
 use concerto_mesh::vertex::Vertex;

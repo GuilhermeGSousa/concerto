@@ -527,13 +527,6 @@ fn push_node_component<T: Serialize + SceneComponent>(
         })
 }
 
-/// The `mesh/*` sub-asset name of every glTF mesh, in mesh-index order.
-///
-/// A mesh is named after its source name, or its index when it has none. A
-/// name an earlier mesh already took gets the mesh index appended, so names
-/// stay stable across re-imports of an unchanged source. Characters the
-/// content tree cannot keep apart in a file name are replaced first, so two
-/// distinct names never land on one file.
 fn mesh_sub_asset_names(document: &gltf::Document) -> Vec<String> {
     let mut taken = HashSet::new();
     document

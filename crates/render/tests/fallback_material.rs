@@ -1,5 +1,4 @@
-//! Covers the magenta stand-in applied to primitive slots no material covers,
-//! and the per-frame claim bookkeeping that decides which slots those are.
+//! Covers the magenta fallback material and per-frame slot claims.
 use concerto_color::Color;
 use concerto_ecs::World;
 use concerto_render::components::fallback_material::{fallback_material_asset, ClaimedSlots};

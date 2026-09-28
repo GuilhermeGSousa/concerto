@@ -16,8 +16,7 @@ use crate::{assets::material::StandardMaterial, Material};
 pub enum SlotBinding<M: Material + Send + Sync + 'static = StandardMaterial> {
     /// One material for every slot, however many the mesh turns out to have.
     All(AssetHandle<M>),
-    /// One entry per slot; `None` leaves that slot to another material type
-    /// or to the fallback.
+    /// One entry per slot; `None` leaves the slot uncovered.
     PerSlot(Vec<Option<AssetHandle<M>>>),
 }
 
@@ -31,11 +30,7 @@ impl<M: Material + Send + Sync + 'static> SlotBinding<M> {
     }
 }
 
-/// Attach this component (alongside [`MeshComponent`]) to an entity to tell the engine
-/// which material each of the mesh's primitives should be rendered with.
-///
-/// The type parameter `M` defaults to [`StandardMaterial`]. Two material types can
-/// coexist on one entity as two components, each covering a subset of slots.
+/// Which material each primitive of the entity's mesh draws with.
 #[derive(Component, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {

@@ -7,8 +7,7 @@ use crate::{
     render_asset::{AssetPreparationError, RenderAsset},
 };
 
-/// Where one primitive's geometry sits inside a [`RenderMesh`]'s shared
-/// vertex and index buffers.
+/// Where one primitive sits in a [`RenderMesh`]'s shared buffers.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PrimitiveRange {
     pub indices: std::ops::Range<u32>,
