@@ -20,9 +20,9 @@ use glam::{Quat, Vec2, Vec3};
 use crate::{
     body::{Mover, flat},
     game::{Game, Rand},
+    house::HouseEntity,
     lighting,
     sfx::{Sfx, Sounds},
-    house::HouseEntity,
 };
 
 pub const EYE_HEIGHT: f32 = 1.62;

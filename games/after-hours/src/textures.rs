@@ -83,7 +83,11 @@ pub fn floorboards() -> Texture {
         let tone = 0.75 + 0.35 * value_noise(row * 7.0 + plank, 1.0, 64, 9);
         let grain = fbm(along * 0.5, v * 4.0, 16, 3, 13);
         let streak = ((v * boards).fract() * 9.0 + grain * 6.0).sin() * 0.5 + 0.5;
-        let base = mix([0.2, 0.12, 0.07], [0.3, 0.19, 0.11], streak * 0.6 + grain * 0.4);
+        let base = mix(
+            [0.2, 0.12, 0.07],
+            [0.3, 0.19, 0.11],
+            streak * 0.6 + grain * 0.4,
+        );
         let mut color = scale(base, tone);
         let seam = (v * boards).fract();
         if !(0.04..=0.96).contains(&seam) {
@@ -98,7 +102,6 @@ pub fn floorboards() -> Texture {
 }
 
 /// A damask wallpaper: staggered medallions on a ground, aged and stained.
-/// One texture spans half a meter.
 pub fn wallpaper(ground: [f32; 3], figure: [f32; 3], seed: u32) -> Texture {
     paint(128, |u, v| {
         let (gx, gy) = (u * 2.0, v * 2.0);
@@ -133,7 +136,11 @@ pub fn wainscot() -> Texture {
         let pu = (u * 2.0).fract();
         let edge = pu.min(1.0 - pu).min(v.min(1.0 - v) * 0.5);
         let bevel = smooth(0.06, 0.1, edge);
-        let groove = if (0.055..0.075).contains(&edge) { 0.5 } else { 1.0 };
+        let groove = if (0.055..0.075).contains(&edge) {
+            0.5
+        } else {
+            1.0
+        };
         scale(base, (0.75 + 0.35 * bevel) * groove)
     })
 }
@@ -144,7 +151,10 @@ pub fn plaster() -> Texture {
         let base = [0.52, 0.49, 0.43];
         let stain = (fbm(u, v, 2, 4, 5) - 0.55).max(0.0) * 2.5;
         let crack = (fbm(u, v, 4, 4, 17) - 0.5).abs() < 0.004;
-        let color = scale(mix(base, [0.36, 0.3, 0.2], stain), 0.9 + 0.2 * fbm(u, v, 8, 2, 3));
+        let color = scale(
+            mix(base, [0.36, 0.3, 0.2], stain),
+            0.9 + 0.2 * fbm(u, v, 8, 2, 3),
+        );
         if crack { scale(color, 0.85) } else { color }
     })
 }
@@ -165,7 +175,10 @@ pub fn wood() -> Texture {
     paint(64, |u, v| {
         let grain = fbm(u * 0.5, v * 4.0, 8, 3, 43);
         let rings = ((u * 12.0 + grain * 5.0).sin() * 0.5 + 0.5) * 0.3;
-        scale(mix([0.16, 0.09, 0.05], [0.28, 0.16, 0.09], grain), 0.85 + rings)
+        scale(
+            mix([0.16, 0.09, 0.05], [0.28, 0.16, 0.09], grain),
+            0.85 + rings,
+        )
     })
 }
 
@@ -175,11 +188,7 @@ pub fn gilt() -> Texture {
         let n = fbm(u, v, 8, 3, 51);
         let bead = ((u * 40.0).sin() * (v * 40.0).sin()).abs();
         let color = mix([0.33, 0.24, 0.08], [0.72, 0.56, 0.24], n * 0.7 + bead * 0.3);
-        if n < 0.35 {
-            scale(color, 0.5)
-        } else {
-            color
-        }
+        if n < 0.35 { scale(color, 0.5) } else { color }
     })
 }
 
@@ -203,11 +212,7 @@ pub fn paper() -> Texture {
         let n = fbm(u, v, 4, 3, 71);
         let line = (v * 10.0).fract() < 0.06 && u > 0.15 && u < 0.85;
         let color = scale([0.82, 0.76, 0.6], 0.85 + 0.2 * n);
-        if line {
-            scale(color, 0.6)
-        } else {
-            color
-        }
+        if line { scale(color, 0.6) } else { color }
     })
 }
 
@@ -223,7 +228,11 @@ pub fn rug(seed: u32) -> Texture {
             blue
         } else if edge < 0.07 {
             let t = (u.min(v) + u.max(v)) * 60.0;
-            if t.sin() * (edge * 200.0).sin() > 0.4 { gold } else { red }
+            if t.sin() * (edge * 200.0).sin() > 0.4 {
+                gold
+            } else {
+                red
+            }
         } else if edge < 0.08 {
             gold
         } else {
@@ -267,7 +276,7 @@ pub enum Picture {
     Landscape,
     Seascape,
     StillLife,
-    /// Clara, in grey silk. The only face he ever painted.
+    /// Clara, in grey silk.
     Clara,
 }
 
@@ -281,10 +290,17 @@ pub const PICTURES: [Picture; 6] = [
 ];
 
 fn varnish(color: [f32; 3], u: f32, v: f32, seed: u32) -> [f32; 3] {
-    let yellow = mix(color, [color[0] * 1.05, color[1] * 0.92, color[2] * 0.6], 0.5);
+    let yellow = mix(
+        color,
+        [color[0] * 1.05, color[1] * 0.92, color[2] * 0.6],
+        0.5,
+    );
     let crack = (fbm(u, v, 8, 3, seed) - 0.5).abs() < 0.012;
     let vignette = 1.0 - ((u - 0.5).powi(2) + (v - 0.5).powi(2)) * 1.4;
-    let c = scale(yellow, vignette.max(0.3) * (0.92 + 0.12 * fbm(u, v, 16, 2, seed + 1)));
+    let c = scale(
+        yellow,
+        vignette.max(0.3) * (0.92 + 0.12 * fbm(u, v, 16, 2, seed + 1)),
+    );
     if crack { scale(c, 0.55) } else { c }
 }
 
@@ -319,7 +335,10 @@ pub fn picture(kind: Picture) -> Texture {
                 let body = dx < s * 0.18 && v > top + s * 0.35 && v < 0.74;
                 let head = (dx * dx + (v - top - s * 0.18).powi(2)).sqrt() < s * 0.16;
                 if body || head {
-                    c = scale([0.55, 0.47, 0.36], 0.5 + 0.5 * smooth(0.0, 1.0, 1.0 - dx * 8.0));
+                    c = scale(
+                        [0.55, 0.47, 0.36],
+                        0.5 + 0.5 * smooth(0.0, 1.0, 1.0 - dx * 8.0),
+                    );
                 }
             }
             varnish(c, u, v, 107)
@@ -338,7 +357,11 @@ pub fn picture(kind: Picture) -> Texture {
         }),
         Picture::Seascape => paint(128, |u, v| {
             let sky = mix([0.3, 0.3, 0.28], [0.1, 0.11, 0.13], smooth(0.5, 0.0, v));
-            let sea = mix([0.05, 0.08, 0.09], [0.15, 0.18, 0.17], fbm(u * 2.0, v * 8.0, 4, 3, 119));
+            let sea = mix(
+                [0.05, 0.08, 0.09],
+                [0.15, 0.18, 0.17],
+                fbm(u * 2.0, v * 8.0, 4, 3, 119),
+            );
             let mut c = if v > 0.5 { sea } else { sky };
             let ship = (u - 0.62).abs() < 0.01 && (0.35..0.5).contains(&v);
             let hull = (u - 0.62).abs() < 0.05 && (0.48..0.52).contains(&v);
@@ -360,7 +383,11 @@ pub fn picture(kind: Picture) -> Texture {
                 c = [0.25, 0.2, 0.12];
             }
             if skull {
-                c = if socket { [0.02, 0.02, 0.02] } else { [0.62, 0.56, 0.44] };
+                c = if socket {
+                    [0.02, 0.02, 0.02]
+                } else {
+                    [0.62, 0.56, 0.44]
+                };
             }
             varnish(c, u, v, 127)
         }),
@@ -402,9 +429,19 @@ mod tests {
 
     #[test]
     fn textures_have_full_rgba_payloads() {
-        for texture in [floorboards(), plaster(), wainscot(), linen(), wood(), gilt(), paper(), rug(1), window_glass()]
-            .into_iter()
-            .chain(PICTURES.map(picture))
+        for texture in [
+            floorboards(),
+            plaster(),
+            wainscot(),
+            linen(),
+            wood(),
+            gilt(),
+            paper(),
+            rug(1),
+            window_glass(),
+        ]
+        .into_iter()
+        .chain(PICTURES.map(picture))
         {
             assert_eq!(
                 texture.data.len(),

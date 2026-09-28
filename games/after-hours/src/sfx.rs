@@ -194,9 +194,7 @@ fn build(sfx: Sfx) -> Mix {
             }
             mix.add(
                 0.5,
-                Tone::new(Wave::Sine, midi(76), 0.9)
-                    .decay(2.5)
-                    .volume(0.35),
+                Tone::new(Wave::Sine, midi(76), 0.9).decay(2.5).volume(0.35),
             )
             .add(
                 0.5,

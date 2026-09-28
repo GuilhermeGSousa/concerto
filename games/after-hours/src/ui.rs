@@ -188,7 +188,12 @@ fn bar(
                 height: UIValue::Px(4.0),
                 ..Default::default()
             },
-            UIMaterial::flat(Color::srgba(1.0, 0.9, 0.7, if label.is_empty() { 0.0 } else { 0.1 })),
+            UIMaterial::flat(Color::srgba(
+                1.0,
+                0.9,
+                0.7,
+                if label.is_empty() { 0.0 } else { 0.1 },
+            )),
         ))
         .entity();
     cmd.add_child(row, track);
@@ -314,9 +319,7 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
         StaminaFill,
         Color::srgba(0.7, 0.68, 0.62, 0.5),
     );
-    let center = cmd
-        .spawn(full_screen(0))
-        .entity();
+    let center = cmd.spawn(full_screen(0)).entity();
     cmd.add_child(hud, center);
     let dot = cmd
         .spawn((
@@ -369,14 +372,7 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
         .entity();
     line(&mut cmd, reading, "", 21.0, PALE, Some(Label::Reading));
     spacer(&mut cmd, reading, 24.0);
-    line(
-        &mut cmd,
-        reading,
-        "E  put the page down",
-        15.0,
-        DIM,
-        None,
-    );
+    line(&mut cmd, reading, "E  put the page down", 15.0, DIM, None);
 
     let pause = cmd
         .spawn((
@@ -421,7 +417,14 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     line(&mut cmd, escaped, "", 46.0, PALE, Some(Label::EscapedTitle));
     line(&mut cmd, escaped, "", 18.0, DIM, Some(Label::EscapedDetail));
     spacer(&mut cmd, escaped, 30.0);
-    line(&mut cmd, escaped, "", 18.0, PALE, Some(Label::EscapedPrompt));
+    line(
+        &mut cmd,
+        escaped,
+        "",
+        18.0,
+        PALE,
+        Some(Label::EscapedPrompt),
+    );
 
     cmd.spawn((
         full_screen(20),

@@ -99,7 +99,6 @@ const TITLES: &[&str] = &[
     "The Eleventh Figure",
 ];
 
-/// Batches geometry per material so the whole house draws in a few calls.
 struct Batches<'a> {
     palette: &'a Palette,
     builders: Vec<(AssetHandle<StandardMaterial>, MeshBuilder)>,
@@ -114,7 +113,11 @@ impl<'a> Batches<'a> {
     }
 
     fn of(&mut self, material: &AssetHandle<StandardMaterial>) -> &mut MeshBuilder {
-        let i = match self.builders.iter().position(|(m, _)| m.id() == material.id()) {
+        let i = match self
+            .builders
+            .iter()
+            .position(|(m, _)| m.id() == material.id())
+        {
             Some(i) => i,
             None => {
                 self.builders
@@ -169,8 +172,6 @@ fn spawn_prop(
     .entity()
 }
 
-/// Local frame of a wall spot: `along` the wall, `inward` into the cell, and
-/// the point on the wall plane at the edge's middle.
 #[derive(Clone, Copy)]
 struct Frame {
     edge: Vec3,
@@ -188,13 +189,10 @@ impl Frame {
         }
     }
 
-    /// A point `a` along the wall, `y` up, `d` out from the wall plane.
     fn at(&self, a: f32, y: f32, d: f32) -> Vec3 {
         self.edge + self.along * a + Vec3::Y * y + self.inward * d
     }
 
-    /// Center and half extents of an axis-aligned box spanning `a0..a1` along,
-    /// `y0..y1` up and `d0..d1` out from the wall plane.
     fn boxed(&self, a0: f32, a1: f32, y0: f32, y1: f32, d0: f32, d1: f32) -> (Vec3, Vec3) {
         let center = self.at((a0 + a1) * 0.5, (y0 + y1) * 0.5, (d0 + d1) * 0.5);
         let half = (self.along * (a1 - a0) * 0.5).abs()
@@ -203,7 +201,6 @@ impl Frame {
         (center, half)
     }
 
-    /// Rotation turning +Z to face into the room.
     fn facing(&self) -> Quat {
         Quat::from_rotation_y(self.inward.x.atan2(self.inward.z))
     }
@@ -238,10 +235,12 @@ fn cornice(batches: &mut Batches, frame: &Frame, a0: f32, a1: f32) {
     batches.of(&palette.wood).cuboid(c, h, &[]);
 }
 
-/// One side of a wall, dressed for the room it faces; doorways leave a gap.
 fn build_wall_side(batches: &mut Batches, level: &Level, spot: WallSpot, doorway: bool) {
     let frame = Frame::of(spot);
-    let kind = level.room(spot.cell).map(|r| r.kind).unwrap_or(RoomKind::Hall);
+    let kind = level
+        .room(spot.cell)
+        .map(|r| r.kind)
+        .unwrap_or(RoomKind::Hall);
     let paper = batches.palette.wallpaper(kind).clone();
     let half = CELL * 0.5;
     if doorway {
@@ -263,7 +262,14 @@ fn build_wall_side(batches: &mut Batches, level: &Level, spot: WallSpot, doorway
             );
             batches.of(&wood).cuboid(c, h, &[Vec3::NEG_Y]);
         }
-        let (c, h) = frame.boxed(-d - 0.09, d + 0.09, DOOR_HEIGHT, DOOR_HEIGHT + 0.14, 0.0, t + 0.05);
+        let (c, h) = frame.boxed(
+            -d - 0.09,
+            d + 0.09,
+            DOOR_HEIGHT,
+            DOOR_HEIGHT + 0.14,
+            0.0,
+            t + 0.05,
+        );
         batches.of(&wood).cuboid(c, h, &[]);
     } else {
         wall_face(batches, &frame, &paper, -half, half, CEILING);
@@ -282,7 +288,12 @@ fn wall_colliders(cmd: &mut CommandQueue, level: &Level) {
         let along = if wall.along_x { Vec3::X } else { Vec3::Z };
         let across = if wall.along_x { Vec3::Z } else { Vec3::X };
         let long = CELL * 0.5 + thickness * 0.5;
-        let thick = across * if wall.along_x { footprint.y } else { footprint.x };
+        let thick = across
+            * if wall.along_x {
+                footprint.y
+            } else {
+                footprint.x
+            };
         if wall.door {
             let piece = (long - DOOR_WIDTH * 0.5) * 0.5;
             for side in [-1.0, 1.0] {
@@ -307,7 +318,6 @@ fn wall_colliders(cmd: &mut CommandQueue, level: &Level) {
     }
 }
 
-/// A gilt frame and its canvas, hung with its middle at `center`.
 fn hang_picture(
     cmd: &mut CommandQueue,
     batches: &mut Batches,
@@ -322,8 +332,18 @@ fn hang_picture(
     let border = 0.08;
     let gilt = batches.palette.gilt.clone();
     for (a0, a1, y0, y1) in [
-        (a - w * 0.5 - border, a + w * 0.5 + border, y + h * 0.5, y + h * 0.5 + border),
-        (a - w * 0.5 - border, a + w * 0.5 + border, y - h * 0.5 - border, y - h * 0.5),
+        (
+            a - w * 0.5 - border,
+            a + w * 0.5 + border,
+            y + h * 0.5,
+            y + h * 0.5 + border,
+        ),
+        (
+            a - w * 0.5 - border,
+            a + w * 0.5 + border,
+            y - h * 0.5 - border,
+            y - h * 0.5,
+        ),
         (a - w * 0.5 - border, a - w * 0.5, y - h * 0.5, y + h * 0.5),
         (a + w * 0.5, a + w * 0.5 + border, y - h * 0.5, y + h * 0.5),
     ] {
@@ -373,7 +393,11 @@ fn sconce(
     let flame = spawn_prop(
         cmd,
         &palette.flame_mesh,
-        if lit { &palette.flame } else { &palette.flame_out },
+        if lit {
+            &palette.flame
+        } else {
+            &palette.flame_out
+        },
         Transform::from_translation(flame_pos),
     );
     if lit {
@@ -396,7 +420,6 @@ fn sconce(
     }
 }
 
-/// A tall sash window with heavy curtains, moonlight behind the glass.
 fn window(cmd: &mut CommandQueue, batches: &mut Batches, frame: &Frame) {
     let t = WALL_THICKNESS * 0.5;
     let palette = batches.palette;
@@ -407,7 +430,12 @@ fn window(cmd: &mut CommandQueue, batches: &mut Batches, frame: &Frame) {
         (-w * 0.5 - 0.08, w * 0.5 + 0.08, y0 - 0.12, y0),
         (-w * 0.5 - 0.08, -w * 0.5, y0, y1),
         (w * 0.5, w * 0.5 + 0.08, y0, y1),
-        (-w * 0.5, w * 0.5, (y0 + y1) * 0.5 - 0.03, (y0 + y1) * 0.5 + 0.03),
+        (
+            -w * 0.5,
+            w * 0.5,
+            (y0 + y1) * 0.5 - 0.03,
+            (y0 + y1) * 0.5 + 0.03,
+        ),
     ] {
         let (c, h) = frame.boxed(a0, a1, b0, b1, t, t + 0.06);
         batches.of(&wood).cuboid(c, h, &[]);
@@ -418,7 +446,14 @@ fn window(cmd: &mut CommandQueue, batches: &mut Batches, frame: &Frame) {
         let (c, h) = frame.boxed(a - 0.2, a + 0.2, 0.0, 3.3, t + 0.06, t + 0.2);
         batches.of(&velvet).cuboid(c, h, &[Vec3::NEG_Y]);
     }
-    let (c, h) = frame.boxed(-w * 0.5 - 0.4, w * 0.5 + 0.4, 3.25, 3.35, t + 0.05, t + 0.24);
+    let (c, h) = frame.boxed(
+        -w * 0.5 - 0.4,
+        w * 0.5 + 0.4,
+        3.25,
+        3.35,
+        t + 0.05,
+        t + 0.24,
+    );
     batches.of(&wood).cuboid(c, h, &[]);
     cmd.spawn((
         HouseEntity,
@@ -436,9 +471,12 @@ fn window(cmd: &mut CommandQueue, batches: &mut Batches, frame: &Frame) {
     ));
 }
 
-/// A piece of furniture against the wall, returned as its footprint so a
-/// collider can be added.
-fn furnish_wall(batches: &mut Batches, frame: &Frame, kind: RoomKind, rand: &mut Rand) -> Option<(Vec3, Vec3)> {
+fn furnish_wall(
+    batches: &mut Batches,
+    frame: &Frame,
+    kind: RoomKind,
+    rand: &mut Rand,
+) -> Option<(Vec3, Vec3)> {
     let t = WALL_THICKNESS * 0.5;
     let palette = batches.palette;
     let linen = palette.linen.clone();
@@ -499,7 +537,14 @@ fn furnish_wall(batches: &mut Batches, frame: &Frame, kind: RoomKind, rand: &mut
             add(batches, &wood, c, h);
             for i in 0..4 {
                 let x = a - 0.5 + i as f32 * 0.3;
-                let (c, h) = frame.boxed(x, x + 0.05, 0.8, 0.8 + rand.range(0.1, 0.25), t + 0.2, t + 0.25);
+                let (c, h) = frame.boxed(
+                    x,
+                    x + 0.05,
+                    0.8,
+                    0.8 + rand.range(0.1, 0.25),
+                    t + 0.2,
+                    t + 0.25,
+                );
                 batches.of(&palette.brass).cuboid(c, h, &[]);
             }
         }
@@ -545,8 +590,13 @@ fn fireplace(batches: &mut Batches, frame: &Frame) -> (Vec3, Vec3) {
     frame.boxed(-0.8, 0.8, 0.0, 1.22, t, t + 0.3)
 }
 
-/// A studio easel with a canvas on it, facing `yaw`.
-fn easel(cmd: &mut CommandQueue, batches: &mut Batches, at: Vec3, yaw: f32, picture: Option<Picture>) {
+fn easel(
+    cmd: &mut CommandQueue,
+    batches: &mut Batches,
+    at: Vec3,
+    yaw: f32,
+    picture: Option<Picture>,
+) {
     let rot = Quat::from_rotation_y(yaw);
     let wood = batches.palette.wood.clone();
     let lean = Quat::from_rotation_x(-0.12);
@@ -557,9 +607,11 @@ fn easel(cmd: &mut CommandQueue, batches: &mut Batches, at: Vec3, yaw: f32, pict
             .oriented_cuboid(c, Vec3::new(0.025, 0.95, 0.025), rot * lean);
     }
     let back = at + rot * Vec3::new(0.0, 0.85, -0.35);
-    batches
-        .of(&wood)
-        .oriented_cuboid(back, Vec3::new(0.025, 0.88, 0.025), rot * Quat::from_rotation_x(0.35));
+    batches.of(&wood).oriented_cuboid(
+        back,
+        Vec3::new(0.025, 0.88, 0.025),
+        rot * Quat::from_rotation_x(0.35),
+    );
     let shelf = at + rot * Vec3::new(0.0, 0.8, 0.1);
     batches
         .of(&wood)
@@ -656,7 +708,6 @@ pub fn build_house(
         }
     }
 
-    // Things on the walls: lots first, then candles, then the rest.
     let mut used: Vec<WallSpot> = Vec::new();
     let mut titles: Vec<&'static str> = TITLES.to_vec();
     let mut lot_number = 3 + (seed % 40) as u32;
@@ -666,7 +717,13 @@ pub fn build_house(
         let picture = if kind == Some(RoomKind::Bedroom) {
             Picture::Clara
         } else {
-            [Picture::Sitter, Picture::Group, Picture::Sitter, Picture::StillLife, Picture::Landscape][i % 5]
+            [
+                Picture::Sitter,
+                Picture::Group,
+                Picture::Sitter,
+                Picture::StillLife,
+                Picture::Landscape,
+            ][i % 5]
         };
         let center = hang_picture(cmd, &mut batches, &frame, 0.0, 1.95, (0.9, 1.1), picture);
         let tag = spawn_prop(
@@ -733,8 +790,10 @@ pub fn build_house(
         let outer = !level.contains(spot.cell.step(spot.dir));
         if outer && !lit && rand.unit() < 0.6 {
             window(cmd, &mut batches, &frame);
-            if matches!(kind, RoomKind::Parlour | RoomKind::Dining | RoomKind::Gallery)
-                && rand.unit() < 0.4
+            if matches!(
+                kind,
+                RoomKind::Parlour | RoomKind::Dining | RoomKind::Gallery
+            ) && rand.unit() < 0.4
                 && let Some((c, h)) = furnish_wall(&mut batches, &frame, kind, &mut rand)
             {
                 collider(cmd, c, h);
@@ -769,7 +828,15 @@ pub fn build_house(
                 (rand.range(0.5, 0.9), rand.range(0.6, 0.9))
             };
             let a = if lit { -0.5 } else { rand.range(-0.4, 0.4) };
-            hang_picture(cmd, &mut batches, &frame, a, 2.0, size, pick[rand.index(pick.len())]);
+            hang_picture(
+                cmd,
+                &mut batches,
+                &frame,
+                a,
+                2.0,
+                size,
+                pick[rand.index(pick.len())],
+            );
         } else if !lit && rand.unit() < 0.25 {
             sconce(cmd, &mut batches, &frame, 1.25, false, &mut rand);
         }
@@ -779,7 +846,8 @@ pub fn build_house(
             RoomKind::Gallery => 0.15,
             _ => 0.55,
         };
-        if Some(room_index) != hall && rand.unit() < furnish_odds
+        if Some(room_index) != hall
+            && rand.unit() < furnish_odds
             && let Some((c, h)) = furnish_wall(&mut batches, &frame, kind, &mut rand)
         {
             collider(cmd, c, h);
@@ -787,14 +855,14 @@ pub fn build_house(
         if kind == RoomKind::Studio && studio_easels < 4 && rand.unit() < 0.6 {
             studio_easels += 1;
             let at = frame.at(rand.range(-1.3, 1.3), 0.0, 0.85);
-            let yaw = frame.inward.x.atan2(frame.inward.z) + rand.range(-0.6, 0.6) + std::f32::consts::PI;
+            let yaw =
+                frame.inward.x.atan2(frame.inward.z) + rand.range(-0.6, 0.6) + std::f32::consts::PI;
             let picture = [None, Some(Picture::Sitter), Some(Picture::Group)][rand.index(3)];
             easel(cmd, &mut batches, at, yaw, picture);
             collider(cmd, at + Vec3::Y * 0.9, Vec3::new(0.3, 0.9, 0.3));
         }
     }
 
-    // Rugs and middle-of-room furniture.
     for (i, room) in level.rooms.iter().enumerate() {
         let min = Cell::new(room.x, room.y).center() - Vec3::new(CELL, 0.0, CELL) * 0.5;
         let size = Vec3::new(room.w as f32, 0.0, room.h as f32) * CELL;
@@ -819,21 +887,37 @@ pub fn build_house(
             match room.kind {
                 RoomKind::Dining => {
                     let half = Vec3::new(1.0, 0.38, 0.5);
-                    batches.of(&palette.linen.clone()).cuboid(vertex + Vec3::Y * 0.38, half, &[Vec3::NEG_Y]);
+                    batches.of(&palette.linen.clone()).cuboid(
+                        vertex + Vec3::Y * 0.38,
+                        half,
+                        &[Vec3::NEG_Y],
+                    );
                     collider(cmd, vertex + Vec3::Y * 0.38, half);
                     for (x, z) in [(-0.6, 0.8), (0.6, 0.8), (-0.6, -0.8), (0.6, -0.8)] {
                         let c = vertex + Vec3::new(x, 0.45, z);
-                        batches.of(&palette.linen.clone()).cuboid(c, Vec3::new(0.22, 0.45, 0.22), &[Vec3::NEG_Y]);
+                        batches.of(&palette.linen.clone()).cuboid(
+                            c,
+                            Vec3::new(0.22, 0.45, 0.22),
+                            &[Vec3::NEG_Y],
+                        );
                     }
                 }
                 RoomKind::Gallery | RoomKind::Parlour => {
                     let half = Vec3::new(0.8, 0.22, 0.35);
-                    batches.of(&palette.linen.clone()).cuboid(vertex + Vec3::Y * 0.22, half, &[Vec3::NEG_Y]);
+                    batches.of(&palette.linen.clone()).cuboid(
+                        vertex + Vec3::Y * 0.22,
+                        half,
+                        &[Vec3::NEG_Y],
+                    );
                     collider(cmd, vertex + Vec3::Y * 0.22, half);
                 }
                 RoomKind::Studio => {
                     let half = Vec3::new(0.7, 0.12, 0.7);
-                    batches.of(&palette.wood.clone()).cuboid(vertex + Vec3::Y * 0.12, half, &[Vec3::NEG_Y]);
+                    batches.of(&palette.wood.clone()).cuboid(
+                        vertex + Vec3::Y * 0.12,
+                        half,
+                        &[Vec3::NEG_Y],
+                    );
                     collider(cmd, vertex + Vec3::Y * 0.12, half);
                 }
                 _ => {}
@@ -841,7 +925,6 @@ pub fn build_house(
         }
     }
 
-    // The front door, the fanlight above it and the ledger on its desk.
     let door = Frame::of(level.exit);
     let t = WALL_THICKNESS * 0.5;
     let paper = palette.wallpaper(RoomKind::Hall).clone();
@@ -856,8 +939,17 @@ pub fn build_house(
     batches.of(&palette.wood.clone()).cuboid(c, h, &[]);
     collider(cmd, c, h);
     for side in [-1.0, 1.0] {
-        let (c, h) = door.boxed(side * 0.7 - 0.08, side * 0.7 + 0.08, 0.0, DOOR_HEIGHT + 0.5, 0.0, t + 0.04);
-        batches.of(&palette.wood.clone()).cuboid(c, h, &[Vec3::NEG_Y]);
+        let (c, h) = door.boxed(
+            side * 0.7 - 0.08,
+            side * 0.7 + 0.08,
+            0.0,
+            DOOR_HEIGHT + 0.5,
+            0.0,
+            t + 0.04,
+        );
+        batches
+            .of(&palette.wood.clone())
+            .cuboid(c, h, &[Vec3::NEG_Y]);
     }
     let (c, h) = door.boxed(-0.3, 0.3, 1.0, 1.02, 0.05, 0.07);
     batches.of(&palette.brass.clone()).cuboid(c, h, &[]);
@@ -888,7 +980,9 @@ pub fn build_house(
 
     let desk_a = 1.25;
     let (c, h) = door.boxed(desk_a - 0.5, desk_a + 0.5, 0.0, 0.8, t, t + 0.55);
-    batches.of(&palette.wood.clone()).cuboid(c, h, &[Vec3::NEG_Y]);
+    batches
+        .of(&palette.wood.clone())
+        .cuboid(c, h, &[Vec3::NEG_Y]);
     collider(cmd, c, h);
     let ledger_pos = door.at(desk_a, 0.83, t + 0.3);
     let book = spawn_prop(
@@ -915,7 +1009,12 @@ pub fn build_house(
     for &cell in &level.oil {
         let jitter = Vec3::new(rand.range(-1.0, 1.0), 0.0, rand.range(-1.0, 1.0));
         let base = cell.center() + jitter;
-        let tin = spawn_prop(cmd, &palette.oil_mesh, &palette.oil, Transform::from_translation(base));
+        let tin = spawn_prop(
+            cmd,
+            &palette.oil_mesh,
+            &palette.oil,
+            Transform::from_translation(base),
+        );
         cmd.insert(OilPickup { base }, tin);
     }
     if let Some(cell) = level.page {

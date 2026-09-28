@@ -67,7 +67,6 @@ impl Dir {
         let (x, y) = self.offset();
         Vec3::new(x as f32, 0.0, y as f32)
     }
-
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,7 +95,8 @@ pub struct Room {
 
 impl Room {
     pub fn cells(&self) -> impl Iterator<Item = Cell> + '_ {
-        (self.y..self.y + self.h).flat_map(move |y| (self.x..self.x + self.w).map(move |x| Cell::new(x, y)))
+        (self.y..self.y + self.h)
+            .flat_map(move |y| (self.x..self.x + self.w).map(move |x| Cell::new(x, y)))
     }
 
     pub fn area(&self) -> i32 {
@@ -110,7 +110,6 @@ pub struct WallSpot {
     pub cell: Cell,
     pub dir: Dir,
 }
-
 
 /// Parameters for one house.
 #[derive(Debug, Clone)]
@@ -395,7 +394,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         }
     }
 
-    // Candidate doors between each pair of adjacent rooms.
     let mut pairs: Vec<((usize, usize), Vec<(Cell, Dir)>)> = Vec::new();
     for &c in &cells {
         for dir in [Dir::East, Dir::South] {
@@ -414,7 +412,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         }
     }
 
-    // A random spanning tree of rooms, then a few extra doors for loops.
     let room_count = level.rooms.len();
     let mut joined = vec![false; room_count];
     joined[0] = true;
@@ -446,7 +443,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         }
     }
 
-    // The hall: a small room on the outside, holding the front door.
     let outer_spots: Vec<WallSpot> = cells
         .iter()
         .flat_map(|&cell| Dir::ALL.into_iter().map(move |dir| WallSpot { cell, dir }))
@@ -460,9 +456,10 @@ pub fn generate(spec: &LevelSpec) -> Level {
             room.area() >= 2 && room.area() <= 4
         })
         .max_by_key(|s| {
-            // Prefer the middle of a side, like a real front door.
             let mid = (size - 1) as f32 * 0.5;
-            let off = (s.cell.x as f32 - mid).abs().min((s.cell.y as f32 - mid).abs());
+            let off = (s.cell.x as f32 - mid)
+                .abs()
+                .min((s.cell.y as f32 - mid).abs());
             (-(off * 10.0) as i32) * 100 + rand.index(50) as i32
         })
         .unwrap_or(outer_spots[0]);
@@ -473,7 +470,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
 
     let from_start = level.distances(level.start);
 
-    // Room kinds: corridors by shape, the studio is the biggest room left.
     for room in level.rooms.iter_mut() {
         if room.kind != RoomKind::Hall && (room.w == 1 || room.h == 1) && room.area() >= 3 {
             room.kind = RoomKind::Corridor;
@@ -513,7 +509,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         }
     }
 
-    // Lots: paintings far from the door, at most one per room where possible.
     let max_dist = cells
         .iter()
         .map(|c| level.distance(&from_start, *c))
@@ -545,7 +540,10 @@ pub fn generate(spec: &LevelSpec) -> Level {
                     RoomKind::Bedroom => 3.0,
                     _ => 0.0,
                 };
-                (s, spread.min(5.0) + fresh_room + gallery + rand.unit() * 2.0)
+                (
+                    s,
+                    spread.min(5.0) + fresh_room + gallery + rand.unit() * 2.0,
+                )
             })
             .max_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(s, _)| s);
@@ -556,22 +554,21 @@ pub fn generate(spec: &LevelSpec) -> Level {
     }
 
     let mut taken = vec![level.start];
-    let pick = |level: &Level, taken: &mut Vec<Cell>, rand: &mut Rand, filter: &dyn Fn(Cell) -> bool| {
-        let options: Vec<Cell> = cells
-            .iter()
-            .copied()
-            .filter(|c| !taken.contains(c) && filter(*c))
-            .collect();
-        let _ = level;
-        (!options.is_empty()).then(|| {
-            let c = options[rand.index(options.len())];
-            taken.push(c);
-            c
-        })
-    };
+    let pick =
+        |level: &Level, taken: &mut Vec<Cell>, rand: &mut Rand, filter: &dyn Fn(Cell) -> bool| {
+            let options: Vec<Cell> = cells
+                .iter()
+                .copied()
+                .filter(|c| !taken.contains(c) && filter(*c))
+                .collect();
+            let _ = level;
+            (!options.is_empty()).then(|| {
+                let c = options[rand.index(options.len())];
+                taken.push(c);
+                c
+            })
+        };
 
-    // Figures: the studio first, then spread through the house, never in the
-    // hall.
     let studio: Vec<Cell> = level
         .rooms
         .iter()
@@ -583,7 +580,9 @@ pub fn generate(spec: &LevelSpec) -> Level {
         let in_studio = figures.iter().filter(|c| studio.contains(c)).count();
         let prefer_studio = in_studio < studio.len().min(3);
         let got = if prefer_studio {
-            pick(&level, &mut taken, &mut rand, &|c| studio.contains(&c) && level.distance(&from_start, c) >= 2)
+            pick(&level, &mut taken, &mut rand, &|c| {
+                studio.contains(&c) && level.distance(&from_start, c) >= 2
+            })
         } else {
             None
         };
@@ -598,7 +597,9 @@ pub fn generate(spec: &LevelSpec) -> Level {
 
     let mut oil = Vec::new();
     for _ in 0..spec.oil {
-        oil.extend(pick(&level, &mut taken, &mut rand, &|c| level.distance(&from_start, c) >= 2));
+        oil.extend(pick(&level, &mut taken, &mut rand, &|c| {
+            level.distance(&from_start, c) >= 2
+        }));
     }
     level.oil = oil;
     level.page = pick(&level, &mut taken, &mut rand, &|c| {
@@ -606,7 +607,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         d >= 2 && d <= (max_dist * 2 / 3).max(2)
     });
 
-    // Candles: one by the front door, then scattered, at most one per cell.
     let mut lights = Vec::new();
     if let Some(s) = level
         .wall_spots()
@@ -666,7 +666,11 @@ mod tests {
             assert_eq!(total, 49);
             assert!(level.rooms.iter().all(|r| r.w <= 4 && r.h <= 4));
             assert_eq!(
-                level.rooms.iter().filter(|r| r.kind == RoomKind::Hall).count(),
+                level
+                    .rooms
+                    .iter()
+                    .filter(|r| r.kind == RoomKind::Hall)
+                    .count(),
                 1
             );
             assert!(level.rooms.len() >= 6, "{} rooms", level.rooms.len());

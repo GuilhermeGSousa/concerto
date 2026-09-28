@@ -1,5 +1,5 @@
-//! Nights: building the house, the pacing, the objectives, the candles, and
-//! the flow between screens.
+//! Nights: building the house, the pacing, the objectives, the candles, and the
+//! flow between screens.
 use concerto::{
     audio::Audio,
     ecs::{
@@ -177,7 +177,6 @@ impl NightState {
         self.message = Some((text.into(), seconds));
     }
 
-    /// Says `text` once per night, under the key `key`.
     fn tell(&mut self, key: &'static str, text: &str, seconds: f32) {
         if !self.told.contains(&key) {
             self.told.push(key);
@@ -186,7 +185,7 @@ impl NightState {
     }
 }
 
-/// The clock on the HUD, e.g. "12:04 AM".
+/// The clock on the HUD, such as "12:04 AM".
 pub fn clock_text(night_time: f32) -> String {
     let minutes = START_MINUTES + night_time * CLOCK_RATE;
     let total = (23.0 * 60.0 + minutes) as u32;
@@ -258,7 +257,6 @@ pub fn rebuild_night(
     };
     player::spawn_player(&mut cmd, feet, yaw);
 
-    // Which figures are possessed: never the nearest to the door.
     let dist = level.distances(start);
     let mut order: Vec<usize> = (0..level.figures.len()).collect();
     order.sort_by_key(|&i| -level.distance(&dist, level.figures[i]));
@@ -445,7 +443,9 @@ fn start_night(game: &mut Game, state: &mut NightState, audio: &mut Audio, sound
 }
 
 fn facing(eye: &Eye, point: Vec3) -> f32 {
-    (point - eye.position).normalize_or_zero().dot(eye.forward())
+    (point - eye.position)
+        .normalize_or_zero()
+        .dot(eye.forward())
 }
 
 /// Lots, the diary page, oil and the ledger.
@@ -506,7 +506,6 @@ pub fn interact(
         state.room = Some((house::room_name(level.rooms[i].kind), 2.5));
     }
 
-    // The most-faced thing in reach decides what E does.
     enum Target {
         Lot(usize),
         Page(Entity),
@@ -605,10 +604,7 @@ pub fn interact(
                         }
                         state.say("That is every lot. Back to the ledger in the hall.", 5.0);
                     } else {
-                        state.say(
-                            format!("Catalogued. {left} more on Mr Pike's list."),
-                            3.0,
-                        );
+                        state.say(format!("Catalogued. {left} more on Mr Pike's list."), 3.0);
                     }
                     gutter_one(&candles, &mut rand);
                 }
@@ -667,7 +663,6 @@ pub fn interact(
     }
 }
 
-/// Starts one steady candle guttering.
 fn gutter_one(candles: &Query<&mut Candle>, rand: &mut Rand) {
     let steady = candles
         .iter()
@@ -790,7 +785,11 @@ pub fn flicker_candles(
         let mut level = 0.85 + 0.15 * candle_noise(candle.phase);
         if let Some(left) = candle.guttering {
             let left = left - dt;
-            level *= if candle_noise(candle.phase * 3.0) > 0.55 { 1.0 } else { 0.15 };
+            level *= if candle_noise(candle.phase * 3.0) > 0.55 {
+                1.0
+            } else {
+                0.15
+            };
             if left <= 0.0 {
                 candle.out = true;
                 candle.guttering = None;

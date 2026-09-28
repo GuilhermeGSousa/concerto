@@ -123,7 +123,11 @@ pub fn spawn_view(level: &crate::level::Level) -> Option<(glam::Vec3, f32)> {
     };
     let out = spot.dir.vector();
     let along = glam::Vec3::new(-out.z, 0.0, out.x);
-    let offset = if platform::debug_value("spawn")? == "ledger" { 1.25 } else { 0.0 };
+    let offset = if platform::debug_value("spawn")? == "ledger" {
+        1.25
+    } else {
+        0.0
+    };
     let feet = spot.cell.center() + out * 0.4 + along * offset;
     Some((feet + glam::Vec3::Y * 0.05, (-out.x).atan2(-out.z)))
 }
