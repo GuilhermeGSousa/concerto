@@ -24,11 +24,13 @@ impl RenderAsset for RenderMesh {
     ) -> Result<Self, AssetPreparationError> {
         let (context,) = params;
 
+        let (merged_vertices, merged_indices) = source_asset.merged_geometry();
+
         let vertices = context
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Vertex Buffer"),
-                contents: bytemuck::cast_slice(&source_asset.vertices),
+                contents: bytemuck::cast_slice(&merged_vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             });
 
@@ -36,10 +38,10 @@ impl RenderAsset for RenderMesh {
             .device
             .create_buffer_init(&wgpu::util::BufferInitDescriptor {
                 label: Some("Index Buffer"),
-                contents: bytemuck::cast_slice(&source_asset.indices),
+                contents: bytemuck::cast_slice(&merged_indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
-        let index_count = source_asset.indices.len() as u32;
+        let index_count = merged_indices.len() as u32;
 
         Ok(RenderMesh {
             vertices,

@@ -405,23 +405,23 @@ impl PhysicsBackend for JoltBackend {
     }
 
     fn create_shape_from_mesh(mesh: &Mesh) -> Result<Self::ShapeHandle, MeshShapeCreationError> {
+        let (merged_vertices, merged_indices) = mesh.merged_geometry();
         // `Vertex` interleaves normals, UVs and skinning weights with the
         // positions, so the positions have to be packed before Jolt can read
         // them as xyz triples.
-        let positions: Vec<f32> = mesh
-            .vertices
+        let positions: Vec<f32> = merged_vertices
             .iter()
             .flat_map(|vertex| vertex.pos_coords)
             .collect();
 
-        // SAFETY: `positions` holds `mesh.vertices.len()` xyz triples and
-        // `mesh.indices` `len()` indices; both are read during the call only.
+        // SAFETY: `positions` holds `merged_vertices.len()` xyz triples and
+        // `merged_indices` `len()` indices; both are read during the call only.
         let shape = unsafe {
             concerto_jolt_ffi::jolt_create_mesh_shape(
                 positions.as_ptr(),
-                mesh.vertices.len() as u32,
-                mesh.indices.as_ptr(),
-                mesh.indices.len() as u32,
+                merged_vertices.len() as u32,
+                merged_indices.as_ptr(),
+                merged_indices.len() as u32,
             )
         };
 

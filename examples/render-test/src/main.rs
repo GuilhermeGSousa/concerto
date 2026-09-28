@@ -256,7 +256,7 @@ fn make_uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }

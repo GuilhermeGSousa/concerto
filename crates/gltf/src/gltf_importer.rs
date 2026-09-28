@@ -201,7 +201,12 @@ impl Importer for GltfImporter {
             let mut prims = Vec::new();
             for gltf_primitive in mesh.primitives() {
                 let m = load_primitive(source_path, mesh.name(), &buffers, &gltf_primitive)?;
-                ctx.emit(&format!("mesh/{mesh_counter}"), &m)?;
+                ctx.emit(
+                    &format!("mesh/{mesh_counter}"),
+                    &Mesh {
+                        primitives: vec![m],
+                    },
+                )?;
 
                 let material_sub_asset = match gltf_primitive.material().index() {
                     Some(material_index) => material_index,
@@ -703,7 +708,7 @@ fn load_primitive(
     mesh_name: Option<&str>,
     buffers: &[Data],
     gltf_primitive: &Primitive,
-) -> Result<Mesh, ImportError> {
+) -> Result<concerto_mesh::Primitive, ImportError> {
     let context = || {
         format!(
             "primitive {} of mesh '{}'",
@@ -720,10 +725,7 @@ fn load_primitive(
         message: format!("{}: {message}", context()),
     };
 
-    let mut primitive = Mesh {
-        vertices: Vec::new(),
-        indices: Vec::new(),
-    };
+    let mut primitive = concerto_mesh::Primitive::default();
 
     let reader = gltf_primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 

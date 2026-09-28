@@ -63,10 +63,8 @@ fn world_grid_on_add(
 
     let (mesh_handle, material_handle) = {
         let asset_server = world.get_resource::<AssetServer>().unwrap();
-        let mesh = concerto_render::assets::mesh::Mesh {
-            vertices: vec![Vertex::default(); 3],
-            indices: vec![0, 1, 2],
-        };
+        let mesh =
+            concerto_render::assets::mesh::Mesh::single(vec![Vertex::default(); 3], vec![0, 1, 2]);
         (
             asset_server.add(mesh),
             asset_server.add(WorldGridMaterial { uniform }),

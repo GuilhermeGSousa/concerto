@@ -39,7 +39,7 @@ fn wait_for_mesh(world: &mut World, handle: &AssetHandle<Mesh>) {
             .unwrap()
             .get(handle)
         {
-            assert_eq!(mesh.vertices.len(), 3);
+            assert_eq!(mesh.primitives[0].vertices.len(), 3);
             return;
         }
         assert!(std::time::Instant::now() < deadline, "mesh load timed out");

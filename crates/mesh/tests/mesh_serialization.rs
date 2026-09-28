@@ -17,16 +17,10 @@ fn sample_vertex(x: f32) -> Vertex {
 
 #[test]
 fn local_aabb_handles_empty_and_nonempty_meshes() {
-    let empty = Mesh {
-        vertices: vec![],
-        indices: vec![],
-    };
+    let empty = Mesh::single(vec![], vec![]);
     assert_eq!(empty.local_aabb(), None);
 
-    let mesh = Mesh {
-        vertices: vec![sample_vertex(-2.0), sample_vertex(4.0)],
-        indices: vec![],
-    };
+    let mesh = Mesh::single(vec![sample_vertex(-2.0), sample_vertex(4.0)], vec![]);
     let bounds = mesh.local_aabb().unwrap();
     assert_eq!(bounds.min, Vec3::new(-2.0, 0.0, 0.0));
     assert_eq!(bounds.max, Vec3::new(4.0, 0.0, 0.0));
@@ -36,8 +30,8 @@ fn local_aabb_handles_empty_and_nonempty_meshes() {
 
 #[test]
 fn transformed_aabb_contains_all_rotated_and_scaled_corners() {
-    let mesh = Mesh {
-        vertices: vec![
+    let mesh = Mesh::single(
+        vec![
             Vertex {
                 pos_coords: [-1.0, -2.0, -3.0],
                 ..Default::default()
@@ -47,8 +41,8 @@ fn transformed_aabb_contains_all_rotated_and_scaled_corners() {
                 ..Default::default()
             },
         ],
-        indices: vec![],
-    };
+        vec![],
+    );
     let transform = Mat4::from_scale_rotation_translation(
         Vec3::new(2.0, 1.0, 0.5),
         glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
@@ -62,21 +56,18 @@ fn transformed_aabb_contains_all_rotated_and_scaled_corners() {
 
 #[test]
 fn mesh_round_trips_through_bincode_directly() {
-    let mesh = Mesh {
-        vertices: vec![sample_vertex(0.0), sample_vertex(1.0)],
-        indices: vec![0, 1, 0],
-    };
+    let mesh = Mesh::single(vec![sample_vertex(0.0), sample_vertex(1.0)], vec![0, 1, 0]);
 
     let bytes = bincode::serialize(&mesh).expect("Mesh should serialize through bincode");
     let decoded: Mesh =
         bincode::deserialize(&bytes).expect("Mesh should deserialize back from bincode bytes");
 
     assert_eq!(
-        decoded.indices, mesh.indices,
+        decoded.primitives[0].indices, mesh.primitives[0].indices,
         "indices must survive a bincode round-trip unchanged"
     );
     assert_eq!(
-        decoded.vertices[1].pos_coords,
+        decoded.primitives[0].vertices[1].pos_coords,
         [1.0, 0.0, 0.0],
         "per-vertex position data must survive a bincode round-trip unchanged"
     );

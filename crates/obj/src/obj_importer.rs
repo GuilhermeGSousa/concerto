@@ -241,10 +241,7 @@ fn build_mesh(mesh_data: &tobj::Mesh) -> Mesh {
         })
         .collect::<Vec<_>>();
 
-    let mut mesh = Mesh {
-        vertices,
-        indices: mesh_data.indices.clone(),
-    };
+    let mut mesh = Mesh::single(vertices, mesh_data.indices.clone());
 
     if requires_normal_computation {
         mesh.compute_normals();

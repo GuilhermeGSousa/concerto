@@ -218,15 +218,14 @@ impl PhysicsBackend for RapierBackend {
     }
 
     fn create_shape_from_mesh(mesh: &Mesh) -> Result<Self::ShapeHandle, MeshShapeCreationError> {
-        let vertices: Vec<rapier3d::math::Vector> = mesh
-            .vertices
+        let (merged_vertices, merged_indices) = mesh.merged_geometry();
+        let vertices: Vec<rapier3d::math::Vector> = merged_vertices
             .iter()
             .map(|vertex| rapier3d::math::Vector::from_array(vertex.pos_coords))
             .collect();
         // `chunks_exact` drops a trailing partial triangle, matching the Jolt
         // shim rather than failing the whole mesh over it.
-        let indices: Vec<[u32; 3]> = mesh
-            .indices
+        let indices: Vec<[u32; 3]> = merged_indices
             .as_chunks::<3>()
             .0
             .iter()

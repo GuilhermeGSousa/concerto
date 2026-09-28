@@ -251,7 +251,7 @@ fn make_plane(width: f32, length: f32) -> Mesh {
     // opposite winding is a floor you fall through as well as cannot see.
     let indices = vec![0, 2, 1, 0, 3, 2];
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }
@@ -292,7 +292,7 @@ fn make_box(half: Vec3) -> Mesh {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }
@@ -326,7 +326,7 @@ fn make_uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }

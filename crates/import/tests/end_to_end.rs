@@ -44,7 +44,7 @@ fn imported_content_assets_load_back_as_their_type() {
 
     let mesh: Mesh = bincode::deserialize(&bytes).expect("payload is a Mesh");
     assert_eq!(
-        mesh.vertices.len(),
+        mesh.primitives[0].vertices.len(),
         3,
         "the triangle fixture's mesh survives import -> load"
     );
