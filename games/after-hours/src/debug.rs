@@ -47,9 +47,10 @@ pub fn trace(
         player
     );
     for (mannequin, transform) in mannequins.iter() {
-        if mannequin.is_hunting() {
+        if mannequin.kind == crate::mannequin::Kind::Possessed {
             log::info!(
-                "trace: hunter at {:?} observed={}",
+                "trace: {:?} at {:.1?} observed={}",
+                mannequin.mood,
                 transform.translation,
                 mannequin.observed
             );
@@ -112,14 +113,29 @@ pub fn pose_gallery(
     true
 }
 
+/// `?spawn=lot` or `?spawn=ledger`: starts the night facing the first lot, or
+/// the ledger.
+pub fn spawn_view(level: &crate::level::Level) -> Option<(glam::Vec3, f32)> {
+    let spot = match platform::debug_value("spawn")?.as_str() {
+        "lot" => *level.lots.first()?,
+        "ledger" => level.exit,
+        _ => return None,
+    };
+    let out = spot.dir.vector();
+    let along = glam::Vec3::new(-out.z, 0.0, out.x);
+    let offset = if platform::debug_value("spawn")? == "ledger" { 1.25 } else { 0.0 };
+    let feet = spot.cell.center() + out * 0.4 + along * offset;
+    Some((feet + glam::Vec3::Y * 0.05, (-out.x).atan2(-out.z)))
+}
+
 /// `?room=N`: starts the night in the corner of room `N`, looking across it.
 pub fn room_view(level: &crate::level::Level) -> Option<(glam::Vec3, f32)> {
     let index: usize = platform::debug_value("room")?.parse().ok()?;
     let room = level.rooms.get(index)?;
     let corner = crate::level::Cell::new(room.x, room.y).center();
     let far = crate::level::Cell::new(room.x + room.w - 1, room.y + room.h - 1).center();
-    let from = corner - glam::Vec3::new(1.2, 0.0, 1.2);
-    let to = far + glam::Vec3::new(1.0, 0.0, 1.0);
+    let from = corner;
+    let to = far + glam::Vec3::new(1.5, 0.0, 1.5);
     let dir = to - from;
     log::warn!("room {index}: {:?} {}x{}", room.kind, room.w, room.h);
     Some((from + glam::Vec3::Y * 0.05, (-dir.x).atan2(-dir.z)))

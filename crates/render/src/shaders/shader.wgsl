@@ -283,7 +283,14 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         // get a real shadow factor here.
         var shadow = 1.0;
         if light_type != POINT_LIGHT {
-            shadow = shadow_visibility(light.shadow_layer, in.world_position);
+            let geometric_normal = normalize(in.world_normal);
+            var reach = 10.0;
+            if light_type != DIRECTIONAL_LIGHT {
+                reach = length(light_delta);
+            }
+            let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
+            let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
+            shadow = shadow_visibility(light.shadow_layer, in.world_position + offset);
         }
 
         let radiance = light.color.rgb * light.intensity * attenuation * shadow;

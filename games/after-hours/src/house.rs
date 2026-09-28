@@ -786,7 +786,7 @@ pub fn build_house(
         }
         if kind == RoomKind::Studio && studio_easels < 4 && rand.unit() < 0.6 {
             studio_easels += 1;
-            let at = frame.at(rand.range(-1.3, 1.3), 0.0, 1.1);
+            let at = frame.at(rand.range(-1.3, 1.3), 0.0, 0.85);
             let yaw = frame.inward.x.atan2(frame.inward.z) + rand.range(-0.6, 0.6) + std::f32::consts::PI;
             let picture = [None, Some(Picture::Sitter), Some(Picture::Group)][rand.index(3)];
             easel(cmd, &mut batches, at, yaw, picture);

@@ -290,9 +290,10 @@ fn varnish(color: [f32; 3], u: f32, v: f32, seed: u32) -> [f32; 3] {
 
 fn figure_bust(u: f32, v: f32, cx: f32, cy: f32, s: f32) -> f32 {
     let (x, y) = ((u - cx) / s, (v - cy) / s);
-    let head = (x * x / 0.018 + (y + 0.2).powi(2) / 0.03) < 1.0;
-    let neck = x.abs() < 0.05 && (-0.06..0.12).contains(&y);
-    let shoulders = y > 0.1 && (x * x / 0.16 + (y - 0.42).powi(2) / 0.1) < 1.0 && y < 0.5;
+    let head = (x * x / 0.012 + (y + 0.22).powi(2) / 0.02) < 1.0;
+    let neck = x.abs() < 0.04 && (-0.1..0.08).contains(&y);
+    let width = 0.1 + 0.32 * ((y - 0.06) / 0.1).clamp(0.0, 1.0);
+    let shoulders = (0.06..0.6).contains(&y) && x.abs() < width;
     if head || neck || shoulders { 1.0 } else { 0.0 }
 }
 

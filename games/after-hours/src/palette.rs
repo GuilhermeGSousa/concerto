@@ -206,7 +206,7 @@ pub fn create_palette(server: Res<AssetServer>, mut slot: ResMut<PaletteSlot>) {
                 .with_base_color_factor(Color::srgba(0.1, 0.1, 0.1, 1.0));
             m.set_roughness_factor(0.2);
             m.set_metallic_factor(0.0);
-            m.set_emissive_factor(Vec3::new(0.18, 0.2, 0.28));
+            m.set_emissive_factor(Vec3::new(0.07, 0.085, 0.13));
             server.add(m)
         },
         velvet: server.add(solid(Color::srgba(0.22, 0.04, 0.05, 1.0), 0.95)),

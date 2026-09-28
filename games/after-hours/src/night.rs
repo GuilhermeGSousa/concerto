@@ -252,7 +252,7 @@ pub fn rebuild_night(
     let yaw = (-inward.x).atan2(-inward.z);
     let debug_escape = !title && platform::debug_flag("escape");
     let feet = start.center() + level.exit.dir.vector() * (CELL * 0.5 - 1.1) + Vec3::Y * 0.05;
-    let (feet, yaw) = match crate::debug::room_view(&level) {
+    let (feet, yaw) = match crate::debug::room_view(&level).or(crate::debug::spawn_view(&level)) {
         Some(view) if !title => view,
         _ => (feet, yaw),
     };
@@ -284,7 +284,7 @@ pub fn rebuild_night(
     };
 
     for (i, &cell) in level.figures.iter().enumerate() {
-        let jitter = Vec3::new(rand.range(-0.9, 0.9), 0.0, rand.range(-0.9, 0.9));
+        let jitter = Vec3::new(rand.range(-0.6, 0.6), 0.0, rand.range(-0.6, 0.6));
         let feet = cell.center() + jitter;
         let face = Dir::ALL[rand.index(4)].vector();
         let is_clara = clara == Some(i) || (!plan.clara && bedroom_figure == Some(i));
@@ -309,7 +309,13 @@ pub fn rebuild_night(
         );
     }
 
-    *director = Director::new(plan.rules, &mut rand);
+    let mut rules = plan.rules;
+    if platform::debug_flag("hunt") {
+        rules.hunt_after_lots = 0;
+        rules.hunt_gap = (4.0, 6.0);
+        rules.stalk_after = 0.0;
+    }
+    *director = Director::new(rules, &mut rand);
     state.ledger = Some(built.ledger);
     state.lots_total = level.lots.len();
     state.lots_done = 0;

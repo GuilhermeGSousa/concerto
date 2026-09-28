@@ -281,7 +281,7 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
         &mut cmd,
         hud,
         UIInset {
-            top: UIValue::Px(22.0),
+            top: UIValue::Px(76.0),
             left: UIValue::Px(0.0),
             ..Default::default()
         },
