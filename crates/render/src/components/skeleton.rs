@@ -1,11 +1,8 @@
 use std::num::NonZeroU64;
 
 use crate::{
-    assets::skeleton::Skeleton,
-    components::{mesh::RenderMeshFanout, render_entity::RenderEntity},
-    device::RenderDevice,
-    layouts::SkeletonLayout,
-    queue::RenderQueue,
+    assets::skeleton::Skeleton, components::render_entity::RenderEntity, device::RenderDevice,
+    layouts::SkeletonLayout, queue::RenderQueue,
 };
 use concerto_app::extractor::Extracted;
 use concerto_ecs::{
@@ -27,11 +24,6 @@ const INITIAL_SKIN_CAPACITY: u32 = 8;
 
 // Byte offset of this skin's slot in the shared [`SkinUniforms`] buffer.
 pub struct RenderSkeletonComponent {
-    pub(crate) offset: u32,
-}
-
-#[derive(Component)]
-pub(crate) struct RenderSkinOffset {
     pub(crate) offset: u32,
 }
 
@@ -151,8 +143,6 @@ pub(crate) fn extract_skeletons(
     skeletons: Extracted<Query<(&SkeletonComponent, &RenderEntity)>>,
     bone_transforms: Extracted<Query<&GlobalTransform>>,
     render_skeletons: Query<&RenderSkeletonComponent>,
-    fanouts: Query<&RenderMeshFanout>,
-    skin_offsets: Query<&RenderSkinOffset>,
     skeleton_assets: Extracted<Res<AssetStore<Skeleton>>>,
     skeleton_layout: Res<SkeletonLayout>,
     mut skins: ResMut<SkinUniforms>,
@@ -171,19 +161,6 @@ pub(crate) fn extract_skeletons(
                 offset
             }
         };
-
-        for &entity in fanouts
-            .get_entity(render_entity)
-            .into_iter()
-            .flat_map(|fanout| &fanout.primitives)
-        {
-            if skin_offsets
-                .get_entity(entity)
-                .is_none_or(|current| current.offset != offset)
-            {
-                cmd.insert(RenderSkinOffset { offset }, entity);
-            }
-        }
 
         let Some(skeleton_asset) = skeleton_assets.get(skeleton.skeleton()) else {
             continue;

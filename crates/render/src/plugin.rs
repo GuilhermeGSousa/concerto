@@ -2,10 +2,7 @@ use crate::{
     assets::{material::StandardMaterial, mesh::Mesh, skeleton::Skeleton, texture::Texture},
     components::{
         camera::{extract_cameras, sync_camera_aspect},
-        fallback_material::{
-            fallback_material_asset, insert_fallback_material, ClaimedSlots, FallbackMaterial,
-            RenderFallbackMaterial,
-        },
+        fallback_material::{fallback_material_asset, FallbackMaterial, RenderFallbackMaterial},
         light::{extract_lights, update_changed_lights, RenderLights},
         mesh::extract_meshes,
         render_entity::extract,
@@ -208,7 +205,6 @@ impl Plugin for RenderPlugin {
             (RenderSet::Lights, RenderSet::Shadows, RenderSet::Draw).chain(),
         )
         .add_render_system(Render, clear_cameras)
-        .add_render_system(Render, insert_fallback_material.before(RenderSet::Lights))
         .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))
         .add_render_system(
             Render,
@@ -296,8 +292,9 @@ impl Plugin for RenderPlugin {
             .get_resource::<AssetStore<StandardMaterial>>()
             .and_then(|_| app.get_resource::<AssetServer>())
             .map(|server| server.add(fallback_material_asset()));
-        let render_fallback_material =
-            RenderFallbackMaterial(fallback_material.as_ref().map(AssetHandle::id));
+        let render_fallback_material = RenderFallbackMaterial::<StandardMaterial>::new(
+            fallback_material.as_ref().map(AssetHandle::id),
+        );
         if let Some(handle) = fallback_material {
             app.insert_resource(FallbackMaterial(handle));
         }
@@ -344,7 +341,6 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
             .insert_resource(render_fallback_material)
-            .insert_resource(ClaimedSlots::default())
             .insert_resource(WorldEnvironment::new(Color::rgba(0.1, 0.1, 0.1, 0.1)));
     }
 }

@@ -1,17 +1,10 @@
-use std::collections::HashSet;
+use std::marker::PhantomData;
 
 use concerto_color::Color;
-use concerto_ecs::{
-    command::CommandQueue,
-    component::Component,
-    query::Query,
-    resource::{Res, ResMut, Resource},
-    Entity, With,
-};
+use concerto_ecs::resource::Resource;
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 
-use crate::assets::material::StandardMaterial;
-use crate::components::{material::RenderMaterialComponent, mesh::RenderMeshInstance};
+use crate::{assets::material::StandardMaterial, components::material::SlotBinding, Material};
 
 /// The magenta stand-in drawn where no material covers a primitive slot.
 pub fn fallback_material_asset() -> StandardMaterial {
@@ -26,54 +19,80 @@ pub fn fallback_material_asset() -> StandardMaterial {
 #[derive(Resource)]
 pub struct FallbackMaterial(pub AssetHandle<StandardMaterial>);
 
-/// Render-world id of the fallback material; `None` when `StandardMaterial` is not rendered.
-#[derive(Resource)]
-pub struct RenderFallbackMaterial(pub Option<AssetId>);
-
-/// On a render-world primitive entity: it currently draws with the fallback.
-#[derive(Component)]
-pub struct UsesFallbackMaterial;
-
-/// Primitive entities some `MaterialComponent<M>` claimed this frame.
-#[derive(Resource, Default)]
-pub struct ClaimedSlots {
-    claimed: HashSet<Entity>,
-    reported: HashSet<Entity>,
+/// The material `M`'s pass draws uncovered slots with; `None` for every `M` but `StandardMaterial`.
+pub struct RenderFallbackMaterial<M: 'static> {
+    pub material: Option<AssetId>,
+    _marker: PhantomData<fn() -> M>,
 }
 
-impl ClaimedSlots {
-    /// Records a claim; `true` the first time a second material type claims `entity` in one frame.
-    pub fn claim(&mut self, entity: Entity) -> bool {
-        !self.claimed.insert(entity) && self.reported.insert(entity)
-    }
-
-    /// Whether any material type claimed `entity` this frame.
-    pub fn is_claimed(&self, entity: Entity) -> bool {
-        self.claimed.contains(&entity)
+impl<M: 'static> RenderFallbackMaterial<M> {
+    pub fn new(material: Option<AssetId>) -> Self {
+        Self {
+            material,
+            _marker: PhantomData,
+        }
     }
 }
 
-pub(crate) fn insert_fallback_material(
-    instances: Query<Entity, With<RenderMeshInstance>>,
-    fallback_users: Query<&UsesFallbackMaterial>,
-    fallback: Res<RenderFallbackMaterial>,
-    mut claimed: ResMut<ClaimedSlots>,
-    mut cmd: CommandQueue,
-) {
-    if let Some(fallback) = fallback.0 {
-        for entity in instances.iter() {
-            if claimed.is_claimed(entity) || fallback_users.get_entity(entity).is_some() {
-                continue;
-            }
-            cmd.insert(
-                (
-                    RenderMaterialComponent::<StandardMaterial>::new(fallback),
-                    UsesFallbackMaterial,
-                ),
-                entity,
-            );
+// Manual Resource impl — #[derive(Resource)] doesn't handle PhantomData<fn()>.
+impl<M: 'static> Resource for RenderFallbackMaterial<M> {
+    fn name() -> &'static str {
+        std::any::type_name::<RenderFallbackMaterial<M>>()
+    }
+}
+
+/// The primitive slots of one mesh instance that some material covered this frame.
+#[derive(Default)]
+pub struct SlotCoverage {
+    all: bool,
+    slots: Vec<bool>,
+    overlap_reported: bool,
+}
+
+impl SlotCoverage {
+    /// Covers every slot until the first `clear`, so a new instance skips the fallback until its materials are extracted.
+    pub fn unresolved() -> Self {
+        Self {
+            all: true,
+            ..Self::default()
         }
     }
 
-    claimed.claimed.clear();
+    /// Uncovers every slot, keeping whether an overlap was already reported.
+    pub fn clear(&mut self) {
+        self.all = false;
+        self.slots.fill(false);
+    }
+
+    /// Covers the slots `binding` covers; `true` the first time two bindings cover one slot.
+    pub fn cover<M: Material + Send + Sync + 'static>(&mut self, binding: &SlotBinding<M>) -> bool {
+        let overlap = match binding {
+            SlotBinding::All(_) => {
+                let overlap = self.all || self.slots.contains(&true);
+                self.all = true;
+                overlap
+            }
+            SlotBinding::PerSlot(slots) => {
+                if self.slots.len() < slots.len() {
+                    self.slots.resize(slots.len(), false);
+                }
+                let mut overlap = false;
+                for (covered, slot) in self.slots.iter_mut().zip(slots) {
+                    if slot.is_some() {
+                        overlap |= self.all || *covered;
+                        *covered = true;
+                    }
+                }
+                overlap
+            }
+        };
+        let first = overlap && !self.overlap_reported;
+        self.overlap_reported |= overlap;
+        first
+    }
+
+    /// Whether any material covered `slot` this frame.
+    pub fn is_covered(&self, slot: u32) -> bool {
+        self.all || self.slots.get(slot as usize).copied().unwrap_or(false)
+    }
 }

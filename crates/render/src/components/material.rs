@@ -70,28 +70,67 @@ impl<M: Material + LoadableAsset> SceneComponent for MaterialComponent<M> {
 }
 
 /// Render-world component placed on mesh entities to identify which material
-/// asset they use for a specific material type `M`.
-///
-/// This component replaces the old `MaterialInstanceTag<M>` (which was a pure
-/// phantom marker) by also carrying the material's [`AssetId`].  This means
-/// [`super::mesh_component::RenderMeshInstance`] no longer needs to store the
-/// material asset id — the two concerns (mesh geometry and material) are kept
-/// in separate components.
+/// asset each primitive slot uses for a specific material type `M`.
 ///
 /// The type parameter `M` ensures that `material_renderpass<M>` only picks up
 /// entities belonging to pipeline `M`, so multiple `MaterialPlugin` instances
 /// for different material types coexist without interfering with each other.
 #[derive(Component)]
 pub(crate) struct RenderMaterialComponent<M: Material + 'static> {
-    pub(crate) material_asset_id: AssetId,
+    pub(crate) slots: RenderSlots,
     _marker: PhantomData<fn() -> M>,
 }
 
 impl<M: Material + 'static> RenderMaterialComponent<M> {
-    pub(crate) fn new(material_asset_id: AssetId) -> Self {
+    pub(crate) fn new(slots: RenderSlots) -> Self {
         Self {
-            material_asset_id,
+            slots,
             _marker: PhantomData,
+        }
+    }
+}
+
+pub(crate) enum RenderSlots {
+    All(AssetId),
+    PerSlot(Vec<Option<AssetId>>),
+}
+
+impl RenderSlots {
+    pub(crate) fn from_binding<M: Material + Send + Sync + 'static>(
+        binding: &SlotBinding<M>,
+    ) -> Self {
+        match binding {
+            SlotBinding::All(handle) => RenderSlots::All(handle.id()),
+            SlotBinding::PerSlot(slots) => RenderSlots::PerSlot(
+                slots
+                    .iter()
+                    .map(|slot| slot.as_ref().map(AssetHandle::id))
+                    .collect(),
+            ),
+        }
+    }
+
+    pub(crate) fn matches<M: Material + Send + Sync + 'static>(
+        &self,
+        binding: &SlotBinding<M>,
+    ) -> bool {
+        match (self, binding) {
+            (RenderSlots::All(id), SlotBinding::All(handle)) => *id == handle.id(),
+            (RenderSlots::PerSlot(ids), SlotBinding::PerSlot(slots)) => {
+                ids.len() == slots.len()
+                    && ids
+                        .iter()
+                        .zip(slots)
+                        .all(|(id, slot)| *id == slot.as_ref().map(AssetHandle::id))
+            }
+            _ => false,
+        }
+    }
+
+    pub(crate) fn slot(&self, index: u32) -> Option<AssetId> {
+        match self {
+            RenderSlots::All(id) => Some(*id),
+            RenderSlots::PerSlot(ids) => *ids.get(index as usize)?,
         }
     }
 }

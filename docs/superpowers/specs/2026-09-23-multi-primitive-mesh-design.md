@@ -12,9 +12,9 @@ entity drawing one primitive with one material. That invariant is load-bearing:
 RenderMaterialComponent<M>)`, and an entity cannot hold two
 `MaterialComponent<M>` of the same type.
 
-The two needs are reconciled by keeping one render entity per primitive while
-making the *asset* a container, and moving the fan-out from import time to
-extract time.
+The two needs are reconciled by making the *asset* a container and keeping one
+render entity per mesh, which draws every primitive from its `RenderMesh`.
+Material dispatch moves from the entity to the primitive slot.
 
 ## Asset shape
 
@@ -73,8 +73,8 @@ struct PrimitiveRange {
 
 struct RenderMeshInstance {
     mesh_asset_id: AssetId,
-    primitive: u32,
     transform: wgpu::Buffer,
+    coverage: SlotCoverage,
 }
 ```
 
@@ -82,20 +82,10 @@ struct RenderMeshInstance {
 index buffer, recording each primitive's index range and base vertex. This is
 one allocation pair per mesh asset rather than per primitive.
 
-The draw loop binds the vertex and index buffers once per mesh and issues
-`draw_indexed(range, base_vertex, 0..1)` per primitive.
-
-### Extract-time fan-out
-
-`extract_meshes` gains `Extracted<Res<AssetStore<Mesh>>>` to read the primitive
-count. The mesh may not be loaded on the first frames, so fan-out is deferred
-until the asset resolves and redone when the handle changes.
-
-The owner render entity carries `RenderMeshFanout { mesh_id, entities:
-Vec<Entity> }`. Each primitive entity carries `MainEntity`, so
-`despawn_stale_render_entities` reclaims them without new cleanup code, while
-`spawn_new_render_entities` still creates only the single owner mirror per main
-entity.
+The draw loop binds the vertex and index buffers once per mesh instance and
+issues `draw_indexed(range, base_vertex, 0..1)` per primitive whose slot the
+pass's material type covers. The shadow pass ignores materials and draws the
+whole index buffer in one call.
 
 ## Materials
 
@@ -118,37 +108,24 @@ Slots live on `MaterialComponent<M>` rather than on `MeshComponent` so material
 dispatch stays typed. Two material types coexist on one entity as two
 components, each covering a subset of slots.
 
-`extract_materials::<M>` walks the owner's `RenderMeshFanout` list and writes
-`RenderMaterialComponent<M>` onto the render entity for each slot its binding
-covers.
+`extract_materials::<M>` mirrors the binding as asset ids in
+`RenderMaterialComponent<M>` on the mesh's render entity, and
+`material_renderpass::<M>` looks up each primitive's material by slot index.
 
 ### Fallback material
 
 A magenta `StandardMaterial` is registered through `AssetServer::add` at plugin
 startup and held in a `FallbackMaterial` resource.
 
-`extract_meshes` tags each new primitive entity `NeedsFallbackMaterial`. Every
-`extract_materials::<M>` clears the tag on the slots it claims. A single system
-at the start of the `Render` stage gives anything still tagged a
-`RenderMaterialComponent<StandardMaterial>` pointing at the fallback.
+Which slots have a material is tracked per instance, not in a global set.
+`extract_meshes` clears the instance's `SlotCoverage` each frame, and every
+`extract_materials::<M>` (ordered after it) marks the slots its binding covers.
+The `StandardMaterial` pass then draws, with the fallback, every primitive whose
+slot nothing covered. A new instance starts fully covered, so it skips the
+fallback until its materials have been extracted.
 
-The fallback runs in a later schedule group rather than behind an ordering
-edge: `.after()` duplicates systems in this engine, and `Extract` completes
-before `Render` begins, so no edge is needed.
-
-Two material types claiming the same slot produce two components of different
-types on one render entity, so both passes draw it. This is an authoring error
-rather than a state the engine can resolve, and nothing can detect it by
-querying, since `RenderMaterialComponent<M1>` and `<M2>` are distinct types with
-no cross-type query.
-
-It is detected by bookkeeping instead. A `ClaimedSlots` render-world resource
-holds the primitive entities claimed this frame. Every `extract_materials::<M>`
-records its claims there and warns when an entity is already present; resource
-writes are immediate rather than deferred, so the second claimant sees the
-first regardless of which order the per-type systems run in. The system that
-applies the fallback clears the set, which is correct without an ordering edge
-because it runs in `Render`, after all of `Extract`.
+Two material types covering the same slot draw it twice. That is an authoring
+error; `SlotCoverage` detects it while marking and warns once per instance.
 
 ## Instancing
 
@@ -166,8 +143,8 @@ forever, which blocks batching; the container removes that obstacle.
 
 **Skeletons.** The synthesized `<node>.primitiveN` child nodes carrying rootless
 `SkeletonComponent` are deleted from the importer. A skinned node keeps one
-`SkeletonComponent` and one `AnimationPlayer`, and the render fan-out copies the
-binding onto each primitive entity.
+`SkeletonComponent` and one `AnimationPlayer`, and every primitive draws with that
+skeleton's palette.
 
 **Hierarchy panel.** Scene trees no longer contain per-primitive child nodes.
 
@@ -191,9 +168,6 @@ directly and move to `Mesh::single`.
   node carries exactly one `SkeletonComponent`.
 - `RenderMesh` preparation records index ranges and base vertices that address
   each primitive's geometry in the concatenated buffers.
-- Fan-out creates one render entity per primitive, defers until the asset
-  loads, rebuilds when the mesh handle changes, and despawns with the main
-  entity.
 - `SlotBinding::All` covers every slot; `PerSlot` covers only its populated
   slots.
 - A primitive whose slot no binding covers receives the fallback material; a

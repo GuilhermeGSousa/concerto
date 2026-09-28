@@ -38,8 +38,8 @@ pub(crate) struct RenderMesh {
 }
 
 impl RenderMesh {
-    pub(crate) fn primitive(&self, index: u32) -> Option<&PrimitiveRange> {
-        self.primitives.get(index as usize)
+    pub(crate) fn index_count(&self) -> u32 {
+        self.primitives.last().map_or(0, |range| range.indices.end)
     }
 }
 
