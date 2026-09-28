@@ -7,10 +7,41 @@ use crate::{
     render_asset::{AssetPreparationError, RenderAsset},
 };
 
+/// Where one primitive's geometry sits inside a [`RenderMesh`]'s shared
+/// vertex and index buffers.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PrimitiveRange {
+    pub indices: std::ops::Range<u32>,
+    pub base_vertex: i32,
+}
+
+/// The index range each primitive occupies in `Mesh::merged_geometry` output.
+pub fn primitive_ranges(mesh: &Mesh) -> Vec<PrimitiveRange> {
+    let mut start = 0u32;
+    mesh.primitives
+        .iter()
+        .map(|primitive| {
+            let end = start + primitive.indices.len() as u32;
+            let range = PrimitiveRange {
+                indices: start..end,
+                base_vertex: 0,
+            };
+            start = end;
+            range
+        })
+        .collect()
+}
+
 pub(crate) struct RenderMesh {
     pub(crate) vertices: wgpu::Buffer,
     pub(crate) indices: wgpu::Buffer,
-    pub(crate) index_count: u32,
+    pub(crate) primitives: Vec<PrimitiveRange>,
+}
+
+impl RenderMesh {
+    pub(crate) fn primitive(&self, index: u32) -> Option<&PrimitiveRange> {
+        self.primitives.get(index as usize)
+    }
 }
 
 impl RenderAsset for RenderMesh {
@@ -41,12 +72,11 @@ impl RenderAsset for RenderMesh {
                 contents: bytemuck::cast_slice(&merged_indices),
                 usage: wgpu::BufferUsages::INDEX,
             });
-        let index_count = merged_indices.len() as u32;
 
         Ok(RenderMesh {
             vertices,
             indices,
-            index_count,
+            primitives: primitive_ranges(source_asset),
         })
     }
 }

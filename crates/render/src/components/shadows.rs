@@ -612,13 +612,17 @@ pub(crate) fn render_shadow_maps(
 
         for (mesh_instance, skeleton) in render_mesh_query.iter() {
             if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
+                let Some(range) = mesh.primitive(mesh_instance.primitive) else {
+                    continue;
+                };
+
                 let offset = skeleton.map_or(0, |sk| sk.offset);
                 render_pass.set_bind_group(1, skins.bind_group(), &[offset]);
 
                 render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                render_pass.draw_indexed(range.indices.clone(), range.base_vertex, 0..1);
             }
         }
     }

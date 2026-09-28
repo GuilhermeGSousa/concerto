@@ -10,6 +10,7 @@ use crate::{components::render_entity::RenderEntity, device::RenderDevice, queue
 #[derive(Component)]
 pub(crate) struct RenderMeshInstance {
     pub(crate) mesh_asset_id: AssetId,
+    pub(crate) primitive: u32,
     pub(crate) transform: wgpu::Buffer,
 }
 
@@ -52,6 +53,7 @@ pub(crate) fn extract_meshes(
 
         let instance = RenderMeshInstance {
             mesh_asset_id: mesh.handle.id(),
+            primitive: 0,
             transform: instance_buffer,
         };
 

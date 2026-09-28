@@ -287,6 +287,10 @@ pub(crate) fn material_renderpass<M: Material>(
 
         for (mesh_instance, skeleton, render_mat_comp) in render_mesh_query.iter() {
             if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
+                let Some(range) = mesh.primitive(mesh_instance.primitive) else {
+                    continue;
+                };
+
                 if let Some(render_mat) = render_materials.get(&render_mat_comp.material_asset_id) {
                     render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
                 } else {
@@ -301,7 +305,7 @@ pub(crate) fn material_renderpass<M: Material>(
                 render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                render_pass.draw_indexed(range.indices.clone(), range.base_vertex, 0..1);
             }
         }
     }
