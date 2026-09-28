@@ -1,54 +1,64 @@
-# itch.io page copy for AFTER HOURS
+# itch.io page copy for STILL LIFE
 
 Paste-ready text for the project page. Adjust freely.
 
 ## Title
 
-AFTER HOURS
+STILL LIFE
 
 ## Short description (tagline)
 
-The mannequins only move when you're not looking.
+They only move when you are not looking.
 
 ## Description
 
-You're the night-shift closer at a department store that should have been
-empty an hour ago.
+*Marrow House, Bloomsbury. November, 1893.*
 
-Lock up: find the register keys scattered across the shop floor, then get
-out through the staff exit. Keep your flashlight on them. Keep your eyes on
-them. The display mannequins never move while you're watching.
+The painter Elias Marrow has been missing for a year. His house has stood shut
+ever since, full of pictures, dust sheets, and the life-size wooden figures he
+painted from.
 
-But you can't watch all of them at once.
+Mr Pike, the auctioneer, needs the pictures catalogued before the sale. He
+says it will take five nights. He did not say why it must be done by night.
+
+Take a lantern. Find the marked pictures. Sign the ledger in the hall before
+you leave.
+
+Most of the figures are only wood and linen. Most of them.
 
 **Features**
 
-- A short, replayable horror game: five nights, then as many more as you can
-  survive.
-- A new store floor every night, generated from a seed: braided aisles of
-  shelving, failing fluorescent lights, keys hidden in the dark.
-- Mannequins that are different every time you look back: closer, and
-  posed a little more wrong.
-- A flashlight with a dying battery, and darkness that is honestly dark.
-- Every sound is synthesized: the hum of the tubes, the creak of something
-  shifting in the next aisle, your own heartbeat.
+- A short, slow-burning horror story in five nights, with an ending, then an
+  endless coda for the brave.
+- A new house every night: rooms, doorways and corridors generated from a
+  seed, dressed with wallpaper, candlelight, gilt frames and dust sheets.
+- Figures that follow one honest rule: a figure you can see never moves. But
+  not every figure is empty, and the ones that are not have patience.
+- The first night is quiet. The house takes its time.
+- A bullseye lantern that burns oil, candles that gutter out one by one, and
+  darkness that is honestly dark.
+- Every sound is synthesized: the clock in the hall, the wind at the
+  windows, wooden joints shifting somewhere behind you.
 - Runs in the browser. No download.
 
 **Controls**
 
-- WASD / arrow keys: move
+- WASD / arrow keys: walk
 - Mouse: look (click the game to capture the mouse)
-- Shift: run (limited breath)
-- F: flashlight on / off
+- Shift: hurry (limited breath)
+- E: catalogue a picture, read a page, sign the ledger (hold)
+- F: lantern shutter
 - Esc: pause
 - On the title or pause screen: `[` `]` look speed, `-` `=` volume,
   `I` invert look
 
 **Tips**
 
-- Listen. Keys chime faintly now and then from the direction they lie in.
-- A mannequin in your flashlight beam is safe, but only while it stays there.
-- Lit aisles are safer than dark ones. The lights don't all stay on.
+- Listen. A faint music-box note sounds now and then from the next marked
+  picture.
+- Cataloguing takes a moment, with your back to the room.
+- Two knocks mean something has decided to come for you. Find it, and hold its
+  gaze.
 
 Made with Concerto, a Rust game engine. All proceeds go toward developing the
 game and the engine further.
@@ -59,16 +69,22 @@ Horror
 
 ## Tags
 
-horror, first-person, psychological-horror, short, atmospheric, procedural-generation,
-mannequins, singleplayer, 3d, spooky
+horror, first-person, psychological-horror, short, atmospheric, victorian,
+procedural-generation, mannequins, story-rich, singleplayer
 
 ## Content warnings
 
-Jump scares, flickering lights, darkness.
+Jump scares, darkness, flickering light.
 
 ## Suggested screenshots
 
 Take them from the game itself (for example with the `?noui` debug flag, see
-README.md): a dark aisle with a mannequin at the edge of the flashlight
-beam; a posed mannequin close up; the title screen; the "YOU WERE CAUGHT"
-card. Cover image: 630 × 500.
+README.md):
+
+- a candlelit corridor of portraits;
+- a figure at the edge of the lantern's pool;
+- a diary page;
+- the title screen;
+- the night card.
+
+The cover image is 630 × 500.

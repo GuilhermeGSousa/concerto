@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <base data-trunk-public-url />
-    <title>AFTER HOURS</title>
+    <title>Still Life</title>
     <style type="text/css">
         html, body {
             margin: 0;
@@ -30,9 +30,9 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            color: #8a877f;
-            font: 14px/1.4 "DejaVu Sans Mono", Menlo, Consolas, monospace;
-            letter-spacing: 0.2em;
+            color: #8a8070;
+            font: italic 18px/1.4 Georgia, "Times New Roman", serif;
+            letter-spacing: 0.05em;
             pointer-events: none;
             z-index: 10;
             background: #000;
@@ -41,7 +41,7 @@
 </head>
 
 <body data-want-lock="0">
-    <div id="loading">OPENING THE STORE…</div>
+    <div id="loading">Unlocking Marrow House…</div>
     <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z"
         data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
     <script>
@@ -61,7 +61,7 @@
         }
         var probe = document.createElement("canvas");
         if (!probe.getContext("webgl2")) {
-            fail("THE STORE WON'T OPEN\n\nthis browser has no WebGL2.\ntry a recent Chrome, Firefox, Edge or Safari,\nand check hardware acceleration is enabled.");
+            fail("The door will not open.\n\nthis browser has no WebGL2.\ntry a recent Chrome, Firefox, Edge or Safari,\nand check hardware acceleration is enabled.");
         }
         var consoleError = console.error;
         console.error = function () {

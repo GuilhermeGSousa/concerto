@@ -1,6 +1,6 @@
 //! Procedural meshes.
 use concerto::render::assets::{mesh::Mesh, vertex::Vertex};
-use glam::{Vec2, Vec3};
+use glam::{Quat, Vec2, Vec3};
 
 fn vertex(pos: Vec3, normal: Vec3, uv: Vec2) -> Vertex {
     Vertex {
@@ -100,6 +100,19 @@ pub fn frustum(bottom: f32, top: f32, height: f32, segments: u32) -> Mesh {
     finish(vertices, indices)
 }
 
+/// A unit quad in the XY plane facing +Z, UVs spanning 0..1, for pictures.
+pub fn canvas() -> Mesh {
+    let mut vertices = Vec::new();
+    for (x, y) in [(-0.5, -0.5), (0.5, -0.5), (0.5, 0.5), (-0.5, 0.5)] {
+        vertices.push(vertex(
+            Vec3::new(x, y, 0.0),
+            Vec3::Z,
+            Vec2::new(x + 0.5, 0.5 - y),
+        ));
+    }
+    finish(vertices, vec![0, 1, 2, 0, 2, 3])
+}
+
 /// Accumulates many axis-aligned boxes and quads into one mesh, so a whole
 /// floor of shelving draws in a handful of calls.
 #[derive(Default)]
@@ -131,6 +144,27 @@ impl MeshBuilder {
             let du = u * half;
             let dv = v * half;
             self.quad(face_center, du, dv, normal);
+        }
+        self
+    }
+
+    /// A box rotated by `rotation` about its own center.
+    pub fn oriented_cuboid(&mut self, center: Vec3, half: Vec3, rotation: Quat) -> &mut Self {
+        for (normal, u, v) in [
+            (Vec3::X, Vec3::NEG_Z, Vec3::Y),
+            (Vec3::NEG_X, Vec3::Z, Vec3::Y),
+            (Vec3::Y, Vec3::X, Vec3::NEG_Z),
+            (Vec3::NEG_Y, Vec3::X, Vec3::Z),
+            (Vec3::Z, Vec3::X, Vec3::Y),
+            (Vec3::NEG_Z, Vec3::NEG_X, Vec3::Y),
+        ] {
+            let face_center = center + rotation * (normal * half);
+            self.quad(
+                face_center,
+                rotation * (u * half),
+                rotation * (v * half),
+                rotation * normal,
+            );
         }
         self
     }
@@ -197,5 +231,12 @@ mod tests {
         let mesh = builder.build();
         assert_valid(&mesh);
         assert_outward(&mesh, Vec3::new(3.0, 1.0, -2.0));
+
+        let mut tilted = MeshBuilder::default();
+        let rotation = Quat::from_rotation_z(0.3) * Quat::from_rotation_y(1.1);
+        tilted.oriented_cuboid(Vec3::ONE, Vec3::new(0.2, 1.0, 0.1), rotation);
+        let mesh = tilted.build();
+        assert_valid(&mesh);
+        assert_outward(&mesh, Vec3::ONE);
     }
 }

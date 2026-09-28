@@ -7,6 +7,7 @@ use concerto::{
     },
     ecs::{IntoSystemConfig, Res, system::NonSendMarker},
     foundation::transform::systems::{propagate_global_transforms, update_simple_entities},
+    ui::text::fonts::UIFontsApp,
     window::plugin::Window,
 };
 
@@ -14,6 +15,7 @@ mod body;
 mod content;
 mod debug;
 mod game;
+mod house;
 mod level;
 mod lighting;
 mod mannequin;
@@ -25,7 +27,7 @@ mod player;
 mod poses;
 mod scare;
 mod sfx;
-mod store;
+mod story;
 mod textures;
 mod ui;
 
@@ -43,7 +45,7 @@ fn random_seed() -> u64 {
 }
 
 fn set_title(_: NonSendMarker, window: Res<Window>) {
-    window.window_handle.set_title("AFTER HOURS");
+    window.window_handle.set_title("Still Life");
 }
 
 fn main() {
@@ -60,6 +62,8 @@ fn main() {
     let seed = random_seed();
     let mut app = App::new();
     app.register_plugin(DefaultPlugins::default());
+    app.add_ui_font(include_bytes!("../fonts/IMFellEnglish-Regular.ttf").as_slice())
+        .add_ui_font(include_bytes!("../fonts/IMFellEnglish-Italic.ttf").as_slice());
 
     app.insert_resource(game::Game::new(platform::load_best(), seed))
         .insert_resource(game::Rand::new(seed))
@@ -69,6 +73,7 @@ fn main() {
         .insert_resource(night::NightState::with_rebuild(night::Rebuild::Title))
         .insert_resource(mannequin::CurrentLevel::default())
         .insert_resource(mannequin::Flow::default())
+        .insert_resource(mannequin::Director::default())
         .insert_resource(player::Eye::default())
         .insert_resource(player::Settings::load())
         .insert_resource(scare::Caught::default())
@@ -96,9 +101,9 @@ fn main() {
             player::control_player,
             mannequin::block_player,
             player::update_flashlight,
-            night::objectives,
+            night::interact,
             night::night_clock,
-            night::flicker_lights,
+            night::flicker_candles,
             mannequin::dress_mannequins,
             ui::update_ui,
         )
@@ -111,6 +116,7 @@ fn main() {
         (
             scare::run_scare,
             player::place_camera,
+            mannequin::direct,
             mannequin::hunt,
             mannequin::face_mannequins,
             mannequin::apply_poses,

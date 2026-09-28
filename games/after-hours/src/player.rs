@@ -1,4 +1,4 @@
-//! The night-shift closer: a first-person capsule with a flashlight.
+//! The auctioneer's clerk: a first-person capsule with a bullseye lantern.
 use concerto::{
     audio::Audio,
     color::Color,
@@ -22,7 +22,7 @@ use crate::{
     game::{Game, Rand},
     lighting,
     sfx::{Sfx, Sounds},
-    store::StoreEntity,
+    house::HouseEntity,
 };
 
 pub const EYE_HEIGHT: f32 = 1.62;
@@ -30,18 +30,18 @@ pub const RADIUS: f32 = 0.3;
 const WALK_SPEED: f32 = 3.0;
 const SPRINT_SPEED: f32 = 5.4;
 const STAMINA_SECONDS: f32 = 4.0;
-const BATTERY_SECONDS: f32 = 150.0;
+const BATTERY_SECONDS: f32 = 170.0;
 const LOW_BATTERY: f32 = 0.22;
-pub const FLASHLIGHT_CONE: f32 = 0.42;
+pub const FLASHLIGHT_CONE: f32 = 0.46;
 pub const FLASHLIGHT_RANGE: f32 = 16.0;
 /// Light at the brightest battery level.
-pub const FLASHLIGHT_INTENSITY: f32 = 26.0;
-/// Where the torch sits relative to the eye (held low and to the right).
+pub const FLASHLIGHT_INTENSITY: f32 = 22.0;
+/// Where the lantern sits relative to the eye (held low and to the right).
 pub const FLASHLIGHT_OFFSET: Vec3 = Vec3::new(0.18, -0.22, -0.1);
 pub const FOV_Y: f32 = 1.2;
 /// Darkness swallowing the far end of every aisle.
 pub const FOG: Fog = Fog {
-    color: Color::BLACK,
+    color: Color::rgba(0.012, 0.008, 0.005, 1.0),
     density: 0.085,
     start: 4.0,
 };
@@ -145,7 +145,6 @@ pub struct Player {
     bob_phase: f32,
     bob_amount: f32,
     pub head: Entity,
-    pub keys: usize,
 }
 
 #[derive(Component)]
@@ -168,7 +167,19 @@ impl Flashlight {
     pub fn is_emitting(&self) -> bool {
         self.emitting
     }
+
+    /// Intensity of the dim light the lantern spills around itself.
+    pub fn glow(&self) -> f32 {
+        LANTERN_GLOW * self.intensity / FLASHLIGHT_INTENSITY
+    }
 }
+
+/// The lantern's spill: a faint point light around the player.
+#[derive(Component)]
+pub struct LanternGlow;
+
+pub const LANTERN_GLOW: f32 = 0.6;
+pub const LANTERN_GLOW_RANGE: f32 = 3.5;
 
 /// The eye this frame and last frame, for the observation test.
 #[derive(Resource, Default, Clone, Copy)]
@@ -192,7 +203,7 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
     let offset = ColliderOffset::bottom_origin(&collider);
     let head = cmd
         .spawn((
-            StoreEntity,
+            HouseEntity,
             Head,
             Transform::from_translation(Vec3::Y * EYE_HEIGHT),
         ))
@@ -209,7 +220,7 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
             },
             {
                 let light = Light::spot_light(FLASHLIGHT_CONE)
-                    .with_color(Color::srgba(1.0, 0.93, 0.8, 1.0))
+                    .with_color(Color::srgba(1.0, 0.8, 0.55, 1.0))
                     .with_intensity(0.0)
                     .with_range(FLASHLIGHT_RANGE);
                 if crate::platform::debug_flag("noshadow") {
@@ -222,10 +233,21 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
         ))
         .entity();
     cmd.add_child(head, flashlight);
+    let glow = cmd
+        .spawn((
+            LanternGlow,
+            Light::point_light()
+                .with_color(Color::srgba(1.0, 0.7, 0.45, 1.0))
+                .with_intensity(0.0)
+                .with_range(LANTERN_GLOW_RANGE),
+            Transform::IDENTITY,
+        ))
+        .entity();
+    cmd.add_child(flashlight, glow);
 
     let root = cmd
         .spawn((
-            StoreEntity,
+            HouseEntity,
             Player {
                 yaw,
                 pitch: 0.0,
@@ -235,7 +257,6 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
                 bob_phase: 0.0,
                 bob_amount: 0.0,
                 head,
-                keys: 0,
             },
             Mover::new(12.0),
             RigidBody {
@@ -350,6 +371,7 @@ pub fn stamina_fraction(player: &Player) -> f32 {
 
 pub fn update_flashlight(
     flashlights: Query<(&mut Flashlight, &mut Light)>,
+    glows: Query<&mut Light, (With<LanternGlow>, Without<Flashlight>)>,
     game: Res<Game>,
     time: Res<Time>,
     mut rand: ResMut<Rand>,
@@ -387,6 +409,9 @@ pub fn update_flashlight(
             0.0
         };
         light.intensity = flashlight.intensity;
+        for mut glow in glows.iter() {
+            glow.intensity = flashlight.glow();
+        }
     }
 }
 
@@ -424,7 +449,7 @@ pub fn place_camera(
         camera.fovy = FOV_Y;
         camera.znear = 0.05;
         camera.zfar = 80.0;
-        camera.clear_color = Color::BLACK;
+        camera.clear_color = FOG.color;
         camera.fog = Some(FOG);
         camera.ambient = Some(Color::rgba(AMBIENT, AMBIENT, AMBIENT, 1.0));
         eye.aspect = camera.aspect;

@@ -1,8 +1,9 @@
-# AFTER HOURS
+# STILL LIFE
 
-A short first-person horror game made with Concerto. You are the night-shift
-closer in a department store; the mannequins only move when you are not
-looking. Design notes live in [DESIGN.md](DESIGN.md).
+A short first-person horror game made with Concerto. You are an auctioneer's
+clerk cataloguing a dead painter's house in 1893, and his lay figures only
+move when you are not looking. Design notes live in [DESIGN.md](DESIGN.md).
+The crate is still called `after-hours`, after the game's first version.
 
 ## Play it locally
 
@@ -78,11 +79,13 @@ URL query flags (native: `AFTER_HOURS_DEBUG=flag1,flag2`):
 |------|--------|
 | `nolock` | Treat the pointer as locked, so play never pauses (headless browsers cannot lock it). |
 | `noui` | Hide every screen, for clean screenshots. |
-| `nohunt` | Mannequins never move. |
-| `trace` | Log camera, player and hunter state; explain far-away observations. |
-| `seed=N` | Fix the first night's floor. |
-| `escape` | Start each night at the open exit, to test the night flow. |
-| `poses`, `poses0`–`poses2` | Replace the title store with a gallery of the pose library. |
+| `nohunt` | Figures never move. |
+| `trace` | Log camera, player and hunter state. |
+| `seed=N` | Fix the first night's house. |
+| `night=N` | Start at night `N`. |
+| `room=N` | Start each night in a corner of room `N` (the log names each room). |
+| `escape` | Treat every lot as catalogued, to test the night flow. |
+| `poses`, `poses0`–`poses2` | Replace the title house with a gallery of the pose library. |
 
 Phase changes (`phase: Title -> Intro (night 1)`) and night builds are
 always logged to the browser console, which makes the game easy to drive
@@ -93,5 +96,6 @@ from Playwright: wait for a log line, act, screenshot.
 - Engine: Concerto.
 - Mannequin model and animations: Universal Animation Library by
   Quaternius (CC0), https://quaternius.com.
-- Font: DejaVu Sans Mono (see `crates/ui/fonts/LICENSE-DejaVu.txt`).
+- Font: IM FELL English by Igino Marini (SIL Open Font License, see
+  `fonts/OFL.txt`).
 - Everything else (geometry, textures, sound and music) is generated in code.

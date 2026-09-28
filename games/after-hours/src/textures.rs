@@ -67,93 +67,322 @@ fn scale(c: [f32; 3], s: f32) -> [f32; 3] {
     [c[0] * s, c[1] * s, c[2] * s]
 }
 
-fn grid_distance(u: f32, v: f32, tiles: f32) -> f32 {
-    let fu = (u * tiles).fract();
-    let fv = (v * tiles).fract();
-    fu.min(1.0 - fu).min(fv).min(1.0 - fv)
+fn smooth(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
-/// Worn vinyl floor tiles: 4×4 tiles per texture (one tile = 0.5 m when the
-/// texture spans 2 m), with grout, per-tile tone and scuffs.
-pub fn floor() -> Texture {
+/// Dark oak floorboards running along `u`, eight boards per texture.
+pub fn floorboards() -> Texture {
     paint(256, |u, v| {
-        let tiles = 4.0;
-        let tile = ((u * tiles).floor() + (v * tiles).floor() * 7.0) as u32;
-        let tone = 0.9 + 0.1 * value_noise(tile as f32, 0.0, 64, 3);
-        let checker = if ((u * tiles).floor() as i32 + (v * tiles).floor() as i32) % 2 == 0 {
-            [0.62, 0.6, 0.55]
-        } else {
-            [0.5, 0.49, 0.46]
+        let boards = 8.0;
+        let row = (v * boards).floor();
+        let shift = value_noise(row, 3.0, 64, 5) * 3.0;
+        let along = u * 1.0 + shift / 3.0;
+        let plank = (along * 2.0).floor();
+        let tone = 0.75 + 0.35 * value_noise(row * 7.0 + plank, 1.0, 64, 9);
+        let grain = fbm(along * 0.5, v * 4.0, 16, 3, 13);
+        let streak = ((v * boards).fract() * 9.0 + grain * 6.0).sin() * 0.5 + 0.5;
+        let base = mix([0.2, 0.12, 0.07], [0.3, 0.19, 0.11], streak * 0.6 + grain * 0.4);
+        let mut color = scale(base, tone);
+        let seam = (v * boards).fract();
+        if !(0.04..=0.96).contains(&seam) {
+            color = scale(color, 0.35);
+        }
+        if (along * 2.0).fract() < 0.012 {
+            color = scale(color, 0.45);
+        }
+        let wear = (fbm(u, v, 4, 4, 77) - 0.5).max(0.0) * 0.6;
+        mix(color, [0.34, 0.26, 0.18], wear)
+    })
+}
+
+/// A damask wallpaper: staggered medallions on a ground, aged and stained.
+/// One texture spans half a meter.
+pub fn wallpaper(ground: [f32; 3], figure: [f32; 3], seed: u32) -> Texture {
+    paint(128, |u, v| {
+        let (gx, gy) = (u * 2.0, v * 2.0);
+        let cell = |x: f32, y: f32| {
+            let dx = x - x.round();
+            let dy = y - y.round();
+            (dx, dy)
         };
-        let grime = fbm(u, v, 4, 5, 11);
-        let scuff = (fbm(u, v, 8, 3, 29) - 0.55).max(0.0) * 1.6;
-        let mut color = scale(checker, tone * (0.8 + 0.35 * grime) - scuff * 0.25);
-        let grout = grid_distance(u, v, tiles);
-        if grout < 0.018 {
-            color = scale(color, 0.55);
-        }
-        color
+        let (ax, ay) = cell(gx, gy);
+        let (bx, by) = cell(gx + 0.5, gy + 0.5);
+        let shape = |dx: f32, dy: f32| {
+            let r = (dx * dx * 1.6 + dy * dy).sqrt();
+            let a = dy.atan2(dx);
+            let petal = 0.17 + 0.06 * (a * 4.0).cos() + 0.03 * (a * 8.0).cos();
+            let ring = (r - 0.26).abs() < 0.018;
+            r < petal || ring
+        };
+        let motif = shape(ax, ay) || shape(bx, by);
+        let mut color = if motif { figure } else { ground };
+        let n = fbm(u, v, 4, 4, seed);
+        color = scale(color, 0.85 + 0.3 * n);
+        let stain = (fbm(u, v, 2, 4, seed + 7) - 0.62).max(0.0) * 2.2;
+        mix(color, [0.12, 0.09, 0.05], stain)
     })
 }
 
-/// Suspended ceiling panels with a dark grid and pinholes.
-pub fn ceiling() -> Texture {
+/// Raised panelling in dark wood: two panels across, one up.
+pub fn wainscot() -> Texture {
     paint(128, |u, v| {
-        let base = [0.5, 0.49, 0.47];
-        let stain = (fbm(u, v, 2, 4, 5) - 0.6).max(0.0) * 2.5;
-        let pin = value_noise(u * 64.0, v * 64.0, 64, 17);
-        let mut color = mix(base, [0.45, 0.38, 0.28], stain);
-        if pin > 0.93 {
-            color = scale(color, 0.7);
-        }
-        if grid_distance(u, v, 2.0) < 0.025 {
-            color = [0.3, 0.3, 0.3];
-        }
-        color
+        let grain = fbm(u * 0.5, v * 3.0, 8, 3, 21);
+        let base = mix([0.14, 0.08, 0.05], [0.24, 0.14, 0.08], grain);
+        let pu = (u * 2.0).fract();
+        let edge = pu.min(1.0 - pu).min(v.min(1.0 - v) * 0.5);
+        let bevel = smooth(0.06, 0.1, edge);
+        let groove = if (0.055..0.075).contains(&edge) { 0.5 } else { 1.0 };
+        scale(base, (0.75 + 0.35 * bevel) * groove)
     })
 }
 
-/// Drywall with grime creeping up from the floor; `v` runs down the wall over
-/// one texture height (mapped to the wall's full height).
-pub fn drywall() -> Texture {
+/// Yellowed plaster with water stains and hairline cracks.
+pub fn plaster() -> Texture {
     paint(128, |u, v| {
-        let base = [0.58, 0.56, 0.5];
-        let grime = fbm(u, v, 4, 5, 41);
-        let low = (v - 0.7).max(0.0) * 2.5;
-        let mut color = scale(base, 0.8 + 0.3 * grime);
-        color = mix(
-            color,
-            [0.25, 0.22, 0.18],
-            (low * (0.6 + 0.6 * grime)).min(0.8),
-        );
-        if v > 0.94 {
-            color = [0.2, 0.19, 0.18];
-        }
-        color
+        let base = [0.52, 0.49, 0.43];
+        let stain = (fbm(u, v, 2, 4, 5) - 0.55).max(0.0) * 2.5;
+        let crack = (fbm(u, v, 4, 4, 17) - 0.5).abs() < 0.004;
+        let color = scale(mix(base, [0.36, 0.3, 0.2], stain), 0.9 + 0.2 * fbm(u, v, 8, 2, 3));
+        if crack { scale(color, 0.85) } else { color }
     })
 }
 
-/// Corrugated cardboard for the stock on the shelves.
-pub fn cardboard() -> Texture {
+/// Linen dust sheets: soft folds and settled dust.
+pub fn linen() -> Texture {
+    paint(128, |u, v| {
+        let fold = fbm(u * 0.5, v * 2.0, 4, 3, 31);
+        let weave = ((u * 128.0).sin() * (v * 128.0).sin()) * 0.03;
+        let shade = 0.7 + 0.35 * smooth(0.3, 0.7, fold) + weave;
+        let dust = fbm(u, v, 8, 3, 33) * 0.1;
+        scale([0.74, 0.71, 0.64], shade - dust)
+    })
+}
+
+/// Polished dark wood for furniture, frames and easels.
+pub fn wood() -> Texture {
     paint(64, |u, v| {
-        let base = [0.55, 0.4, 0.24];
-        let fiber = fbm(u, v, 4, 3, 71);
-        let tape = (v - 0.5).abs() < 0.06;
-        let color = scale(base, 0.8 + 0.3 * fiber);
-        if tape {
-            mix(color, [0.75, 0.62, 0.4], 0.6)
+        let grain = fbm(u * 0.5, v * 4.0, 8, 3, 43);
+        let rings = ((u * 12.0 + grain * 5.0).sin() * 0.5 + 0.5) * 0.3;
+        scale(mix([0.16, 0.09, 0.05], [0.28, 0.16, 0.09], grain), 0.85 + rings)
+    })
+}
+
+/// Tarnished gilt for picture frames.
+pub fn gilt() -> Texture {
+    paint(64, |u, v| {
+        let n = fbm(u, v, 8, 3, 51);
+        let bead = ((u * 40.0).sin() * (v * 40.0).sin()).abs();
+        let color = mix([0.33, 0.24, 0.08], [0.72, 0.56, 0.24], n * 0.7 + bead * 0.3);
+        if n < 0.35 {
+            scale(color, 0.5)
         } else {
             color
         }
     })
 }
 
-/// Painted steel for shelving, subtly mottled.
-pub fn steel() -> Texture {
+/// Worn leather, tinted per material for book spines.
+pub fn leather() -> Texture {
     paint(64, |u, v| {
-        let n = fbm(u, v, 4, 4, 91);
-        scale([0.42, 0.44, 0.47], 0.85 + 0.25 * n)
+        let n = fbm(u, v, 8, 3, 61);
+        let band = (v * 6.0).fract() < 0.06;
+        let tone = 0.7 + 0.4 * n;
+        if band {
+            [0.55, 0.45, 0.2]
+        } else {
+            [tone, tone * 0.95, tone * 0.9]
+        }
     })
+}
+
+/// Paper: lot tags, diary pages, the ledger.
+pub fn paper() -> Texture {
+    paint(64, |u, v| {
+        let n = fbm(u, v, 4, 3, 71);
+        let line = (v * 10.0).fract() < 0.06 && u > 0.15 && u < 0.85;
+        let color = scale([0.82, 0.76, 0.6], 0.85 + 0.2 * n);
+        if line {
+            scale(color, 0.6)
+        } else {
+            color
+        }
+    })
+}
+
+/// A Turkey carpet: border bands and a central medallion.
+pub fn rug(seed: u32) -> Texture {
+    paint(128, |u, v| {
+        let (x, y) = (u - 0.5, v - 0.5);
+        let edge = (0.5 - x.abs()).min(0.5 - y.abs());
+        let red = [0.34, 0.06, 0.05];
+        let blue = [0.07, 0.08, 0.2];
+        let gold = [0.5, 0.36, 0.14];
+        let mut color = if edge < 0.025 {
+            blue
+        } else if edge < 0.07 {
+            let t = (u.min(v) + u.max(v)) * 60.0;
+            if t.sin() * (edge * 200.0).sin() > 0.4 { gold } else { red }
+        } else if edge < 0.08 {
+            gold
+        } else {
+            let r = (x * x + y * y * 2.0).sqrt();
+            let lozenge = x.abs() + y.abs() * 1.4;
+            if lozenge < 0.16 {
+                gold
+            } else if lozenge < 0.22 || (r * 30.0).sin() > 0.93 {
+                blue
+            } else {
+                red
+            }
+        };
+        let wear = fbm(u, v, 4, 4, seed);
+        color = scale(color, 0.7 + 0.4 * wear);
+        mix(color, [0.25, 0.2, 0.16], (wear - 0.62).max(0.0) * 2.0)
+    })
+}
+
+/// Moonlit window glass: small panes and dark glazing bars.
+pub fn window_glass() -> Texture {
+    paint(64, |u, v| {
+        let bar = (u * 3.0).fract() < 0.07 || (v * 4.0).fract() < 0.06;
+        let sky = mix([0.55, 0.62, 0.8], [0.18, 0.22, 0.34], v);
+        let grime = fbm(u, v, 4, 3, 141);
+        if bar {
+            [0.03, 0.03, 0.03]
+        } else {
+            scale(sky, 0.6 + 0.5 * grime)
+        }
+    })
+}
+
+/// The pictures in the house.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Picture {
+    /// A lay figure's bust against a dark ground: smooth, faceless.
+    Sitter,
+    /// Figures standing about a dim room.
+    Group,
+    Landscape,
+    Seascape,
+    StillLife,
+    /// Clara, in grey silk. The only face he ever painted.
+    Clara,
+}
+
+pub const PICTURES: [Picture; 6] = [
+    Picture::Sitter,
+    Picture::Group,
+    Picture::Landscape,
+    Picture::Seascape,
+    Picture::StillLife,
+    Picture::Clara,
+];
+
+fn varnish(color: [f32; 3], u: f32, v: f32, seed: u32) -> [f32; 3] {
+    let yellow = mix(color, [color[0] * 1.05, color[1] * 0.92, color[2] * 0.6], 0.5);
+    let crack = (fbm(u, v, 8, 3, seed) - 0.5).abs() < 0.012;
+    let vignette = 1.0 - ((u - 0.5).powi(2) + (v - 0.5).powi(2)) * 1.4;
+    let c = scale(yellow, vignette.max(0.3) * (0.92 + 0.12 * fbm(u, v, 16, 2, seed + 1)));
+    if crack { scale(c, 0.55) } else { c }
+}
+
+fn figure_bust(u: f32, v: f32, cx: f32, cy: f32, s: f32) -> f32 {
+    let (x, y) = ((u - cx) / s, (v - cy) / s);
+    let head = (x * x / 0.018 + (y + 0.2).powi(2) / 0.03) < 1.0;
+    let neck = x.abs() < 0.05 && (-0.06..0.12).contains(&y);
+    let shoulders = y > 0.1 && (x * x / 0.16 + (y - 0.42).powi(2) / 0.1) < 1.0 && y < 0.5;
+    if head || neck || shoulders { 1.0 } else { 0.0 }
+}
+
+pub fn picture(kind: Picture) -> Texture {
+    match kind {
+        Picture::Sitter => paint(128, |u, v| {
+            let ground = mix([0.05, 0.04, 0.03], [0.16, 0.12, 0.08], fbm(u, v, 2, 4, 101));
+            let shape = figure_bust(u, v, 0.5, 0.45, 0.8);
+            let light = smooth(0.8, 0.2, u) * 0.6 + 0.4;
+            let body = scale([0.62, 0.52, 0.4], light);
+            let joint = ((v - 0.43).abs() < 0.012 && shape > 0.0) as u8 as f32;
+            let c = mix(ground, scale(body, 1.0 - joint * 0.5), shape);
+            varnish(c, u, v, 103)
+        }),
+        Picture::Group => paint(128, |u, v| {
+            let wall = mix([0.07, 0.06, 0.05], [0.2, 0.15, 0.1], smooth(1.0, 0.0, v));
+            let floor = v > 0.72;
+            let mut c = if floor { [0.09, 0.06, 0.04] } else { wall };
+            for (i, x) in [0.2, 0.38, 0.55, 0.8].into_iter().enumerate() {
+                let s = 0.2 + 0.03 * i as f32;
+                let top = 0.72 - s * 2.4;
+                let dx = (u - x).abs();
+                let body = dx < s * 0.18 && v > top + s * 0.35 && v < 0.74;
+                let head = (dx * dx + (v - top - s * 0.18).powi(2)).sqrt() < s * 0.16;
+                if body || head {
+                    c = scale([0.55, 0.47, 0.36], 0.5 + 0.5 * smooth(0.0, 1.0, 1.0 - dx * 8.0));
+                }
+            }
+            varnish(c, u, v, 107)
+        }),
+        Picture::Landscape => paint(128, |u, v| {
+            let sky = mix([0.42, 0.33, 0.2], [0.12, 0.13, 0.15], smooth(0.55, 0.0, v));
+            let hill = 0.55 + 0.08 * (u * 5.0).sin() + 0.04 * fbm(u, 0.0, 4, 3, 109);
+            let c = if v > hill {
+                mix([0.1, 0.1, 0.05], [0.05, 0.05, 0.03], fbm(u, v, 8, 3, 111))
+            } else if v > hill - 0.2 * fbm(u * 3.0, v, 4, 3, 113) && (u * 9.0).fract() < 0.3 {
+                [0.05, 0.06, 0.04]
+            } else {
+                scale(sky, 0.9 + 0.2 * fbm(u, v, 4, 3, 115))
+            };
+            varnish(c, u, v, 117)
+        }),
+        Picture::Seascape => paint(128, |u, v| {
+            let sky = mix([0.3, 0.3, 0.28], [0.1, 0.11, 0.13], smooth(0.5, 0.0, v));
+            let sea = mix([0.05, 0.08, 0.09], [0.15, 0.18, 0.17], fbm(u * 2.0, v * 8.0, 4, 3, 119));
+            let mut c = if v > 0.5 { sea } else { sky };
+            let ship = (u - 0.62).abs() < 0.01 && (0.35..0.5).contains(&v);
+            let hull = (u - 0.62).abs() < 0.05 && (0.48..0.52).contains(&v);
+            if ship || hull {
+                c = [0.04, 0.03, 0.03];
+            }
+            varnish(c, u, v, 121)
+        }),
+        Picture::StillLife => paint(128, |u, v| {
+            let ground = mix([0.04, 0.03, 0.02], [0.12, 0.08, 0.05], fbm(u, v, 2, 3, 123));
+            let table = v > 0.68;
+            let mut c = if table { [0.18, 0.1, 0.05] } else { ground };
+            let vase = ((u - 0.4) / 0.12).powi(2) + ((v - 0.55) / 0.15).powi(2) < 1.0
+                || ((u - 0.4).abs() < 0.04 && (0.32..0.45).contains(&v));
+            let skull = ((u - 0.68) / 0.09).powi(2) + ((v - 0.62) / 0.08).powi(2) < 1.0;
+            let socket = ((u - 0.65) / 0.02).powi(2) + ((v - 0.61) / 0.02).powi(2) < 1.0
+                || ((u - 0.71) / 0.02).powi(2) + ((v - 0.61) / 0.02).powi(2) < 1.0;
+            if vase {
+                c = [0.25, 0.2, 0.12];
+            }
+            if skull {
+                c = if socket { [0.02, 0.02, 0.02] } else { [0.62, 0.56, 0.44] };
+            }
+            varnish(c, u, v, 127)
+        }),
+        Picture::Clara => paint(128, |u, v| {
+            let ground = mix([0.06, 0.05, 0.05], [0.18, 0.15, 0.14], fbm(u, v, 2, 4, 131));
+            let shape = figure_bust(u, v, 0.5, 0.42, 0.75);
+            let (x, y) = (u - 0.5, v - 0.28);
+            let face = (x * x / 0.012 + y * y / 0.02) < 1.0;
+            let hair = (x * x / 0.02 + (y + 0.03).powi(2) / 0.022) < 1.0 && !face;
+            let eye = ((x.abs() - 0.035).powi(2) + (y + 0.01).powi(2)) < 0.00012;
+            let mut c = mix(ground, [0.36, 0.38, 0.4], shape);
+            if hair {
+                c = [0.1, 0.07, 0.05];
+            }
+            if face {
+                c = [0.72, 0.6, 0.52];
+            }
+            if eye {
+                c = [0.05, 0.04, 0.04];
+            }
+            varnish(c, u, v, 133)
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -172,7 +401,10 @@ mod tests {
 
     #[test]
     fn textures_have_full_rgba_payloads() {
-        for texture in [floor(), ceiling(), drywall(), cardboard(), steel()] {
+        for texture in [floorboards(), plaster(), wainscot(), linen(), wood(), gilt(), paper(), rug(1), window_glass()]
+            .into_iter()
+            .chain(PICTURES.map(picture))
+        {
             assert_eq!(
                 texture.data.len(),
                 (texture.width * texture.height * 4) as usize

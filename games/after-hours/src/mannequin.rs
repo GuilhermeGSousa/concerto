@@ -33,7 +33,7 @@ use crate::{
     },
     poses::{Menace, PoseLibrary},
     sfx::{Sfx, Sounds},
-    store::{CeilingLight, StoreEntity},
+    house::{HouseEntity, LightSource},
 };
 
 /// Mannequins have no physics body: the physics engine interpolates bodies
@@ -46,21 +46,34 @@ pub const CATCH_DISTANCE: f32 = 0.95;
 const NEAR_SIGHT: f32 = 2.6;
 const VIEW_MARGIN: f32 = 0.12;
 const SETTLE_FRAMES: u8 = 3;
-const STALK_CELLS: i32 = 3;
-const STALK_SPEED: f32 = 0.55;
-const WAKE_CELLS: i32 = 1;
+/// A stalker never comes closer than this.
+const STALK_KEEP_AWAY: f32 = 3.2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
-    /// Stalks the player whenever unseen.
-    Hunter,
-    /// Stands still.
-    Decoy,
+    /// Wood and linen. Never moves.
+    Inert,
+    /// Something is in it.
+    Possessed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mood {
+    Still,
+    /// Holds its place, but turns to follow you when you look away.
+    Watch,
+    /// Takes up a new place near you, out of sight.
+    Stalk,
+    /// Comes for you.
+    Hunt,
+    /// Withdraws somewhere far away after a hunt.
+    Retreat,
 }
 
 #[derive(Component)]
 pub struct Mannequin {
     pub kind: Kind,
+    pub mood: Mood,
     visual: Entity,
     finish: usize,
     anim: Option<Entity>,
@@ -68,26 +81,34 @@ pub struct Mannequin {
     wanted_pose: Option<usize>,
     settle: u8,
     pub observed: bool,
+    pub ever_seen: bool,
     unseen_for: f32,
+    /// Seconds watched without a break.
+    stare: f32,
     moving: bool,
     creak_timer: f32,
-    pub speed: f32,
+    fidget: f32,
+    mood_time: f32,
     pub yaw: f32,
-    dormant: f32,
+    target: Option<Cell>,
+    route: Vec<i32>,
+    one_shot: bool,
 }
 
 impl Mannequin {
     pub fn is_hunting(&self) -> bool {
-        self.kind == Kind::Hunter && self.dormant <= 0.0
-    }
-
-    pub fn wake(&mut self) {
-        self.kind = Kind::Hunter;
-        self.dormant = 0.0;
+        self.mood == Mood::Hunt
     }
 
     pub fn anim_entity(&self) -> Option<Entity> {
         self.anim
+    }
+
+    fn set_target(&mut self, level: &Level, cell: Cell) {
+        self.target = Some(cell);
+        self.route = level.distances(cell);
+        self.mood_time = 0.0;
+        self.moving = false;
     }
 }
 
@@ -95,30 +116,32 @@ impl Mannequin {
 #[derive(Component)]
 pub struct Dressed;
 
-#[allow(clippy::too_many_arguments)]
 pub fn spawn_mannequin(
     cmd: &mut CommandQueue,
     server: &AssetServer,
     feet: Vec3,
     yaw: f32,
     kind: Kind,
-    speed: f32,
     finish: usize,
     pose: usize,
-    dormant: f32,
 ) -> Entity {
     let visual = cmd
         .spawn((
-            StoreEntity,
+            HouseEntity,
             Transform::from_rotation(Quat::from_rotation_y(yaw)),
             SceneSpawnerComponent(server.load::<Scene>(content::MANNEQUIN_SCENE)),
         ))
         .entity();
     let root = cmd
         .spawn((
-            StoreEntity,
+            HouseEntity,
             Mannequin {
                 kind,
+                mood: if kind == Kind::Possessed {
+                    Mood::Watch
+                } else {
+                    Mood::Still
+                },
                 visual,
                 finish,
                 anim: None,
@@ -126,12 +149,17 @@ pub fn spawn_mannequin(
                 wanted_pose: Some(pose),
                 settle: 0,
                 observed: false,
+                ever_seen: false,
                 unseen_for: 0.0,
+                stare: 0.0,
                 moving: false,
                 creak_timer: 0.0,
-                speed,
+                fidget: 10.0,
+                mood_time: 0.0,
                 yaw,
-                dormant,
+                target: None,
+                route: Vec::new(),
+                one_shot: false,
             },
             Transform::from_translation(feet),
         ))
@@ -281,28 +309,6 @@ fn line_of_sight(sight: &Sight, from: Vec3, point: Vec3, owner: Entity) -> bool 
     hit.point.distance(start) >= distance - 0.4 - 0.05
 }
 
-/// Per sample point: (in view of the current eye, fogged irradiance, line of
-/// sight).
-pub fn explain_observation(sight: &Sight, owner: Entity, feet: Vec3) -> Vec<(bool, f32, bool)> {
-    [0.35, 1.1, 1.65]
-        .map(|h| feet + Vec3::Y * h)
-        .into_iter()
-        .map(|point| {
-            let fog = FOG.amount((point - sight.eye.position).length());
-            (
-                in_view(
-                    sight.eye.position,
-                    sight.eye.rotation,
-                    sight.eye.aspect,
-                    point,
-                ),
-                lighting::irradiance(point, sight.lights, sight.flashlight.as_ref()) * (1.0 - fog),
-                line_of_sight(sight, sight.eye.position, point, owner),
-            )
-        })
-        .collect()
-}
-
 /// Whether any part of the mannequin at `feet` can be seen from either eye.
 pub fn is_observed(sight: &Sight, owner: Entity, feet: Vec3) -> bool {
     if !sight.eye.valid {
@@ -342,37 +348,260 @@ pub struct Flow {
 #[derive(Resource, Default)]
 pub struct CurrentLevel(pub Option<Level>);
 
-fn next_waypoint(level: &Level, flow: &Flow, at: Vec3, goal: Vec3) -> Vec3 {
+/// How the possessed figures behave on a given night.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Rules {
+    pub max_stalkers: usize,
+    pub max_hunters: usize,
+    /// Seconds into the night before anything stalks.
+    pub stalk_after: f32,
+    /// Lots that must be catalogued before anything hunts.
+    pub hunt_after_lots: usize,
+    /// Seconds between hunts, as a random range.
+    pub hunt_gap: (f32, f32),
+    pub hunt_speed: f32,
+    pub stalk_speed: f32,
+    /// How long a hunt presses before it can be stared down.
+    pub hunt_duration: f32,
+    /// Night one's one-off: after this many lots, a figure you have seen is
+    /// somewhere else.
+    pub doubt_after_lots: Option<usize>,
+}
+
+/// Paces the night: who may stalk, who may hunt, and when.
+#[derive(Resource, Default)]
+pub struct Director {
+    pub rules: Rules,
+    pub lots_done: usize,
+    hunt_cooldown: f32,
+    stalk_cooldown: f32,
+    doubt_done: bool,
+    /// A cue for the audio: a figure has just started hunting here.
+    pub hunt_started: Option<Vec3>,
+}
+
+impl Director {
+    pub fn new(rules: Rules, rand: &mut Rand) -> Self {
+        Self {
+            rules,
+            lots_done: 0,
+            hunt_cooldown: rand.range(rules.hunt_gap.0, rules.hunt_gap.1) * 0.5,
+            stalk_cooldown: rules.stalk_after,
+            doubt_done: false,
+            hunt_started: None,
+        }
+    }
+}
+
+fn waypoint(level: &Level, distances: &[i32], at: Vec3, goal: Vec3) -> Vec3 {
     let cell = Cell::from_world(at);
-    if !level.contains(cell) || Some(cell) == flow.target || flow.distances.is_empty() {
+    if !level.contains(cell) || distances.is_empty() {
         return goal;
     }
-    let here = level.distance(&flow.distances, cell);
+    let here = level.distance(distances, cell);
+    if here == 0 {
+        return goal;
+    }
     let Some(next) = level
         .neighbors(cell)
-        .filter(|n| level.distance(&flow.distances, *n) < here)
-        .min_by_key(|n| level.distance(&flow.distances, *n))
+        .filter(|n| level.distance(distances, *n) < here)
+        .min_by_key(|n| level.distance(distances, *n))
     else {
         return goal;
     };
     let axis = (next.center() - cell.center()).normalize_or_zero();
     let offset = flat(at - cell.center());
     let lateral = offset - axis * offset.dot(axis);
-    if lateral.length() > 0.45 {
+    if lateral.length() > 0.3 {
         return cell.center() + axis * offset.dot(axis).max(0.0);
     }
     next.center()
 }
 
+/// A cell for a stalker to wait in: close to the player but not too close,
+/// preferably behind them, and away from the other figures.
+fn stalk_cell(
+    level: &Level,
+    flow: &Flow,
+    eye: &Eye,
+    player: Vec3,
+    taken: &[Cell],
+    rand: &mut Rand,
+) -> Option<Cell> {
+    let forward = flat(eye.forward()).normalize_or_zero();
+    level
+        .cells()
+        .filter(|c| {
+            let d = level.distance(&flow.distances, *c);
+            (2..=3).contains(&d)
+        })
+        .filter(|c| taken.iter().all(|t| t.manhattan(*c) >= 2))
+        .map(|c| {
+            let to = flat(c.center() - player).normalize_or_zero();
+            let behind = -to.dot(forward);
+            (c, behind * 2.0 + rand.unit())
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(c, _)| c)
+}
+
+/// A cell to withdraw to: far from the player and the other figures.
+fn retreat_cell(level: &Level, flow: &Flow, taken: &[Cell], rand: &mut Rand) -> Option<Cell> {
+    level
+        .cells()
+        .filter(|c| level.distance(&flow.distances, *c) >= 4)
+        .filter(|c| taken.iter().all(|t| t.manhattan(*c) >= 2))
+        .map(|c| (c, level.distance(&flow.distances, c).min(7) as f32 + rand.unit() * 3.0))
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(c, _)| c)
+}
+
+/// Decides moods: who stalks, who hunts, who gives up.
+#[allow(clippy::too_many_arguments)]
+pub fn direct(
+    mannequins: Query<(Entity, &mut Mannequin, &Transform), Without<Player>>,
+    players: Query<&Transform, With<Player>>,
+    eye: Res<Eye>,
+    (level, mut flow): (Res<CurrentLevel>, ResMut<Flow>),
+    mut director: ResMut<Director>,
+    game: Res<Game>,
+    (time, mut rand): (Res<Time>, ResMut<Rand>),
+) {
+    let Some(level) = level.0.as_ref() else {
+        return;
+    };
+    let Some(player) = players.iter().next() else {
+        return;
+    };
+    let player_cell = Cell::from_world(player.translation);
+    if flow.target != Some(player_cell) && level.contains(player_cell) {
+        flow.target = Some(player_cell);
+        flow.distances = level.distances(player_cell);
+    }
+    if !game.is_live() || crate::platform::debug_flag("nohunt") {
+        return;
+    }
+    let dt = time.delta().as_secs_f32();
+    let rules = director.rules;
+    director.stalk_cooldown -= dt;
+    let hunting = mannequins
+        .iter()
+        .filter(|(_, m, _)| m.mood == Mood::Hunt)
+        .count();
+    if hunting == 0 && director.lots_done >= rules.hunt_after_lots {
+        director.hunt_cooldown -= dt;
+    }
+
+    let mut taken: Vec<Cell> = mannequins
+        .iter()
+        .map(|(_, m, t)| m.target.unwrap_or(Cell::from_world(t.translation)))
+        .collect();
+    taken.push(player_cell);
+
+    // Night one: a figure you have already seen is suddenly somewhere else.
+    if let Some(after) = rules.doubt_after_lots
+        && !director.doubt_done
+        && director.lots_done >= after
+    {
+        let candidate = mannequins.iter().find(|(_, m, t)| {
+            m.ever_seen
+                && !m.observed
+                && level.distance(&flow.distances, Cell::from_world(t.translation)) >= 2
+        });
+        if let Some((_, mut m, _)) = candidate
+            && let Some(cell) = stalk_cell(level, &flow, &eye, player.translation, &taken, &mut rand)
+        {
+            m.set_target(level, cell);
+            m.mood = Mood::Stalk;
+            m.one_shot = true;
+            director.doubt_done = true;
+        }
+    }
+
+    for (_, mut m, t) in mannequins.iter() {
+        if m.kind != Kind::Possessed {
+            continue;
+        }
+        m.mood_time += dt;
+        let cell = Cell::from_world(t.translation);
+        let away = level.distance(&flow.distances, cell);
+        match m.mood {
+            Mood::Hunt => {
+                let stared_down = m.stare >= 1.2 && m.mood_time > rules.hunt_duration;
+                let lost_you = away > 6;
+                let tired = m.mood_time > rules.hunt_duration * 2.5 && !m.observed;
+                if stared_down || lost_you || tired {
+                    if let Some(c) = retreat_cell(level, &flow, &taken, &mut rand) {
+                        m.set_target(level, c);
+                        m.mood = Mood::Retreat;
+                    } else {
+                        m.mood = Mood::Watch;
+                    }
+                    director.hunt_cooldown = rand.range(rules.hunt_gap.0, rules.hunt_gap.1);
+                }
+            }
+            Mood::Stalk if m.target.is_none() && m.mood_time > rand.range(8.0, 16.0) && away >= 4 => {
+                m.mood = Mood::Watch;
+            }
+            _ => {}
+        }
+    }
+
+    let stalking = mannequins
+        .iter()
+        .filter(|(_, m, _)| m.mood == Mood::Stalk && !m.one_shot)
+        .count();
+    if stalking < rules.max_stalkers && director.stalk_cooldown <= 0.0 {
+        director.stalk_cooldown = rand.range(6.0, 14.0);
+        let pick = mannequins
+            .iter()
+            .filter(|(_, m, _)| m.kind == Kind::Possessed && m.mood == Mood::Watch && !m.observed)
+            .map(|(e, _, t)| (e, level.distance(&flow.distances, Cell::from_world(t.translation))))
+            .filter(|(_, d)| *d >= 3)
+            .max_by_key(|(_, d)| *d);
+        if let Some((e, _)) = pick
+            && let Some(cell) = stalk_cell(level, &flow, &eye, player.translation, &taken, &mut rand)
+            && let Some((_, mut m, _)) = mannequins.get_entity(e)
+        {
+            m.set_target(level, cell);
+            m.mood = Mood::Stalk;
+        }
+    }
+
+    if hunting < rules.max_hunters && director.hunt_cooldown <= 0.0 && director.lots_done >= rules.hunt_after_lots {
+        let pick = mannequins
+            .iter()
+            .filter(|(_, m, _)| {
+                m.kind == Kind::Possessed && matches!(m.mood, Mood::Watch | Mood::Stalk) && !m.observed
+            })
+            .map(|(e, _, t)| (e, t.translation, level.distance(&flow.distances, Cell::from_world(t.translation))))
+            .filter(|(_, _, d)| (2..=5).contains(d))
+            .min_by_key(|(_, _, d)| *d);
+        if let Some((e, at, _)) = pick
+            && let Some((_, mut m, _)) = mannequins.get_entity(e)
+        {
+            m.mood = Mood::Hunt;
+            m.mood_time = 0.0;
+            m.moving = false;
+            m.target = None;
+            m.route.clear();
+            m.stare = 0.0;
+            director.hunt_started = Some(at);
+            director.hunt_cooldown = rand.range(rules.hunt_gap.0, rules.hunt_gap.1);
+        }
+    }
+}
+
+/// Moves whatever is unseen and has somewhere to be.
 #[allow(clippy::too_many_arguments)]
 pub fn hunt(
     mannequins: Query<(Entity, &mut Mannequin, &mut Transform), Without<Player>>,
     players: Query<&Transform, With<Player>>,
     flashlights: Query<&Flashlight>,
-    ceiling_lights: Query<(&Light, &Transform), (With<CeilingLight>, Without<Mannequin>)>,
+    candles: Query<(&Light, &Transform), (With<LightSource>, Without<Mannequin>)>,
     (eye, physics): (Res<Eye>, Res<PhysicsState>),
-    (level, mut flow, library): (Res<CurrentLevel>, ResMut<Flow>, Res<PoseLibrary>),
-    (mut game, mut caught): (ResMut<Game>, ResMut<crate::scare::Caught>),
+    (level, flow, library): (Res<CurrentLevel>, Res<Flow>, Res<PoseLibrary>),
+    (mut game, mut caught, director): (ResMut<Game>, ResMut<crate::scare::Caught>, Res<Director>),
     (time, mut rand): (Res<Time>, ResMut<Rand>),
     (mut audio, mut sounds): (ResMut<Audio>, ResMut<Sounds>),
 ) {
@@ -386,13 +615,7 @@ pub fn hunt(
     let player_pos = player.translation;
     let live = game.is_live();
 
-    let player_cell = Cell::from_world(player_pos);
-    if flow.target != Some(player_cell) && level.contains(player_cell) {
-        flow.target = Some(player_cell);
-        flow.distances = level.distances(player_cell);
-    }
-
-    let lights: Vec<PointLight> = ceiling_lights
+    let mut lights: Vec<PointLight> = candles
         .iter()
         .filter(|(light, ..)| light.intensity > 0.0)
         .map(|(light, t)| PointLight {
@@ -401,6 +624,11 @@ pub fn hunt(
             range: light.range,
         })
         .collect();
+    lights.extend(flashlights.iter().filter(|f| f.is_emitting()).map(|f| PointLight {
+        position: eye.position + eye.rotation * FLASHLIGHT_OFFSET,
+        intensity: f.glow(),
+        range: crate::player::LANTERN_GLOW_RANGE,
+    }));
     let flashlight = flashlights
         .iter()
         .find(|f| f.is_emitting())
@@ -425,35 +653,14 @@ pub fn hunt(
 
     for (entity, mut mannequin, mut transform) in mannequins.iter() {
         let feet = transform.translation;
-        let cell = Cell::from_world(feet);
-        let cells_away = if level.contains(cell) && !flow.distances.is_empty() {
-            level.distance(&flow.distances, cell)
-        } else {
-            i32::MAX
-        };
-        if live && mannequin.kind == Kind::Hunter && mannequin.dormant > 0.0 {
-            mannequin.dormant -= dt;
-            if cells_away <= WAKE_CELLS {
-                mannequin.dormant = 0.0;
-            }
-        }
         mannequin.observed = is_observed(&sight, entity, feet);
-        if mannequin.observed
-            && crate::platform::debug_flag("trace")
-            && (feet - eye.position).length() > 12.0
-            && rand.unit() < 0.02
-        {
-            log::info!(
-                "trace: far observation at {feet:?} from {:?}: {:?}",
-                eye.position,
-                explain_observation(&sight, entity, feet)
-            );
+        if mannequin.observed {
+            mannequin.ever_seen = true;
+            mannequin.stare += dt;
+        } else {
+            mannequin.stare = 0.0;
         }
-        if mannequin.observed
-            || !live
-            || !mannequin.is_hunting()
-            || crate::platform::debug_flag("nohunt")
-        {
+        if mannequin.observed || !live || crate::platform::debug_flag("nohunt") {
             mannequin.unseen_for = 0.0;
             mannequin.moving = false;
             continue;
@@ -465,26 +672,65 @@ pub fn hunt(
 
         let to_player = flat(player_pos - feet);
         let distance = to_player.length();
+
+        if mannequin.kind == Kind::Possessed && mannequin.mood == Mood::Watch {
+            // Watching: turns to follow you, and now and then shifts its pose.
+            if distance < CELL * 3.5 {
+                let facing = yaw_toward(to_player);
+                let turn = (facing - mannequin.yaw + std::f32::consts::PI)
+                    .rem_euclid(std::f32::consts::TAU)
+                    - std::f32::consts::PI;
+                if turn.abs() > 0.3 {
+                    mannequin.yaw = facing;
+                    if distance < CELL * 2.5 {
+                        let (volume, pan) = spatialize(&eye, feet + Vec3::Y * 1.6);
+                        sounds.play_at(&mut audio, Sfx::Click, volume * 0.25, pan);
+                    }
+                }
+                mannequin.fidget -= dt;
+                if mannequin.fidget <= 0.0 {
+                    mannequin.fidget = rand.range(15.0, 30.0);
+                    mannequin.wanted_pose = library.pick(Menace::Uneasy, mannequin.pose, &mut rand);
+                }
+            }
+            continue;
+        }
+
+        let (goal, distances, speed) = match mannequin.mood {
+            Mood::Hunt => (player_pos, &flow.distances, director.rules.hunt_speed),
+            Mood::Stalk | Mood::Retreat => {
+                let Some(target) = mannequin.target else {
+                    continue;
+                };
+                let speed = if mannequin.mood == Mood::Retreat {
+                    director.rules.stalk_speed * 1.4
+                } else {
+                    director.rules.stalk_speed
+                };
+                (target.center(), &mannequin.route, speed)
+            }
+            _ => continue,
+        };
+        let distances = distances.clone();
+
         if !mannequin.moving {
             mannequin.moving = true;
-            let cells_away = distance / CELL;
-            let menace = if cells_away < 1.2 {
-                Menace::Hunting
-            } else if cells_away < 3.0 {
-                if rand.unit() < 0.6 {
-                    Menace::Hunting
-                } else {
-                    Menace::Uneasy
+            let menace = match mannequin.mood {
+                Mood::Hunt if distance < CELL * 1.5 => Menace::Hunting,
+                Mood::Hunt => {
+                    if rand.unit() < 0.5 {
+                        Menace::Hunting
+                    } else {
+                        Menace::Uneasy
+                    }
                 }
-            } else if rand.unit() < 0.6 {
-                Menace::Uneasy
-            } else {
-                Menace::Display
+                Mood::Stalk if !mannequin.one_shot && rand.unit() < 0.6 => Menace::Uneasy,
+                _ => Menace::Display,
             };
             mannequin.wanted_pose = library.pick(menace, mannequin.pose, &mut rand);
         }
 
-        if distance < CATCH_DISTANCE {
+        if mannequin.mood == Mood::Hunt && distance < CATCH_DISTANCE {
             if !caught.active {
                 caught.catch(entity);
                 game.set_phase(crate::game::Phase::Caught);
@@ -492,31 +738,54 @@ pub fn hunt(
             continue;
         }
 
-        let waypoint = next_waypoint(level, &flow, feet, player_pos);
-        let mut dir = flat(waypoint - feet).normalize_or_zero();
+        let arrived = flat(goal - feet).length() < 0.15;
+        let too_close = mannequin.mood == Mood::Stalk && distance < STALK_KEEP_AWAY;
+        if mannequin.mood != Mood::Hunt && (arrived || too_close) {
+            mannequin.target = None;
+            mannequin.route.clear();
+            mannequin.moving = false;
+            mannequin.yaw = yaw_toward(to_player);
+            mannequin.mood_time = 0.0;
+            if mannequin.one_shot {
+                mannequin.one_shot = false;
+                mannequin.kind = Kind::Inert;
+                mannequin.mood = Mood::Still;
+            } else if mannequin.mood == Mood::Retreat {
+                mannequin.mood = Mood::Watch;
+            }
+            continue;
+        }
+
+        let way = waypoint(level, &distances, feet, goal);
+        let mut dir = flat(way - feet).normalize_or_zero();
         for &(other, pos) in &positions {
             if other != entity {
                 let away = flat(feet - pos);
                 let d = away.length();
-                if d < 0.8 && d > 1e-3 {
-                    dir += away / d * (0.8 - d) * 2.0;
+                if d < 1.0 && d > 1e-3 {
+                    dir += away / d * (1.0 - d) * 2.0;
                 }
             }
         }
-        let speed = if cells_away > STALK_CELLS {
-            mannequin.speed * STALK_SPEED
+        let limit = if mannequin.mood == Mood::Hunt {
+            (distance - CATCH_DISTANCE * 0.8).max(0.0)
         } else {
-            mannequin.speed
+            flat(goal - feet).length()
         };
-        let step = (speed * dt).min((distance - CATCH_DISTANCE * 0.8).max(0.0));
+        let step = (speed * dt).min(limit);
         transform.translation = feet + dir.normalize_or_zero() * step;
-        mannequin.yaw = yaw_toward(to_player);
+        mannequin.yaw = if mannequin.mood == Mood::Hunt {
+            yaw_toward(to_player)
+        } else {
+            yaw_toward(dir)
+        };
 
         mannequin.creak_timer -= dt;
         if mannequin.creak_timer <= 0.0 {
             mannequin.creak_timer = rand.range(0.7, 1.4);
             let (volume, pan) = spatialize(&eye, feet + Vec3::Y);
-            sounds.play_at(&mut audio, Sfx::Creak, volume * 0.9, pan);
+            let loud = if mannequin.mood == Mood::Hunt { 0.9 } else { 0.45 };
+            sounds.play_at(&mut audio, Sfx::Creak, volume * loud, pan);
         }
     }
 }

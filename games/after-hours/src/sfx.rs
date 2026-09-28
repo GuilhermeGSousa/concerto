@@ -13,11 +13,16 @@ pub enum Sfx {
     FlashlightClick,
     FlashlightDie,
     Flicker,
-    /// Plastic and fibreglass shifting somewhere you are not looking.
+    /// Wooden joints shifting somewhere you are not looking.
     Creak,
-    KeyPickup,
-    BatteryPickup,
-    Unlock,
+    /// Pen on paper and a soft bell: a lot catalogued.
+    Catalogue,
+    Oil,
+    Page,
+    /// Two wooden knocks: something has started to hunt.
+    Knock,
+    /// A candle going out.
+    Snuff,
     Escape,
     /// The jumpscare hit.
     Stinger,
@@ -25,8 +30,8 @@ pub enum Sfx {
     Heartbeat,
     Click,
     NightStart,
-    /// A faint music-box note from the nearest key (or the unlocked exit), so
-    /// the maze can be navigated by ear.
+    /// A faint music-box note from the nearest lot (or the ledger), so the
+    /// house can be navigated by ear.
     Chime,
 }
 
@@ -175,69 +180,92 @@ fn build(sfx: Sfx) -> Mix {
             );
             mix
         }
-        Sfx::KeyPickup => {
-            let mut mix = Mix::new(0.9);
-            for (i, note) in [81, 88].into_iter().enumerate() {
+        Sfx::Catalogue => {
+            let mut mix = Mix::with_seed(1.4, 41);
+            for i in 0..5 {
                 mix.add(
-                    i as f32 * 0.07,
-                    Tone::new(Wave::Sine, midi(note), 0.7)
+                    i as f32 * 0.09,
+                    Tone::new(Wave::Noise, 0.0, 0.07)
+                        .lowpass(6000.0, 2500.0)
+                        .attack(0.01)
                         .decay(2.5)
-                        .volume(0.5),
+                        .volume(0.25),
+                );
+            }
+            mix.add(
+                0.5,
+                Tone::new(Wave::Sine, midi(76), 0.9)
+                    .decay(2.5)
+                    .volume(0.35),
+            )
+            .add(
+                0.5,
+                Tone::new(Wave::Sine, midi(76) * 2.76, 0.4)
+                    .decay(4.0)
+                    .volume(0.08),
+            );
+            mix
+        }
+        Sfx::Oil => {
+            let mut mix = Mix::with_seed(0.5, 43);
+            mix.add(
+                0.0,
+                Tone::new(Wave::Sine, 520.0, 0.12)
+                    .sweep(380.0)
+                    .decay(3.0)
+                    .volume(0.3),
+            )
+            .add(
+                0.1,
+                Tone::new(Wave::Noise, 0.0, 0.3)
+                    .lowpass(1200.0, 400.0)
+                    .vibrato(9.0, 0.3)
+                    .decay(1.5)
+                    .volume(0.3),
+            );
+            mix
+        }
+        Sfx::Page => {
+            let mut mix = Mix::with_seed(0.5, 47);
+            mix.add(
+                0.0,
+                Tone::new(Wave::Noise, 0.0, 0.35)
+                    .lowpass(5000.0, 1500.0)
+                    .attack(0.05)
+                    .decay(1.8)
+                    .volume(0.5),
+            );
+            mix
+        }
+        Sfx::Knock => {
+            let mut mix = Mix::with_seed(0.8, 53);
+            for at in [0.0, 0.22] {
+                mix.add(
+                    at,
+                    Tone::new(Wave::Sine, 190.0, 0.12)
+                        .sweep(120.0)
+                        .decay(4.0)
+                        .volume(0.9),
                 )
                 .add(
-                    i as f32 * 0.07,
-                    Tone::new(Wave::Sine, midi(note) * 2.76, 0.3)
-                        .decay(4.0)
-                        .volume(0.15),
+                    at,
+                    Tone::new(Wave::Noise, 0.0, 0.05)
+                        .lowpass(2500.0, 600.0)
+                        .decay(3.0)
+                        .volume(0.6),
                 );
             }
             mix
         }
-        Sfx::BatteryPickup => {
-            let mut mix = Mix::new(0.3);
+        Sfx::Snuff => {
+            let mut mix = Mix::with_seed(0.6, 59);
             mix.add(
                 0.0,
-                Tone::new(Wave::Square, 700.0, 0.06)
-                    .lowpass(3000.0, 2000.0)
-                    .decay(2.0)
-                    .volume(0.35),
-            )
-            .add(
-                0.08,
-                Tone::new(Wave::Square, 1050.0, 0.1)
-                    .lowpass(3000.0, 2000.0)
-                    .decay(2.0)
-                    .volume(0.35),
-            );
-            mix
-        }
-        Sfx::Unlock => {
-            let mut mix = Mix::with_seed(1.5, 29);
-            mix.add(
-                0.0,
-                Tone::new(Wave::Noise, 0.0, 0.25)
-                    .lowpass(1800.0, 300.0)
-                    .decay(2.0)
-                    .volume(0.7),
-            )
-            .add(
-                0.0,
-                Tone::new(Wave::Sine, 70.0, 0.4)
-                    .sweep(45.0)
-                    .decay(2.0)
-                    .volume(0.8),
-            )
-            .add(
-                0.3,
-                Tone::new(Wave::Triangle, midi(57), 1.1)
-                    .decay(1.5)
-                    .volume(0.3),
-            )
-            .add(
-                0.3,
-                Tone::new(Wave::Triangle, midi(64), 1.1)
-                    .decay(1.5)
-                    .volume(0.25),
+                Tone::new(Wave::Noise, 0.0, 0.5)
+                    .lowpass(900.0, 250.0)
+                    .attack(0.08)
+                    .decay(1.6)
+                    .volume(0.6),
             );
             mix
         }
@@ -379,26 +407,37 @@ fn ambience() -> Mix {
     let mut mix = Mix::with_seed(length, 97);
     mix.add(
         0.0,
-        Tone::new(Wave::Sine, 60.0, length).decay(0.0).volume(0.35),
-    )
-    .add(
-        0.0,
-        Tone::new(Wave::Sine, 120.0, length).decay(0.0).volume(0.25),
-    )
-    .add(
-        0.0,
-        Tone::new(Wave::Square, 120.0, length)
-            .lowpass(900.0, 900.0)
-            .decay(0.0)
-            .volume(0.04),
-    );
-    mix.add(
-        0.0,
         Tone::new(Wave::Noise, 0.0, length)
-            .lowpass(180.0, 180.0)
+            .lowpass(140.0, 140.0)
             .decay(0.0)
-            .volume(0.9),
+            .volume(0.8),
     );
+    for (start, dur, cutoff) in [(0.0, 9.0, 420.0), (7.0, 8.0, 600.0), (14.0, 10.0, 380.0)] {
+        mix.add(
+            start,
+            Tone::new(Wave::Noise, 0.0, dur)
+                .lowpass(cutoff, cutoff * 0.5)
+                .attack(dur * 0.5)
+                .decay(1.2)
+                .volume(0.35),
+        );
+    }
+    for i in 0..24 {
+        let tock = i % 2 == 1;
+        mix.add(
+            i as f32,
+            Tone::new(Wave::Noise, 0.0, 0.03)
+                .lowpass(if tock { 2400.0 } else { 3600.0 }, 1800.0)
+                .decay(4.0)
+                .volume(0.16),
+        )
+        .add(
+            i as f32,
+            Tone::new(Wave::Sine, if tock { 700.0 } else { 900.0 }, 0.03)
+                .decay(5.0)
+                .volume(0.05),
+        );
+    }
     for (start, note, dur) in [
         (0.0, 38, 11.0),
         (6.0, 45, 9.0),
@@ -412,22 +451,24 @@ fn ambience() -> Mix {
                 .decay(1.5)
                 .vibrato(0.2, 0.006)
                 .lowpass(500.0, 500.0)
-                .volume(0.35),
+                .volume(0.3),
         );
     }
     mix
 }
 
-pub const ALL: [Sfx; 15] = [
+pub const ALL: [Sfx; 17] = [
     Sfx::Chime,
     Sfx::Footstep,
     Sfx::FlashlightClick,
     Sfx::FlashlightDie,
     Sfx::Flicker,
     Sfx::Creak,
-    Sfx::KeyPickup,
-    Sfx::BatteryPickup,
-    Sfx::Unlock,
+    Sfx::Catalogue,
+    Sfx::Oil,
+    Sfx::Page,
+    Sfx::Knock,
+    Sfx::Snuff,
     Sfx::Escape,
     Sfx::Stinger,
     Sfx::DeathDrone,
