@@ -8,7 +8,10 @@ use concerto_render::components::fallback_material::{fallback_material_asset, Cl
 fn the_fallback_material_is_opaque_magenta() {
     let material = fallback_material_asset();
 
-    assert_eq!(material.base_color_factor(), Color::rgba(1.0, 0.0, 1.0, 1.0));
+    assert_eq!(
+        material.base_color_factor(),
+        Color::rgba(1.0, 0.0, 1.0, 1.0)
+    );
 }
 
 #[test]

@@ -194,7 +194,7 @@ impl Plugin for RenderPlugin {
         app.add_render_system(Extract, extract_cameras)
             .add_render_system(Extract, extract_meshes)
             .add_render_system(Extract, extract_lights)
-            .add_render_system(Extract, extract_skeletons);
+            .add_render_system(Extract, extract_skeletons.after(extract_meshes));
 
         if is_windowed {
             app.add_system(Update, update_window::request_window_resize)

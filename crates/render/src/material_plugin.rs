@@ -19,10 +19,10 @@ use crate::{
         camera::RenderCamera,
         fallback_material::{insert_fallback_material, ClaimedSlots, UsesFallbackMaterial},
         material::{MaterialComponent, RenderMaterialComponent},
-        mesh::{extract_meshes, RenderMeshInstance},
+        mesh::{extract_meshes, RenderMeshFanout, RenderMeshInstance},
         render_entity::RenderEntity,
         shadows::RenderLighting,
-        skeleton::{RenderSkeletonComponent, SkinUniforms},
+        skeleton::{RenderSkinOffset, SkinUniforms},
     },
     device::RenderDevice,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
@@ -140,12 +140,14 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into a `RenderMaterialComponent<M>` on
-// each render instance whose primitive slot its binding covers. Every covered
+// each primitive entity of the owner's `RenderMeshFanout` whose slot its
+// binding covers. Every covered
 // slot is recorded in `ClaimedSlots`, whether or not it changed, so the
 // fallback pass in `Render` knows which instances nothing claimed. An
 // instance already drawing with the fallback swaps it out for this material.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
+    fanouts: Query<&RenderMeshFanout>,
     render_meshes: Query<&RenderMeshInstance>,
     render_materials: Query<&RenderMaterialComponent<M>>,
     fallback_users: Query<&UsesFallbackMaterial>,
@@ -153,35 +155,39 @@ pub(crate) fn extract_materials<M: Material>(
     mut cmd: CommandQueue,
 ) {
     for (material, render_entity) in materials.iter() {
-        let entity = **render_entity;
-
-        let Some(instance) = render_meshes.get_entity(entity) else {
-            continue;
-        };
-        let Some(handle) = material.binding.slot(instance.primitive) else {
+        let Some(fanout) = fanouts.get_entity(**render_entity) else {
             continue;
         };
 
-        if claimed.claim(entity) {
-            log::warn!(
-                "primitive slot {} is claimed by more than one material type; it will draw once per type",
-                instance.primitive
-            );
-        }
+        for &entity in &fanout.primitives {
+            let Some(instance) = render_meshes.get_entity(entity) else {
+                continue;
+            };
+            let Some(handle) = material.binding.slot(instance.primitive) else {
+                continue;
+            };
 
-        let uses_fallback = fallback_users.get_entity(entity).is_some();
-        let is_current = render_materials
-            .get_entity(entity)
-            .is_some_and(|current| current.material_asset_id == handle.id());
-        if is_current && !uses_fallback {
-            continue;
-        }
+            if claimed.claim(entity) {
+                log::warn!(
+                    "primitive slot {} is claimed by more than one material type; it will draw once per type",
+                    instance.primitive
+                );
+            }
 
-        if uses_fallback {
-            cmd.remove::<RenderMaterialComponent<StandardMaterial>>(entity);
-            cmd.remove::<UsesFallbackMaterial>(entity);
+            let uses_fallback = fallback_users.get_entity(entity).is_some();
+            let is_current = render_materials
+                .get_entity(entity)
+                .is_some_and(|current| current.material_asset_id == handle.id());
+            if is_current && !uses_fallback {
+                continue;
+            }
+
+            if uses_fallback {
+                cmd.remove::<RenderMaterialComponent<StandardMaterial>>(entity);
+                cmd.remove::<UsesFallbackMaterial>(entity);
+            }
+            cmd.insert(RenderMaterialComponent::<M>::new(handle.id()), entity);
         }
-        cmd.insert(RenderMaterialComponent::<M>::new(handle.id()), entity);
     }
 }
 
@@ -243,7 +249,7 @@ pub(crate) fn material_renderpass<M: Material>(
     mut device: ResMut<RenderDevice>,
     render_mesh_query: Query<(
         &RenderMeshInstance,
-        Option<&RenderSkeletonComponent>,
+        Option<&RenderSkinOffset>,
         &RenderMaterialComponent<M>,
     )>,
     render_cameras: Query<&RenderCamera>,

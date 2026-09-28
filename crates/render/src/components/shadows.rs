@@ -18,7 +18,7 @@ use crate::{
     components::{
         light::{push_render_light_to_gpu, LightType, RenderLight, RenderLights},
         mesh::RenderMeshInstance,
-        skeleton::{RenderSkeletonComponent, SkinUniforms},
+        skeleton::{RenderSkinOffset, SkinUniforms},
     },
     device::RenderDevice,
     layouts::LightingLayout,
@@ -573,7 +573,7 @@ pub(crate) fn render_shadow_maps(
     spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
     _point_shadow_maps: Res<RenderPointShadowMaps>,
     lights: Query<(&RenderLight, &RenderShadowCasterViewProj)>,
-    render_mesh_query: Query<(&RenderMeshInstance, Option<&RenderSkeletonComponent>)>,
+    render_mesh_query: Query<(&RenderMeshInstance, Option<&RenderSkinOffset>)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     skins: Res<SkinUniforms>,
 ) {
