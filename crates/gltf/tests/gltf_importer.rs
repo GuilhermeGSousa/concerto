@@ -6,9 +6,15 @@ use std::path::Path;
 
 use concerto_asset_import::{ImportContext, Importer};
 use concerto_ecs::component::Component;
+use concerto_foundation::assets::Asset;
 use concerto_foundation::assets::AssetId;
 use concerto_gltf::gltf_importer::GltfImporter;
-use concerto_mesh::{SkeletonComponent, mesh::MeshComponent};
+use concerto_mesh::{
+    SkeletonComponent,
+    mesh::{Mesh, MeshComponent},
+};
+use concerto_render::assets::material::StandardMaterial;
+use concerto_render::components::material::{MaterialComponent, SlotBinding};
 use concerto_scene::scene::{Scene, SceneNode};
 
 /// The `AssetId` the node's `MeshComponent` payload points at, if it has one.
@@ -198,92 +204,148 @@ fn import_tracks_external_buffer_as_dependency() {
     );
 }
 
-#[test]
-fn import_flattens_multi_primitive_mesh_into_child_nodes() {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle_two_prims.gltf");
-    let relative_source = Path::new("triangle_two_prims.gltf");
-    let mut ctx = ImportContext::new(relative_source.to_path_buf());
-
+fn import_fixture(file_name: &str) -> concerto_asset_import::ImportOutputs {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(file_name);
+    let mut ctx = ImportContext::new(std::path::PathBuf::from(file_name));
     GltfImporter
         .import(&fixture, &mut ctx)
-        .expect("importing the two-primitive fixture should succeed");
-    let outputs = ctx.into_parts();
+        .unwrap_or_else(|err| panic!("importing {file_name} should succeed: {err:?}"));
+    ctx.into_parts()
+}
 
-    let names: Vec<&str> = outputs.sub_assets.iter().map(|s| s.name.as_str()).collect();
-    for expected in ["mesh/0", "mesh/1", "material/0", "scene"] {
-        assert!(
-            names.contains(&expected),
-            "expected a {expected} sub-asset, got: {names:?}"
-        );
-    }
-
-    let scene_entry = outputs
+fn mesh_sub_asset_names(outputs: &concerto_asset_import::ImportOutputs) -> Vec<&str> {
+    outputs
         .sub_assets
         .iter()
-        .find(|s| s.name == "scene")
+        .filter(|sub| sub.type_name == Mesh::name())
+        .map(|sub| sub.name.as_str())
+        .collect()
+}
+
+fn scene_of(outputs: &concerto_asset_import::ImportOutputs) -> Scene {
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|sub| sub.name == "scene")
+        .expect("a scene sub-asset is emitted");
+    bincode::deserialize(&entry.bytes).expect("the scene deserializes")
+}
+
+fn material_of(node: &SceneNode) -> MaterialComponent<StandardMaterial> {
+    let payload = node
+        .components
+        .iter()
+        .find(|c| c.type_name == MaterialComponent::<StandardMaterial>::name())
+        .expect("the node carries a MaterialComponent");
+    serde_json::from_str(&payload.data).expect("a MaterialComponent payload must deserialize")
+}
+
+#[test]
+fn a_multi_primitive_gltf_mesh_emits_one_sub_asset_holding_every_primitive() {
+    let outputs = import_fixture("triangle_two_prims.gltf");
+
+    assert_eq!(mesh_sub_asset_names(&outputs), vec!["mesh/0"]);
+
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|sub| sub.name == "mesh/0")
         .unwrap();
-    let cooked_scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
+    let mesh: Mesh = bincode::deserialize(&entry.bytes).expect("payload is a Mesh");
+    assert_eq!(mesh.primitives.len(), 2);
+}
+
+#[test]
+fn a_multi_primitive_node_draws_its_mesh_without_synthesized_children() {
+    let outputs = import_fixture("triangle_two_prims.gltf");
+    let scene = scene_of(&outputs);
+
+    assert_eq!(scene.nodes.len(), 1, "primitives fan out at extract time");
+    let node = &scene.nodes[0];
+    assert_eq!(node.name, "Triangle");
+    assert!(node.children.is_empty());
     assert_eq!(
-        cooked_scene.nodes.len(),
-        3,
-        "one parent node plus one appended child node per primitive"
+        mesh_handle_id(node),
+        Some(AssetId::from_path("triangle_two_prims.gltf#mesh/0"))
+    );
+    assert!(
+        matches!(material_of(node).binding, SlotBinding::All(_)),
+        "primitives sharing one material bind it to every slot"
+    );
+}
+
+#[test]
+fn a_mesh_sub_asset_is_named_after_its_source_mesh() {
+    let outputs = import_fixture("barrel_per_primitive_materials.gltf");
+
+    assert_eq!(mesh_sub_asset_names(&outputs), vec!["mesh/Barrel"]);
+    assert_eq!(
+        mesh_handle_id(&scene_of(&outputs).nodes[0]),
+        Some(AssetId::from_path(
+            "barrel_per_primitive_materials.gltf#mesh/Barrel"
+        ))
+    );
+}
+
+#[test]
+fn primitives_with_different_materials_bind_one_per_slot() {
+    let outputs = import_fixture("barrel_per_primitive_materials.gltf");
+    let scene = scene_of(&outputs);
+
+    let SlotBinding::PerSlot(slots) = material_of(&scene.nodes[0]).binding else {
+        panic!("differing primitive materials must bind per slot");
+    };
+    let slot_ids: Vec<Option<AssetId>> = slots
+        .iter()
+        .map(|slot| slot.as_ref().map(|handle| handle.id()))
+        .collect();
+    let material = |index: usize| {
+        Some(AssetId::from_path(&format!(
+            "barrel_per_primitive_materials.gltf#material/{index}"
+        )))
+    };
+    assert_eq!(
+        slot_ids,
+        vec![material(0), material(1), material(2)],
+        "a primitive without a material draws with the default material emitted after the real ones"
+    );
+    for id in slot_ids.into_iter().flatten() {
+        assert!(scene.referenced_assets.contains(&id));
+    }
+}
+
+#[test]
+fn duplicate_and_missing_mesh_names_resolve_by_mesh_index() {
+    let outputs = import_fixture("duplicate_mesh_names.gltf");
+
+    assert_eq!(
+        mesh_sub_asset_names(&outputs),
+        vec!["mesh/Crate", "mesh/Crate.1", "mesh/2"]
     );
 
-    let parent = &cooked_scene.nodes[0];
-    assert_eq!(parent.name, "Triangle", "parent keeps the glTF node name");
-    assert!(
-        mesh_handle_id(parent).is_none(),
-        "a multi-primitive parent node holds no mesh of its own"
-    );
-    assert!(
-        !has_component_ending_in(parent, "MaterialComponent"),
-        "a multi-primitive parent node holds no material of its own"
-    );
-    assert_eq!(
-        parent.children,
-        vec![1, 2],
-        "parent points at the two appended primitive child nodes"
-    );
-
-    for (child_index, expected_mesh_addr) in [
-        (1usize, "triangle_two_prims.gltf#mesh/0"),
-        (2usize, "triangle_two_prims.gltf#mesh/1"),
-    ] {
-        let child = &cooked_scene.nodes[child_index];
-        assert!(
-            child.children.is_empty(),
-            "primitive child node {child_index} is a leaf"
-        );
-        assert!(
-            has_component_ending_in(child, "MaterialComponent"),
-            "primitive child node {child_index} carries a material component"
-        );
+    let scene = scene_of(&outputs);
+    for (node, expected) in scene
+        .nodes
+        .iter()
+        .zip(["mesh/Crate", "mesh/Crate.1", "mesh/2"])
+    {
         assert_eq!(
-            mesh_handle_id(child),
-            Some(AssetId::from_path(expected_mesh_addr)),
-            "primitive child node {child_index} must reference {expected_mesh_addr} by stable AssetId"
+            mesh_handle_id(node),
+            Some(AssetId::from_path(&format!(
+                "duplicate_mesh_names.gltf#{expected}"
+            ))),
+            "node {} must reference {expected}",
+            node.name
         );
     }
 }
 
 #[test]
-fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
-    let fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/skinned_two_prims.gltf");
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("skinned_two_prims.gltf"));
-
-    GltfImporter
-        .import(&fixture, &mut ctx)
-        .expect("importing the two-primitive skinned fixture should succeed");
-    let outputs = ctx.into_parts();
-
-    let scene_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
+fn a_skinned_multi_primitive_node_carries_one_skeleton_component() {
+    let outputs = import_fixture("skinned_two_prims.gltf");
+    let scene = scene_of(&outputs);
 
     let skeletons: Vec<SkeletonComponent> = scene
         .nodes
@@ -292,28 +354,27 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
         .filter(|c| c.type_name == SkeletonComponent::name())
         .map(|c| serde_json::from_str(&c.data).unwrap())
         .collect();
-    let source_skel = skeletons
-        .iter()
-        .find(|skeleton| skeleton.root.is_some())
-        .expect("source node must carry a rooted SkeletonComponent");
-    let bindings: Vec<&SkeletonComponent> = skeletons
-        .iter()
-        .filter(|skeleton| skeleton.root.is_none())
-        .collect();
-
     assert_eq!(
-        bindings.len(),
-        2,
-        "one rootless SkeletonComponent per primitive child, got {}",
-        bindings.len()
+        skeletons.len(),
+        1,
+        "the skinned node owns the only SkeletonComponent; primitives no longer get rootless copies"
     );
-    for binding in &bindings {
-        assert_eq!(
-            binding.bone_ids, source_skel.bone_ids,
-            "primitive child binding must share the source skeleton's bone ids"
-        );
-        assert_eq!(binding.skeleton.id(), source_skel.skeleton.id());
-    }
+    let skeleton = &skeletons[0];
+    assert!(skeleton.root.is_some());
+
+    let skinned_node = scene
+        .nodes
+        .iter()
+        .find(|node| {
+            node.components
+                .iter()
+                .any(|c| c.type_name == SkeletonComponent::name())
+        })
+        .unwrap();
+    assert!(
+        mesh_handle_id(skinned_node).is_some(),
+        "the skinned node draws its mesh itself"
+    );
 
     // The Wiggle clip's channel key must be one of those bone ids, or animation
     // silently does nothing.
@@ -325,8 +386,7 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     let clip: concerto_animation::clip::AnimationClip =
         bincode::deserialize(&clip_entry.bytes).unwrap();
     assert!(
-        clip.target_ids()
-            .any(|id| source_skel.bone_ids.contains(id)),
+        clip.target_ids().any(|id| skeleton.bone_ids.contains(id)),
         "the animation clip must key at least one channel by a skeleton bone id"
     );
 }

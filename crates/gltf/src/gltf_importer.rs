@@ -49,13 +49,6 @@ const EXTRAS_COMPONENTS_KEY: &str = "components";
 
 pub struct GltfImporter;
 
-/// One emitted primitive of a glTF mesh: the sub-asset indices of its imported
-/// `mesh/*` geometry and the `material/*` it draws with.
-struct PrimRef {
-    mesh_sub_asset: usize,
-    material_sub_asset: usize,
-}
-
 /// Dedup key for the textures a source file needs: one imported `texture/*`
 /// sub-asset per (source image, colour space) pair. `srgb` orders
 /// `false < true`, keeping import-output iteration order stable.
@@ -195,33 +188,29 @@ impl Importer for GltfImporter {
         let default_material_index = materials.len();
         let mut default_material_used = false;
 
-        let mut mesh_counter: usize = 0;
-        let mut mesh_prims: Vec<Vec<PrimRef>> = Vec::new();
-        for mesh in document.meshes() {
-            let mut prims = Vec::new();
-            for gltf_primitive in mesh.primitives() {
-                let m = load_primitive(source_path, mesh.name(), &buffers, &gltf_primitive)?;
-                ctx.emit(
-                    &format!("mesh/{mesh_counter}"),
-                    &Mesh {
-                        primitives: vec![m],
-                    },
-                )?;
-
-                let material_sub_asset = match gltf_primitive.material().index() {
+        let mesh_names = mesh_sub_asset_names(&document);
+        let mut mesh_material_slots: Vec<Vec<usize>> = Vec::new();
+        for (gltf_mesh, name) in document.meshes().zip(&mesh_names) {
+            let mut primitives = Vec::new();
+            let mut material_slots = Vec::new();
+            for gltf_primitive in gltf_mesh.primitives() {
+                primitives.push(load_primitive(
+                    source_path,
+                    gltf_mesh.name(),
+                    &buffers,
+                    &gltf_primitive,
+                )?);
+                material_slots.push(match gltf_primitive.material().index() {
                     Some(material_index) => material_index,
                     None => {
                         default_material_used = true;
                         default_material_index
                     }
-                };
-                prims.push(PrimRef {
-                    mesh_sub_asset: mesh_counter,
-                    material_sub_asset,
                 });
-                mesh_counter += 1;
             }
-            mesh_prims.push(prims);
+
+            ctx.emit(name, &Mesh { primitives })?;
+            mesh_material_slots.push(material_slots);
         }
 
         if default_material_used {
@@ -358,8 +347,7 @@ impl Importer for GltfImporter {
         // Node walk. `document.nodes()` yields nodes in index order, so the
         // first `document.nodes().count()` entries of `nodes` line up 1:1 with
         // glTF node indices and every `children` index into that prefix stays
-        // valid. Extra primitive child-nodes (for multi-primitive meshes) are
-        // appended afterwards. Every runtime concern is emitted as a
+        // valid. Every runtime concern is emitted as a
         // `SerializedComponent`; referenced ids are recorded as we go.
         let mut nodes: Vec<SceneNode> = Vec::new();
         let mut referenced_assets: Vec<AssetId> = Vec::new();
@@ -377,11 +365,7 @@ impl Importer for GltfImporter {
             // A skinned node carries the whole binding: which `skeleton/N`
             // sub-asset to load, the joint nodes, their stable ids, and the
             // root bone. This goes on the skinned node itself, which owns the
-            // `AnimationPlayer`. When that node is a multi-primitive mesh its
-            // drawable geometry lives on appended primitive children; the
-            // second node-walk loop gives each of those a rootless
-            // `SkeletonComponent`
-            // so they skin from the same bone entities without a second player.
+            // `AnimationPlayer` and draws every primitive of its mesh.
             if let Some(skin) = gltf_node.skin() {
                 let skin_index = skin.index();
                 if let Some((bones, bone_ids)) = skins
@@ -484,75 +468,38 @@ impl Importer for GltfImporter {
             let Some(gltf_mesh) = gltf_node.mesh() else {
                 continue;
             };
-            let node_index = gltf_node.index();
-            let prims = &mesh_prims[gltf_mesh.index()];
-
-            match prims.len() {
-                0 => {}
-                1 => {
-                    let p = &prims[0];
-                    let mesh_id = ctx.sub_asset_id(&format!("mesh/{}", p.mesh_sub_asset));
-                    let material_id =
-                        ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
-
-                    push_mesh_components(&mut nodes[node_index], mesh_id, material_id)?;
-                    referenced_assets.push(mesh_id);
-                    referenced_assets.push(material_id);
-                }
-                _ => {
-                    let node_name = nodes[node_index].name.clone();
-
-                    // The rooted `SkeletonComponent` sits on the owning
-                    // node; each drawable primitive child gets the binding half
-                    // so it skins from the same bone entities.
-                    let skin_binding = gltf_node.skin().and_then(|skin| {
-                        let skin_index = skin.index();
-                        skins
-                            .iter()
-                            .find(|info| info.skeleton_index == skin_index)
-                            .map(|info| {
-                                (
-                                    ctx.sub_asset_id(&format!("skeleton/{skin_index}")),
-                                    info.bones.clone(),
-                                    info.bone_ids.clone(),
-                                )
-                            })
-                    });
-
-                    for (k, p) in prims.iter().enumerate() {
-                        let child_index = nodes.len();
-                        let mesh_id = ctx.sub_asset_id(&format!("mesh/{}", p.mesh_sub_asset));
-                        let material_id =
-                            ctx.sub_asset_id(&format!("material/{}", p.material_sub_asset));
-
-                        let mut child = SceneNode {
-                            name: format!("{node_name}.primitive{k}"),
-                            children: Vec::new(),
-                            components: Vec::new(),
-                        };
-                        push_node_component(&mut child, &Transform::IDENTITY)?;
-                        push_mesh_components(&mut child, mesh_id, material_id)?;
-                        referenced_assets.push(mesh_id);
-                        referenced_assets.push(material_id);
-
-                        if let Some((skeleton_id, bones, bone_ids)) = &skin_binding {
-                            push_node_component(
-                                &mut child,
-                                &SkeletonComponent {
-                                    skeleton: AssetHandle::weak(*skeleton_id),
-                                    bones: bones.clone(),
-                                    bone_ids: bone_ids.clone(),
-                                    root: None,
-                                },
-                            )?;
-                            referenced_assets.push(*skeleton_id);
-                        }
-
-                        nodes.push(child);
-                        nodes[node_index].children.push(child_index);
-                    }
-                }
+            let material_slots = &mesh_material_slots[gltf_mesh.index()];
+            if material_slots.is_empty() {
+                continue;
             }
+
+            let node = &mut nodes[gltf_node.index()];
+            let mesh_id = ctx.sub_asset_id(&mesh_names[gltf_mesh.index()]);
+            push_node_component(
+                node,
+                &MeshComponent {
+                    handle: AssetHandle::weak(mesh_id),
+                },
+            )?;
+            referenced_assets.push(mesh_id);
+
+            let material_ids: Vec<AssetId> = material_slots
+                .iter()
+                .map(|material_index| ctx.sub_asset_id(&format!("material/{material_index}")))
+                .collect();
+            referenced_assets.extend(material_ids.iter().copied());
+            let material = if material_ids.iter().all(|id| *id == material_ids[0]) {
+                MaterialComponent::<StandardMaterial>::all(AssetHandle::weak(material_ids[0]))
+            } else {
+                MaterialComponent::per_slot(
+                    material_ids
+                        .into_iter()
+                        .map(|id| Some(AssetHandle::weak(id)))
+                        .collect(),
+                )
+            };
+            push_node_component(node, &material)?;
+            push_node_component(node, &SyncWithRenderWorld)?;
         }
 
         ctx.emit(
@@ -580,23 +527,31 @@ fn push_node_component<T: Serialize + SceneComponent>(
         })
 }
 
-/// Pushes the mesh/material/render-sync trio a drawable node carries.
-fn push_mesh_components(
-    node: &mut SceneNode,
-    mesh_id: AssetId,
-    material_id: AssetId,
-) -> Result<(), ImportError> {
-    push_node_component(
-        node,
-        &MeshComponent {
-            handle: AssetHandle::weak(mesh_id),
-        },
-    )?;
-    push_node_component(
-        node,
-        &MaterialComponent::<StandardMaterial>::all(AssetHandle::weak(material_id)),
-    )?;
-    push_node_component(node, &SyncWithRenderWorld)
+/// The `mesh/*` sub-asset name of every glTF mesh, in mesh-index order.
+///
+/// A mesh is named after its source name, or its index when it has none. A
+/// name an earlier mesh already took gets the mesh index appended, so names
+/// stay stable across re-imports of an unchanged source. Characters the
+/// content tree cannot keep apart in a file name are replaced first, so two
+/// distinct names never land on one file.
+fn mesh_sub_asset_names(document: &gltf::Document) -> Vec<String> {
+    let mut taken = HashSet::new();
+    document
+        .meshes()
+        .map(|gltf_mesh| {
+            let index = gltf_mesh.index();
+            let base = gltf_mesh
+                .name()
+                .filter(|name| !name.is_empty())
+                .map(|name| name.replace(['/', '\\', '#'], "_"))
+                .unwrap_or_else(|| index.to_string());
+            let mut name = base;
+            while !taken.insert(name.clone()) {
+                name = format!("{name}.{index}");
+            }
+            format!("mesh/{name}")
+        })
+        .collect()
 }
 
 /// One `type_name -> payload` pair pulled out of a node's Blender `extras`.

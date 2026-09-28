@@ -50,9 +50,14 @@ imported assets/UAL1.glb -> 126 assets
 
 | Extensions           | Importer        | Emits                                              |
 |----------------------|-----------------|---------------------------------------------------|
-| `.gltf` `.glb`       | `GltfImporter`  | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/*`, `scene` |
+| `.gltf` `.glb`       | `GltfImporter`  | `mesh/<name>`, `material/*`, `texture/*`, `skeleton/*`, `animation/*`, `scene` |
 | `.obj` (+ its `.mtl`)| `ObjImporter`   | `mesh/*`, one `material/<mtl stem>`, `scene`       |
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
+
+A glTF mesh imports as one `Mesh` holding all of its primitives, named after
+the source mesh (`mesh/Barrel` lands at `content/<source>/mesh_Barrel.gasset`).
+An unnamed mesh falls back to its glTF index (`mesh/0`), and a name an earlier
+mesh already took gets the index appended (`mesh/Crate.1`).
 
 ### Flags
 
