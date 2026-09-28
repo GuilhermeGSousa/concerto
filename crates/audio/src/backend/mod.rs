@@ -18,8 +18,6 @@ pub(crate) trait AudioBackend {
 }
 
 thread_local! {
-    // Platform audio objects (a WebAudio context) are not `Send`, so the
-    // backend lives on the main thread, which `flush_audio` is pinned to.
     static BACKEND: std::cell::RefCell<Option<ActiveBackend>> = const { std::cell::RefCell::new(None) };
 }
 

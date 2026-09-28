@@ -51,11 +51,6 @@ fn sync_render_entities(main: &mut World, render: &mut World) {
     despawn_stale_render_entities(main, render);
 }
 
-/// Main-world entities that need a render-world mirror but lack one: those
-/// explicitly marked [`SyncWithRenderWorld`], plus anything the renderer draws
-/// or renders from — meshes, lights and cameras — however it was spawned.
-/// Without the implicit cases, geometry spawned from code (rather than from a
-/// scene, which carries the marker) would silently never be drawn.
 fn entities_needing_render_mirror(main: &mut World) -> Vec<Entity> {
     let mut entities = main
         .query::<Entity, (With<SyncWithRenderWorld>, Without<RenderEntity>)>()

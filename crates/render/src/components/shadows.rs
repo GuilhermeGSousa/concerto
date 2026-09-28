@@ -113,28 +113,17 @@ impl Component for RenderShadowCasterSlot {
 // per caster. Everything else — slot allocation, swap-remove compaction,
 // grow/shrink-with-hysteresis — is identical between them, so that's all
 // implemented once against this trait instead of twice.
-//
-// WebGL2 constraints: the GL backend infers a texture's type from its layer
-// count (1 → 2D, 6 on a square texture → cube, larger multiples of 6 → cube
-// array) and WebGL2 has no cube arrays at all. So on wasm the spot/directional
-// array is padded to a layer count that always reads as a 2D array, and point
-// shadows are limited to a single cube bound as `Cube` (see
-// `POINT_SHADOW_VIEW_DIMENSION`, which the layout and shader follow).
 pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
     const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension;
     const LABEL: &'static str;
-    /// Most casters the pool will hold.
     const MAX_CASTERS: u32;
 
-    /// Texture layers to allocate for `view_count` views.
     fn physical_layers(view_count: u32) -> u32 {
         view_count
     }
 }
 
-/// How point-light shadow maps are bound: a cube array natively, a single
-/// cube on WebGL2 (which has no cube arrays).
 pub(crate) const POINT_SHADOW_VIEW_DIMENSION: wgpu::TextureViewDimension =
     if cfg!(target_arch = "wasm32") {
         wgpu::TextureViewDimension::Cube
@@ -159,8 +148,6 @@ impl ShadowMapKind for SpotDirectionalShadowKind {
     }
 }
 
-/// The smallest layer count ≥ `view_count` that the GL backend treats as a
-/// 2D array rather than a single texture or a cube map.
 pub(crate) fn gl_array_layers(view_count: u32) -> u32 {
     let mut layers = view_count.max(2);
     while layers.is_multiple_of(6) {
@@ -269,7 +256,6 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // views aren't separate GPU allocations, so building a fresh one here on
     // demand (rather than caching it) is cheap.
     pub(crate) fn array_view(&self) -> wgpu::TextureView {
-        // A single cube (WebGL2) views exactly its six faces.
         let array_layer_count =
             (K::ARRAY_VIEW_DIMENSION == wgpu::TextureViewDimension::Cube).then_some(6);
         self.texture.create_view(&wgpu::TextureViewDescriptor {

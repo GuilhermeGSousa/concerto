@@ -1,9 +1,5 @@
-//! The few things that differ between the browser and a desktop window:
-//! pointer lock and saving progress.
-//!
-//! On the web, browsers only grant pointer lock inside a user gesture, so the
-//! page's own click handler (in `index.html`) requests it whenever the game
-//! has flagged that it wants it (`<body data-want-lock="1">`).
+//! The few things that differ between the browser and a desktop window: pointer
+//! lock and saving progress.
 use concerto::{
     ecs::{Res, ResMut, Resource, system::NonSendMarker},
     window::plugin::Window,
@@ -20,7 +16,6 @@ mod imp {
     }
 
     /// Whether the page URL carries `flag` in its query (`?nolock&noui`).
-    /// Used for automated testing in headless browsers.
     pub fn debug_flag(flag: &str) -> bool {
         web_sys::window()
             .and_then(|w| w.location().search().ok())
@@ -88,7 +83,6 @@ mod imp {
     use std::sync::atomic::{AtomicBool, Ordering};
 
     static LOCKED: AtomicBool = AtomicBool::new(false);
-    // Natively, progress lasts for the session only for now.
     static STORE: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
     pub fn debug_flag(flag: &str) -> bool {
@@ -149,8 +143,6 @@ pub fn sync_cursor(
     mut state: ResMut<CursorState>,
     window: Res<Window>,
 ) {
-    // The title screen wants the lock too, so the click that starts the
-    // night also captures the mouse.
     let want = matches!(
         game.phase,
         Phase::Title | Phase::Intro | Phase::Playing | Phase::Dead | Phase::Escaped
@@ -165,7 +157,6 @@ pub fn sync_cursor(
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        // Natively the lock follows the phase directly: only on the floor.
         let want = game.phase == Phase::Playing && !game.paused && want;
         if state.wanted != Some(want) {
             use winit::window::CursorGrabMode;

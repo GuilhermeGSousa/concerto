@@ -42,7 +42,6 @@ impl Caught {
 /// Camera effects layered over the player's own view.
 #[derive(Resource, Default)]
 pub struct CameraOverride {
-    /// Where to wrench the view, and how far through the wrench (0..=1).
     look_at: Option<Vec3>,
     blend: f32,
     shake: f32,
@@ -110,7 +109,6 @@ pub fn run_scare(
         caught.started = true;
         sounds.play(&mut audio, Sfx::Stinger, 1.0);
         audio.stop_music();
-        // Step it right into your face and let it move, for once.
         if let Some((mut mannequin, mut transform)) = mannequins.get_entity(by) {
             let away =
                 flat(transform.translation - player_transform.translation).normalize_or(Vec3::Z);
@@ -133,7 +131,6 @@ pub fn run_scare(
     camera.blend = (t / 0.12).min(1.0);
     camera.shake = 1.0 - (t / SCARE_SECONDS) * 0.5;
 
-    // The torch dies in stutters.
     for mut flashlight in flashlights.iter() {
         flashlight.switched_on = rand.unit() > (t / SCARE_SECONDS).powf(0.5);
     }

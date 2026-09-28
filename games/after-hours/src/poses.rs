@@ -1,6 +1,4 @@
-//! The pose library. A pose is a single frame of a clip, held with play rate
-//! 0: mannequins never visibly animate, they are simply *different* each time
-//! you look. Poses are grouped by how threatening they read.
+//! The pose library.
 use concerto::{
     animation::{
         clip::AnimationClip,
@@ -17,13 +15,12 @@ use crate::{content, game::Rand};
 pub enum Menace {
     /// Plausibly just a shop display.
     Display,
-    /// Wrong, somehow. Head turned, crouched, weeping, mid-stride.
+    /// Wrong, somehow.
     Uneasy,
     /// Coming for you: reaching, lunging, crawling.
     Hunting,
 }
 
-/// (menace, clip, seconds into the clip).
 const POSES: &[(Menace, AssetId, f32)] = &[
     (Menace::Display, content::IDLE, 0.4),
     (Menace::Display, content::IDLE_TALKING, 1.1),
@@ -57,8 +54,7 @@ const POSES: &[(Menace, AssetId, f32)] = &[
 pub struct Pose {
     pub menace: Menace,
     pub graph: AssetHandle<AnimationGraph>,
-    /// The clip the pose samples. A mannequin is only frozen into a pose once
-    /// this has loaded; before that it would freeze in its bind pose.
+    /// The clip the pose samples.
     pub clip: AssetHandle<AnimationClip>,
 }
 

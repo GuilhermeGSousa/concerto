@@ -66,18 +66,16 @@ pub struct Camera {
     pub clear_color: Color,
     pub render_target: RenderTarget,
     /// Distance fog for everything this camera draws with the standard
-    /// material. `None` (the default) is no fog.
+    /// material.
     #[serde(default)]
     pub fog: Option<Fog>,
-    /// Ambient light for surfaces this camera draws with the standard
-    /// material, as a colour multiplied by each surface's albedo. `None`
-    /// keeps the built-in default (a dim 3% white).
+    /// Ambient light for surfaces this camera draws with the standard material,
+    /// as a colour multiplied by each surface's albedo.
     #[serde(default)]
     pub ambient: Option<Color>,
 }
 
-/// Exponential-squared distance fog: beyond `start`, surfaces fade toward
-/// `color` as `1 - exp(-(density * (distance - start))^2)`.
+/// Exponential-squared distance fog toward `color`, starting at `start`.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Fog {
     pub color: Color,
@@ -87,7 +85,6 @@ pub struct Fog {
 
 impl Fog {
     /// How much of a surface at `distance` is replaced by fog, `0..=1`.
-    /// Matches the shader, so gameplay can ask what the player can see.
     pub fn amount(&self, distance: f32) -> f32 {
         let d = (distance - self.start).max(0.0) * self.density;
         1.0 - (-(d * d)).exp()
@@ -141,12 +138,8 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
-    // Appended so shaders that declare only the fields above stay valid.
-    /// rgb, and a = 1 when fog is enabled.
     fog_color: Vec4,
-    /// x = density, y = start distance.
     fog_params: Vec4,
-    /// rgb, and a = 1 to override the shader's default ambient.
     ambient: Vec4,
 }
 

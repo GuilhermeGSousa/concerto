@@ -38,7 +38,6 @@ struct Light {
     light_type: u32,
     cos_cone_angle: f32,
     shadow_layer: i32,
-    // 0 = unbounded; otherwise the distance where the light fades to nothing.
     range: f32,
 };
 
@@ -61,11 +60,8 @@ struct ShadowViewProjs {
 struct CameraUniform {
     view_pos: vec3<f32>,
     view_proj: mat4x4<f32>,
-    // rgb + enabled flag in a.
     fog_color: vec4<f32>,
-    // x = density, y = start distance.
     fog_params: vec4<f32>,
-    // rgb + override flag in a (0 = use AMBIENT_INTENSITY).
     ambient: vec4<f32>,
 };
 
@@ -270,8 +266,6 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             let light_distance_sq = dot(light_delta, light_delta);
             attenuation = 1.0 / max(light_distance_sq, 1e-4);
             if light.range > 0.0 {
-                // Smooth window (1 - (d/r)^4)^2: reaches exactly zero at the
-                // range without a visible edge.
                 let ratio = light_distance_sq / (light.range * light.range);
                 let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
                 attenuation *= window * window;
@@ -315,7 +309,6 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
     let ambient = ambient_light * base_color.rgb * occlusion;
     var color = ambient + total_light + emissive;
 
-    // Exponential-squared distance fog, in linear space before tonemapping.
     if camera.fog_color.a > 0.0 {
         let fog_distance = max(length(camera.view_pos - in.world_position) - camera.fog_params.y, 0.0);
         let fog_depth = fog_distance * camera.fog_params.x;

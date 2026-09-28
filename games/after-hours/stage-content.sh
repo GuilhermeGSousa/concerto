@@ -1,7 +1,5 @@
 #!/bin/sh
-# Trunk post-build hook: stages the files listed in content-manifest.txt, and a
-# registry trimmed to them, into the web build's content/ directory. Mirrors
-# what build.rs does for native builds.
+# Trunk post-build hook: stages content-manifest.txt's files into the web build.
 set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)

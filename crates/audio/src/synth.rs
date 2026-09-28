@@ -1,10 +1,4 @@
 //! A tiny offline synthesizer for building [`SoundData`] in code.
-//!
-//! A sound is a [`Mix`] of [`Tone`]s placed at time offsets. Each tone is one
-//! oscillator (or noise) with an exponential pitch sweep, an attack/decay
-//! envelope and an optional sweeping low-pass filter — enough for whooshes,
-//! thumps, zaps, chimes and simple music. Rendering is deterministic: noise
-//! comes from a seeded generator, so a sound is identical on every platform.
 use crate::SoundData;
 
 pub const SAMPLE_RATE: u32 = 44_100;
@@ -28,8 +22,7 @@ pub struct Tone {
     pub duration: f32,
     /// Seconds to ramp in from silence.
     pub attack: f32,
-    /// Shape of the fade-out: `envelope = (1 - t/duration)^decay`. `1.0` is a
-    /// linear fade, larger values fall off faster.
+    /// Shape of the fade-out: `envelope = (1 - t/duration)^decay`.
     pub decay: f32,
     pub volume: f32,
     /// Low-pass cutoff in Hz at the start and end, swept exponentially.
@@ -136,8 +129,7 @@ impl Mix {
         }
     }
 
-    /// Renders `tone` starting `offset` seconds in. Parts past the end of the
-    /// mix are cut off.
+    /// Renders `tone` starting `offset` seconds in.
     pub fn add(&mut self, offset: f32, tone: Tone) -> &mut Self {
         let sr = SAMPLE_RATE as f32;
         let start = (offset.max(0.0) * sr) as usize;
@@ -174,8 +166,6 @@ impl Mix {
 
             let sample = match tone.lowpass {
                 Some((from, to)) => {
-                    // A constant cutoff (the common case for long tones) needs
-                    // its coefficient only once.
                     if i == 0 || from != to {
                         let cutoff = exp_lerp(from, to, progress).min(sr * 0.45);
                         alpha = 1.0 - (-std::f32::consts::TAU * cutoff / sr).exp();
@@ -244,7 +234,6 @@ mod tests {
         );
         let peak = sound.samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         assert!((peak - 0.8).abs() < 1e-4);
-        // The tone ends at 0.25s; the tail is silent.
         assert!(sound.samples[SAMPLE_RATE as usize * 3 / 8..]
             .iter()
             .all(|s| *s == 0.0));

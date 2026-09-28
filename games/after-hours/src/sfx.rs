@@ -25,8 +25,8 @@ pub enum Sfx {
     Heartbeat,
     Click,
     NightStart,
-    /// A faint music-box note from the nearest key (or the unlocked exit),
-    /// so the maze can be navigated by ear.
+    /// A faint music-box note from the nearest key (or the unlocked exit), so
+    /// the maze can be navigated by ear.
     Chime,
 }
 
@@ -34,7 +34,6 @@ pub enum Sfx {
 pub struct Sounds {
     handles: Vec<(Sfx, SoundHandle)>,
     pub ambience: Option<SoundHandle>,
-    /// Per-play pitch jitter so repeats don't sound mechanical.
     jitter: u32,
 }
 
@@ -61,7 +60,7 @@ impl Sounds {
         self.play_at(audio, sfx, volume, 0.0);
     }
 
-    /// Plays with a stereo position (`-1` left .. `1` right).
+    /// Plays with a stereo position (`-1` left ..
     pub fn play_at(&mut self, audio: &mut Audio, sfx: Sfx, volume: f32, pan: f32) {
         let pitch = self.pitch(sfx);
         if let Some(handle) = self.handle(sfx) {
@@ -76,7 +75,6 @@ impl Sounds {
 fn build(sfx: Sfx) -> Mix {
     match sfx {
         Sfx::Footstep => {
-            // Rubber sole on vinyl: a soft thump and a squeak of grit.
             let mut mix = Mix::with_seed(0.14, 7);
             mix.add(
                 0.0,
@@ -131,7 +129,6 @@ fn build(sfx: Sfx) -> Mix {
             mix
         }
         Sfx::Flicker => {
-            // A fluorescent ballast buzzing and catching.
             let mut mix = Mix::with_seed(0.25, 19);
             mix.add(
                 0.0,
@@ -150,7 +147,6 @@ fn build(sfx: Sfx) -> Mix {
             mix
         }
         Sfx::Creak => {
-            // Stiff joints grinding: a scraped, resonant squeal over a knock.
             let mut mix = Mix::with_seed(0.6, 23);
             mix.add(
                 0.0,
@@ -216,7 +212,6 @@ fn build(sfx: Sfx) -> Mix {
             mix
         }
         Sfx::Unlock => {
-            // A heavy bolt drawn back somewhere far off.
             let mut mix = Mix::with_seed(1.5, 29);
             mix.add(
                 0.0,
@@ -268,7 +263,6 @@ fn build(sfx: Sfx) -> Mix {
             mix
         }
         Sfx::Stinger => {
-            // Dissonant brass-and-noise slam with a shriek on top.
             let mut mix = Mix::with_seed(1.4, 37);
             for (note, vol) in [(40, 0.7), (41, 0.6), (46, 0.5), (52, 0.4), (53, 0.4)] {
                 mix.add(
@@ -321,7 +315,6 @@ fn build(sfx: Sfx) -> Mix {
             mix
         }
         Sfx::Heartbeat => {
-            // Lub-dub.
             let mut mix = Mix::new(0.5);
             mix.add(
                 0.0,
@@ -360,7 +353,6 @@ fn build(sfx: Sfx) -> Mix {
             mix
         }
         Sfx::NightStart => {
-            // A distant store PA chime, slightly out of tune.
             let mut mix = Mix::new(2.6);
             for (i, note) in [76, 72, 67, 60].into_iter().enumerate() {
                 mix.add(
@@ -382,12 +374,9 @@ fn build(sfx: Sfx) -> Mix {
     }
 }
 
-/// A 24-second loop of fluorescent hum, air-handling rumble and a slow,
-/// barely-there minor drone.
 fn ambience() -> Mix {
     let length = 24.0;
     let mut mix = Mix::with_seed(length, 97);
-    // Mains hum and its buzz.
     mix.add(
         0.0,
         Tone::new(Wave::Sine, 60.0, length).decay(0.0).volume(0.35),
@@ -403,7 +392,6 @@ fn ambience() -> Mix {
             .decay(0.0)
             .volume(0.04),
     );
-    // HVAC: filtered noise.
     mix.add(
         0.0,
         Tone::new(Wave::Noise, 0.0, length)
@@ -411,7 +399,6 @@ fn ambience() -> Mix {
             .decay(0.0)
             .volume(0.9),
     );
-    // Drone swells, sparse and detuned.
     for (start, note, dur) in [
         (0.0, 38, 11.0),
         (6.0, 45, 9.0),

@@ -1,6 +1,5 @@
-//! Generates `AssetId` constants from `content-manifest.txt` and stages the
-//! listed files, with a registry trimmed to them, into
-//! `<exe-dir>/dummy-content/content/` where `ContentAssetRoot` finds them.
+//! Generates `AssetId` constants from `content-manifest.txt` and stages
+//! those files next to the binary.
 use std::env;
 use std::fmt::Write as _;
 use std::fs;
@@ -38,8 +37,6 @@ fn main() -> anyhow::Result<()> {
     let out_dir = PathBuf::from(env::var("OUT_DIR")?);
     fs::write(out_dir.join("content.rs"), generated)?;
 
-    // OUT_DIR is target/<profile>/build/<pkg>-<hash>/out, so the profile
-    // directory — where the binary lands — is three levels up.
     let staged = out_dir
         .ancestors()
         .nth(3)
@@ -60,8 +57,6 @@ fn main() -> anyhow::Result<()> {
         )?;
     }
 
-    // Keep only the registry rows for staged files: the runtime resolves
-    // AssetIds through it, and rows for absent files would only mislead.
     let registry = fs::read_to_string(source_root.join(".registry.toml"))?;
     let trimmed: String = registry
         .lines()

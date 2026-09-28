@@ -70,9 +70,6 @@ use crate::{
 
 pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl");
 
-/// Adapts a WGSL source to what this platform can compile. WebGL2 has no
-/// cube-map arrays, so there any point-shadow binding becomes a single cube
-/// (matching `POINT_SHADOW_VIEW_DIMENSION`).
 fn platform_shader_source(source: &str) -> std::borrow::Cow<'_, str> {
     if cfg!(target_arch = "wasm32") && source.contains("texture_depth_cube_array") {
         source
@@ -151,10 +148,6 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
-// mirror. Upserts like the other extract systems: a mirror that already names
-// the same material asset is left alone, and one naming a different asset is
-// replaced, so swapping the handle on a live entity (a hit flash, a
-// highlight) takes effect on the next frame.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     render_materials: Query<&RenderMaterialComponent<M>>,

@@ -39,8 +39,7 @@ pub struct Palette {
     pub sign_locked: AssetHandle<StandardMaterial>,
     pub sign_unlocked: AssetHandle<StandardMaterial>,
 
-    /// Mannequin finishes. Hunters and decoys draw from the same set: the
-    /// player must never be able to tell them apart.
+    /// Mannequin finishes.
     pub finishes: Vec<Finish>,
 }
 
@@ -57,7 +56,6 @@ pub fn glowing(color: Color, emissive: Vec3) -> StandardMaterial {
     material
 }
 
-/// A textured material whose texture spans `meters` of world space.
 fn textured(texture: AssetHandle<Texture>, meters: f32, roughness: f32) -> StandardMaterial {
     let mut material = StandardMaterial::new(Some(texture), None).with_uv_scale([1.0 / meters; 2]);
     material.set_roughness_factor(roughness);
@@ -124,19 +122,16 @@ pub fn create_palette(server: Res<AssetServer>, mut slot: ResMut<PaletteSlot>) {
         )),
 
         finishes: vec![
-            // Gloss white display mannequin.
             finish(
                 Color::srgba(0.86, 0.85, 0.82, 1.0),
                 0.25,
                 Color::srgba(0.55, 0.55, 0.55, 1.0),
             ),
-            // Matte black.
             finish(
                 Color::srgba(0.08, 0.08, 0.09, 1.0),
                 0.35,
                 Color::srgba(0.25, 0.25, 0.27, 1.0),
             ),
-            // Dated flesh-tone.
             finish(
                 Color::srgba(0.78, 0.6, 0.5, 1.0),
                 0.45,

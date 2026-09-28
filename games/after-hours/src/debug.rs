@@ -1,10 +1,4 @@
-//! Diagnostics for automated runs in headless browsers. Enabled by URL query
-//! flags on the web (`?nolock&noui&trace`) or `AFTER_HOURS_DEBUG=nolock,trace`
-//! natively:
-//! - `nolock`: treat the pointer as locked, so play never pauses.
-//! - `noui`: hide every screen, for clean screenshots.
-//! - `trace`: log the camera, player and mannequin state once a second.
-//! - `poses`: replace the title store with a lit gallery of every pose.
+//! Diagnostics for automated runs in headless browsers.
 use concerto::{
     director::MainCamera,
     ecs::{Query, Res, ResMut, Resource, With},
@@ -64,7 +58,7 @@ pub fn trace(
 }
 
 /// `?poses`: lays every pose out in rows before the camera, numbered left to
-/// right, front row first. Returns whether it did.
+/// right, front row first.
 pub fn pose_gallery(
     cmd: &mut concerto::ecs::CommandQueue,
     server: &concerto::foundation::assets::asset_server::AssetServer,
@@ -74,8 +68,6 @@ pub fn pose_gallery(
     use concerto::{physics::collider::Collider, render::components::light::Light};
     use glam::Vec3;
 
-    // `poses` shows everything; `poses0`..`poses2` one row (one menace tier
-    // of nine) each, larger and all in the white finish.
     let row_filter = (0..3).find(|r| platform::debug_flag(&format!("poses{r}")));
     if !platform::debug_flag("poses") && row_filter.is_none() {
         return false;
@@ -90,7 +82,6 @@ pub fn pose_gallery(
         Light::directional_light().with_intensity(3.0),
         Transform::from_rotation(glam::Quat::from_rotation_x(-0.6)),
     ));
-    // The player spawns at the origin facing -Z; rows run across X.
     crate::player::spawn_player(cmd, Vec3::new(0.0, 0.05, 0.0), 0.0);
     let per_row = 9;
     for (i, _) in library.poses.iter().enumerate() {

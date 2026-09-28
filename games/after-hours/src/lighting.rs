@@ -1,10 +1,10 @@
-//! The renderer's light falloff, reproduced on the CPU so the observation
-//! rule can ask "is this point lit well enough to see?" and get the same
-//! answer the screen gives.
+//! The renderer's light falloff, reproduced on the CPU so the observation rule
+//! can ask "is this point lit well enough to see?" and get the same answer the
+//! screen gives.
 use glam::Vec3;
 
-/// Irradiance below this reads as black on screen: a mannequin lit more
-/// faintly than this can move without the player seeing it.
+/// Irradiance below this reads as black on screen: a mannequin lit more faintly
+/// than this can move without the player seeing it.
 pub const VISIBLE_IRRADIANCE: f32 = 0.035;
 
 /// The store's ambient light (shader units: a factor on albedo).
@@ -14,7 +14,7 @@ pub const AMBIENT_LIGHT: f32 = 0.004;
 pub const AMBIENT_IRRADIANCE: f32 = AMBIENT_LIGHT * std::f32::consts::PI;
 
 /// Inverse-square falloff with the shader's smooth range window,
-/// `(1 - (d/r)^4)^2`. A `range` of 0 is unbounded.
+/// `(1 - (d/r)^4)^2`.
 pub fn falloff(distance_sq: f32, range: f32) -> f32 {
     let mut attenuation = 1.0 / distance_sq.max(1e-4);
     if range > 0.0 {
@@ -79,7 +79,6 @@ mod tests {
         assert_eq!(falloff(49.0, 7.0), 0.0);
         assert!(falloff(48.0, 7.0) > 0.0);
         assert!((falloff(4.0, 0.0) - 0.25).abs() < 1e-6);
-        // Close in, the window barely changes inverse-square.
         assert!((falloff(1.0, 7.0) / falloff(1.0, 0.0)) > 0.99);
     }
 

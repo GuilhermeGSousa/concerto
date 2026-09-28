@@ -38,8 +38,7 @@ pub mod utils;
 pub enum ContentAssetRoot {
     /// Native: the directory containing the executable.
     Directory(PathBuf),
-    /// wasm: the URL of the directory the page is served from, without a
-    /// trailing slash, e.g. `"https://host/games/mine"`.
+    /// wasm: the URL of the page's directory, without a trailing slash.
     UrlBase(String),
 }
 
@@ -49,9 +48,7 @@ impl ContentAssetRoot {
     /// binaries can therefore coexist in one target directory by placing
     /// content under `<exe-dir>/<exe-name>-content/`; packaged applications
     /// can place `content/` directly beside the executable. wasm uses the
-    /// page's base URL (its directory, or a `<base>` element), so a game
-    /// hosted under a sub-path — as itch.io and GitHub Pages do — finds the
-    /// `content/` directory published next to its page.
+    /// page's base URL, so games hosted under a sub-path find their content.
     pub fn default_for_platform() -> Self {
         cfg_if::cfg_if! {
             if #[cfg(target_arch = "wasm32")] {
@@ -74,8 +71,6 @@ impl ContentAssetRoot {
     }
 }
 
-/// The directory URL content is served from on the web: the document's base
-/// URI (which honours `<base href>`) up to its last `/`.
 #[cfg(target_arch = "wasm32")]
 fn web_content_base() -> String {
     let document_base = web_sys::window()
@@ -89,7 +84,6 @@ fn web_content_base() -> String {
     }
 }
 
-/// `https://host/a/b/index.html?x` → `https://host/a/b`.
 #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
 fn directory_of(uri: &str) -> String {
     let without_query = uri.split(['?', '#']).next().unwrap_or(uri);

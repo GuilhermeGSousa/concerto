@@ -1,5 +1,4 @@
-//! Procedural meshes. Everything in the store except the mannequins is built
-//! here, so the game downloads no environment art.
+//! Procedural meshes.
 use concerto::render::assets::{mesh::Mesh, vertex::Vertex};
 use glam::{Vec2, Vec3};
 
@@ -19,11 +18,9 @@ fn finish(vertices: Vec<Vertex>, indices: Vec<u32>) -> Mesh {
 }
 
 /// An axis-aligned box with the given half-extents, centered on the origin.
-/// UVs are in world units so tiled textures keep a constant density.
 pub fn cuboid(half: Vec3) -> Mesh {
     let mut vertices = Vec::with_capacity(24);
     let mut indices = Vec::with_capacity(36);
-    // (normal, u axis, v axis) per face; corners are normal ± u ± v.
     let faces = [
         (Vec3::X, Vec3::NEG_Z, Vec3::Y),
         (Vec3::NEG_X, Vec3::Z, Vec3::Y),
@@ -104,8 +101,7 @@ pub fn frustum(bottom: f32, top: f32, height: f32, segments: u32) -> Mesh {
 }
 
 /// Accumulates many axis-aligned boxes and quads into one mesh, so a whole
-/// floor of shelving draws in a handful of calls. UVs are world-space meters
-/// (scaled per material with `uv_scale`).
+/// floor of shelving draws in a handful of calls.
 #[derive(Default)]
 pub struct MeshBuilder {
     vertices: Vec<Vertex>,
@@ -117,8 +113,7 @@ impl MeshBuilder {
         self.indices.is_empty()
     }
 
-    /// A box centered at `center` with half-extents `half`. Faces listed in
-    /// `skip` (as outward normals) are left out, e.g. bottoms nobody sees.
+    /// A box centered at `center` with half-extents `half`.
     pub fn cuboid(&mut self, center: Vec3, half: Vec3, skip: &[Vec3]) -> &mut Self {
         let faces = [
             (Vec3::X, Vec3::NEG_Z, Vec3::Y),
@@ -144,8 +139,6 @@ impl MeshBuilder {
     /// `normal` (`du × dv` must point along `normal`).
     pub fn quad(&mut self, center: Vec3, du: Vec3, dv: Vec3, normal: Vec3) -> &mut Self {
         let base = self.vertices.len() as u32;
-        // World-space UVs: project onto the face's own axes so textures keep
-        // a constant density and line up across neighbouring boxes.
         let u_axis = du.normalize_or_zero();
         let v_axis = dv.normalize_or_zero();
         for (su, sv) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
@@ -173,8 +166,6 @@ mod tests {
         assert!(mesh.indices.iter().all(|&i| i < count));
     }
 
-    /// Every triangle of a closed convex mesh centered on the origin must wind
-    /// counter-clockwise seen from outside, or back-face culling hides it.
     fn assert_outward(mesh: &Mesh, center: Vec3) {
         for tri in mesh.indices.chunks(3) {
             let [a, b, c] = [tri[0], tri[1], tri[2]]

@@ -242,7 +242,6 @@ pub struct AnimationClipNode {
     clip: AssetHandle<AnimationClip>,
     play_mode: AnimationPlayMode,
     start_time: f32,
-    /// Playback speed multiplier; `1.0` plays the clip as authored.
     play_rate: f32,
 }
 
@@ -271,7 +270,7 @@ impl AnimationClipNode {
     }
 
     /// Plays the clip `play_rate` times faster than authored (`0.5` is half
-    /// speed). Negative rates are not supported.
+    /// speed).
     pub fn with_play_rate(mut self, play_rate: f32) -> Self {
         self.play_rate = play_rate.max(0.0);
         self

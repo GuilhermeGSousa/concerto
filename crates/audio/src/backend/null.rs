@@ -1,7 +1,6 @@
 use super::AudioBackend;
 use crate::{PlayParams, SoundData, SoundHandle};
 
-/// Native builds have no output device yet; requests are dropped.
 pub(crate) struct NullBackend;
 
 impl NullBackend {

@@ -1,8 +1,6 @@
-//! Textures painted in code at startup. Each covers a whole number of
-//! real-world repeats so it tiles seamlessly; UVs elsewhere are in meters.
+//! Textures painted in code at startup.
 use concerto::render::assets::texture::{Texture, TextureFormat, TextureKind};
 
-/// Tileable value noise in `[0, 1]` with `period` lattice cells per side.
 fn value_noise(x: f32, y: f32, period: u32, seed: u32) -> f32 {
     let hash = |ix: i32, iy: i32| -> f32 {
         let ix = ix.rem_euclid(period as i32) as u32;
@@ -21,7 +19,6 @@ fn value_noise(x: f32, y: f32, period: u32, seed: u32) -> f32 {
     a + (b - a) * sy
 }
 
-/// Fractal noise, tileable over the unit square.
 fn fbm(u: f32, v: f32, base_period: u32, octaves: u32, seed: u32) -> f32 {
     let mut sum = 0.0;
     let mut amp = 0.5;
@@ -70,7 +67,6 @@ fn scale(c: [f32; 3], s: f32) -> [f32; 3] {
     [c[0] * s, c[1] * s, c[2] * s]
 }
 
-/// Distance to the nearest grid line, in tile units, for `tiles` per side.
 fn grid_distance(u: f32, v: f32, tiles: f32) -> f32 {
     let fu = (u * tiles).fract();
     let fv = (v * tiles).fract();
@@ -117,8 +113,8 @@ pub fn ceiling() -> Texture {
     })
 }
 
-/// Drywall with grime creeping up from the floor; `v` runs down the wall
-/// over one texture height (mapped to the wall's full height).
+/// Drywall with grime creeping up from the floor; `v` runs down the wall over
+/// one texture height (mapped to the wall's full height).
 pub fn drywall() -> Texture {
     paint(128, |u, v| {
         let base = [0.58, 0.56, 0.5];
@@ -130,7 +126,6 @@ pub fn drywall() -> Texture {
             [0.25, 0.22, 0.18],
             (low * (0.6 + 0.6 * grime)).min(0.8),
         );
-        // Baseboard.
         if v > 0.94 {
             color = [0.2, 0.19, 0.18];
         }

@@ -1,9 +1,5 @@
 //! The mannequins: spawning, dressing, posing, the observation rule, and the
 //! hunt.
-//!
-//! The one rule the player must be able to trust: **a mannequin that can be
-//! seen does not move.** "Seen" is computed conservatively in
-//! [`is_observed`], against both this frame's and last frame's eye.
 use concerto::{
     animation::{
         clip::AnimationClip,
@@ -42,32 +38,23 @@ use crate::{
 
 /// Mannequins have no physics body: the physics engine interpolates bodies
 /// between fixed steps, which would let a mannequin glide on for a few
-/// centimetres after being seen. They move by transform alone, and the
-/// player is kept out of them by `block_player`.
+/// centimetres after being seen.
 pub const RADIUS: f32 = 0.3;
-/// Seconds a mannequin must go unseen before it may move: a flicker of a
-/// glance still protects you.
 const UNSEEN_GRACE: f32 = 0.12;
 /// Closer than this while it moves, and it has you.
 pub const CATCH_DISTANCE: f32 = 0.95;
-/// You can make out shapes this close even in the dark.
 const NEAR_SIGHT: f32 = 2.6;
-/// Widening of the view frustum used for observation, in radians, covering
-/// rounding and anything peeking in at the screen edge.
 const VIEW_MARGIN: f32 = 0.12;
-/// Frames a new pose is left unpaused so it gets evaluated onto the bones.
 const SETTLE_FRAMES: u8 = 3;
-/// Beyond this many cells of walking distance, hunters only stalk.
 const STALK_CELLS: i32 = 3;
 const STALK_SPEED: f32 = 0.55;
-/// A dormant hunter wakes at once if the player comes this close (cells).
 const WAKE_CELLS: i32 = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
     /// Stalks the player whenever unseen.
     Hunter,
-    /// Stands still. For now.
+    /// Stands still.
     Decoy,
 }
 
@@ -77,20 +64,15 @@ pub struct Mannequin {
     visual: Entity,
     finish: usize,
     anim: Option<Entity>,
-    /// Pose index into the library, and the one waiting to be applied.
     pose: Option<usize>,
     wanted_pose: Option<usize>,
     settle: u8,
     pub observed: bool,
     unseen_for: f32,
-    /// True while a burst of unseen movement is under way; a fresh pose is
-    /// chosen at the start of each burst.
     moving: bool,
     creak_timer: f32,
     pub speed: f32,
     pub yaw: f32,
-    /// Seconds before a hunter starts hunting. Walking right up to it wakes
-    /// it early.
     dormant: f32,
 }
 
@@ -172,8 +154,8 @@ fn find_owner(
     None
 }
 
-/// Once a mannequin's scene has spawned, repaints it in its finish and hooks
-/// up its animation player.
+/// Once a mannequin's scene has spawned, repaints it in its finish and hooks up
+/// its animation player.
 pub fn dress_mannequins(
     players: Query<Entity, (With<AnimationPlayer>, Without<Dressed>)>,
     parents: Query<&ChildOf>,
@@ -195,7 +177,6 @@ pub fn dress_mannequins(
         };
         mannequin.anim = Some(player);
         cmd.insert(Dressed, player);
-        // The first dressed mannequin means the content has arrived.
         crate::platform::mark_ready();
 
         let finish = &palette.finishes[mannequin.finish % palette.finishes.len()];
@@ -241,8 +222,6 @@ pub fn apply_poses(
             mannequin.pose = Some(wanted);
             mannequin.settle = SETTLE_FRAMES;
         }
-        // Hold off counting until the pose's clip has downloaded: freezing
-        // before then would leave the mannequin in its bind pose for good.
         let clip_ready = mannequin
             .pose
             .and_then(|pose| library.clip(pose))
@@ -268,8 +247,6 @@ fn in_view(position: Vec3, rotation: Quat, aspect: f32, point: Vec3) -> bool {
     let local = rotation.inverse() * (point - position);
     let depth = -local.z;
     if depth < 0.02 {
-        // Behind the eye, or so close it straddles the near plane: a body
-        // this close is on screen whichever way it leans.
         return local.length() < 0.5;
     }
     let tan_v = (FOV_Y * 0.5 + VIEW_MARGIN).tan();
@@ -277,13 +254,10 @@ fn in_view(position: Vec3, rotation: Quat, aspect: f32, point: Vec3) -> bool {
     local.y.abs() <= depth * tan_v && local.x.abs() <= depth * tan_h.tan()
 }
 
-/// Whether `point` is bright enough on screen to make out, using the same
-/// falloff the renderer uses. Up close you can see shapes even in the dark.
 fn is_lit(sight: &Sight, point: Vec3) -> bool {
     if (point - sight.eye.position).length() < NEAR_SIGHT {
         return true;
     }
-    // What the fog swallows is as good as dark.
     let fog = FOG.amount((point - sight.eye.position).length());
     lighting::irradiance(point, sight.lights, sight.flashlight.as_ref()) * (1.0 - fog)
         >= lighting::VISIBLE_IRRADIANCE
@@ -296,7 +270,6 @@ fn line_of_sight(sight: &Sight, from: Vec3, point: Vec3, owner: Entity) -> bool 
         return true;
     }
     let dir = to_point / distance;
-    // Start just outside the player's own capsule.
     let start = from + dir * 0.4;
     let Some(hit) = sight
         .physics
@@ -305,12 +278,11 @@ fn line_of_sight(sight: &Sight, from: Vec3, point: Vec3, owner: Entity) -> bool 
         return true;
     };
     let _ = owner;
-    // Anything solid short of the point hides it.
     hit.point.distance(start) >= distance - 0.4 - 0.05
 }
 
 /// Per sample point: (in view of the current eye, fogged irradiance, line of
-/// sight). For the debug trace.
+/// sight).
 pub fn explain_observation(sight: &Sight, owner: Entity, feet: Vec3) -> Vec<(bool, f32, bool)> {
     [0.35, 1.1, 1.65]
         .map(|h| feet + Vec3::Y * h)
@@ -383,8 +355,6 @@ fn next_waypoint(level: &Level, flow: &Flow, at: Vec3, goal: Vec3) -> Vec3 {
     else {
         return goal;
     };
-    // Line up with the doorway before crossing it so nobody ends a burst
-    // half inside a shelf.
     let axis = (next.center() - cell.center()).normalize_or_zero();
     let offset = flat(at - cell.center());
     let lateral = offset - axis * offset.dot(axis);
@@ -496,7 +466,6 @@ pub fn hunt(
         let to_player = flat(player_pos - feet);
         let distance = to_player.length();
         if !mannequin.moving {
-            // A new burst: take a new pose, scarier the closer it gets.
             mannequin.moving = true;
             let cells_away = distance / CELL;
             let menace = if cells_away < 1.2 {
@@ -525,7 +494,6 @@ pub fn hunt(
 
         let waypoint = next_waypoint(level, &flow, feet, player_pos);
         let mut dir = flat(waypoint - feet).normalize_or_zero();
-        // Keep a little apart from each other.
         for &(other, pos) in &positions {
             if other != entity {
                 let away = flat(feet - pos);
@@ -570,7 +538,6 @@ pub fn face_mannequins(
     game: Res<Game>,
 ) {
     for mannequin in mannequins.iter() {
-        // Seen means frozen, except for the one lunging at you.
         if mannequin.observed && game.phase != crate::game::Phase::Caught {
             continue;
         }
@@ -614,7 +581,7 @@ mod tests {
 
     #[test]
     fn view_test_matches_the_camera() {
-        let rotation = Quat::IDENTITY; // looking down -Z
+        let rotation = Quat::IDENTITY;
         let pos = Vec3::ZERO;
         assert!(in_view(
             pos,
@@ -628,13 +595,11 @@ mod tests {
             16.0 / 9.0,
             Vec3::new(0.0, 0.0, 5.0)
         ));
-        // Just past the horizontal edge of a 16:9 view, inside the margin.
         let half_h = ((FOV_Y * 0.5).tan() * 16.0 / 9.0).atan();
         let edge = Vec3::new((half_h + 0.05).tan() * 5.0, 0.0, -5.0);
         assert!(in_view(pos, rotation, 16.0 / 9.0, edge));
         let outside = Vec3::new((half_h + 0.3).tan() * 5.0, 0.0, -5.0);
         assert!(!in_view(pos, rotation, 16.0 / 9.0, outside));
-        // Right behind the shoulder, touching distance: counts as seen.
         assert!(in_view(pos, rotation, 1.0, Vec3::new(0.0, 0.0, 0.3)));
     }
 

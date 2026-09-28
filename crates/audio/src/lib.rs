@@ -1,11 +1,5 @@
 //! Minimal fire-and-forget audio: one-shot sound effects plus a single looping
 //! music track.
-//!
-//! Sounds are plain PCM sample buffers ([`SoundData`]); the [`synth`] module
-//! builds them procedurally so a game can ship audio without any asset files.
-//! Gameplay code queues requests on the [`Audio`] resource from any system and
-//! a main-thread system hands them to the platform backend each frame:
-//! WebAudio on the web, and a silent backend natively for now.
 use std::sync::Arc;
 
 use concerto_app::{schedule_groups::LateUpdate, App, Plugin};
@@ -36,7 +30,7 @@ pub struct SoundHandle(u32);
 pub struct PlayParams {
     /// Linear gain, multiplied by the master volume.
     pub volume: f32,
-    /// Playback-rate multiplier; also shifts pitch. `1.0` is as authored.
+    /// Playback-rate multiplier; also shifts pitch.
     pub rate: f32,
     /// Stereo position: `-1.0` hard left, `0.0` center, `1.0` hard right.
     pub pan: f32,
@@ -77,8 +71,7 @@ pub(crate) enum AudioCommand {
     StopMusic,
 }
 
-/// The game-facing audio API. Requests are queued and handed to the backend
-/// once per frame in `LateUpdate`.
+/// The game-facing audio API.
 #[derive(Resource, Default)]
 pub struct Audio {
     sounds: Vec<Arc<SoundData>>,

@@ -60,7 +60,6 @@ impl AnimationPlayer {
 
     /// Freezes the player: its graph stops advancing and its bones are no
     /// longer posed, so they hold (and can be edited from) their last pose.
-    /// A paused player costs nothing per frame.
     pub fn set_paused(&mut self, paused: bool) {
         self.paused = paused;
     }

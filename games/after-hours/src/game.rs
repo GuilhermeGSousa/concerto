@@ -81,7 +81,6 @@ impl Rand {
     }
 
     pub fn next_u32(&mut self) -> u32 {
-        // xorshift64*
         let mut x = self.0;
         x ^= x >> 12;
         x ^= x << 25;

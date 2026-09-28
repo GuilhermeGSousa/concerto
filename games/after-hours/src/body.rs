@@ -11,7 +11,6 @@ use glam::Vec3;
 pub struct Mover {
     /// Velocity the body is trying to reach.
     pub desired: Vec3,
-    /// Velocity actually applied last step, easing toward `desired`.
     current: Vec3,
     /// How quickly `current` chases `desired`, in 1/s.
     pub responsiveness: f32,
@@ -30,8 +29,8 @@ impl Mover {
     }
 }
 
-/// Fixed step: eases each body toward its desired horizontal velocity,
-/// leaving gravity's vertical component alone.
+/// Fixed step: eases each body toward its desired horizontal velocity, leaving
+/// gravity's vertical component alone.
 pub fn apply_movers(movers: Query<(&mut Mover, &BodyId)>, mut physics: ResMut<PhysicsState>) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     for (mut mover, body) in movers.iter() {

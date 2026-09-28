@@ -15,12 +15,6 @@ pub enum InputState {
     Up,
 }
 
-/// One key or button: whether it is held, and what happened to it this frame.
-///
-/// Presses and releases are recorded as events rather than folded into a
-/// single state, so a tap that goes down *and* up within one frame (a quick
-/// click, a touchpad tap, any input during a slow frame) is still seen as
-/// pressed that frame, and its release is never lost.
 #[derive(Clone, Copy, Default)]
 struct ButtonState {
     down: bool,
@@ -67,7 +61,6 @@ impl ButtonState {
         }
     }
 
-    /// Held now, or tapped at some point this frame.
     fn held(self) -> bool {
         self.down || self.pressed
     }
@@ -186,10 +179,7 @@ impl Input {
             .apply(state);
     }
 
-    /// Adds one raw mouse-motion event. Several can arrive per frame (high
-    /// polling-rate mice, or a slow frame), so they accumulate until
-    /// [`update`](Self::update) clears them. Every platform, the web included,
-    /// reports relative motion here (`movementX/Y` in browsers).
+    /// Adds one raw mouse-motion event.
     pub fn update_mouse_delta(&mut self, delta: (f64, f64)) {
         self.mouse_delta += Vec2::new(delta.0 as f32, delta.1 as f32);
     }
@@ -217,7 +207,6 @@ mod tests {
         input.update();
         assert!(!input.is_held(KEY));
         assert!(input.get_key_state(KEY) == InputState::Up);
-        // And the next tap is seen too.
         input.update_mouse_button(MouseButton::Left, ElementState::Pressed);
         input.update_mouse_button(MouseButton::Left, ElementState::Released);
         assert!(input.is_mouse_button_just_pressed(MouseButton::Left));
@@ -233,7 +222,6 @@ mod tests {
         assert!(input.get_key_state(KEY) == InputState::Pressed);
         input.update();
         assert!(input.get_key_state(KEY) == InputState::Down);
-        // Key repeat sends more presses while held; they are not new presses.
         input.update_key_input(KEY, ElementState::Pressed);
         assert!(!input.is_just_pressed(KEY));
         input.update_key_input(KEY, ElementState::Released);

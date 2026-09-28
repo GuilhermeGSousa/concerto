@@ -1,12 +1,6 @@
 name: AFTER HOURS web build
 
-# Builds the browser release of games/after-hours and uploads it as an
-# artifact (a zip ready for itch.io's "HTML" upload). On a version tag, or a
-# manual run with "publish" ticked, it also pushes the build to itch.io with
-# butler — provided the repository has:
-#   - secret   BUTLER_API_KEY  (https://itch.io/user/settings/api-keys)
-#   - variable ITCH_TARGET     e.g. "your-itch-username/after-hours"
-# Without them the publish step is skipped and the artifact is still built.
+# Publishing to itch.io needs secret BUTLER_API_KEY and variable ITCH_TARGET.
 
 on:
   push:
@@ -33,7 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      # No submodules: the web build uses the pure-Rust Rapier physics backend.
       - uses: actions/checkout@v4
 
       - name: Install stable Rust toolchain
@@ -60,7 +53,6 @@ jobs:
 
       - name: Build release
         working-directory: games/after-hours
-        # Relative asset URLs so the game works from itch.io's sub-path.
         run: trunk build --release --public-url ./
 
       - name: Package

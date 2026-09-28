@@ -48,7 +48,6 @@
         function canvas() { return document.querySelector("canvas"); }
         var loading = document.getElementById("loading");
 
-        // A readable message instead of a black page when the game cannot run.
         function fail(message) {
             if (document.body.dataset.failed) return;
             document.body.dataset.failed = "1";
@@ -64,7 +63,6 @@
         if (!probe.getContext("webgl2")) {
             fail("THE STORE WON'T OPEN\n\nthis browser has no WebGL2.\ntry a recent Chrome, Firefox, Edge or Safari,\nand check hardware acceleration is enabled.");
         }
-        // Rust panics are reported through console.error by the panic hook.
         var consoleError = console.error;
         console.error = function () {
             consoleError.apply(console, arguments);
@@ -74,8 +72,6 @@
             }
         };
 
-        // Pointer lock needs a user gesture. winit cancels pointerdown, which
-        // suppresses mousedown, so this must listen to pointerdown.
         document.addEventListener("pointerdown", function () {
             var c = canvas();
             if (!c) return;
@@ -86,14 +82,11 @@
                 if (request && request.catch) request.catch(function () {});
             }
         }, true);
-        // If the browser refuses the lock, play on with a free cursor.
         document.addEventListener("pointerlockerror", function () {
             document.body.dataset.lockFailed = "1";
         });
         document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
 
-        // Keep "opening the store" up until the game says its content is in
-        // (or, failing that, for at most a minute).
         function ready() {
             if (document.body.dataset.failed) return;
             loading.remove();

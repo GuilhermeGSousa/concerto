@@ -1,4 +1,4 @@
-//! AFTER HOURS — a first-person mannequin horror game. See `DESIGN.md`.
+//! AFTER HOURS — a first-person mannequin horror game.
 use concerto::{
     DefaultPlugins,
     app::{
@@ -50,8 +50,6 @@ fn main() {
     cfg_if::cfg_if! {
         if #[cfg(target_arch = "wasm32")] {
             std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            // Quiet by default for players; `?trace` brings back the phase and
-            // frame-time logs automated tests rely on.
             let level = if platform::debug_flag("trace") { log::Level::Info } else { log::Level::Warn };
             console_log::init_with_level(level).expect("Couldn't initialize logger");
         } else {
@@ -108,11 +106,6 @@ fn main() {
     );
     app.add_system(FixedUpdate, body::apply_movers);
 
-    // Everything that decides what is on screen runs after physics has
-    // interpolated the player for this frame and before transforms propagate
-    // (both passes: parentless entities such as the main camera go through
-    // `update_simple_entities`), so the observation test sees exactly the
-    // frame that will be drawn.
     app.add_system(
         LateUpdate,
         (

@@ -116,10 +116,6 @@ impl RenderPlugin {
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
-                    // On the web, ask for exactly what the adapter offers: fixed
-                    // WebGL2 defaults over-ask on some devices (e.g. 8 colour
-                    // attachments where the browser allows 6), which fails the
-                    // whole device request.
                     required_limits: if cfg!(target_arch = "wasm32") {
                         adapter.limits()
                     } else {

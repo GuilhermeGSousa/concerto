@@ -1,7 +1,4 @@
 //! Procedural store floors: a braided maze of shelving on a square grid.
-//!
-//! Pure data and deterministic from a seed, so it can be unit tested and a
-//! night can be replayed exactly. `store.rs` turns a [`Level`] into entities.
 use std::collections::VecDeque;
 
 use glam::{Vec2, Vec3};
@@ -42,10 +39,10 @@ impl Cell {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dir {
-    North, // -y
-    East,  // +x
-    South, // +y
-    West,  // -x
+    North,
+    East,
+    South,
+    West,
 }
 
 impl Dir {
@@ -85,9 +82,7 @@ pub struct LevelSpec {
 #[derive(Debug, Clone)]
 pub struct Level {
     pub size: i32,
-    /// `open_east[i]`: no wall between cell i and its east neighbor.
     open_east: Vec<bool>,
-    /// `open_south[i]`: no wall between cell i and its south neighbor.
     open_south: Vec<bool>,
     pub start: Cell,
     /// The exit cell and which outer wall the door is in.
@@ -194,8 +189,8 @@ impl Level {
         dist[self.index(c)]
     }
 
-    /// The first step on a shortest path from `from` toward `to`, or `None`
-    /// if already there or unreachable.
+    /// The first step on a shortest path from `from` toward `to`, or `None` if
+    /// already there or unreachable.
     #[cfg(test)]
     pub fn next_step(&self, from: Cell, to: Cell) -> Option<Cell> {
         if from == to || !self.contains(from) || !self.contains(to) {
@@ -207,8 +202,8 @@ impl Level {
             .filter(|n| dist[self.index(*n)] < dist[self.index(from)])
     }
 
-    /// Wall segments between cells and around the outside, each as
-    /// (center, along-axis is X?). Outer walls exclude the exit door.
+    /// Wall segments between cells and around the outside, each as (center,
+    /// along-axis is X?).
     pub fn walls(&self) -> Vec<Wall> {
         let mut walls = Vec::new();
         for c in self.cells() {
@@ -287,7 +282,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         lights: Vec::new(),
     };
 
-    // Randomized depth-first maze.
     let mut visited = vec![false; count];
     let mut stack = vec![level.start];
     visited[level.index(level.start)] = true;
@@ -312,8 +306,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         stack.push(n);
     }
 
-    // Braid: most dead ends get a second way out, so a hunter in one
-    // corridor is rarely a death sentence. A few open-plan gaps as well.
     let cells: Vec<Cell> = level.cells().collect();
     for &c in &cells {
         if level.wall_count(c) >= 3 && rand.unit() < 0.7 {
@@ -341,7 +333,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
         .max()
         .unwrap_or(0);
 
-    // Exit: a far cell on the outer edge, door in its outer wall.
     let edge: Vec<(Cell, Dir)> = cells
         .iter()
         .flat_map(|&c| {
@@ -370,7 +361,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
 
     let mut taken = vec![level.start, level.exit.0];
 
-    // Keys: spread out by farthest-point sampling, preferring dead ends.
     let min_key_dist = (max_dist / 3).max(2);
     for _ in 0..spec.keys {
         let best = cells
@@ -422,7 +412,6 @@ pub fn generate(spec: &LevelSpec) -> Level {
     level.hunters = hunters;
     level.decoys = decoys;
 
-    // Lights: the start and exit are always lit; the rest at random.
     let mut lights = vec![level.start, level.exit.0];
     let mut rest: Vec<Cell> = cells
         .iter()
@@ -500,7 +489,6 @@ mod tests {
             let (cell, dir) = level.exit;
             let (dx, dy) = dir.offset();
             assert!(!level.contains(Cell::new(cell.x + dx, cell.y + dy)));
-            // No wall is generated in the door.
             let door = cell.center() + dir.vector() * CELL * 0.5;
             assert!(level.walls().iter().all(|w| w.center.distance(door) > 0.1));
         }

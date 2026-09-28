@@ -30,9 +30,7 @@ pub const RADIUS: f32 = 0.3;
 const WALK_SPEED: f32 = 3.0;
 const SPRINT_SPEED: f32 = 5.4;
 const STAMINA_SECONDS: f32 = 4.0;
-/// Full battery lasts this long with the light on.
 const BATTERY_SECONDS: f32 = 150.0;
-/// Below this charge the light starts to stutter.
 const LOW_BATTERY: f32 = 0.22;
 pub const FLASHLIGHT_CONE: f32 = 0.42;
 pub const FLASHLIGHT_RANGE: f32 = 16.0;
@@ -47,10 +45,8 @@ pub const FOG: Fog = Fog {
     density: 0.085,
     start: 4.0,
 };
-/// Ambient light: next to nothing, so unlit means unseen. The observation
-/// rule counts it (see `lighting::AMBIENT_IRRADIANCE`).
+/// Ambient light: next to nothing, so unlit means unseen.
 pub const AMBIENT: f32 = lighting::AMBIENT_LIGHT;
-/// Largest mouse movement, in pixels per axis, accepted in one frame.
 const MAX_LOOK_STEP: f32 = 250.0;
 
 #[derive(Resource, Clone, Copy, PartialEq)]
@@ -101,8 +97,8 @@ impl Settings {
     }
 }
 
-/// On the title and pause screens: `[` / `]` sensitivity, `-` / `=` volume,
-/// `I` invert look. Saved as they change.
+/// On the title and pause screens: `[` / `]` sensitivity, `-` / `=` volume, `I`
+/// invert look.
 pub fn adjust_settings(
     mut settings: ResMut<Settings>,
     input: Res<Input>,
@@ -144,7 +140,6 @@ pub struct Player {
     pub yaw: f32,
     pub pitch: f32,
     pub stamina: f32,
-    /// Stamina only refills after a moment of not sprinting.
     stamina_rest: f32,
     pub sprinting: bool,
     bob_phase: f32,
@@ -175,9 +170,7 @@ impl Flashlight {
     }
 }
 
-/// The eye this frame and last frame, for the observation test. Rendering
-/// uses exactly this pose (see `place_camera`), and the previous one covers
-/// anything still on screen from the frame before.
+/// The eye this frame and last frame, for the observation test.
 #[derive(Resource, Default, Clone, Copy)]
 pub struct Eye {
     pub position: Vec3,
@@ -225,8 +218,6 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
                     light.with_shadows()
                 }
             },
-            // Held low and to the right, like a real torch; shadows then
-            // fall visibly behind things instead of hiding right behind them.
             Transform::from_translation(FLASHLIGHT_OFFSET),
         ))
         .entity();
@@ -283,8 +274,6 @@ pub fn control_player(
             continue;
         }
 
-        // Browsers can deliver one wild jump as the pointer lock engages;
-        // no real flick moves this far in a single frame.
         let delta = input
             .mouse_delta()
             .clamp(Vec2::splat(-MAX_LOOK_STEP), Vec2::splat(MAX_LOOK_STEP));
@@ -327,7 +316,6 @@ pub fn control_player(
         };
         mover.desired = wish.normalize_or_zero() * speed;
 
-        // Head bob and footsteps, driven by actual speed.
         let actual = flat(mover.velocity()).length();
         let target_bob = (actual / WALK_SPEED).min(1.6);
         player.bob_amount += (target_bob - player.bob_amount) * (1.0 - (-8.0 * dt).exp());
@@ -379,8 +367,6 @@ pub fn update_flashlight(
             }
         }
 
-        // Low battery: now and then the beam cuts out for a moment. Those
-        // moments are darkness, and the mannequins know it.
         flashlight.flicker_off = (flashlight.flicker_off - dt).max(0.0);
         if flashlight.switched_on && flashlight.battery < LOW_BATTERY && game.is_live() {
             flashlight.flicker_timer -= dt;
@@ -394,7 +380,6 @@ pub fn update_flashlight(
 
         flashlight.emitting =
             flashlight.switched_on && flashlight.battery > 0.0 && flashlight.flicker_off <= 0.0;
-        // Dims as the battery drains.
         let strength = 0.45 + 0.55 * (flashlight.battery / 0.5).min(1.0);
         flashlight.intensity = if flashlight.emitting {
             FLASHLIGHT_INTENSITY * strength

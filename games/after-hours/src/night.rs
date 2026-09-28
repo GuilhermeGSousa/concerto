@@ -1,5 +1,5 @@
-//! Nights: building the floor, the objectives, the clock that wakes the
-//! decoys, failing lights, and the flow between screens.
+//! Nights: building the floor, the objectives, the clock that wakes the decoys,
+//! failing lights, and the flow between screens.
 use concerto::{
     audio::Audio,
     color::Color,
@@ -27,11 +27,8 @@ use crate::{
     store::{self, BatteryPickup, CeilingLight, ExitDoor, KeyPickup, StoreEntity},
 };
 
-/// Seconds between decoys waking up.
 const WAKE_INTERVAL: f32 = 60.0;
-/// Minutes past 11 PM the night starts at.
 const START_MINUTES: f32 = 52.0;
-/// In-game minutes per real second on the floor.
 const CLOCK_RATE: f32 = 0.5;
 
 pub struct NightPlan {
@@ -47,7 +44,6 @@ pub fn plan(night: u32, seed: u64) -> NightPlan {
     let n = night.max(1);
     #[rustfmt::skip]
     let table: [(i32, usize, usize, usize, f32, f32, f32, f32); 5] = [
-        // size keys hunters decoys lit  speed first_wake spacing
         (7,  3, 2, 6,  0.45, 3.5, 25.0, 30.0),
         (8,  3, 3, 7,  0.35, 4.0, 18.0, 22.0),
         (8,  4, 4, 8,  0.3,  4.5, 12.0, 18.0),
@@ -114,7 +110,7 @@ impl NightState {
     }
 }
 
-/// The clock on the HUD, e.g. "12:07 AM".
+/// The clock on the HUD, e.g.
 pub fn clock_text(night_time: f32) -> String {
     let minutes = START_MINUTES + night_time * CLOCK_RATE;
     let total = (23.0 * 60.0 + minutes) as u32;
@@ -181,7 +177,6 @@ pub fn rebuild_night(
     }
     let built = store::build_store(&mut cmd, &server, palette, &level, seed);
 
-    // Face into the store from the start cell.
     let start = level.start;
     let toward = level
         .neighbors(start)
@@ -189,7 +184,6 @@ pub fn rebuild_night(
         .map(|n| n.center() - start.center())
         .unwrap_or(Vec3::Z);
     let yaw = (-toward.x).atan2(-toward.z);
-    // `?escape` (debug): start at the open staff exit to test the escape flow.
     let debug_escape = kind == Rebuild::Night && platform::debug_flag("escape");
     let feet = if debug_escape {
         let (cell, dir) = level.exit;
@@ -203,7 +197,6 @@ pub fn rebuild_night(
         for (i, &cell) in cells.iter().enumerate() {
             let jitter = Vec3::new(rand.range(-1.0, 1.0), 0.0, rand.range(-1.0, 1.0));
             let feet = cell.center() + jitter;
-            // On display: facing the aisle, not you. Yet.
             let face = Dir::ALL[rand.index(4)].vector();
             let pose = library.pick(Menace::Display, None, rand).unwrap_or(0);
             mannequin::spawn_mannequin(
@@ -215,7 +208,6 @@ pub fn rebuild_night(
                 plan.hunter_speed,
                 rand.index(palette.finishes.len()),
                 pose,
-                // Hunters wake one by one; the first gives you a head start.
                 plan.first_wake + i as f32 * plan.wake_spacing,
             );
         }
@@ -275,7 +267,6 @@ pub fn advance_phases(
             if game.phase_time > 0.5 && clicked(&input) {
                 sounds.play(&mut audio, Sfx::Click, 0.6);
                 game.night = 1;
-                // `?seed=N` (debug) makes the first night reproducible.
                 game.seed = platform::debug_value("seed")
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(rand.next_u32() as u64 ^ 0xa11_0005);
@@ -298,7 +289,6 @@ pub fn advance_phases(
             } else if (!locked && game.phase_time > 0.6)
                 || (!platform::IS_WEB && input.is_just_pressed(PhysicalKey::Code(KeyCode::Escape)))
             {
-                // On the web, Escape releases the pointer lock itself.
                 game.paused = true;
             }
         }
@@ -306,7 +296,6 @@ pub fn advance_phases(
         Phase::Dead => {
             if game.phase_time > 1.2 && clicked(&input) {
                 sounds.play(&mut audio, Sfx::Click, 0.6);
-                // Same seed: the same floor, now that you know it.
                 start_night(&mut game, &mut state, &mut audio, &mut sounds);
             }
         }
@@ -359,7 +348,6 @@ pub fn objectives(
     mut cmd: CommandQueue,
 ) {
     let t = game.night_time;
-    // Pickups turn and bob so they catch the light.
     for (_, key, mut transform) in keys.iter() {
         transform.translation = key.base + Vec3::Y * (t * 2.0).sin() * 0.06;
         transform.rotation = Quat::from_rotation_y(t * 1.5);
@@ -403,7 +391,6 @@ pub fn objectives(
             } else {
                 state.say(format!("{left} to go."), 3.0);
             }
-            // The store notices: a working light somewhere dies for good.
             let working = ceiling.iter().filter(|l| l.on && !l.flickers).count();
             if working > 2 {
                 let mut n = rand.index(working);
@@ -488,7 +475,6 @@ pub fn night_clock(
         return;
     };
 
-    // Guidance by ear: the nearest key (or the open exit) chimes now and then.
     state.chime_timer -= dt;
     if state.chime_timer <= 0.0 {
         state.chime_timer = rand.range(5.0, 8.0);
@@ -505,7 +491,6 @@ pub fn night_clock(
         };
         if let Some(point) = source {
             let (volume, pan) = mannequin::spatialize(&eye, point);
-            // Never quite silent, so a far key can still be found.
             sounds.play_at(&mut audio, Sfx::Chime, (volume * 0.5).max(0.07), pan);
         }
     }

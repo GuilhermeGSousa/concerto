@@ -1,6 +1,6 @@
-//! Builds a night's store floor from a [`Level`]: merged static meshes for
-//! the floor, ceiling, walls and stocked shelving, one collider per wall
-//! segment, ceiling fixtures, pickups and the staff exit.
+//! Builds a night's store floor from a [`Level`]: merged static meshes for the
+//! floor, ceiling, walls and stocked shelving, one collider per wall segment,
+//! ceiling fixtures, pickups and the staff exit.
 use concerto::{
     color::Color,
     ecs::{CommandQueue, Component, Entity},
@@ -49,9 +49,7 @@ pub struct CeilingLight {
     pub panel: Entity,
 }
 
-/// Reach of a ceiling fixture. Lights fade smoothly to nothing here, so a
-/// working tube lights its own aisle and a little of the next, and the rest
-/// of the floor is genuinely dark.
+/// Reach of a ceiling fixture.
 pub const CEILING_LIGHT_RANGE: f32 = 6.5;
 pub const CEILING_LIGHT_INTENSITY: f32 = 7.0;
 
@@ -112,7 +110,6 @@ fn spawn_prop(
     .entity()
 }
 
-/// Stocks one side of a shelving unit: boxes of varied size on each shelf.
 fn stock_shelf(
     boxes: &mut [MeshBuilder],
     rand: &mut Rand,
@@ -128,7 +125,6 @@ fn stock_shelf(
         while t < length * 0.5 - 0.2 {
             let w = rand.range(0.18, 0.5).min(length * 0.5 - t);
             if rand.unit() < 0.18 {
-                // A gap where stock was sold.
                 t += w + 0.05;
                 continue;
             }
@@ -167,7 +163,6 @@ pub fn build_store(
     let mut rand = Rand::new(seed ^ 0x5eed_5707);
     let extent = level.extent();
 
-    // Floor and ceiling slabs.
     cmd.spawn((
         StoreEntity,
         Collider::cuboid(extent * 0.5 + 2.0, 0.5, extent * 0.5 + 2.0),
@@ -190,7 +185,6 @@ pub fn build_store(
     );
     spawn_mesh(cmd, server, ceiling, &palette.ceiling);
 
-    // Walls.
     let mut drywall = MeshBuilder::default();
     let mut steel = MeshBuilder::default();
     let mut boxes: Vec<MeshBuilder> = (0..palette.stock.len())
@@ -218,8 +212,6 @@ pub fn build_store(
             Collider::cuboid(half.x, SHELF_HEIGHT * 0.5, half.y),
             Transform::from_translation(center),
         ));
-        // The unit: a solid back panel, end uprights, shelves on both faces,
-        // and stock. Shelves stop short of the ends so units read as units.
         let base = wall.center;
         let (long, thick) = if wall.along_x {
             (Vec3::X, Vec3::Z)
@@ -265,7 +257,6 @@ pub fn build_store(
         spawn_mesh(cmd, server, builder, material);
     }
 
-    // Ceiling fixtures: a panel in every cell, lit or dead.
     let panel_mesh = &palette.panel_mesh;
     for cell in level.cells() {
         let working = level.lights.contains(&cell);
@@ -304,7 +295,6 @@ pub fn build_store(
         }
     }
 
-    // Pickups.
     for &cell in &level.keys {
         let base = cell.center() + Vec3::Y * 1.0;
         let key = spawn_prop(
@@ -326,7 +316,6 @@ pub fn build_store(
         cmd.add_child(key, glow);
     }
     for &cell in &level.batteries {
-        // Tucked toward a corner so they reward looking around.
         let jitter = Vec3::new(rand.range(-1.0, 1.0), 0.0, rand.range(-1.0, 1.0));
         let base = cell.center() + jitter + Vec3::Y * 0.9;
         let battery = spawn_prop(
@@ -338,7 +327,6 @@ pub fn build_store(
         cmd.insert(BatteryPickup { base }, battery);
     }
 
-    // The staff exit: a door in the outer wall with a sign over it.
     let (exit_cell, dir) = level.exit;
     let door_center = exit_cell.center() + dir.vector() * CELL * 0.5;
     let along_x = dir.vector().x == 0.0;
@@ -347,7 +335,6 @@ pub fn build_store(
     } else {
         Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)
     };
-    // Wall either side of and above the door.
     let side_half = Vec3::new(0.8, CEILING * 0.5, OUTER_THICKNESS * 0.5);
     let lintel_half = Vec3::new(0.62, (CEILING - 2.3) * 0.5, OUTER_THICKNESS * 0.5);
     let mut exit_wall = MeshBuilder::default();

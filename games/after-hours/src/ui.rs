@@ -1,5 +1,4 @@
-//! Screens and HUD. Monospace throughout: the look of a security terminal or
-//! a till receipt.
+//! Screens and HUD.
 use concerto::{
     color::Color,
     ecs::{CommandQueue, Component, Entity, Query, Res, With, Without},
@@ -170,7 +169,6 @@ fn bar(cmd: &mut CommandQueue, parent: Entity, label: &str, fill: impl Component
 const CONTROLS: &str = "WASD move    MOUSE look    SHIFT run\nF flashlight    ESC pause";
 
 pub fn spawn_ui(mut cmd: CommandQueue) {
-    // Title.
     let title = cmd
         .spawn((
             full_screen(10),
@@ -201,7 +199,6 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     line(&mut cmd, title, "", 12.0, DIM, Some(Label::Settings));
     line(&mut cmd, title, "", 12.0, DIM, Some(Label::Best));
 
-    // Night card.
     let intro = cmd
         .spawn((
             full_screen(10),
@@ -228,7 +225,6 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     spacer(&mut cmd, intro, 24.0);
     line(&mut cmd, intro, "", 14.0, DIM, Some(Label::NightGoal));
 
-    // HUD.
     let hud = cmd
         .spawn((
             UINode {
@@ -349,7 +345,6 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     cmd.add_child(hud, message_row);
     line(&mut cmd, message_row, "", 15.0, PALE, Some(Label::Message));
 
-    // Pause.
     let pause = cmd
         .spawn((
             full_screen(10),
@@ -364,7 +359,6 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
     spacer(&mut cmd, pause, 14.0);
     line(&mut cmd, pause, "", 12.0, DIM, Some(Label::Settings));
 
-    // Caught.
     let dead = cmd
         .spawn((
             full_screen(10),
@@ -384,7 +378,6 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
         None,
     );
 
-    // Escaped.
     let escaped = cmd
         .spawn((
             full_screen(10),
@@ -411,7 +404,6 @@ pub fn spawn_ui(mut cmd: CommandQueue) {
         Some(Label::EscapedPrompt),
     );
 
-    // Fade-to-black layer for cuts.
     cmd.spawn((
         full_screen(20),
         UIMaterial::flat(Color::srgba(0.0, 0.0, 0.0, 0.0)),
@@ -580,8 +572,6 @@ pub fn update_ui(
         }
     }
 
-    // Fades: in from black as a night starts; hard black at the end of the
-    // jumpscare.
     let alpha = match game.phase {
         Phase::Playing => (1.0 - t / 1.2).max(0.0),
         Phase::Caught => ((t - SCARE_SECONDS + 0.15) / 0.15).clamp(0.0, 1.0),

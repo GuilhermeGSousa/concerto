@@ -7,8 +7,6 @@ use web_sys::{
 use super::AudioBackend;
 use crate::{PlayParams, SoundData, SoundHandle};
 
-/// Simultaneous one-shots beyond this are dropped: a crowd of identical hit
-/// sounds on one frame only clips.
 const MAX_VOICES_PER_FRAME: usize = 12;
 
 pub(crate) struct WebBackend {
@@ -86,8 +84,6 @@ impl WebBackend {
 
 impl AudioBackend for WebBackend {
     fn set_volumes(&mut self, master: f32, music: f32) {
-        // Browsers start the context suspended until the page has had a user
-        // gesture; keep asking until it runs.
         if self.context.state() == AudioContextState::Suspended {
             let _ = self.context.resume();
         }

@@ -43,9 +43,8 @@ pub struct Light {
     pub intensity: f32,
     pub shadowmaps_enabled: bool,
     pub light_type: LightType,
-    /// Distance at which a point or spot light's contribution smoothly
-    /// reaches zero. `0.0` means unbounded (pure inverse-square falloff).
-    /// Ignored by directional lights.
+    /// Distance at which a point or spot light's contribution smoothly reaches
+    /// zero.
     #[serde(default)]
     pub range: f32,
 }
@@ -173,7 +172,6 @@ pub struct RenderLight {
     // Spotlight
     pub(crate) cos_cone_angle: f32,
     pub(crate) shadow_layer: i32,
-    /// `0.0` for unbounded.
     pub(crate) range: f32,
 }
 
