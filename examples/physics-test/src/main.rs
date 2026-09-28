@@ -87,9 +87,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
         // Collider::cuboid(20.0, 0.5, 20.0),
         MeshCollider,
         MeshComponent { handle: floor_mesh },
-        MaterialComponent {
-            handle: floor_material,
-        },
+        MaterialComponent::all(floor_material),
         floor_transform,
     ));
 
@@ -111,9 +109,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             MeshComponent {
                 handle: asset_server.add(make_box(half)),
             },
-            MaterialComponent {
-                handle: wall_material.clone(),
-            },
+            MaterialComponent::all(wall_material.clone()),
             wall_transform,
         ));
     }
@@ -162,7 +158,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             MeshComponent {
                 handle: sphere_mesh.clone(),
             },
-            MaterialComponent { handle: material },
+            MaterialComponent::all(material),
             transform,
         ));
     }

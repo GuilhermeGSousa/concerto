@@ -78,9 +78,7 @@ fn world_grid_on_add(
         context.entity,
     );
     world.insert(
-        MaterialComponent::<WorldGridMaterial> {
-            handle: material_handle,
-        },
+        MaterialComponent::<WorldGridMaterial>::all(material_handle),
         context.entity,
     );
     world.insert(Transform::default(), context.entity);
@@ -91,7 +89,10 @@ pub(crate) fn on_world_grid_changed(
     mut materials: ResMut<AssetStore<WorldGridMaterial>>,
 ) {
     query.iter().for_each(|(grid, material_component)| {
-        let Some(material) = materials.get_mut(&material_component.handle) else {
+        let Some(handle) = material_component.binding.slot(0) else {
+            return;
+        };
+        let Some(material) = materials.get_mut(handle) else {
             return;
         };
 

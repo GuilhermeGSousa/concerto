@@ -34,9 +34,9 @@ fn round_trips_and_reports_references() {
                     component(&MeshComponent {
                         handle: AssetHandle::weak(mesh_id),
                     }),
-                    component(&MaterialComponent::<StandardMaterial> {
-                        handle: AssetHandle::weak(material_id),
-                    }),
+                    component(&MaterialComponent::<StandardMaterial>::all(
+                        AssetHandle::weak(material_id),
+                    )),
                 ],
             },
         ],

@@ -71,9 +71,7 @@ impl Importer for ObjImporter {
                 let material_id = ctx.sub_asset_id(&format!("material/{stem}"));
                 push_node_component(
                     &mut node,
-                    &MaterialComponent::<StandardMaterial> {
-                        handle: AssetHandle::weak(material_id),
-                    },
+                    &MaterialComponent::<StandardMaterial>::all(AssetHandle::weak(material_id)),
                 )?;
                 referenced_assets.push(material_id);
             }

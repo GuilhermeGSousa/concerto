@@ -138,13 +138,14 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
-// mirror. Upserts like the other extract systems: an entity whose render
-// mirror already carries `RenderMaterialComponent<M>` is left alone (this
-// matches the old `Added`-gated behaviour — swapping a material handle after
-// the fact was never picked up either), so this only ever creates, never
-// updates.
+// mirror, resolving the slot the render instance draws. Upserts like the
+// other extract systems: an entity whose render mirror already carries
+// `RenderMaterialComponent<M>` is left alone (this matches the old
+// `Added`-gated behaviour — swapping a material handle after the fact was
+// never picked up either), so this only ever creates, never updates.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
+    render_meshes: Query<&RenderMeshInstance>,
     render_materials: Query<&RenderMaterialComponent<M>>,
     mut cmd: CommandQueue,
 ) {
@@ -155,8 +156,15 @@ pub(crate) fn extract_materials<M: Material>(
             continue;
         }
 
+        let Some(instance) = render_meshes.get_entity(render_entity) else {
+            continue;
+        };
+        let Some(handle) = material.binding.slot(instance.primitive) else {
+            continue;
+        };
+
         cmd.insert(
-            RenderMaterialComponent::<M>::new(material.handle.id()),
+            RenderMaterialComponent::<M>::new(handle.id()),
             render_entity,
         );
     }

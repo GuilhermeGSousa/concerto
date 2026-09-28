@@ -207,7 +207,7 @@ fn shoot_sphere(
         MeshComponent {
             handle: asset_server.add(make_uv_sphere(SPHERE_RADIUS, 12, 24)),
         },
-        MaterialComponent { handle: material },
+        MaterialComponent::all(material),
         Transform::from_translation_rotation(origin, Quat::IDENTITY),
     ));
 }

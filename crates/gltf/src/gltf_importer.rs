@@ -594,9 +594,7 @@ fn push_mesh_components(
     )?;
     push_node_component(
         node,
-        &MaterialComponent::<StandardMaterial> {
-            handle: AssetHandle::weak(material_id),
-        },
+        &MaterialComponent::<StandardMaterial>::all(AssetHandle::weak(material_id)),
     )?;
     push_node_component(node, &SyncWithRenderWorld)
 }

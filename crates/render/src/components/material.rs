@@ -10,22 +10,65 @@ use serde::{Deserialize, Serialize};
 
 use crate::{assets::material::StandardMaterial, Material};
 
+/// Which material each of a mesh's primitive slots draws with.
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(bound = "")]
+pub enum SlotBinding<M: Material + Send + Sync + 'static = StandardMaterial> {
+    /// One material for every slot, however many the mesh turns out to have.
+    All(AssetHandle<M>),
+    /// One entry per slot; `None` leaves that slot to another material type
+    /// or to the fallback.
+    PerSlot(Vec<Option<AssetHandle<M>>>),
+}
+
+impl<M: Material + Send + Sync + 'static> SlotBinding<M> {
+    /// The material covering `index`, or `None` when this binding leaves it open.
+    pub fn slot(&self, index: u32) -> Option<&AssetHandle<M>> {
+        match self {
+            SlotBinding::All(handle) => Some(handle),
+            SlotBinding::PerSlot(slots) => slots.get(index as usize)?.as_ref(),
+        }
+    }
+}
+
 /// Attach this component (alongside [`MeshComponent`]) to an entity to tell the engine
-/// which material the mesh should be rendered with.
+/// which material each of the mesh's primitives should be rendered with.
 ///
-/// The type parameter `M` defaults to [`StandardMaterial`] so existing code that writes
-/// `MaterialComponent { handle: … }` with a `StandardMaterial` handle continues to work
-/// without any change.  Custom materials use `MaterialComponent::<MyMaterial> { handle: … }`.
+/// The type parameter `M` defaults to [`StandardMaterial`]. Two material types can
+/// coexist on one entity as two components, each covering a subset of slots.
 #[derive(Component, Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {
-    pub handle: AssetHandle<M>,
+    pub binding: SlotBinding<M>,
+}
+
+impl<M: Material + Send + Sync + 'static> MaterialComponent<M> {
+    /// One material on every primitive — the common single-material case.
+    pub fn all(handle: AssetHandle<M>) -> Self {
+        Self {
+            binding: SlotBinding::All(handle),
+        }
+    }
+
+    /// One material per primitive slot, `None` leaving a slot uncovered.
+    pub fn per_slot(slots: Vec<Option<AssetHandle<M>>>) -> Self {
+        Self {
+            binding: SlotBinding::PerSlot(slots),
+        }
+    }
 }
 
 impl<M: Material + LoadableAsset> SceneComponent for MaterialComponent<M> {
     fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
         if let Some(server) = ctx.get_resource::<AssetServer>() {
-            self.handle = server.load(self.handle.id());
+            match &mut self.binding {
+                SlotBinding::All(handle) => *handle = server.load(handle.id()),
+                SlotBinding::PerSlot(slots) => {
+                    for handle in slots.iter_mut().flatten() {
+                        *handle = server.load(handle.id());
+                    }
+                }
+            }
         }
         ctx.insert(self, entity);
     }
