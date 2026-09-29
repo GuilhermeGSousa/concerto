@@ -23,7 +23,7 @@ use concerto::{
         },
         scroll::{UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList},
         slider::UISlider,
-        text::{FontFamily, TextComponent},
+        text::{FontFamily, UIText},
         text_input::UITextInput,
         theme::UITheme,
         transform::UIValue,
@@ -55,8 +55,8 @@ struct Submenu {
 #[derive(Component)]
 struct ContextMenu;
 
-fn label(value: impl Into<String>, size: f32) -> TextComponent {
-    TextComponent {
+fn label(value: impl Into<String>, size: f32) -> UIText {
+    UIText {
         text: value.into(),
         font_size: size,
         line_height: size + 5.0,
@@ -349,7 +349,7 @@ fn spawn_showcase(
                 ..Default::default()
             },
             UIMaterial::with_border(theme.surface, theme.border, 1.0),
-            TextComponent::default(),
+            UIText::default(),
             UITextInput::new("Rename…"),
             Interactable,
         ))
@@ -458,7 +458,7 @@ fn spawn_showcase(
                 ..Default::default()
             },
             UIMaterial::with_border(theme.surface, theme.border, 1.0),
-            TextComponent::default(),
+            UIText::default(),
             UITextInput::new("Unicode input…"),
             Interactable,
         ))
@@ -606,7 +606,7 @@ fn spawn_showcase(
                 ..Default::default()
             },
             UIMaterial::flat(theme.surface_raised),
-            TextComponent {
+            UIText {
                 font_family: FontFamily::Monospace,
                 ..label("", 11.0)
             },
@@ -620,7 +620,7 @@ fn drive_panels(
     mut clicks: EventReader<UIClick>,
     dropdowns: Query<(&Dropdown, &mut UIAnchoredPanel)>,
     submenus: Query<(&Submenu, &mut UIAnchoredPanel)>,
-    context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut TextComponent)>,
+    context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
     rows: Query<&VirtualRow>,
     lists: Query<&UIVirtualList>,
 ) {
@@ -666,7 +666,7 @@ fn drive_panels(
 fn update_diagnostics(
     window: Res<Window>,
     diagnostics: Res<UILayoutDiagnostics>,
-    text: Query<&mut TextComponent, concerto::ecs::With<Diagnostics>>,
+    text: Query<&mut UIText, concerto::ecs::With<Diagnostics>>,
     input: Res<UIInputState>,
     focus: Res<FocusedWidget>,
     lists: Query<&UIVirtualList>,
@@ -708,10 +708,7 @@ fn update_diagnostics(
     }
 }
 
-fn update_virtual_rows(
-    lists: Query<&UIVirtualList>,
-    rows: Query<(&VirtualRow, &mut TextComponent)>,
-) {
+fn update_virtual_rows(lists: Query<&UIVirtualList>, rows: Query<(&VirtualRow, &mut UIText)>) {
     let Some(list) = lists.iter().next() else {
         return;
     };

@@ -7,7 +7,7 @@ use concerto_ui::{
     interaction::Interactable,
     material::UIMaterial,
     node::{UIInset, UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -272,7 +272,7 @@ fn fill_region(
                     flex_shrink: 0.0,
                     ..Default::default()
                 },
-                TextComponent {
+                UIText {
                     text: panel.title.to_uppercase(),
                     font_weight: crate::fonts::MEDIUM,
                     font_size: theme.font_size_sm,

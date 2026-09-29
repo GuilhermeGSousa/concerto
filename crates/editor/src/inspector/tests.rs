@@ -294,7 +294,7 @@ fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
     let root_rows = rows(&mut world);
     assert_eq!(root_rows.len(), 1);
     assert_eq!(root_rows[0].1.path, PropertyPath::default());
-    let mut texts = world.query::<&TextComponent, ()>();
+    let mut texts = world.query::<&UIText, ()>();
     assert!(
         texts
             .iter(&mut world)
@@ -385,7 +385,7 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     let all_rows = rows(&mut world);
     assert_eq!(all_rows.len(), 1);
     assert!(!all_rows[0].1.has_editor());
-    let mut texts = world.query::<&TextComponent, ()>();
+    let mut texts = world.query::<&UIText, ()>();
     assert!(
         texts
             .iter(&mut world)

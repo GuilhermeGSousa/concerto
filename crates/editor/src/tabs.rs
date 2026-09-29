@@ -10,7 +10,7 @@ use concerto_ui::{
     interaction::{Interactable, UIClick, UIInteractionStyle},
     material::UIMaterial,
     node::{UILayout, UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -90,7 +90,7 @@ fn sync_tabs(
     mut cmd: CommandQueue,
     contents: Query<Entity, With<TabStripContent>>,
     documents: Query<(Entity, &EditorDocument)>,
-    labels: Query<(&TabLabel, &mut TextComponent)>,
+    labels: Query<(&TabLabel, &mut UIText)>,
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
     tab_buttons: Query<(&EditorTab, &mut UIMaterial, &mut UIInteractionStyle)>,
@@ -201,7 +201,7 @@ fn sync_tabs(
                                 flex_shrink: 0.0,
                                 ..Default::default()
                             },
-                            TextComponent {
+                            UIText {
                                 color: if is_active {
                                     theme.text
                                 } else {
@@ -216,7 +216,7 @@ fn sync_tabs(
                                 max_width: UIValue::Px(220.0),
                                 ..Default::default()
                             },
-                            TextComponent {
+                            UIText {
                                 text: title.clone(),
                                 wrap: false,
                                 ellipsis: true,
@@ -240,7 +240,7 @@ fn sync_tabs(
                                 z_index: 71,
                                 ..Default::default()
                             },
-                            TextComponent {
+                            UIText {
                                 color: theme.text_muted,
                                 ..icon(&theme, glyph::X, theme.font_size_sm)
                             },

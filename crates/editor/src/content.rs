@@ -13,7 +13,7 @@ use concerto_ui::{
     material::UIMaterial,
     node::{UINode, UIRect},
     scroll::{UIScrollArea, UIVirtualList},
-    text::TextComponent,
+    text::UIText,
     text_input::{UITextInput, UITextInputChanged},
     theme::UITheme,
     transform::UIValue,
@@ -107,8 +107,8 @@ fn visible_assets<'a>(project: &'a ProjectState, state: &ContentState) -> Vec<&'
         .collect()
 }
 
-fn text(theme: &UITheme, value: &str) -> TextComponent {
-    TextComponent {
+fn text(theme: &UITheme, value: &str) -> UIText {
+    UIText {
         text: value.into(),
         font_size: theme.font_size_md,
         line_height: theme.line_height(theme.font_size_md),
@@ -150,7 +150,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                     search
                         .add_child((
                             UINode::default(),
-                            TextComponent {
+                            UIText {
                                 color: theme.text_muted,
                                 wrap: false,
                                 ..text(&theme, "⌕")
@@ -163,7 +163,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                                 min_width: UIValue::Px(0.0),
                                 ..Default::default()
                             },
-                            TextComponent {
+                            UIText {
                                 wrap: false,
                                 ellipsis: true,
                                 ..text(&theme, "")
@@ -196,7 +196,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                                 corner_radius: theme.radius_sm,
                                 ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
                             },
-                            TextComponent {
+                            UIText {
                                 color: theme.text_muted,
                                 font_size: 10.0,
                                 line_height: theme.line_height(10.0),
@@ -269,7 +269,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                                             flex_shrink: 1.0,
                                             ..Default::default()
                                         },
-                                        TextComponent {
+                                        UIText {
                                             ellipsis: true,
                                             wrap: false,
                                             ..text(&theme, "")
@@ -380,7 +380,7 @@ fn handle_actions(
 fn refresh_panel(
     project: Res<ProjectState>,
     state: Res<ContentState>,
-    labels: Query<(&Label, &mut TextComponent)>,
+    labels: Query<(&Label, &mut UIText)>,
 ) {
     let assets = visible_assets(&project, &state);
 
@@ -451,7 +451,7 @@ fn render_marks(
 fn render_tags(
     state: Res<ContentState>,
     theme: Res<UITheme>,
-    tags: Query<(&Tag, &mut UIMaterial, &mut TextComponent)>,
+    tags: Query<(&Tag, &mut UIMaterial, &mut UIText)>,
 ) {
     for (tag, mut material, mut text) in tags.iter() {
         let active = tag.0 == state.kind;

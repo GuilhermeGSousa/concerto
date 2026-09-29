@@ -9,7 +9,7 @@ use concerto::{
     scene::spawner::SceneSpawnerComponent,
     ui::{
         node::{UINode, UIRect},
-        text::{FontFamily, TextComponent},
+        text::{FontFamily, UIText},
         transform::UIValue,
     },
 };
@@ -37,7 +37,7 @@ pub(crate) fn spawn_overlay(mut cmd: CommandQueue) {
             },
             ..Default::default()
         },
-        TextComponent {
+        UIText {
             text: "Load: starting…\nState: —".to_string(),
             font_size: 16.0,
             line_height: 22.0,
@@ -50,7 +50,7 @@ pub(crate) fn spawn_overlay(mut cmd: CommandQueue) {
 
 /// Update: reflect the character's load progress in the overlay.
 pub(crate) fn update_overlay(
-    texts: Query<&mut TextComponent, With<OverlayText>>,
+    texts: Query<&mut UIText, With<OverlayText>>,
     spawners: Query<&SceneSpawnerComponent, With<AnimatedCharacter>>,
     players: Query<&AnimationPlayer>,
 ) {

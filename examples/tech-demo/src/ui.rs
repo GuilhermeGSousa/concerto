@@ -5,7 +5,7 @@ use concerto::{
     ui::{
         material::UIMaterial,
         node::{UINode, UIRect},
-        text::{FontFamily, TextComponent},
+        text::{FontFamily, UIText},
         transform::UIValue,
     },
 };
@@ -59,7 +59,7 @@ pub(crate) fn spawn_grounded_overlay(mut cmd: CommandQueue) {
                         flex_grow: 1.0,
                         ..Default::default()
                     },
-                    TextComponent {
+                    UIText {
                         text: "grounded: --".to_string(),
                         font_size: 12.0,
                         line_height: 16.0,
@@ -74,7 +74,7 @@ pub(crate) fn spawn_grounded_overlay(mut cmd: CommandQueue) {
 
 pub(crate) fn update_grounded_overlay(
     probes: Query<&GroundProbe, With<Player>>,
-    texts: Query<&mut TextComponent, With<GroundedText>>,
+    texts: Query<&mut UIText, With<GroundedText>>,
     panels: Query<&mut UIMaterial, With<GroundedPanel>>,
 ) {
     let Some(probe) = probes.iter().next() else {

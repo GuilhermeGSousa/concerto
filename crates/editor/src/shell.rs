@@ -7,7 +7,7 @@ use concerto_ecs::{Component, Query, Res, command::CommandQueue};
 use concerto_ui::{
     material::UIMaterial,
     node::{UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -48,8 +48,8 @@ enum Label {
     ChatterGlyph,
 }
 
-fn text(theme: &UITheme, value: &str) -> TextComponent {
-    TextComponent {
+fn text(theme: &UITheme, value: &str) -> UIText {
+    UIText {
         text: value.into(),
         font_size: theme.font_size_md,
         line_height: theme.line_height(theme.font_size_md),
@@ -104,7 +104,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
 
                 row = row.add_child((
                     UINode::default(),
-                    TextComponent {
+                    UIText {
                         font_weight: MEDIUM,
                         ..text(&theme, "Concerto")
                     },
@@ -177,7 +177,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                             flex_shrink: 0.0,
                             ..Default::default()
                         },
-                        TextComponent {
+                        UIText {
                             color: theme.text_muted,
                             ..icon(&theme, glyph::INFO, theme.font_size_md)
                         },
@@ -188,7 +188,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                             flex_grow: 1.0,
                             ..Default::default()
                         },
-                        TextComponent {
+                        UIText {
                             color: theme.text_muted,
                             wrap: false,
                             ellipsis: true,
@@ -205,7 +205,7 @@ fn refresh_chrome(
     project: Res<ProjectState>,
     scenes: Res<SceneState>,
     theme: Res<UITheme>,
-    labels: Query<(&Label, &mut TextComponent)>,
+    labels: Query<(&Label, &mut UIText)>,
 ) {
     let chatter = if project.busy() || scenes.status.is_empty() {
         project.status.clone()

@@ -12,7 +12,7 @@ use concerto_editor::inspector::{
     EditError, InspectorRegistry, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRowValue, apply_property_commit, apply_property_commits,
 };
-use concerto_ui::{interaction::UIClick, text::TextComponent, theme::UITheme};
+use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
@@ -301,7 +301,7 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         .unwrap();
     assert!(
         world
-            .get_component_for_entity::<TextComponent>(button)
+            .get_component_for_entity::<UIText>(button)
             .unwrap()
             .text
             .contains("Off")
@@ -342,7 +342,7 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
     refresh.run_and_apply(&mut world);
     assert!(
         world
-            .get_component_for_entity::<TextComponent>(button)
+            .get_component_for_entity::<UIText>(button)
             .unwrap()
             .text
             .contains("On")

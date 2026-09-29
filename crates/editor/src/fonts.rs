@@ -1,7 +1,7 @@
 //! The editor's typefaces.
 use concerto_app::{App, Plugin};
 use concerto_ui::text::fonts::UIFontsApp;
-use concerto_ui::text::{FontFamily, TextComponent};
+use concerto_ui::text::{FontFamily, UIText};
 use concerto_ui::theme::UITheme;
 
 /// Family name Inter's faces share; weight picks between them.
@@ -27,8 +27,8 @@ impl Plugin for FontsPlugin {
 }
 
 /// A text node holding one icon glyph.
-pub fn icon(theme: &UITheme, glyph: char, size: f32) -> TextComponent {
-    TextComponent {
+pub fn icon(theme: &UITheme, glyph: char, size: f32) -> UIText {
+    UIText {
         text: glyph.to_string(),
         font_family: FontFamily::Name(PHOSPHOR.into()),
         font_size: size,

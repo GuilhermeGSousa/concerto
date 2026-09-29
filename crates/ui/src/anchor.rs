@@ -36,6 +36,14 @@ pub enum UIAnchorTarget {
 }
 
 impl UIAnchorTarget {
+    pub fn from_node(entity: Entity) -> Self {
+        Self::Node { entity }
+    }
+
+    pub fn from_point(position: Vec2) -> Self {
+        Self::Point { position }
+    }
+
     /// The box `place` should anchor against, given the rects laid out this pass.
     pub fn anchor_box(&self, rects: &HashMap<Entity, UIBox>) -> Option<UIBox> {
         match self {

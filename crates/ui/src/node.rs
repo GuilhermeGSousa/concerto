@@ -464,7 +464,7 @@ pub(crate) struct RenderUIMaterial {
 pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
     ui_roots: Query<(Entity, &UINode, Option<&Children>), Without<ChildOf>>,
-    texts: Query<&crate::text::TextComponent>,
+    texts: Query<&crate::text::UIText>,
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
@@ -720,7 +720,7 @@ fn measure_node(
     }
 }
 
-fn text_context(texts: &Query<&crate::text::TextComponent>, entity: Entity) -> Option<TextMeasure> {
+fn text_context(texts: &Query<&crate::text::UIText>, entity: Entity) -> Option<TextMeasure> {
     let text = texts.get_entity(entity)?;
     Some(TextMeasure {
         signature: text_measure_signature(text),
@@ -735,7 +735,7 @@ fn text_context(texts: &Query<&crate::text::TextComponent>, entity: Entity) -> O
     })
 }
 
-fn text_measure_signature(text: &crate::text::TextComponent) -> u64 {
+fn text_measure_signature(text: &crate::text::UIText) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.text.hash(&mut hasher);
@@ -759,7 +759,7 @@ fn text_measure_signature(text: &crate::text::TextComponent) -> u64 {
 fn new_node(
     taffy: &mut TaffyTree<TextMeasure>,
     node: &UINode,
-    texts: &Query<&crate::text::TextComponent>,
+    texts: &Query<&crate::text::UIText>,
     entity: Entity,
 ) -> Result<NodeId, taffy::TaffyError> {
     match text_context(texts, entity) {
@@ -781,7 +781,7 @@ fn build_taffy_tree(
     parent_id: NodeId,
     children: &Children,
     ui_nodes: &Query<(Entity, &UINode, Option<&Children>)>,
-    texts: &Query<&crate::text::TextComponent>,
+    texts: &Query<&crate::text::UIText>,
     entity_to_taffy: &mut HashMap<Entity, NodeId>,
 ) {
     let mut stack = vec![(parent_id, children.iter().copied().collect::<Vec<_>>())];
@@ -926,9 +926,8 @@ pub(crate) fn extract_ui_nodes(
     let scale = window.scale_factor() as f32;
     let surface = (window.width(), window.height(), scale.to_bits() as u64);
 
-    let to_ndc = |px: f32, py: f32| -> [f32; 2] {
-        [(px / win_w) * 2.0 - 1.0, 1.0 - (py / win_h) * 2.0]
-    };
+    let to_ndc =
+        |px: f32, py: f32| -> [f32; 2] { [(px / win_w) * 2.0 - 1.0, 1.0 - (py / win_h) * 2.0] };
 
     for (computed_node, render_entity) in computed_nodes.iter() {
         let draw_rect = computed_node.rect.intersection(computed_node.clip_rect);
@@ -1195,7 +1194,7 @@ mod tests {
     }
 
     fn label(text: &str) -> TextMeasure {
-        let component = crate::text::TextComponent {
+        let component = crate::text::UIText {
             text: text.into(),
             font_size: 14.0,
             line_height: 20.0,
@@ -1615,11 +1614,11 @@ mod tests {
 
     #[test]
     fn a_changed_label_invalidates_its_measurement() {
-        let before = text_measure_signature(&crate::text::TextComponent {
+        let before = text_measure_signature(&crate::text::UIText {
             text: "Warren".into(),
             ..Default::default()
         });
-        let after = text_measure_signature(&crate::text::TextComponent {
+        let after = text_measure_signature(&crate::text::UIText {
             text: "Curiosities".into(),
             ..Default::default()
         });

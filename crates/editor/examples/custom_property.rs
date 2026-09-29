@@ -16,7 +16,7 @@ use concerto_editor::inspector::{
 use concerto_ui::{
     interaction::{Interactable, UIClick},
     node::UINode,
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -70,7 +70,7 @@ impl PropertyEditor<Setting> for SettingEditor {
                     flex_grow: 1.0,
                     ..Default::default()
                 },
-                TextComponent {
+                UIText {
                     text: label(snapshot),
                     color: theme.text,
                     font_size: theme.font_size_md,
@@ -129,7 +129,7 @@ pub fn click_settings(
 }
 
 pub fn refresh_settings(
-    buttons: Query<(&SettingButton, &mut TextComponent)>,
+    buttons: Query<(&SettingButton, &mut UIText)>,
     rows: Query<&PropertyRowValue>,
 ) {
     for (button, mut text) in buttons.iter() {

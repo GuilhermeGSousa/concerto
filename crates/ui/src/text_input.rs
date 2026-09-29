@@ -7,7 +7,7 @@ use concerto_ecs::{
 };
 use concerto_window::input::{Input, InputState, KeyCode, PhysicalKey};
 
-use crate::{focus::FocusedWidget, text::TextComponent};
+use crate::{focus::FocusedWidget, text::UIText};
 
 /// A single-line text input widget.
 #[derive(Component)]
@@ -77,7 +77,7 @@ pub(crate) fn update_text_inputs(
     mut focused: ResMut<FocusedWidget>,
     input: Res<Input>,
     mut clipboard: ResMut<concerto_window::plugin::WindowClipboard>,
-    text_inputs: Query<(Entity, &mut UITextInput, &mut TextComponent)>,
+    text_inputs: Query<(Entity, &mut UITextInput, &mut UIText)>,
     mut writer: EventWriter<UITextInputChanged>,
     mut submitted: EventWriter<UITextInputSubmitted>,
     mut cancelled: EventWriter<UITextInputCancelled>,

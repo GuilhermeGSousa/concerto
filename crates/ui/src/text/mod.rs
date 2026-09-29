@@ -39,7 +39,7 @@ pub enum FontStyle {
 
 /// Text node component.
 #[derive(Component)]
-pub struct TextComponent {
+pub struct UIText {
     pub text: String,
     pub font_size: f32,
     pub line_height: f32,
@@ -57,7 +57,7 @@ pub struct TextComponent {
     pub ellipsis: bool,
 }
 
-impl TextComponent {
+impl UIText {
     pub fn from_theme(text: impl Into<String>, theme: &UITheme) -> Self {
         Self {
             text: text.into(),
@@ -68,7 +68,7 @@ impl TextComponent {
     }
 }
 
-impl Default for TextComponent {
+impl Default for UIText {
     fn default() -> Self {
         Self {
             text: String::new(),
@@ -166,7 +166,7 @@ pub struct RenderTextComponent {
 }
 
 pub(crate) fn extract_text_nodes(
-    text_nodes: Extracted<Query<(&TextComponent, &UILayout, &RenderEntity)>>,
+    text_nodes: Extracted<Query<(&UIText, &UILayout, &RenderEntity)>>,
     window: Extracted<Res<Window>>,
     mut font_system: ResMut<TextFontSystem>,
     render_text_nodes: Query<&RenderTextComponent>,
@@ -272,7 +272,7 @@ pub(crate) fn text_layer(layout: &UILayout) -> i32 {
     (layout.paint_order >> 32) as i32
 }
 
-fn text_signature(text: &TextComponent, layout: &UILayout, scale: f32) -> u64 {
+fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.text.hash(&mut hasher);
     text.font_size.to_bits().hash(&mut hasher);

@@ -7,7 +7,7 @@ use concerto_ui::{
     interaction::Interactable,
     material::UIMaterial,
     node::{UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
     transform::UIValue,
@@ -154,7 +154,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
                     ..Default::default()
                 }
                 .clipped(),
-                TextComponent {
+                UIText {
                     color: theme.text,
                     font_size: theme.font_size_sm,
                     line_height: theme.line_height(theme.font_size_sm),

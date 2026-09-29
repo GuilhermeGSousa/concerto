@@ -3,6 +3,7 @@ use super::*;
 
 use super::registry::InspectionSource;
 use concerto_ecs::{component::Tick, query::filter::With};
+use concerto_ui::anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel};
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -59,10 +60,26 @@ pub(super) fn sync_inspected_components(
             refresh_card(&source, &mut cmd, entity, card, &theme);
         }
 
-        cmd.entity(stack_entity).add_child((
+        let add_component = cmd
+            .entity(stack_entity)
+            .spawn_child_queue((
+                UINode::default(),
+                UIText::from_theme("Add Component", &theme),
+                Interactable,
+            ))
+            .entity();
+
+        cmd.spawn((
             UINode::default(),
-            TextComponent::from_theme("Add Component", &theme),
-            Interactable,
+            UIAnchoredPanel {
+                target: UIAnchorTarget::from_node(add_component),
+                owner: Some(add_component),
+                side: UIAnchorSide::Above,
+                align: UIAnchorAlign::Center,
+                gap: 5.0,
+                open: false,
+                resolved_side: UIAnchorSide::Below,
+            },
         ));
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
@@ -140,7 +157,7 @@ fn spawn_card(
                         flex_grow: 1.0,
                         ..Default::default()
                     },
-                    TextComponent {
+                    UIText {
                         ellipsis: true,
                         wrap: false,
                         ..text(theme, name)
@@ -207,7 +224,7 @@ fn spawn_row(
             flex_shrink: 0.0,
             ..Default::default()
         },
-        TextComponent {
+        UIText {
             color: theme.text_muted,
             font_size: theme.font_size_sm,
             line_height: theme.line_height(theme.font_size_sm),

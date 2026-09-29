@@ -15,7 +15,7 @@ use concerto_ui::{
     material::UIMaterial,
     node::{UILayout, UINode, UIRect},
     scroll::UIScrollArea,
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -118,8 +118,8 @@ fn collect_inspector_data(
     }
 }
 
-fn text(theme: &UITheme, value: &str) -> TextComponent {
-    TextComponent {
+fn text(theme: &UITheme, value: &str) -> UIText {
+    UIText {
         text: value.into(),
         font_size: theme.font_size_md,
         line_height: theme.line_height(theme.font_size_md),

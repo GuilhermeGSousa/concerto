@@ -8,7 +8,7 @@ use concerto_foundation::time::Time;
 use concerto_ui::{
     UIRenderDiagnostics,
     node::{UILayoutDiagnostics, UINode},
-    text::{FontFamily, TextComponent},
+    text::{FontFamily, UIText},
     theme::UITheme,
 };
 use taffy::FlexDirection;
@@ -60,7 +60,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                     flex_grow: 1.0,
                     ..Default::default()
                 },
-                TextComponent {
+                UIText {
                     text: String::new(),
                     font_family: FontFamily::Monospace,
                     font_size: theme.font_size_sm,
@@ -79,7 +79,7 @@ fn refresh_panel(
     render: Res<UIRenderDiagnostics>,
     time: Res<Time>,
     mut sampler: ResMut<Sampler>,
-    readouts: Query<(&Readout, &mut TextComponent)>,
+    readouts: Query<(&Readout, &mut UIText)>,
 ) {
     sampler.elapsed += time.delta().as_secs_f32();
     sampler.frames += 1;

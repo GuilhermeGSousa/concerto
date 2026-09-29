@@ -12,7 +12,7 @@ use concerto_ui::{
     interaction::{Interactable, UIClick, UIInteractionStyle},
     material::UIMaterial,
     node::{UIInset, UILayout, UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -144,7 +144,7 @@ fn build_controls(
                         corner_radius: theme.radius_sm,
                         ..UIMaterial::flat(Color::srgba(0.0, 0.0, 0.0, 0.0))
                     },
-                    TextComponent {
+                    UIText {
                         color: theme.text_muted,
                         ..icon(&theme, mark, theme.font_size_lg)
                     },
@@ -329,7 +329,7 @@ fn handle_controls(
     }
 }
 
-fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut TextComponent)>) {
+fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut UIText)>) {
     let mark = if window.window_handle.is_maximized() {
         glyph::CORNERS_IN
     } else {

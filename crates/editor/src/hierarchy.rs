@@ -20,7 +20,7 @@ use concerto_ui::{
     material::UIMaterial,
     node::{UILayout, UINode, UIRect},
     scroll::{UIScrollArea, UIVirtualList, scroll_to_rect},
-    text::TextComponent,
+    text::UIText,
     text_input::{UITextInput, UITextInputChanged},
     theme::UITheme,
     transform::UIValue,
@@ -115,8 +115,8 @@ impl Plugin for HierarchyPlugin {
     }
 }
 
-fn text(theme: &UITheme, value: &str) -> TextComponent {
-    TextComponent {
+fn text(theme: &UITheme, value: &str) -> UIText {
+    UIText {
         text: value.into(),
         font_size: theme.font_size_md,
         line_height: theme.line_height(theme.font_size_md),
@@ -223,7 +223,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                 let (mark_node, mark_material) = marks::node();
                                 row.add_child((
                                     icon_column(20.0),
-                                    TextComponent {
+                                    UIText {
                                         color: theme.text_muted,
                                         font_size: 9.0,
                                         line_height: theme.line_height(theme.font_size_md),
@@ -242,7 +242,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                         flex_shrink: 1.0,
                                         ..line(ROW_HEIGHT)
                                     },
-                                    TextComponent {
+                                    UIText {
                                         wrap: false,
                                         ellipsis: true,
                                         ..text(theme, "")
@@ -259,7 +259,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                         margin: UIRect::axes(0.0, 8.0),
                                         ..Default::default()
                                     },
-                                    TextComponent {
+                                    UIText {
                                         color: theme.text_muted,
                                         font_family: concerto_ui::text::FontFamily::Monospace,
                                         font_size: 10.0,
@@ -512,7 +512,7 @@ fn render_tree(
     names: Query<&Name>,
     roots: Query<&SceneRoot>,
     children: Query<&Children>,
-    labels: Query<(&Label, &mut TextComponent)>,
+    labels: Query<(&Label, &mut UIText)>,
     nodes: Query<(&Label, &mut UINode)>,
 ) {
     for (label, mut node) in nodes.iter() {

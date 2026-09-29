@@ -14,7 +14,7 @@ use concerto_foundation::time::{FrameStats, Time};
 use crate::{
     material::UIMaterial,
     node::{UINode, UIRect},
-    text::{FontFamily, TextComponent},
+    text::{FontFamily, UIText},
     transform::UIValue,
 };
 
@@ -53,7 +53,7 @@ fn spawn_overlay(mut cmd: CommandQueue) {
             flex_grow: 1.0,
             ..Default::default()
         },
-        TextComponent {
+        UIText {
             text: "-- FPS".to_string(),
             font_size: 12.0,
             line_height: 16.0,
@@ -68,7 +68,7 @@ fn update_overlay_text(
     time: Res<Time>,
     stats: Res<FrameStats>,
     mut timer: ResMut<OverlayRefreshTimer>,
-    text_nodes: Query<&mut TextComponent, With<FrameStatsText>>,
+    text_nodes: Query<&mut UIText, With<FrameStatsText>>,
 ) {
     timer.0 += time.delta().as_secs_f32();
     if timer.0 < REFRESH_INTERVAL || stats.is_empty() {
