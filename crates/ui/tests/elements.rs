@@ -7,6 +7,7 @@ use concerto_ecs::{
 use concerto_ui::{
     elements::prelude::*,
     interaction::UIInteractionStyle,
+    material::UIMaterial,
     node::{AlignItems, FlexDirection, Overflow, UINode, UIRect},
     text::{FontFamily, UIText},
     theme::{ButtonVariant, ChipColors, UITheme},
@@ -233,4 +234,86 @@ fn text_converts_into_a_plain_uitext() {
     let t = theme();
     let text: UIText = t.text("x").small().into();
     assert_eq!(text.font_size, t.font_size_sm);
+}
+
+fn material_of(spawned: &Spawned) -> &UIMaterial {
+    spawned.get::<UIMaterial>()
+}
+
+#[test]
+fn each_surface_takes_its_fill_and_radius_from_the_theme() {
+    let t = theme();
+    let cases = [
+        (spawn(t.canvas()), t.canvas, 0.0),
+        (spawn(t.panel()), t.surface, t.radius_lg),
+        (spawn(t.card()), t.surface_raised, t.radius_md),
+    ];
+    for (spawned, fill, radius) in &cases {
+        let material = material_of(spawned);
+        assert_eq!(material.color, fill.to_linear());
+        assert_eq!(material.corner_radius, *radius);
+        assert_eq!(material.border_width, 0.0);
+    }
+}
+
+#[test]
+fn a_popup_is_a_bordered_clipped_column_card() {
+    let t = theme();
+    let spawned = spawn(t.popup());
+    let material = material_of(&spawned);
+    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.corner_radius, t.radius_md);
+    assert_eq!(material.border_color, t.border.to_linear());
+    assert_eq!(material.border_width, 1.0);
+    let node = spawned.get::<UINode>();
+    assert_eq!(node.flex_direction, FlexDirection::Column);
+    assert_eq!(node.overflow_x, Overflow::Hidden);
+    assert_eq!(node.overflow_y, Overflow::Hidden);
+}
+
+#[test]
+fn shape_modifiers_restyle_a_surface() {
+    let t = theme();
+    let spawned = spawn(
+        t.panel()
+            .fill(t.accent)
+            .radius_sm()
+            .border(t.focus, 2.0)
+            .rotation(0.5),
+    );
+    let material = material_of(&spawned);
+    assert_eq!(material.color, t.accent.to_linear());
+    assert_eq!(material.corner_radius, t.radius_sm);
+    assert_eq!(material.border_color, t.focus.to_linear());
+    assert_eq!(material.border_width, 2.0);
+    assert_eq!(material.rotation, 0.5);
+}
+
+#[test]
+fn stacks_space_their_children_by_the_theme() {
+    let t = theme();
+    let row = spawn(t.row());
+    let node = row.get::<UINode>();
+    assert_eq!(node.flex_direction, FlexDirection::Row);
+    assert_eq!(node.align_items, Some(AlignItems::Center));
+    assert_eq!(node.gap, Vec2::splat(t.spacing_sm));
+
+    let column = spawn(t.column().gap(0.0));
+    let node = column.get::<UINode>();
+    assert_eq!(node.flex_direction, FlexDirection::Column);
+    assert_eq!(node.gap, Vec2::ZERO);
+}
+
+#[test]
+fn dividers_are_one_border_coloured_pixel() {
+    let t = theme();
+    let horizontal = spawn(t.divider());
+    assert_eq!(horizontal.get::<UINode>().height, UIValue::Px(1.0));
+    assert_eq!(horizontal.get::<UINode>().flex_shrink, 0.0);
+    assert_eq!(horizontal.get::<UINode>().align_self, Some(AlignItems::Stretch));
+    assert_eq!(material_of(&horizontal).color, t.border.to_linear());
+
+    let vertical = spawn(t.divider().vertical());
+    assert_eq!(vertical.get::<UINode>().width, UIValue::Px(1.0));
+    assert_eq!(vertical.get::<UINode>().height, UIValue::Auto);
 }

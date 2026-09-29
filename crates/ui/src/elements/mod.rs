@@ -37,8 +37,10 @@ macro_rules! bundle {
     };
 }
 
+mod surface;
 mod text;
 
+pub use surface::{Divider, Stack, Surface};
 pub use text::{Label, Text};
 
 /// The modifier traits.
