@@ -14,6 +14,7 @@ use crate::{
         render_texture::{DummyRenderTexture, RenderTexture},
         AssetPreparationError, RenderAssets,
     },
+    shader::ShaderDefs,
 };
 
 use bitflags::bitflags;
@@ -26,6 +27,10 @@ use bitflags::bitflags;
 ///
 /// Pass [`ShaderRef::Default`] to use the engine's built-in PBR shader, or
 /// [`ShaderRef::Source`] to supply your own WGSL source string.
+///
+/// Either way the source is preprocessed with shader defs before compiling,
+/// so it may use `#ifdef` / `#if` (see [`crate::shader`] and
+/// [`Material::shader_defs`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShaderRef {
     /// Use the engine's built-in shader.
@@ -585,5 +590,19 @@ pub trait Material: AsBindGroup + Asset + Send + Sync + 'static {
         Self: Sized,
     {
         Some(wgpu::BlendState::REPLACE)
+    }
+
+    /// Adds this material's own shader defs, for `#ifdef` / `#if` in its
+    /// WGSL (see [`crate::shader`]).
+    ///
+    /// `defs` arrives holding the engine's platform defs (e.g.
+    /// [`NO_CUBE_ARRAY_TEXTURES_SUPPORT`](crate::shader::NO_CUBE_ARRAY_TEXTURES_SUPPORT)),
+    /// which the material may also read or remove. Both of its shaders are
+    /// preprocessed with the result. Defaults to adding nothing.
+    fn shader_defs(defs: &mut ShaderDefs)
+    where
+        Self: Sized,
+    {
+        let _ = defs;
     }
 }

@@ -2,6 +2,11 @@ use concerto_ecs::resource::Resource;
 use derive_more::Deref;
 use wgpu::BindGroupLayoutDescriptor;
 
+use crate::{
+    capabilities::RenderCapabilities,
+    components::shadows::{PointShadowKind, ShadowMapKind},
+};
+
 /// Bind-group layout for the camera uniform (`@group(1) @binding(0)` in the
 /// default material convention).
 ///
@@ -76,7 +81,7 @@ impl SkeletonLayout {
 pub(crate) struct LightingLayout(pub(crate) wgpu::BindGroupLayout);
 
 impl LightingLayout {
-    pub fn new(device: &wgpu::Device) -> Self {
+    pub fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
         let layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("lighting_bind_group_layout"),
             entries: &[
@@ -107,13 +112,15 @@ impl LightingLayout {
                     count: None,
                 },
                 // Point-light shadow cube-map array: point lights are
-                // omnidirectional and need a full cube per caster.
+                // omnidirectional and need a full cube per caster. A single
+                // cube where cube arrays aren't supported (WebGL2) — see
+                // `PointShadowKind`.
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
                         sample_type: wgpu::TextureSampleType::Depth,
-                        view_dimension: wgpu::TextureViewDimension::CubeArray,
+                        view_dimension: PointShadowKind::array_view_dimension(capabilities),
                         multisampled: false,
                     },
                     count: None,

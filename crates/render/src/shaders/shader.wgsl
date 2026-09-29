@@ -198,8 +198,15 @@ var t_shadow_spot_directional: texture_depth_2d_array;
 @group(2) @binding(2)
 var sampler_shadow_spot_directional: sampler_comparison;
 
+// WebGL2 can't sample cube-map arrays, so there the point-light pool is a
+// single cube (one point-light shadow caster at most — see `PointShadowKind`).
+#ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
+@group(2) @binding(3)
+var t_shadow_point: texture_depth_cube;
+#else
 @group(2) @binding(3)
 var t_shadow_point: texture_depth_cube_array;
+#endif
 
 @group(2) @binding(4)
 var sampler_shadow_point: sampler_comparison;
@@ -334,7 +341,12 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
     // fraction of samples passing `depth_ref <= stored_depth`, giving
     // softened edges for one tap. A wider multi-tap kernel would soften
     // further but isn't implemented yet.
-    return textureSampleCompare(
+    //
+    // The `Level` variant because this runs in non-uniform control flow (the
+    // early returns above), where WGSL forbids the implicit-derivative
+    // `textureSampleCompare` — browsers' WebGPU rejects the shader for it.
+    // The shadow map has a single mip, so nothing is lost.
+    return textureSampleCompareLevel(
         t_shadow_spot_directional,
         sampler_shadow_spot_directional,
         shadow_uv,

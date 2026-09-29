@@ -41,6 +41,9 @@ derive_more = { version = "2", features = ["full"] }
 concerto-asset-import.workspace = true
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
+# Preprocesses WGSL (`#ifdef` / `#if` shader defs) before handing it to wgpu.
+# The 0.17 line tracks naga 24, the version wgpu 24 is built on.
+naga_oil = { version = "0.17.1", default-features = false }
 
 [dependencies.image]
 version = "0.25.5"
@@ -51,3 +54,8 @@ console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3" }
+
+[dev-dependencies]
+# The same naga wgpu uses, with the GLSL backend, to check the WebGL2 shader
+# variants translate to GLSL ES 3.00 without needing a browser.
+naga = { version = "24", features = ["glsl-out"] }

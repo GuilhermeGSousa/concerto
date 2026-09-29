@@ -1,5 +1,6 @@
 use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
+    capabilities::RenderCapabilities,
     components::{
         camera::{extract_cameras, sync_camera_aspect},
         light::{extract_lights, update_changed_lights, RenderLights},
@@ -115,9 +116,18 @@ impl RenderPlugin {
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::TEXTURE_BINDING_ARRAY,
+                    required_features: wgpu::Features::empty(),
                     required_limits: if cfg!(target_arch = "wasm32") {
-                        Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits())
+                        // WebGL2 only guarantees 4 draw buffers, but
+                        // `downlevel_webgl2_defaults` asks for 8, which some
+                        // browsers/GPUs (e.g. SwiftShader, many mobiles)
+                        // reject. The engine never renders to more than one
+                        // color target, so take whatever the adapter offers.
+                        Limits {
+                            max_color_attachments: adapter.limits().max_color_attachments,
+                            ..Limits::downlevel_webgl2_defaults()
+                        }
+                        .using_resolution(adapter.limits())
                     } else {
                         wgpu::Limits::default()
                     },
@@ -288,11 +298,14 @@ impl Plugin for RenderPlugin {
 
         let skeleton_layout = SkeletonLayout::new(&device);
 
-        let lighting_layout = LightingLayout::new(&device);
+        let capabilities = RenderCapabilities::from_adapter(&adapter);
+
+        let lighting_layout = LightingLayout::new(&device, &capabilities);
 
         let render_lights = RenderLights::new(&device);
-        let render_spot_directional_shadow_maps = RenderSpotDirectionalShadowMaps::new(&device);
-        let render_point_shadow_maps = RenderPointShadowMaps::new(&device);
+        let render_spot_directional_shadow_maps =
+            RenderSpotDirectionalShadowMaps::new(&device, &capabilities);
+        let render_point_shadow_maps = RenderPointShadowMaps::new(&device, &capabilities);
         let render_shadow_view_projs = RenderShadowViewProjs::new(&device);
         let render_lighting = RenderLighting::new(
             &device,
@@ -315,6 +328,7 @@ impl Plugin for RenderPlugin {
                 encoder: None,
             })
             .insert_resource(RenderQueue { queue })
+            .insert_resource(capabilities)
             .insert_resource(RenderWindow::new())
             .insert_resource(camera_layouts)
             .insert_resource(skeleton_layout)

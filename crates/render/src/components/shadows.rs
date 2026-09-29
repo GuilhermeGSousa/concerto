@@ -15,6 +15,7 @@ use wgpu::{
 };
 
 use crate::{
+    capabilities::RenderCapabilities,
     components::{
         light::{push_render_light_to_gpu, LightType, RenderLight, RenderLights},
         mesh::RenderMeshInstance,
@@ -115,24 +116,40 @@ impl Component for RenderShadowCasterSlot {
 // implemented once against this trait instead of twice.
 pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension;
     const LABEL: &'static str;
+
+    // How the whole pool is sampled — also the `LightingLayout` binding's
+    // view dimension, so the two always agree.
+    fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension;
 }
 
 pub(crate) struct SpotDirectionalShadowKind;
 
 impl ShadowMapKind for SpotDirectionalShadowKind {
     const VIEWS_PER_CASTER: u32 = 1;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = wgpu::TextureViewDimension::D2Array;
     const LABEL: &'static str = "spot_directional_shadow_maps";
+
+    fn array_view_dimension(_: &RenderCapabilities) -> wgpu::TextureViewDimension {
+        wgpu::TextureViewDimension::D2Array
+    }
 }
 
 pub(crate) struct PointShadowKind;
 
 impl ShadowMapKind for PointShadowKind {
     const VIEWS_PER_CASTER: u32 = 6;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = wgpu::TextureViewDimension::CubeArray;
     const LABEL: &'static str = "point_shadow_maps";
+
+    // Without cube arrays (WebGL2) the pool is a single cube, so it holds at
+    // most one caster (see `ShadowMapPool::max_capacity`); the shader
+    // switches its binding to match via `NO_CUBE_ARRAY_TEXTURES_SUPPORT`.
+    fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension {
+        if capabilities.cube_array_textures {
+            wgpu::TextureViewDimension::CubeArray
+        } else {
+            wgpu::TextureViewDimension::Cube
+        }
+    }
 }
 
 // Slot-allocated shadow-map depth texture — see `ShadowMapKind` for what
@@ -154,6 +171,10 @@ pub(crate) struct ShadowMapPool<K: ShadowMapKind> {
     pub(crate) views: Vec<wgpu::TextureView>,
     pub(crate) slots: Vec<Entity>,
     capacity: u32,
+    // Bounds on `capacity` imposed by the platform (see `new`).
+    min_capacity: u32,
+    max_capacity: u32,
+    array_view_dimension: wgpu::TextureViewDimension,
     frames_below_capacity: u32,
     _kind: PhantomData<fn() -> K>,
 }
@@ -167,14 +188,34 @@ impl<K: ShadowMapKind> Resource for ShadowMapPool<K> {
 }
 
 impl<K: ShadowMapKind> ShadowMapPool<K> {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let (texture, views) = Self::build_gpu_resources(device, 1);
+    pub(crate) fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
+        let array_view_dimension = K::array_view_dimension(capabilities);
+        let is_array = matches!(
+            array_view_dimension,
+            wgpu::TextureViewDimension::D2Array | wgpu::TextureViewDimension::CubeArray
+        );
+
+        // A non-array view (a lone cube on WebGL2) fits exactly one caster.
+        let max_capacity = if is_array { MAX_SHADOW_CASTERS } else { 1 };
+        // On GL a one-caster texture would be created as a plain 2D/cube
+        // texture, which an array binding can't sample, so keep at least
+        // two casters' worth of layers there.
+        let min_capacity = if is_array && !capabilities.single_layer_texture_arrays {
+            2
+        } else {
+            1
+        };
+
+        let (texture, views) = Self::build_gpu_resources(device, min_capacity);
 
         Self {
             texture,
             views,
             slots: Vec::new(),
-            capacity: 1,
+            capacity: min_capacity,
+            min_capacity,
+            max_capacity,
+            array_view_dimension,
             frames_below_capacity: 0,
             _kind: PhantomData,
         }
@@ -224,14 +265,15 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     pub(crate) fn array_view(&self) -> wgpu::TextureView {
         self.texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(K::LABEL),
-            dimension: Some(K::ARRAY_VIEW_DIMENSION),
+            dimension: Some(self.array_view_dimension),
             ..Default::default()
         })
     }
 
-    // `None` once all `MAX_SHADOW_CASTERS` casters are in use.
+    // `None` once the pool is full: `MAX_SHADOW_CASTERS` casters, or just one
+    // for a single-cube point pool (WebGL2).
     pub(crate) fn push_caster(&mut self, entity: Entity) -> Option<u32> {
-        if self.slots.len() as u32 >= MAX_SHADOW_CASTERS {
+        if self.slots.len() as u32 >= self.max_capacity {
             return None;
         }
         self.slots.push(entity);
@@ -250,7 +292,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // whether anything referencing the old texture/views (namely
     // `RenderLighting`'s bind group) needs rebuilding too.
     pub(crate) fn reconcile_capacity(&mut self, device: &wgpu::Device) -> bool {
-        let needed = (self.slots.len() as u32).max(1);
+        let needed = (self.slots.len() as u32).max(self.min_capacity);
 
         if needed > self.capacity {
             self.resize_to(device, needed);
