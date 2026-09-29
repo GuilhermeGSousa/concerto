@@ -162,11 +162,10 @@ fn lists_editable_and_scene_components_as_queryable_cards_and_hides_plumbing() {
         .collect();
     let names: Vec<_> = children
         .iter()
-        .map(|&entity| {
+        .filter_map(|&entity| {
             world
                 .get_component_for_entity::<InspectedComponent>(entity)
-                .unwrap()
-                .name
+                .map(|card| card.name)
         })
         .collect();
     assert_eq!(names, ["Tag", "Transform"]);
@@ -193,11 +192,10 @@ fn structural_changes_rebuild_the_entire_stack_once() {
     let children = world.get_component_for_entity::<Children>(stack).unwrap();
     let names: Vec<_> = children
         .iter()
-        .map(|&child| {
+        .filter_map(|&child| {
             world
                 .get_component_for_entity::<InspectedComponent>(child)
-                .unwrap()
-                .name
+                .map(|card| card.name)
         })
         .collect();
     assert_eq!(names, ["Tag", "Transform"]);
@@ -359,7 +357,10 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     update(&mut world);
     assert!(cards(&mut world).is_empty());
     assert!(rows(&mut world).is_empty());
-    let mut inputs = world.query::<&concerto_ui::text_input::UITextInput, ()>();
+    let mut inputs = world.query::<
+        &concerto_ui::text_input::UITextInput,
+        concerto_ecs::query::filter::Without<add_component::AddComponentSearch>,
+    >();
     assert_eq!(inputs.iter(&mut world).count(), 0);
 }
 

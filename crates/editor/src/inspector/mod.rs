@@ -25,15 +25,18 @@ use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::scene::SceneRoot;
 use crate::selection::Selection;
 
+mod add_component;
 mod numeric;
 mod registry;
 mod rows;
 mod sync;
 
+use add_component::{clear_add_component_search, populate_add_component_menu};
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
 use concerto_foundation::transform::Transform;
+use concerto_render::components::{camera::Camera, light::Light};
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields,
     select_numeric_field_on_focus,
@@ -82,7 +85,9 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(InspectorScroll::default());
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
-        app.register_editable::<Transform>();
+        app.register_editable::<Transform>()
+            .register_editable::<Light>()
+            .register_editable::<Camera>();
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
@@ -96,6 +101,8 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(LateUpdate, clear_add_component_search)
+            .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)
             .add_system(LateUpdate, sync_inspector_scroll);
     }

@@ -18,7 +18,8 @@ use glam::Vec2;
 use log::warn;
 
 use crate::{
-    focus::{FocusedWidget, UIFocusLost},
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+    interaction::{Interactable, UIClick},
     node::{UIBox, UILayout, UINode},
     text_input::{UITextInput, UITextInputCancelled},
 };
@@ -101,6 +102,10 @@ pub struct UIAnchoredPanel {
     pub gap: f32,
     /// Authoritative open state. The caller sets this; the crate projects it onto `UINode::visible`.
     pub open: bool,
+    /// Left-clicking `owner` toggles `open`.
+    pub toggled_by_owner: bool,
+    /// The widget that takes keyboard focus when the panel opens.
+    pub focus_on_open: Option<Entity>,
     /// The side `place` actually used the last time this panel was laid out, after flip.
     pub(crate) resolved_side: UIAnchorSide,
 }
@@ -116,6 +121,8 @@ impl Default for UIAnchoredPanel {
             align: UIAnchorAlign::Start,
             gap: 4.0,
             open: false,
+            toggled_by_owner: false,
+            focus_on_open: None,
             resolved_side: UIAnchorSide::Below,
         }
     }
@@ -158,6 +165,18 @@ impl UIAnchoredPanel {
 
     pub fn with_open(mut self, open: bool) -> Self {
         self.open = open;
+        self
+    }
+
+    /// Makes a left-click on `owner` toggle the panel open and closed.
+    pub fn toggled_by_owner(mut self) -> Self {
+        self.toggled_by_owner = true;
+        self
+    }
+
+    /// Focuses `widget` whenever the panel opens.
+    pub fn with_focus_on_open(mut self, widget: Entity) -> Self {
+        self.focus_on_open = Some(widget);
         self
     }
 
@@ -304,10 +323,12 @@ pub fn track_panel_stack(
     parents: Query<&ChildOf>,
     parented_panels: Query<(Entity, &UIAnchoredPanel, &ChildOf)>,
     nodeless_panels: Query<(Entity, &UIAnchoredPanel), Without<UINode>>,
+    interactables: Query<&Interactable>,
     mut warned: SystemLocal<MisusedPanels>,
     mut stack: ResMut<UIPanelStack>,
     mut focused: ResMut<FocusedWidget>,
     mut focus_lost: EventWriter<UIFocusLost>,
+    mut focus_gained: EventWriter<UIFocusGained>,
 ) {
     for (entity, _, _) in parented_panels.iter() {
         if warned.insert(entity) {
@@ -322,6 +343,23 @@ pub fn track_panel_stack(
             warn!(
                 "UIAnchoredPanel on {entity:?} has no UINode: the panel is inert — nothing places, \
                  shows or dismisses it"
+            );
+        }
+    }
+    for (entity, panel, _) in panels.iter() {
+        if !panel.toggled_by_owner {
+            continue;
+        }
+        let clickable = match panel.owner {
+            Some(owner) => {
+                nodes.get_entity(owner).is_none() || interactables.get_entity(owner).is_some()
+            }
+            None => false,
+        };
+        if !clickable && warned.insert(entity) {
+            warn!(
+                "UIAnchoredPanel on {entity:?} is toggled by its owner, but the owner is missing \
+                 or not Interactable: clicking it never opens the panel"
             );
         }
     }
@@ -389,10 +427,15 @@ pub fn track_panel_stack(
         .collect();
     ordered.sort_by_key(|(depth, entity)| (*depth, entity.index(), entity.generation()));
 
+    let previously_open = std::mem::take(&mut stack.open);
     stack.open = ordered.into_iter().map(|(_, entity)| entity).collect();
 
+    let mut focus_target = None;
     for (entity, mut panel, mut node) in panels.iter() {
         let is_panel_open = stack.open.contains(&entity);
+        if is_panel_open && !previously_open.contains(&entity) {
+            focus_target = panel.focus_on_open.or(focus_target);
+        }
         if panel.open && !is_panel_open {
             panel.open = false;
         }
@@ -410,6 +453,15 @@ pub fn track_panel_stack(
                 node.z_index = layer;
             }
         }
+    }
+
+    if let Some(target) = focus_target
+        && **focused != Some(target)
+    {
+        if let Some(previous) = focused.replace(target) {
+            focus_lost.write(UIFocusLost(previous));
+        }
+        focus_gained.write(UIFocusGained(target));
     }
 
     if let Some(entity) = **focused
@@ -518,6 +570,22 @@ fn should_dismiss_on_escape(inputs: EscapeDismissal) -> bool {
         && !inputs.field_focused
         && !inputs.field_cancelled_this_frame
         && inputs.stack_open
+}
+
+pub(crate) fn toggle_panels_from_owner(
+    mut clicks: EventReader<UIClick>,
+    panels: Query<&mut UIAnchoredPanel>,
+) {
+    for click in clicks.read() {
+        if click.button != MouseButton::Left {
+            continue;
+        }
+        for mut panel in panels.iter() {
+            if panel.toggled_by_owner && panel.owner == Some(click.entity) {
+                panel.open = !panel.open;
+            }
+        }
+    }
 }
 
 pub(crate) fn dismiss_panels(

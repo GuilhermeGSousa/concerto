@@ -10,7 +10,9 @@ use concerto_render::{
 use glyphon::{Cache, SwashCache, Viewport};
 
 use crate::{
-    anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
+    anchor::{
+        UIDismissPanel, UIPanelStack, dismiss_panels, toggle_panels_from_owner, track_panel_stack,
+    },
     checkbox::{UICheckboxChanged, sync_checkbox_material, toggle_checkboxes},
     focus::{
         FocusedWidget, UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, sync_text_capture,
@@ -142,6 +144,7 @@ impl Plugin for UIPlugin {
                 toggle_checkboxes,
                 update_text_inputs,
                 dismiss_panels.after(update_text_inputs),
+                toggle_panels_from_owner,
                 update_widgets,
                 sync_tab_bodies,
                 update_tooltips,

@@ -43,16 +43,6 @@ struct VirtualRow {
 }
 
 #[derive(Component)]
-struct Dropdown {
-    trigger: Entity,
-}
-
-#[derive(Component)]
-struct Submenu {
-    row: Entity,
-}
-
-#[derive(Component)]
 struct ContextMenu;
 
 fn label(value: impl Into<String>, size: f32) -> UIText {
@@ -288,10 +278,7 @@ fn spawn_showcase(
             .with_side(UIAnchorSide::Below)
             .with_align(UIAnchorAlign::Start)
             .with_gap(4.0)
-            .with_open(false),
-            Dropdown {
-                trigger: menu_trigger,
-            },
+            .toggled_by_owner(),
         ))
         .entity();
 
@@ -337,8 +324,7 @@ fn spawn_showcase(
         .with_side(UIAnchorSide::Right)
         .with_align(UIAnchorAlign::Start)
         .with_gap(2.0)
-        .with_open(false),
-        Submenu { row: materials_row },
+        .toggled_by_owner(),
         label("Standard\nUnlit\nToon", 12.0),
     ));
 
@@ -525,10 +511,7 @@ fn spawn_showcase(
             .with_side(UIAnchorSide::Below)
             .with_align(UIAnchorAlign::Start)
             .with_gap(4.0)
-            .with_open(false),
-            Dropdown {
-                trigger: flip_trigger,
-            },
+            .toggled_by_owner(),
         ))
         .entity();
     for name in ["Reset View", "Frame Selected", "Toggle Grid"] {
@@ -554,47 +537,31 @@ fn spawn_showcase(
 
 fn drive_panels(
     mut clicks: EventReader<UIClick>,
-    dropdowns: Query<(&Dropdown, &mut UIAnchoredPanel)>,
-    submenus: Query<(&Submenu, &mut UIAnchoredPanel)>,
     context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
     rows: Query<&VirtualRow>,
     lists: Query<&UIVirtualList>,
 ) {
     for click in clicks.read() {
-        match click.button {
-            MouseButton::Left => {
-                for (dropdown, mut panel) in dropdowns.iter() {
-                    if dropdown.trigger == click.entity {
-                        panel.open = !panel.open;
-                    }
-                }
-                for (submenu, mut panel) in submenus.iter() {
-                    if submenu.row == click.entity {
-                        panel.open = !panel.open;
-                    }
-                }
-            }
-            MouseButton::Right => {
-                let Some(row) = rows.get_entity(click.entity) else {
-                    continue;
-                };
-                let index = lists
-                    .iter()
-                    .next()
-                    .and_then(|list| list.visible_range().nth(row.slot));
-                for (_, mut panel, mut text) in context_menus.iter() {
-                    panel.target = UIAnchorTarget::Point {
-                        position: click.position,
-                    };
-                    panel.owner = Some(click.entity);
-                    panel.open = true;
-                    text.text = match index {
-                        Some(index) => format!("Row {index:04}\nRename\nDuplicate\nDelete"),
-                        None => String::from("Rename\nDuplicate\nDelete"),
-                    };
-                }
-            }
-            _ => {}
+        if click.button != MouseButton::Right {
+            continue;
+        }
+        let Some(row) = rows.get_entity(click.entity) else {
+            continue;
+        };
+        let index = lists
+            .iter()
+            .next()
+            .and_then(|list| list.visible_range().nth(row.slot));
+        for (_, mut panel, mut text) in context_menus.iter() {
+            panel.target = UIAnchorTarget::Point {
+                position: click.position,
+            };
+            panel.owner = Some(click.entity);
+            panel.open = true;
+            text.text = match index {
+                Some(index) => format!("Row {index:04}\nRename\nDuplicate\nDelete"),
+                None => String::from("Rename\nDuplicate\nDelete"),
+            };
         }
     }
 }

@@ -246,6 +246,18 @@ impl InspectionSource<'_> {
         self.components
             .has_component_changed_since(entity, id, tick)
     }
+    /// Registered components `entity` does not carry yet, with how many are registered in total.
+    pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, EditableComponent)>, usize) {
+        let present = self.components.component_ids(entity);
+        let addable = self
+            .registry
+            .components
+            .iter()
+            .filter(|(id, _)| !present.contains(id))
+            .map(|(&id, &component)| (id, component))
+            .collect();
+        (addable, self.registry.components.len())
+    }
     pub fn visible_components(&self, entity: Entity) -> Vec<(TypeId, &'static str)> {
         self.components
             .component_ids(entity)

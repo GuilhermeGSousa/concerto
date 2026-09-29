@@ -1,9 +1,9 @@
 //! Reconciles the live target with card/row entities.
 use super::*;
 
+use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::registry::InspectionSource;
 use concerto_ecs::{component::Tick, query::filter::With};
-use concerto_ui::anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel};
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -24,6 +24,7 @@ pub(super) fn sync_inspected_components(
     theme: Res<UITheme>,
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
     cards: Query<&InspectedComponent>,
+    menus: Query<(Entity, &AddComponentMenu)>,
     mut cmd: CommandQueue,
 ) {
     let Some((stack_entity, stack, children)) = stacks.iter().next() else {
@@ -60,23 +61,7 @@ pub(super) fn sync_inspected_components(
             refresh_card(&source, &mut cmd, entity, card, &theme);
         }
 
-        let add_component = cmd
-            .entity(stack_entity)
-            .spawn_child_queue((
-                UINode::default(),
-                UIText::from_theme("Add Component", &theme),
-                Interactable,
-            ))
-            .entity();
-
-        cmd.spawn((
-            UINode::default(),
-            UIAnchoredPanel::new(UIAnchorTarget::from_node(add_component))
-                .with_owner(add_component)
-                .with_side(UIAnchorSide::Above)
-                .with_align(UIAnchorAlign::Center)
-                .with_gap(5.0),
-        ));
+        spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
             if let Some(card) = cards.get_entity(entity) {

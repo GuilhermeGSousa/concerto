@@ -8,7 +8,7 @@ use concerto_ui::anchor::{
     PanelRects, UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack,
     panels_to_close, place, track_panel_stack,
 };
-use concerto_ui::focus::{FocusedWidget, UIFocusLost};
+use concerto_ui::focus::{FocusedWidget, UIFocusGained, UIFocusLost};
 use concerto_ui::node::{UIBox, UINode};
 use glam::Vec2;
 
@@ -325,6 +325,7 @@ fn stack_world() -> World {
     world.insert_resource(UIPanelStack::default());
     world.insert_resource(FocusedWidget::default());
     world.insert_resource(EventChannel::<UIFocusLost>::default());
+    world.insert_resource(EventChannel::<UIFocusGained>::default());
     world
 }
 
@@ -739,5 +740,46 @@ fn focus_outside_every_panel_is_left_alone() {
         **world.get_resource::<FocusedWidget>().unwrap(),
         Some(trigger),
         "the trigger is not inside the panel, so closing it says nothing about focus"
+    );
+}
+
+#[test]
+fn opening_a_panel_focuses_its_focus_on_open_widget_once() {
+    let mut world = stack_world();
+    let trigger = node(&mut world);
+    let field = node(&mut world);
+    let menu = world.spawn((
+        UINode::default().with_visible(false),
+        UIAnchoredPanel::new(UIAnchorTarget::Node { entity: trigger })
+            .with_owner(trigger)
+            .with_focus_on_open(field),
+    ));
+    world.insert(ChildOf::new(menu), field);
+    run(&mut world);
+    assert_eq!(
+        **world.get_resource::<FocusedWidget>().unwrap(),
+        None,
+        "a closed panel does not take focus"
+    );
+
+    world
+        .get_component_for_entity_mut::<UIAnchoredPanel>(menu)
+        .unwrap()
+        .open = true;
+    run(&mut world);
+    assert_eq!(
+        **world.get_resource::<FocusedWidget>().unwrap(),
+        Some(field),
+        "opening the panel hands the keyboard to its field"
+    );
+
+    let mut focused = FocusedWidget::default();
+    *focused = Some(trigger);
+    world.insert_resource(focused);
+    run(&mut world);
+    assert_eq!(
+        **world.get_resource::<FocusedWidget>().unwrap(),
+        Some(trigger),
+        "focus moves only on the frame the panel opens, not every frame it stays open"
     );
 }
