@@ -1,6 +1,5 @@
 //! Small themed widget building blocks. These components describe interaction
 //! without introducing editor concepts into the UI crate.
-use concerto_color::Color;
 use concerto_ecs::{
     component::Component,
     entity::Entity,
@@ -11,11 +10,8 @@ use concerto_ecs::{
 use concerto_window::input::MouseButton;
 
 use crate::{
-    interaction::{HoveredNode, Interactable, UIClick, UIInteractionStyle},
-    material::UIMaterial,
-    node::{UINode, UIRect},
-    theme::UITheme,
-    transform::UIValue,
+    interaction::{HoveredNode, UIClick},
+    node::UINode,
 };
 
 #[derive(Component, Default)]
@@ -69,33 +65,6 @@ pub struct UICollapsibleChanged {
 pub struct UITabChanged {
     pub entity: Entity,
     pub selected: usize,
-}
-
-/// Standard compact Concerto button visuals.
-pub fn button(
-    theme: &UITheme,
-) -> (
-    UINode,
-    UIMaterial,
-    Interactable,
-    UIInteractionStyle,
-    UIButton,
-) {
-    (
-        UINode::default()
-            .with_height(UIValue::Px(theme.control_height))
-            .with_flex_shrink(0.0)
-            .with_padding(UIRect::axes(theme.spacing_sm, theme.spacing_md)),
-        UIMaterial::with_border(theme.surface_raised, theme.border, 1.0),
-        Interactable,
-        UIInteractionStyle {
-            normal: theme.surface_raised,
-            hovered: theme.surface_hovered,
-            pressed: theme.accent,
-            disabled: Color::srgba(0.09, 0.075, 0.11, 0.55),
-        },
-        UIButton,
-    )
 }
 
 pub(crate) fn update_widgets(

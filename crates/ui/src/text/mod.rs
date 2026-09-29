@@ -11,9 +11,7 @@ use concerto_window::plugin::Window;
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, Weight, Wrap};
 use std::hash::{Hash, Hasher};
 
-use crate::{
-    node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem, theme::UITheme,
-};
+use crate::{node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem};
 
 pub mod fonts;
 pub(crate) mod resources;
@@ -55,17 +53,6 @@ pub struct UIText {
     pub wrap: bool,
     /// Whether text too long for its box is cut short with an ellipsis.
     pub ellipsis: bool,
-}
-
-impl UIText {
-    pub fn from_theme(text: impl Into<String>, theme: &UITheme) -> Self {
-        Self {
-            text: text.into(),
-            font_size: theme.font_size_md,
-            line_height: theme.line_height(theme.font_size_md),
-            ..Default::default()
-        }
-    }
 }
 
 impl Default for UIText {
