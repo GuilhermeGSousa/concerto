@@ -193,6 +193,123 @@ impl UINode {
         self
     }
 
+    pub fn with_width(mut self, width: UIValue) -> Self {
+        self.width = width;
+        self
+    }
+
+    pub fn with_height(mut self, height: UIValue) -> Self {
+        self.height = height;
+        self
+    }
+
+    pub fn with_size(self, width: UIValue, height: UIValue) -> Self {
+        self.with_width(width).with_height(height)
+    }
+
+    pub fn with_min_width(mut self, min_width: UIValue) -> Self {
+        self.min_width = min_width;
+        self
+    }
+
+    pub fn with_min_height(mut self, min_height: UIValue) -> Self {
+        self.min_height = min_height;
+        self
+    }
+
+    pub fn with_min_size(self, min_width: UIValue, min_height: UIValue) -> Self {
+        self.with_min_width(min_width).with_min_height(min_height)
+    }
+
+    pub fn with_max_width(mut self, max_width: UIValue) -> Self {
+        self.max_width = max_width;
+        self
+    }
+
+    pub fn with_max_height(mut self, max_height: UIValue) -> Self {
+        self.max_height = max_height;
+        self
+    }
+
+    pub fn with_max_size(self, max_width: UIValue, max_height: UIValue) -> Self {
+        self.with_max_width(max_width).with_max_height(max_height)
+    }
+
+    pub fn with_flex_direction(mut self, flex_direction: FlexDirection) -> Self {
+        self.flex_direction = flex_direction;
+        self
+    }
+
+    pub fn with_flex_grow(mut self, flex_grow: f32) -> Self {
+        self.flex_grow = flex_grow;
+        self
+    }
+
+    pub fn with_flex_shrink(mut self, flex_shrink: f32) -> Self {
+        self.flex_shrink = flex_shrink;
+        self
+    }
+
+    pub fn with_gap(mut self, gap: Vec2) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    pub fn with_align_items(mut self, align_items: AlignItems) -> Self {
+        self.align_items = Some(align_items);
+        self
+    }
+
+    pub fn with_align_self(mut self, align_self: AlignItems) -> Self {
+        self.align_self = Some(align_self);
+        self
+    }
+
+    pub fn with_justify_content(mut self, justify_content: AlignContent) -> Self {
+        self.justify_content = Some(justify_content);
+        self
+    }
+
+    pub fn with_padding(mut self, padding: UIRect) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn with_margin(mut self, margin: UIRect) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    pub fn with_position(mut self, position: Position) -> Self {
+        self.position = position;
+        self
+    }
+
+    pub fn with_inset(mut self, inset: UIInset) -> Self {
+        self.inset = inset;
+        self
+    }
+
+    pub fn with_visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    pub fn with_overflow_x(mut self, overflow_x: Overflow) -> Self {
+        self.overflow_x = overflow_x;
+        self
+    }
+
+    pub fn with_overflow_y(mut self, overflow_y: Overflow) -> Self {
+        self.overflow_y = overflow_y;
+        self
+    }
+
+    pub fn with_z_index(mut self, z_index: i32) -> Self {
+        self.z_index = z_index;
+        self
+    }
+
     fn size(&self) -> Size<Dimension> {
         Size {
             width: dimension(self.width),
@@ -307,7 +424,7 @@ pub(crate) struct TextMeasure {
 
 /// Shapes text so the layout pass can size nodes to their content.
 #[derive(Resource)]
-pub struct UITextMeasure {
+pub(crate) struct UITextMeasure {
     font_system: glyphon::FontSystem,
     cache: HashMap<(u64, u32), Vec2>,
 }
@@ -1150,10 +1267,7 @@ mod tests {
 
     #[test]
     fn hidden_nodes_map_to_display_none() {
-        let node = UINode {
-            visible: false,
-            ..Default::default()
-        };
+        let node = UINode::default().with_visible(false);
         assert_eq!(node.style().display, Display::None);
     }
 
@@ -1174,10 +1288,7 @@ mod tests {
             min: Vec2::new(25.0, 30.0),
             size: Vec2::new(50.0, 40.0),
         };
-        let node = UINode {
-            overflow_x: Overflow::Hidden,
-            ..Default::default()
-        };
+        let node = UINode::default().with_overflow_x(Overflow::Hidden);
         assert_eq!(
             node_clip(rect, inherited, &node),
             UIBox {
@@ -1217,21 +1328,16 @@ mod tests {
     fn label_width_in_row(mut measure: TextMeasure, ellipsis: bool, row_width: f32) -> f32 {
         measure.ellipsis = ellipsis;
         let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
-        let node = UINode {
-            flex_grow: 1.0,
-            ..Default::default()
-        };
+        let node = UINode::default().with_flex_grow(1.0);
         let label = taffy
             .new_leaf_with_context(text_leaf_style(&node, &measure), measure)
             .unwrap();
         let row = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(row_width),
-                    flex_direction: FlexDirection::Row,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_width(UIValue::Px(row_width))
+                    .with_flex_direction(FlexDirection::Row)
+                    .style(),
                 &[label],
             )
             .unwrap();
@@ -1256,42 +1362,36 @@ mod tests {
         let mut card = || {
             let pool = taffy
                 .new_leaf(
-                    UINode {
-                        height: UIValue::Px(rows * 32.0),
-                        flex_shrink: 0.0,
-                        position: content_position,
-                        inset: UIInset {
+                    UINode::default()
+                        .with_height(UIValue::Px(rows * 32.0))
+                        .with_flex_shrink(0.0)
+                        .with_position(content_position)
+                        .with_inset(UIInset {
                             left: UIValue::Px(0.0),
                             right: UIValue::Px(0.0),
                             top: UIValue::Px(0.0),
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                    .style(),
+                        })
+                        .style(),
                 )
                 .unwrap();
             let view = taffy
                 .new_with_children(
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .clipped()
-                    .style(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .clipped()
+                        .style(),
                     &[pool],
                 )
                 .unwrap();
             taffy
                 .new_with_children(
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_shrink: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .style(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_shrink(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .style(),
                     &[view],
                 )
                 .unwrap()
@@ -1299,13 +1399,10 @@ mod tests {
         let (first, second) = (card(), card());
         let rail = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(238.0),
-                    height: UIValue::Px(600.0),
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_size(UIValue::Px(238.0), UIValue::Px(600.0))
+                    .with_flex_direction(FlexDirection::Column)
+                    .style(),
                 &[first, second],
             )
             .unwrap();
@@ -1352,23 +1449,19 @@ mod tests {
         let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
         let mut measure = label("content/UAL1/scene.gasset");
         measure.ellipsis = true;
-        let label_node = UINode {
-            flex_grow: 1.0,
-            padding: UIRect::axes(6.0, 8.0),
-            ..Default::default()
-        };
+        let label_node = UINode::default()
+            .with_flex_grow(1.0)
+            .with_padding(UIRect::axes(6.0, 8.0));
         let label_id = taffy
             .new_leaf_with_context(text_leaf_style(&label_node, &measure), measure)
             .unwrap();
         let fixed = |taffy: &mut TaffyTree<TextMeasure>, width: f32| {
             taffy
                 .new_leaf(
-                    UINode {
-                        width: UIValue::Px(width),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    }
-                    .style(),
+                    UINode::default()
+                        .with_width(UIValue::Px(width))
+                        .with_flex_shrink(0.0)
+                        .style(),
                 )
                 .unwrap()
         };
@@ -1376,37 +1469,30 @@ mod tests {
         let glyph = fixed(&mut taffy, 20.0);
         let row = taffy
             .new_with_children(
-                UINode {
-                    height: UIValue::Px(32.0),
-                    flex_shrink: 0.0,
-                    flex_direction: FlexDirection::Row,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_height(UIValue::Px(32.0))
+                    .with_flex_shrink(0.0)
+                    .with_flex_direction(FlexDirection::Row)
+                    .style(),
                 &[toggle, glyph, label_id],
             )
             .unwrap();
         let pool = taffy
             .new_with_children(
-                UINode {
-                    flex_direction: FlexDirection::Column,
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_flex_direction(FlexDirection::Column)
+                    .with_flex_shrink(0.0)
+                    .style(),
                 &[row],
             )
             .unwrap();
         let view = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(197.0),
-                    height: UIValue::Px(300.0),
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                }
-                .clipped()
-                .style(),
+                UINode::default()
+                    .with_size(UIValue::Px(197.0), UIValue::Px(300.0))
+                    .with_flex_direction(FlexDirection::Column)
+                    .clipped()
+                    .style(),
                 &[pool],
             )
             .unwrap();
@@ -1440,14 +1526,11 @@ mod tests {
             .iter()
             .map(|text| {
                 let measure = label(text);
-                let node = UINode {
-                    flex_grow: 1.0,
-                    width: basis,
-                    height: UIValue::Px(28.0),
-                    padding: UIRect::axes(0.0, 4.0),
-                    ..Default::default()
-                }
-                .clipped();
+                let node = UINode::default()
+                    .with_flex_grow(1.0)
+                    .with_size(basis, UIValue::Px(28.0))
+                    .with_padding(UIRect::axes(0.0, 4.0))
+                    .clipped();
                 taffy
                     .new_leaf_with_context(text_leaf_style(&node, &measure), measure)
                     .unwrap()
@@ -1456,25 +1539,21 @@ mod tests {
         let mut children = vec![
             taffy
                 .new_leaf(
-                    UINode {
-                        width: UIValue::Px(72.0),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    }
-                    .style(),
+                    UINode::default()
+                        .with_width(UIValue::Px(72.0))
+                        .with_flex_shrink(0.0)
+                        .style(),
                 )
                 .unwrap(),
         ];
         children.extend(fields.iter().copied());
         let row = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(260.0),
-                    flex_direction: FlexDirection::Row,
-                    gap: Vec2::new(4.0, 0.0),
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_width(UIValue::Px(260.0))
+                    .with_flex_direction(FlexDirection::Row)
+                    .with_gap(Vec2::new(4.0, 0.0))
+                    .style(),
                 &children,
             )
             .unwrap();

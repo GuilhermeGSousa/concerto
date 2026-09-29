@@ -71,15 +71,11 @@ pub(super) fn sync_inspected_components(
 
         cmd.spawn((
             UINode::default(),
-            UIAnchoredPanel {
-                target: UIAnchorTarget::from_node(add_component),
-                owner: Some(add_component),
-                side: UIAnchorSide::Above,
-                align: UIAnchorAlign::Center,
-                gap: 5.0,
-                open: false,
-                resolved_side: UIAnchorSide::Below,
-            },
+            UIAnchoredPanel::new(UIAnchorTarget::from_node(add_component))
+                .with_owner(add_component)
+                .with_side(UIAnchorSide::Above)
+                .with_align(UIAnchorAlign::Center)
+                .with_gap(5.0),
         ));
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
@@ -129,12 +125,10 @@ fn spawn_card(
 ) -> (Entity, InspectedComponent) {
     let mut stack_queue = cmd.entity(stack);
     let mut card_queue = stack_queue.spawn_child_queue((
-        UINode {
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Column,
-            padding: UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_flex_shrink(0.0)
+            .with_flex_direction(FlexDirection::Column)
+            .with_padding(UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm)),
         UIMaterial {
             corner_radius: theme.radius_md,
             ..UIMaterial::flat(theme.surface_raised)
@@ -143,20 +137,15 @@ fn spawn_card(
     let entity = card_queue.entity();
 
     card_queue = card_queue.add_child_with(
-        UINode {
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            align_items: Some(taffy::AlignItems::Center),
-            gap: glam::Vec2::new(theme.spacing_xs + 2.0, 0.0),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_flex_shrink(0.0)
+            .with_flex_direction(FlexDirection::Row)
+            .with_align_items(taffy::AlignItems::Center)
+            .with_gap(glam::Vec2::new(theme.spacing_xs + 2.0, 0.0)),
         |header| {
             header
                 .add_child((
-                    UINode {
-                        flex_grow: 1.0,
-                        ..Default::default()
-                    },
+                    UINode::default().with_flex_grow(1.0),
                     UIText {
                         ellipsis: true,
                         wrap: false,
@@ -164,12 +153,9 @@ fn spawn_card(
                     },
                 ))
                 .add_child((
-                    UINode {
-                        width: UIValue::Px(22.0),
-                        height: UIValue::Px(13.0),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    },
+                    UINode::default()
+                        .with_size(UIValue::Px(22.0), UIValue::Px(13.0))
+                        .with_flex_shrink(0.0),
                     UIMaterial {
                         corner_radius: 6.5,
                         ..UIMaterial::flat(theme.accent)
@@ -206,24 +192,20 @@ fn spawn_row(
     };
     let mut body_queue = cmd.entity(card.body);
     let row_queue = body_queue.spawn_child_queue((
-        UINode {
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            align_items: Some(taffy::AlignItems::Center),
-            gap: glam::Vec2::new(theme.spacing_xs, 0.0),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_flex_shrink(0.0)
+            .with_flex_direction(FlexDirection::Row)
+            .with_align_items(taffy::AlignItems::Center)
+            .with_gap(glam::Vec2::new(theme.spacing_xs, 0.0)),
         target,
         property.value,
         BuildPropertyWidget,
     ));
     let row = row_queue.entity();
     row_queue.add_child((
-        UINode {
-            width: UIValue::Px(PROPERTY_LABEL_WIDTH),
-            flex_shrink: 0.0,
-            ..Default::default()
-        },
+        UINode::default()
+            .with_width(UIValue::Px(PROPERTY_LABEL_WIDTH))
+            .with_flex_shrink(0.0),
         UIText {
             color: theme.text_muted,
             font_size: theme.font_size_sm,
@@ -237,17 +219,15 @@ fn spawn_row(
 }
 
 fn body_node(theme: &UITheme) -> UINode {
-    UINode {
-        visible: false,
-        flex_shrink: 0.0,
-        flex_direction: FlexDirection::Column,
-        gap: glam::Vec2::new(0.0, theme.spacing_xs),
-        padding: UIRect {
+    UINode::default()
+        .with_visible(false)
+        .with_flex_shrink(0.0)
+        .with_flex_direction(FlexDirection::Column)
+        .with_gap(glam::Vec2::new(0.0, theme.spacing_xs))
+        .with_padding(UIRect {
             top: theme.spacing_xs,
             ..Default::default()
-        },
-        ..Default::default()
-    }
+        })
 }
 
 pub(super) fn build_property_widgets(

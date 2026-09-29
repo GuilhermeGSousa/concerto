@@ -48,18 +48,13 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
         return;
     };
     cmd.entity(body).add_child_with(
-        UINode {
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            ..Default::default()
-        }
-        .clipped(),
+        UINode::default()
+            .with_flex_grow(1.0)
+            .with_flex_direction(FlexDirection::Column)
+            .clipped(),
         |panel| {
             panel.add_child((
-                UINode {
-                    flex_grow: 1.0,
-                    ..Default::default()
-                },
+                UINode::default().with_flex_grow(1.0),
                 UIText {
                     text: String::new(),
                     font_family: FontFamily::Monospace,

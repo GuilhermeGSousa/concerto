@@ -4,7 +4,6 @@ use concerto_ecs::{
     entity::Entity,
     events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::Query,
-    resource::Resource,
 };
 use concerto_window::input::MouseButton;
 
@@ -36,10 +35,6 @@ pub struct UICheckboxChanged {
     pub entity: Entity,
     pub checked: bool,
 }
-
-/// Dummy resource so `UICheckboxChanged` is accessible as a resource type.
-#[derive(Resource)]
-pub struct CheckboxResource;
 
 /// Toggles [`UICheckbox::checked`] when the entity receives a [`UIClick`].
 pub(crate) fn toggle_checkboxes(

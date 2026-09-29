@@ -3,7 +3,7 @@ use concerto_ecs::{
     entity::Entity,
     events::{Event, event_writer::EventWriter},
     query::Query,
-    resource::{Res, ResMut, Resource},
+    resource::{Res, ResMut},
 };
 use concerto_window::input::{Input, InputState, KeyCode, PhysicalKey};
 
@@ -67,10 +67,6 @@ fn finish_key(just_pressed: impl Fn(KeyCode) -> bool) -> Option<Finish> {
         None
     }
 }
-
-/// Dummy resource marker so the event can be registered.
-#[derive(Resource)]
-pub struct TextInputResource;
 
 /// Processes keyboard input for focused [`UITextInput`] widgets.
 pub(crate) fn update_text_inputs(

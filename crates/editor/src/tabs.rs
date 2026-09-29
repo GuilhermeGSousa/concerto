@@ -165,15 +165,13 @@ fn sync_tabs(
             };
             cmd.entity(content).add_child_with(
                 (
-                    UINode {
-                        height: UIValue::Px(30.0),
-                        flex_direction: FlexDirection::Row,
-                        align_items: Some(taffy::AlignItems::Center),
-                        padding: UIRect::axes(0.0, theme.spacing_sm),
-                        flex_shrink: 0.0,
-                        z_index: 70,
-                        ..Default::default()
-                    },
+                    UINode::default()
+                        .with_height(UIValue::Px(30.0))
+                        .with_flex_direction(FlexDirection::Row)
+                        .with_align_items(taffy::AlignItems::Center)
+                        .with_padding(UIRect::axes(0.0, theme.spacing_sm))
+                        .with_flex_shrink(0.0)
+                        .with_z_index(70),
                     UIMaterial::flat(if is_active {
                         theme.surface_raised
                     } else {
@@ -196,11 +194,9 @@ fn sync_tabs(
                 |button| {
                     button
                         .add_child((
-                            UINode {
-                                width: UIValue::Px(16.0),
-                                flex_shrink: 0.0,
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_width(UIValue::Px(16.0))
+                                .with_flex_shrink(0.0),
                             UIText {
                                 color: if is_active {
                                     theme.text
@@ -211,11 +207,9 @@ fn sync_tabs(
                             },
                         ))
                         .add_child((
-                            UINode {
-                                flex_shrink: 1.0,
-                                max_width: UIValue::Px(220.0),
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_flex_shrink(1.0)
+                                .with_max_width(UIValue::Px(220.0)),
                             UIText {
                                 text: title.clone(),
                                 wrap: false,
@@ -232,14 +226,11 @@ fn sync_tabs(
                             TabLabel { document: entity },
                         ))
                         .add_child((
-                            UINode {
-                                width: UIValue::Px(18.0),
-                                height: UIValue::Px(24.0),
-                                padding: UIRect::axes(3.0, 3.0),
-                                flex_shrink: 0.0,
-                                z_index: 71,
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_size(UIValue::Px(18.0), UIValue::Px(24.0))
+                                .with_padding(UIRect::axes(3.0, 3.0))
+                                .with_flex_shrink(0.0)
+                                .with_z_index(71),
                             UIText {
                                 color: theme.text_muted,
                                 ..icon(&theme, glyph::X, theme.font_size_sm)

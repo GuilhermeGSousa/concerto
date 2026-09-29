@@ -60,27 +60,22 @@ fn text(theme: &UITheme, value: &str) -> UIText {
 fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(brand) = registry.body(BRAND_ID) {
         cmd.entity(brand).add_child_with(
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(taffy::AlignItems::Center),
-                gap: glam::Vec2::new(theme.spacing_sm, 0.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_flex_direction(FlexDirection::Row)
+                .with_align_items(taffy::AlignItems::Center)
+                .with_gap(glam::Vec2::new(theme.spacing_sm, 0.0)),
             |mut row| {
                 row = row.add_child_with(
                     (
-                        UINode {
-                            width: UIValue::Px(13.0),
-                            height: UIValue::Px(19.0),
-                            flex_shrink: 0.0,
-                            align_items: Some(taffy::AlignItems::Center),
-                            padding: UIRect {
+                        UINode::default()
+                            .with_size(UIValue::Px(13.0), UIValue::Px(19.0))
+                            .with_flex_shrink(0.0)
+                            .with_align_items(taffy::AlignItems::Center)
+                            .with_padding(UIRect {
                                 top: 4.0,
                                 ..Default::default()
-                            },
-                            ..Default::default()
-                        },
+                            }),
                         UIMaterial {
                             corner_radius: 6.0,
                             ..UIMaterial::with_border(TRANSPARENT, theme.accent, 1.5)
@@ -88,12 +83,9 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                     ),
                     |mark| {
                         mark.add_child((
-                            UINode {
-                                width: UIValue::Px(4.0),
-                                height: UIValue::Px(4.0),
-                                flex_shrink: 0.0,
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_size(UIValue::Px(4.0), UIValue::Px(4.0))
+                                .with_flex_shrink(0.0),
                             UIMaterial {
                                 corner_radius: 2.0,
                                 ..UIMaterial::flat(theme.accent)
@@ -112,18 +104,16 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
 
                 row.add_child_with(
                     (
-                        UINode {
-                            flex_grow: 1.0,
-                            flex_direction: FlexDirection::Row,
-                            align_items: Some(taffy::AlignItems::Center),
-                            gap: glam::Vec2::new(2.0, 0.0),
-                            min_width: UIValue::Px(0.0),
-                            height: UIValue::Px(30.0),
-                            z_index: 70,
-                            overflow_x: taffy::Overflow::Clip,
-                            overflow_y: taffy::Overflow::Clip,
-                            ..Default::default()
-                        },
+                        UINode::default()
+                            .with_flex_grow(1.0)
+                            .with_flex_direction(FlexDirection::Row)
+                            .with_align_items(taffy::AlignItems::Center)
+                            .with_gap(glam::Vec2::new(2.0, 0.0))
+                            .with_min_width(UIValue::Px(0.0))
+                            .with_height(UIValue::Px(30.0))
+                            .with_z_index(70)
+                            .with_overflow_x(taffy::Overflow::Clip)
+                            .with_overflow_y(taffy::Overflow::Clip),
                         TabStrip,
                         concerto_ui::interaction::Interactable,
                         crate::window_chrome::WindowChromeControl,
@@ -131,20 +121,18 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                     ),
                     |tabs| {
                         tabs.add_child((
-                            UINode {
-                                flex_direction: FlexDirection::Row,
-                                align_items: Some(taffy::AlignItems::Center),
-                                gap: glam::Vec2::new(2.0, 0.0),
-                                flex_shrink: 0.0,
-                                height: UIValue::Px(30.0),
-                                position: taffy::Position::Absolute,
-                                inset: concerto_ui::node::UIInset {
+                            UINode::default()
+                                .with_flex_direction(FlexDirection::Row)
+                                .with_align_items(taffy::AlignItems::Center)
+                                .with_gap(glam::Vec2::new(2.0, 0.0))
+                                .with_flex_shrink(0.0)
+                                .with_height(UIValue::Px(30.0))
+                                .with_position(taffy::Position::Absolute)
+                                .with_inset(concerto_ui::node::UIInset {
                                     left: UIValue::Px(0.0),
                                     top: UIValue::Px(0.0),
                                     ..Default::default()
-                                },
-                                ..Default::default()
-                            },
+                                }),
                             TabStripContent,
                         ));
                     },
@@ -156,14 +144,12 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
     if let Some(chatter) = registry.body(CHATTER_ID) {
         cmd.entity(chatter).add_child_with(
             (
-                UINode {
-                    height: UIValue::Px(30.0),
-                    flex_shrink: 0.0,
-                    align_items: Some(taffy::AlignItems::Center),
-                    padding: UIRect::axes(0.0, theme.spacing_md),
-                    ..Default::default()
-                }
-                .clipped(),
+                UINode::default()
+                    .with_height(UIValue::Px(30.0))
+                    .with_flex_shrink(0.0)
+                    .with_align_items(taffy::AlignItems::Center)
+                    .with_padding(UIRect::axes(0.0, theme.spacing_md))
+                    .clipped(),
                 UIMaterial {
                     corner_radius: theme.radius_md,
                     ..UIMaterial::flat(theme.surface)
@@ -172,11 +158,9 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
             |strip| {
                 strip
                     .add_child((
-                        UINode {
-                            width: UIValue::Px(18.0),
-                            flex_shrink: 0.0,
-                            ..Default::default()
-                        },
+                        UINode::default()
+                            .with_width(UIValue::Px(18.0))
+                            .with_flex_shrink(0.0),
                         UIText {
                             color: theme.text_muted,
                             ..icon(&theme, glyph::INFO, theme.font_size_md)
@@ -184,10 +168,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                         Label::ChatterGlyph,
                     ))
                     .add_child((
-                        UINode {
-                            flex_grow: 1.0,
-                            ..Default::default()
-                        },
+                        UINode::default().with_flex_grow(1.0),
                         UIText {
                             color: theme.text_muted,
                             wrap: false,

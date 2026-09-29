@@ -65,11 +65,9 @@ impl PropertyEditor<Setting> for SettingEditor {
     ) {
         let button = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(theme.control_height),
-                    flex_grow: 1.0,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_height(UIValue::Px(theme.control_height))
+                    .with_flex_grow(1.0),
                 UIText {
                     text: label(snapshot),
                     color: theme.text,

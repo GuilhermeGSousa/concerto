@@ -98,18 +98,16 @@ fn build_controls(
 
     if let Some(root) = registry.root() {
         cmd.entity(root).add_child((
-            UINode {
-                height: UIValue::Px(TOP_STRIP),
-                position: Position::Absolute,
-                inset: UIInset {
+            UINode::default()
+                .with_height(UIValue::Px(TOP_STRIP))
+                .with_position(Position::Absolute)
+                .with_inset(UIInset {
                     top: UIValue::Px(0.0),
                     left: UIValue::Px(0.0),
                     right: UIValue::Px(0.0),
                     ..Default::default()
-                },
-                z_index: DRAG_LAYER,
-                ..Default::default()
-            },
+                })
+                .with_z_index(DRAG_LAYER),
             Interactable,
             DragHandle,
         ));
@@ -117,13 +115,13 @@ fn build_controls(
 
     if let Some(body) = registry.body(PANEL_ID) {
         let mut body_queue = cmd.entity(body);
-        let mut bar = body_queue.spawn_child_queue(UINode {
-            flex_direction: FlexDirection::Row,
-            align_items: Some(taffy::AlignItems::Center),
-            gap: glam::Vec2::new(2.0, 0.0),
-            padding: UIRect::axes(0.0, theme.spacing_md),
-            ..Default::default()
-        });
+        let mut bar = body_queue.spawn_child_queue(
+            UINode::default()
+                .with_flex_direction(FlexDirection::Row)
+                .with_align_items(taffy::AlignItems::Center)
+                .with_gap(glam::Vec2::new(2.0, 0.0))
+                .with_padding(UIRect::axes(0.0, theme.spacing_md)),
+        );
 
         for (control, mark) in [
             (Control::Minimise, glyph::MINUS),
@@ -132,14 +130,11 @@ fn build_controls(
         ] {
             bar = bar.add_child_with(
                 (
-                    UINode {
-                        width: UIValue::Px(30.0),
-                        height: UIValue::Px(26.0),
-                        flex_shrink: 0.0,
-                        padding: UIRect::axes(3.0, 8.0),
-                        z_index: CONTROL_LAYER,
-                        ..Default::default()
-                    },
+                    UINode::default()
+                        .with_size(UIValue::Px(30.0), UIValue::Px(26.0))
+                        .with_flex_shrink(0.0)
+                        .with_padding(UIRect::axes(3.0, 8.0))
+                        .with_z_index(CONTROL_LAYER),
                     UIMaterial {
                         corner_radius: theme.radius_sm,
                         ..UIMaterial::flat(Color::srgba(0.0, 0.0, 0.0, 0.0))
@@ -182,28 +177,22 @@ fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
     let px = UIValue::Px;
     let edge = |inset: UIInset, width: UIValue, height: UIValue, direction| {
         (
-            UINode {
-                width,
-                height,
-                position: Position::Absolute,
-                inset,
-                z_index: GRIP_LAYER,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(width, height)
+                .with_position(Position::Absolute)
+                .with_inset(inset)
+                .with_z_index(GRIP_LAYER),
             ResizeGrip(direction),
             Interactable,
         )
     };
     let corner = |inset: UIInset, direction| {
         (
-            UINode {
-                width: px(CORNER),
-                height: px(CORNER),
-                position: Position::Absolute,
-                inset,
-                z_index: GRIP_LAYER + 1,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(px(CORNER), px(CORNER))
+                .with_position(Position::Absolute)
+                .with_inset(inset)
+                .with_z_index(GRIP_LAYER + 1),
             ResizeGrip(direction),
             Interactable,
         )

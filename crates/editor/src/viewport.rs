@@ -147,12 +147,9 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, viewport: Re
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, viewport: &EditorViewport) -> Entity {
     cmd.entity(parent)
         .spawn_child_queue((
-            UINode {
-                flex_grow: 1.0,
-                min_width: UIValue::Px(320.0),
-                min_height: UIValue::Px(240.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_min_size(UIValue::Px(320.0), UIValue::Px(240.0)),
             UIMaterial::flat(Color::WHITE),
             UIViewport {
                 texture: viewport.texture.clone(),

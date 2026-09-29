@@ -39,20 +39,14 @@ impl Plugin for FrameStatsOverlayPlugin {
 
 fn spawn_overlay(mut cmd: CommandQueue) {
     cmd.spawn((
-        UINode {
-            width: UIValue::Px(230.0),
-            height: UIValue::Px(46.0),
-            padding: UIRect::axes(6.0, 10.0),
-            margin: UIRect::all(8.0),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_size(UIValue::Px(230.0), UIValue::Px(46.0))
+            .with_padding(UIRect::axes(6.0, 10.0))
+            .with_margin(UIRect::all(8.0)),
         UIMaterial::flat(Color::rgba(0.0, 0.0, 0.0, 0.6)),
     ))
     .add_child((
-        UINode {
-            flex_grow: 1.0,
-            ..Default::default()
-        },
+        UINode::default().with_flex_grow(1.0),
         UIText {
             text: "-- FPS".to_string(),
             font_size: 12.0,

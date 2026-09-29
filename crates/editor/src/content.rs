@@ -122,25 +122,21 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     };
 
     cmd.entity(body).add_child_with(
-        UINode {
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            padding: UIRect::all(10.0),
-            ..Default::default()
-        }
-        .clipped(),
+        UINode::default()
+            .with_flex_grow(1.0)
+            .with_flex_direction(FlexDirection::Column)
+            .with_padding(UIRect::all(10.0))
+            .clipped(),
         |mut panel| {
             panel = panel.add_child_with(
                 (
-                    UINode {
-                        height: UIValue::Px(30.0),
-                        flex_shrink: 0.0,
-                        flex_direction: FlexDirection::Row,
-                        align_items: Some(taffy::AlignItems::Center),
-                        padding: UIRect::axes(0.0, 8.0),
-                        gap: glam::Vec2::new(6.0, 0.0),
-                        ..Default::default()
-                    },
+                    UINode::default()
+                        .with_height(UIValue::Px(30.0))
+                        .with_flex_shrink(0.0)
+                        .with_flex_direction(FlexDirection::Row)
+                        .with_align_items(taffy::AlignItems::Center)
+                        .with_padding(UIRect::axes(0.0, 8.0))
+                        .with_gap(glam::Vec2::new(6.0, 0.0)),
                     UIMaterial {
                         corner_radius: theme.radius_sm,
                         ..UIMaterial::flat(theme.surface_raised)
@@ -157,12 +153,10 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                             },
                         ))
                         .add_child((
-                            UINode {
-                                flex_grow: 1.0,
-                                flex_shrink: 1.0,
-                                min_width: UIValue::Px(0.0),
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_flex_grow(1.0)
+                                .with_flex_shrink(1.0)
+                                .with_min_width(UIValue::Px(0.0)),
                             UIText {
                                 wrap: false,
                                 ellipsis: true,
@@ -177,21 +171,17 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             );
 
             panel = panel.add_child_with(
-                UINode {
-                    flex_shrink: 0.0,
-                    flex_direction: FlexDirection::Row,
-                    gap: glam::Vec2::new(4.0, 0.0),
-                    margin: UIRect::axes(7.0, 0.0),
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_flex_shrink(0.0)
+                    .with_flex_direction(FlexDirection::Row)
+                    .with_gap(glam::Vec2::new(4.0, 0.0))
+                    .with_margin(UIRect::axes(7.0, 0.0)),
                 |mut tags| {
                     for (index, (name, _)) in KINDS.iter().enumerate() {
                         tags = tags.add_child((
-                            UINode {
-                                flex_shrink: 0.0,
-                                padding: UIRect::axes(2.0, 7.0),
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_flex_shrink(0.0)
+                                .with_padding(UIRect::axes(2.0, 7.0)),
                             UIMaterial {
                                 corner_radius: theme.radius_sm,
                                 ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
@@ -213,40 +203,33 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
             panel = panel.add_child_with(
                 (
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_shrink: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .clipped(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_shrink(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .clipped(),
                     Interactable,
                     ContentView,
-                    UIVirtualList {
-                        overscan: 1,
-                        ..UIVirtualList::new(0, ROW_HEIGHT)
-                    },
+                    UIVirtualList::new(0, ROW_HEIGHT).with_overscan(1),
                 ),
                 |mut view| {
-                    let mut pool = view.spawn_child_queue(UINode {
-                        flex_direction: FlexDirection::Column,
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    });
+                    let mut pool = view.spawn_child_queue(
+                        UINode::default()
+                            .with_flex_direction(FlexDirection::Column)
+                            .with_flex_shrink(0.0),
+                    );
                     let pool_entity = pool.entity();
 
                     for slot in 0..ROWS {
                         pool = pool.add_child_with(
                             (
-                                UINode {
-                                    height: UIValue::Px(ROW_HEIGHT),
-                                    flex_shrink: 0.0,
-                                    flex_direction: FlexDirection::Row,
-                                    align_items: Some(taffy::AlignItems::Center),
-                                    padding: UIRect::axes(4.0, 6.0),
-                                    gap: glam::Vec2::new(8.0, 0.0),
-                                    ..Default::default()
-                                },
+                                UINode::default()
+                                    .with_height(UIValue::Px(ROW_HEIGHT))
+                                    .with_flex_shrink(0.0)
+                                    .with_flex_direction(FlexDirection::Row)
+                                    .with_align_items(taffy::AlignItems::Center)
+                                    .with_padding(UIRect::axes(4.0, 6.0))
+                                    .with_gap(glam::Vec2::new(8.0, 0.0)),
                                 UIMaterial {
                                     corner_radius: theme.radius_sm,
                                     ..UIMaterial::flat(TRANSPARENT)
@@ -264,11 +247,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                                 let (mark_node, mark_material) = marks::node();
                                 row.add_child((mark_node, mark_material, MarkSlot(slot)))
                                     .add_child((
-                                        UINode {
-                                            flex_grow: 1.0,
-                                            flex_shrink: 1.0,
-                                            ..Default::default()
-                                        },
+                                        UINode::default().with_flex_grow(1.0).with_flex_shrink(1.0),
                                         UIText {
                                             ellipsis: true,
                                             wrap: false,
@@ -288,12 +267,10 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             );
 
             panel.add_child((
-                UINode {
-                    height: UIValue::Px(26.0),
-                    flex_shrink: 0.0,
-                    padding: UIRect::axes(4.0, 10.0),
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_height(UIValue::Px(26.0))
+                    .with_flex_shrink(0.0)
+                    .with_padding(UIRect::axes(4.0, 10.0)),
                 text(&theme, ""),
                 Label::Count,
             ));
@@ -312,7 +289,7 @@ fn sync_scroll(
     let count = visible_assets(&project, &state).len();
     list.item_count = count;
     area.content_extent = count as f32 * ROW_HEIGHT;
-    state.visible = list.visible_range.clone();
+    state.visible = list.visible_range();
 }
 
 fn update_filter(

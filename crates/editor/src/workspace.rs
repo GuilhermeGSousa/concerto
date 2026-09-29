@@ -274,10 +274,7 @@ mod tests {
                 .release_navigation
         );
 
-        let second = world.spawn(UINode {
-            visible: false,
-            ..Default::default()
-        });
+        let second = world.spawn(UINode::default().with_visible(false));
         world
             .get_component_for_entity_mut::<EditorHosts>(editor)
             .unwrap()

@@ -31,34 +31,25 @@ pub(crate) fn spawn_grounded_overlay(mut cmd: CommandQueue) {
     // Every UI root lays out from the window origin and a root's own margin does not move it,
     // so this transparent spacer (no UIMaterial, hence never drawn) pads the panel down clear
     // of the frame-stats overlay above it.
-    cmd.spawn((UINode {
-        width: UIValue::Px(230.0),
-        height: UIValue::Px(100.0),
-        padding: UIRect {
+    cmd.spawn((UINode::default()
+        .with_size(UIValue::Px(230.0), UIValue::Px(100.0))
+        .with_padding(UIRect {
             top: 54.0,
             right: 0.0,
             bottom: 0.0,
             left: 0.0,
-        },
-        ..Default::default()
-    },))
+        }),))
         .add_child_with(
             (
-                UINode {
-                    width: UIValue::Px(230.0),
-                    height: UIValue::Px(46.0),
-                    padding: UIRect::axes(6.0, 10.0),
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_size(UIValue::Px(230.0), UIValue::Px(46.0))
+                    .with_padding(UIRect::axes(6.0, 10.0)),
                 UIMaterial::flat(panel_color(false)),
                 GroundedPanel,
             ),
             |panel| {
                 panel.add_child((
-                    UINode {
-                        flex_grow: 1.0,
-                        ..Default::default()
-                    },
+                    UINode::default().with_flex_grow(1.0),
                     UIText {
                         text: "grounded: --".to_string(),
                         font_size: 12.0,

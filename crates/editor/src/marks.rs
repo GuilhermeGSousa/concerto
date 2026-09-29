@@ -125,14 +125,11 @@ impl Mark {
 /// A mark node, centred in its column and sized for `Mark::None` until a panel says otherwise.
 pub fn node() -> (UINode, UIMaterial) {
     (
-        UINode {
-            width: UIValue::Px(0.0),
-            height: UIValue::Px(0.0),
-            flex_shrink: 0.0,
-            align_self: Some(taffy::AlignItems::Center),
-            margin: UIRect::axes(0.0, COLUMN / 2.0),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_size(UIValue::Px(0.0), UIValue::Px(0.0))
+            .with_flex_shrink(0.0)
+            .with_align_self(taffy::AlignItems::Center)
+            .with_margin(UIRect::axes(0.0, COLUMN / 2.0)),
         UIMaterial::flat(TRANSPARENT),
     )
 }

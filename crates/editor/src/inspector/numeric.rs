@@ -145,15 +145,12 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
         let mut row_queue = cmd.entity(row);
         for slot in 0..slot_count(value) {
             row_queue = row_queue.add_child((
-                UINode {
-                    flex_grow: 1.0,
-                    width: UIValue::Px(0.0),
-                    min_width: UIValue::Px(0.0),
-                    height: UIValue::Px(theme.control_height),
-                    padding: UIRect::axes(field_leading(theme), theme.spacing_xs),
-                    ..Default::default()
-                }
-                .clipped(),
+                UINode::default()
+                    .with_flex_grow(1.0)
+                    .with_size(UIValue::Px(0.0), UIValue::Px(theme.control_height))
+                    .with_min_width(UIValue::Px(0.0))
+                    .with_padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
+                    .clipped(),
                 UIText {
                     color: theme.text,
                     font_size: theme.font_size_sm,

@@ -125,22 +125,17 @@ fn text(theme: &UITheme, value: &str) -> UIText {
 }
 
 fn line(height: f32) -> UINode {
-    UINode {
-        height: UIValue::Px(height),
-        flex_shrink: 0.0,
-        padding: UIRect::axes(6.0, 8.0),
-        ..Default::default()
-    }
+    UINode::default()
+        .with_height(UIValue::Px(height))
+        .with_flex_shrink(0.0)
+        .with_padding(UIRect::axes(6.0, 8.0))
 }
 
 fn icon_column(width: f32) -> UINode {
-    UINode {
-        width: UIValue::Px(width),
-        height: UIValue::Px(ROW_HEIGHT),
-        flex_shrink: 0.0,
-        padding: UIRect::axes(6.0, 0.0),
-        ..Default::default()
-    }
+    UINode::default()
+        .with_size(UIValue::Px(width), UIValue::Px(ROW_HEIGHT))
+        .with_flex_shrink(0.0)
+        .with_padding(UIRect::axes(6.0, 0.0))
 }
 
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
@@ -152,14 +147,12 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
         (
-            UINode {
-                width: UIValue::Percent(100.0),
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                padding: UIRect::all(8.0),
-                ..Default::default()
-            }
-            .clipped(),
+            UINode::default()
+                .with_width(UIValue::Percent(100.0))
+                .with_flex_grow(1.0)
+                .with_flex_direction(FlexDirection::Column)
+                .with_padding(UIRect::all(8.0))
+                .clipped(),
             UIMaterial::flat(theme.surface),
             Interactable,
             TreeRegion,
@@ -182,37 +175,30 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
 
             tree = tree.add_child_with(
                 (
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .clipped(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .clipped(),
                     Interactable,
                     TreeRegion,
                     TreeView,
-                    UIVirtualList {
-                        overscan: 1,
-                        ..UIVirtualList::new(0, ROW_HEIGHT)
-                    },
+                    UIVirtualList::new(0, ROW_HEIGHT).with_overscan(1),
                 ),
                 |mut view| {
-                    let mut pool = view.spawn_child_queue(UINode {
-                        flex_direction: FlexDirection::Column,
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    });
+                    let mut pool = view.spawn_child_queue(
+                        UINode::default()
+                            .with_flex_direction(FlexDirection::Column)
+                            .with_flex_shrink(0.0),
+                    );
                     let pool_entity = pool.entity();
 
                     for slot in 0..ROWS {
                         pool = pool.add_child_with(
                             (
-                                UINode {
-                                    height: UIValue::Px(ROW_HEIGHT),
-                                    flex_shrink: 0.0,
-                                    flex_direction: FlexDirection::Row,
-                                    ..Default::default()
-                                },
+                                UINode::default()
+                                    .with_height(UIValue::Px(ROW_HEIGHT))
+                                    .with_flex_shrink(0.0)
+                                    .with_flex_direction(FlexDirection::Row),
                                 UIMaterial {
                                     corner_radius: theme.radius_sm,
                                     ..UIMaterial::flat(TRANSPARENT)
@@ -237,11 +223,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                 ))
                                 .add_child((mark_node, mark_material, MarkSlot(slot)))
                                 .add_child((
-                                    UINode {
-                                        flex_grow: 1.0,
-                                        flex_shrink: 1.0,
-                                        ..line(ROW_HEIGHT)
-                                    },
+                                    line(ROW_HEIGHT).with_flex_grow(1.0).with_flex_shrink(1.0),
                                     UIText {
                                         wrap: false,
                                         ellipsis: true,
@@ -253,12 +235,10 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                     Label::Row(slot),
                                 ))
                                 .add_child((
-                                    UINode {
-                                        flex_shrink: 0.0,
-                                        align_self: Some(taffy::AlignItems::Center),
-                                        margin: UIRect::axes(0.0, 8.0),
-                                        ..Default::default()
-                                    },
+                                    UINode::default()
+                                        .with_flex_shrink(0.0)
+                                        .with_align_self(taffy::AlignItems::Center)
+                                        .with_margin(UIRect::axes(0.0, 8.0)),
                                     UIText {
                                         color: theme.text_muted,
                                         font_family: concerto_ui::text::FontFamily::Monospace,
@@ -390,7 +370,7 @@ fn sync_tree_scroll(
         let top = row as f32 * ROW_HEIGHT;
         scroll_to_rect(&mut area, layout.content_rect.size.y, top, top + ROW_HEIGHT);
     }
-    state.visible = list.visible_range.clone();
+    state.visible = list.visible_range();
 }
 
 fn click_tree(

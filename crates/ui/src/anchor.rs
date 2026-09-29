@@ -102,7 +102,7 @@ pub struct UIAnchoredPanel {
     /// Authoritative open state. The caller sets this; the crate projects it onto `UINode::visible`.
     pub open: bool,
     /// The side `place` actually used the last time this panel was laid out, after flip.
-    pub resolved_side: UIAnchorSide,
+    pub(crate) resolved_side: UIAnchorSide,
 }
 
 impl Default for UIAnchoredPanel {
@@ -122,6 +122,50 @@ impl Default for UIAnchoredPanel {
 }
 
 impl UIAnchoredPanel {
+    pub fn new(target: UIAnchorTarget) -> Self {
+        Self {
+            target,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_target(mut self, target: UIAnchorTarget) -> Self {
+        self.target = target;
+        self
+    }
+
+    pub fn with_owner(mut self, owner: Entity) -> Self {
+        self.owner = Some(owner);
+        self
+    }
+
+    /// Sets the preferred side; `resolved_side` follows until the next layout pass.
+    pub fn with_side(mut self, side: UIAnchorSide) -> Self {
+        self.side = side;
+        self.resolved_side = side;
+        self
+    }
+
+    pub fn with_align(mut self, align: UIAnchorAlign) -> Self {
+        self.align = align;
+        self
+    }
+
+    pub fn with_gap(mut self, gap: f32) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    pub fn with_open(mut self, open: bool) -> Self {
+        self.open = open;
+        self
+    }
+
+    /// The side `place` actually used the last time this panel was laid out, after flip.
+    pub fn resolved_side(&self) -> UIAnchorSide {
+        self.resolved_side
+    }
+
     /// The entity whose rect a press is exempt from dismissal inside.
     pub fn press_exempt_entity(&self) -> Option<Entity> {
         match (self.owner, self.target) {

@@ -65,25 +65,20 @@ fn label(value: impl Into<String>, size: f32) -> UIText {
 }
 
 fn panel(width: UIValue, height: UIValue) -> UINode {
-    UINode {
-        width,
-        height,
-        flex_direction: FlexDirection::Column,
-        gap: Vec2::splat(8.0),
-        padding: UIRect::all(12.0),
-        ..Default::default()
-    }
+    UINode::default()
+        .with_size(width, height)
+        .with_flex_direction(FlexDirection::Column)
+        .with_gap(Vec2::splat(8.0))
+        .with_padding(UIRect::all(12.0))
 }
 
 fn menu_row(cmd: &mut CommandQueue, theme: &UITheme, panel: Entity, name: &str) -> Entity {
     let row = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(theme.row_height),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(theme.spacing_xs, theme.spacing_sm),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(theme.row_height))
+                .with_flex_shrink(0.0)
+                .with_padding(UIRect::axes(theme.spacing_xs, theme.spacing_sm)),
             UIMaterial::flat(theme.surface_raised),
             UIInteractionStyle {
                 normal: theme.surface_raised,
@@ -101,13 +96,11 @@ fn menu_row(cmd: &mut CommandQueue, theme: &UITheme, panel: Entity, name: &str) 
 
 fn menu_panel(theme: &UITheme, width: f32) -> (UINode, UIMaterial) {
     (
-        UINode {
-            width: UIValue::Px(width),
-            flex_direction: FlexDirection::Column,
-            padding: UIRect::all(theme.spacing_xs),
-            visible: false,
-            ..Default::default()
-        },
+        UINode::default()
+            .with_width(UIValue::Px(width))
+            .with_flex_direction(FlexDirection::Column)
+            .with_padding(UIRect::all(theme.spacing_xs))
+            .with_visible(false),
         UIMaterial::with_border(theme.surface_raised, theme.border, 1.0),
     )
 }
@@ -125,25 +118,20 @@ fn spawn_showcase(
 
     let root = cmd
         .spawn((
-            UINode {
-                width: UIValue::Percent(100.0),
-                height: UIValue::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                gap: Vec2::splat(theme.spacing_md),
-                padding: UIRect::all(theme.spacing_lg),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+                .with_flex_direction(FlexDirection::Column)
+                .with_gap(Vec2::splat(theme.spacing_md))
+                .with_padding(UIRect::all(theme.spacing_lg)),
             UIMaterial::flat(theme.canvas),
         ))
         .entity();
 
     let heading = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(54.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(54.0))
+                .with_flex_shrink(0.0),
             label(
                 "CONCERTO  /  UI SHOWCASE\nLooking Glass foundations and layout",
                 18.0,
@@ -153,13 +141,13 @@ fn spawn_showcase(
     cmd.add_child(root, heading);
 
     let body = cmd
-        .spawn(UINode {
-            flex_grow: 1.0,
-            min_height: UIValue::Px(320.0),
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_md),
-            ..Default::default()
-        })
+        .spawn(
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_min_height(UIValue::Px(320.0))
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(theme.spacing_md)),
+        )
         .entity();
     cmd.add_child(root, body);
 
@@ -172,11 +160,9 @@ fn spawn_showcase(
     cmd.add_child(body, foundations);
     let foundation_title = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(32.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(32.0))
+                .with_flex_shrink(0.0),
             label("FOUNDATIONS", 15.0),
         ))
         .entity();
@@ -192,12 +178,10 @@ fn spawn_showcase(
     ] {
         let swatch = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(theme.row_height),
-                    flex_shrink: 0.0,
-                    padding: UIRect::axes(4.0, 8.0),
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_height(UIValue::Px(theme.row_height))
+                    .with_flex_shrink(0.0)
+                    .with_padding(UIRect::axes(4.0, 8.0)),
                 UIMaterial::flat(color),
                 label(name, 13.0),
             ))
@@ -206,7 +190,7 @@ fn spawn_showcase(
     }
 
     let type_sample = cmd.spawn((
-        UINode { flex_grow: 1.0, min_height: UIValue::Px(90.0), ..Default::default() },
+        UINode::default().with_flex_grow(1.0).with_min_height(UIValue::Px(90.0)),
         label("Display 24\nBody 14 — warm, compact, readable\nMono 12  ABCDEFGHIJKLMNOPQRSTUVWXYZ\nUnicode  Café · 東京 · مرحبًا · 🂡", 14.0),
     )).entity();
     cmd.add_child(foundations, type_sample);
@@ -220,11 +204,9 @@ fn spawn_showcase(
     cmd.add_child(body, layout);
     let layout_title = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(32.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(32.0))
+                .with_flex_shrink(0.0),
             label("LAYOUT", 15.0),
         ))
         .entity();
@@ -232,18 +214,16 @@ fn spawn_showcase(
 
     let centered = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(96.0),
-                min_width: UIValue::Px(260.0),
-                max_width: UIValue::Px(640.0),
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Row,
-                gap: Vec2::splat(theme.spacing_sm),
-                align_items: Some(AlignItems::Center),
-                justify_content: Some(AlignContent::Center),
-                padding: UIRect::all(theme.spacing_md),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(96.0))
+                .with_min_width(UIValue::Px(260.0))
+                .with_max_width(UIValue::Px(640.0))
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(theme.spacing_sm))
+                .with_align_items(AlignItems::Center)
+                .with_justify_content(AlignContent::Center)
+                .with_padding(UIRect::all(theme.spacing_md)),
             UIMaterial::flat(theme.surface_raised),
         ))
         .entity();
@@ -251,13 +231,10 @@ fn spawn_showcase(
     for (name, width) in [("MIN", 56.0), ("FLEXIBLE", 110.0), ("MAX", 72.0)] {
         let item = cmd
             .spawn((
-                UINode {
-                    width: UIValue::Px(width),
-                    height: UIValue::Px(theme.control_height),
-                    padding: UIRect::axes(6.0, 8.0),
-                    flex_shrink: 1.0,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_size(UIValue::Px(width), UIValue::Px(theme.control_height))
+                    .with_padding(UIRect::axes(6.0, 8.0))
+                    .with_flex_shrink(1.0),
                 UIMaterial::with_border(theme.accent, theme.focus, 1.0),
                 label(name, 11.0),
             ))
@@ -267,24 +244,22 @@ fn spawn_showcase(
 
     let panels_title = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(32.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(32.0))
+                .with_flex_shrink(0.0),
             label("ANCHORED PANELS", 15.0),
         ))
         .entity();
     cmd.add_child(layout, panels_title);
 
     let panel_row = cmd
-        .spawn(UINode {
-            height: UIValue::Px(theme.control_height),
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_sm),
-            ..Default::default()
-        })
+        .spawn(
+            UINode::default()
+                .with_height(UIValue::Px(theme.control_height))
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(theme.spacing_sm)),
+        )
         .entity();
     cmd.add_child(layout, panel_row);
 
@@ -306,17 +281,14 @@ fn spawn_showcase(
     let dropdown = cmd
         .spawn((
             menu_panel(&theme, 180.0),
-            UIAnchoredPanel {
-                target: UIAnchorTarget::Node {
-                    entity: menu_trigger,
-                },
-                owner: Some(menu_trigger),
-                side: UIAnchorSide::Below,
-                align: UIAnchorAlign::Start,
-                gap: 4.0,
-                open: false,
-                ..Default::default()
-            },
+            UIAnchoredPanel::new(UIAnchorTarget::Node {
+                entity: menu_trigger,
+            })
+            .with_owner(menu_trigger)
+            .with_side(UIAnchorSide::Below)
+            .with_align(UIAnchorAlign::Start)
+            .with_gap(4.0)
+            .with_open(false),
             Dropdown {
                 trigger: menu_trigger,
             },
@@ -342,12 +314,10 @@ fn spawn_showcase(
 
     let rename_field = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(theme.control_height),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(theme.spacing_xs, theme.spacing_sm),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(theme.control_height))
+                .with_flex_shrink(0.0)
+                .with_padding(UIRect::axes(theme.spacing_xs, theme.spacing_sm)),
             UIMaterial::with_border(theme.surface, theme.border, 1.0),
             UIText::default(),
             UITextInput::new("Rename…"),
@@ -360,17 +330,14 @@ fn spawn_showcase(
     cmd.spawn((
         submenu_node,
         submenu_material,
-        UIAnchoredPanel {
-            target: UIAnchorTarget::Node {
-                entity: materials_row,
-            },
-            owner: Some(materials_row),
-            side: UIAnchorSide::Right,
-            align: UIAnchorAlign::Start,
-            gap: 2.0,
-            open: false,
-            ..Default::default()
-        },
+        UIAnchoredPanel::new(UIAnchorTarget::Node {
+            entity: materials_row,
+        })
+        .with_owner(materials_row)
+        .with_side(UIAnchorSide::Right)
+        .with_align(UIAnchorAlign::Start)
+        .with_gap(2.0)
+        .with_open(false),
         Submenu { row: materials_row },
         label("Standard\nUnlit\nToon", 12.0),
     ));
@@ -385,27 +352,20 @@ fn spawn_showcase(
     ));
 
     let nested = cmd.spawn((
-        UINode {
-            flex_grow: 1.0,
-            min_height: UIValue::Px(64.0),
-            flex_direction: FlexDirection::Column,
-            gap: Vec2::new(theme.spacing_sm, theme.spacing_sm),
-            padding: UIRect::all(theme.spacing_md),
-            ..Default::default()
-        },
+        UINode::default().with_flex_grow(1.0).with_min_height(UIValue::Px(64.0)).with_flex_direction(FlexDirection::Column).with_gap(Vec2::new(theme.spacing_sm, theme.spacing_sm)).with_padding(UIRect::all(theme.spacing_md)),
         UIMaterial::flat(theme.surface_raised),
         label("Nested flex / percent sizing\nResize the window to exercise min/max constraints. This intentionally long label demonstrates content bounds.", 13.0),
     )).entity();
     cmd.add_child(layout, nested);
 
     let controls = cmd
-        .spawn(UINode {
-            height: UIValue::Px(40.0),
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_sm),
-            ..Default::default()
-        })
+        .spawn(
+            UINode::default()
+                .with_height(UIValue::Px(40.0))
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(theme.spacing_sm)),
+        )
         .entity();
     cmd.add_child(layout, controls);
     let (mut button_node, material, interactable, style, marker) = widgets::button(&theme);
@@ -423,12 +383,9 @@ fn spawn_showcase(
     cmd.add_child(controls, button);
     let checkbox = cmd
         .spawn((
-            UINode {
-                width: UIValue::Px(90.0),
-                height: UIValue::Px(theme.control_height),
-                padding: UIRect::axes(7.0, 9.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(UIValue::Px(90.0), UIValue::Px(theme.control_height))
+                .with_padding(UIRect::axes(7.0, 9.0)),
             UIMaterial::with_border(theme.surface_raised, theme.border, 1.0),
             UICheckbox::new(false),
             Interactable,
@@ -438,11 +395,7 @@ fn spawn_showcase(
     cmd.add_child(controls, checkbox);
     let slider = cmd
         .spawn((
-            UINode {
-                width: UIValue::Px(140.0),
-                height: UIValue::Px(theme.control_height),
-                ..Default::default()
-            },
+            UINode::default().with_size(UIValue::Px(140.0), UIValue::Px(theme.control_height)),
             UIMaterial::flat(theme.surface_raised),
             UISlider::new(0.62, 0.0, 1.0),
             Interactable,
@@ -451,12 +404,9 @@ fn spawn_showcase(
     cmd.add_child(controls, slider);
     let input = cmd
         .spawn((
-            UINode {
-                width: UIValue::Px(180.0),
-                height: UIValue::Px(theme.control_height),
-                padding: UIRect::axes(7.0, 9.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(UIValue::Px(180.0), UIValue::Px(theme.control_height))
+                .with_padding(UIRect::axes(7.0, 9.0)),
             UIMaterial::with_border(theme.surface, theme.border, 1.0),
             UIText::default(),
             UITextInput::new("Unicode input…"),
@@ -467,14 +417,12 @@ fn spawn_showcase(
 
     let virtual_list = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(96.0),
-                min_height: UIValue::Px(56.0),
-                flex_direction: FlexDirection::Column,
-                padding: UIRect::all(theme.spacing_sm),
-                overflow_y: concerto::ui::node::Overflow::Hidden,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(96.0))
+                .with_min_height(UIValue::Px(56.0))
+                .with_flex_direction(FlexDirection::Column)
+                .with_padding(UIRect::all(theme.spacing_sm))
+                .with_overflow_y(concerto::ui::node::Overflow::Hidden),
             UIMaterial::flat(theme.surface_raised),
             UIScrollArea {
                 offset: 0.0,
@@ -489,11 +437,9 @@ fn spawn_showcase(
     for slot in 0..8 {
         let row = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(28.0),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_height(UIValue::Px(28.0))
+                    .with_flex_shrink(0.0),
                 Interactable,
                 label("", 12.0),
                 VirtualRow { slot },
@@ -518,13 +464,11 @@ fn spawn_showcase(
         .entity();
     let split = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(36.0),
-                min_height: UIValue::Px(24.0),
-                flex_direction: FlexDirection::Row,
-                gap: Vec2::splat(4.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(36.0))
+                .with_min_height(UIValue::Px(24.0))
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(4.0)),
             UISplitPane::new(UISplitAxis::Horizontal, split_first, split_second),
         ))
         .entity();
@@ -532,12 +476,9 @@ fn spawn_showcase(
     cmd.add_child(split, split_first);
     let split_handle = cmd
         .spawn((
-            UINode {
-                width: UIValue::Px(5.0),
-                height: UIValue::Percent(100.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(UIValue::Px(5.0), UIValue::Percent(100.0))
+                .with_flex_shrink(0.0),
             UIMaterial::flat(theme.accent),
             Interactable,
             UISplitHandle { pane: split },
@@ -547,14 +488,14 @@ fn spawn_showcase(
     cmd.add_child(split, split_second);
 
     let flip_row = cmd
-        .spawn(UINode {
-            height: UIValue::Px(theme.control_height),
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_sm),
-            justify_content: Some(AlignContent::End),
-            ..Default::default()
-        })
+        .spawn(
+            UINode::default()
+                .with_height(UIValue::Px(theme.control_height))
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(theme.spacing_sm))
+                .with_justify_content(AlignContent::End),
+        )
         .entity();
     cmd.add_child(layout, flip_row);
     let (mut flip_node, flip_material, flip_interactable, flip_style, flip_marker) =
@@ -577,17 +518,14 @@ fn spawn_showcase(
         .spawn((
             flip_panel_node,
             flip_panel_material,
-            UIAnchoredPanel {
-                target: UIAnchorTarget::Node {
-                    entity: flip_trigger,
-                },
-                owner: Some(flip_trigger),
-                side: UIAnchorSide::Below,
-                align: UIAnchorAlign::Start,
-                gap: 4.0,
-                open: false,
-                ..Default::default()
-            },
+            UIAnchoredPanel::new(UIAnchorTarget::Node {
+                entity: flip_trigger,
+            })
+            .with_owner(flip_trigger)
+            .with_side(UIAnchorSide::Below)
+            .with_align(UIAnchorAlign::Start)
+            .with_gap(4.0)
+            .with_open(false),
             Dropdown {
                 trigger: flip_trigger,
             },
@@ -599,12 +537,10 @@ fn spawn_showcase(
 
     let diagnostics = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(28.0),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(5.0, 8.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(28.0))
+                .with_flex_shrink(0.0)
+                .with_padding(UIRect::axes(5.0, 8.0)),
             UIMaterial::flat(theme.surface_raised),
             UIText {
                 font_family: FontFamily::Monospace,
@@ -645,7 +581,7 @@ fn drive_panels(
                 let index = lists
                     .iter()
                     .next()
-                    .and_then(|list| list.visible_range.clone().nth(row.slot));
+                    .and_then(|list| list.visible_range().nth(row.slot));
                 for (_, mut panel, mut text) in context_menus.iter() {
                     panel.target = UIAnchorTarget::Point {
                         position: click.position,
@@ -689,10 +625,10 @@ fn update_diagnostics(
             render_diagnostics.geometry_rebuilds(),
             render_diagnostics.text_reshapes(),
             render_diagnostics.binding_rebuilds(),
-            input.hovered,
+            input.hovered(),
             **focus,
             input.captured(MouseButton::Left),
-            lists.iter().next().map(|list| list.visible_range.clone()),
+            lists.iter().next().map(|list| list.visible_range()),
             stack.open().len(),
             stack
                 .open()
@@ -703,7 +639,7 @@ fn update_diagnostics(
                 .open()
                 .last()
                 .and_then(|entity| panels.get_entity(*entity))
-                .map(|(panel, _)| panel.resolved_side),
+                .map(|(panel, _)| panel.resolved_side()),
         );
     }
 }
@@ -714,8 +650,7 @@ fn update_virtual_rows(lists: Query<&UIVirtualList>, rows: Query<(&VirtualRow, &
     };
     for (slot, mut text) in rows.iter() {
         text.text = list
-            .visible_range
-            .clone()
+            .visible_range()
             .nth(slot.slot)
             .map(|index| format!("◇  Virtual asset row {index:04}"))
             .unwrap_or_default();

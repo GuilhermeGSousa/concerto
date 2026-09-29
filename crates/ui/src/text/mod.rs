@@ -154,7 +154,7 @@ fn measure_line(
 }
 
 #[derive(Component)]
-pub struct RenderTextComponent {
+pub(crate) struct RenderTextComponent {
     pub(crate) buffer: glyphon::Buffer,
     pub(crate) location: glam::Vec2,
     pub(crate) clip_min: glam::Vec2,

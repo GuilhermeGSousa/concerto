@@ -132,12 +132,9 @@ fn build_dock(
 
     let root = cmd
         .spawn((
-            UINode {
-                width: UIValue::Percent(100.0),
-                height: UIValue::Percent(100.0),
-                ..Default::default()
-            }
-            .clipped(),
+            UINode::default()
+                .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+                .clipped(),
             UIMaterial::flat(theme.canvas),
         ))
         .entity();
@@ -159,72 +156,59 @@ fn build_dock(
 fn spawn_region(cmd: &mut CommandQueue, root: Entity, region: Region, theme: &UITheme) -> Entity {
     let rail_top = TOP + MARGIN;
     let node = match region {
-        Region::Scene => UINode {
-            width: UIValue::Percent(100.0),
-            height: UIValue::Percent(100.0),
-            position: Position::Absolute,
-            ..Default::default()
-        },
-        Region::Brand => UINode {
-            height: UIValue::Px(TOP),
-            position: Position::Absolute,
-            inset: UIInset {
+        Region::Scene => UINode::default()
+            .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+            .with_position(Position::Absolute),
+        Region::Brand => UINode::default()
+            .with_height(UIValue::Px(TOP))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(MARGIN),
                 left: UIValue::Px(MARGIN),
                 right: UIValue::Px(340.0),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Row,
-            ..Default::default()
-        },
-        Region::Stats => UINode {
-            height: UIValue::Px(TOP),
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Row),
+        Region::Stats => UINode::default()
+            .with_height(UIValue::Px(TOP))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(MARGIN),
                 right: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Row,
-            ..Default::default()
-        },
-        Region::Rail => UINode {
-            width: UIValue::Px(RAIL),
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Row),
+        Region::Rail => UINode::default()
+            .with_width(UIValue::Px(RAIL))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(rail_top),
                 left: UIValue::Px(MARGIN),
                 bottom: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Column,
-            gap: glam::Vec2::new(0.0, 10.0),
-            ..Default::default()
-        },
-        Region::Side => UINode {
-            width: UIValue::Px(SIDE),
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Column)
+            .with_gap(glam::Vec2::new(0.0, 10.0)),
+        Region::Side => UINode::default()
+            .with_width(UIValue::Px(SIDE))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(rail_top),
                 right: UIValue::Px(MARGIN),
                 bottom: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Column,
-            ..Default::default()
-        },
-        Region::Foot => UINode {
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Column),
+        Region::Foot => UINode::default()
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 left: UIValue::Px(RAIL + MARGIN * 2.0),
                 right: UIValue::Px(SIDE + MARGIN * 2.0),
                 bottom: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Column,
-            gap: glam::Vec2::new(0.0, 8.0),
-            ..Default::default()
-        },
+            })
+            .with_flex_direction(FlexDirection::Column)
+            .with_gap(glam::Vec2::new(0.0, 8.0)),
     };
 
     let entity = cmd.entity(root).spawn_child_queue(node.clipped()).entity();
@@ -243,18 +227,16 @@ fn fill_region(
     for panel in panels {
         let mut container_queue = cmd.entity(container);
         let mut body_queue = container_queue.spawn_child_queue(
-            UINode {
-                flex_grow: 1.0,
-                flex_shrink: 1.0,
-                flex_direction: FlexDirection::Column,
-                padding: if region.is_card() {
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_flex_shrink(1.0)
+                .with_flex_direction(FlexDirection::Column)
+                .with_padding(if region.is_card() {
                     UIRect::all(theme.spacing_md)
                 } else {
                     UIRect::default()
-                },
-                ..Default::default()
-            }
-            .clipped(),
+                })
+                .clipped(),
         );
         let body = body_queue.entity();
         if region != Region::Scene {
@@ -267,11 +249,9 @@ fn fill_region(
                 ..UIMaterial::flat(theme.surface)
             });
             body_queue.add_child((
-                UINode {
-                    height: UIValue::Px(16.0),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_height(UIValue::Px(16.0))
+                    .with_flex_shrink(0.0),
                 UIText {
                     text: panel.title.to_uppercase(),
                     font_weight: crate::fonts::MEDIUM,

@@ -19,17 +19,13 @@ fn anchor(min: Vec2, size: Vec2) -> UIBox {
 }
 
 fn panel(side: UIAnchorSide, align: UIAnchorAlign) -> UIAnchoredPanel {
-    UIAnchoredPanel {
-        target: UIAnchorTarget::Point {
-            position: Vec2::ZERO,
-        },
-        owner: None,
-        side,
-        align,
-        gap: 4.0,
-        open: true,
-        ..Default::default()
-    }
+    UIAnchoredPanel::new(UIAnchorTarget::Point {
+        position: Vec2::ZERO,
+    })
+    .with_side(side)
+    .with_align(align)
+    .with_gap(4.0)
+    .with_open(true)
 }
 
 #[test]
@@ -344,16 +340,10 @@ fn node(world: &mut World) -> Entity {
 
 fn open_panel(world: &mut World, owner: Entity, target: UIAnchorTarget) -> Entity {
     world.spawn((
-        UINode {
-            visible: false,
-            ..Default::default()
-        },
-        UIAnchoredPanel {
-            target,
-            owner: Some(owner),
-            open: true,
-            ..Default::default()
-        },
+        UINode::default().with_visible(false),
+        UIAnchoredPanel::new(target)
+            .with_owner(owner)
+            .with_open(true),
     ))
 }
 
@@ -591,11 +581,7 @@ fn a_node_target_with_no_rect_has_nothing_to_anchor_to() {
 fn a_dropdown_that_named_no_owner_is_still_exempt_from_its_own_trigger() {
     let mut world = World::default();
     let trigger = node(&mut world);
-    let spec = UIAnchoredPanel {
-        target: UIAnchorTarget::Node { entity: trigger },
-        open: true,
-        ..Default::default()
-    };
+    let spec = UIAnchoredPanel::new(UIAnchorTarget::Node { entity: trigger }).with_open(true);
     assert_eq!(spec.press_exempt_entity(), Some(trigger));
 
     let trigger_rect = anchor(Vec2::new(100.0, 60.0), Vec2::new(120.0, 30.0));
@@ -614,14 +600,11 @@ fn a_dropdown_that_named_no_owner_is_still_exempt_from_its_own_trigger() {
 fn an_owned_panel_keeps_exempting_its_owner_not_its_target() {
     let mut world = World::default();
     let row = node(&mut world);
-    let spec = UIAnchoredPanel {
-        target: UIAnchorTarget::Point {
-            position: Vec2::new(500.0, 300.0),
-        },
-        owner: Some(row),
-        open: true,
-        ..Default::default()
-    };
+    let spec = UIAnchoredPanel::new(UIAnchorTarget::Point {
+        position: Vec2::new(500.0, 300.0),
+    })
+    .with_owner(row)
+    .with_open(true);
     assert_eq!(spec.press_exempt_entity(), Some(row));
 }
 

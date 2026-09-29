@@ -25,18 +25,13 @@ pub(crate) struct OverlayText;
 /// Startup: spawn the top-left overlay text node.
 pub(crate) fn spawn_overlay(mut cmd: CommandQueue) {
     cmd.spawn((
-        UINode {
-            // Explicit size: taffy does not measure text, so an Auto-sized node would
-            // collapse to 0x0 and clip the glyphs.
-            width: UIValue::Px(460.0),
-            height: UIValue::Px(64.0),
-            margin: UIRect {
+        UINode::default()
+            .with_size(UIValue::Px(460.0), UIValue::Px(64.0))
+            .with_margin(UIRect {
                 top: 12.0,
                 left: 12.0,
                 ..Default::default()
-            },
-            ..Default::default()
-        },
+            }),
         UIText {
             text: "Load: starting…\nState: —".to_string(),
             font_size: 16.0,

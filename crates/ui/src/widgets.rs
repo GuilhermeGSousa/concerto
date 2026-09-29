@@ -82,12 +82,10 @@ pub fn button(
     UIButton,
 ) {
     (
-        UINode {
-            height: UIValue::Px(theme.control_height),
-            flex_shrink: 0.0,
-            padding: UIRect::axes(theme.spacing_sm, theme.spacing_md),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_height(UIValue::Px(theme.control_height))
+            .with_flex_shrink(0.0)
+            .with_padding(UIRect::axes(theme.spacing_sm, theme.spacing_md)),
         UIMaterial::with_border(theme.surface_raised, theme.border, 1.0),
         Interactable,
         UIInteractionStyle {

@@ -41,7 +41,7 @@ pub struct UIVirtualList {
     pub item_count: usize,
     pub row_height: f32,
     pub overscan: usize,
-    pub visible_range: std::ops::Range<usize>,
+    pub(crate) visible_range: std::ops::Range<usize>,
 }
 
 impl UIVirtualList {
@@ -52,6 +52,16 @@ impl UIVirtualList {
             overscan: 2,
             visible_range: 0..0,
         }
+    }
+
+    pub fn with_overscan(mut self, overscan: usize) -> Self {
+        self.overscan = overscan;
+        self
+    }
+
+    /// The rows currently materialised, overscan included.
+    pub fn visible_range(&self) -> std::ops::Range<usize> {
+        self.visible_range.clone()
     }
 }
 
@@ -397,14 +407,14 @@ const MIN_THUMB: f32 = 24.0;
 
 /// A scrollbar track, pinned to the right edge of its scroll area.
 #[derive(Component)]
-pub struct UIScrollBar {
-    pub area: Entity,
+pub(crate) struct UIScrollBar {
+    pub(crate) area: Entity,
 }
 
 /// The draggable part of a scrollbar.
 #[derive(Component)]
-pub struct UIScrollThumb {
-    pub area: Entity,
+pub(crate) struct UIScrollThumb {
+    pub(crate) area: Entity,
 }
 
 /// Where a scrollbar thumb sits within its track, in logical pixels.
@@ -443,12 +453,10 @@ pub(crate) fn setup_scrollbars(
     for (entity, _) in new_areas.iter() {
         let track = cmd
             .spawn((
-                UINode {
-                    width: UIValue::Px(BAR_WIDTH),
-                    position: Position::Absolute,
-                    visible: false,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_width(UIValue::Px(BAR_WIDTH))
+                    .with_position(Position::Absolute)
+                    .with_visible(false),
                 UIMaterial::flat(theme.canvas),
                 UIScrollBar { area: entity },
             ))
@@ -457,11 +465,9 @@ pub(crate) fn setup_scrollbars(
 
         let thumb = cmd
             .spawn((
-                UINode {
-                    width: UIValue::Percent(100.0),
-                    position: Position::Absolute,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_width(UIValue::Percent(100.0))
+                    .with_position(Position::Absolute),
                 UIMaterial::flat(theme.border),
                 Interactable,
                 UIScrollThumb { area: entity },

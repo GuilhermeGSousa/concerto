@@ -135,34 +135,28 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
-        UINode {
-            flex_grow: 1.0,
-            flex_direction: FlexDirection::Column,
-            gap: glam::Vec2::new(0.0, theme.spacing_sm),
-            ..Default::default()
-        }
-        .clipped(),
+        UINode::default()
+            .with_flex_grow(1.0)
+            .with_flex_direction(FlexDirection::Column)
+            .with_gap(glam::Vec2::new(0.0, theme.spacing_sm))
+            .clipped(),
         |details| {
             details.add_child_with(
                 (
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .clipped(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .clipped(),
                     Interactable,
                     DetailsView,
                 ),
                 |mut view| {
                     let stack = view
                         .spawn_child_queue((
-                            UINode {
-                                flex_shrink: 0.0,
-                                flex_direction: FlexDirection::Column,
-                                gap: glam::Vec2::new(0.0, theme.spacing_xs + 2.0),
-                                ..Default::default()
-                            },
+                            UINode::default()
+                                .with_flex_shrink(0.0)
+                                .with_flex_direction(FlexDirection::Column)
+                                .with_gap(glam::Vec2::new(0.0, theme.spacing_xs + 2.0)),
                             ComponentStack::default(),
                         ))
                         .entity();

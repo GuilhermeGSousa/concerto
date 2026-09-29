@@ -22,7 +22,7 @@ pub struct HoveredNode(Option<Entity>);
 /// Shared pointer routing state.
 #[derive(Resource, Default)]
 pub struct UIInputState {
-    pub hovered: Option<Entity>,
+    pub(crate) hovered: Option<Entity>,
     left: ButtonCapture,
     right: ButtonCapture,
     middle: ButtonCapture,
@@ -48,6 +48,10 @@ impl UIInputState {
     }
 
     /// The node this button pressed on, if it is still down.
+    pub fn hovered(&self) -> Option<Entity> {
+        self.hovered
+    }
+
     pub fn pressed(&self, button: MouseButton) -> Option<Entity> {
         self.capture(button).and_then(|capture| capture.pressed)
     }

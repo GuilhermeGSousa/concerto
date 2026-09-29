@@ -8,7 +8,7 @@ use concerto_ecs::{
         Query,
         filter::{Added, With},
     },
-    resource::{Res, Resource},
+    resource::Res,
 };
 use concerto_window::input::{Input, InputState, MouseButton};
 
@@ -45,7 +45,7 @@ impl UISlider {
 
 /// Marker placed on the fill child entity spawned by `setup_slider_visuals`.
 #[derive(Component)]
-pub struct UISliderFill;
+pub(crate) struct UISliderFill;
 
 /// Fired whenever a [`UISlider`]'s value changes during a drag.
 #[derive(Event)]
@@ -53,10 +53,6 @@ pub struct UISliderChanged {
     pub entity: Entity,
     pub value: f32,
 }
-
-/// Dummy resource marker so the event can be registered.
-#[derive(Resource)]
-pub struct SliderResource;
 
 /// Spawns a fill child entity for each newly added [`UISlider`].
 pub(crate) fn setup_slider_visuals(
@@ -67,11 +63,10 @@ pub(crate) fn setup_slider_visuals(
         let fill = cmd
             .spawn((
                 UISliderFill,
-                UINode {
-                    width: UIValue::Percent(slider.normalized() * 100.0),
-                    height: UIValue::Percent(100.0),
-                    ..Default::default()
-                },
+                UINode::default().with_size(
+                    UIValue::Percent(slider.normalized() * 100.0),
+                    UIValue::Percent(100.0),
+                ),
                 UIMaterial::flat(Color::rgba(0.25, 0.55, 0.95, 1.0)),
             ))
             .entity();
