@@ -60,7 +60,13 @@ impl UITheme {
 
 impl Checkbox {
     fn into_parts(self) -> (UINode, UIMaterial, UICheckbox, Interactable, UIText) {
-        (self.node, self.material, self.checkbox, Interactable, self.text)
+        (
+            self.node,
+            self.material,
+            self.checkbox,
+            Interactable,
+            self.text,
+        )
     }
 }
 

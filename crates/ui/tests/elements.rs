@@ -7,7 +7,7 @@ use concerto_ui::{
     focus::UIFocusable,
     interaction::{Interactable, UIInteractionStyle},
     material::UIMaterial,
-    node::{AlignItems, FlexDirection, Overflow, UINode, UIRect},
+    node::{AlignContent, AlignItems, FlexDirection, Overflow, UINode, UIRect},
     slider::UISlider,
     text::{FontFamily, UIText},
     text_input::UITextInput,
@@ -698,4 +698,81 @@ fn borderless_drops_the_border() {
     let material = material_of(&spawned);
     assert_eq!(material.border_width, 0.0);
     assert_eq!(material.border_color, Color::TRANSPARENT.to_linear());
+}
+
+#[test]
+fn remaining_layout_modifiers_set_their_fields() {
+    let spawned = spawn(
+        theme()
+            .label("x")
+            .size(UIValue::Px(8.0), UIValue::Px(9.0))
+            .min_height(UIValue::Px(2.0))
+            .max_width(UIValue::Px(50.0))
+            .shrink(0.5)
+            .align_items(AlignItems::End)
+            .justify(AlignContent::SpaceBetween),
+    );
+    let node = spawned.get::<UINode>();
+    assert_eq!(node.width, UIValue::Px(8.0));
+    assert_eq!(node.height, UIValue::Px(9.0));
+    assert_eq!(node.min_height, UIValue::Px(2.0));
+    assert_eq!(node.max_width, UIValue::Px(50.0));
+    assert_eq!(node.flex_shrink, 0.5);
+    assert_eq!(node.align_items, Some(AlignItems::End));
+    assert_eq!(node.justify_content, Some(AlignContent::SpaceBetween));
+}
+
+#[test]
+fn align_items_written_after_row_wins() {
+    let node = spawn(theme().label("x").row().align_items(AlignItems::Start));
+    assert_eq!(node.get::<UINode>().align_items, Some(AlignItems::Start));
+}
+
+#[test]
+fn checkbox_and_slider_defaults() {
+    let t = theme();
+    let checkbox = spawn(t.checkbox("x", false));
+    assert_eq!(
+        checkbox.get::<UINode>().padding,
+        UIRect::axes(t.spacing_xs, t.spacing_sm)
+    );
+    assert_eq!(checkbox.get::<UINode>().flex_shrink, 0.0);
+    let slider = spawn(t.slider(0.0, 0.0, 1.0));
+    assert_eq!(slider.get::<UINode>().height, UIValue::Px(t.control_height));
+}
+
+#[test]
+fn a_chip_pads_two_by_seven() {
+    assert_eq!(
+        spawn(theme().chip("x")).get::<UINode>().padding,
+        UIRect::axes(2.0, 7.0)
+    );
+}
+
+#[test]
+fn a_context_menu_is_a_bordered_raised_card() {
+    let t = theme();
+    let spawned = spawn(t.context_menu());
+    let material = material_of(&spawned);
+    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.border_width, 1.0);
+}
+
+#[test]
+fn a_vertical_divider_keeps_its_shrink_and_stretch() {
+    let spawned = spawn(theme().divider().vertical());
+    assert_eq!(spawned.get::<UINode>().flex_shrink, 0.0);
+    assert_eq!(
+        spawned.get::<UINode>().align_self,
+        Some(AlignItems::Stretch)
+    );
+}
+
+#[test]
+fn a_small_bare_field_on_a_surface() {
+    let t = theme();
+    let spawned = spawn(t.text_field("").small().bare().fill(t.surface));
+    assert_eq!(spawned.get::<UIText>().font_size, t.font_size_sm);
+    assert_eq!(material_of(&spawned).color, t.surface.to_linear());
+    assert_eq!(material_of(&spawned).border_width, 0.0);
 }
