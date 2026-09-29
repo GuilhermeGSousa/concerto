@@ -5,11 +5,15 @@ use concerto_ecs::{
     component::bundle::ComponentBundle,
 };
 use concerto_ui::{
+    checkbox::UICheckbox,
     elements::prelude::*,
+    focus::UIFocusable,
     interaction::{Interactable, UIInteractionStyle},
     material::UIMaterial,
     node::{AlignItems, FlexDirection, Overflow, UINode, UIRect},
+    slider::UISlider,
     text::{FontFamily, UIText},
+    text_input::UITextInput,
     theme::{ButtonVariant, ChipColors, UITheme},
     transform::UIValue,
     widgets::UIButton,
@@ -395,4 +399,88 @@ fn button_nests_with_extra_components() {
 #[test]
 fn a_char_labels_a_button() {
     assert_eq!(spawn(theme().button('x')).get::<UIText>().text, "x");
+}
+
+#[test]
+fn text_field_defaults() {
+    let t = theme();
+    let spawned = spawn(t.text_field("Search entities…"));
+    assert!(spawned.has::<Interactable>());
+    assert!(spawned.has::<UIFocusable>());
+    assert_eq!(spawned.get::<UITextInput>().placeholder, "Search entities…");
+    let node = spawned.get::<UINode>();
+    assert_eq!(node.height, UIValue::Px(t.control_height));
+    assert_eq!(node.flex_shrink, 0.0);
+    assert_eq!(node.padding, UIRect::axes(t.spacing_xs, t.spacing_sm));
+    let material = spawned.get::<UIMaterial>();
+    assert_eq!(material.color, t.canvas.to_linear());
+    assert_eq!(material.border_color, t.border.to_linear());
+    assert_eq!(material.border_width, 1.0);
+    assert_eq!(material.corner_radius, t.radius_md);
+    let text = spawned.get::<UIText>();
+    assert!(!text.wrap, "fields stay on one line");
+    assert!(!text.ellipsis, "a field shows its whole value while editing");
+    assert_eq!(text.color, t.text);
+}
+
+#[test]
+fn a_bare_field_has_no_fill_or_border_and_fill_overrides() {
+    let t = theme();
+    let bare = spawn(t.text_field("").bare());
+    assert_eq!(bare.get::<UIMaterial>().color, Color::TRANSPARENT.to_linear());
+    assert_eq!(bare.get::<UIMaterial>().border_width, 0.0);
+    let filled = spawn(t.text_field("").fill(t.surface));
+    assert_eq!(filled.get::<UIMaterial>().color, t.surface.to_linear());
+}
+
+#[test]
+fn chip_colours_follow_its_selection() {
+    let t = theme();
+    for selected in [false, true] {
+        let spawned = spawn(t.chip("mesh").selected(selected));
+        let ChipColors { fill, border, text } = t.chip_colors(selected);
+        let material = spawned.get::<UIMaterial>();
+        assert_eq!(material.color, fill.to_linear());
+        assert_eq!(material.border_color, border.to_linear());
+        assert_eq!(material.border_width, 1.0);
+        assert_eq!(material.corner_radius, t.radius_sm);
+        assert_eq!(spawned.get::<UIText>().color, text);
+        assert_eq!(spawned.get::<UIText>().font_size, t.font_size_sm);
+        assert!(spawned.has::<Interactable>());
+    }
+}
+
+#[test]
+fn chip_selection_overrides_text_colour() {
+    let t = theme();
+    let spawned = spawn(t.chip("mesh").muted().selected(true));
+    assert_eq!(
+        spawned.get::<UIText>().color,
+        t.text,
+        "a chip's text colour always comes from chip_colors"
+    );
+}
+
+#[test]
+fn a_checkbox_uses_the_accent_when_checked() {
+    let t = theme();
+    let spawned = spawn(t.checkbox("CHECK", true));
+    let checkbox = spawned.get::<UICheckbox>();
+    assert!(checkbox.checked);
+    assert_eq!(checkbox.checked_color, t.accent);
+    assert_eq!(checkbox.unchecked_color, t.surface_raised);
+    assert_eq!(spawned.get::<UIText>().text, "CHECK");
+    assert_eq!(spawned.get::<UINode>().height, UIValue::Px(t.control_height));
+    assert!(spawned.has::<Interactable>());
+}
+
+#[test]
+fn a_slider_holds_its_range() {
+    let t = theme();
+    let spawned = spawn(t.slider(0.62, 0.0, 1.0).width(UIValue::Px(140.0)));
+    let slider = spawned.get::<UISlider>();
+    assert_eq!((slider.value, slider.min, slider.max), (0.62, 0.0, 1.0));
+    assert_eq!(spawned.get::<UIMaterial>().color, t.surface_raised.to_linear());
+    assert_eq!(spawned.get::<UINode>().width, UIValue::Px(140.0));
+    assert!(spawned.has::<Interactable>());
 }

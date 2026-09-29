@@ -38,10 +38,16 @@ macro_rules! bundle {
 }
 
 mod button;
+mod chip;
+mod controls;
+mod field;
 mod surface;
 mod text;
 
 pub use button::{Button, Pressable};
+pub use chip::Chip;
+pub use controls::{Checkbox, Slider};
+pub use field::TextField;
 pub use surface::{Divider, Stack, Surface};
 pub use text::{Label, Text};
 
