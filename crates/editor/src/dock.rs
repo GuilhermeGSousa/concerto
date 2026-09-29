@@ -4,10 +4,9 @@ use std::collections::HashMap;
 use concerto_app::{App, Plugin, schedule_groups::Startup};
 use concerto_ecs::{Entity, Res, ResMut, Resource, command::CommandQueue, system::NonSendMarker};
 use concerto_ui::{
+    elements::prelude::*,
     interaction::Interactable,
-    material::UIMaterial,
-    node::{UIInset, UINode, UIRect},
-    text::UIText,
+    node::{UIInset, UINode},
     theme::UITheme,
     transform::UIValue,
 };
@@ -131,12 +130,12 @@ fn build_dock(
         .set_min_inner_size(Some(winit::dpi::PhysicalSize::new(900, 600)));
 
     let root = cmd
-        .spawn((
-            UINode::default()
-                .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+        .spawn(
+            theme
+                .canvas()
+                .size(UIValue::Percent(100.0), UIValue::Percent(100.0))
                 .clipped(),
-            UIMaterial::flat(theme.canvas),
-        ))
+        )
         .entity();
 
     registry.root = Some(root);
@@ -226,41 +225,37 @@ fn fill_region(
     let mut bodies = Vec::with_capacity(panels.len());
     for panel in panels {
         let mut container_queue = cmd.entity(container);
-        let mut body_queue = container_queue.spawn_child_queue(
-            UINode::default()
-                .with_flex_grow(1.0)
-                .with_flex_shrink(1.0)
-                .with_flex_direction(FlexDirection::Column)
-                .with_padding(if region.is_card() {
-                    UIRect::all(theme.spacing_md)
-                } else {
-                    UIRect::default()
-                })
-                .clipped(),
-        );
+        let mut body_queue = if region.is_card() {
+            container_queue.spawn_child_queue(
+                theme
+                    .panel()
+                    .grow()
+                    .column()
+                    .padding(theme.spacing_md)
+                    .clipped(),
+            )
+        } else {
+            container_queue.spawn_child_queue(
+                UINode::default()
+                    .with_flex_grow(1.0)
+                    .with_flex_direction(FlexDirection::Column)
+                    .clipped(),
+            )
+        };
         let body = body_queue.entity();
         if region != Region::Scene {
             body_queue.insert(Interactable);
         }
-
         if region.is_card() {
-            body_queue.insert(UIMaterial {
-                corner_radius: theme.radius_lg,
-                ..UIMaterial::flat(theme.surface)
-            });
-            body_queue.add_child((
-                UINode::default()
-                    .with_height(UIValue::Px(16.0))
-                    .with_flex_shrink(0.0),
-                UIText {
-                    text: panel.title.to_uppercase(),
-                    font_weight: crate::fonts::MEDIUM,
-                    font_size: theme.font_size_sm,
-                    line_height: theme.line_height(theme.font_size_sm),
-                    color: theme.text_muted,
-                    ..Default::default()
-                },
-            ));
+            body_queue.add_child(
+                theme
+                    .label(panel.title.to_uppercase())
+                    .small()
+                    .muted()
+                    .weight(crate::fonts::MEDIUM)
+                    .height(UIValue::Px(16.0))
+                    .fixed(),
+            );
         }
         bodies.push((panel.id, body));
     }

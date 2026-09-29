@@ -6,17 +6,16 @@ use concerto_ecs::{
     events::event_reader::EventReader,
 };
 use concerto_ui::{
+    elements::prelude::*,
     interaction::HoveredNode,
     interaction::{Interactable, UIClick, UIInteractionStyle},
-    material::UIMaterial,
     node::{UILayout, UINode, UIRect},
     text::UIText,
-    theme::UITheme,
+    theme::{ButtonVariant, UITheme},
     transform::UIValue,
 };
 use concerto_window::input::MouseButton;
 use concerto_window::winit_events::WindowEvent;
-use taffy::FlexDirection;
 use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::window_chrome::WindowChromeControl;
@@ -93,7 +92,7 @@ fn sync_tabs(
     labels: Query<(&TabLabel, &mut UIText)>,
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
-    tab_buttons: Query<(&EditorTab, &mut UIMaterial, &mut UIInteractionStyle)>,
+    tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
 ) {
@@ -146,15 +145,12 @@ fn sync_tabs(
                 label.color = color;
             }
         }
-        for (tab, mut material, mut interaction) in tab_buttons.iter() {
+        for (tab, mut interaction) in tab_buttons.iter() {
             if tab.document == entity {
-                let background = if is_active {
-                    theme.surface_raised
-                } else {
-                    theme.surface
-                };
-                material.color = background.to_linear();
-                interaction.normal = background;
+                let style = theme.interaction(ButtonVariant::Tab, is_active);
+                if interaction.normal != style.normal {
+                    **interaction = style;
+                }
             }
         }
         if !existing_tabs.iter().any(|tab| tab.document == entity) {
@@ -163,31 +159,22 @@ fn sync_tabs(
                 "Texture" => glyph::IMAGE,
                 _ => glyph::FILE,
             };
+            let ink = if is_active {
+                theme.text
+            } else {
+                theme.text_muted
+            };
             cmd.entity(content).add_child_with(
                 (
-                    UINode::default()
-                        .with_height(UIValue::Px(30.0))
-                        .with_flex_direction(FlexDirection::Row)
-                        .with_align_items(taffy::AlignItems::Center)
-                        .with_padding(UIRect::axes(0.0, theme.spacing_sm))
-                        .with_flex_shrink(0.0)
-                        .with_z_index(70),
-                    UIMaterial::flat(if is_active {
-                        theme.surface_raised
-                    } else {
-                        theme.surface
-                    }),
-                    UIInteractionStyle {
-                        normal: if is_active {
-                            theme.surface_raised
-                        } else {
-                            theme.surface
-                        },
-                        hovered: theme.surface_hovered,
-                        pressed: theme.accent,
-                        disabled: theme.surface,
-                    },
-                    Interactable,
+                    theme
+                        .pressable()
+                        .tab()
+                        .selected(is_active)
+                        .radius(0.0)
+                        .height(UIValue::Px(30.0))
+                        .row()
+                        .padding(UIRect::axes(0.0, theme.spacing_sm))
+                        .z_index(70),
                     EditorTab { document: entity },
                     WindowChromeControl,
                 ),
@@ -197,32 +184,14 @@ fn sync_tabs(
                             UINode::default()
                                 .with_width(UIValue::Px(16.0))
                                 .with_flex_shrink(0.0),
-                            UIText {
-                                color: if is_active {
-                                    theme.text
-                                } else {
-                                    theme.text_muted
-                                },
-                                ..icon(&theme, mark, theme.font_size_sm)
-                            },
+                            icon(&theme, mark, theme.font_size_sm).color(ink),
                         ))
                         .add_child((
-                            UINode::default()
-                                .with_flex_shrink(1.0)
-                                .with_max_width(UIValue::Px(220.0)),
-                            UIText {
-                                text: title.clone(),
-                                wrap: false,
-                                ellipsis: true,
-                                font_size: theme.font_size_md,
-                                line_height: theme.line_height(theme.font_size_md),
-                                color: if is_active {
-                                    theme.text
-                                } else {
-                                    theme.text_muted
-                                },
-                                ..Default::default()
-                            },
+                            theme
+                                .label(title.clone())
+                                .single_line()
+                                .color(ink)
+                                .max_width(UIValue::Px(220.0)),
                             TabLabel { document: entity },
                         ))
                         .add_child((
@@ -231,10 +200,7 @@ fn sync_tabs(
                                 .with_padding(UIRect::axes(3.0, 3.0))
                                 .with_flex_shrink(0.0)
                                 .with_z_index(71),
-                            UIText {
-                                color: theme.text_muted,
-                                ..icon(&theme, glyph::X, theme.font_size_sm)
-                            },
+                            icon(&theme, glyph::X, theme.font_size_sm).muted(),
                             Interactable,
                             EditorTabClose { document: entity },
                             WindowChromeControl,

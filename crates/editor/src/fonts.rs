@@ -1,7 +1,8 @@
 //! The editor's typefaces.
 use concerto_app::{App, Plugin};
+use concerto_ui::elements::{Text, prelude::*};
+use concerto_ui::text::FontFamily;
 use concerto_ui::text::fonts::UIFontsApp;
-use concerto_ui::text::{FontFamily, UIText};
 use concerto_ui::theme::UITheme;
 
 /// Family name Inter's faces share; weight picks between them.
@@ -27,15 +28,12 @@ impl Plugin for FontsPlugin {
 }
 
 /// A text node holding one icon glyph.
-pub fn icon(theme: &UITheme, glyph: char, size: f32) -> UIText {
-    UIText {
-        text: glyph.to_string(),
-        font_family: FontFamily::Name(PHOSPHOR.into()),
-        font_size: size,
-        line_height: theme.line_height(size),
-        wrap: false,
-        ..Default::default()
-    }
+pub fn icon(theme: &UITheme, glyph: char, size: f32) -> Text {
+    theme
+        .text(glyph)
+        .family(FontFamily::Name(PHOSPHOR.into()))
+        .font_size(size)
+        .no_wrap()
 }
 
 /// Phosphor codepoints, by the name they carry upstream.

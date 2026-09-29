@@ -7,9 +7,9 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::Asset;
 use concerto_ui::{
+    elements::prelude::*,
     focus::FocusedWidget,
     interaction::{HoveredNode, Interactable, UIInputState},
-    material::UIMaterial,
     node::UINode,
     theme::UITheme,
 };
@@ -40,21 +40,14 @@ pub(crate) fn create_editor_hosts(
                 };
                 let mut node = node.clone();
                 node.visible = false;
+                let surface = if index == 0 {
+                    theme.canvas()
+                } else {
+                    theme.panel()
+                };
                 let host = commands
                     .entity(parent.parent())
-                    .spawn_child_queue((
-                        node,
-                        EditorOwned(editor),
-                        Interactable,
-                        UIMaterial {
-                            corner_radius: if index == 0 { 0.0 } else { theme.radius_lg },
-                            ..UIMaterial::flat(if index == 0 {
-                                theme.canvas
-                            } else {
-                                theme.surface
-                            })
-                        },
-                    ))
+                    .spawn_child_queue((surface.node(|_| node), EditorOwned(editor), Interactable))
                     .entity();
                 hosts[index] = Some(host);
             }

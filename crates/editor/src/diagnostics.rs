@@ -7,8 +7,9 @@ use concerto_ecs::{Component, Query, Res, ResMut, Resource, command::CommandQueu
 use concerto_foundation::time::Time;
 use concerto_ui::{
     UIRenderDiagnostics,
+    elements::prelude::*,
     node::{UILayoutDiagnostics, UINode},
-    text::{FontFamily, UIText},
+    text::UIText,
     theme::UITheme,
 };
 use taffy::FlexDirection;
@@ -53,18 +54,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             .with_flex_direction(FlexDirection::Column)
             .clipped(),
         |panel| {
-            panel.add_child((
-                UINode::default().with_flex_grow(1.0),
-                UIText {
-                    text: String::new(),
-                    font_family: FontFamily::Monospace,
-                    font_size: theme.font_size_sm,
-                    line_height: theme.line_height(theme.font_size_sm),
-                    color: theme.text_muted,
-                    ..Default::default()
-                },
-                Readout,
-            ));
+            panel.add_child((theme.label("").small().muted().mono().grow(), Readout));
         },
     );
 }

@@ -3,14 +3,13 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_color::Color;
 use concerto_ecs::{
     Component, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
 };
 use concerto_ui::{
-    interaction::{Interactable, UIClick, UIInteractionStyle},
-    material::UIMaterial,
+    elements::prelude::*,
+    interaction::{Interactable, UIClick},
     node::{UIInset, UILayout, UINode, UIRect},
     text::UIText,
     theme::UITheme,
@@ -20,7 +19,7 @@ use concerto_window::input::MouseButton;
 use concerto_window::plugin::{
     CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
 };
-use taffy::{FlexDirection, Position};
+use taffy::Position;
 use winit::window::ResizeDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region, TOP_STRIP};
@@ -116,11 +115,10 @@ fn build_controls(
     if let Some(body) = registry.body(PANEL_ID) {
         let mut body_queue = cmd.entity(body);
         let mut bar = body_queue.spawn_child_queue(
-            UINode::default()
-                .with_flex_direction(FlexDirection::Row)
-                .with_align_items(taffy::AlignItems::Center)
-                .with_gap(glam::Vec2::new(2.0, 0.0))
-                .with_padding(UIRect::axes(0.0, theme.spacing_md)),
+            theme
+                .row()
+                .gap(2.0)
+                .padding(UIRect::axes(0.0, theme.spacing_md)),
         );
 
         for (control, mark) in [
@@ -130,29 +128,16 @@ fn build_controls(
         ] {
             bar = bar.add_child_with(
                 (
-                    UINode::default()
-                        .with_size(UIValue::Px(30.0), UIValue::Px(26.0))
-                        .with_flex_shrink(0.0)
-                        .with_padding(UIRect::axes(3.0, 8.0))
-                        .with_z_index(CONTROL_LAYER),
-                    UIMaterial {
-                        corner_radius: theme.radius_sm,
-                        ..UIMaterial::flat(Color::srgba(0.0, 0.0, 0.0, 0.0))
-                    },
-                    UIText {
-                        color: theme.text_muted,
-                        ..icon(&theme, mark, theme.font_size_lg)
-                    },
-                    Interactable,
-                    UIInteractionStyle {
-                        normal: Color::srgba(0.0, 0.0, 0.0, 0.0),
-                        hovered: theme.surface_hovered,
-                        pressed: match control {
+                    theme
+                        .pressable()
+                        .pressed(match control {
                             Control::Close => theme.error,
                             _ => theme.accent,
-                        },
-                        disabled: Color::srgba(0.0, 0.0, 0.0, 0.0),
-                    },
+                        })
+                        .size(UIValue::Px(30.0), UIValue::Px(26.0))
+                        .padding(UIRect::axes(3.0, 8.0))
+                        .z_index(CONTROL_LAYER),
+                    icon(&theme, mark, theme.font_size_lg).muted(),
                     control,
                     WindowChromeControl,
                 ),

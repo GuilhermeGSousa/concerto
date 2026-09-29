@@ -3,9 +3,10 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
+use concerto_color::Color;
 use concerto_ecs::{Component, Query, Res, command::CommandQueue};
 use concerto_ui::{
-    material::UIMaterial,
+    elements::prelude::*,
     node::{UINode, UIRect},
     text::UIText,
     theme::UITheme,
@@ -15,7 +16,6 @@ use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{MEDIUM, glyph, icon};
-use crate::marks::TRANSPARENT;
 use crate::project::ProjectState;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
@@ -48,59 +48,36 @@ enum Label {
     ChatterGlyph,
 }
 
-fn text(theme: &UITheme, value: &str) -> UIText {
-    UIText {
-        text: value.into(),
-        font_size: theme.font_size_md,
-        line_height: theme.line_height(theme.font_size_md),
-        ..Default::default()
-    }
-}
-
 fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(brand) = registry.body(BRAND_ID) {
-        cmd.entity(brand).add_child_with(
-            UINode::default()
-                .with_flex_grow(1.0)
-                .with_flex_direction(FlexDirection::Row)
-                .with_align_items(taffy::AlignItems::Center)
-                .with_gap(glam::Vec2::new(theme.spacing_sm, 0.0)),
-            |mut row| {
+        cmd.entity(brand)
+            .add_child_with(theme.row().grow(), |mut row| {
                 row = row.add_child_with(
-                    (
-                        UINode::default()
-                            .with_size(UIValue::Px(13.0), UIValue::Px(19.0))
-                            .with_flex_shrink(0.0)
-                            .with_align_items(taffy::AlignItems::Center)
-                            .with_padding(UIRect {
-                                top: 4.0,
-                                ..Default::default()
-                            }),
-                        UIMaterial {
-                            corner_radius: 6.0,
-                            ..UIMaterial::with_border(TRANSPARENT, theme.accent, 1.5)
-                        },
-                    ),
+                    theme
+                        .canvas()
+                        .fill(Color::TRANSPARENT)
+                        .border(theme.accent, 1.5)
+                        .radius(6.0)
+                        .size(UIValue::Px(13.0), UIValue::Px(19.0))
+                        .fixed()
+                        .align_items(taffy::AlignItems::Center)
+                        .padding(UIRect {
+                            top: 4.0,
+                            ..Default::default()
+                        }),
                     |mark| {
-                        mark.add_child((
-                            UINode::default()
-                                .with_size(UIValue::Px(4.0), UIValue::Px(4.0))
-                                .with_flex_shrink(0.0),
-                            UIMaterial {
-                                corner_radius: 2.0,
-                                ..UIMaterial::flat(theme.accent)
-                            },
-                        ));
+                        mark.add_child(
+                            theme
+                                .canvas()
+                                .fill(theme.accent)
+                                .radius(2.0)
+                                .size(UIValue::Px(4.0), UIValue::Px(4.0))
+                                .fixed(),
+                        );
                     },
                 );
 
-                row = row.add_child((
-                    UINode::default(),
-                    UIText {
-                        font_weight: MEDIUM,
-                        ..text(&theme, "Concerto")
-                    },
-                ));
+                row = row.add_child(theme.label("Concerto").weight(MEDIUM));
 
                 row.add_child_with(
                     (
@@ -137,46 +114,29 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                         ));
                     },
                 );
-            },
-        );
+            });
     }
 
     if let Some(chatter) = registry.body(CHATTER_ID) {
         cmd.entity(chatter).add_child_with(
-            (
-                UINode::default()
-                    .with_height(UIValue::Px(30.0))
-                    .with_flex_shrink(0.0)
-                    .with_align_items(taffy::AlignItems::Center)
-                    .with_padding(UIRect::axes(0.0, theme.spacing_md))
-                    .clipped(),
-                UIMaterial {
-                    corner_radius: theme.radius_md,
-                    ..UIMaterial::flat(theme.surface)
-                },
-            ),
+            theme
+                .panel()
+                .radius_md()
+                .height(UIValue::Px(30.0))
+                .fixed()
+                .align_items(taffy::AlignItems::Center)
+                .padding(UIRect::axes(0.0, theme.spacing_md))
+                .clipped(),
             |strip| {
                 strip
                     .add_child((
                         UINode::default()
                             .with_width(UIValue::Px(18.0))
                             .with_flex_shrink(0.0),
-                        UIText {
-                            color: theme.text_muted,
-                            ..icon(&theme, glyph::INFO, theme.font_size_md)
-                        },
+                        icon(&theme, glyph::INFO, theme.font_size_md).muted(),
                         Label::ChatterGlyph,
                     ))
-                    .add_child((
-                        UINode::default().with_flex_grow(1.0),
-                        UIText {
-                            color: theme.text_muted,
-                            wrap: false,
-                            ellipsis: true,
-                            ..text(&theme, "")
-                        },
-                        Label::Chatter,
-                    ));
+                    .add_child((theme.label("").muted().single_line().grow(), Label::Chatter));
             },
         );
     }
