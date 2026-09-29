@@ -14,7 +14,7 @@ const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
 const PI = 3.14159265359;
-// Mirrored on the CPU by `camera::DEFAULT_AMBIENT_INTENSITY`.
+// Mirrored on the CPU by `camera_environment::DEFAULT_AMBIENT_INTENSITY`.
 const AMBIENT_INTENSITY = 0.03;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;

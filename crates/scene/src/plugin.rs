@@ -3,6 +3,7 @@ use concerto_app::{plugins::Plugin, schedule_groups::Update, App};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
 use concerto_render::components::camera::Camera;
+use concerto_render::components::camera_environment::CameraEnvironment;
 use concerto_render::components::light::Light;
 use concerto_render::components::material::MaterialComponent;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
@@ -24,6 +25,7 @@ impl Plugin for ScenePlugin {
         app.register_scene_component::<MeshComponent>();
         app.register_scene_component::<MaterialComponent>();
         app.register_scene_component::<Camera>();
+        app.register_scene_component::<CameraEnvironment>();
         app.register_scene_component::<Light>();
         app.register_scene_component::<SyncWithRenderWorld>();
         app.register_scene_component::<SkeletonComponent>();
