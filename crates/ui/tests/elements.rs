@@ -6,12 +6,13 @@ use concerto_ecs::{
 };
 use concerto_ui::{
     elements::prelude::*,
-    interaction::UIInteractionStyle,
+    interaction::{Interactable, UIInteractionStyle},
     material::UIMaterial,
     node::{AlignItems, FlexDirection, Overflow, UINode, UIRect},
     text::{FontFamily, UIText},
     theme::{ButtonVariant, ChipColors, UITheme},
     transform::UIValue,
+    widgets::UIButton,
 };
 use glam::Vec2;
 
@@ -316,4 +317,82 @@ fn dividers_are_one_border_coloured_pixel() {
     let vertical = spawn(t.divider().vertical());
     assert_eq!(vertical.get::<UINode>().width, UIValue::Px(1.0));
     assert_eq!(vertical.get::<UINode>().height, UIValue::Auto);
+}
+
+#[test]
+fn a_pressable_is_a_ghost_row_by_default() {
+    let t = theme();
+    let spawned = spawn(t.pressable());
+    assert!(spawned.has::<Interactable>());
+    assert_eq!(
+        colors(spawned.get::<UIInteractionStyle>()),
+        colors(&t.interaction(ButtonVariant::Ghost, false))
+    );
+    let material = spawned.get::<UIMaterial>();
+    assert_eq!(material.corner_radius, t.radius_sm);
+    assert_eq!(
+        material.color,
+        Color::TRANSPARENT.to_linear(),
+        "the first frame already shows the normal colour"
+    );
+    assert_eq!(spawned.get::<UINode>().flex_shrink, 0.0);
+}
+
+#[test]
+fn a_button_is_a_solid_bordered_control() {
+    let t = theme();
+    let spawned = spawn(t.button("Save"));
+    assert!(spawned.has::<UIButton>());
+    assert!(spawned.has::<Interactable>());
+    assert_eq!(
+        colors(spawned.get::<UIInteractionStyle>()),
+        colors(&t.interaction(ButtonVariant::Solid, false))
+    );
+    let material = spawned.get::<UIMaterial>();
+    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.border_color, t.border.to_linear());
+    assert_eq!(material.border_width, 1.0);
+    assert_eq!(material.corner_radius, t.radius_sm);
+    let node = spawned.get::<UINode>();
+    assert_eq!(node.height, UIValue::Px(t.control_height));
+    assert_eq!(node.flex_shrink, 0.0);
+    assert_eq!(node.padding, UIRect::axes(t.spacing_sm, t.spacing_md));
+    let text = spawned.get::<UIText>();
+    assert_eq!(text.text, "Save");
+    assert_eq!(text.color, t.text);
+    assert!(!text.wrap && text.ellipsis);
+}
+
+#[test]
+fn interaction_modifiers_compose_in_any_order() {
+    let t = theme();
+    let a = spawn(t.button("x").pressed(t.error).ghost().selected(true));
+    let b = spawn(t.button("x").selected(true).ghost().pressed(t.error));
+    let mut expected = t.interaction(ButtonVariant::Ghost, true);
+    expected.pressed = t.error;
+    assert_eq!(colors(a.get::<UIInteractionStyle>()), colors(&expected));
+    assert_eq!(colors(b.get::<UIInteractionStyle>()), colors(&expected));
+    assert_eq!(a.get::<UIMaterial>().color, t.selection().to_linear());
+}
+
+#[test]
+fn a_selected_tab_is_raised_and_disabled_colour_overrides() {
+    let t = theme();
+    let spawned = spawn(t.pressable().tab().selected(true).disabled_color(t.error));
+    let style = spawned.get::<UIInteractionStyle>();
+    assert_eq!(style.normal, t.surface_raised);
+    assert_eq!(style.disabled, t.error);
+}
+
+#[test]
+fn button_nests_with_extra_components() {
+    let spawned = spawn((theme().button("Close").ghost().large(), Marker));
+    assert!(spawned.has::<Marker>());
+    assert!(spawned.has::<UIButton>());
+    assert_eq!(spawned.get::<UIText>().font_size, theme().font_size_lg);
+}
+
+#[test]
+fn a_char_labels_a_button() {
+    assert_eq!(spawn(theme().button('x')).get::<UIText>().text, "x");
 }
