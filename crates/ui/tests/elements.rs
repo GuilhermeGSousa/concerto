@@ -5,6 +5,7 @@ use concerto_ecs::{
     component::bundle::ComponentBundle,
 };
 use concerto_ui::{
+    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
     checkbox::UICheckbox,
     elements::prelude::*,
     focus::UIFocusable,
@@ -483,4 +484,69 @@ fn a_slider_holds_its_range() {
     assert_eq!(spawned.get::<UIMaterial>().color, t.surface_raised.to_linear());
     assert_eq!(spawned.get::<UINode>().width, UIValue::Px(140.0));
     assert!(spawned.has::<Interactable>());
+}
+
+#[test]
+fn a_dropdown_hangs_below_its_trigger_and_toggles_with_it() {
+    let t = theme();
+    let mut world = World::default();
+    let trigger = world.spawn(Marker);
+    let entity = world.spawn(t.dropdown(trigger));
+    let panel = world.get_component_for_entity::<UIAnchoredPanel>(entity).unwrap();
+    assert_eq!(panel.target, UIAnchorTarget::Node { entity: trigger });
+    assert_eq!(panel.owner, Some(trigger));
+    assert!(panel.toggled_by_owner);
+    assert_eq!(panel.side, UIAnchorSide::Below);
+    assert_eq!(panel.align, UIAnchorAlign::Start);
+    assert_eq!(panel.gap, t.spacing_xs);
+    assert!(!panel.open);
+    let material = world.get_component_for_entity::<UIMaterial>(entity).unwrap();
+    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.border_width, 1.0);
+}
+
+#[test]
+fn popup_anchor_modifiers_set_the_panel() {
+    let t = theme();
+    let mut world = World::default();
+    let trigger = world.spawn(Marker);
+    let search = world.spawn(Marker);
+    let entity = world.spawn(
+        t.dropdown(trigger)
+            .anchor_side(UIAnchorSide::Above)
+            .anchor_align(UIAnchorAlign::End)
+            .anchor_gap(6.0)
+            .focus_on_open(search)
+            .open(true)
+            .fill(t.canvas)
+            .width(UIValue::Px(272.0)),
+    );
+    let panel = world.get_component_for_entity::<UIAnchoredPanel>(entity).unwrap();
+    assert_eq!(panel.side, UIAnchorSide::Above);
+    assert_eq!(panel.align, UIAnchorAlign::End);
+    assert_eq!(panel.gap, 6.0);
+    assert_eq!(panel.focus_on_open, Some(search));
+    assert!(panel.open);
+    assert_eq!(
+        world.get_component_for_entity::<UIMaterial>(entity).unwrap().color,
+        t.canvas.to_linear()
+    );
+    assert_eq!(
+        world.get_component_for_entity::<UINode>(entity).unwrap().width,
+        UIValue::Px(272.0)
+    );
+}
+
+#[test]
+fn a_context_menu_floats_at_a_point_with_no_owner() {
+    let t = theme();
+    let spawned = spawn((
+        t.context_menu().anchor_target(UIAnchorTarget::Point { position: Vec2::new(4.0, 5.0) }),
+        t.text("Rename"),
+    ));
+    let panel = spawned.get::<UIAnchoredPanel>();
+    assert_eq!(panel.target, UIAnchorTarget::Point { position: Vec2::new(4.0, 5.0) });
+    assert_eq!(panel.owner, None);
+    assert!(!panel.toggled_by_owner);
+    assert_eq!(spawned.get::<UIText>().text, "Rename");
 }

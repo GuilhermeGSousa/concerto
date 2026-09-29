@@ -41,6 +41,7 @@ mod button;
 mod chip;
 mod controls;
 mod field;
+mod popup;
 mod surface;
 mod text;
 
@@ -48,6 +49,7 @@ pub use button::{Button, Pressable};
 pub use chip::Chip;
 pub use controls::{Checkbox, Slider};
 pub use field::TextField;
+pub use popup::Popup;
 pub use surface::{Divider, Stack, Surface};
 pub use text::{Label, Text};
 
