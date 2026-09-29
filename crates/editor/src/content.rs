@@ -8,21 +8,21 @@ use concerto_ecs::{
     events::event_reader::EventReader,
 };
 use concerto_ui::{
-    focus::UIFocusable,
+    elements::prelude::*,
     interaction::{Interactable, UIClick, UIInteractionStyle},
     material::UIMaterial,
     node::{UINode, UIRect},
     scroll::{UIScrollArea, UIVirtualList},
     text::UIText,
-    text_input::{UITextInput, UITextInputChanged},
-    theme::UITheme,
+    text_input::UITextInputChanged,
+    theme::{ButtonVariant, UITheme},
     transform::UIValue,
 };
 use concerto_window::input::MouseButton;
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
+use crate::marks::{self, Mark};
 use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
 use concerto_foundation::assets::AssetId;
 
@@ -107,15 +107,6 @@ fn visible_assets<'a>(project: &'a ProjectState, state: &ContentState) -> Vec<&'
         .collect()
 }
 
-fn text(theme: &UITheme, value: &str) -> UIText {
-    UIText {
-        text: value.into(),
-        font_size: theme.font_size_md,
-        line_height: theme.line_height(theme.font_size_md),
-        ..Default::default()
-    }
-}
-
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     let Some(body) = registry.body(PANEL_ID) else {
         return;
@@ -129,42 +120,27 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             .clipped(),
         |mut panel| {
             panel = panel.add_child_with(
-                (
-                    UINode::default()
-                        .with_height(UIValue::Px(30.0))
-                        .with_flex_shrink(0.0)
-                        .with_flex_direction(FlexDirection::Row)
-                        .with_align_items(taffy::AlignItems::Center)
-                        .with_padding(UIRect::axes(0.0, 8.0))
-                        .with_gap(glam::Vec2::new(6.0, 0.0)),
-                    UIMaterial {
-                        corner_radius: theme.radius_sm,
-                        ..UIMaterial::flat(theme.surface_raised)
-                    },
-                ),
+                theme
+                    .card()
+                    .radius_sm()
+                    .height(UIValue::Px(30.0))
+                    .fixed()
+                    .row()
+                    .padding(UIRect::axes(0.0, 8.0))
+                    .gap(6.0),
                 |search| {
                     search
+                        .add_child(theme.label("⌕").muted().no_wrap())
                         .add_child((
-                            UINode::default(),
-                            UIText {
-                                color: theme.text_muted,
-                                wrap: false,
-                                ..text(&theme, "⌕")
-                            },
-                        ))
-                        .add_child((
-                            UINode::default()
-                                .with_flex_grow(1.0)
-                                .with_flex_shrink(1.0)
-                                .with_min_width(UIValue::Px(0.0)),
-                            UIText {
-                                wrap: false,
-                                ellipsis: true,
-                                ..text(&theme, "")
-                            },
-                            UITextInput::new("Find imported assets…"),
-                            Interactable,
-                            UIFocusable,
+                            theme
+                                .text_field("Find imported assets…")
+                                .bare()
+                                .height(UIValue::Auto)
+                                .padding(0.0)
+                                .single_line()
+                                .grow()
+                                .shrink(1.0)
+                                .min_width(UIValue::Px(0.0)),
                             Filter,
                         ));
                 },
@@ -178,25 +154,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                     .with_margin(UIRect::axes(7.0, 0.0)),
                 |mut tags| {
                     for (index, (name, _)) in KINDS.iter().enumerate() {
-                        tags = tags.add_child((
-                            UINode::default()
-                                .with_flex_shrink(0.0)
-                                .with_padding(UIRect::axes(2.0, 7.0)),
-                            UIMaterial {
-                                corner_radius: theme.radius_sm,
-                                ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
-                            },
-                            UIText {
-                                color: theme.text_muted,
-                                font_size: 10.0,
-                                line_height: theme.line_height(10.0),
-                                wrap: false,
-                                ..text(&theme, name)
-                            },
-                            Interactable,
-                            Action::Kind(index),
-                            Tag(index),
-                        ));
+                        tags = tags.add_child((theme.chip(*name), Action::Kind(index), Tag(index)));
                     }
                 },
             );
@@ -223,36 +181,19 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                     for slot in 0..ROWS {
                         pool = pool.add_child_with(
                             (
-                                UINode::default()
-                                    .with_height(UIValue::Px(ROW_HEIGHT))
-                                    .with_flex_shrink(0.0)
-                                    .with_flex_direction(FlexDirection::Row)
-                                    .with_align_items(taffy::AlignItems::Center)
-                                    .with_padding(UIRect::axes(4.0, 6.0))
-                                    .with_gap(glam::Vec2::new(8.0, 0.0)),
-                                UIMaterial {
-                                    corner_radius: theme.radius_sm,
-                                    ..UIMaterial::flat(TRANSPARENT)
-                                },
-                                Interactable,
-                                UIInteractionStyle {
-                                    normal: TRANSPARENT,
-                                    hovered: theme.surface_hovered,
-                                    pressed: selection_tint(&theme),
-                                    disabled: TRANSPARENT,
-                                },
+                                theme
+                                    .pressable()
+                                    .height(UIValue::Px(ROW_HEIGHT))
+                                    .row()
+                                    .padding(UIRect::axes(4.0, 6.0))
+                                    .gap(8.0),
                                 Action::Asset(slot),
                             ),
                             |row| {
                                 let (mark_node, mark_material) = marks::node();
                                 row.add_child((mark_node, mark_material, MarkSlot(slot)))
                                     .add_child((
-                                        UINode::default().with_flex_grow(1.0).with_flex_shrink(1.0),
-                                        UIText {
-                                            ellipsis: true,
-                                            wrap: false,
-                                            ..text(&theme, "")
-                                        },
+                                        theme.label("").single_line().grow().shrink(1.0),
                                         Label::Asset(slot),
                                     ));
                             },
@@ -267,11 +208,11 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             );
 
             panel.add_child((
-                UINode::default()
-                    .with_height(UIValue::Px(26.0))
-                    .with_flex_shrink(0.0)
-                    .with_padding(UIRect::axes(4.0, 10.0)),
-                text(&theme, ""),
+                theme
+                    .label("")
+                    .height(UIValue::Px(26.0))
+                    .fixed()
+                    .padding(UIRect::axes(4.0, 10.0)),
                 Label::Count,
             ));
         },
@@ -414,13 +355,9 @@ fn render_marks(
         let Action::Asset(slot) = *action else {
             continue;
         };
-        let normal = if selected(slot) {
-            selection_tint(&theme)
-        } else {
-            TRANSPARENT
-        };
-        if style.normal != normal {
-            style.normal = normal;
+        let wanted = theme.interaction(ButtonVariant::Ghost, selected(slot));
+        if style.normal != wanted.normal {
+            **style = wanted;
         }
     }
 }
@@ -431,23 +368,17 @@ fn render_tags(
     tags: Query<(&Tag, &mut UIMaterial, &mut UIText)>,
 ) {
     for (tag, mut material, mut text) in tags.iter() {
-        let active = tag.0 == state.kind;
-        let color = if active {
-            selection_tint(&theme)
-        } else {
-            TRANSPARENT
+        let colors = theme.chip_colors(tag.0 == state.kind);
+        let fill = colors.fill.to_linear();
+        if material.color != fill {
+            material.color = fill;
         }
-        .to_linear();
-        if material.color != color {
-            material.color = color;
-        }
-        let border = if active { theme.accent } else { theme.border }.to_linear();
+        let border = colors.border.to_linear();
         if material.border_color != border {
             material.border_color = border;
         }
-        let ink = if active { theme.text } else { theme.text_muted };
-        if text.color != ink {
-            text.color = ink;
+        if text.color != colors.text {
+            text.color = colors.text;
         }
     }
 }

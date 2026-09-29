@@ -3,25 +3,27 @@ use crate::actions::{
     CollapseRow, ExpandRow, SelectFirst, SelectLast, SelectNext, SelectPrevious, TreeContext,
 };
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::marks::{self, Mark, TRANSPARENT, selection_tint};
+use crate::marks::{self, Mark};
 use crate::scene::{SceneRoot, SceneState};
 use crate::selection::Selection;
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
+use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue, component::name::Name,
     entity::hierarchy::Children, events::event_reader::EventReader,
 };
 use concerto_ui::{
-    focus::{FocusedWidget, UIFocusable},
+    elements::prelude::*,
+    focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
     material::UIMaterial,
     node::{UILayout, UINode, UIRect},
     scroll::{UIScrollArea, UIVirtualList, scroll_to_rect},
     text::UIText,
-    text_input::{UITextInput, UITextInputChanged},
+    text_input::UITextInputChanged,
     theme::UITheme,
     transform::UIValue,
 };
@@ -115,15 +117,6 @@ impl Plugin for HierarchyPlugin {
     }
 }
 
-fn text(theme: &UITheme, value: &str) -> UIText {
-    UIText {
-        text: value.into(),
-        font_size: theme.font_size_md,
-        line_height: theme.line_height(theme.font_size_md),
-        ..Default::default()
-    }
-}
-
 fn line(height: f32) -> UINode {
     UINode::default()
         .with_height(UIValue::Px(height))
@@ -147,29 +140,25 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent).add_child_with(
         (
-            UINode::default()
-                .with_width(UIValue::Percent(100.0))
-                .with_flex_grow(1.0)
-                .with_flex_direction(FlexDirection::Column)
-                .with_padding(UIRect::all(8.0))
+            theme
+                .panel()
+                .radius(0.0)
+                .width(UIValue::Percent(100.0))
+                .grow()
+                .column()
+                .padding(8.0)
                 .clipped(),
-            UIMaterial::flat(theme.surface),
             Interactable,
             TreeRegion,
         ),
         |mut tree| {
             tree = tree
-                .add_child((line(42.0), text(theme, "WORLD"), Label::Title))
+                .add_child((line(42.0), theme.text("WORLD"), Label::Title))
                 .add_child((
-                    line(38.0),
-                    text(theme, ""),
-                    UITextInput::new("Search entities…"),
-                    UIMaterial {
-                        corner_radius: theme.radius_md,
-                        ..UIMaterial::with_border(theme.canvas, theme.border, 1.0)
-                    },
-                    Interactable,
-                    UIFocusable,
+                    theme
+                        .text_field("Search entities…")
+                        .height(UIValue::Px(38.0))
+                        .padding(UIRect::axes(6.0, 8.0)),
                     Filter,
                 ));
 
@@ -195,14 +184,13 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     for slot in 0..ROWS {
                         pool = pool.add_child_with(
                             (
-                                UINode::default()
-                                    .with_height(UIValue::Px(ROW_HEIGHT))
-                                    .with_flex_shrink(0.0)
-                                    .with_flex_direction(FlexDirection::Row),
-                                UIMaterial {
-                                    corner_radius: theme.radius_sm,
-                                    ..UIMaterial::flat(TRANSPARENT)
-                                },
+                                theme
+                                    .canvas()
+                                    .fill(Color::TRANSPARENT)
+                                    .radius_sm()
+                                    .height(UIValue::Px(ROW_HEIGHT))
+                                    .fixed()
+                                    .row(),
                                 RowSlot(slot),
                             ),
                             |row| {
@@ -210,11 +198,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                 row.add_child((
                                     icon_column(20.0),
                                     UIText {
-                                        color: theme.text_muted,
-                                        font_size: 9.0,
                                         line_height: theme.line_height(theme.font_size_md),
-                                        wrap: false,
-                                        ..text(theme, "")
+                                        ..theme.text("").muted().font_size(9.0).no_wrap().into()
                                     },
                                     Interactable,
                                     TreeRegion,
@@ -224,29 +209,22 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                 .add_child((mark_node, mark_material, MarkSlot(slot)))
                                 .add_child((
                                     line(ROW_HEIGHT).with_flex_grow(1.0).with_flex_shrink(1.0),
-                                    UIText {
-                                        wrap: false,
-                                        ellipsis: true,
-                                        ..text(theme, "")
-                                    },
+                                    theme.text("").single_line(),
                                     Interactable,
                                     TreeRegion,
                                     Action::Select(slot),
                                     Label::Row(slot),
                                 ))
                                 .add_child((
-                                    UINode::default()
-                                        .with_flex_shrink(0.0)
-                                        .with_align_self(taffy::AlignItems::Center)
-                                        .with_margin(UIRect::axes(0.0, 8.0)),
-                                    UIText {
-                                        color: theme.text_muted,
-                                        font_family: concerto_ui::text::FontFamily::Monospace,
-                                        font_size: 10.0,
-                                        line_height: theme.line_height(10.0),
-                                        wrap: false,
-                                        ..text(theme, "")
-                                    },
+                                    theme
+                                        .label("")
+                                        .muted()
+                                        .mono()
+                                        .font_size(10.0)
+                                        .no_wrap()
+                                        .fixed()
+                                        .align_self(taffy::AlignItems::Center)
+                                        .margin(UIRect::axes(0.0, 8.0)),
                                     Label::Count(slot),
                                 ));
                             },
@@ -260,7 +238,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 },
             );
 
-            tree.add_child((line(46.0), text(theme, ""), Label::Position));
+            tree.add_child((line(46.0), theme.text(""), Label::Position));
         },
     );
 }
@@ -602,9 +580,9 @@ fn render_marks(
     };
     for (slot, mut material) in rows.iter() {
         let color = if selected_row(slot.0) {
-            selection_tint(&theme)
+            theme.selection()
         } else {
-            TRANSPARENT
+            Color::TRANSPARENT
         }
         .to_linear();
         if material.color != color {
