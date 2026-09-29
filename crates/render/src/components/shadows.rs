@@ -118,8 +118,6 @@ pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
     const LABEL: &'static str;
 
-    // How the whole pool is sampled — also the `LightingLayout` binding's
-    // view dimension, so the two always agree.
     fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension;
 }
 
@@ -140,9 +138,6 @@ impl ShadowMapKind for PointShadowKind {
     const VIEWS_PER_CASTER: u32 = 6;
     const LABEL: &'static str = "point_shadow_maps";
 
-    // Without cube arrays (WebGL2) the pool is a single cube, so it holds at
-    // most one caster (see `ShadowMapPool::max_capacity`); the shader
-    // switches its binding to match via `NO_CUBE_ARRAY_TEXTURES_SUPPORT`.
     fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension {
         if capabilities.cube_array_textures {
             wgpu::TextureViewDimension::CubeArray
@@ -171,7 +166,6 @@ pub(crate) struct ShadowMapPool<K: ShadowMapKind> {
     pub(crate) views: Vec<wgpu::TextureView>,
     pub(crate) slots: Vec<Entity>,
     capacity: u32,
-    // Bounds on `capacity` imposed by the platform (see `new`).
     min_capacity: u32,
     max_capacity: u32,
     array_view_dimension: wgpu::TextureViewDimension,
@@ -195,11 +189,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
             wgpu::TextureViewDimension::D2Array | wgpu::TextureViewDimension::CubeArray
         );
 
-        // A non-array view (a lone cube on WebGL2) fits exactly one caster.
         let max_capacity = if is_array { MAX_SHADOW_CASTERS } else { 1 };
-        // On GL a one-caster texture would be created as a plain 2D/cube
-        // texture, which an array binding can't sample, so keep at least
-        // two casters' worth of layers there.
         let min_capacity = if is_array && !capabilities.single_layer_texture_arrays {
             2
         } else {
@@ -270,8 +260,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
         })
     }
 
-    // `None` once the pool is full: `MAX_SHADOW_CASTERS` casters, or just one
-    // for a single-cube point pool (WebGL2).
+    // `None` once all `MAX_SHADOW_CASTERS` casters are in use.
     pub(crate) fn push_caster(&mut self, entity: Entity) -> Option<u32> {
         if self.slots.len() as u32 >= self.max_capacity {
             return None;

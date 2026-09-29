@@ -1,25 +1,4 @@
-//! WGSL preprocessing with shader defs ("macros").
-//!
-//! Every engine shader goes through [naga_oil]'s preprocessor before it
-//! reaches wgpu, so WGSL can branch on [`ShaderDefs`] at compile time:
-//!
-//! ```wgsl
-//! #ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
-//! @group(2) @binding(3) var t_shadow_point: texture_depth_cube;
-//! #else
-//! @group(2) @binding(3) var t_shadow_point: texture_depth_cube_array;
-//! #endif
-//! ```
-//!
-//! naga_oil also supports `#ifndef`, `#else ifdef`, `#if NAME == value`
-//! (and `!=`, `<`, `<=`, `>`, `>=`) and `#{NAME}` value substitution.
-//!
-//! The engine defines platform defs from [`RenderCapabilities`]
-//! (see [`RenderCapabilities::shader_defs`]); materials add their own through
-//! [`Material::shader_defs`](crate::Material::shader_defs).
-//!
-//! [`RenderCapabilities`]: crate::capabilities::RenderCapabilities
-//! [`RenderCapabilities::shader_defs`]: crate::capabilities::RenderCapabilities::shader_defs
+//! WGSL preprocessing with naga_oil shader defs (`#ifdef`, `#if`, `#{NAME}`).
 
 use std::{borrow::Cow, collections::HashMap};
 
@@ -27,22 +6,20 @@ use naga_oil::compose::{Composer, NagaModuleDescriptor, ShaderType};
 
 pub use naga_oil::compose::ShaderDefValue;
 
-/// Defined when the device can't sample cube-map arrays (WebGL2). The
-/// point-light shadow map is then a single `texture_depth_cube` rather than a
-/// `texture_depth_cube_array`, which caps point-light shadow casters at one.
+/// Defined when cube-map arrays can't be sampled (WebGL2).
 pub const NO_CUBE_ARRAY_TEXTURES_SUPPORT: &str = "NO_CUBE_ARRAY_TEXTURES_SUPPORT";
 
-/// A set of named shader defs, tested with `#ifdef` / `#if` in WGSL.
+/// Named shader defs.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShaderDefs(HashMap<String, ShaderDefValue>);
 
 impl ShaderDefs {
-    /// Defines `name` as a boolean `true` flag, for `#ifdef name`.
+    /// Defines `name` as `true`.
     pub fn define(&mut self, name: impl Into<String>) -> &mut Self {
         self.insert(name, ShaderDefValue::Bool(true))
     }
 
-    /// Defines `name` with a value, for `#if name == value` or `#{name}`.
+    /// Defines `name` with a value.
     pub fn insert(&mut self, name: impl Into<String>, value: ShaderDefValue) -> &mut Self {
         self.0.insert(name.into(), value);
         self
@@ -62,13 +39,7 @@ impl ShaderDefs {
     }
 }
 
-/// Preprocesses `source` with `defs` and parses it into a validated naga
-/// module. `label` names the shader in error messages.
-///
-/// # Errors
-///
-/// Returns the rendered diagnostic if preprocessing, parsing or validation
-/// fails.
+/// Preprocesses and validates `source`, returning the diagnostic on failure.
 pub fn compose_shader(
     label: &str,
     source: &str,
@@ -86,13 +57,7 @@ pub fn compose_shader(
         .map_err(|err| err.emit_to_string(&composer))
 }
 
-/// Preprocesses `source` with `defs` (see [`compose_shader`]) and creates the
-/// wgpu shader module from the result.
-///
-/// # Panics
-///
-/// Panics with the rendered diagnostic if the shader fails to compose — the
-/// same way wgpu treats an invalid WGSL module.
+/// Preprocesses `source` and creates a shader module. Panics if it fails to compose.
 pub fn create_shader_module(
     device: &wgpu::Device,
     label: &str,

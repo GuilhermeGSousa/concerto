@@ -118,11 +118,6 @@ impl RenderPlugin {
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
                     required_limits: if cfg!(target_arch = "wasm32") {
-                        // WebGL2 only guarantees 4 draw buffers, but
-                        // `downlevel_webgl2_defaults` asks for 8, which some
-                        // browsers/GPUs (e.g. SwiftShader, many mobiles)
-                        // reject. The engine never renders to more than one
-                        // color target, so take whatever the adapter offers.
                         Limits {
                             max_color_attachments: adapter.limits().max_color_attachments,
                             ..Limits::downlevel_webgl2_defaults()

@@ -112,9 +112,7 @@ impl LightingLayout {
                     count: None,
                 },
                 // Point-light shadow cube-map array: point lights are
-                // omnidirectional and need a full cube per caster. A single
-                // cube where cube arrays aren't supported (WebGL2) — see
-                // `PointShadowKind`.
+                // omnidirectional and need a full cube per caster.
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,

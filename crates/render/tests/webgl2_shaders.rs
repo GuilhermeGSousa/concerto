@@ -1,8 +1,3 @@
-//! The engine's shaders, preprocessed with WebGL2's shader defs, must
-//! translate to GLSL ES 3.00 — the only shading language WebGL2 accepts.
-//! This is the translation wgpu's GL backend performs in the browser, so a
-//! failure here is a shader that would fail to compile on wasm.
-
 use concerto_render::{capabilities::RenderCapabilities, shader::compose_shader};
 use naga::{
     back::glsl,
@@ -23,7 +18,6 @@ fn assert_translates_to_glsl_es_300(
     entry_points: &[(&str, ShaderStage)],
 ) {
     let module = compose_shader(label, source, &WEBGL2.shader_defs()).unwrap();
-    // WebGL2 can't do cube arrays, so don't let validation assume it can.
     let info = Validator::new(ValidationFlags::all(), Capabilities::empty())
         .validate(&module)
         .unwrap_or_else(|err| panic!("{label} failed validation: {err:?}"));

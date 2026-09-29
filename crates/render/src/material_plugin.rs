@@ -441,7 +441,6 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             ShaderRef::Source(src) => src,
         };
 
-        // Platform defs first, then whatever the material adds on top.
         let mut shader_defs = app
             .render()
             .get_resource::<RenderCapabilities>()
