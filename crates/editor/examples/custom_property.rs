@@ -13,9 +13,9 @@ use concerto_editor::inspector::{
     EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRow, PropertyRowValue, apply_property_commit,
 };
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIClick},
-    node::UINode,
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -65,16 +65,10 @@ impl PropertyEditor<Setting> for SettingEditor {
     ) {
         let button = cmd
             .spawn((
-                UINode::default()
-                    .with_height(UIValue::Px(theme.control_height))
-                    .with_flex_grow(1.0),
-                UIText {
-                    text: label(snapshot),
-                    color: theme.text,
-                    font_size: theme.font_size_md,
-                    line_height: theme.line_height(theme.font_size_md),
-                    ..Default::default()
-                },
+                theme
+                    .label(label(snapshot))
+                    .height(UIValue::Px(theme.control_height))
+                    .grow(),
                 Interactable,
                 SettingButton(row),
             ))

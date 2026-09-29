@@ -36,13 +36,6 @@ pub struct Shape {
     pub border_width: f32,
 }
 
-pub const TRANSPARENT: Color = Color::srgba(0.0, 0.0, 0.0, 0.0);
-
-/// The wash of accent behind a selected row.
-pub fn selection_tint(theme: &UITheme) -> Color {
-    let accent = theme.accent.to_srgba();
-    Color::srgba(accent.r, accent.g, accent.b, 0.2)
-}
 const DIAMOND: f32 = std::f32::consts::FRAC_PI_4;
 
 impl Mark {
@@ -62,8 +55,8 @@ impl Mark {
             size: 8.0,
             corner_radius: 2.0,
             rotation: 0.0,
-            fill: TRANSPARENT,
-            border: TRANSPARENT,
+            fill: Color::TRANSPARENT,
+            border: Color::TRANSPARENT,
             border_width: 0.0,
         };
         match self {
@@ -130,7 +123,7 @@ pub fn node() -> (UINode, UIMaterial) {
             .with_flex_shrink(0.0)
             .with_align_self(taffy::AlignItems::Center)
             .with_margin(UIRect::axes(0.0, COLUMN / 2.0)),
-        UIMaterial::flat(TRANSPARENT),
+        UIMaterial::flat(Color::TRANSPARENT),
     )
 }
 

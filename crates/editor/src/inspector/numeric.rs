@@ -2,12 +2,10 @@ use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
 };
 use concerto_editable::Editable;
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
-    focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
-    interaction::Interactable,
-    material::UIMaterial,
-    node::{UINode, UIRect},
-    text::UIText,
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+    node::UIRect,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
     transform::UIValue,
@@ -145,26 +143,15 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
         let mut row_queue = cmd.entity(row);
         for slot in 0..slot_count(value) {
             row_queue = row_queue.add_child((
-                UINode::default()
-                    .with_flex_grow(1.0)
-                    .with_size(UIValue::Px(0.0), UIValue::Px(theme.control_height))
-                    .with_min_width(UIValue::Px(0.0))
-                    .with_padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
+                theme
+                    .text_field("")
+                    .small()
+                    .grow()
+                    .shrink(1.0)
+                    .width(UIValue::Px(0.0))
+                    .min_width(UIValue::Px(0.0))
+                    .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
                     .clipped(),
-                UIText {
-                    color: theme.text,
-                    font_size: theme.font_size_sm,
-                    line_height: theme.line_height(theme.font_size_sm),
-                    wrap: false,
-                    ..Default::default()
-                },
-                UITextInput::new(""),
-                UIMaterial {
-                    corner_radius: theme.radius_md,
-                    ..UIMaterial::with_border(theme.canvas, theme.border, 1.0)
-                },
-                Interactable,
-                UIFocusable,
                 NumericSlot {
                     row,
                     slot,

@@ -4,6 +4,7 @@ use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
 };
+use concerto_ui::text::UIText;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -223,9 +224,7 @@ impl PropertyEditor<Transform> for WholeTransform {
         value.translation
     }
     fn build(&self, cmd: &mut CommandQueue, row: Entity, _: &Vec3, theme: &UITheme) {
-        let child = cmd
-            .spawn((UINode::default(), text(theme, "Whole transform")))
-            .entity();
+        let child = cmd.spawn(theme.label("Whole transform")).entity();
         cmd.add_child(row, child);
     }
     fn apply(&self, value: &mut Transform, edit: &Vec3) -> Result<(), EditError> {

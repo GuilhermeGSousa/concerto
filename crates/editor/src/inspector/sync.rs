@@ -109,46 +109,29 @@ fn spawn_card(
     theme: &UITheme,
 ) -> (Entity, InspectedComponent) {
     let mut stack_queue = cmd.entity(stack);
-    let mut card_queue = stack_queue.spawn_child_queue((
-        UINode::default()
-            .with_flex_shrink(0.0)
-            .with_flex_direction(FlexDirection::Column)
-            .with_padding(UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm)),
-        UIMaterial {
-            corner_radius: theme.radius_md,
-            ..UIMaterial::flat(theme.surface_raised)
-        },
-    ));
+    let mut card_queue = stack_queue.spawn_child_queue(
+        theme
+            .card()
+            .column()
+            .fixed()
+            .padding(UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm)),
+    );
     let entity = card_queue.entity();
 
-    card_queue = card_queue.add_child_with(
-        UINode::default()
-            .with_flex_shrink(0.0)
-            .with_flex_direction(FlexDirection::Row)
-            .with_align_items(taffy::AlignItems::Center)
-            .with_gap(glam::Vec2::new(theme.spacing_xs + 2.0, 0.0)),
-        |header| {
+    card_queue =
+        card_queue.add_child_with(theme.row().fixed().gap(theme.spacing_xs + 2.0), |header| {
             header
+                .add_child(theme.label(name).single_line().grow())
                 .add_child((
-                    UINode::default().with_flex_grow(1.0),
-                    UIText {
-                        ellipsis: true,
-                        wrap: false,
-                        ..text(theme, name)
-                    },
-                ))
-                .add_child((
-                    UINode::default()
-                        .with_size(UIValue::Px(22.0), UIValue::Px(13.0))
-                        .with_flex_shrink(0.0),
-                    UIMaterial {
-                        corner_radius: 6.5,
-                        ..UIMaterial::flat(theme.accent)
-                    },
+                    theme
+                        .canvas()
+                        .fill(theme.accent)
+                        .radius(6.5)
+                        .size(UIValue::Px(22.0), UIValue::Px(13.0))
+                        .fixed(),
                     UIDisabled,
                 ));
-        },
-    );
+        });
 
     let body = card_queue.spawn_child_queue(body_node(theme)).entity();
 
@@ -177,29 +160,21 @@ fn spawn_row(
     };
     let mut body_queue = cmd.entity(card.body);
     let row_queue = body_queue.spawn_child_queue((
-        UINode::default()
-            .with_flex_shrink(0.0)
-            .with_flex_direction(FlexDirection::Row)
-            .with_align_items(taffy::AlignItems::Center)
-            .with_gap(glam::Vec2::new(theme.spacing_xs, 0.0)),
+        theme.row().fixed().gap(theme.spacing_xs),
         target,
         property.value,
         BuildPropertyWidget,
     ));
     let row = row_queue.entity();
-    row_queue.add_child((
-        UINode::default()
-            .with_width(UIValue::Px(PROPERTY_LABEL_WIDTH))
-            .with_flex_shrink(0.0),
-        UIText {
-            color: theme.text_muted,
-            font_size: theme.font_size_sm,
-            line_height: theme.line_height(theme.font_size_sm),
-            wrap: false,
-            ellipsis: true,
-            ..text(theme, &label)
-        },
-    ));
+    row_queue.add_child(
+        theme
+            .label(label)
+            .small()
+            .muted()
+            .single_line()
+            .width(UIValue::Px(PROPERTY_LABEL_WIDTH))
+            .fixed(),
+    );
     row
 }
 
@@ -231,7 +206,7 @@ pub(super) fn build_property_widgets(
             }
         } else {
             cmd.entity(entity)
-                .add_child((UINode::default(), text(&theme, "Unsupported type")));
+                .add_child(theme.label("Unsupported type"));
         }
         cmd.remove::<BuildPropertyWidget>(entity);
     }

@@ -10,12 +10,11 @@ use concerto_ecs::{
 use std::any::TypeId;
 
 use concerto_editable::PropertyPath;
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
-    material::UIMaterial,
     node::{UILayout, UINode, UIRect},
     scroll::UIScrollArea,
-    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -125,15 +124,6 @@ fn collect_inspector_data(
     }
 }
 
-fn text(theme: &UITheme, value: &str) -> UIText {
-    UIText {
-        text: value.into(),
-        font_size: theme.font_size_md,
-        line_height: theme.line_height(theme.font_size_md),
-        ..Default::default()
-    }
-}
-
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(body) = registry.body(PANEL_ID) {
         spawn_panel(&mut cmd, body, &theme);
@@ -141,13 +131,8 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 }
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
-    cmd.entity(parent).add_child_with(
-        UINode::default()
-            .with_flex_grow(1.0)
-            .with_flex_direction(FlexDirection::Column)
-            .with_gap(glam::Vec2::new(0.0, theme.spacing_sm))
-            .clipped(),
-        |details| {
+    cmd.entity(parent)
+        .add_child_with(theme.column().grow().clipped(), |details| {
             details.add_child_with(
                 (
                     UINode::default()
@@ -160,10 +145,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 |mut view| {
                     let stack = view
                         .spawn_child_queue((
-                            UINode::default()
-                                .with_flex_shrink(0.0)
-                                .with_flex_direction(FlexDirection::Column)
-                                .with_gap(glam::Vec2::new(0.0, theme.spacing_xs + 2.0)),
+                            theme.column().fixed().gap(theme.spacing_xs + 2.0),
                             ComponentStack::default(),
                         ))
                         .entity();
@@ -174,8 +156,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     });
                 },
             );
-        },
-    );
+        });
 }
 
 fn sync_inspector_scroll(

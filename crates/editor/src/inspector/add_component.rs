@@ -6,13 +6,8 @@ use concerto_color::Color;
 use concerto_ecs::component::Tick;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
-    focus::UIFocusable,
-    interaction::UIInteractionStyle,
-    text::FontFamily,
     text_input::UITextInput,
 };
-
-use crate::marks::{TRANSPARENT, selection_tint};
 
 const MENU_WIDTH: f32 = 272.0;
 const MENU_LIST_MAX_HEIGHT: f32 = 320.0;
@@ -67,104 +62,106 @@ fn menu_panel(row: Entity, search: Entity) -> UIAnchoredPanel {
 
 fn spawn_row(cmd: &mut CommandQueue, stack: Entity, theme: &UITheme) -> Entity {
     cmd.entity(stack)
-        .spawn_child_queue((
-            UINode::default()
-                .with_height(UIValue::Px(ROW_HEIGHT))
-                .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Row)
-                .with_align_items(taffy::AlignItems::Center)
-                .with_gap(glam::Vec2::new(7.0, 0.0))
-                .with_padding(UIRect::axes(0.0, 9.0)),
-            UIMaterial {
-                corner_radius: theme.radius_md,
-                ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
-            },
-            UIInteractionStyle {
-                normal: TRANSPARENT,
-                hovered: theme.surface_hovered,
-                pressed: selection_tint(theme),
-                disabled: TRANSPARENT,
-            },
-            Interactable,
-        ))
-        .add_child((UINode::default(), muted(theme, "⌕", 12.0)))
-        .add_child((
-            UINode::default().with_flex_grow(1.0),
-            muted(theme, "add component", 12.0),
-        ))
-        .add_child((UINode::default(), mono(theme, "⌘⇧A", 10.0)))
+        .spawn_child_queue(
+            theme
+                .pressable()
+                .bordered()
+                .radius_md()
+                .height(UIValue::Px(ROW_HEIGHT))
+                .row()
+                .gap(7.0)
+                .padding(UIRect::axes(0.0, 9.0)),
+        )
+        .add_child(theme.label("⌕").muted().font_size(12.0).no_wrap())
+        .add_child(
+            theme
+                .label("add component")
+                .muted()
+                .font_size(12.0)
+                .no_wrap()
+                .grow(),
+        )
+        .add_child(theme.label("⌘⇧A").muted().mono().font_size(10.0).no_wrap())
         .entity()
 }
 
 fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
-    let mut menu = cmd.spawn((
-        UINode::default()
-            .with_width(UIValue::Px(MENU_WIDTH))
-            .with_flex_direction(FlexDirection::Column)
-            .clipped(),
-        UIMaterial {
-            corner_radius: theme.radius_md,
-            ..UIMaterial::with_border(MENU_FILL, theme.border, 1.0)
-        },
-    ));
+    let mut menu = cmd.spawn(theme.popup().fill(MENU_FILL).width(UIValue::Px(MENU_WIDTH)));
 
     let mut header = menu
         .spawn_child_queue(
-            UINode::default()
-                .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Row)
-                .with_align_items(taffy::AlignItems::Center)
-                .with_gap(glam::Vec2::new(7.0, 0.0))
-                .with_padding(UIRect::axes(9.0, 10.0)),
+            theme
+                .row()
+                .fixed()
+                .gap(7.0)
+                .padding(UIRect::axes(9.0, 10.0)),
         )
-        .add_child((UINode::default(), muted(theme, "⌕", 12.5)));
+        .add_child(theme.label("⌕").muted().font_size(12.5).no_wrap());
     let search = header
         .spawn_child_queue((
-            UINode::default()
-                .with_flex_grow(1.0)
-                .with_min_width(UIValue::Px(0.0)),
-            UIText {
-                wrap: false,
-                ellipsis: true,
-                ..sized(theme, "", 12.5)
-            },
-            UITextInput::new("Search components…"),
-            Interactable,
-            UIFocusable,
+            theme
+                .text_field("Search components…")
+                .bare()
+                .height(UIValue::Auto)
+                .padding(0.0)
+                .font_size(12.5)
+                .single_line()
+                .grow()
+                .shrink(1.0)
+                .min_width(UIValue::Px(0.0)),
             AddComponentSearch,
         ))
         .entity();
     let count = header
-        .spawn_child_queue((
-            UINode::default().with_flex_shrink(0.0),
-            mono(theme, "", 9.5),
-        ))
+        .spawn_child_queue(
+            theme
+                .label("")
+                .muted()
+                .mono()
+                .font_size(9.5)
+                .no_wrap()
+                .fixed(),
+        )
         .entity();
 
-    menu = menu.add_child(divider(theme));
+    menu = menu.add_child(theme.divider());
     let list = menu
         .spawn_child_queue(
-            UINode::default()
-                .with_flex_direction(FlexDirection::Column)
-                .with_max_height(UIValue::Px(MENU_LIST_MAX_HEIGHT))
-                .with_gap(glam::Vec2::new(0.0, 1.0))
-                .with_padding(UIRect::all(6.0))
+            theme
+                .column()
+                .gap(1.0)
+                .max_height(UIValue::Px(MENU_LIST_MAX_HEIGHT))
+                .padding(6.0)
                 .clipped(),
         )
         .entity();
-    menu = menu.add_child(divider(theme));
+    menu = menu.add_child(theme.divider());
     menu = menu.add_child_with(
-        UINode::default()
-            .with_flex_shrink(0.0)
-            .with_flex_direction(FlexDirection::Row)
-            .with_gap(glam::Vec2::new(10.0, 0.0))
-            .with_padding(UIRect::axes(7.0, 10.0)),
+        theme
+            .row()
+            .fixed()
+            .gap(10.0)
+            .padding(UIRect::axes(7.0, 10.0)),
         |footer| {
             footer
-                .add_child((UINode::default(), mono(theme, "↑↓ move", 9.5)))
-                .add_child((UINode::default(), mono(theme, "↵ add", 9.5)))
+                .add_child(
+                    theme
+                        .label("↑↓ move")
+                        .muted()
+                        .mono()
+                        .font_size(9.5)
+                        .no_wrap(),
+                )
+                .add_child(theme.label("↵ add").muted().mono().font_size(9.5).no_wrap())
                 .add_child(UINode::default().with_flex_grow(1.0))
-                .add_child((UINode::default(), mono(theme, "⇧↵ add & open", 9.5)));
+                .add_child(
+                    theme
+                        .label("⇧↵ add & open")
+                        .muted()
+                        .mono()
+                        .font_size(9.5)
+                        .no_wrap(),
+                );
         },
     );
 
@@ -240,7 +237,10 @@ pub(super) fn populate_add_component_menu(
         } else {
             format!("{} of {total}", addable.len())
         };
-        cmd.insert(mono(&theme, &count, 9.5), menu.count);
+        cmd.insert(
+            theme.text(&count).muted().mono().font_size(9.5).no_wrap(),
+            menu.count,
+        );
 
         if addable.is_empty() {
             let message = if contents.query.is_empty() {
@@ -248,10 +248,14 @@ pub(super) fn populate_add_component_menu(
             } else {
                 format!("nothing matches “{}”", contents.query)
             };
-            cmd.entity(menu.list).add_child((
-                UINode::default().with_padding(UIRect::axes(6.0, 8.0)),
-                muted(&theme, &message, 12.0),
-            ));
+            cmd.entity(menu.list).add_child(
+                theme
+                    .label(&message)
+                    .muted()
+                    .font_size(12.0)
+                    .no_wrap()
+                    .padding(UIRect::axes(6.0, 8.0)),
+            );
         }
 
         for (index, (_, component)) in addable.iter().enumerate() {
@@ -269,90 +273,38 @@ fn spawn_entry(
     highlighted: bool,
     theme: &UITheme,
 ) {
-    let normal = if highlighted {
-        selection_tint(theme)
-    } else {
-        TRANSPARENT
-    };
-
     let mut list = cmd.entity(list);
     let row = list
-        .spawn_child_queue((
-            UINode::default()
-                .with_flex_shrink(0.0)
-                .with_flex_direction(FlexDirection::Row)
-                .with_align_items(taffy::AlignItems::Center)
-                .with_gap(glam::Vec2::new(8.0, 0.0))
-                .with_padding(UIRect::axes(6.0, 8.0)),
-            UIMaterial {
-                corner_radius: theme.radius_sm,
-                ..UIMaterial::flat(normal)
-            },
-            UIInteractionStyle {
-                normal,
-                hovered: theme.surface_hovered,
-                pressed: selection_tint(theme),
-                disabled: TRANSPARENT,
-            },
-            Interactable,
-        ))
-        .add_child((
-            UINode::default()
-                .with_size(UIValue::Px(MARK_SIZE), UIValue::Px(MARK_SIZE))
-                .with_flex_shrink(0.0),
-            UIMaterial {
-                rotation: std::f32::consts::FRAC_PI_4,
-                ..UIMaterial::flat(theme.accent)
-            },
-        ))
-        .add_child((
-            UINode::default()
-                .with_flex_grow(1.0)
-                .with_min_width(UIValue::Px(0.0)),
-            UIText {
-                wrap: false,
-                ellipsis: true,
-                color: if highlighted {
+        .spawn_child_queue(
+            theme
+                .pressable()
+                .selected(highlighted)
+                .row()
+                .gap(8.0)
+                .padding(UIRect::axes(6.0, 8.0)),
+        )
+        .add_child(
+            theme
+                .canvas()
+                .fill(theme.accent)
+                .rotation(std::f32::consts::FRAC_PI_4)
+                .size(UIValue::Px(MARK_SIZE), UIValue::Px(MARK_SIZE))
+                .fixed(),
+        )
+        .add_child(
+            theme
+                .label(name)
+                .font_size(12.5)
+                .single_line()
+                .color(if highlighted {
                     theme.accent_hovered
                 } else {
                     theme.text
-                },
-                ..sized(theme, name, 12.5)
-            },
-        ));
+                })
+                .grow()
+                .min_width(UIValue::Px(0.0)),
+        );
     if highlighted {
-        row.add_child((UINode::default(), mono(theme, "↵", 9.5)));
-    }
-}
-
-fn divider(theme: &UITheme) -> (UINode, UIMaterial) {
-    (
-        UINode::default()
-            .with_height(UIValue::Px(1.0))
-            .with_flex_shrink(0.0),
-        UIMaterial::flat(theme.border),
-    )
-}
-
-fn sized(theme: &UITheme, value: &str, size: f32) -> UIText {
-    UIText {
-        font_size: size,
-        line_height: theme.line_height(size),
-        wrap: false,
-        ..text(theme, value)
-    }
-}
-
-fn muted(theme: &UITheme, value: &str, size: f32) -> UIText {
-    UIText {
-        color: theme.text_muted,
-        ..sized(theme, value, size)
-    }
-}
-
-fn mono(theme: &UITheme, value: &str, size: f32) -> UIText {
-    UIText {
-        font_family: FontFamily::Monospace,
-        ..muted(theme, value, size)
+        row.add_child(theme.label("↵").muted().mono().font_size(9.5).no_wrap());
     }
 }
