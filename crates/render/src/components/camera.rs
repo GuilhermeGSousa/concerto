@@ -112,9 +112,9 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
-    fog_color: Vec4,
-    fog_params: Vec4,
-    ambient: Vec4,
+    pub(crate) fog_color: Vec4,
+    pub(crate) fog_params: Vec4,
+    pub(crate) ambient: Vec4,
 }
 
 impl CameraUniform {
@@ -136,8 +136,7 @@ impl CameraUniform {
     ) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
-        (self.fog_color, self.fog_params, self.ambient) =
-            CameraEnvironment::uniform_fields(environment);
+        environment.copied().unwrap_or_default().fill(self);
     }
 }
 

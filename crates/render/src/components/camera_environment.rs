@@ -7,6 +7,8 @@ use concerto_ecs::{
 use glam::Vec4;
 use serde::{Deserialize, Serialize};
 
+use super::camera::CameraUniform;
+
 /// Ambient light the standard material uses when a camera sets none; matches
 /// `AMBIENT_INTENSITY` in `shader.wgsl`.
 pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
@@ -56,28 +58,27 @@ impl CameraEnvironment {
         }
     }
 
-    /// The `(fog_color, fog_params, ambient)` camera-uniform fields. A zero
-    /// alpha tells the shader to skip fog or use its default ambient.
-    pub(crate) fn uniform_fields(environment: Option<&Self>) -> (Vec4, Vec4, Vec4) {
-        let environment = environment.copied().unwrap_or_default();
-        let (fog_color, fog_params) = match environment.fog {
+    /// Writes the fog and ambient fields of `uniform`. A zero alpha tells the
+    /// shader to skip fog or use its default ambient.
+    pub(crate) fn fill(&self, uniform: &mut CameraUniform) {
+        match self.fog {
             Some(fog) => {
                 let c = fog.color.to_linear();
-                (
-                    Vec4::new(c.r, c.g, c.b, 1.0),
-                    Vec4::new(fog.density, fog.start, 0.0, 0.0),
-                )
+                uniform.fog_color = Vec4::new(c.r, c.g, c.b, 1.0);
+                uniform.fog_params = Vec4::new(fog.density, fog.start, 0.0, 0.0);
             }
-            None => (Vec4::ZERO, Vec4::ZERO),
-        };
-        let ambient = match environment.ambient {
+            None => {
+                uniform.fog_color = Vec4::ZERO;
+                uniform.fog_params = Vec4::ZERO;
+            }
+        }
+        uniform.ambient = match self.ambient {
             Some(color) => {
                 let c = color.to_linear();
                 Vec4::new(c.r, c.g, c.b, 1.0)
             }
             None => Vec4::ZERO,
         };
-        (fog_color, fog_params, ambient)
     }
 }
 
@@ -103,9 +104,10 @@ mod tests {
 
     #[test]
     fn no_environment_means_no_fog_and_default_ambient() {
-        let (fog_color, _, ambient) = CameraEnvironment::uniform_fields(None);
-        assert_eq!(fog_color.w, 0.0);
-        assert_eq!(ambient.w, 0.0);
+        let mut uniform = CameraUniform::new();
+        CameraEnvironment::default().fill(&mut uniform);
+        assert_eq!(uniform.fog_color.w, 0.0);
+        assert_eq!(uniform.ambient.w, 0.0);
         assert_eq!(
             CameraEnvironment::default().ambient_light().r,
             DEFAULT_AMBIENT_INTENSITY
@@ -121,12 +123,12 @@ mod tests {
                 start: 4.0,
             })
             .with_ambient(Color::WHITE);
-        let (fog_color, fog_params, ambient) =
-            CameraEnvironment::uniform_fields(Some(&environment));
-        assert_eq!(fog_color.w, 1.0);
-        assert_eq!(fog_params.x, 0.1);
-        assert_eq!(fog_params.y, 4.0);
-        assert_eq!(ambient, Vec4::ONE);
+        let mut uniform = CameraUniform::new();
+        environment.fill(&mut uniform);
+        assert_eq!(uniform.fog_color.w, 1.0);
+        assert_eq!(uniform.fog_params.x, 0.1);
+        assert_eq!(uniform.fog_params.y, 4.0);
+        assert_eq!(uniform.ambient, Vec4::ONE);
     }
 
     #[test]
