@@ -22,8 +22,7 @@ use crate::{
     viewport::ViewportCommands,
 };
 
-/// Build contextual containers for new documents. Runs before workspace
-/// visibility and custom UI systems, so deferred hosts are queryable there.
+/// Build contextual containers for new documents.
 pub(crate) fn create_editor_hosts(
     documents: Query<(Entity, &EditorDocument), Without<EditorHosts>>,
     registry: Res<PanelRegistry>,
@@ -42,7 +41,8 @@ pub(crate) fn create_editor_hosts(
                 let mut node = node.clone();
                 node.visible = false;
                 let host = commands
-                    .spawn((
+                    .entity(parent.parent())
+                    .spawn_child_queue((
                         node,
                         EditorOwned(editor),
                         Interactable,
@@ -56,7 +56,6 @@ pub(crate) fn create_editor_hosts(
                         },
                     ))
                     .entity();
-                commands.add_child(parent.parent(), host);
                 hosts[index] = Some(host);
             }
         }
@@ -80,7 +79,6 @@ fn panel_bodies(registry: &PanelRegistry) -> [Option<Entity>; 3] {
 }
 
 /// Update visibility only when tab/panel resources or host components change.
-/// Host changes matter even when the active editor stays the same.
 pub(crate) fn sync_workspace(
     active: Res<ActiveEditor>,
     registry: Res<PanelRegistry>,
@@ -111,8 +109,6 @@ pub(crate) fn sync_workspace(
             set_visible(&nodes, host, active.0 == Some(entity));
         }
     }
-    // Command application has attached new hosts by this point. Keep the
-    // contextual left panel before the shared content browser in the rail.
     if hosts_changed || registry.has_changed() {
         if let Some(base) = bases[1] {
             if let Some(mut siblings) = parents
@@ -137,7 +133,6 @@ fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
 }
 
 /// Clear transient UI state on a tab transition or successful scene replacement.
-/// Native pointer capture is released by the viewport's main-thread system.
 pub(crate) fn reset_workspace_input(
     active: Res<ActiveEditor>,
     mut viewport: ResMut<ViewportCommands>,
@@ -250,7 +245,6 @@ mod tests {
             .get_resource_mut::<ViewportCommands>()
             .unwrap()
             .release_navigation = false;
-        // Unrelated UI changes don't cause a full workspace refresh.
         world
             .get_component_for_entity_mut::<UINode>(first)
             .unwrap()

@@ -58,6 +58,12 @@ pub(super) fn sync_inspected_components(
             let (entity, card) = spawn_card(&mut cmd, stack_entity, target, type_id, name, &theme);
             refresh_card(&source, &mut cmd, entity, card, &theme);
         }
+
+        cmd.entity(stack_entity).add_child((
+            UINode::default(),
+            TextComponent::from_theme("Add Component", &theme),
+            Interactable,
+        ));
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
             if let Some(card) = cards.get_entity(entity) {
@@ -104,64 +110,60 @@ fn spawn_card(
     name: &'static str,
     theme: &UITheme,
 ) -> (Entity, InspectedComponent) {
-    let entity = cmd
-        .spawn((
-            UINode {
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
-                padding: UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm),
-                ..Default::default()
-            },
-            UIMaterial {
-                corner_radius: theme.radius_md,
-                ..UIMaterial::flat(theme.surface_raised)
-            },
-        ))
-        .entity();
-    cmd.add_child(stack, entity);
-    let header = cmd
-        .spawn(UINode {
+    let mut stack_queue = cmd.entity(stack);
+    let mut card_queue = stack_queue.spawn_child_queue((
+        UINode {
+            flex_shrink: 0.0,
+            flex_direction: FlexDirection::Column,
+            padding: UIRect::axes(theme.spacing_xs + 2.0, theme.spacing_sm),
+            ..Default::default()
+        },
+        UIMaterial {
+            corner_radius: theme.radius_md,
+            ..UIMaterial::flat(theme.surface_raised)
+        },
+    ));
+    let entity = card_queue.entity();
+
+    card_queue = card_queue.add_child_with(
+        UINode {
             flex_shrink: 0.0,
             flex_direction: FlexDirection::Row,
             align_items: Some(taffy::AlignItems::Center),
             gap: glam::Vec2::new(theme.spacing_xs + 2.0, 0.0),
             ..Default::default()
-        })
-        .entity();
-    cmd.add_child(entity, header);
-    let label = cmd
-        .spawn((
-            UINode {
-                flex_grow: 1.0,
-                ..Default::default()
-            },
-            TextComponent {
-                ellipsis: true,
-                wrap: false,
-                ..text(theme, name)
-            },
-        ))
-        .entity();
-    cmd.add_child(header, label);
-    // Component enable/disable is not implemented; keep its visual disabled.
-    let toggle = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Px(22.0),
-                height: UIValue::Px(13.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            UIMaterial {
-                corner_radius: 6.5,
-                ..UIMaterial::flat(theme.accent)
-            },
-            UIDisabled,
-        ))
-        .entity();
-    cmd.add_child(header, toggle);
-    let body = cmd.spawn(body_node(theme)).entity();
-    cmd.add_child(entity, body);
+        },
+        |header| {
+            header
+                .add_child((
+                    UINode {
+                        flex_grow: 1.0,
+                        ..Default::default()
+                    },
+                    TextComponent {
+                        ellipsis: true,
+                        wrap: false,
+                        ..text(theme, name)
+                    },
+                ))
+                .add_child((
+                    UINode {
+                        width: UIValue::Px(22.0),
+                        height: UIValue::Px(13.0),
+                        flex_shrink: 0.0,
+                        ..Default::default()
+                    },
+                    UIMaterial {
+                        corner_radius: 6.5,
+                        ..UIMaterial::flat(theme.accent)
+                    },
+                    UIDisabled,
+                ));
+        },
+    );
+
+    let body = card_queue.spawn_child_queue(body_node(theme)).entity();
+
     let card = InspectedComponent {
         entity: target,
         type_id,
@@ -169,7 +171,7 @@ fn spawn_card(
         body,
         last_read_tick: None,
     };
-    cmd.insert(card, entity);
+    card_queue.insert(card);
     (entity, card)
 }
 
@@ -185,39 +187,35 @@ fn spawn_row(
     } else {
         label_for(&property.path)
     };
-    let row = cmd
-        .spawn((
-            UINode {
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(taffy::AlignItems::Center),
-                gap: glam::Vec2::new(theme.spacing_xs, 0.0),
-                ..Default::default()
-            },
-            target,
-            property.value,
-            BuildPropertyWidget,
-        ))
-        .entity();
-    cmd.add_child(card.body, row);
-    let label = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Px(PROPERTY_LABEL_WIDTH),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            TextComponent {
-                color: theme.text_muted,
-                font_size: theme.font_size_sm,
-                line_height: theme.line_height(theme.font_size_sm),
-                wrap: false,
-                ellipsis: true,
-                ..text(theme, &label)
-            },
-        ))
-        .entity();
-    cmd.add_child(row, label);
+    let mut body_queue = cmd.entity(card.body);
+    let row_queue = body_queue.spawn_child_queue((
+        UINode {
+            flex_shrink: 0.0,
+            flex_direction: FlexDirection::Row,
+            align_items: Some(taffy::AlignItems::Center),
+            gap: glam::Vec2::new(theme.spacing_xs, 0.0),
+            ..Default::default()
+        },
+        target,
+        property.value,
+        BuildPropertyWidget,
+    ));
+    let row = row_queue.entity();
+    row_queue.add_child((
+        UINode {
+            width: UIValue::Px(PROPERTY_LABEL_WIDTH),
+            flex_shrink: 0.0,
+            ..Default::default()
+        },
+        TextComponent {
+            color: theme.text_muted,
+            font_size: theme.font_size_sm,
+            line_height: theme.line_height(theme.font_size_sm),
+            wrap: false,
+            ellipsis: true,
+            ..text(theme, &label)
+        },
+    ));
     row
 }
 
@@ -250,10 +248,8 @@ pub(super) fn build_property_widgets(
                 log::warn!("Unable to build property widget: {error}");
             }
         } else {
-            let unsupported = cmd
-                .spawn((UINode::default(), text(&theme, "Unsupported type")))
-                .entity();
-            cmd.add_child(entity, unsupported);
+            cmd.entity(entity)
+                .add_child((UINode::default(), text(&theme, "Unsupported type")));
         }
         cmd.remove::<BuildPropertyWidget>(entity);
     }

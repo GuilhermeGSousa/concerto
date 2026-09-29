@@ -1,10 +1,4 @@
 //! The small geometric marks the design uses in place of icons.
-//!
-//! Nocturne has no icon set. A row says what it holds with a 7–11px shape in
-//! the palette — a filled diamond for a mesh, an outlined rounded rect for a
-//! camera — which is quieter than a pictogram and reads at the size a list row
-//! actually gives it. Each mark is one node: the shape is the node's material,
-//! not a glyph, so it costs no font lookup and scales with the theme.
 use concerto_color::Color;
 use concerto_ui::{
     material::UIMaterial,
@@ -45,20 +39,14 @@ pub struct Shape {
 pub const TRANSPARENT: Color = Color::srgba(0.0, 0.0, 0.0, 0.0);
 
 /// The wash of accent behind a selected row.
-///
-/// A tint rather than a block: the name stays readable and the row still reads
-/// as part of the list, which is how the design marks selection everywhere.
 pub fn selection_tint(theme: &UITheme) -> Color {
     let accent = theme.accent.to_srgba();
     Color::srgba(accent.r, accent.g, accent.b, 0.2)
 }
-/// A square turned onto its corner. The shader keeps it inside its node, so the
-/// node has to be the diagonal rather than the side.
 const DIAMOND: f32 = std::f32::consts::FRAC_PI_4;
 
 impl Mark {
-    /// The mark's geometry, taking the accent when the row is selected so the
-    /// mark reads as part of the highlight rather than a hole in it.
+    /// The mark's geometry, taking the accent when the row is selected.
     pub fn shape(self, theme: &UITheme, selected: bool) -> Shape {
         let outline = if selected {
             theme.text
@@ -93,7 +81,6 @@ impl Mark {
                 ..plain
             },
             Mark::Camera => Shape {
-                // The one mark that is not square: a lens is wider than tall.
                 size: 9.0,
                 border: outline,
                 border_width: 1.5,
@@ -135,8 +122,7 @@ impl Mark {
     }
 }
 
-/// A mark node, centred in its column and sized for `Mark::None` until a panel
-/// says otherwise.
+/// A mark node, centred in its column and sized for `Mark::None` until a panel says otherwise.
 pub fn node() -> (UINode, UIMaterial) {
     (
         UINode {
@@ -144,7 +130,6 @@ pub fn node() -> (UINode, UIMaterial) {
             height: UIValue::Px(0.0),
             flex_shrink: 0.0,
             align_self: Some(taffy::AlignItems::Center),
-            // Centres the shape in its column whatever size it is.
             margin: UIRect::axes(0.0, COLUMN / 2.0),
             ..Default::default()
         },
@@ -153,9 +138,6 @@ pub fn node() -> (UINode, UIMaterial) {
 }
 
 /// Applies a mark to the node and material spawned by [`node`].
-///
-/// Only writes on change: a mark node that rewrote its style every frame would
-/// invalidate the whole layout pass, and there is one per visible row.
 pub fn apply(
     mark: Mark,
     theme: &UITheme,

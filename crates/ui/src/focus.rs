@@ -28,19 +28,10 @@ define_action!(
 );
 
 /// Opts a widget into the keyboard focus ring.
-///
-/// Deliberately separate from [`Interactable`]: a tree row or a split handle is
-/// clickable but has no business being a Tab stop, and a ring that visits every
-/// interactable node is one nobody can use.
 #[derive(Component)]
 pub struct UIFocusable;
 
 /// The UI entity that currently holds keyboard focus, if any.
-///
-/// Focus is set when the user clicks an [`Interactable`](crate::interaction::Interactable) node
-/// and cleared when the user clicks on empty space.  Widgets that need keyboard
-/// input (e.g. [`UITextInput`](crate::text_input::UITextInput)) read this resource to decide
-/// whether to consume typed characters.
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct FocusedWidget(Option<concerto_ecs::entity::Entity>);
 
@@ -51,9 +42,6 @@ pub struct UIFocusGained(pub Entity);
 pub struct UIFocusLost(pub Entity);
 
 /// Sets [`FocusedWidget`] based on left-button clicks.
-///
-/// - Click on an interactable node → focus that node.
-/// - Click on empty space (no node hovered) → clear focus.
 pub(crate) fn update_focus(
     mut focused: ResMut<FocusedWidget>,
     hovered: Res<HoveredNode>,
@@ -92,8 +80,6 @@ pub(crate) fn update_focus(
                 .position(|(_, entity)| Some(*entity) == **focused);
             let len = order.len() as isize;
             let next = match current {
-                // Wraps in both directions, so Tab from the last widget and
-                // Shift+Tab from the first both stay inside the ring.
                 Some(index) => (index as isize + step).rem_euclid(len),
                 None if step > 0 => 0,
                 None => len - 1,
@@ -111,8 +97,7 @@ pub(crate) fn update_focus(
     }
 }
 
-/// Tells the action map that keystrokes belong to a text field right now, so a
-/// bare letter types instead of firing a shortcut.
+/// Tells the action map that keystrokes belong to a text field right now.
 pub(crate) fn sync_text_capture(
     focused: Res<FocusedWidget>,
     inputs: Query<&UITextInput>,

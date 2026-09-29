@@ -60,9 +60,6 @@ pub struct EditorViewport {
 }
 
 /// A first-person fly camera with Unreal's controls.
-///
-/// Navigation only happens with the right button held, which is what keeps
-/// `W` typed into a search field from flying the view across the level.
 #[derive(Resource)]
 pub struct FlyCamera {
     pub position: Vec3,
@@ -98,19 +95,13 @@ impl FlyCamera {
     }
 }
 
-/// Radians of rotation per pixel of pointer travel.
 const LOOK_SENSITIVITY: f32 = 0.0025;
-/// Straight up is a singularity for a yaw/pitch camera; stop just short of it.
 const MAX_PITCH: f32 = 1.55;
-/// Multiplier per wheel notch while the right button is held.
 const SPEED_STEP: f32 = 1.15;
 const MIN_SPEED: f32 = 0.05;
 const MAX_SPEED: f32 = 500.0;
-/// What holding shift does to the fly speed.
 const BOOST: f32 = 4.0;
-/// Metres of pan per pixel, per metre per second of fly speed.
 const PAN_PER_PIXEL: f32 = 0.0015;
-/// Metres of dolly per wheel notch, per metre per second of fly speed.
 const DOLLY_PER_NOTCH: f32 = 0.25;
 
 #[derive(Resource, Default)]
@@ -154,15 +145,14 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, viewport: Re
 }
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, viewport: &EditorViewport) -> Entity {
-    let entity = cmd
-        .spawn((
+    cmd.entity(parent)
+        .spawn_child_queue((
             UINode {
                 flex_grow: 1.0,
                 min_width: UIValue::Px(320.0),
                 min_height: UIValue::Px(240.0),
                 ..Default::default()
             },
-            // White fill so the sampled target comes through unmodified.
             UIMaterial::flat(Color::WHITE),
             UIViewport {
                 texture: viewport.texture.clone(),
@@ -170,17 +160,11 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, viewport: &EditorView
             Interactable,
             ViewportRegion,
         ))
-        .entity();
-    cmd.add_child(parent, entity);
-    entity
+        .entity()
 }
 
-/// The sky behind the scene: Nocturne's canvas lifted a shade, so the viewport
-/// reads as depth behind the cards rather than as another panel beside them.
 const SKY: Color = Color::srgba(0.086, 0.094, 0.157, 1.0);
-/// The ground plane, a shade below the sky for the same reason.
 const GROUND: Color = Color::srgba(0.055, 0.063, 0.114, 1.0);
-/// Grid lines, the palette's border colour at the strength of a hint.
 const GRID_LINES: Color = Color::srgba(0.247, 0.259, 0.322, 0.6);
 
 fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<FlyCamera>) {
@@ -198,8 +182,6 @@ fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<F
         EditorCamera,
         EditorHelper,
     ));
-    // Both of these draw, so both have to reach the render world; without the
-    // marker they exist only in the main world and are silently never drawn.
     cmd.spawn((
         concerto_world_grid::WorldGrid {
             line_color: GRID_LINES,
@@ -217,8 +199,7 @@ fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<F
     ));
 }
 
-/// Apply workspace navigation requests. The caller releases native capture on
-/// the window thread when this returns true.
+/// Apply workspace navigation requests.
 pub(crate) fn apply_workspace_navigation(
     commands: &mut ViewportCommands,
     fly: &mut FlyCamera,
@@ -245,8 +226,6 @@ fn apply_fly_transform(fly: &FlyCamera, transform: &mut Transform) {
 
 #[allow(clippy::too_many_arguments)]
 fn navigate(
-    // Capturing the pointer hands the work to the window's thread and waits
-    // for the result; from a worker that wait never ends on Windows.
     _: NonSendMarker,
     input: Res<Input>,
     time: Res<Time>,
@@ -300,8 +279,6 @@ fn navigate(
     }
 }
 
-/// WASD in camera space, `E`/`Q` along world up, normalised so a diagonal is
-/// not faster than a straight line.
 fn movement(input: &Input, rotation: Quat) -> Vec3 {
     let held = |code| input.is_held(PhysicalKey::Code(code));
     let axis = |positive, negative| match (held(positive), held(negative)) {
@@ -324,8 +301,6 @@ fn speed_scale(input: &Input) -> f32 {
     if shift { BOOST } else { 1.0 }
 }
 
-/// Confines the pointer while looking around, so a long turn does not end with
-/// the cursor outside the window and the view stuck.
 fn capture_pointer(window: &concerto_window::plugin::Window, capture: bool) {
     let handle = &window.window_handle;
     handle.set_cursor_visible(!capture);
@@ -335,12 +310,10 @@ fn capture_pointer(window: &concerto_window::plugin::Window, capture: bool) {
         winit::window::CursorGrabMode::None
     };
     if handle.set_cursor_grab(mode).is_err() && capture {
-        // Wayland and some X setups only offer the locked mode.
         let _ = handle.set_cursor_grab(winit::window::CursorGrabMode::Locked);
     }
 }
 
-/// Every entity in `root`'s subtree, including `root`.
 fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Entity> {
     let mut found = HashSet::new();
     let mut stack = vec![root];
@@ -355,7 +328,6 @@ fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Entity> {
     found
 }
 
-/// The viewport claims its keys only while the pointer is over it.
 fn sync_viewport_context(
     hovered: Res<HoveredNode>,
     regions: Query<&ViewportRegion>,
@@ -385,8 +357,6 @@ fn frame_requested_bounds(
         frame_selected |= action.is(FrameSelected);
         commands.frame_all |= action.is(FrameAll);
     }
-    // Framing is something you ask for. Selecting an entity in the tree moves
-    // the inspector, not the camera.
     let bounds = if commands.frame_all {
         scene_bounds(&mesh_nodes, &meshes, None)
     } else if frame_selected {
@@ -408,8 +378,6 @@ fn frame_requested_bounds(
         .next()
         .map(|(_, camera, _)| camera.fovy)
         .unwrap_or(0.78);
-    // Pull back along the direction the camera is already looking, so framing
-    // changes what fills the view without also changing the angle on it.
     let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
     fly.position = bounds.center() - fly.forward() * distance;
     for (_, _, mut transform) in cameras.iter() {
@@ -417,8 +385,6 @@ fn frame_requested_bounds(
     }
 }
 
-/// World-space bounds of every loaded mesh in `subtree`, or of the whole world
-/// when `subtree` is `None`.
 fn scene_bounds(
     nodes: &Query<(Entity, &MeshComponent, &GlobalTransform)>,
     meshes: &AssetStore<Mesh>,
@@ -447,8 +413,6 @@ fn scene_bounds(
     result
 }
 
-/// The wheel means "how fast do I fly" while looking around, and "move me
-/// forward" otherwise — Unreal's split.
 fn zoom(
     mut events: EventReader<WindowEvent>,
     hovered: Res<HoveredNode>,
@@ -541,7 +505,6 @@ mod tests {
         let mut transform = Transform::IDENTITY;
         apply_fly_transform(&fly, &mut transform);
         assert_eq!(transform.translation, fly.position);
-        // Yawing a quarter turn from -Z faces -X.
         assert!((fly.forward() - Vec3::NEG_X).length() < 0.001);
     }
 

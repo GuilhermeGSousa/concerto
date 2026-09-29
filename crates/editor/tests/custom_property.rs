@@ -197,8 +197,6 @@ fn replacing_an_adapter_invalidates_old_edits_even_for_the_same_adapter_type() {
     let old = property(&world, a);
     let edit = commit(&world, a, SettingEdit::Toggle);
     world.tick();
-    // Registering through `ResMut` stamps the registry, which is what tells
-    // rows captured earlier that they are stale.
     ResMut::<InspectorRegistry>::new(world.as_unsafe_world_cell_mut())
         .register_property_editor::<Setting, SettingEditor>(SettingEditor);
     assert_ne!(old.registry_tick(), property(&world, a).registry_tick());

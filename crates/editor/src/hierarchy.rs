@@ -1,5 +1,4 @@
-//! The world tree: live entities, walked through `Children`, rooted at the
-//! scenes that were spawned into the world.
+//! The world tree: live entities, walked through `Children`, rooted at the scenes that were spawned into the world.
 use crate::actions::{
     CollapseRow, ExpandRow, SelectFirst, SelectLast, SelectNext, SelectPrevious, TreeContext,
 };
@@ -33,19 +32,9 @@ use taffy::FlexDirection;
 
 pub const PANEL_ID: &str = "concerto.warren";
 
-/// Height of one tree row, in logical pixels. The scroll area measures the
-/// tree in these units, so it must match the row nodes exactly.
 const ROW_HEIGHT: f32 = 32.0;
-/// Size of the recycled row pool. Rows beyond what the panel can show stay
-/// blank, so this only needs to cover the tallest viewport we expect.
 const ROWS: usize = 32;
-/// Indentation per tree level, in logical pixels.
 const INDENT: f32 = 12.0;
-/// Depth past which rows stop indenting.
-///
-/// A skeleton is nested twenty levels deep; giving every level its own step
-/// leaves no room for the name, and a row you cannot read is worse than one
-/// whose depth you have to infer from its parents.
 const MAX_INDENT_DEPTH: usize = 6;
 
 /// One visible line of the tree.
@@ -61,15 +50,11 @@ pub struct HierarchyState {
     rows: Vec<Row>,
     expanded: HashSet<Entity>,
     filter: String,
-    /// Rows currently mapped onto the recycled row pool, mirrored from
-    /// [`UIVirtualList::visible_range`] once per frame.
     visible: std::ops::Range<usize>,
-    /// A row the keyboard moved to that the scroll area must bring into view.
     reveal: Option<usize>,
 }
 
 impl HierarchyState {
-    /// Document row backing pool slot `slot`, if any.
     fn row(&self, slot: usize) -> Option<Row> {
         self.rows.get(self.visible.start + slot).copied()
     }
@@ -81,7 +66,6 @@ impl HierarchyState {
 
 #[derive(Component)]
 struct TreeRegion;
-/// The tree's scrolling viewport.
 #[derive(Component)]
 struct TreeView;
 #[derive(Component)]
@@ -97,17 +81,14 @@ enum Action {
 enum Label {
     Row(usize),
     Toggle(usize),
-    /// How many children a group row has, shown at the end of the row.
     Count(usize),
     Title,
     Position,
 }
 
-/// The geometric mark at the head of a row.
 #[derive(Component)]
 struct MarkSlot(usize);
 
-/// The row itself, which carries the selection tint.
 #[derive(Component)]
 struct RowSlot(usize);
 
@@ -124,8 +105,6 @@ impl Plugin for HierarchyPlugin {
         app.add_system(Startup, build_panel);
         app.add_system(LateUpdate, rebuild_rows)
             .add_system(LateUpdate, filter_tree)
-            // Mirrors this frame's virtual range before anything maps a pool
-            // slot back onto a row.
             .add_system(LateUpdate, sync_tree_scroll)
             .add_system(LateUpdate, sync_tree_context)
             .add_system(LateUpdate, click_tree)
@@ -154,10 +133,6 @@ fn line(height: f32) -> UINode {
     }
 }
 
-/// A row's icon column: wide enough for the glyph and nothing else.
-///
-/// `line`'s horizontal padding would eat most of the box and clip the glyph to
-/// a sliver, so an icon keeps only the vertical padding that centres it.
 fn icon_column(width: f32) -> UINode {
     UINode {
         width: UIValue::Px(width),
@@ -175,8 +150,8 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 }
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
-    let tree = cmd
-        .spawn((
+    cmd.entity(parent).add_child_with(
+        (
             UINode {
                 width: UIValue::Percent(100.0),
                 flex_grow: 1.0,
@@ -188,168 +163,128 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
             UIMaterial::flat(theme.surface),
             Interactable,
             TreeRegion,
-        ))
-        .entity();
-    cmd.add_child(parent, tree);
+        ),
+        |mut tree| {
+            tree = tree
+                .add_child((line(42.0), text(theme, "WORLD"), Label::Title))
+                .add_child((
+                    line(38.0),
+                    text(theme, ""),
+                    UITextInput::new("Search entities…"),
+                    UIMaterial {
+                        corner_radius: theme.radius_md,
+                        ..UIMaterial::with_border(theme.canvas, theme.border, 1.0)
+                    },
+                    Interactable,
+                    UIFocusable,
+                    Filter,
+                ));
 
-    let title = cmd
-        .spawn((line(42.0), text(theme, "WORLD"), Label::Title))
-        .entity();
-    cmd.add_child(tree, title);
+            tree = tree.add_child_with(
+                (
+                    UINode {
+                        flex_grow: 1.0,
+                        flex_direction: FlexDirection::Column,
+                        ..Default::default()
+                    }
+                    .clipped(),
+                    Interactable,
+                    TreeRegion,
+                    TreeView,
+                    UIVirtualList {
+                        overscan: 1,
+                        ..UIVirtualList::new(0, ROW_HEIGHT)
+                    },
+                ),
+                |mut view| {
+                    let mut pool = view.spawn_child_queue(UINode {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
+                        ..Default::default()
+                    });
+                    let pool_entity = pool.entity();
 
-    let filter = cmd
-        .spawn((
-            line(38.0),
-            text(theme, ""),
-            UITextInput::new("Search entities…"),
-            UIMaterial {
-                corner_radius: theme.radius_md,
-                ..UIMaterial::with_border(theme.canvas, theme.border, 1.0)
-            },
-            Interactable,
-            UIFocusable,
-            Filter,
-        ))
-        .entity();
-    cmd.add_child(tree, filter);
+                    for slot in 0..ROWS {
+                        pool = pool.add_child_with(
+                            (
+                                UINode {
+                                    height: UIValue::Px(ROW_HEIGHT),
+                                    flex_shrink: 0.0,
+                                    flex_direction: FlexDirection::Row,
+                                    ..Default::default()
+                                },
+                                UIMaterial {
+                                    corner_radius: theme.radius_sm,
+                                    ..UIMaterial::flat(TRANSPARENT)
+                                },
+                                RowSlot(slot),
+                            ),
+                            |row| {
+                                let (mark_node, mark_material) = marks::node();
+                                row.add_child((
+                                    icon_column(20.0),
+                                    TextComponent {
+                                        color: theme.text_muted,
+                                        font_size: 9.0,
+                                        line_height: theme.line_height(theme.font_size_md),
+                                        wrap: false,
+                                        ..text(theme, "")
+                                    },
+                                    Interactable,
+                                    TreeRegion,
+                                    Action::Toggle(slot),
+                                    Label::Toggle(slot),
+                                ))
+                                .add_child((mark_node, mark_material, MarkSlot(slot)))
+                                .add_child((
+                                    UINode {
+                                        flex_grow: 1.0,
+                                        flex_shrink: 1.0,
+                                        ..line(ROW_HEIGHT)
+                                    },
+                                    TextComponent {
+                                        wrap: false,
+                                        ellipsis: true,
+                                        ..text(theme, "")
+                                    },
+                                    Interactable,
+                                    TreeRegion,
+                                    Action::Select(slot),
+                                    Label::Row(slot),
+                                ))
+                                .add_child((
+                                    UINode {
+                                        flex_shrink: 0.0,
+                                        align_self: Some(taffy::AlignItems::Center),
+                                        margin: UIRect::axes(0.0, 8.0),
+                                        ..Default::default()
+                                    },
+                                    TextComponent {
+                                        color: theme.text_muted,
+                                        font_family: concerto_ui::text::FontFamily::Monospace,
+                                        font_size: 10.0,
+                                        line_height: theme.line_height(10.0),
+                                        wrap: false,
+                                        ..text(theme, "")
+                                    },
+                                    Label::Count(slot),
+                                ));
+                            },
+                        );
+                    }
 
-    // The viewport clips and scrolls; the pool inside it is shifted by
-    // `sync_scroll_content` and relabelled from the virtual range each frame.
-    let view = cmd
-        .spawn((
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                ..Default::default()
-            }
-            .clipped(),
-            Interactable,
-            TreeRegion,
-            TreeView,
-            UIVirtualList {
-                overscan: 1,
-                ..UIVirtualList::new(0, ROW_HEIGHT)
-            },
-        ))
-        .entity();
-    cmd.add_child(tree, view);
+                    view.insert(UIScrollArea {
+                        content: Some(pool_entity),
+                        ..Default::default()
+                    });
+                },
+            );
 
-    let pool = cmd
-        .spawn(UINode {
-            flex_direction: FlexDirection::Column,
-            flex_shrink: 0.0,
-            ..Default::default()
-        })
-        .entity();
-    cmd.add_child(view, pool);
-    cmd.insert(
-        UIScrollArea {
-            content: Some(pool),
-            ..Default::default()
+            tree.add_child((line(46.0), text(theme, ""), Label::Position));
         },
-        view,
     );
-
-    for slot in 0..ROWS {
-        let row = cmd
-            .spawn((
-                UINode {
-                    height: UIValue::Px(ROW_HEIGHT),
-                    flex_shrink: 0.0,
-                    flex_direction: FlexDirection::Row,
-                    ..Default::default()
-                },
-                UIMaterial {
-                    corner_radius: theme.radius_sm,
-                    ..UIMaterial::flat(TRANSPARENT)
-                },
-                RowSlot(slot),
-            ))
-            .entity();
-        cmd.add_child(pool, row);
-
-        let toggle = cmd
-            .spawn((
-                icon_column(20.0),
-                TextComponent {
-                    color: theme.text_muted,
-                    font_size: 9.0,
-                    line_height: theme.line_height(theme.font_size_md),
-                    wrap: false,
-                    ..text(theme, "")
-                },
-                Interactable,
-                TreeRegion,
-                Action::Toggle(slot),
-                Label::Toggle(slot),
-            ))
-            .entity();
-        cmd.add_child(row, toggle);
-
-        let (mark_node, mark_material) = marks::node();
-        let mark = cmd
-            .spawn((mark_node, mark_material, MarkSlot(slot)))
-            .entity();
-        cmd.add_child(row, mark);
-
-        let label = cmd
-            .spawn((
-                UINode {
-                    flex_grow: 1.0,
-                    // `line` pins its rows; the label is the one part of a row
-                    // that must give, or a long name widens the row past the
-                    // panel instead of ending in an ellipsis.
-                    flex_shrink: 1.0,
-                    ..line(ROW_HEIGHT)
-                },
-                TextComponent {
-                    // One line per row: a long name ends in an ellipsis rather
-                    // than wrapping into the row below it.
-                    wrap: false,
-                    ellipsis: true,
-                    ..text(theme, "")
-                },
-                Interactable,
-                TreeRegion,
-                Action::Select(slot),
-                Label::Row(slot),
-            ))
-            .entity();
-        cmd.add_child(row, label);
-
-        let count = cmd
-            .spawn((
-                UINode {
-                    flex_shrink: 0.0,
-                    align_self: Some(taffy::AlignItems::Center),
-                    margin: UIRect::axes(0.0, 8.0),
-                    ..Default::default()
-                },
-                TextComponent {
-                    color: theme.text_muted,
-                    font_family: concerto_ui::text::FontFamily::Monospace,
-                    font_size: 10.0,
-                    line_height: theme.line_height(10.0),
-                    wrap: false,
-                    ..text(theme, "")
-                },
-                Label::Count(slot),
-            ))
-            .entity();
-        cmd.add_child(row, count);
-    }
-
-    let position = cmd
-        .spawn((line(46.0), text(theme, ""), Label::Position))
-        .entity();
-    cmd.add_child(tree, position);
 }
 
-/// Walks the live world into a flat row list once per frame.
-///
-/// Rebuilding unconditionally keeps the tree honest: entities appear and vanish
-/// through commands the panel never sees, so there is no reliable change signal
-/// short of the walk itself. It is a tree traversal over a few hundred entities.
 fn rebuild_rows(
     roots: Query<(Entity, &SceneRoot)>,
     children: Query<&Children>,
@@ -357,7 +292,6 @@ fn rebuild_rows(
     mut state: ResMut<HierarchyState>,
 ) {
     let mut root_entities: Vec<Entity> = roots.iter().map(|(entity, _)| entity).collect();
-    // Spawn order is not query order; sort so the tree does not reshuffle.
     root_entities.sort_by_key(|entity| (entity.index(), entity.generation()));
 
     let filter = state.filter.to_lowercase();
@@ -401,9 +335,6 @@ fn push_rows(
     }
 }
 
-/// Emits `entity` when it or any descendant matches, so a match is never
-/// orphaned from the path that leads to it. Filtered branches are always
-/// expanded — collapsing while searching only hides what you searched for.
 fn push_filtered_rows(
     entity: Entity,
     depth: usize,
@@ -445,9 +376,6 @@ fn filter_tree(
     }
 }
 
-/// Bridges the row list and the shared scroll area: publishes the row count the
-/// scroll maths needs, mirrors the resulting range for the systems that map
-/// pool slots back onto rows, and honours keyboard reveal requests.
 fn sync_tree_scroll(
     views: Query<(&TreeView, &mut UIScrollArea, &mut UIVirtualList, &UILayout)>,
     mut state: ResMut<HierarchyState>,
@@ -495,8 +423,6 @@ fn click_tree(
     }
 }
 
-/// The tree claims its keys only while focus is inside it, so arrow keys mean
-/// something else everywhere they should.
 fn sync_tree_context(
     focus: Res<FocusedWidget>,
     regions: Query<&TreeRegion>,
@@ -544,7 +470,6 @@ fn keyboard_tree(
         if fired.is(ExpandRow) && row.has_children {
             state.expanded.insert(row.entity);
         } else if fired.is(CollapseRow) && !state.expanded.remove(&row.entity) {
-            // Already collapsed: step out to the parent, the usual tree contract.
             let parent = (0..position)
                 .rev()
                 .map(|index| state.rows[index])
@@ -591,8 +516,6 @@ fn render_tree(
     nodes: Query<(&Label, &mut UINode)>,
 ) {
     for (label, mut node) in nodes.iter() {
-        // Indentation is a layout property, not part of the label text, so a
-        // long name truncates against the panel edge rather than the margin.
         if let Label::Toggle(slot) = label {
             let depth = state.row(*slot).map_or(0, |row| row.depth);
             node.margin.left = depth.min(MAX_INDENT_DEPTH) as f32 * INDENT;
@@ -647,8 +570,6 @@ fn render_tree(
     }
 }
 
-/// A scene root shows the asset it came from; everything else shows its name,
-/// falling back to the entity index so a nameless entity is still selectable.
 fn entity_label(entity: Entity, names: &Query<&Name>, roots: &Query<&SceneRoot>) -> String {
     if let Some(root) = roots.get_entity(entity) {
         return root.address.clone();
@@ -659,7 +580,6 @@ fn entity_label(entity: Entity, names: &Query<&Name>, roots: &Query<&SceneRoot>)
         .unwrap_or_else(|| format!("Entity {}", entity.index()))
 }
 
-/// What an entity is, as far as the tree can tell from what it carries.
 fn entity_mark(
     entity: Entity,
     has_children: bool,
@@ -683,7 +603,6 @@ fn entity_mark(
     }
 }
 
-/// Draws each pooled row's mark from what its entity carries.
 #[allow(clippy::too_many_arguments)]
 fn render_marks(
     state: Res<HierarchyState>,

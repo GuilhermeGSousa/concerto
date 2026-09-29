@@ -1,6 +1,4 @@
-//! The editor's faces have to carry what the editor asks them for: a wrong
-//! Phosphor codepoint draws a blank box, which is easy to miss on screen and
-//! hard to trace back to a constant.
+//! The editor's faces have to carry what the editor asks them for.
 use concerto_ui::text::fonts::{UIFonts, build_font_system};
 use glyphon::cosmic_text::fontdb;
 use glyphon::{Attrs, Buffer, Family, Metrics, Shaping, Wrap};
@@ -15,8 +13,6 @@ fn fonts() -> UIFonts {
     fonts
 }
 
-/// Glyph ids of `text` shaped in `family`. A zero is `.notdef` — the font has
-/// no such character.
 fn glyph_ids(text: &str, family: &str) -> Vec<u16> {
     let mut font_system = build_font_system(&fonts());
     let mut buffer = Buffer::new(

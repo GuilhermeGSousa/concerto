@@ -20,16 +20,6 @@ use crate::{
 };
 
 /// A draggable range slider widget.
-///
-/// Attach this alongside [`UINode`], [`UIMaterial`] (for the track background),
-/// and [`Interactable`](crate::interaction::Interactable).
-///
-/// On the first frame the `setup_slider_visuals` system spawns a fill child
-/// entity that visually shows the current value.  The `update_slider_drag`
-/// system updates `value` while the left button is held over the slider, and
-/// `sync_slider_fill` keeps the fill child's width in sync each frame.
-///
-/// Listen for [`UISliderChanged`] events to react to value changes.
 #[derive(Component)]
 pub struct UISlider {
     pub value: f32,
@@ -69,10 +59,6 @@ pub struct UISliderChanged {
 pub struct SliderResource;
 
 /// Spawns a fill child entity for each newly added [`UISlider`].
-///
-/// The fill entity has [`UISliderFill`] and a [`UIMaterial`] in the accent
-/// colour.  Its width (as a Taffy percent) is kept in sync by
-/// `sync_slider_fill`.
 pub(crate) fn setup_slider_visuals(
     new_sliders: Query<(Entity, &UISlider), Added<UISlider>>,
     mut cmd: CommandQueue,
@@ -94,9 +80,6 @@ pub(crate) fn setup_slider_visuals(
 }
 
 /// Updates [`UISlider::value`] while the user drags the slider.
-///
-/// Drag begins on `MouseButton::Left` `Pressed` over the slider and continues
-/// while the button is held, even if the cursor leaves the node bounds.
 pub(crate) fn update_slider_drag(
     sliders: Query<(Entity, &mut UISlider, &UILayout)>,
     input: Res<Input>,
@@ -108,11 +91,9 @@ pub(crate) fn update_slider_drag(
     let left = input.get_mouse_button_state(MouseButton::Left);
 
     for (entity, mut slider, computed) in sliders.iter() {
-        // Start drag when pressed over this slider.
         if left == InputState::Pressed && **hovered == Some(entity) {
             slider.dragging = true;
         }
-        // Stop drag on release regardless of cursor position.
         if left == InputState::Released || left == InputState::Up {
             slider.dragging = false;
         }
@@ -132,9 +113,6 @@ pub(crate) fn update_slider_drag(
 }
 
 /// Keeps the fill child's width in sync with the slider's current value.
-///
-/// Queries fill entities via their [`ChildOf`] parent reference, so no entity
-/// ID needs to be stored inside [`UISlider`].
 pub(crate) fn sync_slider_fill(
     fills: Query<(&mut UINode, &ChildOf), With<UISliderFill>>,
     sliders: Query<&UISlider>,

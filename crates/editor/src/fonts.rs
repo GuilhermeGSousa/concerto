@@ -1,8 +1,4 @@
 //! The editor's typefaces.
-//!
-//! Inter carries the text — it is what the Nocturne design system asks for —
-//! and Phosphor carries the icons, as glyphs rather than images so they shape,
-//! measure and clip exactly like any other text.
 use concerto_app::{App, Plugin};
 use concerto_ui::text::fonts::UIFontsApp;
 use concerto_ui::text::{FontFamily, TextComponent};
@@ -22,8 +18,6 @@ pub struct FontsPlugin;
 
 impl Plugin for FontsPlugin {
     fn build(&self, app: &mut App) {
-        // Registration has to happen during `build`: the UI builds its font
-        // systems once every plugin has finished building.
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-Regular.ttf").as_slice());
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-Medium.ttf").as_slice());
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-SemiBold.ttf").as_slice());
@@ -33,9 +27,6 @@ impl Plugin for FontsPlugin {
 }
 
 /// A text node holding one icon glyph.
-///
-/// Sized in the same units as text, because that is what it is: `size` is the
-/// glyph's em box, so an icon next to a label wants the label's font size.
 pub fn icon(theme: &UITheme, glyph: char, size: f32) -> TextComponent {
     TextComponent {
         text: glyph.to_string(),
@@ -48,10 +39,6 @@ pub fn icon(theme: &UITheme, glyph: char, size: f32) -> TextComponent {
 }
 
 /// Phosphor codepoints, by the name they carry upstream.
-///
-/// Taken from Phosphor 2.1's own mapping; the faces under `fonts/Phosphor` are
-/// that release, so the two agree. Adding one means looking its codepoint up
-/// there rather than guessing.
 pub mod glyph {
     /// `rabbit` — the brand mark.
     pub const RABBIT: char = '\u{EAC2}';

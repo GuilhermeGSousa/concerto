@@ -91,8 +91,7 @@ pub struct UIAnchoredPanel {
     pub align: UIAnchorAlign,
     /// Gap between the anchor edge and the panel, in logical pixels.
     pub gap: f32,
-    /// Authoritative open state. The caller sets this; the crate projects it
-    /// onto `UINode::visible`.
+    /// Authoritative open state. The caller sets this; the crate projects it onto `UINode::visible`.
     pub open: bool,
     /// The side `place` actually used the last time this panel was laid out, after flip.
     pub resolved_side: UIAnchorSide,
@@ -391,8 +390,7 @@ fn on_screen(
     true
 }
 
-/// The panels already reported for being built wrong, so a misuse is logged
-/// once rather than every frame for as long as the panel exists.
+/// The panels already reported for being built wrong, so a misuse is logged once.
 #[derive(Default)]
 pub struct MisusedPanels(HashSet<Entity>);
 

@@ -50,9 +50,6 @@ pub struct UITabStrip {
 }
 
 /// The content shown when its tab is the selected one.
-///
-/// Without this a strip renders every panel stacked on top of the others: the
-/// strip tracks a selection, but a selection nothing acts on is just a number.
 #[derive(Component)]
 pub struct UITabBody {
     pub strip: Entity,
@@ -74,8 +71,7 @@ pub struct UITabChanged {
     pub selected: usize,
 }
 
-/// Standard compact Concerto button visuals. Callers add their own action
-/// component and optional `TextComponent` to the returned bundle.
+/// Standard compact Concerto button visuals.
 pub fn button(
     theme: &UITheme,
 ) -> (
@@ -139,9 +135,7 @@ pub(crate) fn update_widgets(
     }
 }
 
-/// Shows the body whose index matches its strip's selection, and hides the
-/// rest. A selection past the end — a panel removed while its tab was current —
-/// hides everything rather than falling back to showing all of them.
+/// Shows the body whose index matches its strip's selection, and hides the rest.
 pub fn sync_tab_bodies(strips: Query<&UITabStrip>, bodies: Query<(&UITabBody, &mut UINode)>) {
     for (body, mut node) in bodies.iter() {
         let Some(strip) = strips.get_entity(body.strip) else {

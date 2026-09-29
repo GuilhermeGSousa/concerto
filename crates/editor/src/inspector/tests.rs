@@ -75,11 +75,6 @@ fn deferred_row_creation_makes_new_bodies_visible() {
     );
 }
 
-/// Switching selection despawns a card and builds the next one in the same
-/// pass, so the new card's entities come from recycled indexes. A recycled
-/// index that still resolves to its previous owner's row made the card's
-/// not-yet-spawned body read a live `UINode`, look already visible, and keep
-/// the hidden node it was spawned with — properties gone, uneditable.
 #[test]
 fn alternating_selections_keep_showing_their_properties() {
     let (mut world, a, _) = world();
@@ -244,8 +239,6 @@ impl PropertyEditor<Transform> for WholeTransform {
     }
 }
 
-/// Mutating through `ResMut` marks the registry changed, which is how an app's
-/// registration reaches the inspector.
 fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
     ResMut::new(world.as_unsafe_world_cell_mut())
 }

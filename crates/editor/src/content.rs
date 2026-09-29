@@ -28,13 +28,9 @@ use concerto_foundation::assets::AssetId;
 
 pub const PANEL_ID: &str = "concerto.curiosities";
 
-/// Height of one asset row, in logical pixels. The scroll area measures the
-/// catalogue in these units, so it must match the row nodes exactly.
 const ROW_HEIGHT: f32 = 28.0;
-/// Size of the recycled row pool, sized for the tallest panel we expect.
 const ROWS: usize = 24;
 
-/// The kinds the tag row can filter by. `None` is "all".
 const KINDS: [(&str, Option<&str>); 5] = [
     ("all", None),
     ("scene", Some("Scene")),
@@ -48,10 +44,7 @@ pub struct ContentState {
     /// Catalogue selection is independent of the open editor's entity selection.
     pub selected: Option<AssetId>,
     filter: String,
-    /// Index into [`KINDS`] of the tag currently selected.
     kind: usize,
-    /// Rows currently mapped onto the recycled pool, mirrored from
-    /// [`UIVirtualList::visible_range`] once per frame.
     visible: std::ops::Range<usize>,
 }
 
@@ -64,7 +57,6 @@ impl ContentState {
 #[derive(Component, Clone, Copy)]
 enum Action {
     Asset(usize),
-    /// One of the kind tags above the list.
     Kind(usize),
 }
 
@@ -74,18 +66,15 @@ enum Label {
     Asset(usize),
 }
 
-/// The geometric mark at the head of an asset row.
 #[derive(Component)]
 struct MarkSlot(usize);
 
-/// One of the kind tags, so the row can show which is active.
 #[derive(Component)]
 struct Tag(usize);
 
 #[derive(Component)]
 struct Filter;
 
-/// The catalogue's scrolling viewport.
 #[derive(Component)]
 struct ContentView;
 
@@ -101,8 +90,6 @@ impl Plugin for ContentPlugin {
         });
         app.add_system(Startup, build_panel)
             .add_system(LateUpdate, update_filter)
-            // Mirrors this frame's virtual range before anything maps a pool
-            // slot back onto an asset.
             .add_system(LateUpdate, sync_scroll)
             .add_system(LateUpdate, handle_actions)
             .add_system(LateUpdate, refresh_panel)
@@ -133,217 +120,187 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
     let Some(body) = registry.body(PANEL_ID) else {
         return;
     };
-    let panel = cmd
-        .spawn(
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                padding: UIRect::all(10.0),
-                ..Default::default()
-            }
-            .clipped(),
-        )
-        .entity();
-    cmd.add_child(body, panel);
 
-    // The pill is the container; the search mark and the field sit inside it,
-    // because one text node shapes in one face and reads one value.
-    let search = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(30.0),
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(taffy::AlignItems::Center),
-                padding: UIRect::axes(0.0, 8.0),
-                gap: glam::Vec2::new(6.0, 0.0),
-                ..Default::default()
-            },
-            UIMaterial {
-                corner_radius: theme.radius_sm,
-                ..UIMaterial::flat(theme.surface_raised)
-            },
-        ))
-        .entity();
-    cmd.add_child(panel, search);
-
-    let mark = cmd
-        .spawn((
-            UINode::default(),
-            TextComponent {
-                color: theme.text_muted,
-                wrap: false,
-                ..text(&theme, "⌕")
-            },
-        ))
-        .entity();
-    cmd.add_child(search, mark);
-
-    let filter = cmd
-        .spawn((
-            UINode {
-                flex_grow: 1.0,
-                flex_shrink: 1.0,
-                min_width: UIValue::Px(0.0),
-                ..Default::default()
-            },
-            TextComponent {
-                wrap: false,
-                ellipsis: true,
-                ..text(&theme, "")
-            },
-            UITextInput::new("Find imported assets…"),
-            Interactable,
-            UIFocusable,
-            Filter,
-        ))
-        .entity();
-    cmd.add_child(search, filter);
-
-    let tags = cmd
-        .spawn(UINode {
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: glam::Vec2::new(4.0, 0.0),
-            margin: UIRect::axes(7.0, 0.0),
-            ..Default::default()
-        })
-        .entity();
-    cmd.add_child(panel, tags);
-
-    for (index, (name, _)) in KINDS.iter().enumerate() {
-        let tag = cmd
-            .spawn((
-                UINode {
-                    flex_shrink: 0.0,
-                    padding: UIRect::axes(2.0, 7.0),
-                    ..Default::default()
-                },
-                UIMaterial {
-                    corner_radius: theme.radius_sm,
-                    ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
-                },
-                TextComponent {
-                    color: theme.text_muted,
-                    font_size: 10.0,
-                    line_height: theme.line_height(10.0),
-                    wrap: false,
-                    ..text(&theme, name)
-                },
-                Interactable,
-                Action::Kind(index),
-                Tag(index),
-            ))
-            .entity();
-        cmd.add_child(tags, tag);
-    }
-
-    // A scrolling viewport over the whole catalogue: the pool inside it is
-    // shifted by `sync_scroll_content` and relabelled from the virtual range.
-    let view = cmd
-        .spawn((
-            UINode {
-                flex_grow: 1.0,
-                flex_shrink: 1.0,
-                flex_direction: FlexDirection::Column,
-                ..Default::default()
-            }
-            .clipped(),
-            Interactable,
-            ContentView,
-            UIVirtualList {
-                overscan: 1,
-                ..UIVirtualList::new(0, ROW_HEIGHT)
-            },
-        ))
-        .entity();
-    cmd.add_child(panel, view);
-
-    let pool = cmd
-        .spawn(UINode {
+    cmd.entity(body).add_child_with(
+        UINode {
+            flex_grow: 1.0,
             flex_direction: FlexDirection::Column,
-            flex_shrink: 0.0,
+            padding: UIRect::all(10.0),
             ..Default::default()
-        })
-        .entity();
-    cmd.add_child(view, pool);
-    cmd.insert(
-        UIScrollArea {
-            content: Some(pool),
-            ..Default::default()
-        },
-        view,
-    );
+        }
+        .clipped(),
+        |mut panel| {
+            panel = panel.add_child_with(
+                (
+                    UINode {
+                        height: UIValue::Px(30.0),
+                        flex_shrink: 0.0,
+                        flex_direction: FlexDirection::Row,
+                        align_items: Some(taffy::AlignItems::Center),
+                        padding: UIRect::axes(0.0, 8.0),
+                        gap: glam::Vec2::new(6.0, 0.0),
+                        ..Default::default()
+                    },
+                    UIMaterial {
+                        corner_radius: theme.radius_sm,
+                        ..UIMaterial::flat(theme.surface_raised)
+                    },
+                ),
+                |search| {
+                    search
+                        .add_child((
+                            UINode::default(),
+                            TextComponent {
+                                color: theme.text_muted,
+                                wrap: false,
+                                ..text(&theme, "⌕")
+                            },
+                        ))
+                        .add_child((
+                            UINode {
+                                flex_grow: 1.0,
+                                flex_shrink: 1.0,
+                                min_width: UIValue::Px(0.0),
+                                ..Default::default()
+                            },
+                            TextComponent {
+                                wrap: false,
+                                ellipsis: true,
+                                ..text(&theme, "")
+                            },
+                            UITextInput::new("Find imported assets…"),
+                            Interactable,
+                            UIFocusable,
+                            Filter,
+                        ));
+                },
+            );
 
-    for slot in 0..ROWS {
-        let row = cmd
-            .spawn((
+            panel = panel.add_child_with(
                 UINode {
-                    height: UIValue::Px(ROW_HEIGHT),
                     flex_shrink: 0.0,
                     flex_direction: FlexDirection::Row,
-                    align_items: Some(taffy::AlignItems::Center),
-                    padding: UIRect::axes(4.0, 6.0),
-                    gap: glam::Vec2::new(8.0, 0.0),
+                    gap: glam::Vec2::new(4.0, 0.0),
+                    margin: UIRect::axes(7.0, 0.0),
                     ..Default::default()
                 },
-                UIMaterial {
-                    corner_radius: theme.radius_sm,
-                    ..UIMaterial::flat(TRANSPARENT)
+                |mut tags| {
+                    for (index, (name, _)) in KINDS.iter().enumerate() {
+                        tags = tags.add_child((
+                            UINode {
+                                flex_shrink: 0.0,
+                                padding: UIRect::axes(2.0, 7.0),
+                                ..Default::default()
+                            },
+                            UIMaterial {
+                                corner_radius: theme.radius_sm,
+                                ..UIMaterial::with_border(TRANSPARENT, theme.border, 1.0)
+                            },
+                            TextComponent {
+                                color: theme.text_muted,
+                                font_size: 10.0,
+                                line_height: theme.line_height(10.0),
+                                wrap: false,
+                                ..text(&theme, name)
+                            },
+                            Interactable,
+                            Action::Kind(index),
+                            Tag(index),
+                        ));
+                    }
                 },
-                Interactable,
-                UIInteractionStyle {
-                    normal: TRANSPARENT,
-                    hovered: theme.surface_hovered,
-                    pressed: selection_tint(&theme),
-                    disabled: TRANSPARENT,
+            );
+
+            panel = panel.add_child_with(
+                (
+                    UINode {
+                        flex_grow: 1.0,
+                        flex_shrink: 1.0,
+                        flex_direction: FlexDirection::Column,
+                        ..Default::default()
+                    }
+                    .clipped(),
+                    Interactable,
+                    ContentView,
+                    UIVirtualList {
+                        overscan: 1,
+                        ..UIVirtualList::new(0, ROW_HEIGHT)
+                    },
+                ),
+                |mut view| {
+                    let mut pool = view.spawn_child_queue(UINode {
+                        flex_direction: FlexDirection::Column,
+                        flex_shrink: 0.0,
+                        ..Default::default()
+                    });
+                    let pool_entity = pool.entity();
+
+                    for slot in 0..ROWS {
+                        pool = pool.add_child_with(
+                            (
+                                UINode {
+                                    height: UIValue::Px(ROW_HEIGHT),
+                                    flex_shrink: 0.0,
+                                    flex_direction: FlexDirection::Row,
+                                    align_items: Some(taffy::AlignItems::Center),
+                                    padding: UIRect::axes(4.0, 6.0),
+                                    gap: glam::Vec2::new(8.0, 0.0),
+                                    ..Default::default()
+                                },
+                                UIMaterial {
+                                    corner_radius: theme.radius_sm,
+                                    ..UIMaterial::flat(TRANSPARENT)
+                                },
+                                Interactable,
+                                UIInteractionStyle {
+                                    normal: TRANSPARENT,
+                                    hovered: theme.surface_hovered,
+                                    pressed: selection_tint(&theme),
+                                    disabled: TRANSPARENT,
+                                },
+                                Action::Asset(slot),
+                            ),
+                            |row| {
+                                let (mark_node, mark_material) = marks::node();
+                                row.add_child((mark_node, mark_material, MarkSlot(slot)))
+                                    .add_child((
+                                        UINode {
+                                            flex_grow: 1.0,
+                                            flex_shrink: 1.0,
+                                            ..Default::default()
+                                        },
+                                        TextComponent {
+                                            ellipsis: true,
+                                            wrap: false,
+                                            ..text(&theme, "")
+                                        },
+                                        Label::Asset(slot),
+                                    ));
+                            },
+                        );
+                    }
+
+                    view.insert(UIScrollArea {
+                        content: Some(pool_entity),
+                        ..Default::default()
+                    });
                 },
-                Action::Asset(slot),
-            ))
-            .entity();
-        cmd.add_child(pool, row);
+            );
 
-        let (mark_node, mark_material) = marks::node();
-        let mark = cmd
-            .spawn((mark_node, mark_material, MarkSlot(slot)))
-            .entity();
-        cmd.add_child(row, mark);
-
-        let label = cmd
-            .spawn((
+            panel.add_child((
                 UINode {
-                    flex_grow: 1.0,
-                    flex_shrink: 1.0,
+                    height: UIValue::Px(26.0),
+                    flex_shrink: 0.0,
+                    padding: UIRect::axes(4.0, 10.0),
                     ..Default::default()
                 },
-                TextComponent {
-                    ellipsis: true,
-                    wrap: false,
-                    ..text(&theme, "")
-                },
-                Label::Asset(slot),
-            ))
-            .entity();
-        cmd.add_child(row, label);
-    }
-
-    let count = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(26.0),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(4.0, 10.0),
-                ..Default::default()
-            },
-            text(&theme, ""),
-            Label::Count,
-        ))
-        .entity();
-    cmd.add_child(panel, count);
+                text(&theme, ""),
+                Label::Count,
+            ));
+        },
+    );
 }
 
-/// Publishes the row count the scroll maths needs and mirrors the resulting
-/// range for the systems that map pool slots back onto assets.
 fn sync_scroll(
     views: Query<(&ContentView, &mut UIScrollArea, &mut UIVirtualList)>,
     project: Res<ProjectState>,
@@ -371,8 +328,6 @@ fn update_filter(
             reset = true;
         }
     }
-    // A new filter is a new list; keeping the old offset would land the user
-    // somewhere arbitrary in it.
     if reset {
         if let Some((_, mut area)) = views.iter().next() {
             area.offset = 0.0;
@@ -402,8 +357,6 @@ fn handle_actions(
         match *action {
             Action::Kind(index) => {
                 state.kind = index;
-                // A different set is a different list; keeping the old offset
-                // would land the user somewhere arbitrary in it.
                 state.visible = 0..0;
                 reset = true;
             }
@@ -451,8 +404,6 @@ fn refresh_panel(
     }
 }
 
-/// Kinds are free-form strings from the content header, so an unknown one gets
-/// the plain mark rather than nothing.
 fn asset_mark(kind: &str) -> Mark {
     match kind {
         "Scene" => Mark::Group,
@@ -463,7 +414,6 @@ fn asset_mark(kind: &str) -> Mark {
     }
 }
 
-/// Draws each pooled row's mark, and tints the row when its asset is selected.
 fn render_marks(
     project: Res<ProjectState>,
     state: Res<ContentState>,
@@ -483,8 +433,6 @@ fn render_marks(
             .map_or(Mark::None, |asset| asset_mark(&asset.kind));
         marks::apply(mark, &theme, selected(slot.0), &mut node, &mut material);
     }
-    // The row's resting colour carries the selection, so hover and press still
-    // work through `UIInteractionStyle` rather than fighting it.
     for (action, mut style) in styles.iter() {
         let Action::Asset(slot) = *action else {
             continue;
@@ -500,7 +448,6 @@ fn render_marks(
     }
 }
 
-/// The tags read as one selected and the rest quiet.
 fn render_tags(
     state: Res<ContentState>,
     theme: Res<UITheme>,

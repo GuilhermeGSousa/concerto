@@ -1,7 +1,4 @@
 //! Engine-native editor. Panels submit commands; project systems own I/O.
-//!
-//! Asset editors allow temporary inspection and edits, but never save files.
-//! Importing is the `import` CLI's job.
 pub mod actions;
 pub mod asset_editor;
 pub mod content;

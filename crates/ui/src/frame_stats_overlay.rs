@@ -18,21 +18,15 @@ use crate::{
     transform::UIValue,
 };
 
-/// Marker for the overlay's text node.
 #[derive(Component)]
 struct FrameStatsText;
 
-/// Seconds between overlay text refreshes. Rebuilding the glyph buffer every
-/// frame would make the overlay itself a hotspot.
 const REFRESH_INTERVAL: f32 = 0.25;
 
 #[derive(Resource)]
 struct OverlayRefreshTimer(f32);
 
 /// Small always-on-top frame-time readout in the window's top-left corner.
-///
-/// Reads the [`FrameStats`] resource maintained by the `TimePlugin`.
-/// Registered by `DefaultPlugins` (non-headless); see docs/profiling.md.
 pub struct FrameStatsOverlayPlugin;
 
 impl Plugin for FrameStatsOverlayPlugin {

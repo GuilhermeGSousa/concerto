@@ -1,8 +1,4 @@
 //! Lifecycle and registration for asset editors.
-//!
-//! Asset editors are deliberately kept separate from property editors.  An
-//! editor is a single, type-owned document; opening another asset of the same
-//! type replaces the document's contents instead of creating another world.
 
 use anyhow::{Result, bail};
 use concerto_app::App;
@@ -17,12 +13,6 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use crate::project::AssetEntry;
 
 /// Installs an editor's components when its document is created.
-///
-/// Asset loading and UI interaction belong in ordinary ECS systems. Query the
-/// document's `pending` request and your own components there, and complete it
-/// with [`finish_asset_request`]. Query [`ActiveEditor`] for tab activation.
-/// Mark detached UI/preview roots with [`EditorOwned`] for automatic cleanup.
-/// Contextual [`EditorHosts`] are supplied by the workspace before UI systems run.
 pub trait AssetEditor: Send + Sync + 'static {
     fn build(&self, _editor: &mut EntityCommandQueue) {}
 }
@@ -99,8 +89,7 @@ pub enum AssetEditorCommand {
 #[derive(Resource, Default)]
 pub struct AssetEditorCommands(pub VecDeque<AssetEditorCommand>);
 
-/// Complete a request through a scoped document borrow. Pass the current
-/// `ProjectState::generation`, not the generation captured by a worker.
+/// Complete a request through a scoped document borrow.
 pub fn finish_asset_request(
     doc: &mut EditorDocument,
     generation: u64,
@@ -137,8 +126,7 @@ pub fn asset_request_is_current(
         && doc.project_generation == project_generation
 }
 
-/// Process tab commands using declared ECS access. Asset-specific work belongs
-/// to the editor's own systems, which observe the resulting pending request.
+/// Process tab commands using declared ECS access.
 pub fn process_editor_commands(
     mut requests: ResMut<AssetEditorCommands>,
     registry: Res<AssetEditorRegistry>,
@@ -151,9 +139,6 @@ pub fn process_editor_commands(
     if requests.0.is_empty() {
         return;
     }
-    // Batch-local staging makes deferred spawns visible to subsequent commands
-    // in this batch (including open/open and open/close-all). ECS remains the
-    // persistent owner; only changed documents are written back.
     let mut next_active = active.0;
     let mut staged: Vec<_> = documents.iter().map(|(e, d)| (e, d.clone())).collect();
     let mut created = HashSet::new();

@@ -1,7 +1,4 @@
 //! The editor's named actions and their default bindings.
-//!
-//! Panels react to actions, never to keys. Rebinding is a change to the table
-//! below (or to `ActionMap` at runtime) rather than a hunt through systems.
 use concerto_app::{App, Plugin, schedule_groups::Startup};
 use concerto_ecs::ResMut;
 use concerto_window::input::KeyCode;
@@ -59,7 +56,6 @@ impl Plugin for ActionsPlugin {
     }
 }
 
-/// The default binding table. One place to read, one place to change.
 fn install_default_bindings(mut actions: ResMut<ActionMap>) {
     actions.bind(FrameSelected, Shortcut::key(KeyCode::KeyF), ViewportContext);
     actions.bind(

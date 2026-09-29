@@ -67,7 +67,6 @@ fn label_for(path: &PropertyPath) -> String {
 #[derive(Component)]
 struct DetailsView;
 
-/// The scrolling column that holds one card per component.
 #[derive(Component, Debug, Default)]
 struct ComponentStack {
     target: Option<Entity>,
@@ -135,53 +134,46 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 }
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
-    let details = cmd
-        .spawn(
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                gap: glam::Vec2::new(0.0, theme.spacing_sm),
-                ..Default::default()
-            }
-            .clipped(),
-        )
-        .entity();
-    cmd.add_child(parent, details);
-
-    // Components are unbounded, so the stack scrolls rather than pushing the
-    // close button off the card.
-    let view = cmd
-        .spawn((
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                ..Default::default()
-            }
-            .clipped(),
-            Interactable,
-            DetailsView,
-        ))
-        .entity();
-    cmd.add_child(details, view);
-
-    let stack = cmd
-        .spawn((
-            UINode {
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
-                gap: glam::Vec2::new(0.0, theme.spacing_xs + 2.0),
-                ..Default::default()
-            },
-            ComponentStack::default(),
-        ))
-        .entity();
-    cmd.add_child(view, stack);
-    cmd.insert(
-        UIScrollArea {
-            content: Some(stack),
+    cmd.entity(parent).add_child_with(
+        UINode {
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Column,
+            gap: glam::Vec2::new(0.0, theme.spacing_sm),
             ..Default::default()
+        }
+        .clipped(),
+        |details| {
+            details.add_child_with(
+                (
+                    UINode {
+                        flex_grow: 1.0,
+                        flex_direction: FlexDirection::Column,
+                        ..Default::default()
+                    }
+                    .clipped(),
+                    Interactable,
+                    DetailsView,
+                ),
+                |mut view| {
+                    let stack = view
+                        .spawn_child_queue((
+                            UINode {
+                                flex_shrink: 0.0,
+                                flex_direction: FlexDirection::Column,
+                                gap: glam::Vec2::new(0.0, theme.spacing_xs + 2.0),
+                                ..Default::default()
+                            },
+                            ComponentStack::default(),
+                        ))
+                        .entity();
+
+                    view.insert(UIScrollArea {
+                        content: Some(stack),
+                        ..Default::default()
+                    });
+                },
+            );
         },
-        view,
     );
 }
 

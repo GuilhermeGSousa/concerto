@@ -1,5 +1,4 @@
-//! Covers scrollbar thumb geometry: where the thumb sits and how big it is for
-//! a given scroll offset, and when the bar should not be shown at all.
+//! Covers scrollbar thumb geometry: where the thumb sits and how big it is.
 use concerto_ui::scroll::{ThumbGeometry, thumb_geometry};
 
 const TRACK: f32 = 200.0;
@@ -20,8 +19,6 @@ fn a_list_that_fits_needs_no_bar() {
 
 #[test]
 fn the_thumb_is_the_visible_fraction_of_the_track() {
-    // A quarter of the content is on screen, so the thumb is a quarter of the
-    // track: the bar reads as "how much of this am I seeing".
     let geometry = thumb_geometry(0.0, 1000.0, 250.0, TRACK).expect("content overflows");
     assert_eq!(geometry.height, 50.0);
     assert_eq!(geometry.offset, 0.0);
@@ -44,7 +41,6 @@ fn the_thumb_reaches_the_bottom_at_maximum_scroll() {
 #[test]
 fn the_thumb_moves_proportionally() {
     let geometry = thumb_geometry(375.0, 1000.0, 250.0, TRACK).expect("content overflows");
-    // Half of the 750px scrollable range, so half of the 150px thumb travel.
     assert_eq!(geometry.offset, 75.0);
 }
 

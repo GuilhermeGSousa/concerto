@@ -1,13 +1,8 @@
 //! Covers tab-strip body switching: selecting a tab shows exactly one body.
-//!
-//! `UITabStrip` already tracked which tab was selected, but nothing acted on
-//! it, so a strip with several panels rendered all of them on top of each
-//! other. This is what the editor's dock stands on.
 use concerto_ecs::{IntoSystem, System, World};
 use concerto_ui::node::UINode;
 use concerto_ui::widgets::{UITabBody, UITabStrip, sync_tab_bodies};
 
-/// Spawns a strip with `count` bodies and returns the strip and its bodies.
 fn strip_with_bodies(
     world: &mut World,
     count: usize,
@@ -74,7 +69,6 @@ fn a_selection_past_the_end_shows_nothing_rather_than_everything() {
     let mut world = World::default();
     let (strip, bodies) = strip_with_bodies(&mut world, 2);
 
-    // A panel was removed while its tab was selected.
     world
         .get_component_for_entity_mut::<UITabStrip>(strip)
         .unwrap()

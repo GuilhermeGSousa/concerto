@@ -85,8 +85,7 @@ pub(crate) struct RegisteredEditor {
     pub adapter: Arc<dyn ErasedEditor>,
 }
 
-/// Components and typed editors available to the inspector. `Default` includes
-/// numeric editors for f32, f64, Vec3 and Quat. Later registration replaces them.
+/// Components and typed editors available to the inspector.
 #[derive(Resource)]
 pub struct InspectorRegistry {
     components: HashMap<TypeId, EditableComponent>,
@@ -137,8 +136,7 @@ impl InspectorRegistry {
         self.editors.get(&id)
     }
 
-    /// Collect fresh owned snapshots, preferring an editor for each node over its
-    /// children. This direct API is uncached; the inspector system caches its results.
+    /// Collect fresh owned snapshots, preferring an editor for each node over its children.
     pub fn collect(&self, root: &dyn Editable) -> Vec<Property> {
         let mut collector = Collect {
             registry: self,
@@ -149,8 +147,7 @@ impl InspectorRegistry {
         collector.properties
     }
 
-    /// Take fresh snapshots of a registered component, or return `None` if the
-    /// component is absent or unregistered. This direct API is uncached.
+    /// Take fresh snapshots of a registered component, or `None` if it is absent or unregistered.
     pub fn collect_component(
         &self,
         world: &World,
@@ -333,8 +330,6 @@ impl EditableApp for App {
     }
 }
 
-/// A stamped handle, so registering an editor marks the registry changed and
-/// every inspector row rebuilds against it.
 fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
     let world = app.main_mut().world_mut();
     assert!(
@@ -344,9 +339,7 @@ fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
     ResMut::new(world.as_unsafe_world_cell_mut())
 }
 
-/// Apply one captured edit to the live world. Useful for headless editor hosts.
-/// Rejection can stamp the component's changed tick, since validation requires
-/// mutable access; adapters must leave its contents unchanged on error.
+/// Apply one captured edit to the live world.
 pub fn apply_property_commit(world: &mut World, commit: PropertyCommit) -> Result<(), EditError> {
     let row = &commit.row;
     let registry = world
@@ -372,11 +365,6 @@ pub fn apply_property_commit(world: &mut World, commit: PropertyCommit) -> Resul
 }
 
 /// Drain queued edits without consulting current selection or UI entity lifetime.
-///
-/// This is the editor's dynamic mutation boundary: captured component types are
-/// registered at runtime, so a static `Query<T>` cannot declare the full write
-/// set. Keep exclusive access here until ECS supports runtime component access;
-/// presentation and user adapters do not receive this world borrow.
 pub fn apply_property_commits(world: &mut World) {
     let Some(commits) = world.get_resource_mut::<PropertyCommits>() else {
         return;
@@ -441,7 +429,6 @@ mod tests {
                 },
             )
             .unwrap();
-        // A simulation update after the snapshot must survive edits to other slots.
         world
             .get_component_for_entity_mut::<Transform>(entity)
             .unwrap()

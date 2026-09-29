@@ -144,40 +144,14 @@ fn advance_capture(
 }
 
 /// Opts a node into hit testing and click events.
-///
-/// Add this to any UI entity that should receive [`UIClick`] events or
-/// contribute to [`HoveredNode`].  Deliberately separate from
-/// [`UIInteractionStyle`] so that interactability and visual feedback are
-/// independent: a node can be clickable without changing colour, and a node
-/// can show hover colours without being a click target.
 #[derive(Component)]
 pub struct Interactable;
 
-/// Marks a node as non-interactive.  When present, `apply_interaction_styles`
-/// uses `UIInteractionStyle::disabled` regardless of cursor position.
+/// Marks a node as non-interactive.
 #[derive(Component)]
 pub struct UIDisabled;
 
 /// Per-node colour palette for the four interaction states.
-///
-/// Attach this alongside [`UIMaterial`] to get automatic hover/press colour
-/// changes.  The system `apply_interaction_styles` writes the correct colour
-/// into `UIMaterial::color` each frame based on the current cursor position and
-/// left-button state.
-///
-/// # Example
-/// ```rust,ignore
-/// (
-///     UINode::default(),
-///     UIMaterial::flat(Color::rgba(0.2, 0.2, 0.2, 1.0)),
-///     UIInteractionStyle {
-///         normal:   Color::rgba(0.20, 0.20, 0.20, 1.0),
-///         hovered:  Color::rgba(0.28, 0.28, 0.28, 1.0),
-///         pressed:  Color::rgba(0.14, 0.14, 0.14, 1.0),
-///         disabled: Color::rgba(0.10, 0.10, 0.10, 0.5),
-///     },
-/// )
-/// ```
 #[derive(Component, Clone)]
 pub struct UIInteractionStyle {
     pub normal: Color,
@@ -228,12 +202,7 @@ pub struct UIPointerLeave {
     pub position: Vec2,
 }
 
-/// Walks all [`UILayout`]s each frame, determines which one (if any) is
-/// under the cursor, updates [`HoveredNode`], and fires [`UIClick`] events on
-/// left-button interaction events.
-///
-/// Runs in `LateUpdate`, after `compute_ui_nodes` has populated
-/// [`UILayout`] for the current frame.
+/// Walks all [`UILayout`]s each frame, determines which one (if any) is under the cursor, updates [`HoveredNode`], and fires [`UIClick`] events on left-button interaction events.
 pub(crate) fn update_ui_interaction(
     computed_nodes: Query<(Entity, &UILayout, &Interactable), Without<UIDisabled>>,
     input: Res<Input>,
@@ -249,7 +218,6 @@ pub(crate) fn update_ui_interaction(
 ) {
     let cursor = window.logical_pointer_position(&input);
 
-    // Pick the node highest in the Z-order that contains the cursor.
     let mut best: Option<(Entity, i64)> = None;
     for (entity, node, _) in computed_nodes.iter() {
         if node.rect.contains(cursor)
@@ -317,13 +285,6 @@ pub(crate) fn update_ui_interaction(
 }
 
 /// Drives [`UIMaterial::color`] from [`UIInteractionStyle`] each frame.
-///
-/// For each entity that has both components:
-/// - If it has [`UIDisabled`], use `style.disabled`.
-/// - Else if it is the currently hovered node and the left button is held,
-///   use `style.pressed`.
-/// - Else if it is hovered, use `style.hovered`.
-/// - Otherwise use `style.normal`.
 pub(crate) fn apply_interaction_styles(
     hovered: Res<HoveredNode>,
     input: Res<Input>,

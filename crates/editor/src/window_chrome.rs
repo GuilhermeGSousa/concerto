@@ -1,10 +1,4 @@
 //! What a title bar would have given us, now that the window has none.
-//!
-//! Move, minimise, maximise, close and resize are all the window manager's job
-//! normally; undecorated, the application has to offer them itself. Moving and
-//! resizing are started by the event loop the moment the button goes down
-//! (see [`WindowGestureRegion`]); all this module does is publish where the
-//! frame's edges and title band currently are.
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
@@ -34,18 +28,13 @@ use crate::fonts::{glyph, icon};
 
 pub const PANEL_ID: &str = "concerto.window";
 
-/// Width of the invisible strip along each window edge that starts a resize.
 const GRIP: f32 = 6.0;
-/// Corners are square and larger, because hitting one is fiddly otherwise.
 const CORNER: f32 = 14.0;
-/// Grips sit above every panel; a card must not swallow the window's edge.
 const GRIP_LAYER: i32 = 100;
-/// The title band sits above the scene but below the buttons standing in it.
 const DRAG_LAYER: i32 = 50;
 const CONTROL_LAYER: i32 = 60;
 
 /// Marks an interactive title-strip control that must block window dragging.
-/// Tab buttons and their close controls use this marker too.
 #[derive(Component, Clone, Copy, Default)]
 pub struct WindowChromeControl;
 
@@ -56,26 +45,16 @@ enum Control {
     Close,
 }
 
-/// The area you drag to move the window: the band across the top, where a
-/// title bar would be. It covers the brand and the stats readout, both of which
-/// are labels rather than controls; the window buttons sit above it.
 #[derive(Component)]
 struct DragHandle;
 
 #[derive(Component, Clone, Copy)]
 struct ResizeGrip(ResizeDirection);
 
-/// Marks the glyph that has to follow whether the window is maximised.
 #[derive(Component)]
 struct MaximiseGlyph;
 
 /// Whether the window manager draws the frame.
-///
-/// Undecorated is what the design asks for, but moving and resizing an
-/// undecorated window is a request to the window manager
-/// (`_NET_WM_MOVERESIZE`, `xdg_toplevel::move`) that a compositor is free to
-/// ignore. `--decorated` hands the whole job back to the window manager for
-/// anyone whose desktop does.
 pub struct WindowChromePlugin {
     pub decorated: bool,
 }
@@ -112,62 +91,52 @@ fn build_controls(
     theme: Res<UITheme>,
 ) {
     window.window_handle.set_decorations(style.decorated);
-    // An undecorated window is not always given focus by the window manager,
-    // and without focus it receives no keys at all.
     window.window_handle.focus_window();
     if style.decorated {
         return;
     }
 
     if let Some(root) = registry.root() {
-        let bar = cmd
-            .spawn((
-                UINode {
-                    height: UIValue::Px(TOP_STRIP),
-                    position: Position::Absolute,
-                    inset: UIInset {
-                        top: UIValue::Px(0.0),
-                        left: UIValue::Px(0.0),
-                        right: UIValue::Px(0.0),
-                        ..Default::default()
-                    },
-                    z_index: DRAG_LAYER,
+        cmd.entity(root).add_child((
+            UINode {
+                height: UIValue::Px(TOP_STRIP),
+                position: Position::Absolute,
+                inset: UIInset {
+                    top: UIValue::Px(0.0),
+                    left: UIValue::Px(0.0),
+                    right: UIValue::Px(0.0),
                     ..Default::default()
                 },
-                Interactable,
-                DragHandle,
-            ))
-            .entity();
-        cmd.add_child(root, bar);
+                z_index: DRAG_LAYER,
+                ..Default::default()
+            },
+            Interactable,
+            DragHandle,
+        ));
     }
 
     if let Some(body) = registry.body(PANEL_ID) {
-        let bar = cmd
-            .spawn(UINode {
-                flex_direction: FlexDirection::Row,
-                align_items: Some(taffy::AlignItems::Center),
-                gap: glam::Vec2::new(2.0, 0.0),
-                padding: UIRect::axes(0.0, theme.spacing_md),
-                ..Default::default()
-            })
-            .entity();
-        cmd.add_child(body, bar);
+        let mut body_queue = cmd.entity(body);
+        let mut bar = body_queue.spawn_child_queue(UINode {
+            flex_direction: FlexDirection::Row,
+            align_items: Some(taffy::AlignItems::Center),
+            gap: glam::Vec2::new(2.0, 0.0),
+            padding: UIRect::axes(0.0, theme.spacing_md),
+            ..Default::default()
+        });
 
         for (control, mark) in [
             (Control::Minimise, glyph::MINUS),
             (Control::Maximise, glyph::CORNERS_OUT),
             (Control::Close, glyph::X),
         ] {
-            let button = cmd
-                .spawn((
+            bar = bar.add_child_with(
+                (
                     UINode {
-                        // Big enough that the glyph's line box fits: a line
-                        // taller than its box is dropped, not clipped.
                         width: UIValue::Px(30.0),
                         height: UIValue::Px(26.0),
                         flex_shrink: 0.0,
                         padding: UIRect::axes(3.0, 8.0),
-                        // Above the title band, which spans the whole strip.
                         z_index: CONTROL_LAYER,
                         ..Default::default()
                     },
@@ -183,7 +152,6 @@ fn build_controls(
                     UIInteractionStyle {
                         normal: Color::srgba(0.0, 0.0, 0.0, 0.0),
                         hovered: theme.surface_hovered,
-                        // Closing is the one that wants to look dangerous.
                         pressed: match control {
                             Control::Close => theme.error,
                             _ => theme.accent,
@@ -192,24 +160,24 @@ fn build_controls(
                     },
                     control,
                     WindowChromeControl,
-                ))
-                .entity();
-            cmd.add_child(bar, button);
-            if matches!(control, Control::Maximise) {
-                cmd.insert(MaximiseGlyph, button);
-            }
+                ),
+                |mut button| {
+                    if matches!(control, Control::Maximise) {
+                        button.insert(MaximiseGlyph);
+                    }
+                },
+            );
         }
     }
 
     if let Some(root) = registry.root() {
+        let mut root_queue = cmd.entity(root);
         for grip in grips() {
-            let entity = cmd.spawn(grip).entity();
-            cmd.add_child(root, entity);
+            root_queue = root_queue.add_child(grip);
         }
     }
 }
 
-/// The eight edge and corner strips, as (node, marker, hit-test opt-in) triples.
 fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
     let px = UIValue::Px;
     let edge = |inset: UIInset, width: UIValue, height: UIValue, direction| {
@@ -233,8 +201,6 @@ fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
                 height: px(CORNER),
                 position: Position::Absolute,
                 inset,
-                // Above the edges, so a corner is a corner and not the edge it
-                // overlaps.
                 z_index: GRIP_LAYER + 1,
                 ..Default::default()
             },
@@ -293,12 +259,6 @@ fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
     ]
 }
 
-/// Publishes the window's own frame — the edges and the title band — for the
-/// event loop to hit-test when a press arrives.
-///
-/// Rectangles rather than "what is hovered": the press is acted on as it
-/// happens, and the hover is always a frame behind it, so a press that lands
-/// as the pointer reaches a grip would find nothing there.
 fn publish_window_gestures(
     grips: Query<(&ResizeGrip, &UILayout)>,
     handles: Query<(&DragHandle, &UILayout)>,
@@ -317,20 +277,16 @@ fn publish_window_gestures(
     for (_, layout) in handles.iter() {
         push_zone(&mut zones, layout, Some(WindowGesture::Move));
     }
-    // A control standing in the title band is a button first.
     for (_, layout) in controls.iter() {
         push_zone(&mut zones, layout, None);
     }
     for (_, layout) in chrome_controls.iter() {
         push_zone(&mut zones, layout, None);
     }
-    // Topmost first, so a corner beats the edge it overlaps and a button beats
-    // the band it stands in — the order the UI itself paints them in.
     zones.sort_by_key(|(paint_order, _)| std::cmp::Reverse(*paint_order));
     region.zones = zones.into_iter().map(|(_, zone)| zone).collect();
 }
 
-/// Adds a node's visible rectangle, skipping it when clipping leaves nothing.
 fn push_zone(
     zones: &mut Vec<(i64, WindowGestureZone)>,
     layout: &UILayout,

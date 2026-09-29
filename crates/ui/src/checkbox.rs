@@ -11,13 +11,6 @@ use concerto_window::input::MouseButton;
 use crate::{interaction::UIClick, material::UIMaterial};
 
 /// A toggleable boolean widget.
-///
-/// Attach this alongside [`UIMaterial`] and [`Interactable`](crate::interaction::Interactable)
-/// to get a checkbox that flips on each click and fires [`UICheckboxChanged`].
-///
-/// The `sync_checkbox_material` system automatically drives `UIMaterial::color`
-/// from the `checked` state each frame, so you only need to set the initial
-/// material colours via [`UIMaterial::with_border`].
 #[derive(Component)]
 pub struct UICheckbox {
     pub checked: bool,

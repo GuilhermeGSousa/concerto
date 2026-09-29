@@ -1,8 +1,4 @@
 //! The document tab strip.
-//!
-//! Tabs are deliberately just views over editor document entities.  The
-//! document owns the asset and its state; this module owns the small amount of
-//! chrome needed to activate or close it.
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::query::filter::With;
 use concerto_ecs::{
@@ -46,7 +42,6 @@ struct TabLabel {
     document: Entity,
 }
 
-/// Marker for the scrolling viewport created by the shell.
 #[derive(Component)]
 pub struct TabStrip;
 
@@ -163,8 +158,13 @@ fn sync_tabs(
             }
         }
         if !existing_tabs.iter().any(|tab| tab.document == entity) {
-            let button = cmd
-                .spawn((
+            let mark = match kind {
+                "Scene" => glyph::CUBE,
+                "Texture" => glyph::IMAGE,
+                _ => glyph::FILE,
+            };
+            cmd.entity(content).add_child_with(
+                (
                     UINode {
                         height: UIValue::Px(30.0),
                         flex_direction: FlexDirection::Row,
@@ -192,76 +192,64 @@ fn sync_tabs(
                     Interactable,
                     EditorTab { document: entity },
                     WindowChromeControl,
-                ))
-                .entity();
-            cmd.add_child(content, button);
-            let mark = match kind {
-                "Scene" => glyph::CUBE,
-                "Texture" => glyph::IMAGE,
-                _ => glyph::FILE,
-            };
-            let mark_entity = cmd
-                .spawn((
-                    UINode {
-                        width: UIValue::Px(16.0),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        color: if is_active {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        },
-                        ..icon(&theme, mark, theme.font_size_sm)
-                    },
-                ))
-                .entity();
-            cmd.add_child(button, mark_entity);
-            let label = cmd
-                .spawn((
-                    UINode {
-                        flex_shrink: 1.0,
-                        max_width: UIValue::Px(220.0),
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        text: title,
-                        wrap: false,
-                        ellipsis: true,
-                        font_size: theme.font_size_md,
-                        line_height: theme.line_height(theme.font_size_md),
-                        color: if is_active {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        },
-                        ..Default::default()
-                    },
-                    TabLabel { document: entity },
-                ))
-                .entity();
-            cmd.add_child(button, label);
-            let close = cmd
-                .spawn((
-                    UINode {
-                        width: UIValue::Px(18.0),
-                        height: UIValue::Px(24.0),
-                        padding: UIRect::axes(3.0, 3.0),
-                        flex_shrink: 0.0,
-                        z_index: 71,
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        color: theme.text_muted,
-                        ..icon(&theme, glyph::X, theme.font_size_sm)
-                    },
-                    Interactable,
-                    EditorTabClose { document: entity },
-                    WindowChromeControl,
-                ))
-                .entity();
-            cmd.add_child(button, close);
+                ),
+                |button| {
+                    button
+                        .add_child((
+                            UINode {
+                                width: UIValue::Px(16.0),
+                                flex_shrink: 0.0,
+                                ..Default::default()
+                            },
+                            TextComponent {
+                                color: if is_active {
+                                    theme.text
+                                } else {
+                                    theme.text_muted
+                                },
+                                ..icon(&theme, mark, theme.font_size_sm)
+                            },
+                        ))
+                        .add_child((
+                            UINode {
+                                flex_shrink: 1.0,
+                                max_width: UIValue::Px(220.0),
+                                ..Default::default()
+                            },
+                            TextComponent {
+                                text: title.clone(),
+                                wrap: false,
+                                ellipsis: true,
+                                font_size: theme.font_size_md,
+                                line_height: theme.line_height(theme.font_size_md),
+                                color: if is_active {
+                                    theme.text
+                                } else {
+                                    theme.text_muted
+                                },
+                                ..Default::default()
+                            },
+                            TabLabel { document: entity },
+                        ))
+                        .add_child((
+                            UINode {
+                                width: UIValue::Px(18.0),
+                                height: UIValue::Px(24.0),
+                                padding: UIRect::axes(3.0, 3.0),
+                                flex_shrink: 0.0,
+                                z_index: 71,
+                                ..Default::default()
+                            },
+                            TextComponent {
+                                color: theme.text_muted,
+                                ..icon(&theme, glyph::X, theme.font_size_sm)
+                            },
+                            Interactable,
+                            EditorTabClose { document: entity },
+                            WindowChromeControl,
+                        ));
+                },
+            );
         }
     }
 
@@ -320,8 +308,6 @@ fn scroll_tabs(
     }
     scroll.offset += delta;
     let width = strip_layout.rect.size.x;
-    // Child bounds remain authoritative even when the absolutely positioned
-    // content box is constrained to the viewport's available width by layout.
     let extent = tabs
         .iter()
         .map(|(_, layout)| layout.rect.max().x - content_layout.rect.min.x)

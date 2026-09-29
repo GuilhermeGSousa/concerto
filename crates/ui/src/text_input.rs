@@ -10,15 +10,6 @@ use concerto_window::input::{Input, InputState, KeyCode, PhysicalKey};
 use crate::{focus::FocusedWidget, text::TextComponent};
 
 /// A single-line text input widget.
-///
-/// Place this on an entity that also has [`UINode`](crate::node::UINode),
-/// [`UIMaterial`], [`TextComponent`], and
-/// [`Interactable`](crate::interaction::Interactable).
-///
-/// The `update_text_inputs` system reads typed characters from `Input` when
-/// this entity has focus, updates `TextComponent::text` each frame (showing
-/// a `|` cursor when focused, or the placeholder when empty and unfocused),
-/// and fires [`UITextInputChanged`] whenever `value` changes.
 #[derive(Component)]
 pub struct UITextInput {
     /// Current string value of the field.
@@ -82,12 +73,6 @@ fn finish_key(just_pressed: impl Fn(KeyCode) -> bool) -> Option<Finish> {
 pub struct TextInputResource;
 
 /// Processes keyboard input for focused [`UITextInput`] widgets.
-///
-/// - Typed printable characters are inserted at the cursor.
-/// - Backspace (on press) removes the character before the cursor.
-/// - Left/Right arrow keys move the cursor by one `char`.
-/// - `TextComponent::text` is updated every frame to reflect the current
-///   value + cursor indicator (focused) or placeholder (empty + unfocused).
 pub(crate) fn update_text_inputs(
     mut focused: ResMut<FocusedWidget>,
     input: Res<Input>,
@@ -138,7 +123,6 @@ pub(crate) fn update_text_inputs(
                 changed = true;
             }
 
-            // --- printable characters ---
             for &c in input.typed_chars().iter().filter(|_| !command) {
                 delete_selection(&mut text_input);
                 let cursor = text_input.cursor;
@@ -147,7 +131,6 @@ pub(crate) fn update_text_inputs(
                 changed = true;
             }
 
-            // --- backspace: delete character before cursor ---
             let backspace = input.get_key_state(PhysicalKey::Code(KeyCode::Backspace));
             if backspace == InputState::Pressed && text_input.cursor > 0 {
                 if !delete_selection(&mut text_input) {
@@ -169,7 +152,6 @@ pub(crate) fn update_text_inputs(
                 }
             }
 
-            // --- arrow keys: move cursor ---
             let left = input.get_key_state(PhysicalKey::Code(KeyCode::ArrowLeft));
             if left == InputState::Pressed && text_input.cursor > 0 {
                 begin_or_clear_selection(&mut text_input, shift);
@@ -214,7 +196,6 @@ pub(crate) fn update_text_inputs(
             }
         }
 
-        // --- update displayed text and border colour ---
         let display = if is_focused {
             let mut s = text_input.value.clone();
             s.insert(text_input.cursor, '|');
@@ -228,9 +209,6 @@ pub(crate) fn update_text_inputs(
         if text.text != display {
             text.text = display;
         }
-
-        // The caret says where focus is; a field keeps whatever border the
-        // panel gave it.
     }
 }
 
