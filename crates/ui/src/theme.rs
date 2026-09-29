@@ -1,6 +1,8 @@
 use concerto_color::Color;
 use concerto_ecs::resource::Resource;
 
+use crate::interaction::UIInteractionStyle;
+
 /// Semantic colors and metrics for the Concerto editor's Nocturne UI.
 #[derive(Resource, Clone)]
 pub struct UITheme {
@@ -34,10 +36,70 @@ pub struct UITheme {
     pub font_size_lg: f32,
 }
 
+/// The colour scheme an interactive element follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonVariant {
+    /// A raised control: buttons, menu rows.
+    Solid,
+    /// No fill until hovered: list rows, icon controls.
+    Ghost,
+    /// A document tab: sits on the surface, raised when selected.
+    Tab,
+}
+
+/// A chip's fill, outline and text colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChipColors {
+    pub fill: Color,
+    pub border: Color,
+    pub text: Color,
+}
+
+const DISABLED_SOLID: Color = Color::srgba(0.09, 0.075, 0.11, 0.55);
+
 impl UITheme {
     /// Leading for a given size.
     pub fn line_height(&self, font_size: f32) -> f32 {
         (font_size * 1.4).round()
+    }
+
+    /// The wash of accent behind a selected row.
+    pub fn selection(&self) -> Color {
+        let accent = self.accent.to_srgba();
+        Color::srgba(accent.r, accent.g, accent.b, 0.2)
+    }
+
+    /// The interaction colours for a variant, raised to its selected fill when `selected`.
+    pub fn interaction(&self, variant: ButtonVariant, selected: bool) -> UIInteractionStyle {
+        match variant {
+            ButtonVariant::Solid => UIInteractionStyle {
+                normal: if selected { self.surface_hovered } else { self.surface_raised },
+                hovered: self.surface_hovered,
+                pressed: self.accent,
+                disabled: DISABLED_SOLID,
+            },
+            ButtonVariant::Ghost => UIInteractionStyle {
+                normal: if selected { self.selection() } else { Color::TRANSPARENT },
+                hovered: self.surface_hovered,
+                pressed: self.selection(),
+                disabled: Color::TRANSPARENT,
+            },
+            ButtonVariant::Tab => UIInteractionStyle {
+                normal: if selected { self.surface_raised } else { self.surface },
+                hovered: self.surface_hovered,
+                pressed: self.accent,
+                disabled: self.surface,
+            },
+        }
+    }
+
+    /// A chip's colours, marked with the accent when `selected`.
+    pub fn chip_colors(&self, selected: bool) -> ChipColors {
+        if selected {
+            ChipColors { fill: self.selection(), border: self.accent, text: self.text }
+        } else {
+            ChipColors { fill: Color::TRANSPARENT, border: self.border, text: self.text_muted }
+        }
     }
 
     /// Nocturne: a quiet, compact dark interface.

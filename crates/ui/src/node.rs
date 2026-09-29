@@ -99,6 +99,13 @@ impl UIRect {
     }
 }
 
+impl From<f32> for UIRect {
+    /// The same value on all four sides.
+    fn from(value: f32) -> Self {
+        Self::all(value)
+    }
+}
+
 /// Offsets of a positioned node from its parent's edges.
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct UIInset {
