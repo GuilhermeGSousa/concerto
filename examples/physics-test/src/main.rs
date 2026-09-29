@@ -70,6 +70,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             color: Color::rgba(1.0, 1.0, 1.0, 1.0),
             intensity: 100.0,
             light_type: LightType::Point,
+            range: 0.0,
             shadowmaps_enabled: false,
         },
         Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::IDENTITY),

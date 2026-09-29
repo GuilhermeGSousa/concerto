@@ -15,13 +15,13 @@ use concerto_ecs::{
     Entity,
 };
 use concerto_window::plugin::Window;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
 use crate::{
     assets::texture::Texture,
-    components::render_entity::RenderEntity,
+    components::{camera_environment::CameraEnvironment, render_entity::RenderEntity},
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
@@ -112,6 +112,9 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
+    pub(crate) fog_color: Vec4,
+    pub(crate) fog_params: Vec4,
+    pub(crate) ambient: Vec4,
 }
 
 impl CameraUniform {
@@ -119,12 +122,21 @@ impl CameraUniform {
         Self {
             view_pos: Vec3::ZERO,
             view_proj: Mat4::IDENTITY,
+            fog_color: Vec4::ZERO,
+            fog_params: Vec4::ZERO,
+            ambient: Vec4::ZERO,
         }
     }
 
-    pub fn update_view_proj(&mut self, camera: &Camera, transform: &GlobalTransform) {
+    pub fn update_view_proj(
+        &mut self,
+        camera: &Camera,
+        environment: Option<&CameraEnvironment>,
+        transform: &GlobalTransform,
+    ) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
+        environment.copied().unwrap_or_default().fill(self);
     }
 }
 
@@ -179,9 +191,16 @@ fn publish_render_target(
     render_textures.insert(handle.id(), target.clone());
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn extract_cameras(
-    cameras: Extracted<Query<(&Camera, &GlobalTransform, &RenderEntity)>>,
+    cameras: Extracted<
+        Query<(
+            &Camera,
+            Option<&CameraEnvironment>,
+            &GlobalTransform,
+            &RenderEntity,
+        )>,
+    >,
     render_cameras: Query<&mut RenderCamera>,
     mut cmd: CommandQueue,
     device: Res<RenderDevice>,
@@ -191,11 +210,11 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (camera, transform, render_entity) in cameras.iter() {
+    for (camera, environment, transform, render_entity) in cameras.iter() {
         let render_entity = **render_entity;
 
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(camera, transform);
+        camera_uniform.update_view_proj(camera, environment, transform);
 
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;

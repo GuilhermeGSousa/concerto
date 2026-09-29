@@ -457,6 +457,7 @@ impl Importer for GltfImporter {
                         intensity: light.intensity() / LUMINOUS_EFFICACY,
                         shadowmaps_enabled: false,
                         light_type,
+                        range: light.range().unwrap_or(0.0),
                     },
                 )?;
                 push_node_component(&mut scene_node, &SyncWithRenderWorld)?;

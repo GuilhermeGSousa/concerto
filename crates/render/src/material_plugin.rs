@@ -140,11 +140,9 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
-// mirror. Upserts like the other extract systems: an entity whose render
-// mirror already carries `RenderMaterialComponent<M>` is left alone (this
-// matches the old `Added`-gated behaviour — swapping a material handle after
-// the fact was never picked up either), so this only ever creates, never
-// updates.
+// mirror. Upserts like the other extract systems: a mirror that already names
+// the same material asset is left alone, and one naming a different asset is
+// replaced, so swapping the handle on a live entity takes effect next frame.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     render_materials: Query<&RenderMaterialComponent<M>>,
@@ -153,7 +151,10 @@ pub(crate) fn extract_materials<M: Material>(
     for (material, render_entity) in materials.iter() {
         let render_entity = **render_entity;
 
-        if render_materials.get_entity(render_entity).is_some() {
+        if render_materials
+            .get_entity(render_entity)
+            .is_some_and(|existing| existing.material_asset_id == material.handle.id())
+        {
             continue;
         }
 
