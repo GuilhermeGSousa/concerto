@@ -214,7 +214,7 @@ impl AnimationNodeInstance for AnimationClipNodeInstance {
             return;
         };
 
-        self.time += delta_time * self.play_rate;
+        self.time += delta_time * self.play_rate * clip_node.play_rate;
 
         match clip_node.play_mode {
             AnimationPlayMode::Loop => {
@@ -242,6 +242,7 @@ pub struct AnimationClipNode {
     clip: AssetHandle<AnimationClip>,
     play_mode: AnimationPlayMode,
     start_time: f32,
+    play_rate: f32,
 }
 
 impl AnimationClipNode {
@@ -250,6 +251,7 @@ impl AnimationClipNode {
             clip,
             play_mode: AnimationPlayMode::Loop,
             start_time: 0.0,
+            play_rate: 1.0,
         }
     }
 
@@ -264,6 +266,13 @@ impl AnimationClipNode {
 
     pub fn with_play_mode(mut self, play_mode: AnimationPlayMode) -> Self {
         self.play_mode = play_mode;
+        self
+    }
+
+    /// Plays the clip `play_rate` times faster than authored (`0.5` is half
+    /// speed).
+    pub fn with_play_rate(mut self, play_rate: f32) -> Self {
+        self.play_rate = play_rate.max(0.0);
         self
     }
 }

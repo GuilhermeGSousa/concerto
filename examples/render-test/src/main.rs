@@ -143,6 +143,7 @@ fn spawn_camera_terminal(
             color: Color::WHITE,
             intensity: 100.0,
             light_type: LightType::Point,
+            range: 0.0,
         },
         TerminalOutput,
         Transform::from_translation_rotation(Vec3::ZERO, Quat::IDENTITY),
@@ -158,6 +159,7 @@ fn spawn_camera_windowed(mut cmd: CommandQueue) {
             color: Color::WHITE,
             intensity: 10.0,
             light_type: LightType::Point,
+            range: 0.0,
             shadowmaps_enabled: false,
         },
     );

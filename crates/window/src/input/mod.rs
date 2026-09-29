@@ -1,5 +1,4 @@
 pub mod actions;
-use cfg_if::cfg_if;
 use concerto_ecs::resource::Resource;
 use glam::Vec2;
 use std::collections::HashMap;
@@ -16,15 +15,64 @@ pub enum InputState {
     Up,
 }
 
+#[derive(Clone, Copy, Default)]
+struct ButtonState {
+    down: bool,
+    pressed: bool,
+    released: bool,
+}
+
+impl ButtonState {
+    fn press(&mut self) {
+        if !self.down {
+            self.down = true;
+            self.pressed = true;
+        }
+    }
+
+    fn release(&mut self) {
+        if self.down {
+            self.down = false;
+            self.released = true;
+        }
+    }
+
+    fn apply(&mut self, state: ElementState) {
+        match state {
+            ElementState::Pressed => self.press(),
+            ElementState::Released => self.release(),
+        }
+    }
+
+    fn end_frame(&mut self) {
+        self.pressed = false;
+        self.released = false;
+    }
+
+    fn state(self) -> InputState {
+        if self.pressed {
+            InputState::Pressed
+        } else if self.released {
+            InputState::Released
+        } else if self.down {
+            InputState::Down
+        } else {
+            InputState::Up
+        }
+    }
+
+    fn held(self) -> bool {
+        self.down || self.pressed
+    }
+}
+
 #[derive(Resource)]
 pub struct Input {
-    input_map: HashMap<winit::keyboard::PhysicalKey, InputState>,
-    mouse_button_map: HashMap<MouseButton, InputState>,
+    input_map: HashMap<winit::keyboard::PhysicalKey, ButtonState>,
+    mouse_button_map: HashMap<MouseButton, ButtonState>,
     mouse_delta: Vec2,
     mouse_position: Vec2,
     typed_chars: Vec<char>,
-    #[cfg(target_arch = "wasm32")]
-    previous_mouse_delta: Vec2,
 }
 
 impl Input {
@@ -35,39 +83,33 @@ impl Input {
             mouse_delta: Vec2::ZERO,
             mouse_position: Vec2::ZERO,
             typed_chars: Vec::new(),
-            #[cfg(target_arch = "wasm32")]
-            previous_mouse_delta: Vec2::ZERO,
         }
     }
 
     pub fn get_key_state(&self, key: PhysicalKey) -> InputState {
-        match self.input_map.get(&key) {
-            Some(state) => *state,
-            None => InputState::Up,
-        }
+        self.input_map
+            .get(&key)
+            .map_or(InputState::Up, |state| state.state())
     }
 
     /// Every key that entered the pressed state this frame.
     pub fn just_pressed_keys(&self) -> impl Iterator<Item = PhysicalKey> + '_ {
         self.input_map
             .iter()
-            .filter(|(_, state)| **state == InputState::Pressed)
+            .filter(|(_, state)| state.pressed)
             .map(|(key, _)| *key)
     }
 
     pub fn is_just_pressed(&self, key: PhysicalKey) -> bool {
-        self.get_key_state(key) == InputState::Pressed
+        self.input_map.get(&key).is_some_and(|state| state.pressed)
     }
 
     pub fn is_held(&self, key: PhysicalKey) -> bool {
-        matches!(
-            self.get_key_state(key),
-            InputState::Pressed | InputState::Down
-        )
+        self.input_map.get(&key).is_some_and(|state| state.held())
     }
 
     pub fn is_just_released(&self, key: PhysicalKey) -> bool {
-        self.get_key_state(key) == InputState::Released
+        self.input_map.get(&key).is_some_and(|state| state.released)
     }
 
     pub fn mouse_delta(&self) -> Vec2 {
@@ -79,25 +121,27 @@ impl Input {
     }
 
     pub fn get_mouse_button_state(&self, button: MouseButton) -> InputState {
-        match self.mouse_button_map.get(&button) {
-            Some(state) => *state,
-            None => InputState::Up,
-        }
+        self.mouse_button_map
+            .get(&button)
+            .map_or(InputState::Up, |state| state.state())
     }
 
     pub fn is_mouse_button_just_pressed(&self, button: MouseButton) -> bool {
-        self.get_mouse_button_state(button) == InputState::Pressed
+        self.mouse_button_map
+            .get(&button)
+            .is_some_and(|state| state.pressed)
     }
 
     pub fn is_mouse_button_held(&self, button: MouseButton) -> bool {
-        matches!(
-            self.get_mouse_button_state(button),
-            InputState::Pressed | InputState::Down
-        )
+        self.mouse_button_map
+            .get(&button)
+            .is_some_and(|state| state.held())
     }
 
     pub fn is_mouse_button_just_released(&self, button: MouseButton) -> bool {
-        self.get_mouse_button_state(button) == InputState::Released
+        self.mouse_button_map
+            .get(&button)
+            .is_some_and(|state| state.released)
     }
 
     /// Characters typed this frame (text input, after modifier keys are applied).
@@ -110,50 +154,18 @@ impl Input {
         self.typed_chars.push(c);
     }
 
+    /// Ends the frame: this frame's presses and releases become history.
     pub fn update(&mut self) {
-        for state in self.input_map.values_mut() {
-            match state {
-                InputState::Pressed => *state = InputState::Down,
-                InputState::Released => *state = InputState::Up,
-                _ => {}
-            }
-        }
-        for state in self.mouse_button_map.values_mut() {
-            match state {
-                InputState::Pressed => *state = InputState::Down,
-                InputState::Released => *state = InputState::Up,
-                _ => {}
-            }
-        }
+        self.input_map.values_mut().for_each(ButtonState::end_frame);
+        self.mouse_button_map
+            .values_mut()
+            .for_each(ButtonState::end_frame);
         self.mouse_delta = Vec2::ZERO;
         self.typed_chars.clear();
     }
 
     pub fn update_key_input(&mut self, key: PhysicalKey, state: ElementState) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.input_map.entry(key) {
-            match state {
-                ElementState::Pressed => {
-                    e.insert(InputState::Pressed);
-                }
-                ElementState::Released => {
-                    e.insert(InputState::Released);
-                }
-            };
-            return;
-        }
-
-        match state {
-            ElementState::Pressed => {
-                if self.input_map.get(&key) == Some(&InputState::Up) {
-                    self.input_map.insert(key, InputState::Pressed);
-                }
-            }
-            ElementState::Released => {
-                if self.input_map.get(&key) == Some(&InputState::Down) {
-                    self.input_map.insert(key, InputState::Released);
-                }
-            }
-        }
+        self.input_map.entry(key).or_default().apply(state);
     }
 
     pub fn update_mouse_position(&mut self, x: f64, y: f64) {
@@ -161,50 +173,70 @@ impl Input {
     }
 
     pub fn update_mouse_button(&mut self, button: MouseButton, state: ElementState) {
-        if let std::collections::hash_map::Entry::Vacant(e) = self.mouse_button_map.entry(button) {
-            match state {
-                ElementState::Pressed => {
-                    e.insert(InputState::Pressed);
-                }
-                ElementState::Released => {
-                    e.insert(InputState::Released);
-                }
-            };
-            return;
-        }
-
-        match state {
-            ElementState::Pressed => {
-                if self.mouse_button_map.get(&button) == Some(&InputState::Up) {
-                    self.mouse_button_map.insert(button, InputState::Pressed);
-                }
-            }
-            ElementState::Released => {
-                if self.mouse_button_map.get(&button) == Some(&InputState::Down) {
-                    self.mouse_button_map.insert(button, InputState::Released);
-                }
-            }
-        }
+        self.mouse_button_map
+            .entry(button)
+            .or_default()
+            .apply(state);
     }
 
+    /// Adds one raw mouse-motion event.
     pub fn update_mouse_delta(&mut self, delta: (f64, f64)) {
-        let delta = Vec2::new(delta.0 as f32, delta.1 as f32);
-
-        cfg_if! {
-            if #[cfg(target_arch = "wasm32")] {
-                self.mouse_delta = delta - self.previous_mouse_delta;
-                self.previous_mouse_delta = delta;
-            }
-            else
-            {
-                self.mouse_delta = delta;
-            }
-        }
+        self.mouse_delta += Vec2::new(delta.0 as f32, delta.1 as f32);
     }
 }
 
 impl Default for Input {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KEY: PhysicalKey = PhysicalKey::Code(KeyCode::KeyW);
+
+    #[test]
+    fn a_tap_within_one_frame_is_seen_and_does_not_stick() {
+        let mut input = Input::new();
+        input.update_key_input(KEY, ElementState::Pressed);
+        input.update_key_input(KEY, ElementState::Released);
+        assert!(input.is_just_pressed(KEY));
+        assert!(input.is_held(KEY));
+        input.update();
+        assert!(!input.is_held(KEY));
+        assert!(input.get_key_state(KEY) == InputState::Up);
+        input.update_mouse_button(MouseButton::Left, ElementState::Pressed);
+        input.update_mouse_button(MouseButton::Left, ElementState::Released);
+        assert!(input.is_mouse_button_just_pressed(MouseButton::Left));
+        input.update();
+        input.update_mouse_button(MouseButton::Left, ElementState::Pressed);
+        assert!(input.is_mouse_button_just_pressed(MouseButton::Left));
+    }
+
+    #[test]
+    fn held_keys_go_pressed_down_released_up() {
+        let mut input = Input::new();
+        input.update_key_input(KEY, ElementState::Pressed);
+        assert!(input.get_key_state(KEY) == InputState::Pressed);
+        input.update();
+        assert!(input.get_key_state(KEY) == InputState::Down);
+        input.update_key_input(KEY, ElementState::Pressed);
+        assert!(!input.is_just_pressed(KEY));
+        input.update_key_input(KEY, ElementState::Released);
+        assert!(input.is_just_released(KEY));
+        input.update();
+        assert!(input.get_key_state(KEY) == InputState::Up);
+    }
+
+    #[test]
+    fn mouse_motion_accumulates_within_a_frame() {
+        let mut input = Input::new();
+        input.update_mouse_delta((3.0, -1.0));
+        input.update_mouse_delta((2.0, 4.0));
+        assert_eq!(input.mouse_delta(), Vec2::new(5.0, 3.0));
+        input.update();
+        assert_eq!(input.mouse_delta(), Vec2::ZERO);
     }
 }

@@ -60,6 +60,7 @@ fn spawn_camera(mut cmd: CommandQueue) {
             color: Color::rgba(1.0, 1.0, 1.0, 1.0),
             intensity: 20.0,
             light_type: LightType::Point,
+            range: 0.0,
             shadowmaps_enabled: false,
         },
     );
