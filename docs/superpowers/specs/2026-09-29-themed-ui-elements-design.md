@@ -351,7 +351,8 @@ Specific rewrites:
 Deleted: the four private `text()` helpers, add_component's
 `sized`/`muted`/`mono`/`divider`, `widgets::button`, `UIText::from_theme`,
 `marks::selection_tint` (→ `theme.selection()`), `marks::TRANSPARENT`
-(→ `Color::TRANSPARENT`), and the showcase's `label`/`panel`/`menu_panel`/`menu_row`.
+(→ `Color::TRANSPARENT`), and the showcase's `label`/`panel`/`menu_panel`
+(`menu_row` survives as a two-line spawn-and-parent helper built on the builders).
 
 Hard-coded per-site pixel values (e.g. `UIRect::axes(6.0, 8.0)`, row heights)
 stay as explicit modifiers. Moving them onto the spacing scale shifts pixels
