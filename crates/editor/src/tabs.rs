@@ -2,14 +2,15 @@
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::query::filter::With;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::CommandQueue, entity::hierarchy::ChildOf,
-    events::event_reader::EventReader,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, command::CommandQueue,
+    entity::hierarchy::ChildOf, events::event_reader::EventReader,
 };
 use concerto_ui::{
     elements::prelude::*,
     interaction::HoveredNode,
     interaction::{Interactable, UIClick, UIInteractionStyle},
     node::{UILayout, UINode, UIRect},
+    sets::UiSet,
     text::UIText,
     theme::{ButtonVariant, UITheme},
     transform::UIValue,
@@ -59,7 +60,7 @@ impl Plugin for TabsPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(LateUpdate, handle_tab_clicks)
             .add_system(LateUpdate, scroll_tabs)
-            .add_system(LateUpdate, sync_tabs);
+            .add_system(LateUpdate, sync_tabs.before(UiSet::Materials));
     }
 }
 

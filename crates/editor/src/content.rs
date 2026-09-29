@@ -4,7 +4,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup},
 };
 use concerto_ecs::{
-    Component, Query, Res, ResMut, Resource, command::CommandQueue,
+    Component, IntoSystemConfig, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
 };
 use concerto_ui::{
@@ -13,6 +13,7 @@ use concerto_ui::{
     material::UIMaterial,
     node::{UINode, UIRect},
     scroll::{UIScrollArea, UIVirtualList},
+    sets::UiSet,
     text::UIText,
     text_input::UITextInputChanged,
     theme::{ButtonVariant, UITheme},
@@ -93,8 +94,8 @@ impl Plugin for ContentPlugin {
             .add_system(LateUpdate, sync_scroll)
             .add_system(LateUpdate, handle_actions)
             .add_system(LateUpdate, refresh_panel)
-            .add_system(LateUpdate, render_marks)
-            .add_system(LateUpdate, render_tags);
+            .add_system(LateUpdate, render_marks.before(UiSet::Materials))
+            .add_system(LateUpdate, render_tags.before(UiSet::Materials));
     }
 }
 
