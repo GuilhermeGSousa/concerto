@@ -197,10 +197,12 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                 let (mark_node, mark_material) = marks::node();
                                 row.add_child((
                                     icon_column(20.0),
-                                    UIText {
-                                        line_height: theme.line_height(theme.font_size_md),
-                                        ..theme.text("").muted().font_size(9.0).no_wrap().into()
-                                    },
+                                    theme
+                                        .text("")
+                                        .muted()
+                                        .font_size(9.0)
+                                        .line_height(theme.line_height(theme.font_size_md))
+                                        .no_wrap(),
                                     Interactable,
                                     TreeRegion,
                                     Action::Toggle(slot),

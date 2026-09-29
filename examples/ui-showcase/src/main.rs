@@ -337,6 +337,7 @@ fn spawn_showcase(
             theme
                 .checkbox("CHECK", false)
                 .width(UIValue::Px(90.0))
+                .shrink(1.0)
                 .padding(UIRect::axes(7.0, 9.0))
                 .font_size(12.0),
         )
@@ -352,6 +353,7 @@ fn spawn_showcase(
                 .text_field("Unicode input…")
                 .fill(theme.surface)
                 .width(UIValue::Px(180.0))
+                .shrink(1.0)
                 .padding(UIRect::axes(7.0, 9.0)),
         )
         .entity();

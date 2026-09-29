@@ -69,23 +69,35 @@ impl UITheme {
         Color::srgba(accent.r, accent.g, accent.b, 0.2)
     }
 
-    /// The interaction colours for a variant, raised to its selected fill when `selected`.
+    /// The variant's colours, raised to its selected fill when `selected`; ignores per-element overrides, so use `InteractionSpec::resolve` for elements built with them.
     pub fn interaction(&self, variant: ButtonVariant, selected: bool) -> UIInteractionStyle {
         match variant {
             ButtonVariant::Solid => UIInteractionStyle {
-                normal: if selected { self.surface_hovered } else { self.surface_raised },
+                normal: if selected {
+                    self.surface_hovered
+                } else {
+                    self.surface_raised
+                },
                 hovered: self.surface_hovered,
                 pressed: self.accent,
                 disabled: DISABLED_SOLID,
             },
             ButtonVariant::Ghost => UIInteractionStyle {
-                normal: if selected { self.selection() } else { Color::TRANSPARENT },
+                normal: if selected {
+                    self.selection()
+                } else {
+                    Color::TRANSPARENT
+                },
                 hovered: self.surface_hovered,
                 pressed: self.selection(),
                 disabled: Color::TRANSPARENT,
             },
             ButtonVariant::Tab => UIInteractionStyle {
-                normal: if selected { self.surface_raised } else { self.surface },
+                normal: if selected {
+                    self.surface_raised
+                } else {
+                    self.surface
+                },
                 hovered: self.surface_hovered,
                 pressed: self.accent,
                 disabled: self.surface,
@@ -96,9 +108,17 @@ impl UITheme {
     /// A chip's colours, marked with the accent when `selected`.
     pub fn chip_colors(&self, selected: bool) -> ChipColors {
         if selected {
-            ChipColors { fill: self.selection(), border: self.accent, text: self.text }
+            ChipColors {
+                fill: self.selection(),
+                border: self.accent,
+                text: self.text,
+            }
         } else {
-            ChipColors { fill: Color::TRANSPARENT, border: self.border, text: self.text_muted }
+            ChipColors {
+                fill: Color::TRANSPARENT,
+                border: self.border,
+                text: self.text_muted,
+            }
         }
     }
 

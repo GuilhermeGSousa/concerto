@@ -102,7 +102,7 @@ pub trait Layout: Sized {
         self.node(|node| node.with_max_height(max_height))
     }
 
-    /// Lays children out left to right, centred on the cross axis.
+    /// Lays children out left to right and centres them; call `align_items` after it to change that.
     fn row(self) -> Self {
         self.node(|node| {
             node.with_flex_direction(FlexDirection::Row)
@@ -179,6 +179,11 @@ pub trait Typography: Themed + Sized {
         let text = self.text_mut();
         text.font_size = size;
         text.line_height = line_height;
+        self
+    }
+
+    fn line_height(mut self, line_height: f32) -> Self {
+        self.text_mut().line_height = line_height;
         self
     }
 
@@ -268,6 +273,11 @@ pub trait Shape: Themed + Sized {
         self.border(color, 1.0)
     }
 
+    /// No border at all.
+    fn borderless(self) -> Self {
+        self.border(Color::TRANSPARENT, 0.0)
+    }
+
     fn rotation(mut self, radians: f32) -> Self {
         self.material_mut().rotation = radians;
         self
@@ -279,6 +289,10 @@ pub trait Shape: Themed + Sized {
 pub struct InteractionSpec {
     pub variant: ButtonVariant,
     pub selected: bool,
+    /// Replaces the variant's normal colour.
+    pub normal: Option<Color>,
+    /// Replaces the variant's hovered colour.
+    pub hovered: Option<Color>,
     /// Replaces the variant's pressed colour.
     pub pressed: Option<Color>,
     /// Replaces the variant's disabled colour.
@@ -290,6 +304,8 @@ impl InteractionSpec {
         Self {
             variant,
             selected: false,
+            normal: None,
+            hovered: None,
             pressed: None,
             disabled: None,
         }
@@ -297,6 +313,12 @@ impl InteractionSpec {
 
     pub fn resolve(&self, theme: &UITheme) -> UIInteractionStyle {
         let mut style = theme.interaction(self.variant, self.selected);
+        if let Some(normal) = self.normal {
+            style.normal = normal;
+        }
+        if let Some(hovered) = self.hovered {
+            style.hovered = hovered;
+        }
         if let Some(pressed) = self.pressed {
             style.pressed = pressed;
         }
@@ -330,6 +352,16 @@ pub trait Interactive: Sized {
 
     fn selected(mut self, selected: bool) -> Self {
         self.interaction_mut().selected = selected;
+        self
+    }
+
+    fn normal(mut self, color: Color) -> Self {
+        self.interaction_mut().normal = Some(color);
+        self
+    }
+
+    fn hovered(mut self, color: Color) -> Self {
+        self.interaction_mut().hovered = Some(color);
         self
     }
 

@@ -44,6 +44,13 @@ impl UITheme {
 }
 
 impl TextField {
+    /// The starting value, with the cursor after it.
+    pub fn value(mut self, value: impl Into<String>) -> Self {
+        self.input.value = value.into();
+        self.input.cursor = self.input.value.len();
+        self
+    }
+
     pub fn fill(mut self, color: Color) -> Self {
         self.material.color = color.to_linear();
         self
