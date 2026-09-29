@@ -14,6 +14,7 @@ const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
 const PI = 3.14159265359;
+// Mirrored on the CPU by `camera::DEFAULT_AMBIENT_INTENSITY`.
 const AMBIENT_INTENSITY = 0.03;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
@@ -38,6 +39,7 @@ struct Light {
     light_type: u32,
     cos_cone_angle: f32,
     shadow_layer: i32,
+    range: f32,
 };
 
 struct Lights {
@@ -59,6 +61,9 @@ struct ShadowViewProjs {
 struct CameraUniform {
     view_pos: vec3<f32>,
     view_proj: mat4x4<f32>,
+    fog_color: vec4<f32>,
+    fog_params: vec4<f32>,
+    ambient: vec4<f32>,
 };
 
 struct VertexInput {
@@ -257,10 +262,16 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             light_dir = normalize(light_delta);
         }
 
+        // Mirrored on the CPU by `Light::attenuation_at`.
         var attenuation = 1.0;
         if light_type != DIRECTIONAL_LIGHT {
             let light_distance_sq = dot(light_delta, light_delta);
             attenuation = 1.0 / max(light_distance_sq, 1e-4);
+            if light.range > 0.0 {
+                let ratio = light_distance_sq / (light.range * light.range);
+                let window = clamp(1.0 - ratio * ratio, 0.0, 1.0);
+                attenuation *= window * window;
+            }
         }
         if light_type == SPOT_LIGHT {
             let cone_dir = normalize(light.direction.xyz);
@@ -274,7 +285,14 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         // get a real shadow factor here.
         var shadow = 1.0;
         if light_type != POINT_LIGHT {
-            shadow = shadow_visibility(light.shadow_layer, in.world_position);
+            let geometric_normal = normalize(in.world_normal);
+            var reach = 10.0;
+            if light_type != DIRECTIONAL_LIGHT {
+                reach = length(light_delta);
+            }
+            let grazing = 1.5 - clamp(dot(geometric_normal, light_dir), 0.0, 1.0);
+            let offset = geometric_normal * (0.01 + 0.004 * reach) * grazing;
+            shadow = shadow_visibility(light.shadow_layer, in.world_position + offset);
         }
 
         let radiance = light.color.rgb * light.intensity * attenuation * shadow;
@@ -296,8 +314,16 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         total_light += (kd * diffuse_color / PI + specular) * radiance * NdotL;
     }
 
-    let ambient = AMBIENT_INTENSITY * base_color.rgb * occlusion;
-    let color = ambient + total_light + emissive;
+    let ambient_light = select(vec3<f32>(AMBIENT_INTENSITY), camera.ambient.rgb, camera.ambient.a > 0.0);
+    let ambient = ambient_light * base_color.rgb * occlusion;
+    var color = ambient + total_light + emissive;
+
+    if camera.fog_color.a > 0.0 {
+        let fog_distance = max(length(camera.view_pos - in.world_position) - camera.fog_params.y, 0.0);
+        let fog_depth = fog_distance * camera.fog_params.x;
+        let fog_amount = 1.0 - exp(-(fog_depth * fog_depth));
+        color = mix(color, camera.fog_color.rgb, fog_amount);
+    }
 
     // Tone map to LDR; the sRGB surface format applies gamma encoding.
     return vec4<f32>(aces_tonemap(color), base_color.a);

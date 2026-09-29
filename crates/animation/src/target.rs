@@ -38,6 +38,9 @@ pub(crate) fn animate_targets(
     animation_clips: Res<AssetStore<AnimationClip>>,
 ) {
     for (mut animation_player, skeleton) in animation_players.iter() {
+        if animation_player.is_paused() {
+            continue;
+        }
         animation_player.evaluate(
             &animation_clips,
             &animation_graphs,
@@ -57,6 +60,9 @@ pub(crate) fn update_animation_players(
 ) {
     let delta_time = time.delta().as_secs_f32();
     for mut animation_player in animation_players.iter() {
+        if animation_player.is_paused() {
+            continue;
+        }
         animation_player.update(delta_time, &animation_clips, &animation_graphs);
     }
 }

@@ -8,8 +8,10 @@ license.workspace = true
 
 [dependencies]
 concerto-app.workspace = true
+concerto-color.workspace = true
 concerto-director.workspace = true
 concerto-foundation.workspace = true
+concerto-physics.workspace = true
 concerto-render.workspace = true
 concerto-window.workspace = true
 concerto-ecs.workspace = true

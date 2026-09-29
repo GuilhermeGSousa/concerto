@@ -15,7 +15,7 @@ use concerto_ecs::{
     Entity,
 };
 use concerto_window::plugin::Window;
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
@@ -65,6 +65,34 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
+    /// Distance fog for everything this camera draws with the standard
+    /// material.
+    #[serde(default)]
+    pub fog: Option<Fog>,
+    /// Ambient light for surfaces this camera draws with the standard material,
+    /// as a colour multiplied by each surface's albedo.
+    #[serde(default)]
+    pub ambient: Option<Color>,
+}
+
+/// Ambient light the standard material uses for cameras without
+/// [`Camera::ambient`]; matches `AMBIENT_INTENSITY` in `shader.wgsl`.
+pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
+
+/// Exponential-squared distance fog toward `color`, starting at `start`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Fog {
+    pub color: Color,
+    pub density: f32,
+    pub start: f32,
+}
+
+impl Fog {
+    /// How much of a surface at `distance` is replaced by fog, `0..=1`.
+    pub fn amount(&self, distance: f32) -> f32 {
+        let d = (distance - self.start).max(0.0) * self.density;
+        1.0 - (-(d * d)).exp()
+    }
 }
 
 impl SceneComponent for Camera {
@@ -92,6 +120,20 @@ impl Camera {
     pub fn build_projection_matrix(&self) -> Mat4 {
         Mat4::perspective_rh(self.fovy, self.aspect, self.znear, self.zfar)
     }
+
+    /// The ambient light this camera draws the standard material with:
+    /// [`Camera::ambient`], or [`DEFAULT_AMBIENT_INTENSITY`] when unset.
+    pub fn ambient_light(&self) -> LinearRgba {
+        match self.ambient {
+            Some(color) => color.to_linear(),
+            None => LinearRgba::new(
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                1.0,
+            ),
+        }
+    }
 }
 
 impl Default for Camera {
@@ -103,6 +145,8 @@ impl Default for Camera {
             zfar: 100.0,
             clear_color: Color::rgba(0.118, 0.831, 0.922, 1.0),
             render_target: RenderTarget::main_window(),
+            fog: None,
+            ambient: None,
         }
     }
 }
@@ -112,6 +156,9 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
+    fog_color: Vec4,
+    fog_params: Vec4,
+    ambient: Vec4,
 }
 
 impl CameraUniform {
@@ -119,12 +166,33 @@ impl CameraUniform {
         Self {
             view_pos: Vec3::ZERO,
             view_proj: Mat4::IDENTITY,
+            fog_color: Vec4::ZERO,
+            fog_params: Vec4::ZERO,
+            ambient: Vec4::ZERO,
         }
     }
 
     pub fn update_view_proj(&mut self, camera: &Camera, transform: &GlobalTransform) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
+        match camera.fog {
+            Some(fog) => {
+                let c = fog.color.to_linear();
+                self.fog_color = Vec4::new(c.r, c.g, c.b, 1.0);
+                self.fog_params = Vec4::new(fog.density, fog.start, 0.0, 0.0);
+            }
+            None => {
+                self.fog_color = Vec4::ZERO;
+                self.fog_params = Vec4::ZERO;
+            }
+        }
+        self.ambient = match camera.ambient {
+            Some(color) => {
+                let c = color.to_linear();
+                Vec4::new(c.r, c.g, c.b, 1.0)
+            }
+            None => Vec4::ZERO,
+        };
     }
 }
 
