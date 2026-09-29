@@ -1,4 +1,3 @@
-//! Text builders.
 use super::{Layout, Themed, Typography};
 use crate::{node::UINode, text::UIText, theme::UITheme};
 

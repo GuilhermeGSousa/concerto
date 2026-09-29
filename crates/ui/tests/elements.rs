@@ -7,7 +7,6 @@ use concerto_ecs::{
 use concerto_ui::{
     elements::prelude::*,
     interaction::UIInteractionStyle,
-    material::UIMaterial,
     node::{AlignItems, FlexDirection, Overflow, UINode, UIRect},
     text::{FontFamily, UIText},
     theme::{ButtonVariant, ChipColors, UITheme},
@@ -235,6 +234,3 @@ fn text_converts_into_a_plain_uitext() {
     let text: UIText = t.text("x").small().into();
     assert_eq!(text.font_size, t.font_size_sm);
 }
-
-#[allow(dead_code)]
-fn unused_material_import_guard(_: UIMaterial) {}

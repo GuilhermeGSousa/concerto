@@ -1,15 +1,4 @@
-//! Themed element builders.
-//!
-//! Each builder is created from a [`UITheme`] (`theme.button("Save")`, `theme.card()`), follows
-//! the theme by default, and is itself a [`ComponentBundle`](concerto_ecs::component::bundle::ComponentBundle):
-//! spawn it directly, or nest it in a tuple with extra components.
-//!
-//! ```ignore
-//! use concerto_ui::elements::prelude::*;
-//! cmd.entity(toolbar)
-//!     .add_child(theme.button("Save").width(UIValue::Px(112.0)))
-//!     .add_child((theme.text_field("Search…").grow(), Filter));
-//! ```
+//! Themed element builders, created from a [`UITheme`] and spawnable as bundles.
 use concerto_color::Color;
 use glam::Vec2;
 
@@ -22,7 +11,6 @@ use crate::{
     transform::UIValue,
 };
 
-/// Implements `ComponentBundle` for a builder by delegating to its `into_parts` tuple.
 macro_rules! bundle {
     ($builder:ty => $parts:ty) => {
         impl concerto_ecs::component::bundle::ComponentBundle for $builder {
@@ -53,7 +41,7 @@ mod text;
 
 pub use text::{Label, Text};
 
-/// The modifier traits, for `use concerto_ui::elements::prelude::*;`.
+/// The modifier traits.
 pub mod prelude {
     pub use super::{Interactive, Layout, Shape, Themed, Typography};
 }
