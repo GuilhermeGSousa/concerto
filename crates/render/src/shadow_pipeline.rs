@@ -5,16 +5,17 @@ use concerto_mesh::Vertex;
 use wgpu::{
     BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, DepthBiasState,
     DepthStencilState, MultisampleState, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PrimitiveState, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderStages, StencilState,
-    TextureFormat,
+    PrimitiveState, RenderPipelineDescriptor, ShaderStages, StencilState, TextureFormat,
 };
 
 use crate::{
     assets::vertex::VertexBufferLayout,
+    capabilities::RenderCapabilities,
     components::shadows::{render_shadow_maps, update_shadow_view_proj},
     device::RenderDevice,
     layouts::SkeletonLayout,
     sets::RenderSet,
+    shader::create_shader_module,
 };
 
 #[derive(Resource)]
@@ -47,10 +48,17 @@ impl Plugin for ShadowPipelinePlugin {
             .get_resource::<RenderDevice>()
             .expect("RenderDevice not found; register RenderPlugin before MaterialPlugin");
 
-        let vs_module = device.create_shader_module(ShaderModuleDescriptor {
-            label: Some("Shadows VS"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/shadow.wgsl").into()),
-        });
+        let capabilities = app
+            .render()
+            .get_resource::<RenderCapabilities>()
+            .expect("RenderCapabilities not found: make sure the RenderPlugin is registered.");
+
+        let vs_module = create_shader_module(
+            device,
+            "Shadows VS",
+            include_str!("shaders/shadow.wgsl"),
+            &capabilities.shader_defs(),
+        );
 
         let light_view_bind_group_layout =
             device.create_bind_group_layout(&BindGroupLayoutDescriptor {
@@ -105,10 +113,10 @@ impl Plugin for ShadowPipelinePlugin {
                 bias: DepthBiasState {
                     constant: 0,
                     slope_scale: 1.0,
-                    clamp: if cfg!(target_arch = "wasm32") {
-                        0.0
-                    } else {
+                    clamp: if capabilities.depth_bias_clamp {
                         100.0
+                    } else {
+                        0.0
                     },
                 },
             }),

@@ -14,6 +14,7 @@ const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
 const PI = 3.14159265359;
+// Mirrored on the CPU by `camera_environment::DEFAULT_AMBIENT_INTENSITY`.
 const AMBIENT_INTENSITY = 0.03;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
@@ -202,8 +203,13 @@ var t_shadow_spot_directional: texture_depth_2d_array;
 @group(2) @binding(2)
 var sampler_shadow_spot_directional: sampler_comparison;
 
+#ifdef NO_CUBE_ARRAY_TEXTURES_SUPPORT
+@group(2) @binding(3)
+var t_shadow_point: texture_depth_cube;
+#else
 @group(2) @binding(3)
 var t_shadow_point: texture_depth_cube_array;
+#endif
 
 @group(2) @binding(4)
 var sampler_shadow_point: sampler_comparison;
@@ -261,6 +267,7 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             light_dir = normalize(light_delta);
         }
 
+        // Mirrored on the CPU by `Light::attenuation_at`.
         var attenuation = 1.0;
         if light_type != DIRECTIONAL_LIGHT {
             let light_distance_sq = dot(light_delta, light_delta);
@@ -358,7 +365,7 @@ fn shadow_visibility(shadow_layer: i32, world_position: vec3<f32>) -> f32 {
     // fraction of samples passing `depth_ref <= stored_depth`, giving
     // softened edges for one tap. A wider multi-tap kernel would soften
     // further but isn't implemented yet.
-    return textureSampleCompare(
+    return textureSampleCompareLevel(
         t_shadow_spot_directional,
         sampler_shadow_spot_directional,
         shadow_uv,

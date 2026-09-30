@@ -66,7 +66,10 @@ pub fn pose_gallery(
     palette: &crate::palette::Palette,
     library: &crate::poses::PoseLibrary,
 ) -> bool {
-    use concerto::{physics::collider::Collider, render::components::light::Light};
+    use concerto::{
+        physics::collider::Collider,
+        render::components::{light::Light, render_entity::SyncWithRenderWorld},
+    };
     use glam::Vec3;
 
     let row_filter = (0..3).find(|r| platform::debug_flag(&format!("poses{r}")));
@@ -80,6 +83,7 @@ pub fn pose_gallery(
     ));
     cmd.spawn((
         crate::house::HouseEntity,
+        SyncWithRenderWorld,
         Light::directional_light().with_intensity(3.0),
         Transform::from_rotation(glam::Quat::from_rotation_x(-0.6)),
     ));

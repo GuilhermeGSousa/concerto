@@ -21,7 +21,7 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     assets::texture::Texture,
-    components::render_entity::RenderEntity,
+    components::{camera_environment::CameraEnvironment, render_entity::RenderEntity},
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
@@ -65,30 +65,6 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
-    /// Distance fog for everything this camera draws with the standard
-    /// material.
-    #[serde(default)]
-    pub fog: Option<Fog>,
-    /// Ambient light for surfaces this camera draws with the standard material,
-    /// as a colour multiplied by each surface's albedo.
-    #[serde(default)]
-    pub ambient: Option<Color>,
-}
-
-/// Exponential-squared distance fog toward `color`, starting at `start`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Fog {
-    pub color: Color,
-    pub density: f32,
-    pub start: f32,
-}
-
-impl Fog {
-    /// How much of a surface at `distance` is replaced by fog, `0..=1`.
-    pub fn amount(&self, distance: f32) -> f32 {
-        let d = (distance - self.start).max(0.0) * self.density;
-        1.0 - (-(d * d)).exp()
-    }
 }
 
 impl SceneComponent for Camera {
@@ -127,8 +103,6 @@ impl Default for Camera {
             zfar: 100.0,
             clear_color: Color::rgba(0.118, 0.831, 0.922, 1.0),
             render_target: RenderTarget::main_window(),
-            fog: None,
-            ambient: None,
         }
     }
 }
@@ -138,9 +112,9 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
-    fog_color: Vec4,
-    fog_params: Vec4,
-    ambient: Vec4,
+    pub(crate) fog_color: Vec4,
+    pub(crate) fog_params: Vec4,
+    pub(crate) ambient: Vec4,
 }
 
 impl CameraUniform {
@@ -154,27 +128,15 @@ impl CameraUniform {
         }
     }
 
-    pub fn update_view_proj(&mut self, camera: &Camera, transform: &GlobalTransform) {
+    pub fn update_view_proj(
+        &mut self,
+        camera: &Camera,
+        environment: Option<&CameraEnvironment>,
+        transform: &GlobalTransform,
+    ) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
-        match camera.fog {
-            Some(fog) => {
-                let c = fog.color.to_linear();
-                self.fog_color = Vec4::new(c.r, c.g, c.b, 1.0);
-                self.fog_params = Vec4::new(fog.density, fog.start, 0.0, 0.0);
-            }
-            None => {
-                self.fog_color = Vec4::ZERO;
-                self.fog_params = Vec4::ZERO;
-            }
-        }
-        self.ambient = match camera.ambient {
-            Some(color) => {
-                let c = color.to_linear();
-                Vec4::new(c.r, c.g, c.b, 1.0)
-            }
-            None => Vec4::ZERO,
-        };
+        environment.copied().unwrap_or_default().fill(self);
     }
 }
 
@@ -229,9 +191,16 @@ fn publish_render_target(
     render_textures.insert(handle.id(), target.clone());
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn extract_cameras(
-    cameras: Extracted<Query<(&Camera, &GlobalTransform, &RenderEntity)>>,
+    cameras: Extracted<
+        Query<(
+            &Camera,
+            Option<&CameraEnvironment>,
+            &GlobalTransform,
+            &RenderEntity,
+        )>,
+    >,
     render_cameras: Query<&mut RenderCamera>,
     mut cmd: CommandQueue,
     device: Res<RenderDevice>,
@@ -241,11 +210,11 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (camera, transform, render_entity) in cameras.iter() {
+    for (camera, environment, transform, render_entity) in cameras.iter() {
         let render_entity = **render_entity;
 
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(camera, transform);
+        camera_uniform.update_view_proj(camera, environment, transform);
 
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;

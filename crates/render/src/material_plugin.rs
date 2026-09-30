@@ -14,6 +14,7 @@ use concerto_ecs::{
 
 use crate::{
     assets::material::ShaderRef,
+    capabilities::RenderCapabilities,
     components::{
         camera::RenderCamera,
         material::{MaterialComponent, RenderMaterialComponent},
@@ -31,6 +32,7 @@ use crate::{
         AssetPreparationError, RenderAsset, RenderAssetPlugin, RenderAssets,
     },
     resources::RenderContext,
+    shader::create_shader_module,
     Material,
 };
 
@@ -69,16 +71,6 @@ use crate::{
 // ─── Default (built-in) shader source ────────────────────────────────────────
 
 pub(crate) const DEFAULT_SHADER_SOURCE: &str = include_str!("shaders/shader.wgsl");
-
-fn platform_shader_source(source: &str) -> std::borrow::Cow<'_, str> {
-    if cfg!(target_arch = "wasm32") && source.contains("texture_depth_cube_array") {
-        source
-            .replace("texture_depth_cube_array", "texture_depth_cube")
-            .into()
-    } else {
-        source.into()
-    }
-}
 
 // ─── MaterialPipeline ─────────────────────────────────────────────────────────
 
@@ -148,6 +140,9 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
+// mirror. Upserts like the other extract systems: a mirror that already names
+// the same material asset is left alone, and one naming a different asset is
+// replaced, so swapping the handle on a live entity takes effect next frame.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     render_materials: Query<&RenderMaterialComponent<M>>,
@@ -438,23 +433,24 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         });
 
         // Resolve shader sources (fall back to the built-in Phong shader).
-        let vs_src = platform_shader_source(match M::vertex_shader() {
+        let vs_src: &str = match M::vertex_shader() {
             ShaderRef::Default => DEFAULT_SHADER_SOURCE,
             ShaderRef::Source(src) => src,
-        });
-        let fs_src = platform_shader_source(match M::fragment_shader() {
+        };
+        let fs_src: &str = match M::fragment_shader() {
             ShaderRef::Default => DEFAULT_SHADER_SOURCE,
             ShaderRef::Source(src) => src,
-        });
+        };
 
-        let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Material VS"),
-            source: wgpu::ShaderSource::Wgsl(vs_src),
-        });
-        let fs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Material FS"),
-            source: wgpu::ShaderSource::Wgsl(fs_src),
-        });
+        let mut shader_defs = app
+            .render()
+            .get_resource::<RenderCapabilities>()
+            .expect("RenderCapabilities not found; register RenderPlugin before MaterialPlugin")
+            .shader_defs();
+        M::shader_defs(&mut shader_defs);
+
+        let vs_module = create_shader_module(device, "Material VS", vs_src, &shader_defs);
+        let fs_module = create_shader_module(device, "Material FS", fs_src, &shader_defs);
 
         // Use the vertex layouts from the material trait.
         let vertex_layouts = M::vertex_layouts();

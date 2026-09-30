@@ -15,6 +15,7 @@ use wgpu::{
 };
 
 use crate::{
+    capabilities::RenderCapabilities,
     components::{
         light::{push_render_light_to_gpu, LightType, RenderLight, RenderLights},
         mesh::RenderMeshInstance,
@@ -115,58 +116,35 @@ impl Component for RenderShadowCasterSlot {
 // implemented once against this trait instead of twice.
 pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension;
     const LABEL: &'static str;
-    const MAX_CASTERS: u32;
 
-    fn physical_layers(view_count: u32) -> u32 {
-        view_count
-    }
+    fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension;
 }
-
-pub(crate) const POINT_SHADOW_VIEW_DIMENSION: wgpu::TextureViewDimension =
-    if cfg!(target_arch = "wasm32") {
-        wgpu::TextureViewDimension::Cube
-    } else {
-        wgpu::TextureViewDimension::CubeArray
-    };
 
 pub(crate) struct SpotDirectionalShadowKind;
 
 impl ShadowMapKind for SpotDirectionalShadowKind {
     const VIEWS_PER_CASTER: u32 = 1;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = wgpu::TextureViewDimension::D2Array;
     const LABEL: &'static str = "spot_directional_shadow_maps";
-    const MAX_CASTERS: u32 = MAX_SHADOW_CASTERS;
 
-    fn physical_layers(view_count: u32) -> u32 {
-        if cfg!(target_arch = "wasm32") {
-            gl_array_layers(view_count)
-        } else {
-            view_count
-        }
+    fn array_view_dimension(_: &RenderCapabilities) -> wgpu::TextureViewDimension {
+        wgpu::TextureViewDimension::D2Array
     }
-}
-
-pub(crate) fn gl_array_layers(view_count: u32) -> u32 {
-    let mut layers = view_count.max(2);
-    while layers.is_multiple_of(6) {
-        layers += 1;
-    }
-    layers
 }
 
 pub(crate) struct PointShadowKind;
 
 impl ShadowMapKind for PointShadowKind {
     const VIEWS_PER_CASTER: u32 = 6;
-    const ARRAY_VIEW_DIMENSION: wgpu::TextureViewDimension = POINT_SHADOW_VIEW_DIMENSION;
     const LABEL: &'static str = "point_shadow_maps";
-    const MAX_CASTERS: u32 = if cfg!(target_arch = "wasm32") {
-        1
-    } else {
-        MAX_SHADOW_CASTERS
-    };
+
+    fn array_view_dimension(capabilities: &RenderCapabilities) -> wgpu::TextureViewDimension {
+        if capabilities.cube_array_textures {
+            wgpu::TextureViewDimension::CubeArray
+        } else {
+            wgpu::TextureViewDimension::Cube
+        }
+    }
 }
 
 // Slot-allocated shadow-map depth texture — see `ShadowMapKind` for what
@@ -188,6 +166,9 @@ pub(crate) struct ShadowMapPool<K: ShadowMapKind> {
     pub(crate) views: Vec<wgpu::TextureView>,
     pub(crate) slots: Vec<Entity>,
     capacity: u32,
+    min_capacity: u32,
+    max_capacity: u32,
+    array_view_dimension: wgpu::TextureViewDimension,
     frames_below_capacity: u32,
     _kind: PhantomData<fn() -> K>,
 }
@@ -201,14 +182,30 @@ impl<K: ShadowMapKind> Resource for ShadowMapPool<K> {
 }
 
 impl<K: ShadowMapKind> ShadowMapPool<K> {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
-        let (texture, views) = Self::build_gpu_resources(device, 1);
+    pub(crate) fn new(device: &wgpu::Device, capabilities: &RenderCapabilities) -> Self {
+        let array_view_dimension = K::array_view_dimension(capabilities);
+        let is_array = matches!(
+            array_view_dimension,
+            wgpu::TextureViewDimension::D2Array | wgpu::TextureViewDimension::CubeArray
+        );
+
+        let max_capacity = if is_array { MAX_SHADOW_CASTERS } else { 1 };
+        let min_capacity = if is_array && !capabilities.single_layer_texture_arrays {
+            2
+        } else {
+            1
+        };
+
+        let (texture, views) = Self::build_gpu_resources(device, min_capacity);
 
         Self {
             texture,
             views,
             slots: Vec::new(),
-            capacity: 1,
+            capacity: min_capacity,
+            min_capacity,
+            max_capacity,
+            array_view_dimension,
             frames_below_capacity: 0,
             _kind: PhantomData,
         }
@@ -225,7 +222,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
             size: wgpu::Extent3d {
                 width: SHADOW_MAP_SIZE,
                 height: SHADOW_MAP_SIZE,
-                depth_or_array_layers: K::physical_layers(view_count),
+                depth_or_array_layers: view_count,
             },
             mip_level_count: 1,
             sample_count: 1,
@@ -256,19 +253,16 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // views aren't separate GPU allocations, so building a fresh one here on
     // demand (rather than caching it) is cheap.
     pub(crate) fn array_view(&self) -> wgpu::TextureView {
-        let array_layer_count =
-            (K::ARRAY_VIEW_DIMENSION == wgpu::TextureViewDimension::Cube).then_some(6);
         self.texture.create_view(&wgpu::TextureViewDescriptor {
             label: Some(K::LABEL),
-            dimension: Some(K::ARRAY_VIEW_DIMENSION),
-            array_layer_count,
+            dimension: Some(self.array_view_dimension),
             ..Default::default()
         })
     }
 
     // `None` once all `MAX_SHADOW_CASTERS` casters are in use.
     pub(crate) fn push_caster(&mut self, entity: Entity) -> Option<u32> {
-        if self.slots.len() as u32 >= K::MAX_CASTERS {
+        if self.slots.len() as u32 >= self.max_capacity {
             return None;
         }
         self.slots.push(entity);
@@ -287,7 +281,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
     // whether anything referencing the old texture/views (namely
     // `RenderLighting`'s bind group) needs rebuilding too.
     pub(crate) fn reconcile_capacity(&mut self, device: &wgpu::Device) -> bool {
-        let needed = (self.slots.len() as u32).max(1);
+        let needed = (self.slots.len() as u32).max(self.min_capacity);
 
         if needed > self.capacity {
             self.resize_to(device, needed);
@@ -657,23 +651,6 @@ pub(crate) fn render_shadow_maps(
                 render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
-        }
-    }
-}
-
-#[cfg(test)]
-mod webgl_layer_tests {
-    use super::gl_array_layers;
-
-    #[test]
-    fn gl_array_layers_never_reads_as_2d_or_cube() {
-        for views in 0..40 {
-            let layers = gl_array_layers(views);
-            assert!(layers >= views.max(2));
-            assert!(
-                !layers.is_multiple_of(6),
-                "{views} views -> {layers} layers reads as a cube"
-            );
         }
     }
 }

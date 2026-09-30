@@ -174,7 +174,7 @@ The player walks at 3 m/s and hurries at 5.4 m/s, with limited breath.
 ## Engine work this game drove
 - **Web builds run:**
   - WebGL2-compatible device limits and shadow maps;
-  - meshes, lights and cameras spawned from code are rendered;
+  - the game tags the meshes and lights it spawns with `SyncWithRenderWorld`;
   - content loads from the page's directory, so itch.io sub-paths work;
   - the web event loop no longer spins;
   - mouse look works.

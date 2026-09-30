@@ -17,6 +17,7 @@
 extern crate self as concerto_render;
 
 pub mod assets;
+pub mod capabilities;
 pub mod components;
 pub mod device;
 pub mod importers;
@@ -27,6 +28,7 @@ pub mod queue;
 pub mod render_asset;
 pub mod resources;
 pub mod sets;
+pub mod shader;
 pub mod shadow_pipeline;
 pub mod systems;
 pub mod wgpu_wrapper;

@@ -13,7 +13,7 @@ use concerto::{
     render::{
         MaterialComponent,
         assets::{material::StandardMaterial, mesh::Mesh},
-        components::light::Light,
+        components::{light::Light, render_entity::SyncWithRenderWorld},
     },
 };
 use glam::{Quat, Vec3};
@@ -135,6 +135,7 @@ impl<'a> Batches<'a> {
             }
             cmd.spawn((
                 HouseEntity,
+                SyncWithRenderWorld,
                 MeshComponent {
                     handle: server.add(builder.build()),
                 },
@@ -161,6 +162,7 @@ fn spawn_prop(
 ) -> Entity {
     cmd.spawn((
         HouseEntity,
+        SyncWithRenderWorld,
         MeshComponent {
             handle: mesh.clone(),
         },
@@ -354,6 +356,7 @@ fn hang_picture(
     let palette = batches.palette;
     cmd.spawn((
         HouseEntity,
+        SyncWithRenderWorld,
         MeshComponent {
             handle: palette.canvas_mesh.clone(),
         },
@@ -411,6 +414,7 @@ fn sconce(
                 guttering: None,
                 out: false,
             },
+            SyncWithRenderWorld,
             Light::point_light()
                 .with_color(Color::srgba(1.0, 0.62, 0.3, 1.0))
                 .with_intensity(CANDLE_INTENSITY)
@@ -457,6 +461,7 @@ fn window(cmd: &mut CommandQueue, batches: &mut Batches, frame: &Frame) {
     batches.of(&wood).cuboid(c, h, &[]);
     cmd.spawn((
         HouseEntity,
+        SyncWithRenderWorld,
         MeshComponent {
             handle: palette.canvas_mesh.clone(),
         },
@@ -627,6 +632,7 @@ fn easel(
     if let Some(picture) = picture {
         cmd.spawn((
             HouseEntity,
+            SyncWithRenderWorld,
             MeshComponent {
                 handle: palette.canvas_mesh.clone(),
             },
@@ -645,6 +651,7 @@ fn easel(
 fn rug(cmd: &mut CommandQueue, palette: &Palette, center: Vec3, size: (f32, f32), which: usize) {
     cmd.spawn((
         HouseEntity,
+        SyncWithRenderWorld,
         MeshComponent {
             handle: palette.canvas_mesh.clone(),
         },
@@ -956,6 +963,7 @@ pub fn build_house(
     let _ = d;
     cmd.spawn((
         HouseEntity,
+        SyncWithRenderWorld,
         MeshComponent {
             handle: palette.canvas_mesh.clone(),
         },
@@ -971,6 +979,7 @@ pub fn build_house(
     cmd.spawn((
         HouseEntity,
         LightSource,
+        SyncWithRenderWorld,
         Light::point_light()
             .with_color(Color::srgba(0.45, 0.55, 0.8, 1.0))
             .with_intensity(1.4)

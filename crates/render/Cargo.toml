@@ -41,6 +41,7 @@ derive_more = { version = "2", features = ["full"] }
 concerto-asset-import.workspace = true
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
+naga_oil = { version = "0.17.1", default-features = false }
 
 [dependencies.image]
 version = "0.25.5"
@@ -51,3 +52,6 @@ console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
 wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3" }
+
+[dev-dependencies]
+naga = { version = "24", features = ["glsl-out"] }

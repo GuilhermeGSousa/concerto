@@ -10,8 +10,10 @@ use concerto::{
         rigid_body::{AllowedDofs, MotionType, RigidBody},
     },
     render::components::{
-        camera::{Camera, Fog},
+        camera::Camera,
+        camera_environment::{CameraEnvironment, Fog},
         light::Light,
+        render_entity::SyncWithRenderWorld,
     },
     window::input::{Input, KeyCode, PhysicalKey},
 };
@@ -218,6 +220,7 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
                 flicker_off: 0.0,
                 intensity: 0.0,
             },
+            SyncWithRenderWorld,
             {
                 let light = Light::spot_light(FLASHLIGHT_CONE)
                     .with_color(Color::srgba(1.0, 0.8, 0.55, 1.0))
@@ -236,6 +239,7 @@ pub fn spawn_player(cmd: &mut CommandQueue, feet: Vec3, yaw: f32) -> Entity {
     let glow = cmd
         .spawn((
             LanternGlow,
+            SyncWithRenderWorld,
             Light::point_light()
                 .with_color(Color::srgba(1.0, 0.7, 0.45, 1.0))
                 .with_intensity(0.0)
@@ -421,11 +425,17 @@ pub fn place_camera(
     players: Query<(&Player, &Transform), Without<Head>>,
     heads: Query<&mut Transform, With<Head>>,
     main_cameras: Query<
-        (&mut Transform, &mut Camera),
+        (
+            Entity,
+            &mut Transform,
+            &mut Camera,
+            Option<&CameraEnvironment>,
+        ),
         (With<MainCamera>, Without<Head>, Without<Player>),
     >,
     mut eye: ResMut<Eye>,
     shake: Res<crate::scare::CameraOverride>,
+    mut cmd: CommandQueue,
 ) {
     let Some((player, body)) = players.iter().next() else {
         return;
@@ -443,15 +453,19 @@ pub fn place_camera(
     }
 
     let (position, rotation) = shake.apply(body.translation + local, rotation);
-    for (mut transform, mut camera) in main_cameras.iter() {
+    let environment = CameraEnvironment::default()
+        .with_fog(FOG)
+        .with_ambient(Color::rgba(AMBIENT, AMBIENT, AMBIENT, 1.0));
+    for (entity, mut transform, mut camera, current) in main_cameras.iter() {
         transform.translation = position;
         transform.rotation = rotation;
         camera.fovy = FOV_Y;
         camera.znear = 0.05;
         camera.zfar = 80.0;
         camera.clear_color = FOG.color;
-        camera.fog = Some(FOG);
-        camera.ambient = Some(Color::rgba(AMBIENT, AMBIENT, AMBIENT, 1.0));
+        if current != Some(&environment) {
+            cmd.insert(environment, entity);
+        }
         eye.aspect = camera.aspect;
     }
     if eye.valid {

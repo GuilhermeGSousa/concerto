@@ -106,6 +106,40 @@ impl Light {
         self.shadowmaps_enabled = true;
         self
     }
+
+    /// How much of this light reaches `point`, as the standard material
+    /// computes it: inverse-square falloff windowed by [`Light::range`], times
+    /// the soft cone edge for spot lights. Directional lights return `1.0`.
+    /// Shadows and surface orientation are not taken into account.
+    pub fn attenuation_at(&self, transform: &GlobalTransform, point: Vec3) -> f32 {
+        let cone_angle = match self.light_type {
+            LightType::Directional => return 1.0,
+            LightType::Point => None,
+            LightType::Spot { cone_angle } => Some(cone_angle),
+        };
+
+        let to_point = point - transform.translation();
+        let distance_sq = to_point.length_squared();
+        let mut attenuation = 1.0 / distance_sq.max(1e-4);
+        if self.range > 0.0 {
+            let ratio = distance_sq / (self.range * self.range);
+            let window = (1.0 - ratio * ratio).clamp(0.0, 1.0);
+            attenuation *= window * window;
+        }
+        if let Some(cone_angle) = cone_angle {
+            let forward = -(transform.rotation() * Vec3::Z);
+            let cos_cone = cone_angle.cos();
+            let soft_edge = cos_cone + (1.0 - cos_cone) * 0.2;
+            let angle_cos = to_point.normalize_or_zero().dot(forward);
+            attenuation *= smoothstep(cos_cone, soft_edge, angle_cos);
+        }
+        attenuation
+    }
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 #[derive(Serialize, Deserialize)]
@@ -411,5 +445,57 @@ pub(crate) fn extract_lights(
         };
 
         cmd.insert(render_light, render_entity);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::{Mat4, Quat};
+
+    fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
+        GlobalTransform::new(Mat4::from_rotation_translation(rotation, translation))
+    }
+
+    #[test]
+    fn point_light_falls_off_with_the_square_of_distance() {
+        let light = Light::point_light();
+        let transform = at(Vec3::ZERO, Quat::IDENTITY);
+        let near = light.attenuation_at(&transform, Vec3::new(1.0, 0.0, 0.0));
+        let far = light.attenuation_at(&transform, Vec3::new(0.0, 2.0, 0.0));
+        assert!((near - 1.0).abs() < 1e-6);
+        assert!((far - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn range_reaches_zero_at_the_limit() {
+        let light = Light::point_light().with_range(7.0);
+        let transform = at(Vec3::ZERO, Quat::IDENTITY);
+        assert_eq!(light.attenuation_at(&transform, Vec3::X * 7.0), 0.0);
+        assert!(light.attenuation_at(&transform, Vec3::X * 6.9) > 0.0);
+        assert!(light.attenuation_at(&transform, Vec3::X) > 0.99);
+    }
+
+    #[test]
+    fn spot_light_only_reaches_inside_its_cone() {
+        let light = Light::spot_light(0.4);
+        // Spot lights shine down their local -Z.
+        let transform = at(Vec3::ZERO, Quat::IDENTITY);
+        assert!((light.attenuation_at(&transform, Vec3::NEG_Z) - 1.0).abs() < 1e-6);
+        assert_eq!(light.attenuation_at(&transform, Vec3::Z), 0.0);
+        assert_eq!(light.attenuation_at(&transform, Vec3::X), 0.0);
+
+        let turned = at(
+            Vec3::ZERO,
+            Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+        );
+        assert!((light.attenuation_at(&turned, Vec3::NEG_X) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn directional_light_is_unattenuated() {
+        let light = Light::directional_light();
+        let transform = at(Vec3::new(3.0, 50.0, -2.0), Quat::IDENTITY);
+        assert_eq!(light.attenuation_at(&transform, Vec3::ZERO), 1.0);
     }
 }
