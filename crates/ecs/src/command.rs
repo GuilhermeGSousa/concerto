@@ -1,7 +1,10 @@
 use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
-    component::{Component, bundle::ComponentBundle},
+    component::{
+        Component,
+        bundle::{ComponentBundle, IntoBundle},
+    },
     entity::{
         Entity,
         entity_store::EntityStore,
@@ -22,11 +25,11 @@ impl<'a> EntityCommandQueue<'a> {
         self.entity
     }
 
-    pub fn add_child<T: ComponentBundle + 'static>(self, components: T) -> Self {
+    pub fn add_child<T: IntoBundle<Bundle: 'static>>(self, components: T) -> Self {
         self.add_child_with(components, |_| {})
     }
 
-    pub fn add_child_with<T: ComponentBundle + 'static>(
+    pub fn add_child_with<T: IntoBundle<Bundle: 'static>>(
         mut self,
         components: T,
         f: impl Fn(EntityCommandQueue),
@@ -39,7 +42,7 @@ impl<'a> EntityCommandQueue<'a> {
     }
 
     /// Spawns a child of this entity and returns the child's command queue.
-    pub fn spawn_child_queue<T: ComponentBundle + 'static>(
+    pub fn spawn_child_queue<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
     ) -> EntityCommandQueue<'_> {
@@ -55,7 +58,7 @@ impl<'a> EntityCommandQueue<'a> {
         self
     }
 
-    pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T) {
+    pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T) {
         self.command_queue.insert(component, self.entity);
     }
 
@@ -87,10 +90,13 @@ impl<'w, 's> CommandQueue<'w, 's> {
         }
     }
 
-    pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> EntityCommandQueue<'_> {
+    pub fn spawn<T: IntoBundle<Bundle: 'static>>(
+        &mut self,
+        components: T,
+    ) -> EntityCommandQueue<'_> {
         let spawned_entity = self.entities.reserve();
         self.queue_state
-            .push(SpawnCommand::new(components, spawned_entity));
+            .push(SpawnCommand::new(components.into_bundle(), spawned_entity));
 
         EntityCommandQueue {
             entity: spawned_entity,
@@ -116,8 +122,11 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(DespawnCommand::new(entity));
     }
 
-    pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.queue_state.push(InsertCommand { component, entity });
+    pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T, entity: Entity) {
+        self.queue_state.push(InsertCommand {
+            component: component.into_bundle(),
+            entity,
+        });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {

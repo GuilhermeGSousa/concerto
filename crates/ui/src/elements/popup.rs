@@ -1,5 +1,5 @@
 use concerto_color::Color;
-use concerto_ecs::entity::Entity;
+use concerto_ecs::{component::bundle::IntoBundle, entity::Entity};
 
 use super::{Layout, Shape, Surface, Themed};
 use crate::{
@@ -73,14 +73,16 @@ impl Popup {
         self.panel = self.panel.with_open(open);
         self
     }
+}
 
-    fn into_parts(self) -> (UINode, UIMaterial, UIAnchoredPanel) {
-        let (node, material) = self.surface.into_parts();
+impl IntoBundle for Popup {
+    type Bundle = (UINode, UIMaterial, UIAnchoredPanel);
+
+    fn into_bundle(self) -> Self::Bundle {
+        let (node, material) = self.surface.into_bundle();
         (node, material, self.panel)
     }
 }
-
-bundle!(Popup => (UINode, UIMaterial, UIAnchoredPanel));
 
 impl Themed for Popup {
     fn theme(&self) -> &UITheme {

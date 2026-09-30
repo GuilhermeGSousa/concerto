@@ -1,4 +1,5 @@
 use concerto_color::Color;
+use concerto_ecs::component::bundle::IntoBundle;
 
 use super::{Layout, Themed, Typography};
 use crate::{
@@ -45,8 +46,12 @@ impl Chip {
         self.selected = selected;
         self
     }
+}
 
-    fn into_parts(self) -> (UINode, UIMaterial, UIText, Interactable) {
+impl IntoBundle for Chip {
+    type Bundle = (UINode, UIMaterial, UIText, Interactable);
+
+    fn into_bundle(self) -> Self::Bundle {
         let colors = self.theme.chip_colors(self.selected);
         let material = UIMaterial {
             color: colors.fill.to_linear(),
@@ -60,8 +65,6 @@ impl Chip {
         (self.node, material, text, Interactable)
     }
 }
-
-bundle!(Chip => (UINode, UIMaterial, UIText, Interactable));
 
 impl Themed for Chip {
     fn theme(&self) -> &UITheme {

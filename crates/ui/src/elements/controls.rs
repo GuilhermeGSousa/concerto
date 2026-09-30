@@ -1,3 +1,5 @@
+use concerto_ecs::component::bundle::IntoBundle;
+
 use super::{Layout, Shape, Themed, Typography};
 use crate::{
     checkbox::UICheckbox,
@@ -58,8 +60,10 @@ impl UITheme {
     }
 }
 
-impl Checkbox {
-    fn into_parts(self) -> (UINode, UIMaterial, UICheckbox, Interactable, UIText) {
+impl IntoBundle for Checkbox {
+    type Bundle = (UINode, UIMaterial, UICheckbox, Interactable, UIText);
+
+    fn into_bundle(self) -> Self::Bundle {
         (
             self.node,
             self.material,
@@ -70,14 +74,13 @@ impl Checkbox {
     }
 }
 
-impl Slider {
-    fn into_parts(self) -> (UINode, UIMaterial, UISlider, Interactable) {
+impl IntoBundle for Slider {
+    type Bundle = (UINode, UIMaterial, UISlider, Interactable);
+
+    fn into_bundle(self) -> Self::Bundle {
         (self.node, self.material, self.slider, Interactable)
     }
 }
-
-bundle!(Checkbox => (UINode, UIMaterial, UICheckbox, Interactable, UIText));
-bundle!(Slider => (UINode, UIMaterial, UISlider, Interactable));
 
 impl Themed for Checkbox {
     fn theme(&self) -> &UITheme {

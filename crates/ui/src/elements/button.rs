@@ -1,4 +1,5 @@
 use concerto_color::Color;
+use concerto_ecs::component::bundle::IntoBundle;
 
 use super::{InteractionSpec, Interactive, Layout, Shape, Themed, Typography};
 use crate::{
@@ -57,8 +58,10 @@ impl UITheme {
     }
 }
 
-impl Pressable {
-    fn into_parts(self) -> (UINode, UIMaterial, UIInteractionStyle, Interactable) {
+impl IntoBundle for Pressable {
+    type Bundle = (UINode, UIMaterial, UIInteractionStyle, Interactable);
+
+    fn into_bundle(self) -> Self::Bundle {
         let style = self.interaction.resolve(&self.theme);
         let material = UIMaterial {
             color: style.normal.to_linear(),
@@ -68,24 +71,21 @@ impl Pressable {
     }
 }
 
-impl Button {
-    fn into_parts(
-        self,
-    ) -> (
+impl IntoBundle for Button {
+    type Bundle = (
         UINode,
         UIMaterial,
         UIInteractionStyle,
         Interactable,
         UIButton,
         UIText,
-    ) {
-        let (node, material, style, interactable) = self.pressable.into_parts();
+    );
+
+    fn into_bundle(self) -> Self::Bundle {
+        let (node, material, style, interactable) = self.pressable.into_bundle();
         (node, material, style, interactable, UIButton, self.text)
     }
 }
-
-bundle!(Pressable => (UINode, UIMaterial, UIInteractionStyle, Interactable));
-bundle!(Button => (UINode, UIMaterial, UIInteractionStyle, Interactable, UIButton, UIText));
 
 impl Themed for Pressable {
     fn theme(&self) -> &UITheme {

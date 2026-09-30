@@ -1,5 +1,5 @@
 use concerto_color::Color;
-use concerto_ecs::{Component, Entity, World, component::bundle::ComponentBundle};
+use concerto_ecs::{Component, Entity, World, component::bundle::IntoBundle};
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
     checkbox::UICheckbox,
@@ -36,7 +36,7 @@ impl Spawned {
     }
 }
 
-fn spawn(bundle: impl ComponentBundle + 'static) -> Spawned {
+fn spawn(bundle: impl IntoBundle) -> Spawned {
     let mut world = World::default();
     let entity = world.spawn(bundle);
     Spawned { world, entity }

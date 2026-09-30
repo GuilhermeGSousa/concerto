@@ -11,32 +11,6 @@ use crate::{
     transform::UIValue,
 };
 
-macro_rules! bundle {
-    ($builder:ty => $parts:ty) => {
-        impl concerto_ecs::component::bundle::ComponentBundle for $builder {
-            fn get_component_ids() -> Vec<concerto_ecs::component::ComponentId> {
-                <$parts as concerto_ecs::component::bundle::ComponentBundle>::get_component_ids()
-            }
-
-            fn generate_empty_table() -> concerto_ecs::table::Table {
-                <$parts as concerto_ecs::component::bundle::ComponentBundle>::generate_empty_table()
-            }
-
-            fn write_into<S: concerto_ecs::component::bundle::ComponentSink>(
-                self,
-                sink: &mut S,
-                current_tick: u32,
-            ) {
-                concerto_ecs::component::bundle::ComponentBundle::write_into(
-                    self.into_parts(),
-                    sink,
-                    current_tick,
-                )
-            }
-        }
-    };
-}
-
 mod button;
 mod chip;
 mod controls;

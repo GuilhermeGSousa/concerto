@@ -1,4 +1,5 @@
 use concerto_color::Color;
+use concerto_ecs::component::bundle::IntoBundle;
 
 use super::{Layout, Shape, Themed};
 use crate::{
@@ -93,16 +94,6 @@ impl Surface {
         self.material.color = color.to_linear();
         self
     }
-
-    pub(crate) fn into_parts(self) -> (UINode, UIMaterial) {
-        (self.node, self.material)
-    }
-}
-
-impl Stack {
-    fn into_parts(self) -> UINode {
-        self.node
-    }
 }
 
 impl Divider {
@@ -111,15 +102,31 @@ impl Divider {
         self.node.height = UIValue::Auto;
         self
     }
+}
 
-    fn into_parts(self) -> (UINode, UIMaterial) {
+impl IntoBundle for Surface {
+    type Bundle = (UINode, UIMaterial);
+
+    fn into_bundle(self) -> Self::Bundle {
         (self.node, self.material)
     }
 }
 
-bundle!(Surface => (UINode, UIMaterial));
-bundle!(Stack => UINode);
-bundle!(Divider => (UINode, UIMaterial));
+impl IntoBundle for Stack {
+    type Bundle = UINode;
+
+    fn into_bundle(self) -> Self::Bundle {
+        self.node
+    }
+}
+
+impl IntoBundle for Divider {
+    type Bundle = (UINode, UIMaterial);
+
+    fn into_bundle(self) -> Self::Bundle {
+        (self.node, self.material)
+    }
+}
 
 impl Themed for Surface {
     fn theme(&self) -> &UITheme {

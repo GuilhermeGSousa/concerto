@@ -4,7 +4,7 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomData, ptr};
 
 use crate::command::{Command, CommandQueue, CommandQueueState};
-use crate::component::bundle::{ComponentBundle, MergeRow, PushRow, ReplaceRow};
+use crate::component::bundle::{ComponentBundle, IntoBundle, MergeRow, PushRow, ReplaceRow};
 use crate::component::registry::{ComponentRegistry, TypeInfo};
 use crate::component::scene::{SceneComponent, SceneSpawnContext};
 use crate::entity::EntityWorldMut;
@@ -75,9 +75,9 @@ impl World {
     }
 
     /// Spawns a new entity with the given component bundle and returns its [`Entity`] handle.
-    pub fn spawn<T: ComponentBundle>(&mut self, bundle: T) -> Entity {
+    pub fn spawn<T: IntoBundle>(&mut self, bundle: T) -> Entity {
         let entity = self.entity_store.alloc();
-        self.spawn_allocated_internal(entity, bundle);
+        self.spawn_allocated_internal(entity, bundle.into_bundle());
         self.flush_commands();
         entity
     }
@@ -166,8 +166,8 @@ impl World {
     /// Adds components to an existing entity, migrating it to the appropriate archetype.
     ///
     /// If the entity already has a component of type `T`, the existing value is replaced.
-    pub fn insert<T: ComponentBundle>(&mut self, bundle: T, entity: Entity) {
-        self.insert_internal(bundle, entity);
+    pub fn insert<T: IntoBundle>(&mut self, bundle: T, entity: Entity) {
+        self.insert_internal(bundle.into_bundle(), entity);
         self.flush_commands();
     }
 
@@ -833,7 +833,7 @@ impl<'w> RestrictedWorld<'w> {
     }
 
     /// Reserves an entity and queues its spawn after the enclosing operation.
-    pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> Entity {
+    pub fn spawn<T: IntoBundle<Bundle: 'static>>(&mut self, components: T) -> Entity {
         self.commands().spawn(components).entity()
     }
 

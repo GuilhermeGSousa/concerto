@@ -1,4 +1,5 @@
 use concerto_color::Color;
+use concerto_ecs::component::bundle::IntoBundle;
 
 use super::{Layout, Shape, Themed, Typography};
 use crate::{
@@ -63,17 +64,19 @@ impl TextField {
         self.material.border_width = 0.0;
         self
     }
+}
 
-    fn into_parts(
-        self,
-    ) -> (
+impl IntoBundle for TextField {
+    type Bundle = (
         UINode,
         UIMaterial,
         UIText,
         UITextInput,
         Interactable,
         UIFocusable,
-    ) {
+    );
+
+    fn into_bundle(self) -> Self::Bundle {
         (
             self.node,
             self.material,
@@ -84,8 +87,6 @@ impl TextField {
         )
     }
 }
-
-bundle!(TextField => (UINode, UIMaterial, UIText, UITextInput, Interactable, UIFocusable));
 
 impl Themed for TextField {
     fn theme(&self) -> &UITheme {

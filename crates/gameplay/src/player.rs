@@ -1,12 +1,12 @@
 use concerto_director::VirtualCamera;
-use concerto_ecs::{CommandQueue, Component, component::bundle::ComponentBundle};
+use concerto_ecs::{CommandQueue, Component, component::bundle::IntoBundle};
 use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 
 #[derive(Component)]
 pub struct Player;
 
-pub fn spawn_first_person_player<T: ComponentBundle + 'static>(
+pub fn spawn_first_person_player<T: IntoBundle + 'static>(
     cmd: &mut CommandQueue,
     pos: Vec3,
     extra_components: T,

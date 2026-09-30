@@ -1,3 +1,5 @@
+use concerto_ecs::component::bundle::IntoBundle;
+
 use super::{Layout, Themed, Typography};
 use crate::{node::UINode, text::UIText, theme::UITheme};
 
@@ -41,26 +43,27 @@ impl UITheme {
     }
 }
 
-impl Text {
-    fn into_parts(self) -> UIText {
-        self.text
-    }
-}
-
 impl From<Text> for UIText {
     fn from(text: Text) -> Self {
         text.text
     }
 }
 
-impl Label {
-    fn into_parts(self) -> (UINode, UIText) {
-        (self.node, self.text.text)
+impl IntoBundle for Text {
+    type Bundle = UIText;
+
+    fn into_bundle(self) -> Self::Bundle {
+        self.text
     }
 }
 
-bundle!(Text => UIText);
-bundle!(Label => (UINode, UIText));
+impl IntoBundle for Label {
+    type Bundle = (UINode, UIText);
+
+    fn into_bundle(self) -> Self::Bundle {
+        (self.node, self.text.text)
+    }
+}
 
 impl Themed for Text {
     fn theme(&self) -> &UITheme {

@@ -65,11 +65,8 @@ geometric marks, moving hard-coded pixel values onto the spacing scale.
   cannot carry optional components; each builder type has a fixed set.
   Tuples of bundles are bundles, so extras compose by nesting:
   `(theme.button("Close"), Control::Close)`.
-- `EntityCommandQueue::add_child` / `spawn_child_queue` require
-  `ComponentBundle + 'static`, so builders cannot borrow `&UITheme`.
-- `concerto_ecs::component::bundle::{ComponentBundle, ComponentSink}` and
-  `concerto_ecs::table::Table` are public, so `concerto_ui` can implement
-  `ComponentBundle` for its own types.
+- Commands store their bundle (`Bundle: 'static`), so builders cannot borrow
+  `&UITheme`.
 - `apply_interaction_styles` writes `UIMaterial::color` from
   `UIInteractionStyle` every frame, so builders need only set the style, and
   refresh code that also writes `material.color` is redundant.
@@ -82,7 +79,7 @@ New module `concerto_ui::elements`:
 
 ```
 crates/ui/src/elements/
-  mod.rs       — Themed/Layout/Typography/Shape/Interactive traits, bundle! macro, prelude
+  mod.rs       — Themed/Layout/Typography/Shape/Interactive traits, prelude
   text.rs      — Text, Label
   surface.rs   — Surface, Stack, Divider
   button.rs    — ButtonVariant, Pressable, Button
@@ -107,26 +104,32 @@ Colours that depend on several settings (interaction variant × selected ×
 overrides, chip selection) are resolved when the builder is written into the
 world, so `.pressed(theme.error).ghost()` equals `.ghost().pressed(theme.error)`.
 
-A private macro implements `ComponentBundle` by delegating to the builder's
-flat parts tuple:
+`concerto_ecs` gains an `IntoBundle` trait, and each builder implements it by
+returning its flat parts tuple:
 
 ```rust
-macro_rules! bundle {
-    ($builder:ty => $parts:ty) => {
-        impl ComponentBundle for $builder {
-            fn get_component_ids() -> Vec<ComponentId> {
-                <$parts as ComponentBundle>::get_component_ids()
-            }
-            fn generate_empty_table() -> Table {
-                <$parts as ComponentBundle>::generate_empty_table()
-            }
-            fn write_into<S: ComponentSink>(self, sink: &mut S, tick: u32) {
-                self.into_parts().write_into(sink, tick)
-            }
-        }
-    };
+// concerto_ecs
+pub trait IntoBundle: Send + Sync + Sized {
+    type Bundle: ComponentBundle;
+    fn into_bundle(self) -> Self::Bundle;
+}
+impl<T: ComponentBundle> IntoBundle for T { /* identity */ }
+
+// concerto_ui
+impl IntoBundle for Button {
+    type Bundle = (UINode, UIMaterial, UIInteractionStyle, Interactable, UIButton, UIText);
+    fn into_bundle(self) -> Self::Bundle { /* resolve colours, return parts */ }
 }
 ```
+
+The ECS entry points (`World::spawn/insert`, `CommandQueue::spawn/insert`,
+`EntityCommandQueue::add_child/add_child_with/spawn_child_queue/insert`,
+`EntityWorldMut::spawn_child`, `RestrictedWorld::spawn`) take `T: IntoBundle`,
+and tuple `ComponentBundle` impls accept `IntoBundle` elements, so builders
+spawn directly and nest in tuples. A blanket
+`impl<T: IntoParts> ComponentBundle for T` is not possible: it conflicts with
+`impl<T: Component> ComponentBundle for T` (E0119), and from `concerto_ui` it
+breaks the orphan rule.
 
 No `.build()` call is ever needed at a call site.
 
