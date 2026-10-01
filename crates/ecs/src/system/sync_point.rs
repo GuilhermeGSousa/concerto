@@ -6,6 +6,8 @@ use crate::{
 pub(crate) struct SyncPoint;
 
 impl System for SyncPoint {
+    type In = ();
+    
     fn name(&self) -> &'static str {
         "SyncPoint"
     }

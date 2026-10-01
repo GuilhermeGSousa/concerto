@@ -24,12 +24,14 @@ use crate::{
     world::{UnsafeWorldCell, World},
 };
 
-pub type BoxedSystem = Box<dyn System>;
+pub type BoxedSystem = Box<dyn System<In = ()>>;
 
 /// A unit of work a [`Schedule`](crate::Schedule) runs against a [`World`].
 ///
 /// Functions become systems through [`IntoSystem`]; implementing this directly is rarely needed.
 pub trait System: Send + Sync + 'static {
+    type In;
+
     fn name(&self) -> &'static str;
 
     /// Returns the id used to name this system as an ordering target.
@@ -62,6 +64,8 @@ pub trait System: Send + Sync + 'static {
 }
 
 impl System for BoxedSystem {
+    type In = ();
+    
     fn name(&self) -> &'static str {
         (**self).name()
     }
@@ -85,6 +89,7 @@ impl System for BoxedSystem {
     fn initialize(&mut self, world: &mut World) {
         (**self).initialize(world);
     }
+    
 }
 
 pub(crate) struct FunctionSystem<F, Input: SystemInput> {
@@ -114,6 +119,8 @@ where
     for<'w, 's> F:
         FnMut(typle_args!(i in .. => T<{i}>)) + FnMut(typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
 {
+    type In = ();
+
     fn name(&self) -> &'static str {
         std::any::type_name::<F>()
     }
@@ -157,7 +164,7 @@ pub trait IntoSystem<Marker> {
 #[doc(hidden)]
 pub struct AlreadySystem;
 
-impl<S: System + 'static> IntoSystem<AlreadySystem> for S {
+impl<S: System<In = ()> + 'static> IntoSystem<AlreadySystem> for S {
     fn into_system(self) -> BoxedSystem {
         Box::new(self)
     }

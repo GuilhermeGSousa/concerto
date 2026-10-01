@@ -40,6 +40,7 @@ pub mod intern;
 pub mod label;
 pub mod query;
 pub mod resource;
+pub mod signal;
 pub mod system;
 pub mod table;
 pub mod utilities;

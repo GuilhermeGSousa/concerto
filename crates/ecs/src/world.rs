@@ -13,6 +13,7 @@ use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
 use crate::resource::ResourceStorage;
+use crate::signal::{IntoListenerSystem, Signal};
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
 use crate::table::MutableCellAccessor;
 use crate::{
@@ -643,6 +644,18 @@ impl World {
         if let Some(schedules) = self.get_resource_mut::<CompiledSchedules>() {
             schedules.insert(label, schedule);
         }
+    }
+
+    pub fn add_listener<T: Signal>(&mut self, system: impl IntoListenerSystem<T>) {}
+
+    pub fn trigger<T: Signal>(&mut self, signal: T)
+    {
+        
+    }
+
+    pub fn trigger_default<T: Signal + Default>(&mut self)
+    {
+        self.trigger(T::default());
     }
 }
 
