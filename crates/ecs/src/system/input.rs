@@ -11,6 +11,13 @@ use crate::{
 use derive_more::{Deref, DerefMut};
 use typle::typle;
 
+pub trait SystemArg: Send + Sync {}
+
+// TODO: Cleanup and implement on tuple
+impl SystemArg for () {
+    
+}
+
 pub trait SystemInput {
     type State: Send + Sync + Sized;
     type Data<'world, 'state>;

@@ -223,7 +223,7 @@ impl ExecutorState {
             let task = async move {
                 {
                     profiling::scope!(sys.name());
-                    unsafe { sys.run_unsafe(world_cell) };
+                    unsafe { sys.run_unsafe((), world_cell) };
                 }
                 context.system_completed(system_index);
             };
@@ -311,6 +311,8 @@ mod tests {
     }
 
     impl System for NonSendProbe {
+        type In = ();
+
         fn name(&self) -> &'static str {
             "NonSendProbe"
         }
@@ -334,6 +336,7 @@ mod tests {
         }
 
         fn apply(&mut self, _world: &mut World) {}
+        
     }
 
     #[test]

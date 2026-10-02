@@ -9,7 +9,7 @@ pub mod schedule;
 pub mod set;
 mod sync_point;
 
-use std::any::TypeId;
+use std::{any::TypeId, marker::PhantomData};
 
 pub use config::{
     AlreadyConfigured, DependencyTarget, IntoDependencyTarget, IntoSystemConfig, SystemConfig,
@@ -20,8 +20,7 @@ use input::SystemInput;
 use typle::typle;
 
 use crate::{
-    system::{access::SystemAccess, meta::SystemMetadata},
-    world::{UnsafeWorldCell, World},
+    system::{access::SystemAccess, input::SystemArg, meta::SystemMetadata}, world::{UnsafeWorldCell, World},
 };
 
 pub type BoxedSystem = Box<dyn System<In = ()>>;
@@ -30,7 +29,7 @@ pub type BoxedSystem = Box<dyn System<In = ()>>;
 ///
 /// Functions become systems through [`IntoSystem`]; implementing this directly is rarely needed.
 pub trait System: Send + Sync + 'static {
-    type In;
+    type In: SystemArg;
 
     fn name(&self) -> &'static str;
 
@@ -43,14 +42,18 @@ pub trait System: Send + Sync + 'static {
 
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    fn run_and_apply(&mut self, world: &mut World) {
-        self.run(world);
+    fn run_and_apply(&mut self,
+        args: Self::In,
+        world: &mut World) {
+        self.run(args, world);
         self.apply(world);
     }
 
-    fn run(&mut self, world: &mut World) {
+    fn run(&mut self,
+        args: Self::In,
+        world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
-        unsafe { self.run_unsafe(world_cell) };
+        unsafe { self.run_unsafe(args, world_cell) };
     }
 
     /// Runs the system through a shared world cell, for parallel executors.
@@ -58,7 +61,10 @@ pub trait System: Send + Sync + 'static {
     /// # Safety
     ///
     /// No system with conflicting access may run on the same world at the same time.
-    unsafe fn run_unsafe(&mut self, world: UnsafeWorldCell);
+    unsafe fn run_unsafe(
+        &mut self, 
+        args: Self::In,
+        world: UnsafeWorldCell);
 
     fn apply(&mut self, world: &mut World);
 }
@@ -78,8 +84,8 @@ impl System for BoxedSystem {
         (**self).apply(world);
     }
 
-    unsafe fn run_unsafe(&mut self, world: UnsafeWorldCell) {
-        unsafe { (**self).run_unsafe(world) };
+    unsafe fn run_unsafe(&mut self, args: Self::In,world: UnsafeWorldCell) {
+        unsafe { (**self).run_unsafe(args, world) };
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -92,66 +98,70 @@ impl System for BoxedSystem {
     
 }
 
-pub(crate) struct FunctionSystem<F, Input: SystemInput> {
+pub(crate) struct FunctionSystem<F, Args: SystemArg, Input: SystemInput> {
     pub func: F,
     system_state: Option<Input::State>,
+    _marker: PhantomData<Args>
 }
 
-impl<F, Input> FunctionSystem<F, Input>
+impl<F, Args, Input> FunctionSystem<F, Args,  Input>
 where
+    Args: SystemArg,
     Input: SystemInput + 'static,
 {
     pub fn new(func: F) -> Self {
         Self {
             func,
             system_state: None,
+            _marker: PhantomData::default()
         }
     }
 }
 
 #[allow(unused_variables, unused_mut, clippy::unit_arg)]
 #[typle(Tuple for 0..=12)]
-impl<F, T> System for FunctionSystem<F, T>
+impl<F, Args, Inputs> System for FunctionSystem<F, Args, Inputs>
 where
     F: Send + Sync + 'static,
-    T: Tuple,
-    T<_>: SystemInput + 'static,
+    Inputs: Tuple,
+    Inputs<_>: SystemInput + 'static,
+    Args: SystemArg + 'static,
     for<'w, 's> F:
-        FnMut(typle_args!(i in .. => T<{i}>)) + FnMut(typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
+        FnMut(Args, typle_args!(i in .. => Inputs<{i}>)) + FnMut(Args, typle_args!(i in .. => Inputs<{i}>::Data<'w, 's>)),
 {
-    type In = ();
+    type In = Args;
 
     fn name(&self) -> &'static str {
         std::any::type_name::<F>()
     }
 
     fn initialize(&mut self, world: &mut World) {
-        self.system_state = Some(T::init_state(world));
+        self.system_state = Some(Inputs::init_state(world));
     }
 
     fn apply(&mut self, world: &mut World) {
-        for typle_index!(i) in 0..T::LEN {
+        for typle_index!(i) in 0..Inputs::LEN {
             let state = self
                 .system_state
                 .as_mut()
                 .expect("Attempted to run uninitialized system.");
-            <T<{ i }>>::apply(&mut state[[i]], world);
+            <Inputs<{ i }>>::apply(&mut state[[i]], world);
         }
     }
 
-    unsafe fn run_unsafe(&mut self, world: UnsafeWorldCell) {
+    unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell) {
         let state = self
             .system_state
             .as_mut()
             .expect("Attempted to run uninitialized system.");
-        (self.func)(typle_args!(i in .. =>  {
-            <T<{i}>>::get_data(&mut state[[i]], world)
+        (self.func)(args, typle_args!(i in .. =>  {
+            <Inputs<{i}>>::get_data(&mut state[[i]], world)
         }));
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
-        for typle_index!(i) in 0..T::LEN {
-            <T<{ i }>>::fill_access(meta, access);
+        for typle_index!(i) in 0..Inputs::LEN {
+            <Inputs<{ i }>>::fill_access(meta, access);
         }
     }
 }
