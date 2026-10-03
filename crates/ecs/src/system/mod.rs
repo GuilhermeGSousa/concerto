@@ -20,7 +20,8 @@ use input::SystemInput;
 use typle::typle;
 
 use crate::{
-    system::{access::SystemAccess, input::SystemArg, meta::SystemMetadata}, world::{UnsafeWorldCell, World},
+    system::{access::SystemAccess, input::SystemArg, meta::SystemMetadata},
+    world::{UnsafeWorldCell, World},
 };
 
 pub type BoxedSystem = Box<dyn System<In = ()>>;
@@ -42,16 +43,12 @@ pub trait System: Send + Sync + 'static {
 
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    fn run_and_apply(&mut self,
-        args: Self::In,
-        world: &mut World) {
+    fn run_and_apply(&mut self, args: Self::In, world: &mut World) {
         self.run(args, world);
         self.apply(world);
     }
 
-    fn run(&mut self,
-        args: Self::In,
-        world: &mut World) {
+    fn run(&mut self, args: Self::In, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
         unsafe { self.run_unsafe(args, world_cell) };
     }
@@ -61,17 +58,14 @@ pub trait System: Send + Sync + 'static {
     /// # Safety
     ///
     /// No system with conflicting access may run on the same world at the same time.
-    unsafe fn run_unsafe(
-        &mut self, 
-        args: Self::In,
-        world: UnsafeWorldCell);
+    unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell);
 
     fn apply(&mut self, world: &mut World);
 }
 
 impl System for BoxedSystem {
     type In = ();
-    
+
     fn name(&self) -> &'static str {
         (**self).name()
     }
@@ -84,7 +78,7 @@ impl System for BoxedSystem {
         (**self).apply(world);
     }
 
-    unsafe fn run_unsafe(&mut self, args: Self::In,world: UnsafeWorldCell) {
+    unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell) {
         unsafe { (**self).run_unsafe(args, world) };
     }
 
@@ -95,41 +89,36 @@ impl System for BoxedSystem {
     fn initialize(&mut self, world: &mut World) {
         (**self).initialize(world);
     }
-    
 }
 
-pub(crate) struct FunctionSystem<F, Args: SystemArg, Input: SystemInput> {
+pub(crate) struct FunctionSystem<F, Input: SystemInput> {
     pub func: F,
     system_state: Option<Input::State>,
-    _marker: PhantomData<Args>
 }
 
-impl<F, Args, Input> FunctionSystem<F, Args,  Input>
+impl<F, Input> FunctionSystem<F, Input>
 where
-    Args: SystemArg,
     Input: SystemInput + 'static,
 {
     pub fn new(func: F) -> Self {
         Self {
             func,
             system_state: None,
-            _marker: PhantomData::default()
         }
     }
 }
 
 #[allow(unused_variables, unused_mut, clippy::unit_arg)]
 #[typle(Tuple for 0..=12)]
-impl<F, Args, Inputs> System for FunctionSystem<F, Args, Inputs>
+impl<F, Inputs> System for FunctionSystem<F, Inputs>
 where
     F: Send + Sync + 'static,
     Inputs: Tuple,
     Inputs<_>: SystemInput + 'static,
-    Args: SystemArg + 'static,
-    for<'w, 's> F:
-        FnMut(Args, typle_args!(i in .. => Inputs<{i}>)) + FnMut(Args, typle_args!(i in .. => Inputs<{i}>::Data<'w, 's>)),
+    for<'w, 's> F: FnMut(typle_args!(i in .. => Inputs<{i}>))
+        + FnMut(typle_args!(i in .. => Inputs<{i}>::Data<'w, 's>)),
 {
-    type In = Args;
+    type In = ();
 
     fn name(&self) -> &'static str {
         std::any::type_name::<F>()
@@ -154,7 +143,7 @@ where
             .system_state
             .as_mut()
             .expect("Attempted to run uninitialized system.");
-        (self.func)(args, typle_args!(i in .. =>  {
+        (self.func)(typle_args!(i in .. =>  {
             <Inputs<{i}>>::get_data(&mut state[[i]], world)
         }));
     }
@@ -167,8 +156,66 @@ where
 }
 
 /// Converts a function, closure or [`System`] into a [`BoxedSystem`].
-pub trait IntoSystem<Marker> {
-    fn into_system(self) -> BoxedSystem;
+pub trait IntoSystem<Args: SystemArg, Marker>: Sized {
+    type System: System<In = Args>;
+    fn into_system(self) -> Self::System;
+
+    fn with_args<T>(self, args: T) -> SystemWithArgs<Self::System, T>
+    where
+        T: Send + Sync + SystemArg + 'static,
+    {
+        SystemWithArgs::new(self, args)
+    }
+}
+
+pub struct SystemWithArgs<S, Args>
+where
+    S: System<In = Args>,
+    Args: SystemArg,
+{
+    system: S,
+    args: Args,
+}
+
+impl<S, Args> SystemWithArgs<S, Args>
+where
+    S: System<In = Args>,
+    Args: SystemArg,
+{
+    fn new<M>(system: impl IntoSystem<Args, M, System = S>, args: Args) -> Self {
+        Self {
+            system: system.into_system(),
+            args,
+        }
+    }
+}
+
+impl<S, Args> System for SystemWithArgs<S, Args>
+where
+    S: System<In = Args>,
+    Args: SystemArg + 'static,
+{
+    type In = ();
+
+    fn name(&self) -> &'static str {
+        self.system.name()
+    }
+
+    fn initialize(&mut self, world: &mut World) {
+        self.system.initialize(world);
+    }
+
+    fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
+        self.system.fill_access(meta, access);
+    }
+
+    unsafe fn run_unsafe(&mut self, _args: Self::In, world: UnsafeWorldCell) {
+        unsafe { self.system.run_unsafe(self.args, world) };
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        self.system.apply(world);
+    }
 }
 
 #[doc(hidden)]
