@@ -14,9 +14,7 @@ use typle::typle;
 pub trait SystemArg: Send + Sync {}
 
 // TODO: Cleanup and implement on tuple
-impl SystemArg for () {
-    
-}
+impl SystemArg for () {}
 
 pub trait SystemInput {
     type State: Send + Sync + Sized;
@@ -55,6 +53,10 @@ where
         world: UnsafeWorldCell<'world>,
     ) -> Self::Data<'world, 'state> {
         typle_for!(i in .. => <T<{i}>>::get_data(&mut state[[i]], world))
+    }
+
+    fn apply(state: &mut Self::State, world: &mut World) {
+        typle_for!(i in .. => <T<{i}>>::apply(&mut state[[i]], world));
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {

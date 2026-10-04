@@ -323,7 +323,7 @@ mod tests {
             meta.set_non_send();
         }
 
-        unsafe fn run_unsafe(&mut self, _world: UnsafeWorldCell) {
+        unsafe fn run_unsafe(&mut self, _args: Self::In, _world: UnsafeWorldCell) {
             if self.running.swap(true, Ordering::SeqCst) {
                 self.overlapped.store(true, Ordering::SeqCst);
             }
@@ -336,7 +336,6 @@ mod tests {
         }
 
         fn apply(&mut self, _world: &mut World) {}
-        
     }
 
     #[test]

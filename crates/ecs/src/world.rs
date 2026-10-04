@@ -648,13 +648,9 @@ impl World {
 
     pub fn add_listener<T: Signal>(&mut self, system: impl IntoListenerSystem<T>) {}
 
-    pub fn trigger<T: Signal>(&mut self, signal: T)
-    {
-        
-    }
+    pub fn trigger<T: Signal>(&mut self, signal: T) {}
 
-    pub fn trigger_default<T: Signal + Default>(&mut self)
-    {
+    pub fn trigger_default<T: Signal + Default>(&mut self) {
         self.trigger(T::default());
     }
 }

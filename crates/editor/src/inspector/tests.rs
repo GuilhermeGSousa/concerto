@@ -10,12 +10,12 @@ use serde::{Deserialize, Serialize};
 
 pub(super) fn update(world: &mut World) {
     for mut system in [
-        collect_inspector_data.into_system(),
-        sync_inspected_components.into_system(),
-        build_property_widgets.into_system(),
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
     ] {
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
     }
     world.tick();
 }
@@ -23,9 +23,9 @@ pub(super) fn update(world: &mut World) {
 #[test]
 fn inspector_presentation_systems_do_not_request_exclusive_access() {
     for system in [
-        collect_inspector_data.into_system(),
-        sync_inspected_components.into_system(),
-        build_property_widgets.into_system(),
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
     ] {
         let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
         let mut access = concerto_ecs::system::access::SystemAccess::default();
@@ -39,17 +39,17 @@ fn metadata_tracks_selection_and_despawn_without_spurious_changes() {
     let (mut world, target, _) = world();
     let mut collect = collect_inspector_data.into_system();
     collect.initialize(&mut world);
-    collect.run_and_apply(&mut world);
+    collect.run_and_apply((), &mut world);
     let tick = world.resource_changed_tick::<InspectorData>();
     assert_eq!(
         world.get_resource::<InspectorData>().unwrap().entity,
         Some(target)
     );
     world.tick();
-    collect.run_and_apply(&mut world);
+    collect.run_and_apply((), &mut world);
     assert_eq!(world.resource_changed_tick::<InspectorData>(), tick);
     world.despawn(target);
-    collect.run_and_apply(&mut world);
+    collect.run_and_apply((), &mut world);
     assert!(
         world
             .get_resource::<InspectorData>()
@@ -590,7 +590,7 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
         .unwrap()
         .translation
         .x = 1.0;
-    sync.run_and_apply(&mut world);
+    sync.run_and_apply((), &mut world);
     world
         .get_component_for_entity_mut::<Transform>(target)
         .unwrap()

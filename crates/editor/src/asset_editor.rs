@@ -248,7 +248,7 @@ mod tests {
     fn process_editor_commands(world: &mut World) {
         let mut system = super::process_editor_commands.into_system();
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
     }
     fn finish_asset_request(
         world: &mut World,
@@ -338,7 +338,7 @@ mod tests {
         })
         .into_system();
         check.initialize(&mut w);
-        check.run_and_apply(&mut w);
+        check.run_and_apply((), &mut w);
     }
 
     #[test]

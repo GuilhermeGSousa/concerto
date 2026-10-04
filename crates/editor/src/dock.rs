@@ -335,7 +335,7 @@ mod tests {
         world.insert_resource(Built::default());
         let mut system = build_every_region.into_system();
         system.initialize(&mut world);
-        system.run_and_apply(&mut world);
+        system.run_and_apply((), &mut world);
 
         let built = &world.get_resource::<Built>().unwrap().0;
         assert_eq!(built.len(), Region::ALL.len());

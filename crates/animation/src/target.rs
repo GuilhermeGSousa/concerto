@@ -106,7 +106,7 @@ mod tests {
 
         let mut system = initialize_skeletons.into_system();
         system.initialize(&mut world);
-        system.run_and_apply(&mut world);
+        system.run_and_apply((), &mut world);
 
         assert!(
             world

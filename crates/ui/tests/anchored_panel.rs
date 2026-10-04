@@ -332,7 +332,7 @@ fn stack_world() -> World {
 fn run(world: &mut World) {
     let mut system = track_panel_stack.into_system();
     system.initialize(world);
-    system.run_and_apply(world);
+    system.run_and_apply((), world);
 }
 
 fn node(world: &mut World) -> Entity {

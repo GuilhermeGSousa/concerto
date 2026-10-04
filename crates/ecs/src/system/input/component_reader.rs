@@ -108,7 +108,7 @@ mod tests {
             .unwrap()
             .0 = 2;
         world.tick();
-        read.run_and_apply(&mut world);
+        read.run_and_apply((), &mut world);
         world.despawn(entity);
         let components = ComponentMetadata::new(&world);
         assert!(!components.entity_is_valid(entity));

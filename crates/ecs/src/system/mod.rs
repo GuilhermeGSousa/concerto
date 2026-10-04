@@ -20,7 +20,11 @@ use input::SystemInput;
 use typle::typle;
 
 use crate::{
-    system::{access::SystemAccess, input::SystemArg, meta::SystemMetadata},
+    system::{
+        access::SystemAccess,
+        input::{SystemArg, SystemInputData},
+        meta::SystemMetadata,
+    },
     world::{UnsafeWorldCell, World},
 };
 
@@ -91,51 +95,91 @@ impl System for BoxedSystem {
     }
 }
 
-pub(crate) struct FunctionSystem<F, Input: SystemInput> {
-    pub func: F,
-    system_state: Option<Input::State>,
+/// A function that can run as a [`System`], optionally taking a leading [`SystemArg`].
+pub trait SystemFunction<Marker>: Send + Sync + 'static {
+    type In: SystemArg;
+    type Inputs: SystemInput;
+
+    fn call(&mut self, args: Self::In, data: SystemInputData<'_, '_, Self::Inputs>);
 }
 
-impl<F, Input> FunctionSystem<F, Input>
+#[doc(hidden)]
+pub struct WithArgs<Args, T>(PhantomData<fn(Args, T)>);
+
+#[allow(unused_variables)]
+#[typle(Tuple for 0..=12)]
+impl<F, T> SystemFunction<T> for F
 where
-    Input: SystemInput + 'static,
+    F: Send + Sync + 'static,
+    T: Tuple,
+    T<_>: SystemInput + 'static,
+    for<'w, 's> F:
+        FnMut(typle_args!(i in .. => T<{i}>)) + FnMut(typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
 {
+    type In = ();
+    type Inputs = T;
+
+    fn call(&mut self, _args: (), data: SystemInputData<'_, '_, T>) {
+        self(typle_args!(i in .. => data[[i]]));
+    }
+}
+
+#[allow(unused_variables)]
+#[typle(Tuple for 0..=12)]
+impl<F, Args, T> SystemFunction<WithArgs<Args, T>> for F
+where
+    F: Send + Sync + 'static,
+    T: Tuple,
+    T<_>: SystemInput + 'static,
+    Args: SystemArg + 'static,
+    for<'w, 's> F: FnMut(Args, typle_args!(i in .. => T<{i}>))
+        + FnMut(Args, typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
+{
+    type In = Args;
+    type Inputs = T;
+
+    fn call(&mut self, args: Args, data: SystemInputData<'_, '_, T>) {
+        self(args, typle_args!(i in .. => data[[i]]));
+    }
+}
+
+pub struct FunctionSystem<F: SystemFunction<Marker>, Marker> {
+    pub func: F,
+    system_state: Option<<F::Inputs as SystemInput>::State>,
+    marker: PhantomData<fn() -> Marker>,
+}
+
+impl<F: SystemFunction<Marker>, Marker> FunctionSystem<F, Marker> {
     pub fn new(func: F) -> Self {
         Self {
             func,
             system_state: None,
+            marker: PhantomData,
         }
     }
 }
 
-#[allow(unused_variables, unused_mut, clippy::unit_arg)]
-#[typle(Tuple for 0..=12)]
-impl<F, Inputs> System for FunctionSystem<F, Inputs>
+impl<F, Marker> System for FunctionSystem<F, Marker>
 where
-    F: Send + Sync + 'static,
-    Inputs: Tuple,
-    Inputs<_>: SystemInput + 'static,
-    for<'w, 's> F: FnMut(typle_args!(i in .. => Inputs<{i}>))
-        + FnMut(typle_args!(i in .. => Inputs<{i}>::Data<'w, 's>)),
+    F: SystemFunction<Marker>,
+    Marker: 'static,
 {
-    type In = ();
+    type In = F::In;
 
     fn name(&self) -> &'static str {
         std::any::type_name::<F>()
     }
 
     fn initialize(&mut self, world: &mut World) {
-        self.system_state = Some(Inputs::init_state(world));
+        self.system_state = Some(F::Inputs::init_state(world));
     }
 
     fn apply(&mut self, world: &mut World) {
-        for typle_index!(i) in 0..Inputs::LEN {
-            let state = self
-                .system_state
-                .as_mut()
-                .expect("Attempted to run uninitialized system.");
-            <Inputs<{ i }>>::apply(&mut state[[i]], world);
-        }
+        let state = self
+            .system_state
+            .as_mut()
+            .expect("Attempted to run uninitialized system.");
+        F::Inputs::apply(state, world);
     }
 
     unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell) {
@@ -143,15 +187,11 @@ where
             .system_state
             .as_mut()
             .expect("Attempted to run uninitialized system.");
-        (self.func)(typle_args!(i in .. =>  {
-            <Inputs<{i}>>::get_data(&mut state[[i]], world)
-        }));
+        self.func.call(args, F::Inputs::get_data(state, world));
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
-        for typle_index!(i) in 0..Inputs::LEN {
-            <Inputs<{ i }>>::fill_access(meta, access);
-        }
+        F::Inputs::fill_access(meta, access);
     }
 }
 
@@ -160,9 +200,17 @@ pub trait IntoSystem<Args: SystemArg, Marker>: Sized {
     type System: System<In = Args>;
     fn into_system(self) -> Self::System;
 
-    fn with_args<T>(self, args: T) -> SystemWithArgs<Self::System, T>
+    /// Converts into a type-erased [`BoxedSystem`].
+    fn into_boxed_system(self) -> BoxedSystem
     where
-        T: Send + Sync + SystemArg + 'static,
+        Self::System: System<In = ()>,
+    {
+        Box::new(self.into_system())
+    }
+
+    fn with_args(self, args: Args) -> SystemWithArgs<Self::System, Args>
+    where
+        Args: Clone + 'static,
     {
         SystemWithArgs::new(self, args)
     }
@@ -193,7 +241,7 @@ where
 impl<S, Args> System for SystemWithArgs<S, Args>
 where
     S: System<In = Args>,
-    Args: SystemArg + 'static,
+    Args: SystemArg + Clone + 'static,
 {
     type In = ();
 
@@ -210,7 +258,7 @@ where
     }
 
     unsafe fn run_unsafe(&mut self, _args: Self::In, world: UnsafeWorldCell) {
-        unsafe { self.system.run_unsafe(self.args, world) };
+        unsafe { self.system.run_unsafe(self.args.clone(), world) };
     }
 
     fn apply(&mut self, world: &mut World) {
@@ -221,23 +269,26 @@ where
 #[doc(hidden)]
 pub struct AlreadySystem;
 
-impl<S: System<In = ()> + 'static> IntoSystem<AlreadySystem> for S {
-    fn into_system(self) -> BoxedSystem {
-        Box::new(self)
+impl<S: System<In = ()> + 'static> IntoSystem<(), AlreadySystem> for S {
+    type System = S;
+
+    fn into_system(self) -> Self::System {
+        self
     }
 }
 
-#[typle(Tuple for 0..=12)]
-impl<F, T> IntoSystem<T> for F
+#[doc(hidden)]
+pub struct IsFunctionSystem;
+
+impl<F, Marker> IntoSystem<F::In, (IsFunctionSystem, Marker)> for F
 where
-    F: Send + Sync + 'static,
-    T: Tuple,
-    T<_>: SystemInput + 'static,
-    for<'w, 's> F:
-        FnMut(typle_args!(i in .. => T<{i}>)) + FnMut(typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
+    F: SystemFunction<Marker>,
+    Marker: 'static,
 {
-    fn into_system(self) -> BoxedSystem {
-        Box::new(FunctionSystem::new(self))
+    type System = FunctionSystem<F, Marker>;
+
+    fn into_system(self) -> Self::System {
+        FunctionSystem::new(self)
     }
 }
 

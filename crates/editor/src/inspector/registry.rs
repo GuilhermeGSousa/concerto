@@ -554,7 +554,7 @@ mod tests {
         apply_property_commit(&mut world, edit).unwrap();
         let mut propagation = update_simple_entities.into_system();
         propagation.initialize(&mut world);
-        propagation.run_and_apply(&mut world);
+        propagation.run_and_apply((), &mut world);
         assert_eq!(
             world
                 .get_component_for_entity::<GlobalTransform>(entity)

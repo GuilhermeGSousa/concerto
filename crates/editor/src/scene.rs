@@ -204,19 +204,19 @@ mod tests {
     fn process_editor_commands(world: &mut World) {
         let mut system = crate::asset_editor::process_editor_commands.into_system();
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
     }
     fn update_scenes(world: &mut World) {
         let mut system = super::update_scenes.into_system();
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
         let mut reset = (|mut commands: ResMut<crate::viewport::ViewportCommands>,
                           mut fly: ResMut<crate::viewport::FlyCamera>| {
             crate::viewport::apply_workspace_navigation(&mut commands, &mut fly);
         })
         .into_system();
         reset.initialize(world);
-        reset.run_and_apply(world);
+        reset.run_and_apply((), world);
     }
     use crate::asset_editor::{
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,

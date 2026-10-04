@@ -528,10 +528,10 @@ mod tests {
         world.insert_resource(EventChannel::<UITextInputCancelled>::default());
         let mut build = build.into_system();
         build.initialize(&mut world);
-        build.run_and_apply(&mut world);
+        build.run_and_apply((), &mut world);
         let mut refresh = refresh_numeric_fields.into_system();
         refresh.initialize(&mut world);
-        refresh.run_and_apply(&mut world);
+        refresh.run_and_apply((), &mut world);
         let mut fields = world.query::<(Entity, &NumericSlot), ()>();
         assert_eq!(fields.iter(&mut world).count(), 3);
         let (field, row) = fields
@@ -551,7 +551,7 @@ mod tests {
             .get_component_for_entity_mut::<UITextInput>(field)
             .unwrap()
             .value = "2.5".into();
-        refresh.run_and_apply(&mut world);
+        refresh.run_and_apply((), &mut world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)
@@ -569,7 +569,7 @@ mod tests {
             });
         let mut submit = commit_numeric_fields.into_system();
         submit.initialize(&mut world);
-        submit.run_and_apply(&mut world);
+        submit.run_and_apply((), &mut world);
         apply_property_commits(&mut world);
         assert_eq!(
             world
@@ -589,7 +589,7 @@ mod tests {
             .get_component_for_entity_mut::<PropertyRowValue>(row)
             .unwrap() = snapshot;
         **world.get_resource_mut::<FocusedWidget>().unwrap() = None;
-        refresh.run_and_apply(&mut world);
+        refresh.run_and_apply((), &mut world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)
@@ -608,7 +608,7 @@ mod tests {
             .push_event(UITextInputCancelled { entity: field });
         let mut cancel = cancel_numeric_fields.into_system();
         cancel.initialize(&mut world);
-        cancel.run_and_apply(&mut world);
+        cancel.run_and_apply((), &mut world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)

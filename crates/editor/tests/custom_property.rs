@@ -292,7 +292,7 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
     world.insert_resource(EventChannel::<UIClick>::default());
     let mut build = build_widget.into_system();
     build.initialize(&mut world);
-    build.run_and_apply(&mut world);
+    build.run_and_apply((), &mut world);
     let mut query = world.query::<(Entity, &SettingButton), ()>();
     let (button, row) = query
         .iter(&mut world)
@@ -316,7 +316,7 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         });
     let mut click = example::click_settings.into_system();
     click.initialize(&mut world);
-    click.run_and_apply(&mut world);
+    click.run_and_apply((), &mut world);
     assert_eq!(world.get_resource::<PropertyCommits>().unwrap().0.len(), 1);
     apply_property_commits(&mut world);
     assert!(
@@ -339,7 +339,7 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         .unwrap() = refreshed;
     let mut refresh = example::refresh_settings.into_system();
     refresh.initialize(&mut world);
-    refresh.run_and_apply(&mut world);
+    refresh.run_and_apply((), &mut world);
     assert!(
         world
             .get_component_for_entity::<UIText>(button)

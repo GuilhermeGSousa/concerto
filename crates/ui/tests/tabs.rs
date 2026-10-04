@@ -17,7 +17,7 @@ fn strip_with_bodies(
 fn run(world: &mut World) {
     let mut system = sync_tab_bodies.into_system();
     system.initialize(world);
-    system.run_and_apply(world);
+    system.run_and_apply((), world);
 }
 
 fn visible(world: &World, entity: concerto_ecs::Entity) -> bool {
