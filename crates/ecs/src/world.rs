@@ -646,7 +646,7 @@ impl World {
         }
     }
 
-    pub fn add_listener<T: Signal>(&mut self, system: impl IntoListenerSystem<T>) {}
+    pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListenerSystem<T, M>) {}
 
     pub fn trigger<T: Signal>(&mut self, signal: T) {}
 

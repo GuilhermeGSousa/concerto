@@ -22,13 +22,15 @@ use typle::typle;
 use crate::{
     system::{
         access::SystemAccess,
-        input::{SystemArg, SystemInputData},
+        input::{SystemArg, SystemArgData, SystemInputData},
         meta::SystemMetadata,
     },
     world::{UnsafeWorldCell, World},
 };
 
 pub type BoxedSystem = Box<dyn System<In = ()>>;
+
+pub type SysArg<'a, S> = SystemArgData<'a, <S as System>::In>;
 
 /// A unit of work a [`Schedule`](crate::Schedule) runs against a [`World`].
 ///
@@ -47,12 +49,12 @@ pub trait System: Send + Sync + 'static {
 
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    fn run_and_apply(&mut self, args: Self::In, world: &mut World) {
+    fn run_and_apply<'i>(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         self.run(args, world);
         self.apply(world);
     }
 
-    fn run(&mut self, args: Self::In, world: &mut World) {
+    fn run(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
         unsafe { self.run_unsafe(args, world_cell) };
     }
@@ -62,7 +64,7 @@ pub trait System: Send + Sync + 'static {
     /// # Safety
     ///
     /// No system with conflicting access may run on the same world at the same time.
-    unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell);
+    unsafe fn run_unsafe(&mut self, args: SysArg<'_, Self>, world: UnsafeWorldCell);
 
     fn apply(&mut self, world: &mut World);
 }
@@ -100,7 +102,11 @@ pub trait SystemFunction<Marker>: Send + Sync + 'static {
     type In: SystemArg;
     type Inputs: SystemInput;
 
-    fn call(&mut self, args: Self::In, data: SystemInputData<'_, '_, Self::Inputs>);
+    fn call(
+        &mut self,
+        args: SystemArgData<'_, Self::In>,
+        data: SystemInputData<'_, '_, Self::Inputs>,
+    );
 }
 
 #[doc(hidden)]
@@ -132,13 +138,13 @@ where
     T: Tuple,
     T<_>: SystemInput + 'static,
     Args: SystemArg + 'static,
-    for<'w, 's> F: FnMut(Args, typle_args!(i in .. => T<{i}>))
-        + FnMut(Args, typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
+    for<'i, 'w, 's> F: FnMut(Args, typle_args!(i in .. => T<{i}>))
+        + FnMut(Args::Arg<'i>, typle_args!(i in .. => T<{i}>::Data<'w, 's>)),
 {
     type In = Args;
     type Inputs = T;
 
-    fn call(&mut self, args: Args, data: SystemInputData<'_, '_, T>) {
+    fn call(&mut self, args: SystemArgData<'_, Args>, data: SystemInputData<'_, '_, T>) {
         self(args, typle_args!(i in .. => data[[i]]));
     }
 }
@@ -182,7 +188,7 @@ where
         F::Inputs::apply(state, world);
     }
 
-    unsafe fn run_unsafe(&mut self, args: Self::In, world: UnsafeWorldCell) {
+    unsafe fn run_unsafe(&mut self, args: SysArg<'_, Self>, world: UnsafeWorldCell) {
         let state = self
             .system_state
             .as_mut()
@@ -210,7 +216,7 @@ pub trait IntoSystem<Args: SystemArg, Marker>: Sized {
 
     fn with_args(self, args: Args) -> SystemWithArgs<Self::System, Args>
     where
-        Args: Clone + 'static,
+        Args: for<'i> SystemArg<Arg<'i> = Args> + 'static,
     {
         SystemWithArgs::new(self, args)
     }
@@ -241,7 +247,7 @@ where
 impl<S, Args> System for SystemWithArgs<S, Args>
 where
     S: System<In = Args>,
-    Args: SystemArg + Clone + 'static,
+    Args: for<'i> SystemArg<Arg<'i> = Args> + Clone + 'static,
 {
     type In = ();
 

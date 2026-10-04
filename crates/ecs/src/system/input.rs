@@ -11,10 +11,14 @@ use crate::{
 use derive_more::{Deref, DerefMut};
 use typle::typle;
 
-pub trait SystemArg: Send + Sync {}
+pub trait SystemArg: Send + Sync {
+    type Arg<'i>: SystemArg;
+}
 
 // TODO: Cleanup and implement on tuple
-impl SystemArg for () {}
+impl SystemArg for () {
+    type Arg<'i> = ();
+}
 
 pub trait SystemInput {
     type State: Send + Sync + Sized;
@@ -65,6 +69,8 @@ where
 }
 
 pub type SystemInputData<'w, 's, P> = <P as SystemInput>::Data<'w, 's>;
+
+pub type SystemArgData<'i, A> = <A as SystemArg>::Arg<'i>;
 
 pub struct StaticSystemInput<'w, 's, P: SystemInput>(SystemInputData<'w, 's, P>);
 
