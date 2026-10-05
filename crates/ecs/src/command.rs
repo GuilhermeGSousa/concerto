@@ -11,7 +11,7 @@ use crate::{
         hierarchy::{ChildOf, DespawnChildren},
     },
     resource::Resource,
-    signal::Signal,
+    signal::{EntitySignal, Signal},
     system::{input::SystemInput, meta::SystemMetadata},
     world::World,
 };
@@ -65,6 +65,12 @@ impl<'a> EntityCommandQueue<'a> {
 
     pub fn despawn(mut self) {
         self.command_queue.despawn(self.entity());
+    }
+
+    /// Queues a signal for this entity's own listener, run when commands are applied.
+    pub fn trigger<T: EntitySignal>(&mut self, signal: T) {
+        self.command_queue
+            .push(TriggerOnCommand(self.entity, signal));
     }
 }
 
@@ -480,5 +486,13 @@ struct TriggerCommand<T: Signal>(T);
 impl<T: Signal> Command for TriggerCommand<T> {
     fn execute(self, world: &mut World) {
         world.trigger(self.0);
+    }
+}
+
+struct TriggerOnCommand<T: EntitySignal>(Entity, T);
+
+impl<T: EntitySignal> Command for TriggerOnCommand<T> {
+    fn execute(self, world: &mut World) {
+        world.trigger_on(self.0, self.1);
     }
 }

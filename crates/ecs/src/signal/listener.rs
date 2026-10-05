@@ -38,7 +38,9 @@ impl<S: Signal> Listener<S> {
             state.system.initialize(guard.world);
             state.initialized = true;
         }
-        state.system.run_and_apply(On { signal }, guard.world);
+        state
+            .system
+            .run_and_apply(On { signal, entity }, guard.world);
     }
 }
 

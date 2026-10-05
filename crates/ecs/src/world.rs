@@ -13,8 +13,8 @@ use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
 use crate::resource::ResourceStorage;
-use crate::signal::Signal;
 use crate::signal::listener::{IntoListener, Listener, Listeners};
+use crate::signal::{EntitySignal, Signal};
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
 use crate::table::MutableCellAccessor;
 use crate::{
@@ -657,6 +657,11 @@ impl World {
         for entity in entities {
             Listener::<T>::run(entity, &mut signal, self);
         }
+    }
+
+    /// Runs `target`'s own listener for this signal, if it has one.
+    pub fn trigger_on<T: EntitySignal>(&mut self, target: Entity, mut signal: T) {
+        Listener::<T>::run(target, &mut signal, self);
     }
 
     pub fn trigger_default<T: Signal + Default>(&mut self) {

@@ -1,9 +1,9 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use concerto_ecs::{
-    CommandQueue, Component, IntoSystem, Query, ResMut, Resource, System, World,
+    CommandQueue, Component, Entity, IntoSystem, Query, ResMut, Resource, System, World,
     signal::{
-        On, Signal,
+        EntitySignal, On, Signal,
         listener::{IntoListener, Listener},
     },
     system::input::SystemLocal,
@@ -17,8 +17,20 @@ impl Signal for TestSignal {}
 struct OtherSignal;
 impl Signal for OtherSignal {}
 
+#[derive(Default)]
+struct Poke(u32);
+impl Signal for Poke {}
+impl EntitySignal for Poke {}
+
 #[derive(Resource, Default)]
 struct Calls(Vec<u32>);
+
+#[derive(Resource, Default)]
+struct Poked(Vec<Entity>);
+
+fn record_poked(on: On<Poke>, mut poked: ResMut<Poked>) {
+    poked.0.push(on.entity());
+}
 
 #[derive(Component)]
 struct TestComponent;
@@ -313,4 +325,71 @@ fn listeners_can_queue_other_signals() {
     world.trigger(TestSignal(1));
 
     assert_eq!(world.get_resource::<Calls>().unwrap().0, [1, 2, 3]);
+}
+
+#[test]
+fn trigger_on_runs_only_the_target_listener() {
+    let mut world = World::new();
+    world.insert_resource(Poked::default());
+    let first = world.spawn(record_poked.into_listener());
+    let second = world.spawn(record_poked.into_listener());
+    world.add_listener(|_: On<Poke>| panic!("listener on another entity ran"));
+
+    world.trigger_on(second, Poke(0));
+    world.trigger_on(first, Poke(0));
+
+    assert_eq!(world.get_resource::<Poked>().unwrap().0, [second, first]);
+}
+
+#[test]
+fn broadcast_listeners_see_their_own_entity() {
+    let mut world = World::new();
+    world.insert_resource(Poked::default());
+    world.register_component::<Listener<Poke>>();
+    let first = world.spawn(record_poked.into_listener());
+    let second = world.spawn(record_poked.into_listener());
+
+    world.trigger(Poke(0));
+
+    assert_eq!(world.get_resource::<Poked>().unwrap().0, [first, second]);
+}
+
+#[test]
+fn trigger_on_skips_entities_without_a_live_listener() {
+    let mut world = World::new();
+    world.insert_resource(Poked::default());
+    let bare = world.spawn(TestComponent);
+    let despawned = world.spawn(record_poked.into_listener());
+    world.despawn(despawned);
+
+    world.trigger_on(bare, Poke(0));
+    world.trigger_on(despawned, Poke(0));
+
+    assert!(world.get_resource::<Poked>().unwrap().0.is_empty());
+}
+
+#[test]
+fn queued_entity_signals_are_deferred_and_observe_command_order() {
+    let mut world = World::new();
+    world.insert_resource(Calls::default());
+    let target = world.spawn(
+        (|on: On<Poke>, query: Query<&TestComponent>, mut calls: ResMut<Calls>| {
+            calls.0.push(on.signal().0 + query.iter().count() as u32);
+        })
+        .into_listener(),
+    );
+    let mut system = (move |mut commands: CommandQueue| {
+        commands.spawn(TestComponent);
+        commands.entity(target).trigger(Poke(10));
+        commands.spawn(TestComponent);
+        commands.entity(target).trigger(Poke(20));
+    })
+    .into_system();
+    system.initialize(&mut world);
+
+    system.run((), &mut world);
+    assert!(world.get_resource::<Calls>().unwrap().0.is_empty());
+
+    system.apply(&mut world);
+    assert_eq!(world.get_resource::<Calls>().unwrap().0, [11, 22]);
 }

@@ -1,18 +1,24 @@
-use crate::system::input::SystemArg;
+use crate::{Entity, system::input::SystemArg};
 
 pub mod listener;
 
 pub trait Signal: Send + Sync + 'static {}
 
+pub trait EntitySignal: Signal {}
+
 pub struct On<'w, S: Signal> {
     signal: &'w mut S,
+    entity: Entity,
 }
 
-impl<S:Signal> On<'_, S>
-{
-    pub fn signal(&self) -> &S
-    {
+impl<S: Signal> On<'_, S> {
+    pub fn signal(&self) -> &S {
         self.signal
+    }
+
+    /// The entity whose listener is running.
+    pub fn entity(&self) -> Entity {
+        self.entity
     }
 }
 
@@ -35,9 +41,12 @@ mod tests {
         let mut listener = (|on: On<Count>| on.signal.0 += 1).into_listener_system();
         listener.initialize(&mut world);
 
+        let entity = world.spawn(());
         let mut count = Count(0);
-        listener.run_and_apply(On { signal: &mut count }, &mut world);
-        listener.run_and_apply(On { signal: &mut count }, &mut world);
+        let signal = &mut count;
+        listener.run_and_apply(On { signal, entity }, &mut world);
+        let signal = &mut count;
+        listener.run_and_apply(On { signal, entity }, &mut world);
 
         assert_eq!(count.0, 2);
     }
