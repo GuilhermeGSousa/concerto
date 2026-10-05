@@ -10,6 +10,36 @@ cargo run -p concerto-editor -- --project examples/render-test
 
 Add `--decorated` to use the window manager's title bar.
 
+## Headless, for agents (MCP)
+
+```sh
+cargo run -p concerto-editor -- --headless --mcp [--project examples/render-test]
+```
+
+runs the editor with no window and no panels, and serves its verbs as
+[MCP](https://modelcontextprotocol.io) tools on stdin/stdout: `status`,
+`list_assets`, `scene_tree`, `find_entities`, `inspect`, `open_project`,
+`open_asset`, `close_editor`, `select`, `frame` and `set_camera`. The
+repository's `.mcp.json` registers it with Claude Code, so an agent working in
+this checkout starts its own editor on demand. Build once first
+(`cargo build -p concerto-editor`): a cold build outlasts an MCP client's
+startup timeout.
+
+Headless still renders the viewport, so it needs a GPU adapter; with none, a
+software Vulkan driver works (`apt-get install mesa-vulkan-drivers libvulkan1`).
+`--viewport 1920x1080` sets the render size (default 1280x720).
+
+Frames run only while there is work: a call that changes something, a load in
+progress, or a call waiting on one. Read-only calls are answered between
+frames. When the client closes stdin the editor exits.
+
+`EditorPlugin { headless: true }` is the switch: it registers the core — project,
+asset editors, scene preview, selection, property model, editor camera — and
+skips every plugin that needs a window. Pair it with an app that registers
+neither `WindowPlugin` nor `UIPlugin`. The tools live in `src/mcp/` behind the
+default `mcp` feature; the protocol, runner and tool registry are the
+app-agnostic `concerto-mcp` crate.
+
 Selecting a supported asset in Curiosities opens its editor tab. Each asset type
 has one editor: another Scene reuses the Scene tab. The old preview, camera,
 selection, and temporary edits remain until its replacement loads successfully.

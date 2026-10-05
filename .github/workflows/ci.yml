@@ -50,6 +50,13 @@ jobs:
           # jolt-ffi builds the Jolt Physics C++ sources from a submodule.
           submodules: true
 
+      - name: Free disk space
+        # The workspace's test binaries outgrow the free space on an Ubuntu
+        # runner ("No space left on device"). Drop preinstalled SDKs this
+        # job never uses.
+        if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -60,15 +67,22 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ matrix.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          # v2: built with the slimmer debug info below; older caches would
+          # only add stale artefacts to the disk.
+          key: ${{ matrix.os }}-cargo-test-v2-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ matrix.os }}-cargo-test-
+            ${{ matrix.os }}-cargo-test-v2-
 
       - name: Run tests
         # Runs the physics suite against the Jolt backend (the native
         # default); the same suite runs against the Rapier backend in the
         # test_physics_rapier job.
         run: cargo test --workspace
+        env:
+          # Full debug info more than doubles the size of target/. Line
+          # tables keep file and line numbers in backtraces.
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_INCREMENTAL: 0
 
   test_physics_rapier:
     name: Test Physics (Rapier backend)

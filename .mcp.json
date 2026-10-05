@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "concerto": {
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "concerto-editor", "--", "--headless", "--mcp"]
+    }
+  }
+}

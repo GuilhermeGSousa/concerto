@@ -75,22 +75,32 @@ struct ComponentStack {
     registry_tick: Option<concerto_ecs::component::Tick>,
 }
 
+/// The property model: which components are editable, their editors, and the
+/// queue that applies edits. Runs with or without a window.
 pub struct InspectorPlugin;
 
 impl Plugin for InspectorPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(InspectorData::default());
-        app.insert_resource(InspectorScroll::default());
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
         app.register_editable::<Transform>();
+        app.add_system(Update, apply_property_commits);
+    }
+}
+
+/// The Looking Glass panel. Requires a window; register after [`InspectorPlugin`].
+pub struct InspectorPanelPlugin;
+
+impl Plugin for InspectorPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(InspectorData::default());
+        app.insert_resource(InspectorScroll::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
             region: Region::Side,
         });
         app.add_system(Startup, build_panel);
-        app.add_system(Update, apply_property_commits);
         app.add_system(LateUpdate, select_numeric_field_on_focus)
             .add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)

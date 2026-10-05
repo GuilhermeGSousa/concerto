@@ -7,7 +7,10 @@ repository.workspace = true
 license.workspace = true
 
 [features]
+default = ["mcp"]
 tracy = ["profiling/profile-with-tracy"]
+# The MCP server and the editor's tools (`--headless --mcp`).
+mcp = ["dep:concerto-mcp", "dep:schemars"]
 
 [dependencies]
 profiling = "1"
@@ -25,6 +28,8 @@ concerto-render.workspace = true
 concerto-window.workspace = true
 concerto-ui.workspace = true
 concerto-color.workspace = true
+concerto-mcp = { workspace = true, optional = true }
+schemars = { version = "1", optional = true }
 taffy = "0.9.2"
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
