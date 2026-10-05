@@ -1,7 +1,7 @@
 # Editor MCP Server — Design
 
-**Status:** approved direction, ready for an M1 implementation plan
-**Touches:** new `crates/editor-mcp`; `crates/editor` (headless split, viewport),
+**Status:** M1 done; M2–M5 not started
+**Touches:** new `crates/mcp`; `crates/editor` (headless split, viewport, tools),
 `crates/editable`, `crates/ecs` (entity ids), `crates/render` (readback)
 
 ## Problem
@@ -56,7 +56,7 @@ verbs as tools, plus the one thing a mouse never needed: a screenshot.
 | First transport | Stdio, with the editor headless | The agent spawns the editor itself, so it works where no display exists, and there is nothing to attach to or secure. The engine already runs headless |
 | Headless | `EditorPlugin { headless }`, on top of `DefaultPlugins::headless()`'s rule | Same switch the engine uses: no `WindowPlugin`, no `UIPlugin`. The editor splits into a core that runs either way and panels that need a window |
 | Second transport | Streamable HTTP on loopback (M5), attaching to a windowed editor | The person launches that editor, so the agent must attach rather than spawn |
-| Where the server lives | In the editor process, in its own crate | Tools need the live `World`. A crate keeps tokio out of `concerto-editor` |
+| Where the server lives | In the editor process. Protocol, runner and tool registry in `concerto-mcp`; the editor's tools in `concerto-editor` behind an `mcp` feature | Tools need the live `World`. The server knows nothing about the editor, so a game can serve its own tools the same way — and the editor binary can depend on it without a package cycle (see M1 notes) |
 | Protocol implementation | `rmcp`, the official Rust SDK | Protocol revisions and JSON Schema generation are someone else's problem. tokio runs on one thread inside one crate |
 | Threading | Server thread queues requests; one exclusive system answers them | The `World` is touched only on the main thread, at a known point in the frame, like `apply_property_commits` |
 | Headless frame pacing | Frames run only while a request is in flight | An idle headless editor on lavapipe would otherwise burn a core rendering a view nobody is looking at |
@@ -120,18 +120,23 @@ The viewport mixes camera state with window input in two systems, and owns its
 resolution through the UI layout. Headless needs each pulled apart:
 
 1. **Fly camera → transform.** `navigate` both reads input and writes the
-   camera's `Transform` from `FlyCamera`. The write moves to a core system,
-   `apply_fly_camera`, that runs when `FlyCamera` changes. `navigate` keeps
-   only input handling. `set_camera` then works by writing `FlyCamera`, in
-   either mode.
+   camera's `Transform` from `FlyCamera`, and so do framing and `zoom`. The
+   write moves to one core system, `apply_fly_camera`, which runs last and
+   writes only when the pose differs. Everything else — input, framing, a
+   tool — only writes `FlyCamera`. The navigation requests `navigate` used to
+   consume (`reset` after a scene is replaced, `release_navigation` on a tab
+   switch) move to a core `process_navigation_requests`; the panel keeps only
+   the window-side half, releasing a captured pointer.
 2. **Framing.** `frame_requested_bounds` reads `ActionFired`. `ViewportCommands`
    gains `frame_selected` beside the existing `frame_all`; a panel-side system
    turns the `FrameSelected`/`FrameAll` actions into those flags, and the core
    system reads only the flags.
 3. **Resolution.** Windowed, `sync_viewport_size` follows the panel's layout.
    Headless, there is no layout: the viewport starts at `--viewport 1280x720`
-   (default) and `screenshot` may resize it, since nobody else is looking. The
-   texture and the camera's aspect are set by one shared function either way.
+   (default) and `screenshot` may resize it, since nobody else is looking.
+   `EditorViewport` carries the size, so the camera's initial aspect comes from
+   it rather than from the texture store, which `AssetServer::add` has not
+   reached by `Startup`.
 
 ### The runner
 
@@ -157,16 +162,15 @@ exits; an agent never leaves an orphaned editor behind.
 ## Section 2 — The server
 
 ```
-crates/editor-mcp/src/
-  lib.rs        EditorMcpPlugin { transport }, McpInbox, serve_requests
-  runner.rs     the request-driven headless runner
-  server.rs     rmcp ServerHandler on its own thread; tool schemas
-  tools/
-    observe.rs  status, list_assets, scene_tree, find_entities, inspect
-    act.rs      open_project, open_asset, close_editor, select, frame, set_camera
-    edit.rs     set_property
-    capture.rs  screenshot
-  format.rs     entity ids, tree rendering, truncation
+crates/mcp/src/            concerto-mcp: knows nothing about the editor
+  lib.rs        McpPlugin, McpTool, McpTools, McpInbox, PendingRequests,
+                serve_requests, Handled::after, call_tool
+  runner.rs     McpRunnerPlugin, McpActivity, run_until_closed
+  server.rs     rmcp ServerHandler on its own thread; spawn_server, stdio
+crates/editor/src/mcp/     concerto-editor, `mcp` feature
+  mod.rs        EditorMcpPlugin, identity, WorldIndex, argument helpers
+  observe.rs    status, list_assets, scene_tree, find_entities, inspect
+  act.rs        open_project, open_asset, close_editor, select, frame, set_camera
 ```
 
 ### The request path
@@ -177,7 +181,8 @@ crates/editor-mcp/src/
                      ▼
                crossbeam channel  ── also wakes the runner
                      │
- main thread, Update: serve_requests(&mut World)   ◀── exclusive system
+ main thread, First:  serve_requests(&mut World)   ◀── exclusive system
+ between frames:      read-only calls only (see M1 notes)
                      │ immediate → reply now
                      │ deferred  → PendingRequests
                      ▼
@@ -185,7 +190,8 @@ crates/editor-mcp/src/
 ```
 
 `serve_requests` is an exclusive system (`fn(&mut World)`), registered in
-`Update` before `apply_property_commits`. It is the editor's second dynamic
+`First`, so whatever a handler queues is processed by the same frame's
+`Update`. It is the editor's second dynamic
 mutation boundary and follows the first one's rules: it drains its queue
 completely, never holds a world borrow across frames, and leaves UI entities to
 the systems that own them.
@@ -261,7 +267,7 @@ collection takes `limit` and says how many it left out.
 | `list_assets` | `query?`, `kind?`, `folder?`, `limit = 50`, `offset = 0` | `address · kind · id` lines from `Project::filtered_assets`, plus the total |
 | `scene_tree` | `root?`, `depth = 3`, `limit = 200`, `all = false` | Indented tree under the open scene's `SceneRoot`, or under `root` |
 | `find_entities` | `name?`, `component?`, `limit = 50` | Matching entities with their paths from the root |
-| `inspect` | `entity`, `components?` | Each component's JSON value via `TypeInfo::read`, and its editable property paths with their types |
+| `inspect` | `entity`, `components?` | Each component's JSON value via `TypeInfo::read`; editable property paths join it with `set_property` in M3 |
 
 `scene_tree` renders one line per entity:
 
@@ -443,10 +449,56 @@ Each leaves the editor working and is shippable alone.
 
 **M1 — Headless editor over stdio.** The core/panel split and the three
 viewport changes (Section 1), `--headless`, the request-driven runner,
-`crates/editor-mcp` with `--mcp`, `.mcp.json`, entity ids (4a). Tools:
+an MCP server crate, `--mcp`, `.mcp.json`, entity ids (4a). Tools:
 `status`, `list_assets`, `scene_tree`, `find_entities`, `inspect`,
 `open_project`, `open_asset`, `close_editor`, `select`, `frame`, `set_camera`.
 After M1 an agent anywhere can answer "what is in this scene and where is it".
+
+*Done.* Verified against `examples/render-test` on lavapipe: open the project,
+open Sponza (105 entities), walk, find, inspect, frame, place the camera, close.
+Departures from the design, and what forced them:
+
+- **Two crates, not one.** `crates/editor-mcp` depending on the editor, with the
+  editor binary depending on it for `--mcp`, is a package cycle, which Cargo
+  rejects even for optional dependencies. So the server became the app-agnostic
+  `concerto-mcp` (protocol thread, inbox, pending calls, runner, a registry
+  keyed by tool name with schemas generated from each tool's argument struct),
+  and the tools moved into the editor behind a default `mcp` feature. A game
+  can now serve its own tools through the same crate — the runtime-debugger
+  case again.
+- **Read-only calls cost no frame.** As designed, every call ran a frame, and a
+  frame right after Sponza loads took 11 s in a debug build on lavapipe, so
+  `scene_tree` did too. Tools now declare themselves read-only, and the runner
+  answers read-only calls straight from the inbox between frames, stopping at
+  the first call that may change something so order is kept and writes still
+  land inside a frame where change detection sees them. Looking now takes
+  milliseconds; acting costs one frame.
+- **Calls wait for a project that is still opening.** With `--project` at
+  launch, an immediate `open_asset` found the editor busy and failed — which an
+  agent would hit every time. `Handled::after(ready, then)` in `concerto-mcp`
+  waits for a condition and then runs a handler that may itself go pending;
+  every tool that needs the catalogue waits for it through that.
+- **The runner needs to know about background work.** A project opened at
+  launch loads on a worker thread that only finishes if frames run. Apps set
+  `McpActivity::keep_awake` while busy; the editor does for a project opening,
+  a scene loading, or any document with a pending request. Busy frames are
+  capped at ~60 per second.
+- **No GPU now says what to install.** `RenderPlugin` unwrapped the adapter
+  request; it now names lavapipe in the panic message, which is what an agent
+  sees in the MCP client's server log.
+- **`inspect` has no editable paths yet.** They only mean something with
+  `set_property`, so they move to M3 with it.
+
+Found on the way, not fixed here:
+
+- `concerto-render` did not compile on any target: `Limits` was used without
+  an import inside a `cfg!` branch, and `cfg!` compiles both branches. Fixed in
+  passing (`wgpu::Limits`), since nothing could be built without it.
+- **As many `App`s updating at once as the global compute pool has threads
+  deadlock it.** Eight bare apps (`MainSchedulePlugin` and `TimePlugin` only)
+  on eight threads hang on a 4-core machine. Tests that build apps in parallel —
+  the default for `cargo test` — are exposed. The new tests serialise their
+  apps behind a lock; the pool itself is untouched.
 
 **M2 — See.** Texture readback (4c) and `screenshot`. This is the milestone
 that pays for the rest.
