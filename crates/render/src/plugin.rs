@@ -111,16 +111,19 @@ impl RenderPlugin {
                 force_fallback_adapter: false,
             })
             .await
-            .unwrap();
+            .expect(
+                "No GPU adapter found. Without a GPU, a software Vulkan driver works: \
+                 Mesa's lavapipe (`apt-get install mesa-vulkan-drivers libvulkan1`).",
+            );
 
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
                     required_limits: if cfg!(target_arch = "wasm32") {
-                        Limits {
+                        wgpu::Limits {
                             max_color_attachments: adapter.limits().max_color_attachments,
-                            ..Limits::downlevel_webgl2_defaults()
+                            ..wgpu::Limits::downlevel_webgl2_defaults()
                         }
                         .using_resolution(adapter.limits())
                     } else {
