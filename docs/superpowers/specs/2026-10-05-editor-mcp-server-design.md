@@ -1,8 +1,8 @@
 # Editor MCP Server — Design
 
-**Status:** draft, for review
-**Touches:** new `crates/editor-mcp`; small additions to `crates/editor`,
-`crates/editable`, `crates/ecs` and `crates/render`
+**Status:** approved direction, ready for an M1 implementation plan
+**Touches:** new `crates/editor-mcp`; `crates/editor` (headless split, viewport),
+`crates/editable`, `crates/ecs` (entity ids), `crates/render` (readback)
 
 ## Problem
 
@@ -23,14 +23,15 @@ verbs as tools, plus the one thing a mouse never needed: a screenshot.
 
 ## Goals
 
-- An agent can attach to an editor the user is running, observe it, and act on
-  it with the same verbs the user has.
+- An agent can start its own editor, with no window and no display, and drive
+  it through MCP — on a workstation, in CI, or in a cloud session.
 - An agent can see what the viewport renders, as an image.
 - Edits made through MCP take the inspector's path: the same registry,
   validation and mutation boundary. There is no second way to change the world.
 - Tool output is compact and bounded. A 5,000-entity scene must not produce a
   5,000-line answer.
-- The server is opt-in, local-only, and costs nothing when off.
+- Later, an agent can attach to the editor a person is using, and the two share
+  one selection.
 
 ## Non-goals
 
@@ -40,45 +41,129 @@ verbs as tools, plus the one thing a mouse never needed: a screenshot.
   directly.
 - **Spawning, despawning, adding or removing components.** The editor cannot do
   these yet; MCP will not do them first.
-- **Undo.** None exists. MCP edits are as temporary as inspector edits, so
-  reopening the asset is the undo.
-- **Driving the UI by synthetic input.** Clicking buttons by coordinate is
-  brittle and slow; tools address the editor's state, not its pixels.
-- **Remote access.** Loopback only.
+- **Undo.** None exists. Reopening the asset is the undo.
+- **Driving the UI by synthetic input.** Tools address the editor's state, not
+  its pixels.
+- **Headless UI.** A headless editor has no panels. Rendering the editor's own
+  UI offscreen would need a stand-in for `Window`, which wraps a real winit
+  window; that is the attach mode's job (M5), not headless's.
+- **Remote access.** Stdio, or loopback in M5.
 
 ## Decisions
 
 | Decision | Chosen | Because |
 | --- | --- | --- |
-| Where the server lives | In the editor process, in its own crate | Tools need the live `World`; a separate process would need its own protocol to reach it. A crate keeps tokio out of `concerto-editor` |
-| Transport | Streamable HTTP on loopback (attach); stdio later (headless) | The user launches the editor, so the agent must attach to it, not spawn it. Stdio fits the case where the agent *does* spawn it |
-| Protocol implementation | `rmcp`, the official Rust SDK | Protocol revisions, capability negotiation and JSON Schema generation are someone else's problem. tokio runs on one thread inside one crate |
+| First transport | Stdio, with the editor headless | The agent spawns the editor itself, so it works where no display exists, and there is nothing to attach to or secure. The engine already runs headless |
+| Headless | `EditorPlugin { headless }`, on top of `DefaultPlugins::headless()`'s rule | Same switch the engine uses: no `WindowPlugin`, no `UIPlugin`. The editor splits into a core that runs either way and panels that need a window |
+| Second transport | Streamable HTTP on loopback (M5), attaching to a windowed editor | The person launches that editor, so the agent must attach rather than spawn |
+| Where the server lives | In the editor process, in its own crate | Tools need the live `World`. A crate keeps tokio out of `concerto-editor` |
+| Protocol implementation | `rmcp`, the official Rust SDK | Protocol revisions and JSON Schema generation are someone else's problem. tokio runs on one thread inside one crate |
 | Threading | Server thread queues requests; one exclusive system answers them | The `World` is touched only on the main thread, at a known point in the frame, like `apply_property_commits` |
+| Headless frame pacing | Frames run only while a request is in flight | An idle headless editor on lavapipe would otherwise burn a core rendering a view nobody is looking at |
 | Long operations | Tools block until done, with a timeout | An agent that opens a project wants the catalogue, not a "loading" reply and a polling loop |
+| Selection | Shared: `select` writes the editor's `Selection` | An agent and a person looking at one editor should look at the same thing, and an agent should be able to point |
+| Attribution | None. Agent edits look like any other edit | They are the same live-world edit through the same path; a label adds UI for no decision anyone makes |
 | Entity ids | `"42v3"` (index, generation) | Short, and the generation makes a stale id an error rather than a different entity |
 | Output | Compact text for trees and lists, JSON for values | Trees are read, not parsed; component values are structured and are fed back into `set_property` |
 | Edits | `PropertyEditor` gains an optional JSON parser | Validation lives in the adapter; a JSON path that bypasses it would let MCP write values the inspector rejects |
 
-The rejected transport alternative is worth recording: a small stdio bridge
-binary that Claude Code spawns and that forwards to the editor over a socket.
-It costs a second process and a second protocol to buy nothing HTTP does not
-already give, since Claude Code connects to HTTP servers directly.
-
-The rejected protocol alternative is a hand-written JSON-RPC server on
-`tiny_http`. It is perhaps 300 lines and avoids tokio, but MCP has revised its
-transport twice in a year, and tracking that is not this engine's job.
+Two rejected alternatives are worth recording. A stdio bridge binary that
+forwards to a running editor over a socket buys nothing once the editor speaks
+stdio itself. A hand-written JSON-RPC server avoids tokio, but MCP has revised
+its transport twice in a year, and tracking that is not this engine's job.
 
 ---
 
-## Section 1 — Architecture
+## Section 1 — The headless editor
+
+### What headless means already
+
+`DefaultPlugins::headless()` registers everything except `WindowPlugin` and
+`UIPlugin`. `RenderPlugin` already copes: with no `Window` at build it creates
+no surface and renders only to texture targets. On a machine with no GPU,
+Mesa's lavapipe (`apt-get install -y mesa-vulkan-drivers libvulkan1`) runs real
+frames; the command-flushing measurements were taken that way.
+
+The editor's `main.rs` does not use `DefaultPlugins` — it registers its own
+smaller list — but follows the same rule: `--headless` drops `WindowPlugin` and
+`UIPlugin` from that list and passes `headless: true` to `EditorPlugin`.
+
+### Why the editor cannot run headless today
+
+A system whose `Res<T>` is missing panics, and much of the editor reads
+window-world resources: `Res<Window>` in the dock, viewport and window chrome;
+`Res<Input>` in viewport navigation; `EventReader<ActionFired>` in framing;
+`Res<UITheme>`, `PanelRegistry` and UI components throughout the panels. None
+of those systems has a reason to run without a window.
+
+### The split
+
+`EditorPlugin { project, decorated, headless }` registers a core always, and the
+panels only when `headless` is false.
+
+| Core — runs headless | Panels — windowed only |
+| --- | --- |
+| `Selection` | `FontsPlugin`, `DockPlugin`, `ActionsPlugin` |
+| `ProjectPlugin`, `EditorCommands`, `ProjectState` | `HierarchyPlugin`, `ContentPlugin`, `DiagnosticsPlugin` |
+| `AssetEditorRegistry`, `AssetEditorCommands`, `ActiveEditor`, `process_editor_commands` | Inspector panel systems (`build_panel`, row sync, numeric fields) |
+| `ScenePlugin` (the `Scene` asset editor) | Workspace hosts and visibility, `TabsPlugin`, `ShellPlugin` |
+| Inspector model: `InspectorRegistry`, `PropertyCommits`, `apply_property_commits`, `register_editable::<Transform>()` | `WindowChromePlugin` |
+| Viewport core: `EditorViewport`, `FlyCamera`, `ViewportCommands`, `spawn_camera`, framing | Viewport panel, `navigate`, `sync_viewport_size`, `sync_viewport_context`, `zoom` |
+
+`InspectorPlugin` and `ViewportPlugin` each become a core plugin plus a panel
+plugin. Asset editors already tolerate having no panels — "headless hosts have
+no UI containers" — so `create_editor_hosts` simply does not run.
+
+### Three viewport changes
+
+The viewport mixes camera state with window input in two systems, and owns its
+resolution through the UI layout. Headless needs each pulled apart:
+
+1. **Fly camera → transform.** `navigate` both reads input and writes the
+   camera's `Transform` from `FlyCamera`. The write moves to a core system,
+   `apply_fly_camera`, that runs when `FlyCamera` changes. `navigate` keeps
+   only input handling. `set_camera` then works by writing `FlyCamera`, in
+   either mode.
+2. **Framing.** `frame_requested_bounds` reads `ActionFired`. `ViewportCommands`
+   gains `frame_selected` beside the existing `frame_all`; a panel-side system
+   turns the `FrameSelected`/`FrameAll` actions into those flags, and the core
+   system reads only the flags.
+3. **Resolution.** Windowed, `sync_viewport_size` follows the panel's layout.
+   Headless, there is no layout: the viewport starts at `--viewport 1280x720`
+   (default) and `screenshot` may resize it, since nobody else is looking. The
+   texture and the camera's aspect are set by one shared function either way.
+
+### The runner
+
+Without `WindowPlugin` the app keeps `run_once` and exits after one frame, and
+`ScheduleRunnerPlugin` spins without sleeping. The MCP stdio plugin installs its
+own runner:
+
+```
+finish plugin build
+loop:
+    if no request is queued or pending:
+        block on the inbox (or exit when stdin closes)
+    app.update()
+```
+
+The editor runs frames only while there is work: a queued request, a pending
+one waiting on a project load or a readback, or a background job a pending
+request depends on. When stdin closes, the runner returns and the process
+exits; an agent never leaves an orphaned editor behind.
+
+---
+
+## Section 2 — The server
 
 ```
 crates/editor-mcp/src/
   lib.rs        EditorMcpPlugin { transport }, McpInbox, serve_requests
+  runner.rs     the request-driven headless runner
   server.rs     rmcp ServerHandler on its own thread; tool schemas
   tools/
-    observe.rs  status, assets, scene_tree, find_entities, inspect
-    act.rs      open_project, open_asset, close_editor, select, frame, camera
+    observe.rs  status, list_assets, scene_tree, find_entities, inspect
+    act.rs      open_project, open_asset, close_editor, select, frame, set_camera
     edit.rs     set_property
     capture.rs  screenshot
   format.rs     entity ids, tree rendering, truncation
@@ -87,16 +172,16 @@ crates/editor-mcp/src/
 ### The request path
 
 ```
- Claude Code ──HTTP──▶ rmcp (tokio thread)
-                          │ McpRequest { tool, args, reply: oneshot::Sender }
-                          ▼
-                    crossbeam channel
-                          │
- main thread, Update:  serve_requests(&mut World)   ◀── exclusive system
-                          │ immediate → reply now
-                          │ deferred  → PendingRequests
-                          ▼
- each later frame:     poll pending → reply, or time out
+ agent ──stdio──▶ rmcp (tokio thread)
+                     │ McpRequest { tool, args, reply: oneshot::Sender }
+                     ▼
+               crossbeam channel  ── also wakes the runner
+                     │
+ main thread, Update: serve_requests(&mut World)   ◀── exclusive system
+                     │ immediate → reply now
+                     │ deferred  → PendingRequests
+                     ▼
+ each later frame:   poll pending → reply, or time out
 ```
 
 `serve_requests` is an exclusive system (`fn(&mut World)`), registered in
@@ -121,59 +206,44 @@ enum Handled {
 `open_project` pushes `EditorCommand::OpenProject` and returns `Pending` with a
 poll that waits for `ProjectState::generation` to advance or for `status` to
 report an error. `open_asset` waits for the document's `pending` to clear.
-`screenshot` waits for the render world's readback. Nothing blocks the frame.
+`screenshot` waits for the render world's readback. Nothing blocks a frame.
 
-The editor runs with `ControlFlow::Poll`, so the queue is drained every frame
-even when nobody is touching the mouse. A minimised window may stop presenting
-on some compositors; `serve_requests` runs in the main world and is unaffected,
-but `screenshot` would wait on a render that never happens and time out with a
-message saying so.
-
-### Generations
-
-A project switch or a closed tab can land between a tool's request and its
-reply. Pending requests capture `ProjectState::generation` and the document's
+Pending requests capture `ProjectState::generation` and the document's
 `request_generation`, exactly as asynchronous asset editors do, and fail with
-`superseded` rather than reporting on the wrong project.
+`superseded` rather than report on the wrong project.
 
----
+### Configuration
 
-## Section 2 — Transport and configuration
-
-```sh
-cargo run -p concerto-editor -- --project examples/render-test --mcp
-cargo run -p concerto-editor -- --project examples/render-test --mcp-port 7311
-```
-
-`--mcp` binds `127.0.0.1:7311`; `--mcp-port` picks another port. Off by default.
-The repository ships a project-scoped `.mcp.json` so Claude Code finds it with
-no setup:
+The repository ships a project-scoped `.mcp.json`:
 
 ```json
 {
   "mcpServers": {
-    "concerto": { "type": "http", "url": "http://127.0.0.1:7311/mcp" }
+    "concerto": {
+      "command": "cargo",
+      "args": ["run", "-q", "-p", "concerto-editor", "--", "--headless", "--mcp"]
+    }
   }
 }
 ```
 
-Tools then appear to the agent as `mcp__concerto__<tool>`, so tool names carry
-no prefix of their own.
+No `--project`: one checkout holds several example projects, and the agent
+opens the one it is working on with `open_project`. Tools appear to the agent as
+`mcp__concerto__<tool>`, so their names carry no prefix.
 
-**Security.** Loopback only, never `0.0.0.0`. The server rejects requests whose
-`Origin` header names anything but localhost, as the MCP specification requires
-for HTTP servers, which closes DNS rebinding from a browser tab. A bearer token
-is not worth its friction while the server cannot write files, and should be
-reconsidered the day it can.
+A cold `cargo run` compiles the engine, Jolt included, and outlasts an MCP
+client's startup timeout. The README says to build once first
+(`cargo build -p concerto-editor`); after that `cargo run -q` only checks
+freshness before starting. Claude Code's `MCP_TIMEOUT` raises the limit for a first run.
 
-**Stdio (M5).** `--headless --mcp-stdio` runs the editor without a window and
-speaks MCP on stdin/stdout, for an agent that should start its own editor — in
-CI, or in a cloud session with no display. It needs two things this design does
-not otherwise: a windowless runner (the render plugin already tolerates having
-no surface; the editor's `WindowPlugin` dependency is what has to give), and a
-stdout that carries nothing but protocol, which means auditing every `println!`
-reachable from the editor. A GPU is still required for `screenshot`; a software
-Vulkan driver (lavapipe) is enough.
+**Stdout belongs to the protocol.** Logs already go to stderr through
+`env_logger`. The only `println!`s reachable from engine crates today are in
+tests; `--mcp` additionally installs a panic hook that writes to stderr, and a
+test that runs the headless editor through a few requests and asserts that
+every stdout line parses as JSON-RPC keeps it that way.
+
+**No GPU.** If `RenderPlugin` finds no adapter the editor exits at startup with
+a stderr message naming lavapipe, rather than serving tools that will all fail.
 
 ---
 
@@ -187,7 +257,7 @@ collection takes `limit` and says how many it left out.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
-| `status` | — | Project root and status line, open documents (id, asset, kind, status), active document, selection, scene loading state, viewport size, frame number |
+| `status` | — | Mode (headless or windowed), project root and status line, open documents (id, asset, kind, status), active document, selection, scene loading state, viewport size, frame number |
 | `list_assets` | `query?`, `kind?`, `folder?`, `limit = 50`, `offset = 0` | `address · kind · id` lines from `Project::filtered_assets`, plus the total |
 | `scene_tree` | `root?`, `depth = 3`, `limit = 200`, `all = false` | Indented tree under the open scene's `SceneRoot`, or under `root` |
 | `find_entities` | `name?`, `component?`, `limit = 50` | Matching entities with their paths from the root |
@@ -206,9 +276,8 @@ collection takes `limit` and says how many it left out.
 
 The truncation lines are written as the call that would continue, so the agent
 never has to work out how to page. `all = true` drops the `SceneRoot` filter and
-shows the editor's own helpers and UI — the toggle the Wonderland design
-planned for the hierarchy panel but never built, wanted for the same reason:
-the runtime-debugger case.
+shows the editor's own helpers — the toggle the Wonderland design planned for
+the hierarchy panel, wanted for the same reason: the runtime-debugger case.
 
 `inspect` keeps the inspector's honesty rule: a component that is present but
 fails to serialise is listed with `"value": null, "unavailable": true`, never
@@ -221,14 +290,9 @@ omitted.
 | `open_project` | `path` | `EditorCommand::OpenProject`; waits for the catalogue (timeout 30s) |
 | `open_asset` | `asset` (address or id) | `EditorCommand::OpenAsset`; waits for the document to load or fail (timeout 30s) |
 | `close_editor` | `document` | `AssetEditorCommand::Close` |
-| `select` | `entity` or `asset`, or nothing to clear | Writes `Selection`, so the hierarchy and inspector follow |
-| `frame` | `entity?` | Frames the entity, or the whole scene, through the viewport's existing bounds path |
+| `select` | `entity` or `asset`, or nothing to clear | Writes `Selection`; in a windowed editor the hierarchy and inspector follow |
+| `frame` | `entity?` | Selects `entity` if given, then sets `frame_selected`, or `frame_all` with no argument |
 | `set_camera` | `position`, then `look_at` or `yaw`+`pitch` | Writes `FlyCamera`; returns the resulting pose |
-
-`select` changes what the user sees. That is deliberate: an agent and a person
-looking at the same editor should be looking at the same thing, and "I've
-selected the spine bone for you" is a useful thing for an agent to be able to
-say.
 
 ### Edit
 
@@ -245,24 +309,20 @@ tools a pair: read, change one field, write back.
 
 | Tool | Arguments | Returns |
 | --- | --- | --- |
-| `screenshot` | `max_edge = 1024` | PNG of the viewport's render target, as MCP image content, plus the camera pose it was taken from |
+| `screenshot` | `max_edge = 1024`; headless only: `width?`, `height?` | PNG of the viewport's render target as MCP image content, plus the camera pose it was taken from |
 
-It captures what the viewport shows, at the viewport's resolution, downscaled
-so the longer edge fits `max_edge`. To see something from elsewhere, an agent
-calls `set_camera` or `frame` first. A capture that changed the camera itself
-would leave the user's view somewhere unexpected.
-
-Capturing the whole window — the editor's own UI, which is engine UI and has had
-its share of bugs only visible on screen — is a second target, `window`, in M2b.
-It needs the surface texture created with `COPY_SRC`, which costs a usage flag
-on the swapchain and is worth confirming against each backend before turning on.
+It captures what the editor camera sees. To see something from elsewhere, an
+agent calls `set_camera` or `frame` first; a capture that moved the camera
+itself would, in a windowed editor, leave the person's view somewhere
+unexpected. Headless, `width`/`height` resize the viewport before the capture
+(and stay), since there is no panel to own its size.
 
 ### Deliberately absent
 
-`run_action` (firing an `ActionFired` by name) is the obvious next tool, and it
-would make every keyboard shortcut scriptable. It waits on a name lookup for
-interned `ActionLabel`s, which do not have one. Logs are M4; until then an agent
-running the editor itself can read stderr.
+`run_action` (firing an `ActionFired` by name) would make every shortcut
+scriptable, but interned `ActionLabel`s have no name lookup, and headless has no
+`ActionMap`. Logs are M4; until then the agent that spawned the editor can read
+its stderr only through the MCP client's own logs.
 
 ---
 
@@ -310,29 +370,23 @@ adapter's validation all run exactly as they do for a click in the inspector.
 `EditError` gains `NotScriptable`, and the MCP error names the editor type so
 an agent knows the field exists but is not settable.
 
-### 4c. Viewport readback (`crates/render`, `crates/editor-mcp`)
+### 4c. Texture readback (`crates/render`)
 
 The terminal renderer already reads a render target back to the CPU, and its
 split-worlds note (`2026-09-25-terminal-renderer-split-worlds.md`) records
-where it went wrong: readback must be a render-world system, in the render
-subapp's `LateRender`, after `finish_render`. This design needs the same thing
-and should build it once, as a general `TextureReadback` in `crates/render`:
+where that went wrong: readback must be a render-world system, in the render
+subapp's `LateRender`, after `finish_render`. Build it once, generally:
 
 ```rust
-/// Main world: ask for a texture's pixels.
+/// Main world: ask for a texture's pixels after the next frame renders.
 pub struct ReadbackRequest { pub texture: AssetHandle<Texture>, pub reply: Sender<ReadbackResult> }
 ```
 
 Requests are extracted into the render world, copied to a staging buffer after
-the frame's submit, mapped, and sent back with the row padding removed. The
-terminal renderer can move onto it when it is fixed; `screenshot` is its first
-user. PNG encoding happens on the server thread, not the main one.
-
-### 4d. Editor `WindowPlugin` independence (M5 only)
-
-The editor reads `Input`, `ActionMap` and `CloseRequest`, all inserted by
-`WindowPlugin`. Headless needs them inserted without a window. Scoped in M5,
-not before.
+the frame's submit, mapped, and sent back with row padding removed. Render
+targets are already created with `COPY_SRC`. The terminal renderer can move onto
+this when it is fixed; `screenshot` is its first user. PNG encoding happens on
+the server thread, not the main one.
 
 ---
 
@@ -359,22 +413,27 @@ stable code and a sentence that says what to do next:
 
 ## Section 6 — Testing
 
-Handlers are plain functions of `&mut World` and JSON arguments, so almost all
-of the surface is tested without a transport, a window or a GPU: build a
-`World` with the registries and a spawned scene, call the handler, assert on
-its output. The `scene_tree` truncation lines, the stale-id path and the
-not-scriptable path each get a test, because those are the outputs an agent
-acts on.
+Handlers are plain functions of `&mut World` and JSON arguments, so most of the
+surface is tested without a transport, a window or a GPU: build a `World` with
+the core plugins and a spawned scene, call the handler, assert on its output.
+The `scene_tree` truncation lines, the stale-id path and the not-scriptable
+path each get a test, because those are the outputs an agent acts on.
+
+The headless split gets its own test: build the app with
+`EditorPlugin { headless: true }` and no window plugins, finish the build, and
+run a few frames. Today that panics on the first missing `Res<Window>`; the
+test is what keeps a future panel system from leaking into the core.
 
 One end-to-end test runs `rmcp`'s client against the server over an in-memory
-duplex: initialise, list tools, call `status`. It pins the schema and catches a
-handler that panics instead of replying.
+duplex: initialise, list tools, call `status`, open `examples/render-test`,
+read the tree. It pins the schema and the stdout-is-protocol rule.
 
 `edits_from_json` for the numeric editors is tested alongside the existing
 numeric commit tests, including that `[1, NaN, 3]` changes nothing.
 
-Screenshot is tested by hand until M5, since it needs a GPU; M5's headless mode
-makes it testable on software Vulkan.
+`screenshot` needs a GPU. Its test skips when no adapter is found, as
+`test_headless_gpu_render_produces_output` already does, and runs on lavapipe
+where it is installed.
 
 ---
 
@@ -382,34 +441,26 @@ makes it testable on software Vulkan.
 
 Each leaves the editor working and is shippable alone.
 
-**M1 — Attach and observe.** `crates/editor-mcp`, `--mcp`, `.mcp.json`. Tools:
+**M1 — Headless editor over stdio.** The core/panel split and the three
+viewport changes (Section 1), `--headless`, the request-driven runner,
+`crates/editor-mcp` with `--mcp`, `.mcp.json`, entity ids (4a). Tools:
 `status`, `list_assets`, `scene_tree`, `find_entities`, `inspect`,
 `open_project`, `open_asset`, `close_editor`, `select`, `frame`, `set_camera`.
-Entity ids (4a). After M1 an agent can answer "what is in this scene and where
-is it" against the running editor.
+After M1 an agent anywhere can answer "what is in this scene and where is it".
 
-**M2 — See.** `TextureReadback` (4c) and `screenshot` of the viewport. This is
-the milestone that pays for the rest. **M2b:** `window` capture.
+**M2 — See.** Texture readback (4c) and `screenshot`. This is the milestone
+that pays for the rest.
 
 **M3 — Edit.** `PropertyPath::resolve`, `edits_from_json` and `set_property`
 (4b).
 
-**M4 — Logs.** A ring-buffer logger installed in front of `env_logger`, and a
-`logs` tool (`since`, `level`, `limit`). The `PropertyCommit dropped` warning
-is the kind of thing an agent should see without the user copying it over.
+**M4 — Logs.** A ring-buffer logger in front of `env_logger`, and a `logs` tool
+(`since`, `level`, `limit`). The `PropertyCommit dropped` warning is the kind
+of thing an agent should see without reading stderr.
 
-**M5 — Headless.** `--headless --mcp-stdio` (4d), so an agent can start its
-own editor in CI or a cloud session.
-
-## Open questions
-
-1. **Should `select` move the user's selection?** This design says yes, so the
-   agent and the user share a view. The alternative is an agent-only selection
-   that the panels ignore, which avoids surprises but means an agent can never
-   point at something.
-2. **Should MCP edits show in the editor?** They do, since they are live-world
-   edits. Should the status line say "edited by agent", or is the changed value
-   enough?
-3. **Is M5 worth pulling forward?** Cloud sessions — including the one this
-   document was written in — have no display, so until M5 the server helps
-   only when the agent runs on the same machine as the editor.
+**M5 — Attach.** `--mcp-http [port]` on a windowed editor: Streamable HTTP on
+`127.0.0.1`, `Origin` checked against localhost (the MCP specification's
+defence against DNS rebinding), and the `ControlFlow::Poll` frame loop draining
+the inbox instead of the request-driven runner. Shared selection is when
+`select` becomes visible to a person. Adds `screenshot target=window`, which
+captures the editor's own UI and needs the surface created with `COPY_SRC`.
