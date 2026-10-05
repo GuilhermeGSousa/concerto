@@ -7,13 +7,16 @@ use concerto_color::Color;
 use concerto_ecs::entity::hierarchy::Children;
 use concerto_ecs::system::NonSendMarker;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, command::CommandQueue,
     events::event_reader::EventReader,
 };
 use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     time::Time,
-    transform::{GlobalTransform, Transform},
+    transform::{
+        GlobalTransform, Transform,
+        systems::{propagate_global_transforms, update_simple_entities},
+    },
 };
 use concerto_mesh::{Mesh, MeshComponent, mesh::Aabb};
 use concerto_render::{
@@ -57,6 +60,8 @@ pub struct EditorHelper;
 #[derive(Resource)]
 pub struct EditorViewport {
     pub texture: AssetHandle<Texture>,
+    /// The render target's size in pixels, kept in step with the texture.
+    pub size: [u32; 2],
 }
 
 /// A first-person fly camera with Unreal's controls.
@@ -116,32 +121,65 @@ const DOLLY_PER_NOTCH: f32 = 0.25;
 #[derive(Resource, Default)]
 pub struct ViewportCommands {
     pub frame_all: bool,
+    /// Frame the current selection's subtree.
+    pub frame_selected: bool,
     pub(crate) reset: bool,
     pub(crate) release_navigation: bool,
+    /// Set when a navigation request ended a mouse look, so the panel releases
+    /// the pointer the window captured for it.
+    pub(crate) release_pointer: bool,
 }
 
-pub struct ViewportPlugin;
+/// The editor camera, its render target and framing: everything the viewport
+/// does that needs no window. [`ViewportPanelPlugin`] adds the panel and input.
+pub struct ViewportPlugin {
+    /// The render target's initial size. A windowed editor resizes it to its
+    /// panel; a headless one keeps it.
+    pub size: [u32; 2],
+}
 impl Plugin for ViewportPlugin {
+    fn build(&self, app: &mut App) {
+        let size = self.size.map(|side| side.max(1));
+        let texture = app
+            .get_resource::<AssetServer>()
+            .expect("ViewportPlugin requires AssetManagerPlugin")
+            .add(Texture::render_target(size[0], size[1]));
+        app.insert_resource(EditorViewport { texture, size })
+            .insert_resource(FlyCamera::default())
+            .insert_resource(ViewportCommands::default())
+            .add_system(Startup, spawn_camera)
+            .add_system(Update, process_navigation_requests)
+            .add_system(LateUpdate, frame_requested_bounds)
+            // Before propagation, or the camera renders a frame behind input.
+            .add_system(
+                LateUpdate,
+                apply_fly_camera
+                    .after(frame_requested_bounds)
+                    .before(update_simple_entities)
+                    .before(propagate_global_transforms),
+            );
+    }
+}
+
+/// The viewport panel, mouse and keyboard navigation, and panel-driven
+/// resolution. Requires a window; register after [`ViewportPlugin`].
+pub struct ViewportPanelPlugin;
+impl Plugin for ViewportPanelPlugin {
     fn build(&self, app: &mut App) {
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Scene",
             region: Region::Scene,
         });
-        let texture = app
-            .get_resource::<AssetServer>()
-            .expect("ViewportPlugin requires AssetManagerPlugin")
-            .add(Texture::render_target(800, 600));
-        app.insert_resource(EditorViewport { texture })
-            .insert_resource(FlyCamera::default())
-            .insert_resource(ViewportCommands::default())
-            .add_system(Startup, spawn_camera)
-            .add_system(Startup, build_panel)
-            .add_system(Update, navigate)
+        app.add_system(Startup, build_panel)
+            .add_system(Update, navigate.after(process_navigation_requests))
             .add_system(Update, sync_viewport_size)
             .add_system(LateUpdate, sync_viewport_context)
-            .add_system(LateUpdate, frame_requested_bounds)
-            .add_system(LateUpdate, zoom);
+            .add_system(
+                LateUpdate,
+                frame_requested_actions.before(frame_requested_bounds),
+            )
+            .add_system(LateUpdate, zoom.before(apply_fly_camera));
     }
 }
 
@@ -186,9 +224,10 @@ const GRID_LINES: Color = Color::srgba(0.247, 0.259, 0.322, 0.6);
 fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<FlyCamera>) {
     let mut transform = Transform::IDENTITY;
     apply_fly_transform(&fly, &mut transform);
+    let [width, height] = viewport.size;
     cmd.spawn((
         Camera {
-            aspect: 4.0 / 3.0,
+            aspect: width as f32 / height as f32,
             clear_color: SKY,
             render_target: RenderTarget::texture(viewport.texture.clone()),
             ..Default::default()
@@ -232,6 +271,7 @@ pub(crate) fn apply_workspace_navigation(
     if commands.reset {
         *fly = FlyCamera::default();
         commands.frame_all = false;
+        commands.frame_selected = false;
     }
     commands.reset = false;
     commands.release_navigation = false;
@@ -241,6 +281,33 @@ pub(crate) fn apply_workspace_navigation(
 fn apply_fly_transform(fly: &FlyCamera, transform: &mut Transform) {
     transform.translation = fly.position;
     transform.rotation = fly.rotation();
+}
+
+/// Consumes navigation requests from workspace transitions and scene
+/// replacement. Runs with or without a window; the panel releases the pointer.
+pub(crate) fn process_navigation_requests(
+    mut commands: ResMut<ViewportCommands>,
+    mut fly: ResMut<FlyCamera>,
+) {
+    if !commands.release_navigation && !commands.reset {
+        return;
+    }
+    if apply_workspace_navigation(&mut commands, &mut fly) {
+        commands.release_pointer = true;
+    }
+}
+
+/// The one place the camera's transform follows [`FlyCamera`]. Whatever moved
+/// the camera this frame — input, framing, a tool — only writes `FlyCamera`.
+fn apply_fly_camera(fly: Res<FlyCamera>, cameras: Query<(&EditorCamera, &mut Transform)>) {
+    let rotation = fly.rotation();
+    for (_, mut transform) in cameras.iter() {
+        // Compare first: writing unconditionally would mark the transform
+        // changed every frame and re-propagate a camera that never moved.
+        if transform.translation != fly.position || transform.rotation != rotation {
+            apply_fly_transform(&fly, &mut transform);
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -253,14 +320,12 @@ fn navigate(
     window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
     regions: Query<&ViewportRegion>,
-    cameras: Query<(&EditorCamera, &mut Transform)>,
     mut fly: ResMut<FlyCamera>,
     mut commands: ResMut<ViewportCommands>,
 ) {
-    if commands.release_navigation || commands.reset {
-        if apply_workspace_navigation(&mut commands, &mut fly) {
-            capture_pointer(&window, false);
-        }
+    if commands.release_pointer {
+        commands.release_pointer = false;
+        capture_pointer(&window, false);
     }
     let over_viewport = (**hovered).is_some_and(|entity| regions.get_entity(entity).is_some());
     if input.is_mouse_button_just_pressed(MouseButton::Right) && over_viewport {
@@ -293,10 +358,6 @@ fn navigate(
         let step = fly.speed * speed_scale(&input) * time.delta().as_secs_f32();
         let movement = movement(&input, fly.rotation()) * step;
         fly.position += movement;
-    }
-
-    for (_, mut transform) in cameras.iter() {
-        apply_fly_transform(&fly, &mut transform);
     }
 }
 
@@ -369,35 +430,46 @@ fn sync_viewport_context(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn frame_requested_bounds(
+/// Turns the framing shortcuts into [`ViewportCommands`] flags, which is all
+/// the core framing system reads.
+fn frame_requested_actions(
     mut fired: EventReader<ActionFired>,
+    mut commands: ResMut<ViewportCommands>,
+) {
+    for action in fired.read() {
+        if action.is(FrameSelected) {
+            commands.frame_selected = true;
+        }
+        if action.is(FrameAll) {
+            commands.frame_all = true;
+        }
+    }
+}
+
+fn frame_requested_bounds(
     meshes: Res<AssetStore<Mesh>>,
     mesh_nodes: Query<(Entity, &MeshComponent, &GlobalTransform)>,
     children: Query<&Children>,
-    cameras: Query<(&EditorCamera, &Camera, &mut Transform)>,
+    cameras: Query<(&EditorCamera, &Camera)>,
     selection: Res<Selection>,
     mut commands: ResMut<ViewportCommands>,
     mut fly: ResMut<FlyCamera>,
 ) {
-    let mut frame_selected = false;
-    for action in fired.read() {
-        frame_selected |= action.is(FrameSelected);
-        commands.frame_all |= action.is(FrameAll);
+    if !commands.frame_all && !commands.frame_selected {
+        return;
     }
     // Framing is something you ask for. Selecting an entity in the tree moves
     // the inspector, not the camera.
     let bounds = if commands.frame_all {
         scene_bounds(&mesh_nodes, &meshes, None)
-    } else if frame_selected {
+    } else {
         selection
             .entity()
             .map(|entity| subtree(entity, &children))
             .and_then(|set| scene_bounds(&mesh_nodes, &meshes, Some(&set)))
-    } else {
-        None
     };
     commands.frame_all = false;
+    commands.frame_selected = false;
 
     let Some(bounds) = bounds else {
         return;
@@ -406,15 +478,12 @@ fn frame_requested_bounds(
     let fovy = cameras
         .iter()
         .next()
-        .map(|(_, camera, _)| camera.fovy)
+        .map(|(_, camera)| camera.fovy)
         .unwrap_or(0.78);
     // Pull back along the direction the camera is already looking, so framing
     // changes what fills the view without also changing the angle on it.
     let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
     fly.position = bounds.center() - fly.forward() * distance;
-    for (_, _, mut transform) in cameras.iter() {
-        apply_fly_transform(&fly, &mut transform);
-    }
 }
 
 /// World-space bounds of every loaded mesh in `subtree`, or of the whole world
@@ -453,13 +522,11 @@ fn zoom(
     mut events: EventReader<WindowEvent>,
     hovered: Res<HoveredNode>,
     regions: Query<&ViewportRegion>,
-    cameras: Query<(&EditorCamera, &mut Transform)>,
     mut fly: ResMut<FlyCamera>,
 ) {
     if (**hovered).is_none_or(|entity| regions.get_entity(entity).is_none()) {
         return;
     }
-    let mut moved = false;
     for event in events.read() {
         if let winit::event::WindowEvent::MouseWheel { delta, .. } = &**event {
             let amount = match delta {
@@ -471,13 +538,7 @@ fn zoom(
             } else {
                 let step = fly.forward() * amount * fly.speed * DOLLY_PER_NOTCH;
                 fly.position += step;
-                moved = true;
             }
-        }
-    }
-    if moved {
-        for (_, mut transform) in cameras.iter() {
-            apply_fly_transform(&fly, &mut transform);
         }
     }
 }
@@ -485,7 +546,7 @@ fn zoom(
 fn sync_viewport_size(
     layouts: Query<(&ViewportRegion, &UILayout)>,
     cameras: Query<(&EditorCamera, &mut Camera)>,
-    viewport: Res<EditorViewport>,
+    mut viewport: ResMut<EditorViewport>,
     mut textures: ResMut<AssetStore<Texture>>,
     window: Res<concerto_window::plugin::Window>,
 ) {
@@ -495,6 +556,9 @@ fn sync_viewport_size(
     let scale = window.scale_factor() as f32;
     let width = (layout.rect.size.x * scale).round().max(1.0) as u32;
     let height = (layout.rect.size.y * scale).round().max(1.0) as u32;
+    if viewport.size != [width, height] {
+        viewport.size = [width, height];
+    }
     if let Some(texture) = textures.get_mut(&viewport.texture) {
         texture.width = width;
         texture.height = height;
