@@ -1,11 +1,12 @@
 //! Small themed widget building blocks. These components describe interaction
 //! without introducing editor concepts into the UI crate.
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
     entity::Entity,
-    events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::Query,
     resource::Res,
+    signal::{EntitySignal, On, Signal},
 };
 use concerto_window::input::MouseButton;
 
@@ -55,51 +56,64 @@ pub struct UITabBody {
 #[derive(Component, Default)]
 pub struct UIPropertyRow;
 
-#[derive(Event)]
+/// Sent to a [`UICollapsibleSection`] when it expands or collapses.
 pub struct UICollapsibleChanged {
-    pub entity: Entity,
     pub expanded: bool,
 }
 
-#[derive(Event)]
+impl Signal for UICollapsibleChanged {}
+impl EntitySignal for UICollapsibleChanged {}
+
+/// Sent to a [`UITabStrip`] when one of its tabs is selected.
 pub struct UITabChanged {
-    pub entity: Entity,
     pub selected: usize,
 }
 
-pub(crate) fn update_widgets(
-    mut clicks: EventReader<UIClick>,
+impl Signal for UITabChanged {}
+impl EntitySignal for UITabChanged {}
+
+/// Click listener that expands or collapses the [`UICollapsibleSection`] it sits on.
+pub fn toggle_collapsible(
+    on: On<UIClick>,
     collapsibles: Query<&mut UICollapsibleSection>,
+    nodes: Query<&mut UINode>,
+    mut cmd: CommandQueue,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(mut section) = collapsibles.get_entity(on.entity()) else {
+        return;
+    };
+    section.expanded = !section.expanded;
+    if let Some(mut node) = nodes.get_entity(section.content) {
+        node.visible = section.expanded;
+    }
+    cmd.entity(on.entity()).trigger(UICollapsibleChanged {
+        expanded: section.expanded,
+    });
+}
+
+/// Click listener that selects the [`UITab`] it sits on in its strip.
+pub fn select_tab(
+    on: On<UIClick>,
     tabs: Query<&UITab>,
     strips: Query<&mut UITabStrip>,
-    nodes: Query<&mut UINode>,
-    mut collapsible_events: EventWriter<UICollapsibleChanged>,
-    mut tab_events: EventWriter<UITabChanged>,
+    mut cmd: CommandQueue,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        if let Some(mut section) = collapsibles.get_entity(click.entity) {
-            section.expanded = !section.expanded;
-            if let Some(mut node) = nodes.get_entity(section.content) {
-                node.visible = section.expanded;
-            }
-            collapsible_events.write(UICollapsibleChanged {
-                entity: click.entity,
-                expanded: section.expanded,
-            });
-        }
-        if let Some(tab) = tabs.get_entity(click.entity)
-            && let Some(mut strip) = strips.get_entity(tab.strip)
-        {
-            strip.selected = tab.index;
-            tab_events.write(UITabChanged {
-                entity: tab.strip,
-                selected: tab.index,
-            });
-        }
+    if on.signal().button != MouseButton::Left {
+        return;
     }
+    let Some(tab) = tabs.get_entity(on.entity()) else {
+        return;
+    };
+    let Some(mut strip) = strips.get_entity(tab.strip) else {
+        return;
+    };
+    strip.selected = tab.index;
+    cmd.entity(tab.strip).trigger(UITabChanged {
+        selected: tab.index,
+    });
 }
 
 /// Shows the body whose index matches its strip's selection, and hides the rest.

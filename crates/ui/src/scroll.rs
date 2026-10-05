@@ -6,6 +6,7 @@ use concerto_ecs::{
     events::event_reader::EventReader,
     query::{Query, filter::Added},
     resource::Res,
+    signal::{On, listener::IntoListener},
 };
 use concerto_window::input::MouseButton;
 use concerto_window::winit_events::WindowEvent;
@@ -169,38 +170,38 @@ pub(crate) fn update_virtual_lists(lists: Query<(&mut UIVirtualList, &UIScrollAr
     }
 }
 
-pub(crate) fn update_split_panes(
-    mut drags: EventReader<UIDrag>,
+/// Drag listener that moves the boundary of the pane its [`UISplitHandle`] belongs to.
+pub fn drag_split_handle(
+    on: On<UIDrag>,
     handles: Query<(&UISplitHandle, &UILayout)>,
     panes: Query<(&mut UISplitPane, &UILayout)>,
 ) {
-    for drag in drags.read() {
-        if drag.button != MouseButton::Left {
-            continue;
-        }
-        let Some(pane_entity) = handles
-            .get_entity(drag.entity)
-            .map(|(handle, _)| handle.pane)
-        else {
-            continue;
-        };
-        let Some((mut pane, layout)) = panes.get_entity(pane_entity) else {
-            continue;
-        };
-        if pane.collapsed.is_some() {
-            continue;
-        }
-        let available = available_extent(&pane, layout, pane_entity, &handles);
-        if available <= 0.0 {
-            continue;
-        }
-        let delta = match pane.axis {
-            UISplitAxis::Horizontal => drag.delta.x,
-            UISplitAxis::Vertical => drag.delta.y,
-        };
-        let first = first_extent(&pane, available) + delta;
-        pane.ratio = (first / available).clamp(0.0, 1.0);
+    let drag = on.signal();
+    if drag.button != MouseButton::Left {
+        return;
     }
+    let Some(pane_entity) = handles
+        .get_entity(on.entity())
+        .map(|(handle, _)| handle.pane)
+    else {
+        return;
+    };
+    let Some((mut pane, layout)) = panes.get_entity(pane_entity) else {
+        return;
+    };
+    if pane.collapsed.is_some() {
+        return;
+    }
+    let available = available_extent(&pane, layout, pane_entity, &handles);
+    if available <= 0.0 {
+        return;
+    }
+    let delta = match pane.axis {
+        UISplitAxis::Horizontal => drag.delta.x,
+        UISplitAxis::Vertical => drag.delta.y,
+    };
+    let first = first_extent(&pane, available) + delta;
+    pane.ratio = (first / available).clamp(0.0, 1.0);
 }
 
 pub(crate) fn sync_split_panes(
@@ -471,6 +472,7 @@ pub(crate) fn setup_scrollbars(
                 UIMaterial::flat(theme.border),
                 Interactable,
                 UIScrollThumb { area: entity },
+                drag_scrollbar_thumb.into_listener(),
             ))
             .entity();
         cmd.add_child(track, thumb);
@@ -532,32 +534,31 @@ pub(crate) fn sync_scrollbar_thumbs(
 }
 
 /// Drags the view by dragging its thumb.
-pub(crate) fn drag_scrollbar_thumbs(
-    mut drags: EventReader<UIDrag>,
+fn drag_scrollbar_thumb(
+    on: On<UIDrag>,
     thumbs: Query<&UIScrollThumb>,
     areas: Query<(&mut UIScrollArea, &UILayout)>,
 ) {
-    for drag in drags.read() {
-        if drag.button != MouseButton::Left {
-            continue;
-        }
-        let Some(thumb) = thumbs.get_entity(drag.entity) else {
-            continue;
-        };
-        let Some((mut area, layout)) = areas.get_entity(thumb.area) else {
-            continue;
-        };
-        let viewport = layout.content_rect.size.y;
-        let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
-        else {
-            continue;
-        };
-        let travel = viewport - geometry.height;
-        if travel <= 0.0 {
-            continue;
-        }
-        let scrollable = area.content_extent - viewport;
-        let max = scrollable.max(0.0);
-        area.offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
+    let drag = on.signal();
+    if drag.button != MouseButton::Left {
+        return;
     }
+    let Some(thumb) = thumbs.get_entity(on.entity()) else {
+        return;
+    };
+    let Some((mut area, layout)) = areas.get_entity(thumb.area) else {
+        return;
+    };
+    let viewport = layout.content_rect.size.y;
+    let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
+    else {
+        return;
+    };
+    let travel = viewport - geometry.height;
+    if travel <= 0.0 {
+        return;
+    }
+    let scrollable = area.content_extent - viewport;
+    let max = scrollable.max(0.0);
+    area.offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
 }

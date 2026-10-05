@@ -1,7 +1,7 @@
 use concerto_color::Color;
 use concerto_ecs::component::bundle::IntoBundle;
 
-use super::{Layout, Themed, Typography};
+use super::{Layout, Listen, Themed, Typography};
 use crate::{
     interaction::Interactable,
     material::UIMaterial,
@@ -65,6 +65,8 @@ impl IntoBundle for Chip {
         (self.node, material, text, Interactable)
     }
 }
+
+impl Listen for Chip {}
 
 impl Themed for Chip {
     fn theme(&self) -> &UITheme {

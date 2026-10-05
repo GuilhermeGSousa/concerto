@@ -3,7 +3,7 @@ use concerto_ecs::SystemSet;
 /// The ordered phases of the UI in `LateUpdate`, for ordering systems against the UI.
 #[derive(SystemSet, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum UiSet {
-    /// Pointer hit testing, focus and text capture.
+    /// Pointer hit testing and signals, focus and text capture.
     Input,
     /// Widget behaviour driven by this frame's input.
     Widgets,

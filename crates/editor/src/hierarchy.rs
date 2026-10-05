@@ -12,8 +12,15 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue, component::name::Name,
-    entity::hierarchy::Children, events::event_reader::EventReader,
+    Component, Entity, Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    component::name::Name,
+    entity::hierarchy::Children,
+    events::event_reader::EventReader,
+    signal::{
+        On,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_ui::{
     elements::prelude::*,
@@ -74,12 +81,6 @@ struct TreeView;
 struct Filter;
 
 #[derive(Component)]
-enum Action {
-    Select(usize),
-    Toggle(usize),
-}
-
-#[derive(Component)]
 enum Label {
     Row(usize),
     Toggle(usize),
@@ -109,7 +110,6 @@ impl Plugin for HierarchyPlugin {
             .add_system(LateUpdate, filter_tree)
             .add_system(LateUpdate, sync_tree_scroll)
             .add_system(LateUpdate, sync_tree_context)
-            .add_system(LateUpdate, click_tree)
             .add_system(LateUpdate, keyboard_tree)
             .add_system(LateUpdate, sync_disabled)
             .add_system(LateUpdate, render_tree)
@@ -205,8 +205,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                         .no_wrap(),
                                     Interactable,
                                     TreeRegion,
-                                    Action::Toggle(slot),
                                     Label::Toggle(slot),
+                                    toggle_row(slot),
                                 ))
                                 .add_child((mark_node, mark_material, MarkSlot(slot)))
                                 .add_child((
@@ -214,8 +214,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                     theme.text("").single_line(),
                                     Interactable,
                                     TreeRegion,
-                                    Action::Select(slot),
                                     Label::Row(slot),
+                                    select_row(slot),
                                 ))
                                 .add_child((
                                     theme
@@ -353,34 +353,28 @@ fn sync_tree_scroll(
     state.visible = list.visible_range();
 }
 
-fn click_tree(
-    mut events: EventReader<UIClick>,
-    actions: Query<&Action>,
-    mut state: ResMut<HierarchyState>,
-    mut selection: ResMut<Selection>,
-) {
-    for event in events.read() {
-        if event.button != MouseButton::Left {
-            continue;
+fn select_row(slot: usize) -> Listener<UIClick> {
+    (move |on: On<UIClick>, state: Res<HierarchyState>, mut selection: ResMut<Selection>| {
+        if on.signal().button == MouseButton::Left
+            && let Some(row) = state.row(slot)
+        {
+            selection.select_entity(row.entity);
         }
-        let Some(action) = actions.get_entity(event.entity) else {
-            continue;
-        };
-        match *action {
-            Action::Select(slot) => {
-                if let Some(row) = state.row(slot) {
-                    selection.select_entity(row.entity);
-                }
-            }
-            Action::Toggle(slot) => {
-                if let Some(row) = state.row(slot) {
-                    if row.has_children && !state.expanded.remove(&row.entity) {
-                        state.expanded.insert(row.entity);
-                    }
-                }
-            }
+    })
+    .into_listener()
+}
+
+fn toggle_row(slot: usize) -> Listener<UIClick> {
+    (move |on: On<UIClick>, mut state: ResMut<HierarchyState>| {
+        if on.signal().button == MouseButton::Left
+            && let Some(row) = state.row(slot)
+            && row.has_children
+            && !state.expanded.remove(&row.entity)
+        {
+            state.expanded.insert(row.entity);
         }
-    }
+    })
+    .into_listener()
 }
 
 fn sync_tree_context(

@@ -1,9 +1,9 @@
 use concerto_color::Color;
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
-    entity::Entity,
-    events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::Query,
+    signal::{EntitySignal, On, Signal},
 };
 use concerto_window::input::MouseButton;
 
@@ -29,31 +29,26 @@ impl UICheckbox {
     }
 }
 
-/// Fired the frame a [`UICheckbox`] is toggled.
-#[derive(Event)]
+/// Sent to a [`UICheckbox`] when it is toggled.
 pub struct UICheckboxChanged {
-    pub entity: Entity,
     pub checked: bool,
 }
 
-/// Toggles [`UICheckbox::checked`] when the entity receives a [`UIClick`].
-pub(crate) fn toggle_checkboxes(
-    mut clicks: EventReader<UIClick>,
-    checkboxes: Query<&mut UICheckbox>,
-    mut writer: EventWriter<UICheckboxChanged>,
-) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        if let Some(mut checkbox) = checkboxes.get_entity(click.entity) {
-            checkbox.checked = !checkbox.checked;
-            writer.write(UICheckboxChanged {
-                entity: click.entity,
-                checked: checkbox.checked,
-            });
-        }
+impl Signal for UICheckboxChanged {}
+impl EntitySignal for UICheckboxChanged {}
+
+/// Click listener that toggles the [`UICheckbox`] it sits on.
+pub fn toggle_checkbox(on: On<UIClick>, checkboxes: Query<&mut UICheckbox>, mut cmd: CommandQueue) {
+    if on.signal().button != MouseButton::Left {
+        return;
     }
+    let Some(mut checkbox) = checkboxes.get_entity(on.entity()) else {
+        return;
+    };
+    checkbox.checked = !checkbox.checked;
+    cmd.entity(on.entity()).trigger(UICheckboxChanged {
+        checked: checkbox.checked,
+    });
 }
 
 /// Drives `UIMaterial::color` from `UICheckbox::checked` each frame.

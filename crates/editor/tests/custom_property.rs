@@ -5,7 +5,6 @@ mod example;
 use concerto_app::App;
 use concerto_ecs::{
     Component, Entity, IntoSystem, Res, ResMut, Resource, System, World, command::CommandQueue,
-    events::event_channel::EventChannel,
 };
 use concerto_editable::{Editable, PropertyPath};
 use concerto_editor::inspector::{
@@ -289,7 +288,6 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         property: property(&world, a),
         target: a,
     });
-    world.insert_resource(EventChannel::<UIClick>::default());
     let mut build = build_widget.into_system();
     build.initialize(&mut world);
     build.run_and_apply((), &mut world);
@@ -306,17 +304,13 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
             .text
             .contains("Off")
     );
-    world
-        .get_resource_mut::<EventChannel<UIClick>>()
-        .unwrap()
-        .push_event(UIClick {
-            entity: button,
+    world.trigger_on(
+        button,
+        UIClick {
             position: glam::Vec2::ZERO,
             button: MouseButton::Left,
-        });
-    let mut click = example::click_settings.into_system();
-    click.initialize(&mut world);
-    click.run_and_apply((), &mut world);
+        },
+    );
     assert_eq!(world.get_resource::<PropertyCommits>().unwrap().0.len(), 1);
     apply_property_commits(&mut world);
     assert!(

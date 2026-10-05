@@ -1,13 +1,11 @@
-#![allow(clippy::too_many_arguments)]
-
 use concerto_color::Color;
-use concerto_ecs::events::event_writer::EventWriter;
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
     entity::Entity,
-    events::Event,
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
+    signal::{EntitySignal, Signal},
 };
 use concerto_window::input::{Input, InputState, MouseButton};
 use derive_more::{Deref, DerefMut};
@@ -147,7 +145,7 @@ fn advance_capture(
     outcome
 }
 
-/// Opts a node into hit testing and click events.
+/// Opts a node into hit testing and pointer signals.
 #[derive(Component)]
 pub struct Interactable;
 
@@ -164,64 +162,87 @@ pub struct UIInteractionStyle {
     pub disabled: Color,
 }
 
-/// Fired when a button is released over the same node it pressed.
-#[derive(Event)]
+/// Sent to a node when a button is released over the node it pressed.
 pub struct UIClick {
-    pub entity: Entity,
     pub position: Vec2,
     pub button: MouseButton,
 }
 
-#[derive(Event)]
+/// Sent to a node when a button goes down over it.
 pub struct UIPointerDown {
-    pub entity: Entity,
     pub position: Vec2,
     pub button: MouseButton,
 }
 
-#[derive(Event)]
+/// Sent to the node a button pressed when that button is released, wherever the pointer is.
 pub struct UIPointerUp {
-    pub entity: Entity,
     pub position: Vec2,
     pub button: MouseButton,
 }
 
-#[derive(Event)]
+/// Sent every frame to the node a held button pressed, wherever the pointer is.
 pub struct UIDrag {
-    pub entity: Entity,
     pub position: Vec2,
     pub delta: Vec2,
     pub button: MouseButton,
 }
 
-#[derive(Event)]
+/// Sent to a node when the pointer moves onto it.
 pub struct UIPointerEnter {
-    pub entity: Entity,
     pub position: Vec2,
 }
 
-#[derive(Event)]
+/// Sent to a node when the pointer moves off it.
 pub struct UIPointerLeave {
-    pub entity: Entity,
     pub position: Vec2,
 }
 
-/// Walks all [`UILayout`]s each frame, determines which one (if any) is under the cursor, updates [`HoveredNode`], and fires [`UIClick`] events on left-button interaction events.
+macro_rules! entity_signals {
+    ($($signal:ty),* $(,)?) => {
+        $(
+            impl Signal for $signal {}
+            impl EntitySignal for $signal {}
+        )*
+    };
+}
+
+entity_signals!(
+    UIClick,
+    UIPointerDown,
+    UIPointerUp,
+    UIDrag,
+    UIPointerEnter,
+    UIPointerLeave,
+);
+
+/// Walks all [`UILayout`]s each frame, determines which one (if any) is under the cursor, updates [`HoveredNode`], and sends the pointer signals to the nodes involved.
 pub(crate) fn update_ui_interaction(
     computed_nodes: Query<(Entity, &UILayout, &Interactable), Without<UIDisabled>>,
     input: Res<Input>,
     window: Res<concerto_window::plugin::Window>,
     mut hovered: ResMut<HoveredNode>,
     mut state: ResMut<UIInputState>,
-    mut click_writer: EventWriter<UIClick>,
-    mut down_writer: EventWriter<UIPointerDown>,
-    mut up_writer: EventWriter<UIPointerUp>,
-    mut drag_writer: EventWriter<UIDrag>,
-    mut enter_writer: EventWriter<UIPointerEnter>,
-    mut leave_writer: EventWriter<UIPointerLeave>,
+    mut cmd: CommandQueue,
 ) {
     let cursor = window.logical_pointer_position(&input);
+    route_pointer(
+        cursor,
+        &computed_nodes,
+        &input,
+        &mut hovered,
+        &mut state,
+        &mut cmd,
+    );
+}
 
+fn route_pointer(
+    cursor: Vec2,
+    computed_nodes: &Query<(Entity, &UILayout, &Interactable), Without<UIDisabled>>,
+    input: &Input,
+    hovered: &mut HoveredNode,
+    state: &mut UIInputState,
+    cmd: &mut CommandQueue,
+) {
     let mut best: Option<(Entity, i64)> = None;
     for (entity, node, _) in computed_nodes.iter() {
         if node.rect.contains(cursor)
@@ -235,16 +256,12 @@ pub(crate) fn update_ui_interaction(
     let hit = best.map(|(entity, _)| entity);
     if state.hovered != hit {
         if let Some(entity) = state.hovered {
-            leave_writer.write(UIPointerLeave {
-                entity,
-                position: cursor,
-            });
+            cmd.entity(entity)
+                .trigger(UIPointerLeave { position: cursor });
         }
         if let Some(entity) = hit {
-            enter_writer.write(UIPointerEnter {
-                entity,
-                position: cursor,
-            });
+            cmd.entity(entity)
+                .trigger(UIPointerEnter { position: cursor });
         }
     }
     **hovered = hit;
@@ -257,29 +274,25 @@ pub(crate) fn update_ui_interaction(
         };
         let outcome = advance_capture(capture, input_state, hit, cursor);
         if let Some(entity) = outcome.down {
-            down_writer.write(UIPointerDown {
-                entity,
+            cmd.entity(entity).trigger(UIPointerDown {
                 position: cursor,
                 button,
             });
         }
         if let Some(entity) = outcome.up {
-            up_writer.write(UIPointerUp {
-                entity,
+            cmd.entity(entity).trigger(UIPointerUp {
                 position: cursor,
                 button,
             });
         }
         if let Some(entity) = outcome.click {
-            click_writer.write(UIClick {
-                entity,
+            cmd.entity(entity).trigger(UIClick {
                 position: cursor,
                 button,
             });
         }
         if let Some(entity) = outcome.drag {
-            drag_writer.write(UIDrag {
-                entity,
+            cmd.entity(entity).trigger(UIDrag {
                 position: cursor,
                 delta: outcome.delta,
                 button,
@@ -321,9 +334,148 @@ mod tests {
     use crate::node::{UIBox, UILayout};
     use glam::Vec2;
 
-    use super::{ButtonCapture, Interactable, UIInputState, advance_capture};
-    use concerto_ecs::{World, entity::Entity};
-    use concerto_window::input::{InputState, MouseButton};
+    use super::{
+        ButtonCapture, HoveredNode, Interactable, UIClick, UIDisabled, UIDrag, UIInputState,
+        UIPointerDown, UIPointerEnter, UIPointerLeave, UIPointerUp, advance_capture, route_pointer,
+    };
+    use concerto_ecs::{
+        IntoSystem, System, World,
+        command::CommandQueue,
+        entity::Entity,
+        query::{Query, filter::Without},
+        resource::{Res, ResMut, Resource},
+        signal::{On, listener::IntoListener},
+    };
+    use concerto_window::input::{Input, InputState, MouseButton};
+    use winit::event::ElementState;
+
+    #[derive(Resource, Default)]
+    struct Heard(Vec<(Entity, &'static str)>);
+
+    #[derive(Resource)]
+    struct Cursor(Vec2);
+
+    fn square(min: f32) -> UILayout {
+        let rect = UIBox {
+            min: Vec2::splat(min),
+            size: Vec2::splat(10.0),
+        };
+        UILayout {
+            rect,
+            content_rect: rect,
+            clip_rect: rect,
+            paint_order: 0,
+        }
+    }
+
+    fn hear<S: concerto_ecs::signal::Signal>(
+        name: &'static str,
+    ) -> concerto_ecs::signal::listener::Listener<S> {
+        (move |on: On<S>, mut heard: ResMut<Heard>| heard.0.push((on.entity(), name)))
+            .into_listener()
+    }
+
+    fn node(world: &mut World, min: f32) -> Entity {
+        world.spawn((
+            square(min),
+            Interactable,
+            hear::<UIPointerEnter>("enter"),
+            hear::<UIPointerLeave>("leave"),
+            hear::<UIPointerDown>("down"),
+            hear::<UIPointerUp>("up"),
+            hear::<UIClick>("click"),
+            hear::<UIDrag>("drag"),
+        ))
+    }
+
+    fn pointer_world() -> World {
+        let mut world = World::default();
+        world.insert_resource(Heard::default());
+        world.insert_resource(Cursor(Vec2::ZERO));
+        world.insert_resource(Input::new());
+        world.insert_resource(HoveredNode::default());
+        world.insert_resource(UIInputState::default());
+        world
+    }
+
+    fn frame(
+        world: &mut World,
+        cursor: Vec2,
+        button: Option<ElementState>,
+    ) -> Vec<(Entity, &'static str)> {
+        world.get_resource_mut::<Cursor>().unwrap().0 = cursor;
+        if let Some(state) = button {
+            world
+                .get_resource_mut::<Input>()
+                .unwrap()
+                .update_mouse_button(MouseButton::Left, state);
+        }
+        let mut route =
+            (|cursor: Res<Cursor>,
+              nodes: Query<(Entity, &UILayout, &Interactable), Without<UIDisabled>>,
+              input: Res<Input>,
+              mut hovered: ResMut<HoveredNode>,
+              mut state: ResMut<UIInputState>,
+              mut cmd: CommandQueue| {
+                route_pointer(cursor.0, &nodes, &input, &mut hovered, &mut state, &mut cmd);
+            })
+            .into_system();
+        route.initialize(world);
+        route.run_and_apply((), world);
+        world.get_resource_mut::<Input>().unwrap().update();
+        std::mem::take(&mut world.get_resource_mut::<Heard>().unwrap().0)
+    }
+
+    #[test]
+    fn a_press_and_release_reaches_the_listeners_on_the_node_under_the_pointer() {
+        let mut world = pointer_world();
+        let target = node(&mut world, 0.0);
+        let _other = node(&mut world, 50.0);
+        let inside = Vec2::splat(5.0);
+
+        assert_eq!(frame(&mut world, inside, None), [(target, "enter")]);
+        assert_eq!(
+            frame(&mut world, inside, Some(ElementState::Pressed)),
+            [(target, "down")]
+        );
+        assert_eq!(
+            frame(&mut world, inside, Some(ElementState::Released)),
+            [(target, "up"), (target, "click")]
+        );
+    }
+
+    #[test]
+    fn a_captured_node_hears_drags_and_the_release_after_the_pointer_leaves_it() {
+        let mut world = pointer_world();
+        let target = node(&mut world, 0.0);
+        let other = node(&mut world, 50.0);
+        let inside = Vec2::splat(5.0);
+        let over_other = Vec2::splat(55.0);
+
+        frame(&mut world, inside, None);
+        frame(&mut world, inside, Some(ElementState::Pressed));
+        assert_eq!(
+            frame(&mut world, over_other, None),
+            [(target, "leave"), (other, "enter"), (target, "drag")]
+        );
+        assert_eq!(
+            frame(&mut world, over_other, Some(ElementState::Released)),
+            [(target, "up")],
+            "sliding off the pressed node cancels the click"
+        );
+    }
+
+    #[test]
+    fn a_disabled_node_hears_nothing() {
+        let mut world = pointer_world();
+        let target = node(&mut world, 0.0);
+        world.insert(UIDisabled, target);
+        let inside = Vec2::splat(5.0);
+
+        assert!(frame(&mut world, inside, None).is_empty());
+        assert!(frame(&mut world, inside, Some(ElementState::Pressed)).is_empty());
+        assert!(frame(&mut world, inside, Some(ElementState::Released)).is_empty());
+    }
 
     fn entities(count: usize) -> Vec<Entity> {
         let mut world = World::default();

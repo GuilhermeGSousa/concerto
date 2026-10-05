@@ -5,7 +5,7 @@ use concerto_app::{
 };
 use concerto_ecs::{
     Component, IntoSystemConfig, Query, Res, ResMut, Resource, command::CommandQueue,
-    events::event_reader::EventReader,
+    events::event_reader::EventReader, signal::On,
 };
 use concerto_ui::{
     elements::prelude::*,
@@ -55,11 +55,8 @@ impl ContentState {
     }
 }
 
-#[derive(Component, Clone, Copy)]
-enum Action {
-    Asset(usize),
-    Kind(usize),
-}
+#[derive(Component)]
+struct AssetRow(usize);
 
 #[derive(Component)]
 enum Label {
@@ -92,7 +89,6 @@ impl Plugin for ContentPlugin {
         app.add_system(Startup, build_panel)
             .add_system(LateUpdate, update_filter)
             .add_system(LateUpdate, sync_scroll)
-            .add_system(LateUpdate, handle_actions)
             .add_system(LateUpdate, refresh_panel)
             .add_system(LateUpdate, render_marks.before(UiSet::Materials))
             .add_system(LateUpdate, render_tags.before(UiSet::Materials));
@@ -155,7 +151,8 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                     .with_margin(UIRect::axes(7.0, 0.0)),
                 |mut tags| {
                     for (index, (name, _)) in KINDS.iter().enumerate() {
-                        tags = tags.add_child((theme.chip(*name), Action::Kind(index), Tag(index)));
+                        tags =
+                            tags.add_child((theme.chip(*name).on_click(select_kind), Tag(index)));
                     }
                 },
             );
@@ -187,8 +184,9 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
                                     .height(UIValue::Px(ROW_HEIGHT))
                                     .row()
                                     .padding(UIRect::axes(4.0, 6.0))
-                                    .gap(8.0),
-                                Action::Asset(slot),
+                                    .gap(8.0)
+                                    .on_click(open_asset),
+                                AssetRow(slot),
                             ),
                             |row| {
                                 let (mark_node, mark_material) = marks::node();
@@ -254,45 +252,44 @@ fn update_filter(
     }
 }
 
-fn handle_actions(
-    mut clicks: EventReader<UIClick>,
-    actions: Query<&Action>,
+fn select_kind(
+    on: On<UIClick>,
+    tags: Query<&Tag>,
     project: Res<ProjectState>,
     mut state: ResMut<ContentState>,
     views: Query<(&ContentView, &mut UIScrollArea)>,
+) {
+    if on.signal().button != MouseButton::Left || project.busy() {
+        return;
+    }
+    let Some(tag) = tags.get_entity(on.entity()) else {
+        return;
+    };
+    state.kind = tag.0;
+    state.visible = 0..0;
+    if let Some((_, mut area)) = views.iter().next() {
+        area.offset = 0.0;
+    }
+}
+
+fn open_asset(
+    on: On<UIClick>,
+    rows: Query<&AssetRow>,
+    project: Res<ProjectState>,
+    mut state: ResMut<ContentState>,
     mut commands: ResMut<EditorCommands>,
 ) {
-    let mut reset = false;
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        let Some(action) = actions.get_entity(click.entity) else {
-            continue;
-        };
-        if project.busy() {
-            continue;
-        }
-        match *action {
-            Action::Kind(index) => {
-                state.kind = index;
-                state.visible = 0..0;
-                reset = true;
-            }
-            Action::Asset(slot) => {
-                let assets = visible_assets(&project, &state);
-                if let Some(asset) = assets.get(state.index(slot)) {
-                    let id = asset.id;
-                    state.selected = Some(id);
-                    commands.0.push_back(EditorCommand::OpenAsset(id));
-                }
-            }
-        }
+    if on.signal().button != MouseButton::Left || project.busy() {
+        return;
     }
-    if reset {
-        if let Some((_, mut area)) = views.iter().next() {
-            area.offset = 0.0;
-        }
+    let Some(row) = rows.get_entity(on.entity()) else {
+        return;
+    };
+    let assets = visible_assets(&project, &state);
+    if let Some(asset) = assets.get(state.index(row.0)) {
+        let id = asset.id;
+        state.selected = Some(id);
+        commands.0.push_back(EditorCommand::OpenAsset(id));
     }
 }
 
@@ -338,7 +335,7 @@ fn render_marks(
     state: Res<ContentState>,
     theme: Res<UITheme>,
     slots: Query<(&MarkSlot, &mut UINode, &mut UIMaterial)>,
-    styles: Query<(&Action, &mut UIInteractionStyle)>,
+    styles: Query<(&AssetRow, &mut UIInteractionStyle)>,
 ) {
     let assets = visible_assets(&project, &state);
     let selected = |slot: usize| {
@@ -352,11 +349,8 @@ fn render_marks(
             .map_or(Mark::None, |asset| asset_mark(&asset.kind));
         marks::apply(mark, &theme, selected(slot.0), &mut node, &mut material);
     }
-    for (action, mut style) in styles.iter() {
-        let Action::Asset(slot) = *action else {
-            continue;
-        };
-        let wanted = theme.interaction(ButtonVariant::Ghost, selected(slot));
+    for (row, mut style) in styles.iter() {
+        let wanted = theme.interaction(ButtonVariant::Ghost, selected(row.0));
         if style.normal != wanted.normal {
             **style = wanted;
         }

@@ -2,8 +2,11 @@
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::query::filter::With;
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut, command::CommandQueue,
-    entity::hierarchy::ChildOf, events::event_reader::EventReader,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut,
+    command::CommandQueue,
+    entity::hierarchy::ChildOf,
+    events::event_reader::EventReader,
+    signal::{On, listener::IntoListener},
 };
 use concerto_ui::{
     elements::prelude::*,
@@ -58,31 +61,38 @@ pub struct TabsPlugin;
 
 impl Plugin for TabsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(LateUpdate, handle_tab_clicks)
-            .add_system(LateUpdate, scroll_tabs)
+        app.add_system(LateUpdate, scroll_tabs)
             .add_system(LateUpdate, sync_tabs.before(UiSet::Materials));
     }
 }
 
-fn handle_tab_clicks(
-    mut clicks: concerto_ecs::events::event_reader::EventReader<UIClick>,
+fn activate_tab(
+    on: On<UIClick>,
     tabs: Query<&EditorTab>,
+    mut commands: ResMut<AssetEditorCommands>,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    if let Some(tab) = tabs.get_entity(on.entity()) {
+        commands
+            .0
+            .push_back(AssetEditorCommand::Activate(tab.document));
+    }
+}
+
+fn close_tab(
+    on: On<UIClick>,
     closes: Query<&EditorTabClose>,
     mut commands: ResMut<AssetEditorCommands>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        if let Some(close) = closes.get_entity(click.entity) {
-            commands
-                .0
-                .push_back(AssetEditorCommand::Close(close.document));
-        } else if let Some(tab) = tabs.get_entity(click.entity) {
-            commands
-                .0
-                .push_back(AssetEditorCommand::Activate(tab.document));
-        }
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    if let Some(close) = closes.get_entity(on.entity()) {
+        commands
+            .0
+            .push_back(AssetEditorCommand::Close(close.document));
     }
 }
 
@@ -175,7 +185,8 @@ fn sync_tabs(
                         .height(UIValue::Px(30.0))
                         .row()
                         .padding(UIRect::axes(0.0, theme.spacing_sm))
-                        .z_index(70),
+                        .z_index(70)
+                        .on_click(activate_tab),
                     EditorTab { document: entity },
                     WindowChromeControl,
                 ),
@@ -204,6 +215,7 @@ fn sync_tabs(
                             icon(&theme, glyph::X, theme.font_size_sm).muted(),
                             Interactable,
                             EditorTabClose { document: entity },
+                            close_tab.into_listener(),
                             WindowChromeControl,
                         ));
                 },

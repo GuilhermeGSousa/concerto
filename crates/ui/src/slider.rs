@@ -3,17 +3,17 @@ use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
-    events::{Event, event_writer::EventWriter},
     query::{
         Query,
         filter::{Added, With},
     },
-    resource::Res,
+    signal::{EntitySignal, On, Signal},
 };
-use concerto_window::input::{Input, InputState, MouseButton};
+use concerto_window::input::MouseButton;
+use glam::Vec2;
 
 use crate::{
-    interaction::HoveredNode,
+    interaction::{UIDrag, UIPointerDown},
     material::UIMaterial,
     node::{UILayout, UINode},
     transform::UIValue,
@@ -25,17 +25,11 @@ pub struct UISlider {
     pub value: f32,
     pub min: f32,
     pub max: f32,
-    pub(crate) dragging: bool,
 }
 
 impl UISlider {
     pub fn new(value: f32, min: f32, max: f32) -> Self {
-        Self {
-            value,
-            min,
-            max,
-            dragging: false,
-        }
+        Self { value, min, max }
     }
 
     fn normalized(&self) -> f32 {
@@ -47,12 +41,13 @@ impl UISlider {
 #[derive(Component)]
 pub(crate) struct UISliderFill;
 
-/// Fired whenever a [`UISlider`]'s value changes during a drag.
-#[derive(Event)]
+/// Sent to a [`UISlider`] whenever its value changes during a drag.
 pub struct UISliderChanged {
-    pub entity: Entity,
     pub value: f32,
 }
+
+impl Signal for UISliderChanged {}
+impl EntitySignal for UISliderChanged {}
 
 /// Spawns a fill child entity for each newly added [`UISlider`].
 pub(crate) fn setup_slider_visuals(
@@ -74,36 +69,56 @@ pub(crate) fn setup_slider_visuals(
     }
 }
 
-/// Updates [`UISlider::value`] while the user drags the slider.
-pub(crate) fn update_slider_drag(
-    sliders: Query<(Entity, &mut UISlider, &UILayout)>,
-    input: Res<Input>,
-    window: Res<concerto_window::plugin::Window>,
-    hovered: Res<HoveredNode>,
-    mut writer: EventWriter<UISliderChanged>,
+/// Pointer-down listener that moves the [`UISlider`] it sits on to the pointer.
+pub fn press_slider(
+    on: On<UIPointerDown>,
+    sliders: Query<(&mut UISlider, &UILayout)>,
+    mut cmd: CommandQueue,
 ) {
-    let cursor = window.logical_pointer_position(&input);
-    let left = input.get_mouse_button_state(MouseButton::Left);
+    let signal = on.signal();
+    slide_to(
+        on.entity(),
+        signal.button,
+        signal.position,
+        &sliders,
+        &mut cmd,
+    );
+}
 
-    for (entity, mut slider, computed) in sliders.iter() {
-        if left == InputState::Pressed && **hovered == Some(entity) {
-            slider.dragging = true;
-        }
-        if left == InputState::Released || left == InputState::Up {
-            slider.dragging = false;
-        }
+/// Drag listener that keeps the [`UISlider`] it sits on under the pointer.
+pub fn drag_slider(
+    on: On<UIDrag>,
+    sliders: Query<(&mut UISlider, &UILayout)>,
+    mut cmd: CommandQueue,
+) {
+    let signal = on.signal();
+    slide_to(
+        on.entity(),
+        signal.button,
+        signal.position,
+        &sliders,
+        &mut cmd,
+    );
+}
 
-        if slider.dragging && (left == InputState::Pressed || left == InputState::Down) {
-            let norm = ((cursor.x - computed.rect.min.x) / computed.rect.size.x).clamp(0.0, 1.0);
-            let new_value = slider.min + norm * (slider.max - slider.min);
-            if (new_value - slider.value).abs() > f32::EPSILON {
-                slider.value = new_value;
-                writer.write(UISliderChanged {
-                    entity,
-                    value: new_value,
-                });
-            }
-        }
+fn slide_to(
+    entity: Entity,
+    button: MouseButton,
+    position: Vec2,
+    sliders: &Query<(&mut UISlider, &UILayout)>,
+    cmd: &mut CommandQueue,
+) {
+    if button != MouseButton::Left {
+        return;
+    }
+    let Some((mut slider, layout)) = sliders.get_entity(entity) else {
+        return;
+    };
+    let norm = ((position.x - layout.rect.min.x) / layout.rect.size.x).clamp(0.0, 1.0);
+    let value = slider.min + norm * (slider.max - slider.min);
+    if (value - slider.value).abs() > f32::EPSILON {
+        slider.value = value;
+        cmd.entity(entity).trigger(UISliderChanged { value });
     }
 }
 

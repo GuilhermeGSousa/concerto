@@ -1,20 +1,25 @@
 use concerto_color::Color;
-use concerto_ecs::{Component, Entity, World, component::bundle::IntoBundle};
+use concerto_ecs::{
+    Component, Entity, ResMut, Resource, World, component::bundle::IntoBundle, signal::On,
+};
 use concerto_ui::{
-    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
-    checkbox::UICheckbox,
+    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, toggle_owned_panels},
+    checkbox::{UICheckbox, UICheckboxChanged},
     elements::prelude::*,
     focus::UIFocusable,
-    interaction::{Interactable, UIInteractionStyle},
+    interaction::{
+        Interactable, UIClick, UIDrag, UIInteractionStyle, UIPointerDown, UIPointerEnter,
+    },
     material::UIMaterial,
-    node::{AlignContent, AlignItems, FlexDirection, Overflow, UINode, UIRect},
-    slider::UISlider,
+    node::{AlignContent, AlignItems, FlexDirection, Overflow, UIBox, UILayout, UINode, UIRect},
+    slider::{UISlider, UISliderChanged},
     text::{FontFamily, UIText},
     text_input::UITextInput,
     theme::{ButtonVariant, ChipColors, UITheme},
     transform::UIValue,
     widgets::UIButton,
 };
+use concerto_window::input::MouseButton;
 use glam::Vec2;
 
 struct Spawned {
@@ -775,4 +780,218 @@ fn a_small_bare_field_on_a_surface() {
     assert_eq!(spawned.get::<UIText>().font_size, t.font_size_sm);
     assert_eq!(material_of(&spawned).color, t.surface.to_linear());
     assert_eq!(material_of(&spawned).border_width, 0.0);
+}
+
+#[derive(Resource, Default)]
+struct Heard(Vec<String>);
+
+fn listening_world() -> World {
+    let mut world = World::default();
+    world.insert_resource(Heard::default());
+    world
+}
+
+fn heard(world: &World) -> &[String] {
+    &world.get_resource::<Heard>().unwrap().0
+}
+
+fn click(world: &mut World, entity: Entity, button: MouseButton) {
+    world.trigger_on(
+        entity,
+        UIClick {
+            position: Vec2::ZERO,
+            button,
+        },
+    );
+}
+
+#[test]
+fn a_button_runs_its_click_listener_and_keeps_its_modifiers() {
+    let t = theme();
+    let mut world = listening_world();
+    let button = world.spawn(
+        t.button("Save")
+            .on_click(|_: On<UIClick>, mut heard: ResMut<Heard>| heard.0.push("save".into()))
+            .ghost()
+            .width(UIValue::Px(90.0))
+            .small(),
+    );
+
+    click(&mut world, button, MouseButton::Left);
+    click(&mut world, button, MouseButton::Left);
+
+    assert_eq!(heard(&world), ["save", "save"]);
+    let node = world.get_component_for_entity::<UINode>(button).unwrap();
+    assert_eq!(node.width, UIValue::Px(90.0));
+    assert_eq!(
+        world
+            .get_component_for_entity::<UIText>(button)
+            .unwrap()
+            .font_size,
+        t.font_size_sm
+    );
+    assert_eq!(
+        colors(
+            world
+                .get_component_for_entity::<UIInteractionStyle>(button)
+                .unwrap()
+        ),
+        colors(&t.interaction(ButtonVariant::Ghost, false))
+    );
+    assert!(world.get_component_for_entity::<UIButton>(button).is_some());
+}
+
+#[test]
+fn an_element_can_listen_for_several_signals() {
+    let t = theme();
+    let mut world = listening_world();
+    let row = world.spawn(
+        t.pressable()
+            .on_click(|_: On<UIClick>, mut heard: ResMut<Heard>| heard.0.push("click".into()))
+            .on(|_: On<UIPointerEnter>, mut heard: ResMut<Heard>| heard.0.push("enter".into())),
+    );
+
+    world.trigger_on(
+        row,
+        UIPointerEnter {
+            position: Vec2::ZERO,
+        },
+    );
+    click(&mut world, row, MouseButton::Left);
+
+    assert_eq!(heard(&world), ["enter", "click"]);
+}
+
+#[test]
+fn a_listener_sees_the_element_it_sits_on() {
+    let t = theme();
+    let mut world = listening_world();
+    let listener = |on: On<UIClick>, mut heard: ResMut<Heard>| {
+        heard.0.push(format!("{:?}", on.entity()));
+    };
+    let first = world.spawn(t.chip("mesh").on_click(listener));
+    let second = world.spawn(t.chip("scene").on_click(listener));
+
+    click(&mut world, second, MouseButton::Left);
+    click(&mut world, first, MouseButton::Left);
+
+    assert_eq!(heard(&world), [format!("{second:?}"), format!("{first:?}")]);
+}
+
+#[test]
+fn a_checkbox_toggles_on_left_click_and_reports_the_change() {
+    let t = theme();
+    let mut world = listening_world();
+    let checkbox = world.spawn(t.checkbox("Shadows", false).on_change(
+        |on: On<UICheckboxChanged>, mut heard: ResMut<Heard>| {
+            heard.0.push(on.signal().checked.to_string());
+        },
+    ));
+    let checked = |world: &World| {
+        world
+            .get_component_for_entity::<UICheckbox>(checkbox)
+            .unwrap()
+            .checked
+    };
+
+    click(&mut world, checkbox, MouseButton::Right);
+    assert!(!checked(&world), "only the left button toggles");
+
+    click(&mut world, checkbox, MouseButton::Left);
+    assert!(checked(&world));
+    click(&mut world, checkbox, MouseButton::Left);
+    assert!(!checked(&world));
+
+    assert_eq!(heard(&world), ["true", "false"]);
+}
+
+#[test]
+fn a_slider_follows_the_pointer_and_reports_each_change() {
+    let t = theme();
+    let mut world = listening_world();
+    let slider = world.spawn(t.slider(0.0, 0.0, 10.0).on_change(
+        |on: On<UISliderChanged>, mut heard: ResMut<Heard>| {
+            heard.0.push(on.signal().value.to_string());
+        },
+    ));
+    let rect = UIBox {
+        min: Vec2::new(100.0, 0.0),
+        size: Vec2::new(200.0, 20.0),
+    };
+    world.insert(
+        UILayout {
+            rect,
+            content_rect: rect,
+            clip_rect: rect,
+            paint_order: 0,
+        },
+        slider,
+    );
+    let value = |world: &World| {
+        world
+            .get_component_for_entity::<UISlider>(slider)
+            .unwrap()
+            .value
+    };
+
+    world.trigger_on(
+        slider,
+        UIPointerDown {
+            position: Vec2::new(150.0, 10.0),
+            button: MouseButton::Left,
+        },
+    );
+    assert_eq!(value(&world), 2.5);
+
+    let drag = |x: f32, button| UIDrag {
+        position: Vec2::new(x, 10.0),
+        delta: Vec2::ZERO,
+        button,
+    };
+    world.trigger_on(slider, drag(200.0, MouseButton::Left));
+    assert_eq!(value(&world), 5.0);
+    world.trigger_on(slider, drag(200.0, MouseButton::Left));
+    world.trigger_on(slider, drag(250.0, MouseButton::Right));
+    assert_eq!(value(&world), 5.0, "only the left button drags");
+    world.trigger_on(slider, drag(900.0, MouseButton::Left));
+    assert_eq!(
+        value(&world),
+        10.0,
+        "the value stops at the end of the track"
+    );
+
+    assert_eq!(heard(&world), ["2.5", "5", "10"]);
+}
+
+#[test]
+fn a_dropdown_opens_and_closes_when_its_trigger_is_clicked() {
+    let t = theme();
+    let mut world = World::default();
+    let trigger = world.spawn(t.button("Menu").on_click(toggle_owned_panels));
+    let bystander = world.spawn(t.button("Other").on_click(toggle_owned_panels));
+    let dropdown = world.spawn(t.dropdown(trigger));
+    let context_menu = world.spawn(t.context_menu());
+    world
+        .get_component_for_entity_mut::<UIAnchoredPanel>(context_menu)
+        .unwrap()
+        .owner = Some(trigger);
+    let open = |world: &World, panel| {
+        world
+            .get_component_for_entity::<UIAnchoredPanel>(panel)
+            .unwrap()
+            .open
+    };
+
+    click(&mut world, bystander, MouseButton::Left);
+    assert!(!open(&world, dropdown), "only the owner toggles its panel");
+
+    click(&mut world, trigger, MouseButton::Left);
+    assert!(open(&world, dropdown));
+    assert!(
+        !open(&world, context_menu),
+        "a panel that is not toggled by its owner stays shut"
+    );
+
+    click(&mut world, trigger, MouseButton::Left);
+    assert!(!open(&world, dropdown));
 }

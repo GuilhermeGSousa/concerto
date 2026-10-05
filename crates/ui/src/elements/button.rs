@@ -1,7 +1,7 @@
 use concerto_color::Color;
 use concerto_ecs::component::bundle::IntoBundle;
 
-use super::{InteractionSpec, Interactive, Layout, Shape, Themed, Typography};
+use super::{InteractionSpec, Interactive, Layout, Listen, Shape, Themed, Typography};
 use crate::{
     interaction::{Interactable, UIInteractionStyle},
     material::UIMaterial,
@@ -86,6 +86,10 @@ impl IntoBundle for Button {
         (node, material, style, interactable, UIButton, self.text)
     }
 }
+
+impl Listen for Pressable {}
+
+impl Listen for Button {}
 
 impl Themed for Pressable {
     fn theme(&self) -> &UITheme {

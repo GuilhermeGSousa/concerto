@@ -8,12 +8,15 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     ecs::{
-        CommandQueue, Component, Entity, Query, Res, events::event_reader::EventReader,
+        CommandQueue, Component, Entity, Query, Res,
+        signal::{On, listener::IntoListener},
         system::NonSendMarker,
     },
     ui::{
         UIRenderDiagnostics,
-        anchor::{UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack},
+        anchor::{
+            UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack, toggle_owned_panels,
+        },
         elements::prelude::*,
         focus::FocusedWidget,
         interaction::{Interactable, UIClick, UIInputState},
@@ -21,7 +24,9 @@ use concerto::{
             AlignContent, AlignItems, FlexDirection, Overflow, UILayout, UILayoutDiagnostics,
             UINode, UIRect,
         },
-        scroll::{UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList},
+        scroll::{
+            UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList, drag_split_handle,
+        },
         text::UIText,
         theme::UITheme,
         transform::UIValue,
@@ -241,7 +246,8 @@ fn spawn_showcase(
             theme
                 .button("MENU  \u{25be}")
                 .width(UIValue::Px(120.0))
-                .font_size(12.0),
+                .font_size(12.0)
+                .on_click(toggle_owned_panels),
         )
         .entity();
     cmd.add_child(panel_row, menu_trigger);
@@ -271,6 +277,8 @@ fn spawn_showcase(
         }
     }
     let materials_row = materials_row.expect("the materials row is always spawned");
+    cmd.entity(materials_row)
+        .insert(toggle_owned_panels.into_listener());
 
     let rename_field = cmd
         .spawn(theme.text_field("Rename…").fill(theme.surface))
@@ -390,6 +398,7 @@ fn spawn_showcase(
                     .fixed(),
                 Interactable,
                 VirtualRow { slot },
+                open_context_menu.into_listener(),
             ))
             .entity();
         cmd.add_child(virtual_list, row);
@@ -428,6 +437,7 @@ fn spawn_showcase(
                 .fixed(),
             Interactable,
             UISplitHandle { pane: split },
+            drag_split_handle.into_listener(),
         ))
         .entity();
     cmd.add_child(split, split_handle);
@@ -448,7 +458,8 @@ fn spawn_showcase(
             theme
                 .button("VIEW  \u{25be}")
                 .width(UIValue::Px(120.0))
-                .font_size(12.0),
+                .font_size(12.0)
+                .on_click(toggle_owned_panels),
         )
         .entity();
     cmd.add_child(flip_row, flip_trigger);
@@ -480,34 +491,33 @@ fn spawn_showcase(
     cmd.add_child(root, diagnostics);
 }
 
-fn drive_panels(
-    mut clicks: EventReader<UIClick>,
+fn open_context_menu(
+    on: On<UIClick>,
     context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
     rows: Query<&VirtualRow>,
     lists: Query<&UIVirtualList>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Right {
-            continue;
-        }
-        let Some(row) = rows.get_entity(click.entity) else {
-            continue;
+    let click = on.signal();
+    if click.button != MouseButton::Right {
+        return;
+    }
+    let Some(row) = rows.get_entity(on.entity()) else {
+        return;
+    };
+    let index = lists
+        .iter()
+        .next()
+        .and_then(|list| list.visible_range().nth(row.slot));
+    for (_, mut panel, mut text) in context_menus.iter() {
+        panel.target = UIAnchorTarget::Point {
+            position: click.position,
         };
-        let index = lists
-            .iter()
-            .next()
-            .and_then(|list| list.visible_range().nth(row.slot));
-        for (_, mut panel, mut text) in context_menus.iter() {
-            panel.target = UIAnchorTarget::Point {
-                position: click.position,
-            };
-            panel.owner = Some(click.entity);
-            panel.open = true;
-            text.text = match index {
-                Some(index) => format!("Row {index:04}\nRename\nDuplicate\nDelete"),
-                None => String::from("Rename\nDuplicate\nDelete"),
-            };
-        }
+        panel.owner = Some(on.entity());
+        panel.open = true;
+        text.text = match index {
+            Some(index) => format!("Row {index:04}\nRename\nDuplicate\nDelete"),
+            None => String::from("Rename\nDuplicate\nDelete"),
+        };
     }
 }
 
@@ -575,7 +585,6 @@ fn main() {
     app.register_plugin(DefaultPlugins::default())
         .add_system(Startup, spawn_showcase)
         .add_system(Update, update_diagnostics)
-        .add_system(Update, update_virtual_rows)
-        .add_system(Update, drive_panels);
+        .add_system(Update, update_virtual_rows);
     app.run();
 }

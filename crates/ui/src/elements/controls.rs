@@ -1,12 +1,15 @@
-use concerto_ecs::component::bundle::IntoBundle;
+use concerto_ecs::{
+    component::bundle::IntoBundle,
+    signal::listener::{IntoListener, Listener},
+};
 
-use super::{Layout, Shape, Themed, Typography};
+use super::{Layout, Listening, Shape, Themed, Typography};
 use crate::{
-    checkbox::UICheckbox,
-    interaction::Interactable,
+    checkbox::{UICheckbox, UICheckboxChanged, toggle_checkbox},
+    interaction::{Interactable, UIClick, UIDrag, UIPointerDown},
     material::UIMaterial,
     node::{UINode, UIRect},
-    slider::UISlider,
+    slider::{UISlider, UISliderChanged, drag_slider, press_slider},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -60,8 +63,35 @@ impl UITheme {
     }
 }
 
+impl Checkbox {
+    /// Runs `listener` each time the box is toggled; attach it after the other modifiers.
+    pub fn on_change<M>(
+        self,
+        listener: impl IntoListener<UICheckboxChanged, M>,
+    ) -> Listening<Self, UICheckboxChanged> {
+        Listening::new(self, listener)
+    }
+}
+
+impl Slider {
+    /// Runs `listener` each time a drag changes the value; attach it after the other modifiers.
+    pub fn on_change<M>(
+        self,
+        listener: impl IntoListener<UISliderChanged, M>,
+    ) -> Listening<Self, UISliderChanged> {
+        Listening::new(self, listener)
+    }
+}
+
 impl IntoBundle for Checkbox {
-    type Bundle = (UINode, UIMaterial, UICheckbox, Interactable, UIText);
+    type Bundle = (
+        UINode,
+        UIMaterial,
+        UICheckbox,
+        Interactable,
+        UIText,
+        Listener<UIClick>,
+    );
 
     fn into_bundle(self) -> Self::Bundle {
         (
@@ -70,15 +100,30 @@ impl IntoBundle for Checkbox {
             self.checkbox,
             Interactable,
             self.text,
+            toggle_checkbox.into_listener(),
         )
     }
 }
 
 impl IntoBundle for Slider {
-    type Bundle = (UINode, UIMaterial, UISlider, Interactable);
+    type Bundle = (
+        UINode,
+        UIMaterial,
+        UISlider,
+        Interactable,
+        Listener<UIPointerDown>,
+        Listener<UIDrag>,
+    );
 
     fn into_bundle(self) -> Self::Bundle {
-        (self.node, self.material, self.slider, Interactable)
+        (
+            self.node,
+            self.material,
+            self.slider,
+            Interactable,
+            press_slider.into_listener(),
+            drag_slider.into_listener(),
+        )
     }
 }
 

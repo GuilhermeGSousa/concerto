@@ -3,10 +3,7 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_ecs::{
-    Component, Query, Res, ResMut, Resource, command::CommandQueue,
-    events::event_reader::EventReader,
-};
+use concerto_ecs::{Component, Query, Res, ResMut, Resource, command::CommandQueue, signal::On};
 use concerto_ui::{
     elements::prelude::*,
     interaction::{Interactable, UIClick},
@@ -72,7 +69,6 @@ impl Plugin for WindowChromePlugin {
         }
         app.add_system(Startup, build_controls)
             .add_system(LateUpdate, publish_window_gestures)
-            .add_system(LateUpdate, handle_controls)
             .add_system(LateUpdate, sync_maximise_glyph);
     }
 }
@@ -136,7 +132,8 @@ fn build_controls(
                         })
                         .size(UIValue::Px(30.0), UIValue::Px(26.0))
                         .padding(UIRect::axes(3.0, 8.0))
-                        .z_index(CONTROL_LAYER),
+                        .z_index(CONTROL_LAYER)
+                        .on_click(press_control),
                     icon(&theme, mark, theme.font_size_lg).muted(),
                     control,
                     WindowChromeControl,
@@ -280,26 +277,24 @@ fn push_zone(
     ));
 }
 
-fn handle_controls(
-    mut clicks: EventReader<UIClick>,
+fn press_control(
+    on: On<UIClick>,
     controls: Query<&Control>,
     window: Res<Window>,
     mut close: ResMut<CloseRequest>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        let Some(control) = controls.get_entity(click.entity) else {
-            continue;
-        };
-        match control {
-            Control::Minimise => window.window_handle.set_minimized(true),
-            Control::Maximise => window
-                .window_handle
-                .set_maximized(!window.window_handle.is_maximized()),
-            Control::Close => close.0 = true,
-        }
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(control) = controls.get_entity(on.entity()) else {
+        return;
+    };
+    match control {
+        Control::Minimise => window.window_handle.set_minimized(true),
+        Control::Maximise => window
+            .window_handle
+            .set_maximized(!window.window_handle.is_maximized()),
+        Control::Close => close.0 = true,
     }
 }
 

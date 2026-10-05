@@ -5,7 +5,7 @@ use super::registry::InspectionSource;
 use concerto_color::Color;
 use concerto_ecs::component::Tick;
 use concerto_ui::{
-    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
+    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, toggle_owned_panels},
     text_input::UITextInput,
 };
 
@@ -70,7 +70,8 @@ fn spawn_row(cmd: &mut CommandQueue, stack: Entity, theme: &UITheme) -> Entity {
                 .height(UIValue::Px(ROW_HEIGHT))
                 .row()
                 .gap(7.0)
-                .padding(UIRect::axes(0.0, 9.0)),
+                .padding(UIRect::axes(0.0, 9.0))
+                .on_click(toggle_owned_panels),
         )
         .add_child(theme.label("⌕").muted().font_size(12.0).no_wrap())
         .add_child(

@@ -18,7 +18,7 @@ pub struct Popup {
 }
 
 impl UITheme {
-    /// A menu below `trigger`, opened and closed by clicking it.
+    /// A menu below `trigger`, opened and closed by a trigger that listens with `toggle_owned_panels`.
     pub fn dropdown(&self, trigger: Entity) -> Popup {
         Popup {
             surface: self.popup(),

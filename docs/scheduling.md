@@ -89,7 +89,7 @@ Sets are configured per schedule; the render subapp uses `configure_render_sets`
 ## Joining a set
 
 ```rust
-app.add_system(LateUpdate, (update_widgets, update_tooltips).in_set(UiSet::Widgets));
+app.add_system(LateUpdate, (sync_tab_bodies, update_tooltips).in_set(UiSet::Widgets));
 app.add_system(LateUpdate, compute_ui_nodes.in_set(UiSet::Layout));
 ```
 

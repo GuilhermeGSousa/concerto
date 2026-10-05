@@ -9,6 +9,7 @@ use concerto_ecs::{
     events::{event_reader::EventReader, event_writer::EventWriter},
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
+    signal::On,
     system::input::SystemLocal,
 };
 use concerto_window::define_action;
@@ -572,18 +573,14 @@ fn should_dismiss_on_escape(inputs: EscapeDismissal) -> bool {
         && inputs.stack_open
 }
 
-pub(crate) fn toggle_panels_from_owner(
-    mut clicks: EventReader<UIClick>,
-    panels: Query<&mut UIAnchoredPanel>,
-) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        for mut panel in panels.iter() {
-            if panel.toggled_by_owner && panel.owner == Some(click.entity) {
-                panel.open = !panel.open;
-            }
+/// Click listener for a panel owner: opens or closes the panels it toggles.
+pub fn toggle_owned_panels(on: On<UIClick>, panels: Query<&mut UIAnchoredPanel>) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    for mut panel in panels.iter() {
+        if panel.toggled_by_owner && panel.owner == Some(on.entity()) {
+            panel.open = !panel.open;
         }
     }
 }
