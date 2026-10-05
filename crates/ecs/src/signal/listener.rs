@@ -8,8 +8,57 @@ use crate::{
 };
 
 pub struct Listener<S: Signal> {
-    system: Box<dyn ListenerSystem<S>>,
+    // Taken while running so the system can safely access or reshape the world.
+    state: Option<ListenerState<S>>,
     marker: PhantomData<S>,
+}
+
+struct ListenerState<S: Signal> {
+    system: Box<dyn ListenerSystem<S>>,
+    initialized: bool,
+}
+
+impl<S: Signal> Listener<S> {
+    pub(crate) fn run(entity: Entity, signal: &mut S, world: &mut crate::World) {
+        let Some(listener) = world.get_component_for_entity_mut::<Self>(entity) else {
+            return;
+        };
+        let state = listener
+            .state
+            .take()
+            .expect("Cannot recursively run an active listener");
+
+        let mut guard = RunningListener {
+            world,
+            entity,
+            state: Some(state),
+        };
+        let state = guard.state.as_mut().unwrap();
+        if !state.initialized {
+            state.system.initialize(guard.world);
+            state.initialized = true;
+        }
+        state.system.run_and_apply(On { signal }, guard.world);
+    }
+}
+
+/// Restores system state even if initialization, execution, or command application panics.
+struct RunningListener<'w, S: Signal> {
+    world: &'w mut crate::World,
+    entity: Entity,
+    state: Option<ListenerState<S>>,
+}
+
+impl<S: Signal> Drop for RunningListener<'_, S> {
+    fn drop(&mut self) {
+        if let Some(listener) = self
+            .world
+            .get_component_for_entity_mut::<Listener<S>>(self.entity)
+            && listener.state.is_none()
+        {
+            listener.state = self.state.take();
+        }
+    }
 }
 
 impl<S: Signal> Component for Listener<S> {
@@ -74,7 +123,10 @@ where
 {
     fn into_listener(self) -> Listener<S> {
         Listener {
-            system: Box::new(self.into_listener_system()),
+            state: Some(ListenerState {
+                system: Box::new(self.into_listener_system()),
+                initialized: false,
+            }),
             marker: PhantomData,
         }
     }
@@ -104,6 +156,12 @@ pub(crate) struct Listeners {
 }
 
 impl Listeners {
+    pub(crate) fn get<S: Signal>(&self) -> &[Entity] {
+        self.entities
+            .get(&TypeId::of::<S>())
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    }
     pub(crate) fn register_listener<S: Signal>(&mut self, entity: Entity) {
         let entities = self.entities.entry(TypeId::of::<S>()).or_default();
         // Replacement fires on_add again; keep the original registration order.

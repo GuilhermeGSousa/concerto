@@ -14,7 +14,7 @@ use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
 use crate::resource::ResourceStorage;
 use crate::signal::Signal;
-use crate::signal::listener::{IntoListener, Listeners};
+use crate::signal::listener::{IntoListener, Listener, Listeners};
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
 use crate::table::MutableCellAccessor;
 use crate::{
@@ -640,27 +640,36 @@ impl World {
     }
 
     pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
-        self.register_component_lifetimes::<crate::signal::listener::Listener<T>>();
+        self.register_component_lifetimes::<Listener<T>>();
         self.spawn(system.into_listener());
     }
 
-    pub fn trigger<T: Signal>(&mut self, signal: T) {}
+    /// Runs matching listeners in registration order, applying each system's commands.
+    ///
+    /// Listeners added during dispatch start receiving signals on the next trigger.
+    /// Listeners removed before their turn are skipped. System state is initialized
+    /// on first use and retained between triggers.
+    ///
+    /// # Panics
+    /// Panics if a nested trigger tries to run a listener that is already running.
+    pub fn trigger<T: Signal>(&mut self, mut signal: T) {
+        let entities = self.listeners().get::<T>().to_vec();
+        for entity in entities {
+            Listener::<T>::run(entity, &mut signal, self);
+        }
+    }
 
     pub fn trigger_default<T: Signal + Default>(&mut self) {
         self.trigger(T::default());
     }
 
-    pub(crate) fn listeners(&self) -> &Listeners
-    {
+    pub(crate) fn listeners(&self) -> &Listeners {
         &self.listeners
     }
 
-    pub(crate) fn listeners_mut(&mut self) -> &mut Listeners
-    {
+    pub(crate) fn listeners_mut(&mut self) -> &mut Listeners {
         &mut self.listeners
     }
-
-
 }
 
 #[derive(Copy, Clone)]

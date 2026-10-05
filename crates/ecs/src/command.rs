@@ -11,6 +11,7 @@ use crate::{
         hierarchy::{ChildOf, DespawnChildren},
     },
     resource::Resource,
+    signal::Signal,
     system::{input::SystemInput, meta::SystemMetadata},
     world::World,
 };
@@ -143,6 +144,13 @@ impl<'w, 's> CommandQueue<'w, 's> {
     /// Queues a command that is not part of this queue's typed API.
     pub(crate) fn push<C: Command + 'static>(&mut self, command: C) {
         self.queue_state.push(command);
+    }
+
+    /// Queues a signal to run matching listeners when commands are applied.
+    ///
+    /// Uses the dispatch and reentrancy rules of [World::trigger].
+    pub fn trigger<T: Signal>(&mut self, signal: T) {
+        self.queue_state.push(TriggerCommand(signal));
     }
 
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
@@ -464,5 +472,13 @@ impl<T: Resource> InsertResource<T> {
 impl<T: Resource> Command for InsertResource<T> {
     fn execute(self, world: &mut World) {
         world.insert_resource(self.resource);
+    }
+}
+
+struct TriggerCommand<T: Signal>(T);
+
+impl<T: Signal> Command for TriggerCommand<T> {
+    fn execute(self, world: &mut World) {
+        world.trigger(self.0);
     }
 }
