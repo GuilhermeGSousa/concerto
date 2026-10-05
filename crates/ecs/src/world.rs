@@ -13,7 +13,8 @@ use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
 use crate::resource::ResourceStorage;
-use crate::signal::{IntoListenerSystem, Signal};
+use crate::signal::Signal;
+use crate::signal::listener::{IntoListener, Listeners};
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
 use crate::table::MutableCellAccessor;
 use crate::{
@@ -44,6 +45,7 @@ use crate::{component::Tick, system::meta::SystemMetadata};
 /// let mut world = World::new();
 /// let entity = world.spawn(Health(100.0));
 /// ```
+#[derive(Default)]
 pub struct World {
     archetypes: Vec<Archetype>,
     resources: AnyMap,
@@ -51,6 +53,7 @@ pub struct World {
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
+    listeners: Listeners,
     current_tick: u32,
     command_queue_start: usize,
     command_queue: CommandQueueState,
@@ -62,17 +65,7 @@ unsafe impl Sync for World {}
 impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
-        Self {
-            archetypes: Vec::new(),
-            archetype_index: HashMap::new(),
-            resources: AnyMap::new(),
-            component_lifetimes: Default::default(),
-            entity_store: EntityStore::new(),
-            current_tick: 0,
-            component_registry: ComponentRegistry::default(),
-            command_queue_start: 0,
-            command_queue: CommandQueueState::new(),
-        }
+        Self::default()
     }
 
     /// Spawns a new entity with the given component bundle and returns its [`Entity`] handle.
@@ -646,19 +639,28 @@ impl World {
         }
     }
 
-    pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListenerSystem<T, M>) {}
+    pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
+        self.register_component_lifetimes::<crate::signal::listener::Listener<T>>();
+        self.spawn(system.into_listener());
+    }
 
     pub fn trigger<T: Signal>(&mut self, signal: T) {}
 
     pub fn trigger_default<T: Signal + Default>(&mut self) {
         self.trigger(T::default());
     }
-}
 
-impl Default for World {
-    fn default() -> Self {
-        Self::new()
+    pub(crate) fn listeners(&self) -> &Listeners
+    {
+        &self.listeners
     }
+
+    pub(crate) fn listeners_mut(&mut self) -> &mut Listeners
+    {
+        &mut self.listeners
+    }
+
+
 }
 
 #[derive(Copy, Clone)]

@@ -18,7 +18,7 @@ impl System for SyncPoint {
         access.write_world();
     }
 
-    unsafe fn run_unsafe(&mut self, args: Self::In, _world: crate::world::UnsafeWorldCell) {}
+    unsafe fn run_unsafe(&mut self, _args: Self::In, _world: crate::world::UnsafeWorldCell) {}
 
     fn apply(&mut self, _world: &mut crate::World) {}
 }

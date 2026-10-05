@@ -1,7 +1,6 @@
-use crate::{
-    System,
-    system::{IntoSystem, input::SystemArg},
-};
+use crate::system::input::SystemArg;
+
+pub mod listener;
 
 pub trait Signal: Send + Sync + 'static {}
 
@@ -9,25 +8,11 @@ pub struct On<'w, S: Signal> {
     signal: &'w mut S,
 }
 
-pub trait ListenerSystem<S: Signal>: System<In = On<'static, S>> + 'static {}
-
-impl<S: Signal, T: System<In = On<'static, S>>> ListenerSystem<S> for T {}
-
-pub trait IntoListenerSystem<S: Signal, Marker> {
-    type Listener: ListenerSystem<S>;
-
-    fn into_listener(self) -> Self::Listener;
-}
-
-impl<S, Marker, T> IntoListenerSystem<S, Marker> for T
-where
-    S: Signal,
-    T: IntoSystem<On<'static, S>, Marker>,
+impl<S:Signal> On<'_, S>
 {
-    type Listener = T::System;
-
-    fn into_listener(self) -> Self::Listener {
-        self.into_system()
+    pub fn signal(&self) -> &S
+    {
+        self.signal
     }
 }
 
@@ -38,7 +23,7 @@ impl<S: Signal> SystemArg for On<'_, S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::World;
+    use crate::{System, World, signal::listener::IntoListenerSystem};
 
     struct Count(u32);
 
@@ -47,7 +32,7 @@ mod tests {
     #[test]
     fn listener_runs_with_a_borrowed_signal() {
         let mut world = World::new();
-        let mut listener = (|on: On<Count>| on.signal.0 += 1).into_listener();
+        let mut listener = (|on: On<Count>| on.signal.0 += 1).into_listener_system();
         listener.initialize(&mut world);
 
         let mut count = Count(0);
