@@ -39,6 +39,25 @@ impl Entity {
     pub fn generation(&self) -> NonZero<u32> {
         self.generation
     }
+
+    /// A compact text id for tools outside the process, e.g. `42v3`.
+    ///
+    /// The generation is part of the id, so a tool holding an id from before a
+    /// slot was reused gets a stale-entity error instead of the new occupant.
+    pub fn to_id_string(&self) -> String {
+        format!("{}v{}", self.index, self.generation)
+    }
+
+    /// Parses an id written by [`to_id_string`](Self::to_id_string). The entity
+    /// may no longer exist; check with
+    /// [`World::entity_is_valid`](crate::world::World::entity_is_valid).
+    pub fn parse_id(id: &str) -> Option<Entity> {
+        let (index, generation) = id.trim().split_once('v')?;
+        Some(Entity::new(
+            index.parse().ok()?,
+            NonZero::new(generation.parse().ok()?)?,
+        ))
+    }
 }
 
 impl Debug for Entity {
@@ -143,5 +162,27 @@ mod structural_version_tests {
         let wrapped = EntityStructuralVersion(u16::MAX).next();
         assert_eq!(wrapped, EntityStructuralVersion(0));
         assert_eq!(wrapped.next(), EntityStructuralVersion(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id_strings_round_trip() {
+        let mut world = World::new();
+        world.spawn(());
+        let entity = world.spawn(());
+        let id = entity.to_id_string();
+        assert_eq!(id, format!("{}v{}", entity.index(), entity.generation()));
+        assert_eq!(Entity::parse_id(&id), Some(entity));
+    }
+
+    #[test]
+    fn malformed_ids_do_not_parse() {
+        for id in ["", "42", "v3", "42v", "42v0", "-1v1", "42x3", "42v3v1"] {
+            assert_eq!(Entity::parse_id(id), None, "{id:?} must not parse");
+        }
     }
 }
