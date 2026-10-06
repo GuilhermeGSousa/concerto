@@ -1,10 +1,9 @@
 use concerto_color::Color;
 use concerto_ecs::resource::Resource;
 
+use crate::interaction::UIInteractionStyle;
+
 /// Semantic colors and metrics for the Concerto editor's Nocturne UI.
-///
-/// Applications can replace this resource to reskin reusable UI without
-/// coupling widgets to editor-specific concepts.
 #[derive(Resource, Clone)]
 pub struct UITheme {
     pub canvas: Color,
@@ -16,8 +15,7 @@ pub struct UITheme {
     pub border: Color,
     pub accent: Color,
     pub accent_hovered: Color,
-    /// The palette's second accent, for marks that must read as a different
-    /// kind of thing rather than as a different state.
+    /// The palette's second accent, for marks that must read as a different kind of thing.
     pub accent_secondary: Color,
     pub focus: Color,
     pub error: Color,
@@ -32,31 +30,103 @@ pub struct UITheme {
     pub radius_sm: f32,
     pub radius_md: f32,
     pub radius_lg: f32,
-    /// Type scale. Panels read these rather than hard-coding sizes, so
-    /// replacing the theme actually replaces the typography.
+    /// Type scale.
     pub font_size_sm: f32,
     pub font_size_md: f32,
     pub font_size_lg: f32,
 }
 
+/// The colour scheme an interactive element follows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ButtonVariant {
+    /// A raised control: buttons, menu rows.
+    Solid,
+    /// No fill until hovered: list rows, icon controls.
+    Ghost,
+    /// A document tab: sits on the surface, raised when selected.
+    Tab,
+}
+
+/// A chip's fill, outline and text colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChipColors {
+    pub fill: Color,
+    pub border: Color,
+    pub text: Color,
+}
+
+const DISABLED_SOLID: Color = Color::srgba(0.09, 0.075, 0.11, 0.55);
+
 impl UITheme {
-    /// Leading for a given size. One ratio for the whole scale keeps vertical
-    /// rhythm consistent between panels.
+    /// Leading for a given size.
     pub fn line_height(&self, font_size: f32) -> f32 {
         (font_size * 1.4).round()
     }
 
-    /// Nocturne: a quiet, compact dark interface. A near-neutral blue-grey
-    /// ground, one blurple accent used as a line rather than a flood, and
-    /// panels that sit on the scene as translucent cards.
-    // Channel values are sampled colours, not maths: one of them lands near
-    // 1/π and clippy would rather it were the constant.
+    /// The wash of accent behind a selected row.
+    pub fn selection(&self) -> Color {
+        let accent = self.accent.to_srgba();
+        Color::srgba(accent.r, accent.g, accent.b, 0.2)
+    }
+
+    /// The variant's colours, raised to its selected fill when `selected`; ignores per-element overrides, so use `InteractionSpec::resolve` for elements built with them.
+    pub fn interaction(&self, variant: ButtonVariant, selected: bool) -> UIInteractionStyle {
+        match variant {
+            ButtonVariant::Solid => UIInteractionStyle {
+                normal: if selected {
+                    self.surface_hovered
+                } else {
+                    self.surface_raised
+                },
+                hovered: self.surface_hovered,
+                pressed: self.accent,
+                disabled: DISABLED_SOLID,
+            },
+            ButtonVariant::Ghost => UIInteractionStyle {
+                normal: if selected {
+                    self.selection()
+                } else {
+                    Color::TRANSPARENT
+                },
+                hovered: self.surface_hovered,
+                pressed: self.selection(),
+                disabled: Color::TRANSPARENT,
+            },
+            ButtonVariant::Tab => UIInteractionStyle {
+                normal: if selected {
+                    self.surface_raised
+                } else {
+                    self.surface
+                },
+                hovered: self.surface_hovered,
+                pressed: self.accent,
+                disabled: self.surface,
+            },
+        }
+    }
+
+    /// A chip's colours, marked with the accent when `selected`.
+    pub fn chip_colors(&self, selected: bool) -> ChipColors {
+        if selected {
+            ChipColors {
+                fill: self.selection(),
+                border: self.accent,
+                text: self.text,
+            }
+        } else {
+            ChipColors {
+                fill: Color::TRANSPARENT,
+                border: self.border,
+                text: self.text_muted,
+            }
+        }
+    }
+
+    /// Nocturne: a quiet, compact dark interface.
     #[allow(clippy::approx_constant)]
     pub fn nocturne() -> Self {
         Self {
-            // The scene ground shows through everything; panels float on it.
             canvas: Color::srgba(0.063, 0.071, 0.125, 1.0),
-            // Cards are translucent so the scene reads behind them.
             surface: Color::srgba(0.078, 0.086, 0.133, 0.72),
             surface_raised: Color::srgba(0.137, 0.145, 0.196, 0.85),
             surface_hovered: Color::srgba(0.212, 0.204, 0.318, 0.9),
@@ -64,7 +134,6 @@ impl UITheme {
             text_muted: Color::srgba(0.576, 0.592, 0.671, 1.0),
             border: Color::srgba(0.247, 0.259, 0.302, 1.0),
             accent: Color::srgba(0.569, 0.518, 0.851, 1.0),
-            // Nocturne's accent-2-500, #9690c9.
             accent_secondary: Color::srgba(0.588, 0.565, 0.788, 1.0),
             accent_hovered: Color::srgba(0.710, 0.671, 0.988, 1.0),
             focus: Color::srgba(0.710, 0.671, 0.988, 1.0),

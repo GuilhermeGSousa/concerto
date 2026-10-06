@@ -6,6 +6,8 @@ use crate::{
 pub(crate) struct SyncPoint;
 
 impl System for SyncPoint {
+    type In = ();
+
     fn name(&self) -> &'static str {
         "SyncPoint"
     }
@@ -16,7 +18,7 @@ impl System for SyncPoint {
         access.write_world();
     }
 
-    unsafe fn run_unsafe(&mut self, _world: crate::world::UnsafeWorldCell) {}
+    unsafe fn run_unsafe(&mut self, _args: Self::In, _world: crate::world::UnsafeWorldCell) {}
 
     fn apply(&mut self, _world: &mut crate::World) {}
 }

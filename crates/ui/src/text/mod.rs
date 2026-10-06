@@ -11,9 +11,7 @@ use concerto_window::plugin::Window;
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, Weight, Wrap};
 use std::hash::{Hash, Hasher};
 
-use crate::{
-    node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem, theme::UITheme,
-};
+use crate::{node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem};
 
 pub mod fonts;
 pub(crate) mod resources;
@@ -38,41 +36,26 @@ pub enum FontStyle {
 }
 
 /// Text node component.
-///
-/// Changing any field re-builds the glyphon buffer on the next frame.
 #[derive(Component)]
-pub struct TextComponent {
+pub struct UIText {
     pub text: String,
     pub font_size: f32,
     pub line_height: f32,
-    /// Font family.  Defaults to [`FontFamily::SansSerif`].
+    /// Font family. Defaults to [`FontFamily::SansSerif`].
     pub font_family: FontFamily,
-    /// Font weight (100–900).  400 = regular, 700 = bold.  Defaults to 400.
+    /// Font weight (100–900). 400 = regular, 700 = bold. Defaults to 400.
     pub font_weight: u16,
-    /// Font style.  Defaults to [`FontStyle::Normal`].
+    /// Font style. Defaults to [`FontStyle::Normal`].
     pub font_style: FontStyle,
-    /// Semantic foreground color. The default is warm off-white rather than
-    /// renderer-owned pure white so widgets can be themed consistently.
+    /// Semantic foreground color.
     pub color: Color,
     /// Whether text may wrap at word boundaries inside the content rectangle.
     pub wrap: bool,
-    /// Whether text too long for its box is cut short with an ellipsis rather
-    /// than simply clipped. Only meaningful for unwrapped single-line text.
+    /// Whether text too long for its box is cut short with an ellipsis.
     pub ellipsis: bool,
 }
 
-impl TextComponent {
-    pub fn from_theme(text: impl Into<String>, theme: &UITheme) -> Self {
-        Self {
-            text: text.into(),
-            font_size: theme.font_size_md,
-            line_height: theme.line_height(theme.font_size_md),
-            ..Default::default()
-        }
-    }
-}
-
-impl Default for TextComponent {
+impl Default for UIText {
     fn default() -> Self {
         Self {
             text: String::new(),
@@ -88,12 +71,6 @@ impl Default for TextComponent {
     }
 }
 
-/// The longest prefix of `text` that fits `width`, with an ellipsis appended.
-///
-/// Shaping is the only honest way to know where a string stops fitting, so this
-/// binary-searches character boundaries rather than guessing from a character
-/// count — proportional fonts make any such guess wrong for exactly the names
-/// that need truncating.
 fn truncate_to_width(
     font_system: &mut FontSystem,
     metrics: Metrics,
@@ -112,7 +89,6 @@ fn truncate_to_width(
         .chain(std::iter::once(text.len()))
         .collect();
 
-    // Largest prefix that still fits once the ellipsis is accounted for.
     let mut low = 0;
     let mut high = boundaries.len() - 1;
     while low < high {
@@ -147,7 +123,6 @@ pub fn truncate_for_test(text: &str, width: f32, metrics: (f32, f32)) -> Option<
     )
 }
 
-/// Width of `text` shaped on one unwrapped line.
 fn measure_line(
     font_system: &mut FontSystem,
     metrics: Metrics,
@@ -166,20 +141,19 @@ fn measure_line(
 }
 
 #[derive(Component)]
-pub struct RenderTextComponent {
+pub(crate) struct RenderTextComponent {
     pub(crate) buffer: glyphon::Buffer,
     pub(crate) location: glam::Vec2,
     pub(crate) clip_min: glam::Vec2,
     pub(crate) clip_max: glam::Vec2,
     pub(crate) color: glyphon::Color,
-    /// Explicit z-layer, recovered from the node's paint order. Text is batched
-    /// by this so it can be interleaved with the quads of the same layer.
+    /// Explicit z-layer, recovered from the node's paint order.
     pub(crate) layer: i32,
     signature: u64,
 }
 
 pub(crate) fn extract_text_nodes(
-    text_nodes: Extracted<Query<(&TextComponent, &UILayout, &RenderEntity)>>,
+    text_nodes: Extracted<Query<(&UIText, &UILayout, &RenderEntity)>>,
     window: Extracted<Res<Window>>,
     mut font_system: ResMut<TextFontSystem>,
     render_text_nodes: Query<&RenderTextComponent>,
@@ -236,8 +210,6 @@ pub(crate) fn extract_text_nodes(
             .weight(Weight(text_component.font_weight))
             .style(style);
 
-        // Truncation happens here, where the font system is: the source text
-        // stays intact so the panel that owns it never has to know.
         let display = if text_component.ellipsis && !text_component.wrap {
             truncate_to_width(
                 &mut font_system,
@@ -256,9 +228,6 @@ pub(crate) fn extract_text_nodes(
             &mut font_system,
             display.as_deref().unwrap_or(&text_component.text),
             attrs,
-            // Advanced, not Basic: basic shaping has no font fallback, so any
-            // character the UI font lacks is drawn as a .notdef box rather than
-            // borrowed from another face.
             Shaping::Advanced,
         );
         text_buffer.shape_until_scroll(&mut font_system, false);
@@ -286,13 +255,11 @@ pub(crate) fn extract_text_nodes(
 }
 
 /// The explicit `z_index` a node was given, recovered from its paint order.
-/// `paint_order` is `(z_index << 32) + tree sequence`, and the sequence is
-/// always non-negative, so an arithmetic shift returns the z_index unchanged.
 pub(crate) fn text_layer(layout: &UILayout) -> i32 {
     (layout.paint_order >> 32) as i32
 }
 
-fn text_signature(text: &TextComponent, layout: &UILayout, scale: f32) -> u64 {
+fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.text.hash(&mut hasher);
     text.font_size.to_bits().hash(&mut hasher);

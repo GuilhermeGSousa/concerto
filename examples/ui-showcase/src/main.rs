@@ -8,26 +8,28 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     ecs::{
-        CommandQueue, Component, Entity, Query, Res, events::event_reader::EventReader,
+        CommandQueue, Component, Entity, Query, Res,
+        signal::{On, listener::IntoListener},
         system::NonSendMarker,
     },
     ui::{
         UIRenderDiagnostics,
-        anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack},
-        checkbox::UICheckbox,
-        focus::FocusedWidget,
-        interaction::{Interactable, UIClick, UIInputState, UIInteractionStyle},
-        material::UIMaterial,
-        node::{
-            AlignContent, AlignItems, FlexDirection, UILayout, UILayoutDiagnostics, UINode, UIRect,
+        anchor::{
+            UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack, toggle_owned_panels,
         },
-        scroll::{UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList},
-        slider::UISlider,
-        text::{FontFamily, TextComponent},
-        text_input::UITextInput,
+        elements::prelude::*,
+        focus::FocusedWidget,
+        interaction::{Interactable, UIClick, UIInputState},
+        node::{
+            AlignContent, AlignItems, FlexDirection, Overflow, UILayout, UILayoutDiagnostics,
+            UINode, UIRect,
+        },
+        scroll::{
+            UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList, drag_split_handle,
+        },
+        text::UIText,
         theme::UITheme,
         transform::UIValue,
-        widgets,
     },
     window::input::MouseButton,
     window::plugin::Window,
@@ -43,73 +45,22 @@ struct VirtualRow {
 }
 
 #[derive(Component)]
-struct Dropdown {
-    trigger: Entity,
-}
-
-#[derive(Component)]
-struct Submenu {
-    row: Entity,
-}
-
-#[derive(Component)]
 struct ContextMenu;
-
-fn label(value: impl Into<String>, size: f32) -> TextComponent {
-    TextComponent {
-        text: value.into(),
-        font_size: size,
-        line_height: size + 5.0,
-        ..Default::default()
-    }
-}
-
-fn panel(width: UIValue, height: UIValue) -> UINode {
-    UINode {
-        width,
-        height,
-        flex_direction: FlexDirection::Column,
-        gap: Vec2::splat(8.0),
-        padding: UIRect::all(12.0),
-        ..Default::default()
-    }
-}
 
 fn menu_row(cmd: &mut CommandQueue, theme: &UITheme, panel: Entity, name: &str) -> Entity {
     let row = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(theme.row_height),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(theme.spacing_xs, theme.spacing_sm),
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.surface_raised),
-            UIInteractionStyle {
-                normal: theme.surface_raised,
-                hovered: theme.surface_hovered,
-                pressed: theme.accent,
-                disabled: theme.surface,
-            },
-            Interactable,
-            label(name, 12.0),
+            theme
+                .pressable()
+                .solid()
+                .radius(0.0)
+                .height(UIValue::Px(theme.row_height))
+                .padding(UIRect::axes(theme.spacing_xs, theme.spacing_sm)),
+            theme.text(name).font_size(12.0),
         ))
         .entity();
     cmd.add_child(panel, row);
     row
-}
-
-fn menu_panel(theme: &UITheme, width: f32) -> (UINode, UIMaterial) {
-    (
-        UINode {
-            width: UIValue::Px(width),
-            flex_direction: FlexDirection::Column,
-            padding: UIRect::all(theme.spacing_xs),
-            visible: false,
-            ..Default::default()
-        },
-        UIMaterial::with_border(theme.surface_raised, theme.border, 1.0),
-    )
 }
 
 fn spawn_showcase(
@@ -124,61 +75,60 @@ fn spawn_showcase(
     window.set_min_inner_size(Some(Vec2::new(900.0, 700.0)));
 
     let root = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Percent(100.0),
-                height: UIValue::Percent(100.0),
-                flex_direction: FlexDirection::Column,
-                gap: Vec2::splat(theme.spacing_md),
-                padding: UIRect::all(theme.spacing_lg),
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.canvas),
-        ))
+        .spawn(
+            theme
+                .canvas()
+                .size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+                .column()
+                .gap(theme.spacing_md)
+                .padding(theme.spacing_lg),
+        )
         .entity();
 
     let heading = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(54.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            label(
-                "CONCERTO  /  UI SHOWCASE\nLooking Glass foundations and layout",
-                18.0,
-            ),
-        ))
+        .spawn(
+            theme
+                .label("CONCERTO  /  UI SHOWCASE\nLooking Glass foundations and layout")
+                .font_size(18.0)
+                .height(UIValue::Px(54.0))
+                .fixed(),
+        )
         .entity();
     cmd.add_child(root, heading);
 
     let body = cmd
-        .spawn(UINode {
-            flex_grow: 1.0,
-            min_height: UIValue::Px(320.0),
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_md),
-            ..Default::default()
-        })
+        .spawn(
+            theme
+                .row()
+                .grow()
+                .min_height(UIValue::Px(320.0))
+                .gap(theme.spacing_md)
+                .align_items(AlignItems::Stretch),
+        )
         .entity();
     cmd.add_child(root, body);
 
     let foundations = cmd
-        .spawn((
-            panel(UIValue::Percent(46.0), UIValue::Percent(100.0)),
-            UIMaterial::with_border(theme.surface, theme.border, 1.0),
-        ))
+        .spawn(
+            theme
+                .panel()
+                .radius(0.0)
+                .bordered()
+                .size(UIValue::Percent(46.0), UIValue::Percent(100.0))
+                .column()
+                .gap(8.0)
+                .padding(12.0),
+        )
         .entity();
     cmd.add_child(body, foundations);
     let foundation_title = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(32.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            label("FOUNDATIONS", 15.0),
-        ))
+        .spawn(
+            theme
+                .label("FOUNDATIONS")
+                .font_size(15.0)
+                .height(UIValue::Px(32.0))
+                .fixed(),
+        )
         .entity();
     cmd.add_child(foundations, foundation_title);
 
@@ -192,135 +142,123 @@ fn spawn_showcase(
     ] {
         let swatch = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(theme.row_height),
-                    flex_shrink: 0.0,
-                    padding: UIRect::axes(4.0, 8.0),
-                    ..Default::default()
-                },
-                UIMaterial::flat(color),
-                label(name, 13.0),
+                theme
+                    .canvas()
+                    .fill(color)
+                    .height(UIValue::Px(theme.row_height))
+                    .fixed()
+                    .padding(UIRect::axes(4.0, 8.0)),
+                theme.text(name).font_size(13.0),
             ))
             .entity();
         cmd.add_child(foundations, swatch);
     }
 
-    let type_sample = cmd.spawn((
-        UINode { flex_grow: 1.0, min_height: UIValue::Px(90.0), ..Default::default() },
-        label("Display 24\nBody 14 — warm, compact, readable\nMono 12  ABCDEFGHIJKLMNOPQRSTUVWXYZ\nUnicode  Café · 東京 · مرحبًا · 🂡", 14.0),
-    )).entity();
+    let type_sample = cmd
+        .spawn(
+            theme
+                .label("Display 24\nBody 14 — warm, compact, readable\nMono 12  ABCDEFGHIJKLMNOPQRSTUVWXYZ\nUnicode  Café · 東京 · مرحبًا · 🂡")
+                .font_size(14.0)
+                .grow()
+                .min_height(UIValue::Px(90.0)),
+        )
+        .entity();
     cmd.add_child(foundations, type_sample);
 
     let layout = cmd
-        .spawn((
-            panel(UIValue::Auto, UIValue::Percent(100.0)),
-            UIMaterial::with_border(theme.surface, theme.border, 1.0),
-        ))
+        .spawn(
+            theme
+                .panel()
+                .radius(0.0)
+                .bordered()
+                .size(UIValue::Auto, UIValue::Percent(100.0))
+                .column()
+                .gap(8.0)
+                .padding(12.0),
+        )
         .entity();
     cmd.add_child(body, layout);
     let layout_title = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(32.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            label("LAYOUT", 15.0),
-        ))
+        .spawn(
+            theme
+                .label("LAYOUT")
+                .font_size(15.0)
+                .height(UIValue::Px(32.0))
+                .fixed(),
+        )
         .entity();
     cmd.add_child(layout, layout_title);
 
     let centered = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(96.0),
-                min_width: UIValue::Px(260.0),
-                max_width: UIValue::Px(640.0),
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Row,
-                gap: Vec2::splat(theme.spacing_sm),
-                align_items: Some(AlignItems::Center),
-                justify_content: Some(AlignContent::Center),
-                padding: UIRect::all(theme.spacing_md),
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.surface_raised),
-        ))
+        .spawn(
+            theme
+                .card()
+                .radius(0.0)
+                .height(UIValue::Px(96.0))
+                .min_width(UIValue::Px(260.0))
+                .max_width(UIValue::Px(640.0))
+                .fixed()
+                .row()
+                .gap(theme.spacing_sm)
+                .justify(AlignContent::Center)
+                .padding(theme.spacing_md),
+        )
         .entity();
     cmd.add_child(layout, centered);
     for (name, width) in [("MIN", 56.0), ("FLEXIBLE", 110.0), ("MAX", 72.0)] {
         let item = cmd
             .spawn((
-                UINode {
-                    width: UIValue::Px(width),
-                    height: UIValue::Px(theme.control_height),
-                    padding: UIRect::axes(6.0, 8.0),
-                    flex_shrink: 1.0,
-                    ..Default::default()
-                },
-                UIMaterial::with_border(theme.accent, theme.focus, 1.0),
-                label(name, 11.0),
+                theme
+                    .canvas()
+                    .fill(theme.accent)
+                    .border(theme.focus, 1.0)
+                    .size(UIValue::Px(width), UIValue::Px(theme.control_height))
+                    .padding(UIRect::axes(6.0, 8.0)),
+                theme.text(name).font_size(11.0),
             ))
             .entity();
         cmd.add_child(centered, item);
     }
 
     let panels_title = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(32.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            label("ANCHORED PANELS", 15.0),
-        ))
+        .spawn(
+            theme
+                .label("ANCHORED PANELS")
+                .font_size(15.0)
+                .height(UIValue::Px(32.0))
+                .fixed(),
+        )
         .entity();
     cmd.add_child(layout, panels_title);
 
     let panel_row = cmd
-        .spawn(UINode {
-            height: UIValue::Px(theme.control_height),
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_sm),
-            ..Default::default()
-        })
+        .spawn(
+            theme
+                .row()
+                .height(UIValue::Px(theme.control_height))
+                .fixed(),
+        )
         .entity();
     cmd.add_child(layout, panel_row);
 
-    let (mut menu_node, menu_material, menu_interactable, menu_style, menu_marker) =
-        widgets::button(&theme);
-    menu_node.width = UIValue::Px(120.0);
     let menu_trigger = cmd
-        .spawn((
-            menu_node,
-            menu_material,
-            menu_interactable,
-            menu_style,
-            menu_marker,
-            label("MENU  \u{25be}", 12.0),
-        ))
+        .spawn(
+            theme
+                .button("MENU  \u{25be}")
+                .width(UIValue::Px(120.0))
+                .font_size(12.0)
+                .on_click(toggle_owned_panels),
+        )
         .entity();
     cmd.add_child(panel_row, menu_trigger);
 
     let dropdown = cmd
-        .spawn((
-            menu_panel(&theme, 180.0),
-            UIAnchoredPanel {
-                target: UIAnchorTarget::Node {
-                    entity: menu_trigger,
-                },
-                owner: Some(menu_trigger),
-                side: UIAnchorSide::Below,
-                align: UIAnchorAlign::Start,
-                gap: 4.0,
-                open: false,
-                ..Default::default()
-            },
-            Dropdown {
-                trigger: menu_trigger,
-            },
-        ))
+        .spawn(
+            theme
+                .dropdown(menu_trigger)
+                .width(UIValue::Px(180.0))
+                .padding(theme.spacing_xs),
+        )
         .entity();
 
     let mut materials_row = None;
@@ -339,143 +277,107 @@ fn spawn_showcase(
         }
     }
     let materials_row = materials_row.expect("the materials row is always spawned");
+    cmd.entity(materials_row)
+        .insert(toggle_owned_panels.into_listener());
 
     let rename_field = cmd
-        .spawn((
-            UINode {
-                height: UIValue::Px(theme.control_height),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(theme.spacing_xs, theme.spacing_sm),
-                ..Default::default()
-            },
-            UIMaterial::with_border(theme.surface, theme.border, 1.0),
-            TextComponent::default(),
-            UITextInput::new("Rename…"),
-            Interactable,
-        ))
+        .spawn(theme.text_field("Rename…").fill(theme.surface))
         .entity();
     cmd.add_child(dropdown, rename_field);
 
-    let (submenu_node, submenu_material) = menu_panel(&theme, 150.0);
     cmd.spawn((
-        submenu_node,
-        submenu_material,
-        UIAnchoredPanel {
-            target: UIAnchorTarget::Node {
-                entity: materials_row,
-            },
-            owner: Some(materials_row),
-            side: UIAnchorSide::Right,
-            align: UIAnchorAlign::Start,
-            gap: 2.0,
-            open: false,
-            ..Default::default()
-        },
-        Submenu { row: materials_row },
-        label("Standard\nUnlit\nToon", 12.0),
+        theme
+            .dropdown(materials_row)
+            .width(UIValue::Px(150.0))
+            .padding(theme.spacing_xs)
+            .anchor_side(UIAnchorSide::Right)
+            .anchor_gap(2.0),
+        theme.text("Standard\nUnlit\nToon").font_size(12.0),
     ));
 
-    let (context_node, context_material) = menu_panel(&theme, 170.0);
     cmd.spawn((
-        context_node,
-        context_material,
-        UIAnchoredPanel::default(),
+        theme
+            .context_menu()
+            .width(UIValue::Px(170.0))
+            .padding(theme.spacing_xs),
         ContextMenu,
-        label("", 12.0),
+        theme.text("").font_size(12.0),
     ));
 
-    let nested = cmd.spawn((
-        UINode {
-            flex_grow: 1.0,
-            min_height: UIValue::Px(64.0),
-            flex_direction: FlexDirection::Column,
-            gap: Vec2::new(theme.spacing_sm, theme.spacing_sm),
-            padding: UIRect::all(theme.spacing_md),
-            ..Default::default()
-        },
-        UIMaterial::flat(theme.surface_raised),
-        label("Nested flex / percent sizing\nResize the window to exercise min/max constraints. This intentionally long label demonstrates content bounds.", 13.0),
-    )).entity();
+    let nested = cmd
+        .spawn((
+            theme
+                .card()
+                .radius(0.0)
+                .grow()
+                .min_height(UIValue::Px(64.0))
+                .column()
+                .gap(theme.spacing_sm)
+                .padding(theme.spacing_md),
+            theme
+                .text("Nested flex / percent sizing\nResize the window to exercise min/max constraints. This intentionally long label demonstrates content bounds.")
+                .font_size(13.0),
+        ))
+        .entity();
     cmd.add_child(layout, nested);
 
     let controls = cmd
-        .spawn(UINode {
-            height: UIValue::Px(40.0),
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_sm),
-            ..Default::default()
-        })
+        .spawn(
+            theme
+                .row()
+                .height(UIValue::Px(40.0))
+                .fixed()
+                .align_items(AlignItems::Stretch),
+        )
         .entity();
     cmd.add_child(layout, controls);
-    let (mut button_node, material, interactable, style, marker) = widgets::button(&theme);
-    button_node.width = UIValue::Px(112.0);
     let button = cmd
-        .spawn((
-            button_node,
-            material,
-            interactable,
-            style,
-            marker,
-            label("BUTTON", 12.0),
-        ))
+        .spawn(
+            theme
+                .button("BUTTON")
+                .width(UIValue::Px(112.0))
+                .font_size(12.0),
+        )
         .entity();
     cmd.add_child(controls, button);
     let checkbox = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Px(90.0),
-                height: UIValue::Px(theme.control_height),
-                padding: UIRect::axes(7.0, 9.0),
-                ..Default::default()
-            },
-            UIMaterial::with_border(theme.surface_raised, theme.border, 1.0),
-            UICheckbox::new(false),
-            Interactable,
-            label("CHECK", 12.0),
-        ))
+        .spawn(
+            theme
+                .checkbox("CHECK", false)
+                .width(UIValue::Px(90.0))
+                .shrink(1.0)
+                .padding(UIRect::axes(7.0, 9.0))
+                .font_size(12.0),
+        )
         .entity();
     cmd.add_child(controls, checkbox);
     let slider = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Px(140.0),
-                height: UIValue::Px(theme.control_height),
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.surface_raised),
-            UISlider::new(0.62, 0.0, 1.0),
-            Interactable,
-        ))
+        .spawn(theme.slider(0.62, 0.0, 1.0).width(UIValue::Px(140.0)))
         .entity();
     cmd.add_child(controls, slider);
     let input = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Px(180.0),
-                height: UIValue::Px(theme.control_height),
-                padding: UIRect::axes(7.0, 9.0),
-                ..Default::default()
-            },
-            UIMaterial::with_border(theme.surface, theme.border, 1.0),
-            TextComponent::default(),
-            UITextInput::new("Unicode input…"),
-            Interactable,
-        ))
+        .spawn(
+            theme
+                .text_field("Unicode input…")
+                .fill(theme.surface)
+                .width(UIValue::Px(180.0))
+                .shrink(1.0)
+                .padding(UIRect::axes(7.0, 9.0)),
+        )
         .entity();
     cmd.add_child(controls, input);
 
     let virtual_list = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(96.0),
-                min_height: UIValue::Px(56.0),
-                flex_direction: FlexDirection::Column,
-                padding: UIRect::all(theme.spacing_sm),
-                overflow_y: concerto::ui::node::Overflow::Hidden,
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.surface_raised),
+            theme
+                .card()
+                .radius(0.0)
+                .height(UIValue::Px(96.0))
+                .min_height(UIValue::Px(56.0))
+                .column()
+                .gap(0.0)
+                .padding(theme.spacing_sm)
+                .node(|node| node.with_overflow_y(Overflow::Hidden)),
             UIScrollArea {
                 offset: 0.0,
                 content_extent: 280_000.0,
@@ -489,14 +391,14 @@ fn spawn_showcase(
     for slot in 0..8 {
         let row = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(28.0),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
+                theme
+                    .label("")
+                    .font_size(12.0)
+                    .height(UIValue::Px(28.0))
+                    .fixed(),
                 Interactable,
-                label("", 12.0),
                 VirtualRow { slot },
+                open_context_menu.into_listener(),
             ))
             .entity();
         cmd.add_child(virtual_list, row);
@@ -504,27 +406,23 @@ fn spawn_showcase(
 
     let split_first = cmd
         .spawn((
-            UINode::default(),
-            UIMaterial::flat(theme.surface),
-            label("SPLIT A", 12.0),
+            theme.canvas().fill(theme.surface),
+            theme.text("SPLIT A").font_size(12.0),
         ))
         .entity();
     let split_second = cmd
         .spawn((
-            UINode::default(),
-            UIMaterial::flat(theme.surface_raised),
-            label("SPLIT B", 12.0),
+            theme.canvas().fill(theme.surface_raised),
+            theme.text("SPLIT B").font_size(12.0),
         ))
         .entity();
     let split = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(36.0),
-                min_height: UIValue::Px(24.0),
-                flex_direction: FlexDirection::Row,
-                gap: Vec2::splat(4.0),
-                ..Default::default()
-            },
+            UINode::default()
+                .with_height(UIValue::Px(36.0))
+                .with_min_height(UIValue::Px(24.0))
+                .with_flex_direction(FlexDirection::Row)
+                .with_gap(Vec2::splat(4.0)),
             UISplitPane::new(UISplitAxis::Horizontal, split_first, split_second),
         ))
         .entity();
@@ -532,66 +430,47 @@ fn spawn_showcase(
     cmd.add_child(split, split_first);
     let split_handle = cmd
         .spawn((
-            UINode {
-                width: UIValue::Px(5.0),
-                height: UIValue::Percent(100.0),
-                flex_shrink: 0.0,
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.accent),
+            theme
+                .canvas()
+                .fill(theme.accent)
+                .size(UIValue::Px(5.0), UIValue::Percent(100.0))
+                .fixed(),
             Interactable,
             UISplitHandle { pane: split },
+            drag_split_handle.into_listener(),
         ))
         .entity();
     cmd.add_child(split, split_handle);
     cmd.add_child(split, split_second);
 
     let flip_row = cmd
-        .spawn(UINode {
-            height: UIValue::Px(theme.control_height),
-            flex_shrink: 0.0,
-            flex_direction: FlexDirection::Row,
-            gap: Vec2::splat(theme.spacing_sm),
-            justify_content: Some(AlignContent::End),
-            ..Default::default()
-        })
+        .spawn(
+            theme
+                .row()
+                .height(UIValue::Px(theme.control_height))
+                .fixed()
+                .justify(AlignContent::End),
+        )
         .entity();
     cmd.add_child(layout, flip_row);
-    let (mut flip_node, flip_material, flip_interactable, flip_style, flip_marker) =
-        widgets::button(&theme);
-    flip_node.width = UIValue::Px(120.0);
     let flip_trigger = cmd
-        .spawn((
-            flip_node,
-            flip_material,
-            flip_interactable,
-            flip_style,
-            flip_marker,
-            label("VIEW  \u{25be}", 12.0),
-        ))
+        .spawn(
+            theme
+                .button("VIEW  \u{25be}")
+                .width(UIValue::Px(120.0))
+                .font_size(12.0)
+                .on_click(toggle_owned_panels),
+        )
         .entity();
     cmd.add_child(flip_row, flip_trigger);
 
-    let (flip_panel_node, flip_panel_material) = menu_panel(&theme, 220.0);
     let flip_dropdown = cmd
-        .spawn((
-            flip_panel_node,
-            flip_panel_material,
-            UIAnchoredPanel {
-                target: UIAnchorTarget::Node {
-                    entity: flip_trigger,
-                },
-                owner: Some(flip_trigger),
-                side: UIAnchorSide::Below,
-                align: UIAnchorAlign::Start,
-                gap: 4.0,
-                open: false,
-                ..Default::default()
-            },
-            Dropdown {
-                trigger: flip_trigger,
-            },
-        ))
+        .spawn(
+            theme
+                .dropdown(flip_trigger)
+                .width(UIValue::Px(220.0))
+                .padding(theme.spacing_xs),
+        )
         .entity();
     for name in ["Reset View", "Frame Selected", "Toggle Grid"] {
         menu_row(&mut cmd, &theme, flip_dropdown, name);
@@ -599,74 +478,53 @@ fn spawn_showcase(
 
     let diagnostics = cmd
         .spawn((
-            UINode {
-                height: UIValue::Px(28.0),
-                flex_shrink: 0.0,
-                padding: UIRect::axes(5.0, 8.0),
-                ..Default::default()
-            },
-            UIMaterial::flat(theme.surface_raised),
-            TextComponent {
-                font_family: FontFamily::Monospace,
-                ..label("", 11.0)
-            },
+            theme
+                .card()
+                .radius(0.0)
+                .height(UIValue::Px(28.0))
+                .fixed()
+                .padding(UIRect::axes(5.0, 8.0)),
+            theme.text("").mono().font_size(11.0),
             Diagnostics,
         ))
         .entity();
     cmd.add_child(root, diagnostics);
 }
 
-fn drive_panels(
-    mut clicks: EventReader<UIClick>,
-    dropdowns: Query<(&Dropdown, &mut UIAnchoredPanel)>,
-    submenus: Query<(&Submenu, &mut UIAnchoredPanel)>,
-    context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut TextComponent)>,
+fn open_context_menu(
+    on: On<UIClick>,
+    context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
     rows: Query<&VirtualRow>,
     lists: Query<&UIVirtualList>,
 ) {
-    for click in clicks.read() {
-        match click.button {
-            MouseButton::Left => {
-                for (dropdown, mut panel) in dropdowns.iter() {
-                    if dropdown.trigger == click.entity {
-                        panel.open = !panel.open;
-                    }
-                }
-                for (submenu, mut panel) in submenus.iter() {
-                    if submenu.row == click.entity {
-                        panel.open = !panel.open;
-                    }
-                }
-            }
-            MouseButton::Right => {
-                let Some(row) = rows.get_entity(click.entity) else {
-                    continue;
-                };
-                let index = lists
-                    .iter()
-                    .next()
-                    .and_then(|list| list.visible_range.clone().nth(row.slot));
-                for (_, mut panel, mut text) in context_menus.iter() {
-                    panel.target = UIAnchorTarget::Point {
-                        position: click.position,
-                    };
-                    panel.owner = Some(click.entity);
-                    panel.open = true;
-                    text.text = match index {
-                        Some(index) => format!("Row {index:04}\nRename\nDuplicate\nDelete"),
-                        None => String::from("Rename\nDuplicate\nDelete"),
-                    };
-                }
-            }
-            _ => {}
-        }
+    let click = on.signal();
+    if click.button != MouseButton::Right {
+        return;
+    }
+    let Some(row) = rows.get_entity(on.entity()) else {
+        return;
+    };
+    let index = lists
+        .iter()
+        .next()
+        .and_then(|list| list.visible_range().nth(row.slot));
+    for (_, mut panel, mut text) in context_menus.iter() {
+        panel.target = UIAnchorTarget::Point {
+            position: click.position,
+        };
+        panel.owner = Some(on.entity());
+        panel.open = true;
+        text.text = match index {
+            Some(index) => format!("Row {index:04}\nRename\nDuplicate\nDelete"),
+            None => String::from("Rename\nDuplicate\nDelete"),
+        };
     }
 }
 
 fn update_diagnostics(
     window: Res<Window>,
     diagnostics: Res<UILayoutDiagnostics>,
-    text: Query<&mut TextComponent, concerto::ecs::With<Diagnostics>>,
+    text: Query<&mut UIText, concerto::ecs::With<Diagnostics>>,
     input: Res<UIInputState>,
     focus: Res<FocusedWidget>,
     lists: Query<&UIVirtualList>,
@@ -689,10 +547,10 @@ fn update_diagnostics(
             render_diagnostics.geometry_rebuilds(),
             render_diagnostics.text_reshapes(),
             render_diagnostics.binding_rebuilds(),
-            input.hovered,
+            input.hovered(),
             **focus,
             input.captured(MouseButton::Left),
-            lists.iter().next().map(|list| list.visible_range.clone()),
+            lists.iter().next().map(|list| list.visible_range()),
             stack.open().len(),
             stack
                 .open()
@@ -703,22 +561,18 @@ fn update_diagnostics(
                 .open()
                 .last()
                 .and_then(|entity| panels.get_entity(*entity))
-                .map(|(panel, _)| panel.resolved_side),
+                .map(|(panel, _)| panel.resolved_side()),
         );
     }
 }
 
-fn update_virtual_rows(
-    lists: Query<&UIVirtualList>,
-    rows: Query<(&VirtualRow, &mut TextComponent)>,
-) {
+fn update_virtual_rows(lists: Query<&UIVirtualList>, rows: Query<(&VirtualRow, &mut UIText)>) {
     let Some(list) = lists.iter().next() else {
         return;
     };
     for (slot, mut text) in rows.iter() {
         text.text = list
-            .visible_range
-            .clone()
+            .visible_range()
             .nth(slot.slot)
             .map(|index| format!("◇  Virtual asset row {index:04}"))
             .unwrap_or_default();
@@ -731,7 +585,6 @@ fn main() {
     app.register_plugin(DefaultPlugins::default())
         .add_system(Startup, spawn_showcase)
         .add_system(Update, update_diagnostics)
-        .add_system(Update, update_virtual_rows)
-        .add_system(Update, drive_panels);
+        .add_system(Update, update_virtual_rows);
     app.run();
 }

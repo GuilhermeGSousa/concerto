@@ -1,7 +1,4 @@
 //! The one thing every panel agrees on.
-//!
-//! Panels never reference each other: the hierarchy and viewport write here,
-//! the inspector and viewport read. That is what makes a panel removable.
 use concerto_ecs::{entity::Entity, resource::Resource};
 use concerto_foundation::assets::AssetId;
 
@@ -57,8 +54,7 @@ impl Selection {
         self.replace(None);
     }
 
-    /// Clears the selection only if it names `entity` — for use when an entity
-    /// is about to be despawned, so the selection never dangles.
+    /// Clears the selection only if it names `entity`.
     pub fn clear_entity(&mut self, entity: Entity) {
         if self.entity() == Some(entity) {
             self.clear();

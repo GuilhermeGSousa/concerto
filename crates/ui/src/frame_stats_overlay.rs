@@ -14,25 +14,19 @@ use concerto_foundation::time::{FrameStats, Time};
 use crate::{
     material::UIMaterial,
     node::{UINode, UIRect},
-    text::{FontFamily, TextComponent},
+    text::{FontFamily, UIText},
     transform::UIValue,
 };
 
-/// Marker for the overlay's text node.
 #[derive(Component)]
 struct FrameStatsText;
 
-/// Seconds between overlay text refreshes. Rebuilding the glyph buffer every
-/// frame would make the overlay itself a hotspot.
 const REFRESH_INTERVAL: f32 = 0.25;
 
 #[derive(Resource)]
 struct OverlayRefreshTimer(f32);
 
 /// Small always-on-top frame-time readout in the window's top-left corner.
-///
-/// Reads the [`FrameStats`] resource maintained by the `TimePlugin`.
-/// Registered by `DefaultPlugins` (non-headless); see docs/profiling.md.
 pub struct FrameStatsOverlayPlugin;
 
 impl Plugin for FrameStatsOverlayPlugin {
@@ -45,21 +39,15 @@ impl Plugin for FrameStatsOverlayPlugin {
 
 fn spawn_overlay(mut cmd: CommandQueue) {
     cmd.spawn((
-        UINode {
-            width: UIValue::Px(230.0),
-            height: UIValue::Px(46.0),
-            padding: UIRect::axes(6.0, 10.0),
-            margin: UIRect::all(8.0),
-            ..Default::default()
-        },
+        UINode::default()
+            .with_size(UIValue::Px(230.0), UIValue::Px(46.0))
+            .with_padding(UIRect::axes(6.0, 10.0))
+            .with_margin(UIRect::all(8.0)),
         UIMaterial::flat(Color::rgba(0.0, 0.0, 0.0, 0.6)),
     ))
     .add_child((
-        UINode {
-            flex_grow: 1.0,
-            ..Default::default()
-        },
-        TextComponent {
+        UINode::default().with_flex_grow(1.0),
+        UIText {
             text: "-- FPS".to_string(),
             font_size: 12.0,
             line_height: 16.0,
@@ -74,7 +62,7 @@ fn update_overlay_text(
     time: Res<Time>,
     stats: Res<FrameStats>,
     mut timer: ResMut<OverlayRefreshTimer>,
-    text_nodes: Query<&mut TextComponent, With<FrameStatsText>>,
+    text_nodes: Query<&mut UIText, With<FrameStatsText>>,
 ) {
     timer.0 += time.delta().as_secs_f32();
     if timer.0 < REFRESH_INTERVAL || stats.is_empty() {

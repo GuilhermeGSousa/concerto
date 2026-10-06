@@ -1,24 +1,14 @@
 //! What a title bar would have given us, now that the window has none.
-//!
-//! Move, minimise, maximise, close and resize are all the window manager's job
-//! normally; undecorated, the application has to offer them itself. Moving and
-//! resizing are started by the event loop the moment the button goes down
-//! (see [`WindowGestureRegion`]); all this module does is publish where the
-//! frame's edges and title band currently are.
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_color::Color;
-use concerto_ecs::{
-    Component, Query, Res, ResMut, Resource, command::CommandQueue,
-    events::event_reader::EventReader,
-};
+use concerto_ecs::{Component, Query, Res, ResMut, Resource, command::CommandQueue, signal::On};
 use concerto_ui::{
-    interaction::{Interactable, UIClick, UIInteractionStyle},
-    material::UIMaterial,
+    elements::prelude::*,
+    interaction::{Interactable, UIClick},
     node::{UIInset, UILayout, UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -26,7 +16,7 @@ use concerto_window::input::MouseButton;
 use concerto_window::plugin::{
     CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
 };
-use taffy::{FlexDirection, Position};
+use taffy::Position;
 use winit::window::ResizeDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region, TOP_STRIP};
@@ -34,18 +24,13 @@ use crate::fonts::{glyph, icon};
 
 pub const PANEL_ID: &str = "concerto.window";
 
-/// Width of the invisible strip along each window edge that starts a resize.
 const GRIP: f32 = 6.0;
-/// Corners are square and larger, because hitting one is fiddly otherwise.
 const CORNER: f32 = 14.0;
-/// Grips sit above every panel; a card must not swallow the window's edge.
 const GRIP_LAYER: i32 = 100;
-/// The title band sits above the scene but below the buttons standing in it.
 const DRAG_LAYER: i32 = 50;
 const CONTROL_LAYER: i32 = 60;
 
 /// Marks an interactive title-strip control that must block window dragging.
-/// Tab buttons and their close controls use this marker too.
 #[derive(Component, Clone, Copy, Default)]
 pub struct WindowChromeControl;
 
@@ -56,26 +41,16 @@ enum Control {
     Close,
 }
 
-/// The area you drag to move the window: the band across the top, where a
-/// title bar would be. It covers the brand and the stats readout, both of which
-/// are labels rather than controls; the window buttons sit above it.
 #[derive(Component)]
 struct DragHandle;
 
 #[derive(Component, Clone, Copy)]
 struct ResizeGrip(ResizeDirection);
 
-/// Marks the glyph that has to follow whether the window is maximised.
 #[derive(Component)]
 struct MaximiseGlyph;
 
 /// Whether the window manager draws the frame.
-///
-/// Undecorated is what the design asks for, but moving and resizing an
-/// undecorated window is a request to the window manager
-/// (`_NET_WM_MOVERESIZE`, `xdg_toplevel::move`) that a compositor is free to
-/// ignore. `--decorated` hands the whole job back to the window manager for
-/// anyone whose desktop does.
 pub struct WindowChromePlugin {
     pub decorated: bool,
 }
@@ -94,7 +69,6 @@ impl Plugin for WindowChromePlugin {
         }
         app.add_system(Startup, build_controls)
             .add_system(LateUpdate, publish_window_gestures)
-            .add_system(LateUpdate, handle_controls)
             .add_system(LateUpdate, sync_maximise_glyph);
     }
 }
@@ -112,132 +86,95 @@ fn build_controls(
     theme: Res<UITheme>,
 ) {
     window.window_handle.set_decorations(style.decorated);
-    // An undecorated window is not always given focus by the window manager,
-    // and without focus it receives no keys at all.
     window.window_handle.focus_window();
     if style.decorated {
         return;
     }
 
     if let Some(root) = registry.root() {
-        let bar = cmd
-            .spawn((
-                UINode {
-                    height: UIValue::Px(TOP_STRIP),
-                    position: Position::Absolute,
-                    inset: UIInset {
-                        top: UIValue::Px(0.0),
-                        left: UIValue::Px(0.0),
-                        right: UIValue::Px(0.0),
-                        ..Default::default()
-                    },
-                    z_index: DRAG_LAYER,
+        cmd.entity(root).add_child((
+            UINode::default()
+                .with_height(UIValue::Px(TOP_STRIP))
+                .with_position(Position::Absolute)
+                .with_inset(UIInset {
+                    top: UIValue::Px(0.0),
+                    left: UIValue::Px(0.0),
+                    right: UIValue::Px(0.0),
                     ..Default::default()
-                },
-                Interactable,
-                DragHandle,
-            ))
-            .entity();
-        cmd.add_child(root, bar);
+                })
+                .with_z_index(DRAG_LAYER),
+            Interactable,
+            DragHandle,
+        ));
     }
 
     if let Some(body) = registry.body(PANEL_ID) {
-        let bar = cmd
-            .spawn(UINode {
-                flex_direction: FlexDirection::Row,
-                align_items: Some(taffy::AlignItems::Center),
-                gap: glam::Vec2::new(2.0, 0.0),
-                padding: UIRect::axes(0.0, theme.spacing_md),
-                ..Default::default()
-            })
-            .entity();
-        cmd.add_child(body, bar);
+        let mut body_queue = cmd.entity(body);
+        let mut bar = body_queue.spawn_child_queue(
+            theme
+                .row()
+                .gap(2.0)
+                .padding(UIRect::axes(0.0, theme.spacing_md)),
+        );
 
         for (control, mark) in [
             (Control::Minimise, glyph::MINUS),
             (Control::Maximise, glyph::CORNERS_OUT),
             (Control::Close, glyph::X),
         ] {
-            let button = cmd
-                .spawn((
-                    UINode {
-                        // Big enough that the glyph's line box fits: a line
-                        // taller than its box is dropped, not clipped.
-                        width: UIValue::Px(30.0),
-                        height: UIValue::Px(26.0),
-                        flex_shrink: 0.0,
-                        padding: UIRect::axes(3.0, 8.0),
-                        // Above the title band, which spans the whole strip.
-                        z_index: CONTROL_LAYER,
-                        ..Default::default()
-                    },
-                    UIMaterial {
-                        corner_radius: theme.radius_sm,
-                        ..UIMaterial::flat(Color::srgba(0.0, 0.0, 0.0, 0.0))
-                    },
-                    TextComponent {
-                        color: theme.text_muted,
-                        ..icon(&theme, mark, theme.font_size_lg)
-                    },
-                    Interactable,
-                    UIInteractionStyle {
-                        normal: Color::srgba(0.0, 0.0, 0.0, 0.0),
-                        hovered: theme.surface_hovered,
-                        // Closing is the one that wants to look dangerous.
-                        pressed: match control {
+            bar = bar.add_child_with(
+                (
+                    theme
+                        .pressable()
+                        .pressed(match control {
                             Control::Close => theme.error,
                             _ => theme.accent,
-                        },
-                        disabled: Color::srgba(0.0, 0.0, 0.0, 0.0),
-                    },
+                        })
+                        .size(UIValue::Px(30.0), UIValue::Px(26.0))
+                        .padding(UIRect::axes(3.0, 8.0))
+                        .z_index(CONTROL_LAYER)
+                        .on_click(press_control),
+                    icon(&theme, mark, theme.font_size_lg).muted(),
                     control,
                     WindowChromeControl,
-                ))
-                .entity();
-            cmd.add_child(bar, button);
-            if matches!(control, Control::Maximise) {
-                cmd.insert(MaximiseGlyph, button);
-            }
+                ),
+                |mut button| {
+                    if matches!(control, Control::Maximise) {
+                        button.insert(MaximiseGlyph);
+                    }
+                },
+            );
         }
     }
 
     if let Some(root) = registry.root() {
+        let mut root_queue = cmd.entity(root);
         for grip in grips() {
-            let entity = cmd.spawn(grip).entity();
-            cmd.add_child(root, entity);
+            root_queue = root_queue.add_child(grip);
         }
     }
 }
 
-/// The eight edge and corner strips, as (node, marker, hit-test opt-in) triples.
 fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
     let px = UIValue::Px;
     let edge = |inset: UIInset, width: UIValue, height: UIValue, direction| {
         (
-            UINode {
-                width,
-                height,
-                position: Position::Absolute,
-                inset,
-                z_index: GRIP_LAYER,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(width, height)
+                .with_position(Position::Absolute)
+                .with_inset(inset)
+                .with_z_index(GRIP_LAYER),
             ResizeGrip(direction),
             Interactable,
         )
     };
     let corner = |inset: UIInset, direction| {
         (
-            UINode {
-                width: px(CORNER),
-                height: px(CORNER),
-                position: Position::Absolute,
-                inset,
-                // Above the edges, so a corner is a corner and not the edge it
-                // overlaps.
-                z_index: GRIP_LAYER + 1,
-                ..Default::default()
-            },
+            UINode::default()
+                .with_size(px(CORNER), px(CORNER))
+                .with_position(Position::Absolute)
+                .with_inset(inset)
+                .with_z_index(GRIP_LAYER + 1),
             ResizeGrip(direction),
             Interactable,
         )
@@ -293,12 +230,6 @@ fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
     ]
 }
 
-/// Publishes the window's own frame — the edges and the title band — for the
-/// event loop to hit-test when a press arrives.
-///
-/// Rectangles rather than "what is hovered": the press is acted on as it
-/// happens, and the hover is always a frame behind it, so a press that lands
-/// as the pointer reaches a grip would find nothing there.
 fn publish_window_gestures(
     grips: Query<(&ResizeGrip, &UILayout)>,
     handles: Query<(&DragHandle, &UILayout)>,
@@ -317,20 +248,16 @@ fn publish_window_gestures(
     for (_, layout) in handles.iter() {
         push_zone(&mut zones, layout, Some(WindowGesture::Move));
     }
-    // A control standing in the title band is a button first.
     for (_, layout) in controls.iter() {
         push_zone(&mut zones, layout, None);
     }
     for (_, layout) in chrome_controls.iter() {
         push_zone(&mut zones, layout, None);
     }
-    // Topmost first, so a corner beats the edge it overlaps and a button beats
-    // the band it stands in — the order the UI itself paints them in.
     zones.sort_by_key(|(paint_order, _)| std::cmp::Reverse(*paint_order));
     region.zones = zones.into_iter().map(|(_, zone)| zone).collect();
 }
 
-/// Adds a node's visible rectangle, skipping it when clipping leaves nothing.
 fn push_zone(
     zones: &mut Vec<(i64, WindowGestureZone)>,
     layout: &UILayout,
@@ -350,30 +277,28 @@ fn push_zone(
     ));
 }
 
-fn handle_controls(
-    mut clicks: EventReader<UIClick>,
+fn press_control(
+    on: On<UIClick>,
     controls: Query<&Control>,
     window: Res<Window>,
     mut close: ResMut<CloseRequest>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        let Some(control) = controls.get_entity(click.entity) else {
-            continue;
-        };
-        match control {
-            Control::Minimise => window.window_handle.set_minimized(true),
-            Control::Maximise => window
-                .window_handle
-                .set_maximized(!window.window_handle.is_maximized()),
-            Control::Close => close.0 = true,
-        }
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(control) = controls.get_entity(on.entity()) else {
+        return;
+    };
+    match control {
+        Control::Minimise => window.window_handle.set_minimized(true),
+        Control::Maximise => window
+            .window_handle
+            .set_maximized(!window.window_handle.is_maximized()),
+        Control::Close => close.0 = true,
     }
 }
 
-fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut TextComponent)>) {
+fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut UIText)>) {
     let mark = if window.window_handle.is_maximized() {
         glyph::CORNERS_IN
     } else {

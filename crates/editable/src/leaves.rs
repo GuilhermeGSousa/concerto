@@ -1,3 +1,4 @@
+use concerto_color::Color;
 use glam::{Quat, Vec3};
 
 use crate::Editable;
@@ -8,3 +9,4 @@ impl Editable for Vec3 {}
 impl Editable for Quat {}
 impl Editable for String {}
 impl Editable for bool {}
+impl Editable for Color {}

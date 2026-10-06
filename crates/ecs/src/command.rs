@@ -1,13 +1,17 @@
 use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
-    component::{Component, bundle::ComponentBundle},
+    component::{
+        Component,
+        bundle::{ComponentBundle, IntoBundle},
+    },
     entity::{
         Entity,
         entity_store::EntityStore,
         hierarchy::{ChildOf, DespawnChildren},
     },
     resource::Resource,
+    signal::{EntitySignal, Signal},
     system::{input::SystemInput, meta::SystemMetadata},
     world::World,
 };
@@ -22,11 +26,11 @@ impl<'a> EntityCommandQueue<'a> {
         self.entity
     }
 
-    pub fn add_child<T: ComponentBundle + 'static>(self, components: T) -> Self {
+    pub fn add_child<T: IntoBundle<Bundle: 'static>>(self, components: T) -> Self {
         self.add_child_with(components, |_| {})
     }
 
-    pub fn add_child_with<T: ComponentBundle + 'static>(
+    pub fn add_child_with<T: IntoBundle<Bundle: 'static>>(
         mut self,
         components: T,
         f: impl Fn(EntityCommandQueue),
@@ -39,7 +43,7 @@ impl<'a> EntityCommandQueue<'a> {
     }
 
     /// Spawns a child of this entity and returns the child's command queue.
-    pub fn spawn_child_queue<T: ComponentBundle + 'static>(
+    pub fn spawn_child_queue<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
     ) -> EntityCommandQueue<'_> {
@@ -55,12 +59,18 @@ impl<'a> EntityCommandQueue<'a> {
         self
     }
 
-    pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T) {
+    pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T) {
         self.command_queue.insert(component, self.entity);
     }
 
     pub fn despawn(mut self) {
         self.command_queue.despawn(self.entity());
+    }
+
+    /// Queues a signal for this entity's own listener, run when commands are applied.
+    pub fn trigger<T: EntitySignal>(&mut self, signal: T) {
+        self.command_queue
+            .push(TriggerOnCommand(self.entity, signal));
     }
 }
 
@@ -87,10 +97,13 @@ impl<'w, 's> CommandQueue<'w, 's> {
         }
     }
 
-    pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> EntityCommandQueue<'_> {
+    pub fn spawn<T: IntoBundle<Bundle: 'static>>(
+        &mut self,
+        components: T,
+    ) -> EntityCommandQueue<'_> {
         let spawned_entity = self.entities.reserve();
         self.queue_state
-            .push(SpawnCommand::new(components, spawned_entity));
+            .push(SpawnCommand::new(components.into_bundle(), spawned_entity));
 
         EntityCommandQueue {
             entity: spawned_entity,
@@ -116,8 +129,11 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(DespawnCommand::new(entity));
     }
 
-    pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.queue_state.push(InsertCommand { component, entity });
+    pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T, entity: Entity) {
+        self.queue_state.push(InsertCommand {
+            component: component.into_bundle(),
+            entity,
+        });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {
@@ -134,6 +150,13 @@ impl<'w, 's> CommandQueue<'w, 's> {
     /// Queues a command that is not part of this queue's typed API.
     pub(crate) fn push<C: Command + 'static>(&mut self, command: C) {
         self.queue_state.push(command);
+    }
+
+    /// Queues a signal to run matching listeners when commands are applied.
+    ///
+    /// Uses the dispatch and reentrancy rules of [World::trigger].
+    pub fn trigger<T: Signal>(&mut self, signal: T) {
+        self.queue_state.push(TriggerCommand(signal));
     }
 
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
@@ -455,5 +478,21 @@ impl<T: Resource> InsertResource<T> {
 impl<T: Resource> Command for InsertResource<T> {
     fn execute(self, world: &mut World) {
         world.insert_resource(self.resource);
+    }
+}
+
+struct TriggerCommand<T: Signal>(T);
+
+impl<T: Signal> Command for TriggerCommand<T> {
+    fn execute(self, world: &mut World) {
+        world.trigger(self.0);
+    }
+}
+
+struct TriggerOnCommand<T: EntitySignal>(Entity, T);
+
+impl<T: EntitySignal> Command for TriggerOnCommand<T> {
+    fn execute(self, world: &mut World) {
+        world.trigger_on(self.0, self.1);
     }
 }

@@ -1,11 +1,8 @@
 //! The editor's typefaces.
-//!
-//! Inter carries the text — it is what the Nocturne design system asks for —
-//! and Phosphor carries the icons, as glyphs rather than images so they shape,
-//! measure and clip exactly like any other text.
 use concerto_app::{App, Plugin};
+use concerto_ui::elements::{Text, prelude::*};
+use concerto_ui::text::FontFamily;
 use concerto_ui::text::fonts::UIFontsApp;
-use concerto_ui::text::{FontFamily, TextComponent};
 use concerto_ui::theme::UITheme;
 
 /// Family name Inter's faces share; weight picks between them.
@@ -22,8 +19,6 @@ pub struct FontsPlugin;
 
 impl Plugin for FontsPlugin {
     fn build(&self, app: &mut App) {
-        // Registration has to happen during `build`: the UI builds its font
-        // systems once every plugin has finished building.
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-Regular.ttf").as_slice());
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-Medium.ttf").as_slice());
         app.add_ui_font(include_bytes!("../fonts/Inter/Inter-SemiBold.ttf").as_slice());
@@ -33,25 +28,15 @@ impl Plugin for FontsPlugin {
 }
 
 /// A text node holding one icon glyph.
-///
-/// Sized in the same units as text, because that is what it is: `size` is the
-/// glyph's em box, so an icon next to a label wants the label's font size.
-pub fn icon(theme: &UITheme, glyph: char, size: f32) -> TextComponent {
-    TextComponent {
-        text: glyph.to_string(),
-        font_family: FontFamily::Name(PHOSPHOR.into()),
-        font_size: size,
-        line_height: theme.line_height(size),
-        wrap: false,
-        ..Default::default()
-    }
+pub fn icon(theme: &UITheme, glyph: char, size: f32) -> Text {
+    theme
+        .text(glyph)
+        .family(FontFamily::Name(PHOSPHOR.into()))
+        .font_size(size)
+        .no_wrap()
 }
 
 /// Phosphor codepoints, by the name they carry upstream.
-///
-/// Taken from Phosphor 2.1's own mapping; the faces under `fonts/Phosphor` are
-/// that release, so the two agree. Adding one means looking its codepoint up
-/// there rather than guessing.
 pub mod glyph {
     /// `rabbit` — the brand mark.
     pub const RABBIT: char = '\u{EAC2}';
@@ -93,6 +78,8 @@ pub mod glyph {
     pub const CORNERS_IN: char = '\u{E1CE}';
     /// `x` — dismissing, and the window's close button.
     pub const X: char = '\u{E4F6}';
+    /// `dots-three` — a menu of further actions.
+    pub const DOTS_THREE: char = '\u{E1FE}';
     /// `dot` — a leaf row with nothing to expand.
     pub const DOT: char = '\u{ECDE}';
 }

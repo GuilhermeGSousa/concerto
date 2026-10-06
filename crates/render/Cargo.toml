@@ -13,6 +13,7 @@ crate-type = ["cdylib", "rlib"]
 profiling = "1"
 concerto-app.workspace = true
 concerto-color.workspace = true
+concerto-editable.workspace = true
 concerto-foundation.workspace = true
 concerto-ecs.workspace = true
 concerto-mesh.workspace = true

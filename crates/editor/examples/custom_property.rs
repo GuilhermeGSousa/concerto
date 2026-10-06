@@ -5,25 +5,26 @@ use std::any::TypeId;
 
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Component, Entity, Query, ResMut, World, command::CommandQueue,
-    events::event_reader::EventReader,
+    Component, Entity, Query, ResMut, World,
+    command::CommandQueue,
+    signal::{On, listener::IntoListener},
 };
 use concerto_editable::Editable;
 use concerto_editor::inspector::{
     EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRow, PropertyRowValue, apply_property_commit,
 };
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIClick},
-    node::UINode,
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
 use concerto_window::input::MouseButton;
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
-#[derive(Component, Editable)]
+#[derive(Component, Editable, Default)]
 pub struct Setting {
     pub title: String,
     pub enabled: bool,
@@ -65,20 +66,13 @@ impl PropertyEditor<Setting> for SettingEditor {
     ) {
         let button = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(theme.control_height),
-                    flex_grow: 1.0,
-                    ..Default::default()
-                },
-                TextComponent {
-                    text: label(snapshot),
-                    color: theme.text,
-                    font_size: theme.font_size_md,
-                    line_height: theme.line_height(theme.font_size_md),
-                    ..Default::default()
-                },
+                theme
+                    .label(label(snapshot))
+                    .height(UIValue::Px(theme.control_height))
+                    .grow(),
                 Interactable,
                 SettingButton(row),
+                toggle_setting.into_listener(),
             ))
             .entity();
         cmd.add_child(row, button);
@@ -106,30 +100,28 @@ fn label(snapshot: &SettingSnapshot) -> String {
     )
 }
 
-pub fn click_settings(
-    mut clicks: EventReader<UIClick>,
+pub fn toggle_setting(
+    on: On<UIClick>,
     buttons: Query<&SettingButton>,
     rows: Query<&PropertyRow>,
     mut commits: ResMut<PropertyCommits>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        let Some(button) = buttons.get_entity(click.entity) else {
-            continue;
-        };
-        let Some(row) = rows.get_entity(button.0) else {
-            continue;
-        };
-        if let Err(error) = commits.push::<Setting, SettingEditor>(row, SettingEdit::Toggle) {
-            log::warn!("Setting edit dropped: {error}");
-        }
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(button) = buttons.get_entity(on.entity()) else {
+        return;
+    };
+    let Some(row) = rows.get_entity(button.0) else {
+        return;
+    };
+    if let Err(error) = commits.push::<Setting, SettingEditor>(row, SettingEdit::Toggle) {
+        log::warn!("Setting edit dropped: {error}");
     }
 }
 
 pub fn refresh_settings(
-    buttons: Query<(&SettingButton, &mut TextComponent)>,
+    buttons: Query<(&SettingButton, &mut UIText)>,
     rows: Query<&PropertyRowValue>,
 ) {
     for (button, mut text) in buttons.iter() {
@@ -149,7 +141,6 @@ pub fn refresh_settings(
 pub fn install(app: &mut App) {
     app.register_editable::<Setting>()
         .register_property_editor::<Setting, SettingEditor>(SettingEditor)
-        .add_system(LateUpdate, click_settings)
         .add_system(LateUpdate, refresh_settings);
 }
 

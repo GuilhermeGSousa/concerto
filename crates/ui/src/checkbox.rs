@@ -1,23 +1,15 @@
 use concerto_color::Color;
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
-    entity::Entity,
-    events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::Query,
-    resource::Resource,
+    signal::{EntitySignal, On, Signal},
 };
 use concerto_window::input::MouseButton;
 
 use crate::{interaction::UIClick, material::UIMaterial};
 
 /// A toggleable boolean widget.
-///
-/// Attach this alongside [`UIMaterial`] and [`Interactable`](crate::interaction::Interactable)
-/// to get a checkbox that flips on each click and fires [`UICheckboxChanged`].
-///
-/// The `sync_checkbox_material` system automatically drives `UIMaterial::color`
-/// from the `checked` state each frame, so you only need to set the initial
-/// material colours via [`UIMaterial::with_border`].
 #[derive(Component)]
 pub struct UICheckbox {
     pub checked: bool,
@@ -37,35 +29,26 @@ impl UICheckbox {
     }
 }
 
-/// Fired the frame a [`UICheckbox`] is toggled.
-#[derive(Event)]
+/// Sent to a [`UICheckbox`] when it is toggled.
 pub struct UICheckboxChanged {
-    pub entity: Entity,
     pub checked: bool,
 }
 
-/// Dummy resource so `UICheckboxChanged` is accessible as a resource type.
-#[derive(Resource)]
-pub struct CheckboxResource;
+impl Signal for UICheckboxChanged {}
+impl EntitySignal for UICheckboxChanged {}
 
-/// Toggles [`UICheckbox::checked`] when the entity receives a [`UIClick`].
-pub(crate) fn toggle_checkboxes(
-    mut clicks: EventReader<UIClick>,
-    checkboxes: Query<&mut UICheckbox>,
-    mut writer: EventWriter<UICheckboxChanged>,
-) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        if let Some(mut checkbox) = checkboxes.get_entity(click.entity) {
-            checkbox.checked = !checkbox.checked;
-            writer.write(UICheckboxChanged {
-                entity: click.entity,
-                checked: checkbox.checked,
-            });
-        }
+/// Click listener that toggles the [`UICheckbox`] it sits on.
+pub fn toggle_checkbox(on: On<UIClick>, checkboxes: Query<&mut UICheckbox>, mut cmd: CommandQueue) {
+    if on.signal().button != MouseButton::Left {
+        return;
     }
+    let Some(mut checkbox) = checkboxes.get_entity(on.entity()) else {
+        return;
+    };
+    checkbox.checked = !checkbox.checked;
+    cmd.entity(on.entity()).trigger(UICheckboxChanged {
+        checked: checkbox.checked,
+    });
 }
 
 /// Drives `UIMaterial::color` from `UICheckbox::checked` each frame.

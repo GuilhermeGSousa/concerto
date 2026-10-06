@@ -46,9 +46,6 @@ fn main() -> anyhow::Result<()> {
         .register_plugin(concerto_world_grid::plugin::WorldGridPlugin)
         .register_plugin(concerto_scene::plugin::ScenePlugin)
         .register_plugin(EditorPlugin { project, decorated })
-        // Last: systems run in registration order, and the UI's layout pass is
-        // the end of that order. Registering it before the panels would lay out
-        // what they built on the previous frame.
         .register_plugin(concerto_ui::plugin::UIPlugin);
     app.run();
     Ok(())

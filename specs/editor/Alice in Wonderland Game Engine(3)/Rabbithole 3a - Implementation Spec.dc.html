@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/nocturne-65b2bbac-1310-4623-b17d-26000ab76e5c/styles.css">
+<script src="_ds/nocturne-65b2bbac-1310-4623-b17d-26000ab76e5c/_ds_bundle.js"></script>
+<script src="./doc-page.js"></script>
+<style>
+doc-page:not(:defined){visibility:hidden}
+body{background:#e9e9ed}
+doc-page{color:#1a1c26;font-family:var(--font-body);font-size:10.5pt;line-height:1.55}
+doc-page h1,doc-page h2,doc-page h3,doc-page h4{font-family:var(--font-heading);font-weight:500;color:#101220}
+doc-page a{color:#4b3f95}
+doc-page a:hover{color:#2f2664}
+.spec-table{width:100%;border-collapse:collapse;font-size:9pt;margin:10px 0 18px}
+.spec-table th{text-align:left;font-weight:500;font-size:8pt;letter-spacing:.08em;text-transform:uppercase;color:#5b5f70;border-bottom:1px solid #b8bcc9;padding:5px 8px 5px 0}
+.spec-table td{border-bottom:1px solid #dcdee6;padding:6px 8px 6px 0;vertical-align:top}
+.spec-table td:first-child{white-space:nowrap;font-family:ui-monospace,Menlo,monospace;font-size:8.5pt;color:#2f2664}
+.mono{font-family:ui-monospace,Menlo,monospace;font-size:9pt}
+.note{break-inside:avoid;orphans:3;widows:3;border-left:2px solid #9184d9;padding:8px 0 8px 12px;margin:14px 0;font-size:9.5pt;color:#3a3d4d}
+</style>
+</helmet>
+
+<doc-page margin="0.7in">
+  <div slot="footer" style="display:flex;justify-content:space-between;font-size:8pt;color:#6b6f80;padding-top:6px;border-top:1px solid #d2d5df">
+    <span>Rabbithole Engine — editor shell spec, layout 3a</span>
+    <span>Nocturne tokens · v1 · Sept 2026</span>
+  </div>
+
+  <h1 style="font-size:23pt;line-height:1.15;margin:0 0 4px">Rabbithole editor shell</h1>
+  <p style="margin:0 0 20px;font-size:11pt;color:#4a4e5e">Implementation spec for layout <strong style="font-weight:500">3a</strong> — full-bleed viewport, glass overlay panels, ECS inspector. Written against the <a href="Rabbithole Engine.dc.html">mockup file</a>; every value below is authoritative over the mockup's pixels where the two disagree.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">1 · Shell geometry</h2>
+  <p style="margin:0 0 10px">One layer: the 3D viewport is the full window. Every panel is an overlay floating above it, inset from the window edge — there are no dock splitters and no reserved gutters. Panels never resize the viewport; they occlude it.</p>
+  <table class="spec-table">
+    <thead><tr><th>Region</th><th>Placement</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>viewport</td><td>fills the window, edge to edge, behind everything</td><td>Camera framing must assume the centre ~55% is unobstructed.</td></tr>
+      <tr><td>titlebar</td><td>top-left, inset 18px / 16px; no background plate</td><td>Scene name + breadcrumb only. Text directly over the scene.</td></tr>
+      <tr><td>stats</td><td>top-right, inset 18px / 16px; no plate</td><td>Optional; hidden by default in a shipping build.</td></tr>
+      <tr><td>left rail</td><td>width 238px, inset left 18px, top 52px, bottom 18px</td><td>Two stacked panels, 10px gap: scene tree (44% of rail height) over asset browser (56%). Both scroll independently.</td></tr>
+      <tr><td>right rail</td><td>width 290px, inset right 18px, top 52px, bottom 18px</td><td>Single panel: entity inspector. Scrolls.</td></tr>
+      <tr><td>centre foot</td><td>horizontally between the rails (left 284px, right 326px), bottom 18px</td><td>Two rows, 8px gap: pill toolbar (centred, hugs content) above the full-width log strip.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 6px">Minimum window: <span class="mono">1080 × 640</span>. Below 1180px wide the centre foot's command hint truncates before the rails shrink; below 900px the left rail collapses to a 44px icon strip (not mocked — ask before building).</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">2 · The panel surface</h2>
+  <p style="margin:0 0 10px">Every overlay panel is the same object. Build it once.</p>
+  <table class="spec-table">
+    <thead><tr><th>Property</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr><td>background</td><td><span class="mono">#141622</span> at 62% opacity</td></tr>
+      <tr><td>backdrop-filter</td><td><span class="mono">blur(14px)</span> — required; without it the scene reads through and text fails contrast</td></tr>
+      <tr><td>border-radius</td><td><span class="mono">var(--radius-lg)</span></td></tr>
+      <tr><td>elevation</td><td><span class="mono">var(--shadow-sm)</span> — one step only, never stacked</td></tr>
+      <tr><td>padding</td><td>10px (rail panels) · 12px (inspector)</td></tr>
+      <tr><td>section header</td><td>10px / 500 / <span class="mono">.1em</span> tracking / uppercase / <span class="mono">--color-neutral-500</span>, with a right-aligned count or affordance</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 10px">The toolbar and log strip are the same surface at <span class="mono">#101220</span> / 78–82% and <span class="mono">blur(16px)</span> — darker because they sit over the brightest part of the floor. Toolbar radius is a full pill (<span class="mono">99px</span>); the log strip uses <span class="mono">--radius-md</span>.</p>
+  <div class="note">If your UI library can't do <span class="mono">backdrop-filter</span>, raise panel opacity to 92% and drop the blur. Do not compromise by using a semi-transparent panel without blur — 3D detail behind text is the one thing this layout can't tolerate.</div>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">3 · Scene tree (“Warren”)</h2>
+  <p style="margin:0 0 10px">A flat-indent tree of entities. Row height 22–24px, indent 16px per level, 12.5px label.</p>
+  <table class="spec-table">
+    <thead><tr><th>Element</th><th>Spec</th></tr></thead>
+    <tbody>
+      <tr><td>disclosure</td><td>9px glyph, 9px column reserved even on leaves so labels align</td></tr>
+      <tr><td>type mark</td><td>8px square rotated 45° = entity · 7px circle = environment/light · 8×6px rounded rect = camera · monospace <span class="mono">/</span> = script or system group. Colour <span class="mono">--color-neutral-600</span>, or <span class="mono">--color-accent</span> when selected.</td></tr>
+      <tr><td>component count</td><td>right-aligned, 10px monospace, <span class="mono">--color-neutral-600</span>. This is the ECS tell — show it on every entity row.</td></tr>
+      <tr><td>selected row</td><td>background <span class="mono">--color-accent</span> @ 20%, text <span class="mono">--color-accent-100</span>, radius <span class="mono">--radius-sm</span>. No left bar in this layout (that belongs to the docked variants).</td></tr>
+      <tr><td>hover row</td><td><span class="mono">--color-neutral-100</span> @ 6%</td></tr>
+      <tr><td>footer</td><td>10.5px, <span class="mono">--color-neutral-600</span>: “<span class="mono">N entities · M components</span>”</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 6px">Behaviours: click selects, double-click renames inline, drag re-parents (drop line at 1px <span class="mono">--color-accent</span>), <span class="mono">⌫</span> deletes with an undo toast. Multi-select with shift/cmd puts the inspector into the shared-components state (§5.4).</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">4 · Asset browser (“Curiosities”)</h2>
+  <p style="margin:0 0 10px">Deliberately a <em>list</em>, not a thumbnail grid: the project is expected to carry hundreds of assets, and names are the primary key. Thumbnails cost the vertical space this panel needs for results.</p>
+  <table class="spec-table">
+    <thead><tr><th>Element</th><th>Spec</th></tr></thead>
+    <tbody>
+      <tr><td>search</td><td>26px tall, radius <span class="mono">--radius-sm</span>, fill <span class="mono">--color-neutral-100</span> @ 9%, leading <span class="mono">⌕</span>, trailing <span class="mono">⌘P</span> hint. Filters as you type; substring match on name and extension; results ranked by recency of use.</td></tr>
+      <tr><td>type filters</td><td>Row of small tags (10px): all / mesh / mat / tex / lua / audio. Active = <span class="mono">.tag-outline</span>, inactive = <span class="mono">.tag-neutral</span>. Single-select.</td></tr>
+      <tr><td>row</td><td>22px: type mark (8–9px, same vocabulary as the tree) · name, ellipsised at the middle if long · right-aligned size in 9.5px monospace.</td></tr>
+      <tr><td>row states</td><td>hover as tree; selected as tree; a row whose asset is used by the selected entity gets its mark in <span class="mono">--color-accent</span>.</td></tr>
+      <tr><td>footer</td><td>“<span class="mono">N of TOTAL match “query”</span>” — replaces the count when a query is active.</td></tr>
+      <tr><td>scrolling</td><td>Virtualise. Assume 10k rows. Scrollbar is overlay-style, 6px, <span class="mono">--color-neutral-700</span>.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 6px">Drag an asset row into the viewport to instantiate it as an entity at the drop point; drag onto an inspector slot to assign it. Both need a 1px accent outline on the valid drop target.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">5 · Entity inspector (“Looking glass”)</h2>
+  <p style="margin:0 0 10px">The inspector is a <strong style="font-weight:500">list of components</strong>, not a fixed form. It renders whatever array the entity holds, in the order the world stores them, with no privileged Transform section — Transform simply happens to be first.</p>
+
+  <h3 style="font-size:11pt;margin:16px 0 4px">5.1 Header</h3>
+  <p style="margin:0 0 10px">Entity mark · name (14px / 500) · id in 10.5px monospace <span class="mono">--color-neutral-600</span> · overflow <span class="mono">⋯</span>. Below it, a <span class="mono">components N</span> label in the section-header style.</p>
+
+  <h3 style="font-size:11pt;margin:16px 0 4px">5.2 Component card</h3>
+  <table class="spec-table">
+    <thead><tr><th>Element</th><th>Spec</th></tr></thead>
+    <tbody>
+      <tr><td>card</td><td>radius <span class="mono">--radius-md</span>, fill <span class="mono">--color-neutral-100</span> @ 7%, 6px gap between cards</td></tr>
+      <tr><td>card header</td><td>6×8px padding: disclosure (8px) · type mark (7px rotated square) · name in 12px / 500 heading · optional 10.5px monospace summary (mass, language) · enable checkbox right-aligned</td></tr>
+      <tr><td>type mark colour</td><td><span class="mono">--color-accent</span> = engine-core component · <span class="mono">--color-accent-2-500</span> = script/user component · <span class="mono">--color-neutral-500</span> = collapsed or disabled</td></tr>
+      <tr><td>enable checkbox</td><td>13px <span class="mono">.radio + .dot</span>. Unchecked means the component stays on the entity but its system skips it. Distinct from removal.</td></tr>
+      <tr><td>collapsed</td><td>Header row only, same fill. Collapse state persists per component <em>type</em>, not per entity.</td></tr>
+      <tr><td>field row</td><td>Label column 38–52px, 11px <span class="mono">--color-neutral-500</span>; value chips 24px tall, <span class="mono">--color-neutral-900</span> fill, radius <span class="mono">--radius-sm</span>, 11px monospace.</td></tr>
+      <tr><td>vector field</td><td>Three equal chips in a grid, 4px gap. Axis letters are optional and tinted x/y/z = accent / neutral-300 / accent-2 when shown.</td></tr>
+      <tr><td>dirty field</td><td><span class="mono">inset 0 0 0 1px var(--color-accent)</span> on the chip until the value is committed or the frame advances.</td></tr>
+      <tr><td>asset reference</td><td>Value chip with the asset's type mark and name, ellipsised; click reveals it in Curiosities, drag-drop reassigns.</td></tr>
+      <tr><td>reorder / remove</td><td>Drag the card header to reorder; remove via the <span class="mono">⋯</span> menu. Never a visible ✕ — accidental component loss is the expensive mistake here.</td></tr>
+    </tbody>
+  </table>
+
+  <h3 style="font-size:11pt;margin:16px 0 4px">5.3 Add component</h3>
+  <p style="margin:0 0 10px">A 30px dashed-border row (<span class="mono">--color-neutral-700</span>) reading “add component” with an <span class="mono">⌘⇧A</span> hint. It opens a filtered searchable list of registered component types, grouped engine / script, excluding types the entity already has when the type is single-instance. This is the only affordance for adding — no separate menu.</p>
+
+  <h3 style="font-size:11pt;margin:16px 0 4px">5.4 Other states</h3>
+  <p style="margin:0 0 6px">Nothing selected: panel shows the scene's own properties (environment, active camera, systems list) rather than an empty state. Multi-select: show only components common to the whole selection; fields whose values differ read <span class="mono">—</span> and edit all. Footer line, 10.5px <span class="mono">--color-neutral-600</span>: “systems touching this entity: …”.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">6 · Toolbar and log (“Chatter”)</h2>
+  <table class="spec-table">
+    <thead><tr><th>Element</th><th>Spec</th></tr></thead>
+    <tbody>
+      <tr><td>gizmo group</td><td>Three 28×26px pill buttons — translate / rotate / scale. Active: <span class="mono">--color-accent</span> @ 20% fill, <span class="mono">--color-accent-100</span> glyph. Keys <span class="mono">W E R</span>.</td></tr>
+      <tr><td>divider</td><td>1px × 20px, <span class="mono">--color-neutral-100</span> @ 14%</td></tr>
+      <tr><td>command hint</td><td>12.5px <span class="mono">--color-neutral-500</span> + <span class="mono">⌘K</span> chip. Opens the command palette; the hint text is the only thematic copy in the toolbar.</td></tr>
+      <tr><td>play</td><td><span class="mono">.btn .btn-primary</span>, 28px, pill radius, never shrinks. Toggles to a stop treatment while running and the viewport gains a 1px accent inner border.</td></tr>
+      <tr><td>log strip (collapsed)</td><td>32px: title · unread badge (accent-800 fill, accent-100 text) · severity glyph · the newest line, ellipsised · <span class="mono">⌥L</span> · chevron. Clicking anywhere expands.</td></tr>
+      <tr><td>log strip (expanded)</td><td>Grows upward to 224px over the viewport, same surface. Columns: time · source (52px: assets / world / systems / script / audio) · severity glyph · message. 11.5px monospace, 1.6 line-height, rows never wrap — ellipsis and a details popover instead.</td></tr>
+      <tr><td>severity</td><td><span class="mono">✓</span> <span class="mono">--color-accent-400</span> · <span class="mono">·</span> <span class="mono">--color-neutral-600</span> · <span class="mono">!</span> <span class="mono">--color-accent-300</span> on a row tinted <span class="mono">--color-accent</span> @ 12% · errors use the same treatment one ramp step lighter.</td></tr>
+      <tr><td>filters (expanded)</td><td>Text filter (190px) + segmented all / warn / script, right-aligned in the header row.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 6px">A script <span class="mono">error</span> auto-expands the strip once per play session; warnings only bump the badge. Clicking a script line focuses that entity and reveals the offending component.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">7 · Tokens used</h2>
+  <p style="margin:0 0 10px">All from Nocturne; nothing outside this list appears in the layout.</p>
+  <table class="spec-table">
+    <thead><tr><th>Token</th><th>Role in this screen</th></tr></thead>
+    <tbody>
+      <tr><td>--color-accent</td><td>selection, active tool, dirty field, engine component mark, gizmo X axis</td></tr>
+      <tr><td>--color-accent-100 / -200</td><td>text on accent-tinted fills</td></tr>
+      <tr><td>--color-accent-300</td><td>warning glyphs and warning text (body-size accent must use this step)</td></tr>
+      <tr><td>--color-accent-400</td><td>success glyph, pressed state</td></tr>
+      <tr><td>--color-accent-800</td><td>badge fill</td></tr>
+      <tr><td>--color-accent-2-400 / -500</td><td>script and user-component marks (reads as accent — mono palette)</td></tr>
+      <tr><td>--color-neutral-200 / -300</td><td>primary and secondary panel text</td></tr>
+      <tr><td>--color-neutral-500 / -600</td><td>labels, counts, type marks, hints</td></tr>
+      <tr><td>--color-neutral-700</td><td>dashed borders, scrollbars</td></tr>
+      <tr><td>--color-neutral-900</td><td>value-chip and input fills</td></tr>
+      <tr><td>--radius-sm / -md / -lg</td><td>chips and rows / cards and strip / panels</td></tr>
+      <tr><td>--shadow-sm / -md</td><td>panels / toolbar</td></tr>
+      <tr><td>--font-heading / --font-body</td><td>Inter 500 for names and headers / Inter 400 for everything else</td></tr>
+    </tbody>
+  </table>
+  <p style="margin:0 0 6px">Numeric values are monospace throughout (system <span class="mono">ui-monospace</span> stack) — coordinates, ids, sizes, timestamps and counts. This is load-bearing: it's how a value reads as editable data rather than label text.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">8 · Type and hit-target floor</h2>
+  <p style="margin:0 0 6px">8px is the smallest glyph (disclosure arrows), 9.5px the smallest text (file sizes), 10px the smallest label (section headers, tags). Interactive rows are 22px minimum with a 26px hit box; buttons and inputs 26–30px. Don't go below these — the layout is dense on purpose but stops here.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">9 · Wonderland theming</h2>
+  <p style="margin:0 0 6px">The theme lives in <em>names and one motif</em>, nothing structural: panel titles (Warren, Curiosities, Looking glass, Chatter), the play verb (“Fall in”), the command-palette hint, the rabbit-silhouette mark in the titlebar, and the checkerboard ground plane in the viewport. Every one of these is a string or a single asset — keep them in one place so the theme can be switched off. Component type names, field labels, log sources and keyboard hints stay literal; a beginner should never have to translate a metaphor to find a property.</p>
+
+  <h2 style="font-size:14pt;margin:24px 0 6px">10 · Not specified here</h2>
+  <p style="margin:0 0 6px">Command palette contents, script editor, material editor, the icon-collapsed rail, play-mode chrome, and the systems/world inspector are all referenced above but not designed. Ask before implementing them from imagination.</p>
+</doc-page>
+</x-dc>
+</body>
+</html>

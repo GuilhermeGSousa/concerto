@@ -32,6 +32,8 @@ pub(crate) struct EditableComponent {
     pub collect: fn(&InspectorRegistry, &ComponentMetadata, Entity, Tick) -> Option<Vec<Property>>,
     pub apply:
         fn(&mut World, Entity, &PropertyPath, &dyn ErasedEditor, &dyn Any) -> Result<(), EditError>,
+    pub insert: Option<fn(&mut World, Entity)>,
+    pub remove: fn(&mut World, Entity),
 }
 
 pub(crate) trait ErasedEditor: Send + Sync {
@@ -85,8 +87,7 @@ pub(crate) struct RegisteredEditor {
     pub adapter: Arc<dyn ErasedEditor>,
 }
 
-/// Components and typed editors available to the inspector. `Default` includes
-/// numeric editors for f32, f64, Vec3 and Quat. Later registration replaces them.
+/// Components and typed editors available to the inspector.
 #[derive(Resource)]
 pub struct InspectorRegistry {
     components: HashMap<TypeId, EditableComponent>,
@@ -105,7 +106,16 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
-    pub fn register_component<T: Component + Editable>(&mut self) {
+    pub fn register_component<T: Component + Editable + Default>(&mut self) {
+        self.register::<T>(Some(|world, entity| world.insert(T::default(), entity)));
+    }
+
+    /// Registers a component the inspector edits and removes but never offers to add.
+    pub fn register_inspectable<T: Component + Editable>(&mut self) {
+        self.register::<T>(None);
+    }
+
+    fn register<T: Component + Editable>(&mut self, insert: Option<fn(&mut World, Entity)>) {
         let path = std::any::type_name::<T>();
         self.components.insert(
             TypeId::of::<T>(),
@@ -113,6 +123,8 @@ impl InspectorRegistry {
                 name: path.rsplit("::").next().unwrap_or(path),
                 collect: collect_typed::<T>,
                 apply: apply_typed::<T>,
+                insert,
+                remove: |world, entity| world.remove_component::<T>(entity),
             },
         );
     }
@@ -137,8 +149,7 @@ impl InspectorRegistry {
         self.editors.get(&id)
     }
 
-    /// Collect fresh owned snapshots, preferring an editor for each node over its
-    /// children. This direct API is uncached; the inspector system caches its results.
+    /// Collect fresh owned snapshots, preferring an editor for each node over its children.
     pub fn collect(&self, root: &dyn Editable) -> Vec<Property> {
         let mut collector = Collect {
             registry: self,
@@ -149,8 +160,7 @@ impl InspectorRegistry {
         collector.properties
     }
 
-    /// Take fresh snapshots of a registered component, or return `None` if the
-    /// component is absent or unregistered. This direct API is uncached.
+    /// Take fresh snapshots of a registered component, or `None` if it is absent or unregistered.
     pub fn collect_component(
         &self,
         world: &World,
@@ -249,6 +259,24 @@ impl InspectionSource<'_> {
         self.components
             .has_component_changed_since(entity, id, tick)
     }
+    pub fn is_registered(&self, id: TypeId) -> bool {
+        self.registry.component(id).is_some()
+    }
+    /// Addable components `entity` does not carry yet, with how many are addable in total.
+    pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, EditableComponent)>, usize) {
+        let present = self.components.component_ids(entity);
+        let addable = || {
+            self.registry
+                .components
+                .iter()
+                .filter(|(_, component)| component.insert.is_some())
+        };
+        let missing = addable()
+            .filter(|(id, _)| !present.contains(id))
+            .map(|(&id, &component)| (id, component))
+            .collect();
+        (missing, addable().count())
+    }
     pub fn visible_components(&self, entity: Entity) -> Vec<(TypeId, &'static str)> {
         self.components
             .component_ids(entity)
@@ -312,7 +340,9 @@ fn apply_typed<T: Component + Editable>(
 }
 
 pub trait EditableApp {
-    fn register_editable<T: Component + Editable>(&mut self) -> &mut Self;
+    fn register_editable<T: Component + Editable + Default>(&mut self) -> &mut Self;
+    /// Registers a component the inspector edits and removes but never offers to add.
+    fn register_inspectable<T: Component + Editable>(&mut self) -> &mut Self;
     fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
         &mut self,
         editor: E,
@@ -320,8 +350,12 @@ pub trait EditableApp {
 }
 
 impl EditableApp for App {
-    fn register_editable<T: Component + Editable>(&mut self) -> &mut Self {
+    fn register_editable<T: Component + Editable + Default>(&mut self) -> &mut Self {
         registry(self).register_component::<T>();
+        self
+    }
+    fn register_inspectable<T: Component + Editable>(&mut self) -> &mut Self {
+        registry(self).register_inspectable::<T>();
         self
     }
     fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
@@ -333,8 +367,6 @@ impl EditableApp for App {
     }
 }
 
-/// A stamped handle, so registering an editor marks the registry changed and
-/// every inspector row rebuilds against it.
 fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
     let world = app.main_mut().world_mut();
     assert!(
@@ -344,9 +376,7 @@ fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
     ResMut::new(world.as_unsafe_world_cell_mut())
 }
 
-/// Apply one captured edit to the live world. Useful for headless editor hosts.
-/// Rejection can stamp the component's changed tick, since validation requires
-/// mutable access; adapters must leave its contents unchanged on error.
+/// Apply one captured edit to the live world.
 pub fn apply_property_commit(world: &mut World, commit: PropertyCommit) -> Result<(), EditError> {
     let row = &commit.row;
     let registry = world
@@ -372,11 +402,6 @@ pub fn apply_property_commit(world: &mut World, commit: PropertyCommit) -> Resul
 }
 
 /// Drain queued edits without consulting current selection or UI entity lifetime.
-///
-/// This is the editor's dynamic mutation boundary: captured component types are
-/// registered at runtime, so a static `Query<T>` cannot declare the full write
-/// set. Keep exclusive access here until ECS supports runtime component access;
-/// presentation and user adapters do not receive this world borrow.
 pub fn apply_property_commits(world: &mut World) {
     let Some(commits) = world.get_resource_mut::<PropertyCommits>() else {
         return;
@@ -441,7 +466,6 @@ mod tests {
                 },
             )
             .unwrap();
-        // A simulation update after the snapshot must survive edits to other slots.
         world
             .get_component_for_entity_mut::<Transform>(entity)
             .unwrap()
@@ -555,7 +579,7 @@ mod tests {
         apply_property_commit(&mut world, edit).unwrap();
         let mut propagation = update_simple_entities.into_system();
         propagation.initialize(&mut world);
-        propagation.run_and_apply(&mut world);
+        propagation.run_and_apply((), &mut world);
         assert_eq!(
             world
                 .get_component_for_entity::<GlobalTransform>(entity)

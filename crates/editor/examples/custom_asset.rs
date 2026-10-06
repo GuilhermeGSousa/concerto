@@ -2,7 +2,7 @@
 use anyhow::Result;
 use concerto_app::schedule_groups::Update;
 use concerto_ecs::{
-    Component, Entity, IntoSystem, Query, Res,
+    Component, Entity, IntoSystem, Query, Res, System,
     command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::{ChildOf, Children},
 };
@@ -192,13 +192,13 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
                 asset,
                 project_generation: 1,
             });
-        process.run_and_apply(world);
+        process.run_and_apply((), world);
         let mut load = load_dialogue.into_system();
         load.initialize(world);
-        load.run_and_apply(world);
+        load.run_and_apply((), world);
         // The first pass observes the document/widget archetype created by
         // the lifecycle system; the second pass processes that pending load.
-        load.run_and_apply(world);
+        load.run_and_apply((), world);
         let active = world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         assert_eq!(*document.get_or_insert(active), active);
         let widget = world
@@ -225,7 +225,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         .unwrap()
         .0
         .push_back(AssetEditorCommand::CloseAll);
-    process.run_and_apply(world);
+    process.run_and_apply((), world);
     assert_eq!(world.query::<&DialogueWidget, ()>().iter(world).count(), 0);
     Ok(())
 }

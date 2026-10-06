@@ -7,9 +7,9 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::Asset;
 use concerto_ui::{
+    elements::prelude::*,
     focus::FocusedWidget,
     interaction::{HoveredNode, Interactable, UIInputState},
-    material::UIMaterial,
     node::UINode,
     theme::UITheme,
 };
@@ -22,8 +22,7 @@ use crate::{
     viewport::ViewportCommands,
 };
 
-/// Build contextual containers for new documents. Runs before workspace
-/// visibility and custom UI systems, so deferred hosts are queryable there.
+/// Build contextual containers for new documents.
 pub(crate) fn create_editor_hosts(
     documents: Query<(Entity, &EditorDocument), Without<EditorHosts>>,
     registry: Res<PanelRegistry>,
@@ -41,22 +40,15 @@ pub(crate) fn create_editor_hosts(
                 };
                 let mut node = node.clone();
                 node.visible = false;
+                let surface = if index == 0 {
+                    theme.canvas()
+                } else {
+                    theme.panel()
+                };
                 let host = commands
-                    .spawn((
-                        node,
-                        EditorOwned(editor),
-                        Interactable,
-                        UIMaterial {
-                            corner_radius: if index == 0 { 0.0 } else { theme.radius_lg },
-                            ..UIMaterial::flat(if index == 0 {
-                                theme.canvas
-                            } else {
-                                theme.surface
-                            })
-                        },
-                    ))
+                    .entity(parent.parent())
+                    .spawn_child_queue((surface.node(|_| node), EditorOwned(editor), Interactable))
                     .entity();
-                commands.add_child(parent.parent(), host);
                 hosts[index] = Some(host);
             }
         }
@@ -80,7 +72,6 @@ fn panel_bodies(registry: &PanelRegistry) -> [Option<Entity>; 3] {
 }
 
 /// Update visibility only when tab/panel resources or host components change.
-/// Host changes matter even when the active editor stays the same.
 pub(crate) fn sync_workspace(
     active: Res<ActiveEditor>,
     registry: Res<PanelRegistry>,
@@ -111,8 +102,6 @@ pub(crate) fn sync_workspace(
             set_visible(&nodes, host, active.0 == Some(entity));
         }
     }
-    // Command application has attached new hosts by this point. Keep the
-    // contextual left panel before the shared content browser in the rail.
     if hosts_changed || registry.has_changed() {
         if let Some(base) = bases[1] {
             if let Some(mut siblings) = parents
@@ -137,7 +126,6 @@ fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
 }
 
 /// Clear transient UI state on a tab transition or successful scene replacement.
-/// Native pointer capture is released by the viewport's main-thread system.
 pub(crate) fn reset_workspace_input(
     active: Res<ActiveEditor>,
     mut viewport: ResMut<ViewportCommands>,
@@ -170,15 +158,15 @@ mod tests {
     fn process_editor_commands(world: &mut World) {
         let mut system = crate::asset_editor::process_editor_commands.into_system();
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
     }
     fn sync_workspace(world: &mut World) {
         for mut system in [
-            super::sync_workspace.into_system(),
-            super::reset_workspace_input.into_system(),
+            super::sync_workspace.into_boxed_system(),
+            super::reset_workspace_input.into_boxed_system(),
         ] {
             system.initialize(world);
-            system.run_and_apply(world);
+            system.run_and_apply((), world);
         }
     }
     use crate::asset_editor::{
@@ -214,9 +202,9 @@ mod tests {
     #[test]
     fn workspace_systems_do_not_request_exclusive_world_access() {
         for system in [
-            super::create_editor_hosts.into_system(),
-            super::sync_workspace.into_system(),
-            super::reset_workspace_input.into_system(),
+            super::create_editor_hosts.into_boxed_system(),
+            super::sync_workspace.into_boxed_system(),
+            super::reset_workspace_input.into_boxed_system(),
         ] {
             let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
             let mut access = concerto_ecs::system::access::SystemAccess::default();
@@ -250,7 +238,6 @@ mod tests {
             .get_resource_mut::<ViewportCommands>()
             .unwrap()
             .release_navigation = false;
-        // Unrelated UI changes don't cause a full workspace refresh.
         world
             .get_component_for_entity_mut::<UINode>(first)
             .unwrap()
@@ -280,10 +267,7 @@ mod tests {
                 .release_navigation
         );
 
-        let second = world.spawn(UINode {
-            visible: false,
-            ..Default::default()
-        });
+        let second = world.spawn(UINode::default().with_visible(false));
         world
             .get_component_for_entity_mut::<EditorHosts>(editor)
             .unwrap()
@@ -303,7 +287,7 @@ mod tests {
         world.tick();
         let mut deactivate = (|mut active: ResMut<ActiveEditor>| active.0 = None).into_system();
         deactivate.initialize(&mut world);
-        deactivate.run_and_apply(&mut world);
+        deactivate.run_and_apply((), &mut world);
         sync_workspace(&mut world);
         assert!(
             !world
@@ -356,7 +340,7 @@ mod tests {
         })
         .into_system();
         change_panels.initialize(&mut world);
-        change_panels.run_and_apply(&mut world);
+        change_panels.run_and_apply((), &mut world);
         sync_workspace(&mut world);
         assert!(
             world
@@ -370,7 +354,7 @@ mod tests {
         let mut reset =
             (|mut commands: ResMut<ViewportCommands>| commands.reset = true).into_system();
         reset.initialize(&mut world);
-        reset.run_and_apply(&mut world);
+        reset.run_and_apply((), &mut world);
         sync_workspace(&mut world);
         assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
         assert!(

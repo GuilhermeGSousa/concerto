@@ -7,8 +7,7 @@ use concerto_ecs::{Component, Entity, Resource, command::CommandQueue, component
 use concerto_editable::{Editable, PropertyPath};
 use concerto_ui::theme::UITheme;
 
-/// A rejected edit leaves the target unchanged. Type mismatches and stale
-/// registrations are reported without invoking the adapter.
+/// A rejected edit leaves the target unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EditError {
     Rejected,
@@ -27,11 +26,6 @@ impl std::fmt::Display for EditError {
 impl std::error::Error for EditError {}
 
 /// Presentation and validated editing for a concrete Rust type.
-///
-/// Register widget systems in `LateUpdate` after `InspectorPlugin`. They read
-/// [`PropertyRowValue::snapshot`] and queue edits with [`PropertyCommits::push`].
-/// Commits apply in the next `Update`, before transform propagation.
-/// Per-row UI state belongs on entities spawned by `build`, not on this adapter.
 pub trait PropertyEditor<T: Editable>: Send + Sync + 'static {
     type Snapshot: Clone + PartialEq + Send + Sync + 'static;
     type Edit: Send + Sync + 'static;
@@ -80,7 +74,6 @@ pub(crate) struct Snapshot {
 }
 
 /// Owned snapshot refreshed independently of the widget's focused edit buffer.
-/// Unsupported rows have no snapshot.
 #[derive(Component, Clone, Default)]
 pub struct PropertyRowValue(pub(crate) Option<Snapshot>);
 

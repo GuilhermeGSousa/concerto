@@ -29,16 +29,6 @@ pub(crate) fn update_text_viewport(
     text_viewport.update(&queue, Resolution { width, height });
 }
 
-/// Compute the screen-space scissor rectangle for a text node.
-///
-/// `TextBounds` is a clip rect in **absolute screen pixel coordinates** — all
-/// four values are measured from the top-left corner of the window, not from
-/// the node's own origin.  The text that falls outside this rect is discarded
-/// by glyphon before it reaches the GPU.
-///
-/// The node's `location` is already in absolute screen pixels (set by
-/// `write_absolute_positions` in `node.rs`), so we just map it straight
-/// through.
 #[cfg(test)]
 fn node_text_bounds(location: glam::Vec2, size: glam::Vec2) -> TextBounds {
     TextBounds {
@@ -102,10 +92,6 @@ pub(crate) fn prepare_text_renderer(
     }
 }
 
-/// Splits `layers` at the first batch belonging to `layer` or above.
-///
-/// Text for a layer is drawn after that layer's quads, so every batch strictly
-/// below the quad about to be drawn must be flushed first.
 fn batches_below(layers: &[i32], next: usize, layer: i32) -> usize {
     let mut end = next;
     while end < layers.len() && layers[end] < layer {
@@ -126,8 +112,8 @@ mod tests {
         let b = node_text_bounds(loc, size);
         assert_eq!(b.left, 10);
         assert_eq!(b.top, 800);
-        assert_eq!(b.right, 130); // 10 + 120
-        assert_eq!(b.bottom, 832); // 800 + 32
+        assert_eq!(b.right, 130);
+        assert_eq!(b.bottom, 832);
     }
 
     #[test]
@@ -145,7 +131,6 @@ pub(crate) fn ui_renderpass(
     mut device: ResMut<RenderDevice>,
     render_window: Res<RenderWindow>,
     ui_nodes: Query<(&RenderUINode, Option<&RenderUIMaterial>)>,
-    // Text
     text_renderers: Res<TextRenderers>,
     text_viewport: Res<TextViewport>,
     text_atlas: Res<TextAtlas>,
@@ -175,7 +160,6 @@ pub(crate) fn ui_renderpass(
         let mut batch = 0;
 
         for (render_node, render_material) in render_nodes {
-            // Flush the text of every layer below this quad's before drawing it.
             let flush_to = batches_below(layers, batch, (render_node.z_index >> 32) as i32);
             while batch < flush_to {
                 text_renderers.renderers[batch]
@@ -199,7 +183,6 @@ pub(crate) fn ui_renderpass(
             render_pass.draw_indexed(0..render_node.index_count, 0, 0..1);
         }
 
-        // Anything at or above the topmost quad's layer draws last.
         while batch < layers.len() {
             text_renderers.renderers[batch]
                 .render(&text_atlas, &text_viewport, &mut render_pass)
@@ -216,17 +199,13 @@ mod layer_tests {
     #[test]
     fn flushes_only_the_layers_below_the_quad_being_drawn() {
         let layers = [0, 1, 4];
-        // A quad on layer 0 flushes nothing: its own text draws after it.
         assert_eq!(batches_below(&layers, 0, 0), 0);
-        // A quad on layer 1 flushes layer 0's text first.
         assert_eq!(batches_below(&layers, 0, 1), 1);
-        // A quad on layer 5 flushes everything still pending.
         assert_eq!(batches_below(&layers, 1, 5), 3);
     }
 
     #[test]
     fn layers_with_no_quads_of_their_own_still_flush_in_order() {
-        // Text on layer 2 exists but no quad does; the next quad is on 7.
         let layers = [2];
         assert_eq!(batches_below(&layers, 0, 7), 1);
     }

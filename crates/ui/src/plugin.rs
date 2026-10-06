@@ -11,15 +11,12 @@ use glyphon::{Cache, SwashCache, Viewport};
 
 use crate::{
     anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
-    checkbox::{UICheckboxChanged, sync_checkbox_material, toggle_checkboxes},
+    checkbox::sync_checkbox_material,
     focus::{
         FocusedWidget, UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, sync_text_capture,
         update_focus,
     },
-    interaction::{
-        HoveredNode, UIClick, UIDrag, UIInputState, UIPointerDown, UIPointerEnter, UIPointerLeave,
-        UIPointerUp, apply_interaction_styles, update_ui_interaction,
-    },
+    interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     material::UIMaterial,
     node::{
         UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes, extract_ui_materials,
@@ -28,12 +25,11 @@ use crate::{
     render::{prepare_text_renderer, ui_renderpass, update_text_viewport},
     resources::UIRenderDiagnostics,
     scroll::{
-        drag_scrollbar_thumbs, setup_scrollbars, sync_scroll_content, sync_scrollbar_thumbs,
-        sync_scrollbar_tracks, sync_split_panes, update_scroll_areas, update_split_panes,
-        update_virtual_lists,
+        setup_scrollbars, sync_scroll_content, sync_scrollbar_thumbs, sync_scrollbar_tracks,
+        sync_split_panes, update_scroll_areas, update_virtual_lists,
     },
     sets::UiSet,
-    slider::{UISliderChanged, setup_slider_visuals, sync_slider_fill, update_slider_drag},
+    slider::{setup_slider_visuals, sync_slider_fill},
     text::{
         extract_text_nodes,
         fonts::{UIFonts, build_font_system},
@@ -45,9 +41,7 @@ use crate::{
         UITextInputCancelled, UITextInputChanged, UITextInputSubmitted, update_text_inputs,
     },
     theme::UITheme,
-    widgets::{
-        UICollapsibleChanged, UITabChanged, sync_tab_bodies, update_tooltips, update_widgets,
-    },
+    widgets::{sync_tab_bodies, update_tooltips},
 };
 
 /// Registers the UI's resources, events and systems, ordered by [`UiSet`] in `LateUpdate`.
@@ -97,21 +91,11 @@ impl Plugin for UIPlugin {
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
 
-        app.register_event::<UIClick>();
-        app.register_event::<UIPointerDown>();
-        app.register_event::<UIPointerUp>();
-        app.register_event::<UIPointerEnter>();
-        app.register_event::<UIPointerLeave>();
-        app.register_event::<UIDrag>();
-        app.register_event::<UICheckboxChanged>();
-        app.register_event::<UISliderChanged>();
         app.register_event::<UITextInputChanged>();
         app.register_event::<UITextInputSubmitted>();
         app.register_event::<UITextInputCancelled>();
         app.register_event::<UIFocusGained>();
         app.register_event::<UIFocusLost>();
-        app.register_event::<UICollapsibleChanged>();
-        app.register_event::<UITabChanged>();
 
         app.configure_sets(
             LateUpdate,
@@ -139,17 +123,12 @@ impl Plugin for UIPlugin {
         app.add_system(
             LateUpdate,
             (
-                toggle_checkboxes,
                 update_text_inputs,
                 dismiss_panels.after(update_text_inputs),
-                update_widgets,
                 sync_tab_bodies,
                 update_tooltips,
                 update_scroll_areas,
                 update_virtual_lists.after(update_scroll_areas),
-                update_split_panes,
-                update_slider_drag,
-                drag_scrollbar_thumbs,
             )
                 .in_set(UiSet::Widgets),
         );

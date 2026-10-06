@@ -4,17 +4,18 @@ use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
 };
+use concerto_ui::text::UIText;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 pub(super) fn update(world: &mut World) {
     for mut system in [
-        collect_inspector_data.into_system(),
-        sync_inspected_components.into_system(),
-        build_property_widgets.into_system(),
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
     ] {
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
     }
     world.tick();
 }
@@ -22,9 +23,9 @@ pub(super) fn update(world: &mut World) {
 #[test]
 fn inspector_presentation_systems_do_not_request_exclusive_access() {
     for system in [
-        collect_inspector_data.into_system(),
-        sync_inspected_components.into_system(),
-        build_property_widgets.into_system(),
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
     ] {
         let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
         let mut access = concerto_ecs::system::access::SystemAccess::default();
@@ -38,17 +39,17 @@ fn metadata_tracks_selection_and_despawn_without_spurious_changes() {
     let (mut world, target, _) = world();
     let mut collect = collect_inspector_data.into_system();
     collect.initialize(&mut world);
-    collect.run_and_apply(&mut world);
+    collect.run_and_apply((), &mut world);
     let tick = world.resource_changed_tick::<InspectorData>();
     assert_eq!(
         world.get_resource::<InspectorData>().unwrap().entity,
         Some(target)
     );
     world.tick();
-    collect.run_and_apply(&mut world);
+    collect.run_and_apply((), &mut world);
     assert_eq!(world.resource_changed_tick::<InspectorData>(), tick);
     world.despawn(target);
-    collect.run_and_apply(&mut world);
+    collect.run_and_apply((), &mut world);
     assert!(
         world
             .get_resource::<InspectorData>()
@@ -75,11 +76,6 @@ fn deferred_row_creation_makes_new_bodies_visible() {
     );
 }
 
-/// Switching selection despawns a card and builds the next one in the same
-/// pass, so the new card's entities come from recycled indexes. A recycled
-/// index that still resolves to its previous owner's row made the card's
-/// not-yet-spawned body read a live `UINode`, look already visible, and keep
-/// the hidden node it was spawned with — properties gone, uneditable.
 #[test]
 fn alternating_selections_keep_showing_their_properties() {
     let (mut world, a, _) = world();
@@ -167,11 +163,10 @@ fn lists_editable_and_scene_components_as_queryable_cards_and_hides_plumbing() {
         .collect();
     let names: Vec<_> = children
         .iter()
-        .map(|&entity| {
+        .filter_map(|&entity| {
             world
                 .get_component_for_entity::<InspectedComponent>(entity)
-                .unwrap()
-                .name
+                .map(|card| card.name)
         })
         .collect();
     assert_eq!(names, ["Tag", "Transform"]);
@@ -198,11 +193,10 @@ fn structural_changes_rebuild_the_entire_stack_once() {
     let children = world.get_component_for_entity::<Children>(stack).unwrap();
     let names: Vec<_> = children
         .iter()
-        .map(|&child| {
+        .filter_map(|&child| {
             world
                 .get_component_for_entity::<InspectedComponent>(child)
-                .unwrap()
-                .name
+                .map(|card| card.name)
         })
         .collect();
     assert_eq!(names, ["Tag", "Transform"]);
@@ -230,9 +224,7 @@ impl PropertyEditor<Transform> for WholeTransform {
         value.translation
     }
     fn build(&self, cmd: &mut CommandQueue, row: Entity, _: &Vec3, theme: &UITheme) {
-        let child = cmd
-            .spawn((UINode::default(), text(theme, "Whole transform")))
-            .entity();
+        let child = cmd.spawn(theme.label("Whole transform")).entity();
         cmd.add_child(row, child);
     }
     fn apply(&self, value: &mut Transform, edit: &Vec3) -> Result<(), EditError> {
@@ -244,8 +236,6 @@ impl PropertyEditor<Transform> for WholeTransform {
     }
 }
 
-/// Mutating through `ResMut` marks the registry changed, which is how an app's
-/// registration reaches the inspector.
 fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
     ResMut::new(world.as_unsafe_world_cell_mut())
 }
@@ -301,7 +291,7 @@ fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
     let root_rows = rows(&mut world);
     assert_eq!(root_rows.len(), 1);
     assert_eq!(root_rows[0].1.path, PropertyPath::default());
-    let mut texts = world.query::<&TextComponent, ()>();
+    let mut texts = world.query::<&UIText, ()>();
     assert!(
         texts
             .iter(&mut world)
@@ -366,13 +356,16 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     update(&mut world);
     assert!(cards(&mut world).is_empty());
     assert!(rows(&mut world).is_empty());
-    let mut inputs = world.query::<&concerto_ui::text_input::UITextInput, ()>();
+    let mut inputs = world.query::<
+        &concerto_ui::text_input::UITextInput,
+        concerto_ecs::query::filter::Without<add_component::AddComponentSearch>,
+    >();
     assert_eq!(inputs.iter(&mut world).count(), 0);
 }
 
 #[test]
 fn unsupported_values_build_an_explicit_read_only_row() {
-    #[derive(Component, concerto_editable::Editable)]
+    #[derive(Component, concerto_editable::Editable, Default)]
     struct Unsupported {
         title: String,
     }
@@ -392,7 +385,7 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     let all_rows = rows(&mut world);
     assert_eq!(all_rows.len(), 1);
     assert!(!all_rows[0].1.has_editor());
-    let mut texts = world.query::<&TextComponent, ()>();
+    let mut texts = world.query::<&UIText, ()>();
     assert!(
         texts
             .iter(&mut world)
@@ -412,7 +405,7 @@ fn labels_capitalise_the_field_name() {
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
     use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
-    #[derive(Component)]
+    #[derive(Component, Default)]
     struct Dynamic {
         reverse: bool,
         show_b: bool,
@@ -597,7 +590,7 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
         .unwrap()
         .translation
         .x = 1.0;
-    sync.run_and_apply(&mut world);
+    sync.run_and_apply((), &mut world);
     world
         .get_component_for_entity_mut::<Transform>(target)
         .unwrap()
@@ -695,4 +688,316 @@ fn inspector_access_only_blocks_component_and_declared_resource_writes() {
     component.write_component::<Transform>();
     assert!(!SystemAccess::are_disjoint(&access, &component));
     assert!(!SystemAccess::are_disjoint(&component, &access));
+}
+
+#[derive(Component, concerto_editable::Editable, Default)]
+struct Gain {
+    amount: f32,
+}
+
+fn structural_world() -> (World, Entity, Entity) {
+    use concerto_ecs::events::event_channel::EventChannel;
+    let (mut world, entity, stack) = world();
+    registry_mut(&mut world).register_component::<Gain>();
+    world.insert_resource(ComponentEdits::default());
+    world.insert_resource(EventChannel::<concerto_ui::text_input::UITextInputSubmitted>::default());
+    update(&mut world);
+    (world, entity, stack)
+}
+
+fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+    let mut system = system.into_system();
+    system.initialize(world);
+    system.run_and_apply((), world);
+}
+
+fn click(world: &mut World, entity: Entity) {
+    world.trigger_on(
+        entity,
+        concerto_ui::interaction::UIClick {
+            position: glam::Vec2::ZERO,
+            button: concerto_window::input::MouseButton::Left,
+        },
+    );
+}
+
+fn only<T: Component>(world: &mut World) -> Entity {
+    let mut query = world.query::<(Entity, &T), ()>();
+    let found: Vec<Entity> = query.iter(world).map(|(entity, _)| entity).collect();
+    assert_eq!(found.len(), 1, "expected exactly one match");
+    found[0]
+}
+
+fn is_open(world: &World, panel: Entity) -> bool {
+    world
+        .get_component_for_entity::<concerto_ui::anchor::UIAnchoredPanel>(panel)
+        .unwrap()
+        .open
+}
+
+fn open_add_menu(world: &mut World) -> Entity {
+    let menu = only::<add_component::AddComponentMenu>(world);
+    world
+        .get_component_for_entity_mut::<concerto_ui::anchor::UIAnchoredPanel>(menu)
+        .unwrap()
+        .open = true;
+    run(world, populate_add_component_menu);
+    menu
+}
+
+fn card_names(world: &mut World) -> Vec<&'static str> {
+    let mut names: Vec<_> = cards(world).iter().map(|(_, card)| card.name).collect();
+    names.sort();
+    names
+}
+
+fn queued(world: &World) -> Vec<ComponentEdit> {
+    world.get_resource::<ComponentEdits>().unwrap().0.clone()
+}
+
+#[test]
+fn clicking_a_menu_entry_adds_the_component_and_closes_the_menu() {
+    let (mut world, entity, _) = structural_world();
+    let menu = open_add_menu(&mut world);
+    let entry = only::<add_component::AddComponentEntry>(&mut world);
+
+    click(&mut world, entry);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&world, menu));
+
+    apply_component_edits(&mut world);
+    assert!(queued(&world).is_empty());
+    assert!(world.get_component_for_entity::<Gain>(entity).is_some());
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Gain", "Transform"]);
+}
+
+#[test]
+fn submitting_the_search_adds_the_highlighted_entry() {
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_ui::text_input::UITextInputSubmitted;
+    let (mut world, entity, _) = structural_world();
+    let menu = open_add_menu(&mut world);
+    let search = only::<add_component::AddComponentSearch>(&mut world);
+    let stray = world.spawn(());
+    for field in [stray, search] {
+        world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: String::new(),
+            });
+    }
+
+    run(&mut world, add_component::add_highlighted_component);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&world, menu));
+}
+
+#[test]
+fn a_cards_menu_removes_its_component() {
+    let (mut world, entity, _) = structural_world();
+    world.insert(Gain::default(), entity);
+    update(&mut world);
+    let menu = only::<component_menu::ComponentMenu>(&mut world);
+    let buttons: Vec<Entity> = {
+        let mut query = world.query::<(Entity, &component_menu::ComponentMenuButton), ()>();
+        query
+            .iter(&mut world)
+            .filter(|(_, button)| button.component == TypeId::of::<Gain>())
+            .map(|(entity, _)| entity)
+            .collect()
+    };
+    assert_eq!(buttons.len(), 1);
+    let button = buttons[0];
+
+    click(&mut world, button);
+    assert!(is_open(&world, menu));
+    click(&mut world, button);
+    assert!(!is_open(&world, menu));
+    click(&mut world, button);
+    let panel = world
+        .get_component_for_entity::<concerto_ui::anchor::UIAnchoredPanel>(menu)
+        .unwrap();
+    assert!(panel.open);
+    assert_eq!(panel.owner, Some(button));
+
+    let remove = only::<component_menu::RemoveComponentItem>(&mut world);
+    click(&mut world, remove);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Remove {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&world, menu));
+
+    apply_component_edits(&mut world);
+    assert!(world.get_component_for_entity::<Gain>(entity).is_none());
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Transform"]);
+    assert_eq!(
+        world
+            .query::<&component_menu::ComponentMenu, ()>()
+            .iter(&mut world)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn only_registered_components_offer_a_menu() {
+    let (mut world, entity, _) = structural_world();
+    world.register_component_type::<Tag>();
+    world.insert(Tag, entity);
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Tag", "Transform"]);
+    let mut query = world.query::<&component_menu::ComponentMenuButton, ()>();
+    let components: Vec<TypeId> = query.iter(&mut world).map(|b| b.component).collect();
+    assert_eq!(components, [TypeId::of::<Transform>()]);
+}
+
+#[test]
+fn stale_structural_edits_are_dropped() {
+    let (mut world, entity, _) = structural_world();
+    let gain = TypeId::of::<Gain>();
+    let transform = TypeId::of::<Transform>();
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Add {
+                entity,
+                component: transform
+            }
+        ),
+        Err(EditError::Rejected)
+    );
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Remove {
+                entity,
+                component: gain
+            }
+        ),
+        Err(EditError::NotFound)
+    );
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Add {
+                entity,
+                component: TypeId::of::<Plumbing>()
+            }
+        ),
+        Err(EditError::UnregisteredComponent)
+    );
+    let gone = world.spawn(());
+    world.despawn(gone);
+    for edit in [
+        ComponentEdit::Add {
+            entity: gone,
+            component: gain,
+        },
+        ComponentEdit::Remove {
+            entity: gone,
+            component: gain,
+        },
+    ] {
+        assert_eq!(
+            apply_component_edit(&mut world, edit),
+            Err(EditError::MissingTarget)
+        );
+    }
+    world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .extend([
+            ComponentEdit::Add {
+                entity: gone,
+                component: gain,
+            },
+            ComponentEdit::Add {
+                entity,
+                component: gain,
+            },
+        ]);
+    apply_component_edits(&mut world);
+    assert!(queued(&world).is_empty());
+    assert!(world.get_component_for_entity::<Gain>(entity).is_some());
+}
+
+#[test]
+fn inspectable_components_are_edited_and_removed_but_never_added() {
+    #[derive(Component, concerto_editable::Editable)]
+    struct Lens {
+        focal: f32,
+    }
+    let lens = TypeId::of::<Lens>();
+    let (mut world, entity, _) = structural_world();
+    registry_mut(&mut world).register_inspectable::<Lens>();
+    update(&mut world);
+
+    open_add_menu(&mut world);
+    let entry = only::<add_component::AddComponentEntry>(&mut world);
+    click(&mut world, entry);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .clear();
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Add {
+                entity,
+                component: lens
+            }
+        ),
+        Err(EditError::Rejected)
+    );
+
+    world.insert(Lens { focal: 35.0 }, entity);
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Lens", "Transform"]);
+    assert!(
+        rows(&mut world)
+            .iter()
+            .any(|(_, row)| row.component == lens)
+    );
+    let mut buttons = world.query::<&component_menu::ComponentMenuButton, ()>();
+    assert!(buttons.iter(&mut world).any(|b| b.component == lens));
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Remove {
+                entity,
+                component: lens
+            }
+        ),
+        Ok(())
+    );
+    assert!(world.get_component_for_entity::<Lens>(entity).is_none());
 }

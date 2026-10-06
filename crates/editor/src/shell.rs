@@ -1,16 +1,14 @@
-//! The chrome around the scene: what is open, and what the editor last had to
-//! say.
-//!
-//! Everything with content of its own is a panel; this is what is left.
+//! The chrome around the scene: what is open, and what the editor last had to say.
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
+use concerto_color::Color;
 use concerto_ecs::{Component, Query, Res, command::CommandQueue};
 use concerto_ui::{
-    material::UIMaterial,
+    elements::prelude::*,
     node::{UINode, UIRect},
-    text::TextComponent,
+    text::UIText,
     theme::UITheme,
     transform::UIValue,
 };
@@ -18,7 +16,6 @@ use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{MEDIUM, glyph, icon};
-use crate::marks::TRANSPARENT;
 use crate::project::ProjectState;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
@@ -47,183 +44,101 @@ impl Plugin for ShellPlugin {
 
 #[derive(Component)]
 enum Label {
-    /// The last thing the editor said, in the foot.
     Chatter,
-    /// The glyph in front of the status line: what kind of thing it is.
     ChatterGlyph,
-}
-
-fn text(theme: &UITheme, value: &str) -> TextComponent {
-    TextComponent {
-        text: value.into(),
-        font_size: theme.font_size_md,
-        line_height: theme.line_height(theme.font_size_md),
-        ..Default::default()
-    }
 }
 
 fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(brand) = registry.body(BRAND_ID) {
-        let row = cmd
-            .spawn(UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Row,
-                align_items: Some(taffy::AlignItems::Center),
-                gap: glam::Vec2::new(theme.spacing_sm, 0.0),
-                ..Default::default()
-            })
-            .entity();
-        cmd.add_child(brand, row);
-
-        // The design's mark: a burrow mouth, drawn rather than lettered.
-        let mark = cmd
-            .spawn((
-                UINode {
-                    width: UIValue::Px(13.0),
-                    height: UIValue::Px(19.0),
-                    flex_shrink: 0.0,
-                    align_items: Some(taffy::AlignItems::Center),
-                    padding: UIRect {
-                        top: 4.0,
-                        ..Default::default()
+        cmd.entity(brand)
+            .add_child_with(theme.row().grow(), |mut row| {
+                row = row.add_child_with(
+                    theme
+                        .canvas()
+                        .fill(Color::TRANSPARENT)
+                        .border(theme.accent, 1.5)
+                        .radius(6.0)
+                        .size(UIValue::Px(13.0), UIValue::Px(19.0))
+                        .fixed()
+                        .align_items(taffy::AlignItems::Center)
+                        .padding(UIRect {
+                            top: 4.0,
+                            ..Default::default()
+                        }),
+                    |mark| {
+                        mark.add_child(
+                            theme
+                                .canvas()
+                                .fill(theme.accent)
+                                .radius(2.0)
+                                .size(UIValue::Px(4.0), UIValue::Px(4.0))
+                                .fixed(),
+                        );
                     },
-                    ..Default::default()
-                },
-                UIMaterial {
-                    corner_radius: 6.0,
-                    ..UIMaterial::with_border(TRANSPARENT, theme.accent, 1.5)
-                },
-            ))
-            .entity();
-        cmd.add_child(row, mark);
+                );
 
-        let pupil = cmd
-            .spawn((
-                UINode {
-                    width: UIValue::Px(4.0),
-                    height: UIValue::Px(4.0),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
-                UIMaterial {
-                    corner_radius: 2.0,
-                    ..UIMaterial::flat(theme.accent)
-                },
-            ))
-            .entity();
-        cmd.add_child(mark, pupil);
+                row = row.add_child(theme.label("Concerto").weight(MEDIUM));
 
-        let wordmark = cmd
-            .spawn((
-                UINode::default(),
-                TextComponent {
-                    font_weight: MEDIUM,
-                    ..text(&theme, "Concerto")
-                },
-            ))
-            .entity();
-        cmd.add_child(row, wordmark);
-
-        // The document tabs live beside the brand and are populated by the
-        // tab system as editor document entities appear.
-        let tabs = cmd
-            .spawn((
-                UINode {
-                    flex_grow: 1.0,
-                    flex_direction: FlexDirection::Row,
-                    align_items: Some(taffy::AlignItems::Center),
-                    gap: glam::Vec2::new(2.0, 0.0),
-                    min_width: UIValue::Px(0.0),
-                    height: UIValue::Px(30.0),
-                    z_index: 70,
-                    overflow_x: taffy::Overflow::Clip,
-                    overflow_y: taffy::Overflow::Clip,
-                    ..Default::default()
-                },
-                TabStrip,
-                concerto_ui::interaction::Interactable,
-                crate::window_chrome::WindowChromeControl,
-                TabScroll::default(),
-            ))
-            .entity();
-        cmd.add_child(row, tabs);
-        let tab_content = cmd
-            .spawn((
-                UINode {
-                    flex_direction: FlexDirection::Row,
-                    align_items: Some(taffy::AlignItems::Center),
-                    gap: glam::Vec2::new(2.0, 0.0),
-                    flex_shrink: 0.0,
-                    height: UIValue::Px(30.0),
-                    position: taffy::Position::Absolute,
-                    inset: concerto_ui::node::UIInset {
-                        left: UIValue::Px(0.0),
-                        top: UIValue::Px(0.0),
-                        ..Default::default()
+                row.add_child_with(
+                    (
+                        UINode::default()
+                            .with_flex_grow(1.0)
+                            .with_flex_direction(FlexDirection::Row)
+                            .with_align_items(taffy::AlignItems::Center)
+                            .with_gap(glam::Vec2::new(2.0, 0.0))
+                            .with_min_width(UIValue::Px(0.0))
+                            .with_height(UIValue::Px(30.0))
+                            .with_z_index(70)
+                            .with_overflow_x(taffy::Overflow::Clip)
+                            .with_overflow_y(taffy::Overflow::Clip),
+                        TabStrip,
+                        concerto_ui::interaction::Interactable,
+                        crate::window_chrome::WindowChromeControl,
+                        TabScroll::default(),
+                    ),
+                    |tabs| {
+                        tabs.add_child((
+                            UINode::default()
+                                .with_flex_direction(FlexDirection::Row)
+                                .with_align_items(taffy::AlignItems::Center)
+                                .with_gap(glam::Vec2::new(2.0, 0.0))
+                                .with_flex_shrink(0.0)
+                                .with_height(UIValue::Px(30.0))
+                                .with_position(taffy::Position::Absolute)
+                                .with_inset(concerto_ui::node::UIInset {
+                                    left: UIValue::Px(0.0),
+                                    top: UIValue::Px(0.0),
+                                    ..Default::default()
+                                }),
+                            TabStripContent,
+                        ));
                     },
-                    ..Default::default()
-                },
-                TabStripContent,
-            ))
-            .entity();
-        cmd.add_child(tabs, tab_content);
+                );
+            });
     }
 
     if let Some(chatter) = registry.body(CHATTER_ID) {
-        let strip = cmd
-            .spawn((
-                UINode {
-                    height: UIValue::Px(30.0),
-                    flex_shrink: 0.0,
-                    align_items: Some(taffy::AlignItems::Center),
-                    padding: UIRect::axes(0.0, theme.spacing_md),
-                    ..Default::default()
-                }
+        cmd.entity(chatter).add_child_with(
+            theme
+                .panel()
+                .radius_md()
+                .height(UIValue::Px(30.0))
+                .fixed()
+                .align_items(taffy::AlignItems::Center)
+                .padding(UIRect::axes(0.0, theme.spacing_md))
                 .clipped(),
-                UIMaterial {
-                    corner_radius: theme.radius_md,
-                    ..UIMaterial::flat(theme.surface)
-                },
-            ))
-            .entity();
-        cmd.add_child(chatter, strip);
-
-        let status_glyph = cmd
-            .spawn((
-                UINode {
-                    width: UIValue::Px(18.0),
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                },
-                TextComponent {
-                    color: theme.text_muted,
-                    ..icon(&theme, glyph::INFO, theme.font_size_md)
-                },
-                Label::ChatterGlyph,
-            ))
-            .entity();
-        cmd.add_child(strip, status_glyph);
-
-        // Text renders off a UILayout, so a label with no UINode never enters
-        // the layout tree and silently draws nothing.
-        let label = cmd
-            .spawn((
-                UINode {
-                    flex_grow: 1.0,
-                    ..Default::default()
-                },
-                TextComponent {
-                    color: theme.text_muted,
-                    // The foot is one line tall; a long path must cut short
-                    // rather than wrap out of the strip.
-                    wrap: false,
-                    ellipsis: true,
-                    ..text(&theme, "")
-                },
-                Label::Chatter,
-            ))
-            .entity();
-        cmd.add_child(strip, label);
+            |strip| {
+                strip
+                    .add_child((
+                        UINode::default()
+                            .with_width(UIValue::Px(18.0))
+                            .with_flex_shrink(0.0),
+                        icon(&theme, glyph::INFO, theme.font_size_md).muted(),
+                        Label::ChatterGlyph,
+                    ))
+                    .add_child((theme.label("").muted().single_line().grow(), Label::Chatter));
+            },
+        );
     }
 }
 
@@ -231,7 +146,7 @@ fn refresh_chrome(
     project: Res<ProjectState>,
     scenes: Res<SceneState>,
     theme: Res<UITheme>,
-    labels: Query<(&Label, &mut TextComponent)>,
+    labels: Query<(&Label, &mut UIText)>,
 ) {
     let chatter = if project.busy() || scenes.status.is_empty() {
         project.status.clone()

@@ -8,4 +8,5 @@ license.workspace = true
 
 [dependencies]
 concerto-editable-macros.workspace = true
+concerto-color.workspace = true
 glam = "0.30.1"

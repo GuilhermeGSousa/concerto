@@ -40,7 +40,7 @@ fn query_mutations_and_replacements_are_observed_without_touching_other_componen
     let read_at = world.current_tick();
     let mut system = mutate.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
     world.tick();
     assert!(world.has_component_changed_since(entity, TypeId::of::<Value>(), read_at));
     assert!(!world.has_component_changed_since(entity, TypeId::of::<Other>(), read_at));

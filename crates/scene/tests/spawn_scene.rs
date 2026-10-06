@@ -94,7 +94,7 @@ fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
 
     let mut system = spawn_fixture_scene.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
 
     let output = world
         .get_resource::<SpawnOutput>()
@@ -145,7 +145,7 @@ fn spawned_nodes_carry_their_authored_name() {
 
     let mut system = spawn_fixture_scene.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
 
     let entities = world
         .get_resource::<SpawnOutput>()
@@ -278,7 +278,7 @@ fn spawner_expands_nodes_and_upgrades_weak_handles() {
 
     let mut system = spawn_scene_components.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
 
     assert!(
         world

@@ -9,6 +9,7 @@ use concerto_ecs::{
     resource::{Res, Resource},
     Changed,
 };
+use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
@@ -37,7 +38,7 @@ const MAX_LIGHTS: usize = 128;
 /// outside that same tick — resolved to either a real layer index or `-1`.
 const SHADOW_LAYER_REQUESTED: i32 = -2;
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Editable, Serialize, Deserialize)]
 pub struct Light {
     pub color: Color,
     pub intensity: f32,
@@ -52,6 +53,12 @@ pub struct Light {
 impl SceneComponent for Light {
     fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
         ctx.insert(self, entity);
+    }
+}
+
+impl Default for Light {
+    fn default() -> Self {
+        Self::point_light()
     }
 }
 
@@ -147,6 +154,20 @@ pub enum LightType {
     Point,
     Spot { cone_angle: f32 },
     Directional,
+}
+
+impl Editable for LightType {
+    fn visit(&self, visitor: &mut dyn PropertyVisitor) {
+        if let LightType::Spot { cone_angle } = self {
+            visitor.field("cone_angle", cone_angle);
+        }
+    }
+
+    fn visit_mut(&mut self, visitor: &mut dyn PropertyVisitorMut) {
+        if let LightType::Spot { cone_angle } = self {
+            visitor.field("cone_angle", cone_angle);
+        }
+    }
 }
 
 impl LightType {

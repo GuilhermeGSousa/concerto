@@ -1,5 +1,4 @@
 //! One scene preview, replaced only after the next asset has loaded successfully.
-//! Temporary inspector changes live in ECS; this editor never saves them.
 use std::{path::PathBuf, thread::JoinHandle};
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
@@ -28,8 +27,7 @@ pub struct SceneRoot {
     pub address: String,
 }
 
-/// Shared presentation summary for the scene hierarchy and Chatter. The scene
-/// editor entity owns the actual preview and pending worker.
+/// Shared presentation summary for the scene hierarchy and Chatter.
 #[derive(Resource, Default)]
 pub struct SceneState {
     pub status: String,
@@ -148,7 +146,6 @@ fn update_scenes(
                 .worker
                 .join()
                 .unwrap_or_else(|_| Err("Scene worker failed".into()));
-            // Validate again before queuing any changes to the old preview.
             if crate::asset_editor::asset_request_is_current(&doc, job.request, project.generation)
             {
                 match result {
@@ -207,19 +204,19 @@ mod tests {
     fn process_editor_commands(world: &mut World) {
         let mut system = crate::asset_editor::process_editor_commands.into_system();
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
     }
     fn update_scenes(world: &mut World) {
         let mut system = super::update_scenes.into_system();
         system.initialize(world);
-        system.run_and_apply(world);
+        system.run_and_apply((), world);
         let mut reset = (|mut commands: ResMut<crate::viewport::ViewportCommands>,
                           mut fly: ResMut<crate::viewport::FlyCamera>| {
             crate::viewport::apply_workspace_navigation(&mut commands, &mut fly);
         })
         .into_system();
         reset.initialize(world);
-        reset.run_and_apply(world);
+        reset.run_and_apply((), world);
     }
     use crate::asset_editor::{
         ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,

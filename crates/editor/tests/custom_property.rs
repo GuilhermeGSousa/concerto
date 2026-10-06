@@ -5,19 +5,18 @@ mod example;
 use concerto_app::App;
 use concerto_ecs::{
     Component, Entity, IntoSystem, Res, ResMut, Resource, System, World, command::CommandQueue,
-    events::event_channel::EventChannel,
 };
 use concerto_editable::{Editable, PropertyPath};
 use concerto_editor::inspector::{
     EditError, InspectorRegistry, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRowValue, apply_property_commit, apply_property_commits,
 };
-use concerto_ui::{interaction::UIClick, text::TextComponent, theme::UITheme};
+use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
 
-#[derive(Component, Editable)]
+#[derive(Component, Editable, Default)]
 struct Container {
     setting: Setting,
     gain: f32,
@@ -197,8 +196,6 @@ fn replacing_an_adapter_invalidates_old_edits_even_for_the_same_adapter_type() {
     let old = property(&world, a);
     let edit = commit(&world, a, SettingEdit::Toggle);
     world.tick();
-    // Registering through `ResMut` stamps the registry, which is what tells
-    // rows captured earlier that they are stale.
     ResMut::<InspectorRegistry>::new(world.as_unsafe_world_cell_mut())
         .register_property_editor::<Setting, SettingEditor>(SettingEditor);
     assert_ne!(old.registry_tick(), property(&world, a).registry_tick());
@@ -291,10 +288,9 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         property: property(&world, a),
         target: a,
     });
-    world.insert_resource(EventChannel::<UIClick>::default());
     let mut build = build_widget.into_system();
     build.initialize(&mut world);
-    build.run_and_apply(&mut world);
+    build.run_and_apply((), &mut world);
     let mut query = world.query::<(Entity, &SettingButton), ()>();
     let (button, row) = query
         .iter(&mut world)
@@ -303,22 +299,18 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         .unwrap();
     assert!(
         world
-            .get_component_for_entity::<TextComponent>(button)
+            .get_component_for_entity::<UIText>(button)
             .unwrap()
             .text
             .contains("Off")
     );
-    world
-        .get_resource_mut::<EventChannel<UIClick>>()
-        .unwrap()
-        .push_event(UIClick {
-            entity: button,
+    world.trigger_on(
+        button,
+        UIClick {
             position: glam::Vec2::ZERO,
             button: MouseButton::Left,
-        });
-    let mut click = example::click_settings.into_system();
-    click.initialize(&mut world);
-    click.run_and_apply(&mut world);
+        },
+    );
     assert_eq!(world.get_resource::<PropertyCommits>().unwrap().0.len(), 1);
     apply_property_commits(&mut world);
     assert!(
@@ -341,10 +333,10 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
         .unwrap() = refreshed;
     let mut refresh = example::refresh_settings.into_system();
     refresh.initialize(&mut world);
-    refresh.run_and_apply(&mut world);
+    refresh.run_and_apply((), &mut world);
     assert!(
         world
-            .get_component_for_entity::<TextComponent>(button)
+            .get_component_for_entity::<UIText>(button)
             .unwrap()
             .text
             .contains("On")

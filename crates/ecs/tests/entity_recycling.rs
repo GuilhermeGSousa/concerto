@@ -32,7 +32,7 @@ fn a_reserved_entity_carries_no_components_before_it_is_spawned() {
 
     let mut probe = probe.into_system();
     probe.initialize(&mut world);
-    probe.run_and_apply(&mut world);
+    probe.run_and_apply((), &mut world);
 
     let mut stale = world.query::<&StaleLookup, ()>();
     assert_eq!(

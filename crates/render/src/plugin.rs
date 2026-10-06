@@ -37,7 +37,7 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_ecs::{resource::Resource, IntoSetConfig, IntoSystemConfig, World};
 use std::sync::{Arc, Mutex};
-use wgpu::{Adapter, Device, Instance, MemoryHints, Queue};
+use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
 
 #[doc(hidden)]
 pub struct RenderResources {

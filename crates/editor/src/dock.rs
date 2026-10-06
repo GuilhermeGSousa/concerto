@@ -1,21 +1,12 @@
 //! The shell's skeleton: named regions overlaid on a full-bleed scene.
-//!
-//! Nothing here knows what Warren or the ECS inspector is. Panels declare an id,
-//! a title and a region; the dock places the regions and hands each panel a body
-//! entity to build into.
-//!
-//! The topology is a constant. Panels move between regions by changing their
-//! declaration, never by dragging — which is what lets shortcuts and muscle
-//! memory mean something.
 use std::collections::HashMap;
 
 use concerto_app::{App, Plugin, schedule_groups::Startup};
 use concerto_ecs::{Entity, Res, ResMut, Resource, command::CommandQueue, system::NonSendMarker};
 use concerto_ui::{
+    elements::prelude::*,
     interaction::Interactable,
-    material::UIMaterial,
-    node::{UIInset, UINode, UIRect},
-    text::TextComponent,
+    node::{UIInset, UINode},
     theme::UITheme,
     transform::UIValue,
 };
@@ -24,17 +15,11 @@ use taffy::{FlexDirection, Position};
 /// Where a panel sits over the scene.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Region {
-    /// Full-bleed, behind everything else. The scene itself.
     Scene,
-    /// Top strip, flush left — what is open.
     Brand,
-    /// Top strip, flush right — running costs.
     Stats,
-    /// Left rail. Panels stack, sharing its height.
     Rail,
-    /// Right card.
     Side,
-    /// Centre foot, stacked above the bottom edge.
     Foot,
 }
 
@@ -48,14 +33,12 @@ impl Region {
         Region::Foot,
     ];
 
-    /// Whether the region's panels are floating cards rather than bare chrome.
     fn is_card(self) -> bool {
         matches!(self, Region::Rail | Region::Side)
     }
 }
 
-/// A panel's declaration. Data only: building is the panel's own business, done
-/// by a `Startup` system that looks its body up by id.
+/// A panel's declaration.
 #[derive(Clone, Copy)]
 pub struct PanelDescriptor {
     pub id: &'static str,
@@ -82,9 +65,7 @@ impl PanelRegistry {
         self.panels.push(panel);
     }
 
-    /// The node every region is placed over, once the dock has run. Anything
-    /// that has to sit above the whole shell rather than inside one panel — a
-    /// window resize grip, say — belongs here.
+    /// The node every region is placed over, once the dock has run.
     pub fn root(&self) -> Option<Entity> {
         self.root
     }
@@ -129,21 +110,14 @@ impl Plugin for DockPlugin {
     }
 }
 
-/// Gap from the window edge, in logical pixels.
 const MARGIN: f32 = 18.0;
-/// Height of the top strip.
 const TOP: f32 = 34.0;
-/// Height of the band above the cards: the top strip plus its margin. This is
-/// the window's title area, even though nothing draws a title bar.
+/// Height of the band above the cards.
 pub const TOP_STRIP: f32 = TOP + MARGIN;
-/// Width of the left rail.
 const RAIL: f32 = 238.0;
-/// Width of the right card.
 const SIDE: f32 = 290.0;
 
 fn build_dock(
-    // `set_title` sends the window a message and waits for its thread to
-    // answer; from a worker that wait never ends on Windows.
     _: NonSendMarker,
     mut cmd: CommandQueue,
     mut registry: ResMut<PanelRegistry>,
@@ -155,18 +129,13 @@ fn build_dock(
         .window_handle
         .set_min_inner_size(Some(winit::dpi::PhysicalSize::new(900, 600)));
 
-    // The root is the scene's ground. Panels are absolutely positioned over it,
-    // so the scene keeps the whole window rather than a centre column.
     let root = cmd
-        .spawn((
-            UINode {
-                width: UIValue::Percent(100.0),
-                height: UIValue::Percent(100.0),
-                ..Default::default()
-            }
-            .clipped(),
-            UIMaterial::flat(theme.canvas),
-        ))
+        .spawn(
+            theme
+                .canvas()
+                .size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+                .clipped(),
+        )
         .entity();
 
     registry.root = Some(root);
@@ -183,92 +152,69 @@ fn build_dock(
     }
 }
 
-/// Places one region over the scene.
-///
-/// Every region but [`Region::Scene`] is absolutely positioned, so adding or
-/// removing one never reflows another — the whole point of an overlay.
 fn spawn_region(cmd: &mut CommandQueue, root: Entity, region: Region, theme: &UITheme) -> Entity {
     let rail_top = TOP + MARGIN;
     let node = match region {
-        Region::Scene => UINode {
-            width: UIValue::Percent(100.0),
-            height: UIValue::Percent(100.0),
-            position: Position::Absolute,
-            ..Default::default()
-        },
-        // Both top strips size to their own text now.
-        Region::Brand => UINode {
-            height: UIValue::Px(TOP),
-            position: Position::Absolute,
-            inset: UIInset {
+        Region::Scene => UINode::default()
+            .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
+            .with_position(Position::Absolute),
+        Region::Brand => UINode::default()
+            .with_height(UIValue::Px(TOP))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(MARGIN),
                 left: UIValue::Px(MARGIN),
                 right: UIValue::Px(340.0),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Row,
-            ..Default::default()
-        },
-        Region::Stats => UINode {
-            height: UIValue::Px(TOP),
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Row),
+        Region::Stats => UINode::default()
+            .with_height(UIValue::Px(TOP))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(MARGIN),
                 right: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Row,
-            ..Default::default()
-        },
-        // One rail holding both cards, so flex splits the height between them
-        // rather than each guessing an offset the other has to agree with.
-        Region::Rail => UINode {
-            width: UIValue::Px(RAIL),
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Row),
+        Region::Rail => UINode::default()
+            .with_width(UIValue::Px(RAIL))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(rail_top),
                 left: UIValue::Px(MARGIN),
                 bottom: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Column,
-            gap: glam::Vec2::new(0.0, 10.0),
-            ..Default::default()
-        },
-        Region::Side => UINode {
-            width: UIValue::Px(SIDE),
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Column)
+            .with_gap(glam::Vec2::new(0.0, 10.0)),
+        Region::Side => UINode::default()
+            .with_width(UIValue::Px(SIDE))
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 top: UIValue::Px(rail_top),
                 right: UIValue::Px(MARGIN),
                 bottom: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Column,
-            ..Default::default()
-        },
-        Region::Foot => UINode {
-            position: Position::Absolute,
-            inset: UIInset {
+            })
+            .with_flex_direction(FlexDirection::Column),
+        Region::Foot => UINode::default()
+            .with_position(Position::Absolute)
+            .with_inset(UIInset {
                 left: UIValue::Px(RAIL + MARGIN * 2.0),
                 right: UIValue::Px(SIDE + MARGIN * 2.0),
                 bottom: UIValue::Px(MARGIN),
                 ..Default::default()
-            },
-            flex_direction: FlexDirection::Column,
-            gap: glam::Vec2::new(0.0, 8.0),
-            ..Default::default()
-        },
+            })
+            .with_flex_direction(FlexDirection::Column)
+            .with_gap(glam::Vec2::new(0.0, 8.0)),
     };
 
-    let entity = cmd.spawn(node.clipped()).entity();
-    cmd.add_child(root, entity);
+    let entity = cmd.entity(root).spawn_child_queue(node.clipped()).entity();
     let _ = theme;
     entity
 }
 
-/// Gives each panel in a region a body to build into, with a card title where
-/// the region wants one.
 fn fill_region(
     cmd: &mut CommandQueue,
     container: Entity,
@@ -278,57 +224,38 @@ fn fill_region(
 ) -> Vec<(&'static str, Entity)> {
     let mut bodies = Vec::with_capacity(panels.len());
     for panel in panels {
-        let body = cmd
-            .spawn(
-                UINode {
-                    flex_grow: 1.0,
-                    flex_shrink: 1.0,
-                    flex_direction: FlexDirection::Column,
-                    padding: if region.is_card() {
-                        UIRect::all(theme.spacing_md)
-                    } else {
-                        UIRect::default()
-                    },
-                    ..Default::default()
-                }
-                .clipped(),
+        let mut container_queue = cmd.entity(container);
+        let mut body_queue = if region.is_card() {
+            container_queue.spawn_child_queue(
+                theme
+                    .panel()
+                    .grow()
+                    .column()
+                    .padding(theme.spacing_md)
+                    .clipped(),
             )
-            .entity();
-        cmd.add_child(container, body);
+        } else {
+            container_queue.spawn_child_queue(
+                UINode::default()
+                    .with_flex_grow(1.0)
+                    .with_flex_direction(FlexDirection::Column)
+                    .clipped(),
+            )
+        };
+        let body = body_queue.entity();
         if region != Region::Scene {
-            cmd.insert(Interactable, body);
+            body_queue.insert(Interactable);
         }
-
         if region.is_card() {
-            // Each panel is its own glass card; stacking two in the rail then
-            // needs no divider.
-            cmd.insert(
-                UIMaterial {
-                    corner_radius: theme.radius_lg,
-                    ..UIMaterial::flat(theme.surface)
-                },
-                body,
+            body_queue.add_child(
+                theme
+                    .label(panel.title.to_uppercase())
+                    .small()
+                    .muted()
+                    .weight(crate::fonts::MEDIUM)
+                    .height(UIValue::Px(16.0))
+                    .fixed(),
             );
-            let title = cmd
-                .spawn((
-                    UINode {
-                        height: UIValue::Px(16.0),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        // Nocturne sets these kickers in caps; the shaper has no
-                        // letter-spacing control, so the text carries the case.
-                        text: panel.title.to_uppercase(),
-                        font_weight: crate::fonts::MEDIUM,
-                        font_size: theme.font_size_sm,
-                        line_height: theme.line_height(theme.font_size_sm),
-                        color: theme.text_muted,
-                        ..Default::default()
-                    },
-                ))
-                .entity();
-            cmd.add_child(body, title);
         }
         bodies.push((panel.id, body));
     }
@@ -408,7 +335,7 @@ mod tests {
         world.insert_resource(Built::default());
         let mut system = build_every_region.into_system();
         system.initialize(&mut world);
-        system.run_and_apply(&mut world);
+        system.run_and_apply((), &mut world);
 
         let built = &world.get_resource::<Built>().unwrap().0;
         assert_eq!(built.len(), Region::ALL.len());

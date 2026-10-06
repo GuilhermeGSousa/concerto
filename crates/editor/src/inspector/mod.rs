@@ -10,12 +10,11 @@ use concerto_ecs::{
 use std::any::TypeId;
 
 use concerto_editable::PropertyPath;
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
-    material::UIMaterial,
     node::{UILayout, UINode, UIRect},
     scroll::UIScrollArea,
-    text::TextComponent,
     theme::UITheme,
     transform::UIValue,
 };
@@ -25,15 +24,23 @@ use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::scene::SceneRoot;
 use crate::selection::Selection;
 
+mod add_component;
+mod component_menu;
+mod edits;
 mod numeric;
 mod registry;
 mod rows;
 mod sync;
 
+use add_component::{
+    add_highlighted_component, clear_add_component_search, populate_add_component_menu,
+};
+pub use edits::{ComponentEdit, ComponentEdits, apply_component_edit, apply_component_edits};
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
 use concerto_foundation::transform::Transform;
+use concerto_render::components::{camera::Camera, light::Light};
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields,
     select_numeric_field_on_focus,
@@ -67,7 +74,6 @@ fn label_for(path: &PropertyPath) -> String {
 #[derive(Component)]
 struct DetailsView;
 
-/// The scrolling column that holds one card per component.
 #[derive(Component, Debug, Default)]
 struct ComponentStack {
     target: Option<Entity>,
@@ -83,20 +89,27 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(InspectorScroll::default());
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
-        app.register_editable::<Transform>();
+        app.insert_resource(ComponentEdits::default());
+        app.register_editable::<Transform>()
+            .register_editable::<Light>()
+            .register_inspectable::<Camera>();
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
             region: Region::Side,
         });
         app.add_system(Startup, build_panel);
-        app.add_system(Update, apply_property_commits);
+        app.add_system(Update, apply_property_commits)
+            .add_system(Update, apply_component_edits);
         app.add_system(LateUpdate, select_numeric_field_on_focus)
             .add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(LateUpdate, add_highlighted_component)
+            .add_system(LateUpdate, clear_add_component_search)
+            .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)
             .add_system(LateUpdate, sync_inspector_scroll);
     }
@@ -119,15 +132,6 @@ fn collect_inspector_data(
     }
 }
 
-fn text(theme: &UITheme, value: &str) -> TextComponent {
-    TextComponent {
-        text: value.into(),
-        font_size: theme.font_size_md,
-        line_height: theme.line_height(theme.font_size_md),
-        ..Default::default()
-    }
-}
-
 fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(body) = registry.body(PANEL_ID) {
         spawn_panel(&mut cmd, body, &theme);
@@ -135,54 +139,32 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 }
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
-    let details = cmd
-        .spawn(
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                gap: glam::Vec2::new(0.0, theme.spacing_sm),
-                ..Default::default()
-            }
-            .clipped(),
-        )
-        .entity();
-    cmd.add_child(parent, details);
+    cmd.entity(parent)
+        .add_child_with(theme.column().grow().clipped(), |details| {
+            details.add_child_with(
+                (
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .clipped(),
+                    Interactable,
+                    DetailsView,
+                ),
+                |mut view| {
+                    let stack = view
+                        .spawn_child_queue((
+                            theme.column().fixed().gap(theme.spacing_xs + 2.0),
+                            ComponentStack::default(),
+                        ))
+                        .entity();
 
-    // Components are unbounded, so the stack scrolls rather than pushing the
-    // close button off the card.
-    let view = cmd
-        .spawn((
-            UINode {
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Column,
-                ..Default::default()
-            }
-            .clipped(),
-            Interactable,
-            DetailsView,
-        ))
-        .entity();
-    cmd.add_child(details, view);
-
-    let stack = cmd
-        .spawn((
-            UINode {
-                flex_shrink: 0.0,
-                flex_direction: FlexDirection::Column,
-                gap: glam::Vec2::new(0.0, theme.spacing_xs + 2.0),
-                ..Default::default()
-            },
-            ComponentStack::default(),
-        ))
-        .entity();
-    cmd.add_child(view, stack);
-    cmd.insert(
-        UIScrollArea {
-            content: Some(stack),
-            ..Default::default()
-        },
-        view,
-    );
+                    view.insert(UIScrollArea {
+                        content: Some(stack),
+                        ..Default::default()
+                    });
+                },
+            );
+        });
 }
 
 fn sync_inspector_scroll(

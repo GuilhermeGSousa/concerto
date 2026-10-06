@@ -37,7 +37,6 @@ fn setup() -> (App, Entity, Entity) {
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(UITheme::default());
     app.insert_resource(HoveredNode::default());
-    app.register_event::<UIClick>();
     app.register_event::<WindowEvent>();
     app.register_plugin(TabsPlugin);
     let world = app.main_mut().world_mut();
@@ -113,18 +112,15 @@ fn tabs_build_in_order_inside_scroll_content_and_route_clicks() {
         .find(|(_, close)| close.document == earlier)
         .unwrap()
         .0;
-    let clicks = world.get_resource_mut::<EventChannel<UIClick>>().unwrap();
-    clicks.push_event(UIClick {
-        entity: children[1],
-        position: Vec2::ZERO,
-        button: MouseButton::Left,
-    });
-    clicks.push_event(UIClick {
-        entity: close,
-        position: Vec2::ZERO,
-        button: MouseButton::Left,
-    });
-    tick(&mut app);
+    for target in [children[1], close] {
+        world.trigger_on(
+            target,
+            UIClick {
+                position: Vec2::ZERO,
+                button: MouseButton::Left,
+            },
+        );
+    }
     let commands = app.get_resource_mut::<AssetEditorCommands>().unwrap();
     assert!(
         matches!(commands.0.pop_front(), Some(AssetEditorCommand::Activate(entity)) if entity == later)

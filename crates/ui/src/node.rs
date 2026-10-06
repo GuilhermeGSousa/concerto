@@ -99,12 +99,14 @@ impl UIRect {
     }
 }
 
+impl From<f32> for UIRect {
+    /// The same value on all four sides.
+    fn from(value: f32) -> Self {
+        Self::all(value)
+    }
+}
+
 /// Offsets of a positioned node from its parent's edges.
-///
-/// Each side is independent and defaults to [`UIValue::Auto`], which is what
-/// makes `UIInset { right: Px(18.0), ..Default::default() }` mean "18 from the
-/// right and wherever the layout puts it otherwise". A plain length rect cannot
-/// express that: a zero on the opposite side pins the node there instead.
 #[derive(Default, Clone, Copy, Debug, PartialEq)]
 pub struct UIInset {
     pub top: UIValue,
@@ -158,7 +160,6 @@ impl UIBox {
     }
 }
 
-// User defined layout data
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UINode {
     pub width: UIValue,
@@ -187,22 +188,132 @@ pub struct UINode {
 }
 
 impl UINode {
-    /// Whether both axes are pinned, so no amount of text can resize this node.
-    ///
-    /// A per-frame-changing label on a rigid node — a readout, a counter — would
-    /// otherwise invalidate the whole layout pass every frame for a size that
-    /// cannot move.
     fn is_rigid(&self) -> bool {
         matches!(self.width, UIValue::Px(_) | UIValue::Percent(_))
             && matches!(self.height, UIValue::Px(_) | UIValue::Percent(_))
     }
 
-    /// Clips descendants to this node's box on both axes. Containers that own a
-    /// fixed region of the screen need this: without it, children that no
-    /// longer fit keep painting over their neighbours.
+    /// Clips descendants to this node's box on both axes.
     pub fn clipped(mut self) -> Self {
         self.overflow_x = Overflow::Hidden;
         self.overflow_y = Overflow::Hidden;
+        self
+    }
+
+    pub fn with_width(mut self, width: UIValue) -> Self {
+        self.width = width;
+        self
+    }
+
+    pub fn with_height(mut self, height: UIValue) -> Self {
+        self.height = height;
+        self
+    }
+
+    pub fn with_size(self, width: UIValue, height: UIValue) -> Self {
+        self.with_width(width).with_height(height)
+    }
+
+    pub fn with_min_width(mut self, min_width: UIValue) -> Self {
+        self.min_width = min_width;
+        self
+    }
+
+    pub fn with_min_height(mut self, min_height: UIValue) -> Self {
+        self.min_height = min_height;
+        self
+    }
+
+    pub fn with_min_size(self, min_width: UIValue, min_height: UIValue) -> Self {
+        self.with_min_width(min_width).with_min_height(min_height)
+    }
+
+    pub fn with_max_width(mut self, max_width: UIValue) -> Self {
+        self.max_width = max_width;
+        self
+    }
+
+    pub fn with_max_height(mut self, max_height: UIValue) -> Self {
+        self.max_height = max_height;
+        self
+    }
+
+    pub fn with_max_size(self, max_width: UIValue, max_height: UIValue) -> Self {
+        self.with_max_width(max_width).with_max_height(max_height)
+    }
+
+    pub fn with_flex_direction(mut self, flex_direction: FlexDirection) -> Self {
+        self.flex_direction = flex_direction;
+        self
+    }
+
+    pub fn with_flex_grow(mut self, flex_grow: f32) -> Self {
+        self.flex_grow = flex_grow;
+        self
+    }
+
+    pub fn with_flex_shrink(mut self, flex_shrink: f32) -> Self {
+        self.flex_shrink = flex_shrink;
+        self
+    }
+
+    pub fn with_gap(mut self, gap: Vec2) -> Self {
+        self.gap = gap;
+        self
+    }
+
+    pub fn with_align_items(mut self, align_items: AlignItems) -> Self {
+        self.align_items = Some(align_items);
+        self
+    }
+
+    pub fn with_align_self(mut self, align_self: AlignItems) -> Self {
+        self.align_self = Some(align_self);
+        self
+    }
+
+    pub fn with_justify_content(mut self, justify_content: AlignContent) -> Self {
+        self.justify_content = Some(justify_content);
+        self
+    }
+
+    pub fn with_padding(mut self, padding: UIRect) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn with_margin(mut self, margin: UIRect) -> Self {
+        self.margin = margin;
+        self
+    }
+
+    pub fn with_position(mut self, position: Position) -> Self {
+        self.position = position;
+        self
+    }
+
+    pub fn with_inset(mut self, inset: UIInset) -> Self {
+        self.inset = inset;
+        self
+    }
+
+    pub fn with_visible(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
+    }
+
+    pub fn with_overflow_x(mut self, overflow_x: Overflow) -> Self {
+        self.overflow_x = overflow_x;
+        self
+    }
+
+    pub fn with_overflow_y(mut self, overflow_y: Overflow) -> Self {
+        self.overflow_y = overflow_y;
+        self
+    }
+
+    pub fn with_z_index(mut self, z_index: i32) -> Self {
+        self.z_index = z_index;
         self
     }
 
@@ -257,7 +368,6 @@ fn dimension(value: UIValue) -> Dimension {
     match value {
         UIValue::Auto => Dimension::auto(),
         UIValue::Px(value) => Dimension::length(value),
-        // Taffy works in fractions; `UIValue::Percent` is on a 0-100 scale.
         UIValue::Percent(value) => Dimension::percent(value / 100.0),
     }
 }
@@ -307,9 +417,6 @@ pub struct UILayoutDiagnostics {
 }
 
 /// What the layout pass needs to know to measure one text node.
-///
-/// A snapshot rather than a borrow, because Taffy holds the context for the
-/// duration of the solve while the query that produced it is long since done.
 pub(crate) struct TextMeasure {
     text: String,
     font_size: f32,
@@ -318,23 +425,14 @@ pub(crate) struct TextMeasure {
     weight: u16,
     italic: bool,
     wrap: bool,
-    /// Not part of the measured size, but it decides whether the node may be
-    /// laid out narrower than that size.
     ellipsis: bool,
     signature: u64,
 }
 
 /// Shapes text so the layout pass can size nodes to their content.
-///
-/// Text is the one thing Taffy cannot size on its own: it has no idea what a
-/// glyph is. Without this, any node hugging a label collapses to its padding,
-/// which is why buttons, tabs, pills and strips all had to carry hard-coded
-/// dimensions.
 #[derive(Resource)]
-pub struct UITextMeasure {
+pub(crate) struct UITextMeasure {
     font_system: glyphon::FontSystem,
-    /// Taffy asks for the same node at several widths while solving, so a
-    /// measured size is worth keeping for the rest of the pass.
     cache: HashMap<(u64, u32), Vec2>,
 }
 
@@ -346,7 +444,6 @@ impl UITextMeasure {
         }
     }
 
-    /// Size of `measure`'s text when laid out into `width`, in logical pixels.
     fn measure(&mut self, measure: &TextMeasure, width: Option<f32>) -> Vec2 {
         let key = (measure.signature, width.map_or(u32::MAX, f32::to_bits));
         if let Some(size) = self.cache.get(&key) {
@@ -383,8 +480,6 @@ impl UITextMeasure {
             widest = widest.max(run.line_w);
             lines += 1.0;
         }
-        // Ceil the width: a fractional advance that Taffy floors would clip the
-        // last glyph, and a hair of slack never shows.
         let size = Vec2::new(widest.ceil(), lines * measure.line_height);
         self.cache.insert(key, size);
         size
@@ -406,8 +501,6 @@ pub(crate) fn text_attrs(
         FontFamily::SansSerif => glyphon::Family::SansSerif,
         FontFamily::Serif => glyphon::Family::Serif,
         FontFamily::Monospace => glyphon::Family::Monospace,
-        // Interned rather than leaked: this runs per text node per frame, so
-        // leaking a fresh copy of the name would grow without bound.
         FontFamily::Name(name) => glyphon::Family::Name(intern_family(&name)),
     };
     glyphon::Attrs::new()
@@ -420,10 +513,6 @@ pub(crate) fn text_attrs(
         })
 }
 
-/// Interns a family name for the lifetime of the process.
-///
-/// `glyphon::Attrs<'static>` needs a `&'static str`, and the set of family
-/// names an application uses is small and fixed.
 fn intern_family(name: &str) -> &'static str {
     static NAMES: std::sync::Mutex<Option<std::collections::HashSet<&'static str>>> =
         std::sync::Mutex::new(None);
@@ -486,9 +575,6 @@ pub(crate) struct RenderUINode {
     pub(crate) vertex_buffer: Buffer,
     source_rect: UIBox,
     clip_rect: UIBox,
-    /// Physical surface the baked NDC vertices were computed against. Vertices
-    /// are stored in NDC, so a surface resize invalidates them even when the
-    /// node's logical rect is unchanged.
     surface: (u32, u32, u64),
     pub(crate) z_index: i64,
 }
@@ -502,7 +588,7 @@ pub(crate) struct RenderUIMaterial {
 pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
     ui_roots: Query<(Entity, &UINode, Option<&Children>), Without<ChildOf>>,
-    texts: Query<&crate::text::TextComponent>,
+    texts: Query<&crate::text::UIText>,
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
@@ -534,8 +620,6 @@ pub(crate) fn compute_ui_nodes(
         .map(|(entity, node, _)| (entity, node.clone()))
         .collect::<Vec<_>>();
     styles.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
-    // Text is part of the layout now, so a changed label has to invalidate the
-    // pass exactly as a changed style does.
     let mut text_snapshot = ui_nodes
         .iter()
         .filter(|(_, node, _)| !node.is_rigid())
@@ -579,12 +663,6 @@ pub(crate) fn compute_ui_nodes(
     engine.logical_size = logical_size;
     engine.scale_factor = scale_factor;
 
-    // Taffy's compact style representation is deliberately !Send/!Sync, so it
-    // cannot live in an ECS Resource. Keep the structural signature retained
-    // for invalidation diagnostics while the short-lived solver stays local to
-    // this system invocation.
-    // Sizes are only valid for this pass: the text they were measured from may
-    // have changed, which is what got us here.
     measurer.clear();
 
     let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
@@ -625,9 +703,6 @@ pub(crate) fn compute_ui_nodes(
     }
     diagnostics.layout_passes += 1;
 
-    // Phase 2: walk each root and accumulate absolute screen positions as we
-    // descend.  Taffy's `layout().location` is relative to the parent, so we
-    // must add the parent's absolute position at every level.
     let window_clip = UIBox {
         min: Vec2::ZERO,
         size: logical_size,
@@ -744,7 +819,6 @@ pub(crate) fn compute_ui_nodes(
     }
 }
 
-/// What Taffy asks of one measured leaf, answered in logical pixels.
 fn measure_node(
     measurer: &mut UITextMeasure,
     known: Size<Option<f32>>,
@@ -754,14 +828,11 @@ fn measure_node(
     let Some(measure) = context else {
         return Size::ZERO;
     };
-    // An explicit size wins outright; there is nothing to work out.
     if let (Some(width), Some(height)) = (known.width, known.height) {
         return Size { width, height };
     }
     let constraint = match (known.width, available.width) {
         (Some(width), _) => Some(width),
-        // Min-content asks how narrow this can get, which for wrapped text is
-        // its longest unbreakable word; max-content asks for one long line.
         (None, AvailableSpace::Definite(width)) => Some(width),
         (None, AvailableSpace::MinContent) => Some(0.0),
         (None, AvailableSpace::MaxContent) => None,
@@ -773,8 +844,7 @@ fn measure_node(
     }
 }
 
-/// A node's measure context, when it carries text.
-fn text_context(texts: &Query<&crate::text::TextComponent>, entity: Entity) -> Option<TextMeasure> {
+fn text_context(texts: &Query<&crate::text::UIText>, entity: Entity) -> Option<TextMeasure> {
     let text = texts.get_entity(entity)?;
     Some(TextMeasure {
         signature: text_measure_signature(text),
@@ -789,8 +859,7 @@ fn text_context(texts: &Query<&crate::text::TextComponent>, entity: Entity) -> O
     })
 }
 
-/// Everything that changes a text node's measured size.
-fn text_measure_signature(text: &crate::text::TextComponent) -> u64 {
+fn text_measure_signature(text: &crate::text::UIText) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.text.hash(&mut hasher);
@@ -811,11 +880,10 @@ fn text_measure_signature(text: &crate::text::TextComponent) -> u64 {
     hasher.finish()
 }
 
-/// Adds one node, giving it a measure context when it carries text.
 fn new_node(
     taffy: &mut TaffyTree<TextMeasure>,
     node: &UINode,
-    texts: &Query<&crate::text::TextComponent>,
+    texts: &Query<&crate::text::UIText>,
     entity: Entity,
 ) -> Result<NodeId, taffy::TaffyError> {
     match text_context(texts, entity) {
@@ -824,13 +892,6 @@ fn new_node(
     }
 }
 
-/// The style of a node carrying text.
-///
-/// A label that ellipsises is allowed to be narrower than its text — that is
-/// what the ellipsis is for — so it opts out of the flex automatic minimum
-/// size, exactly as `min-width: 0` does in CSS. Without this it pushes the row
-/// holding it wider than the panel, and the text spills out instead of ending
-/// in an ellipsis.
 fn text_leaf_style(node: &UINode, measure: &TextMeasure) -> Style {
     let mut style = node.style();
     if measure.ellipsis && !measure.wrap && matches!(node.min_width, UIValue::Auto) {
@@ -839,13 +900,12 @@ fn text_leaf_style(node: &UINode, measure: &TextMeasure) -> Style {
     style
 }
 
-/// Iteratively registers descendants, avoiding call-stack growth for deep trees.
 fn build_taffy_tree(
     taffy: &mut TaffyTree<TextMeasure>,
     parent_id: NodeId,
     children: &Children,
     ui_nodes: &Query<(Entity, &UINode, Option<&Children>)>,
-    texts: &Query<&crate::text::TextComponent>,
+    texts: &Query<&crate::text::UIText>,
     entity_to_taffy: &mut HashMap<Entity, NodeId>,
 ) {
     let mut stack = vec![(parent_id, children.iter().copied().collect::<Vec<_>>())];
@@ -870,11 +930,6 @@ fn build_taffy_tree(
     }
 }
 
-/// Iteratively writes [`UILayout`] with absolute logical coordinates
-/// for every node in the subtree rooted at `children`.
-///
-/// `parent_origin` is the absolute screen position of the parent so we can
-/// convert each child's parent-relative `location` to an absolute position.
 fn write_absolute_positions(
     taffy: &TaffyTree<TextMeasure>,
     parent_origin: Vec2,
@@ -912,8 +967,6 @@ fn write_absolute_positions(
             continue;
         };
 
-        // layout.location is relative to the parent — add the parent's
-        // absolute position to obtain the screen-space position.
         let abs_pos = origin + Vec2::new(layout.location.x, layout.location.y);
         let size = Vec2::new(layout.size.width, layout.size.height);
         let Some((_, node, grand_children)) = ui_nodes.get_entity(child_entity) else {
@@ -997,15 +1050,8 @@ pub(crate) fn extract_ui_nodes(
     let scale = window.scale_factor() as f32;
     let surface = (window.width(), window.height(), scale.to_bits() as u64);
 
-    // Convert pixel coordinates to Normalized Device Coordinates (NDC).
-    // Screen space: (0,0) = top-left corner, Y increases downward.
-    // NDC space:    (-1,-1) = bottom-left, (+1,+1) = top-right, Y increases upward.
-    let to_ndc = |px: f32, py: f32| -> [f32; 2] {
-        [
-            (px / win_w) * 2.0 - 1.0, // map [0, width]  → [-1, +1]
-            1.0 - (py / win_h) * 2.0, // map [0, height] → [+1, -1] (flip Y)
-        ]
-    };
+    let to_ndc =
+        |px: f32, py: f32| -> [f32; 2] { [(px / win_w) * 2.0 - 1.0, 1.0 - (py / win_h) * 2.0] };
 
     for (computed_node, render_entity) in computed_nodes.iter() {
         let draw_rect = computed_node.rect.intersection(computed_node.clip_rect);
@@ -1041,19 +1087,19 @@ pub(crate) fn extract_ui_nodes(
             UIVertex {
                 pos_coords: to_ndc(x, y),
                 uv: relative_min.into(),
-            }, // top-left
+            },
             UIVertex {
                 pos_coords: to_ndc(x, y + h),
                 uv: [relative_min.x, relative_max.y],
-            }, // bottom-left
+            },
             UIVertex {
                 pos_coords: to_ndc(x + w, y + h),
                 uv: relative_max.into(),
-            }, // bottom-right
+            },
             UIVertex {
                 pos_coords: to_ndc(x + w, y),
                 uv: [relative_max.x, relative_min.y],
-            }, // top-right
+            },
         ];
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -1081,14 +1127,6 @@ pub(crate) fn extract_ui_nodes(
 }
 
 /// Syncs the user-facing material fields into the GPU-side uniforms each frame.
-///
-/// `border_params` carries the node's measured size because the shader needs
-/// pixels to round corners and inset borders at any scale; `flags` carries
-/// whether a texture is bound, because the dummy texture bound in its absence
-/// reads as zeros and would otherwise multiply the fill away.
-///
-/// Runs in `LateUpdate` after `compute_ui_nodes`. Writing these marks the
-/// material changed, so `extract_ui_materials` rebuilds the bind group.
 pub(crate) fn sync_material_params(nodes: Query<(&UILayout, &mut UIMaterial)>) {
     for (node, mut material) in nodes.iter() {
         let params = [
@@ -1111,20 +1149,12 @@ pub(crate) fn sync_material_params(nodes: Query<(&UILayout, &mut UIMaterial)>) {
 }
 
 /// Shows a camera's render target on this node.
-///
-/// A thin convenience over [`UIMaterial::texture`]: a camera renders into a
-/// texture asset like any other, so displaying one is just binding its handle.
-/// Attach alongside [`UINode`] and [`UIMaterial`]; the `texture` must be the
-/// same handle passed to [`Camera::render_target`].
 #[derive(Component)]
 pub struct UIViewport {
     pub texture: AssetHandle<Texture>,
 }
 
 /// Copies a viewport's handle into its material.
-///
-/// Runs in `LateUpdate`, before the layout and extract passes read the
-/// material, so a viewport added this frame is bound this frame.
 pub(crate) fn sync_viewport_textures(viewports: Query<(&UIViewport, &mut UIMaterial)>) {
     for (viewport, mut material) in viewports.iter() {
         if material
@@ -1138,11 +1168,6 @@ pub(crate) fn sync_viewport_textures(viewports: Query<(&UIViewport, &mut UIMater
 }
 
 /// Extracts [`UIMaterial`] changes into GPU-side [`RenderUIMaterial`] bind groups.
-///
-/// The bind group is created via [`UIMaterial::create_bind_group`] — the same
-/// macro-generated method that is used to verify bind-group layout compatibility
-/// — so the layout used here is always consistent with the one used to build the
-/// UI render pipeline.
 pub(crate) fn extract_ui_materials(
     computed_nodes: Extracted<Query<(&UIMaterial, &RenderEntity)>>,
     device: Res<RenderDevice>,
@@ -1154,9 +1179,6 @@ pub(crate) fn extract_ui_materials(
     mut cmd: CommandQueue,
 ) {
     for (node_material, render_entity) in computed_nodes.iter() {
-        // A texture the store has not prepared yet would bind the dummy, and the
-        // signature would not change afterwards — so the node would stay bound to
-        // an empty texture forever. Wait for it instead.
         if node_material
             .texture
             .as_ref()
@@ -1216,9 +1238,6 @@ fn material_signature(
         material.flags[1].to_bits(),
         material.flags[2].to_bits(),
         material.flags[3].to_bits(),
-        // The bind group holds the texture view, so it must be rebuilt both
-        // when the handle changes and when the texture behind the handle does —
-        // a render target is reallocated whenever its camera resizes.
         material.texture.as_ref().map_or(0, |handle| {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1255,10 +1274,7 @@ mod tests {
 
     #[test]
     fn hidden_nodes_map_to_display_none() {
-        let node = UINode {
-            visible: false,
-            ..Default::default()
-        };
+        let node = UINode::default().with_visible(false);
         assert_eq!(node.style().display, Display::None);
     }
 
@@ -1266,7 +1282,6 @@ mod tests {
     fn percentages_use_a_zero_to_hundred_scale() {
         assert_eq!(dimension(UIValue::Percent(100.0)), Dimension::percent(1.0));
         assert_eq!(dimension(UIValue::Percent(25.0)), Dimension::percent(0.25));
-        // No fractional heuristic: one is one percent, not one hundred.
         assert_eq!(dimension(UIValue::Percent(1.0)), Dimension::percent(0.01));
     }
 
@@ -1280,10 +1295,7 @@ mod tests {
             min: Vec2::new(25.0, 30.0),
             size: Vec2::new(50.0, 40.0),
         };
-        let node = UINode {
-            overflow_x: Overflow::Hidden,
-            ..Default::default()
-        };
+        let node = UINode::default().with_overflow_x(Overflow::Hidden);
         assert_eq!(
             node_clip(rect, inherited, &node),
             UIBox {
@@ -1300,7 +1312,7 @@ mod tests {
     }
 
     fn label(text: &str) -> TextMeasure {
-        let component = crate::text::TextComponent {
+        let component = crate::text::UIText {
             text: text.into(),
             font_size: 14.0,
             line_height: 20.0,
@@ -1320,26 +1332,19 @@ mod tests {
         }
     }
 
-    /// Lays a label out inside a row of `row_width`, returning the width it
-    /// ended up with.
     fn label_width_in_row(mut measure: TextMeasure, ellipsis: bool, row_width: f32) -> f32 {
         measure.ellipsis = ellipsis;
         let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
-        let node = UINode {
-            flex_grow: 1.0,
-            ..Default::default()
-        };
+        let node = UINode::default().with_flex_grow(1.0);
         let label = taffy
             .new_leaf_with_context(text_leaf_style(&node, &measure), measure)
             .unwrap();
         let row = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(row_width),
-                    flex_direction: FlexDirection::Row,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_width(UIValue::Px(row_width))
+                    .with_flex_direction(FlexDirection::Row)
+                    .style(),
                 &[label],
             )
             .unwrap();
@@ -1359,49 +1364,41 @@ mod tests {
         taffy.layout(label).unwrap().size.width
     }
 
-    /// Two cards sharing a rail, each holding a scrolling viewport over `rows`
-    /// rows. Returns the height each card ended up with.
     fn card_heights(rows: f32, content_position: Position) -> (f32, f32) {
         let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
         let mut card = || {
             let pool = taffy
                 .new_leaf(
-                    UINode {
-                        height: UIValue::Px(rows * 32.0),
-                        flex_shrink: 0.0,
-                        position: content_position,
-                        inset: UIInset {
+                    UINode::default()
+                        .with_height(UIValue::Px(rows * 32.0))
+                        .with_flex_shrink(0.0)
+                        .with_position(content_position)
+                        .with_inset(UIInset {
                             left: UIValue::Px(0.0),
                             right: UIValue::Px(0.0),
                             top: UIValue::Px(0.0),
                             ..Default::default()
-                        },
-                        ..Default::default()
-                    }
-                    .style(),
+                        })
+                        .style(),
                 )
                 .unwrap();
             let view = taffy
                 .new_with_children(
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .clipped()
-                    .style(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .clipped()
+                        .style(),
                     &[pool],
                 )
                 .unwrap();
             taffy
                 .new_with_children(
-                    UINode {
-                        flex_grow: 1.0,
-                        flex_shrink: 1.0,
-                        flex_direction: FlexDirection::Column,
-                        ..Default::default()
-                    }
-                    .style(),
+                    UINode::default()
+                        .with_flex_grow(1.0)
+                        .with_flex_shrink(1.0)
+                        .with_flex_direction(FlexDirection::Column)
+                        .style(),
                     &[view],
                 )
                 .unwrap()
@@ -1409,13 +1406,10 @@ mod tests {
         let (first, second) = (card(), card());
         let rail = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(238.0),
-                    height: UIValue::Px(600.0),
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_size(UIValue::Px(238.0), UIValue::Px(600.0))
+                    .with_flex_direction(FlexDirection::Column)
+                    .style(),
                 &[first, second],
             )
             .unwrap();
@@ -1438,9 +1432,6 @@ mod tests {
         )
     }
 
-    /// The bug this guards: the scroll content used to sit in flow, so a taller
-    /// list grew its card and a scrolled one shrank it. Panels then collapsed as
-    /// the viewport and its content chased each other frame after frame.
     #[test]
     fn a_scroll_viewport_does_not_take_its_size_from_its_content() {
         let (short, tall) = (
@@ -1460,31 +1451,24 @@ mod tests {
         );
     }
 
-    /// Reproduces the panel structure: a clipped view, a column pool, a row of
-    /// [fixed toggle, fixed glyph, growing label].
     #[test]
     fn a_long_label_does_not_widen_the_row_inside_a_scroll_pool() {
         let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
         let mut measure = label("content/UAL1/scene.gasset");
         measure.ellipsis = true;
-        let label_node = UINode {
-            flex_grow: 1.0,
-            padding: UIRect::axes(6.0, 8.0),
-            ..Default::default()
-        };
+        let label_node = UINode::default()
+            .with_flex_grow(1.0)
+            .with_padding(UIRect::axes(6.0, 8.0));
         let label_id = taffy
             .new_leaf_with_context(text_leaf_style(&label_node, &measure), measure)
             .unwrap();
         let fixed = |taffy: &mut TaffyTree<TextMeasure>, width: f32| {
             taffy
                 .new_leaf(
-                    UINode {
-                        width: UIValue::Px(width),
-                        // Icon columns hold their width; only the label gives.
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    }
-                    .style(),
+                    UINode::default()
+                        .with_width(UIValue::Px(width))
+                        .with_flex_shrink(0.0)
+                        .style(),
                 )
                 .unwrap()
         };
@@ -1492,37 +1476,30 @@ mod tests {
         let glyph = fixed(&mut taffy, 20.0);
         let row = taffy
             .new_with_children(
-                UINode {
-                    height: UIValue::Px(32.0),
-                    flex_shrink: 0.0,
-                    flex_direction: FlexDirection::Row,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_height(UIValue::Px(32.0))
+                    .with_flex_shrink(0.0)
+                    .with_flex_direction(FlexDirection::Row)
+                    .style(),
                 &[toggle, glyph, label_id],
             )
             .unwrap();
         let pool = taffy
             .new_with_children(
-                UINode {
-                    flex_direction: FlexDirection::Column,
-                    flex_shrink: 0.0,
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_flex_direction(FlexDirection::Column)
+                    .with_flex_shrink(0.0)
+                    .style(),
                 &[row],
             )
             .unwrap();
         let view = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(197.0),
-                    height: UIValue::Px(300.0),
-                    flex_direction: FlexDirection::Column,
-                    ..Default::default()
-                }
-                .clipped()
-                .style(),
+                UINode::default()
+                    .with_size(UIValue::Px(197.0), UIValue::Px(300.0))
+                    .with_flex_direction(FlexDirection::Column)
+                    .clipped()
+                    .style(),
                 &[pool],
             )
             .unwrap();
@@ -1550,24 +1527,17 @@ mod tests {
         );
     }
 
-    /// The widths a row of grown text fields ends up with, one per `texts`.
-    ///
-    /// Reproduces an inspector property row: a fixed label column followed by
-    /// fields that share what is left of the row.
     fn field_widths(texts: &[&str], basis: UIValue) -> Vec<f32> {
         let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
         let fields: Vec<_> = texts
             .iter()
             .map(|text| {
                 let measure = label(text);
-                let node = UINode {
-                    flex_grow: 1.0,
-                    width: basis,
-                    height: UIValue::Px(28.0),
-                    padding: UIRect::axes(0.0, 4.0),
-                    ..Default::default()
-                }
-                .clipped();
+                let node = UINode::default()
+                    .with_flex_grow(1.0)
+                    .with_size(basis, UIValue::Px(28.0))
+                    .with_padding(UIRect::axes(0.0, 4.0))
+                    .clipped();
                 taffy
                     .new_leaf_with_context(text_leaf_style(&node, &measure), measure)
                     .unwrap()
@@ -1576,25 +1546,21 @@ mod tests {
         let mut children = vec![
             taffy
                 .new_leaf(
-                    UINode {
-                        width: UIValue::Px(72.0),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    }
-                    .style(),
+                    UINode::default()
+                        .with_width(UIValue::Px(72.0))
+                        .with_flex_shrink(0.0)
+                        .style(),
                 )
                 .unwrap(),
         ];
         children.extend(fields.iter().copied());
         let row = taffy
             .new_with_children(
-                UINode {
-                    width: UIValue::Px(260.0),
-                    flex_direction: FlexDirection::Row,
-                    gap: Vec2::new(4.0, 0.0),
-                    ..Default::default()
-                }
-                .style(),
+                UINode::default()
+                    .with_width(UIValue::Px(260.0))
+                    .with_flex_direction(FlexDirection::Row)
+                    .with_gap(Vec2::new(4.0, 0.0))
+                    .style(),
                 &children,
             )
             .unwrap();
@@ -1617,10 +1583,6 @@ mod tests {
             .collect()
     }
 
-    /// The bug this guards: a text field with an automatic flex basis takes its
-    /// width from its own content, so typing into one of a row of fields — the
-    /// caret counts as content too — widened it and squeezed its neighbours.
-    /// Nothing a field holds may move its edges.
     #[test]
     fn a_row_of_grown_fields_keeps_equal_widths_whatever_they_contain() {
         let uneven = ["0.000", "-1284.375", "7.5"];
@@ -1630,8 +1592,6 @@ mod tests {
             field_widths(&["0.000"; 3], UIValue::Px(0.0)),
             "a field's width must not depend on its text"
         );
-        // Free space that does not divide evenly leaves a pixel somewhere; what
-        // matters is that it is a pixel of rounding and not a word of text.
         assert!(
             widths
                 .windows(2)
@@ -1646,8 +1606,6 @@ mod tests {
         );
     }
 
-    /// Uniforms live in the bind group, so a slot the signature ignored would
-    /// leave a rotated shape drawn at its old angle.
     #[test]
     fn the_rotation_slot_is_part_of_the_material_signature() {
         use crate::material::UIMaterial;
@@ -1742,11 +1700,11 @@ mod tests {
 
     #[test]
     fn a_changed_label_invalidates_its_measurement() {
-        let before = text_measure_signature(&crate::text::TextComponent {
+        let before = text_measure_signature(&crate::text::UIText {
             text: "Warren".into(),
             ..Default::default()
         });
-        let after = text_measure_signature(&crate::text::TextComponent {
+        let after = text_measure_signature(&crate::text::UIText {
             text: "Curiosities".into(),
             ..Default::default()
         });

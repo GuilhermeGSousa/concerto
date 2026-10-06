@@ -8,7 +8,7 @@ use concerto_ui::anchor::{
     PanelRects, UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack,
     panels_to_close, place, track_panel_stack,
 };
-use concerto_ui::focus::{FocusedWidget, UIFocusLost};
+use concerto_ui::focus::{FocusedWidget, UIFocusGained, UIFocusLost};
 use concerto_ui::node::{UIBox, UINode};
 use glam::Vec2;
 
@@ -19,17 +19,13 @@ fn anchor(min: Vec2, size: Vec2) -> UIBox {
 }
 
 fn panel(side: UIAnchorSide, align: UIAnchorAlign) -> UIAnchoredPanel {
-    UIAnchoredPanel {
-        target: UIAnchorTarget::Point {
-            position: Vec2::ZERO,
-        },
-        owner: None,
-        side,
-        align,
-        gap: 4.0,
-        open: true,
-        ..Default::default()
-    }
+    UIAnchoredPanel::new(UIAnchorTarget::Point {
+        position: Vec2::ZERO,
+    })
+    .with_side(side)
+    .with_align(align)
+    .with_gap(4.0)
+    .with_open(true)
 }
 
 #[test]
@@ -329,13 +325,14 @@ fn stack_world() -> World {
     world.insert_resource(UIPanelStack::default());
     world.insert_resource(FocusedWidget::default());
     world.insert_resource(EventChannel::<UIFocusLost>::default());
+    world.insert_resource(EventChannel::<UIFocusGained>::default());
     world
 }
 
 fn run(world: &mut World) {
     let mut system = track_panel_stack.into_system();
     system.initialize(world);
-    system.run_and_apply(world);
+    system.run_and_apply((), world);
 }
 
 fn node(world: &mut World) -> Entity {
@@ -344,16 +341,10 @@ fn node(world: &mut World) -> Entity {
 
 fn open_panel(world: &mut World, owner: Entity, target: UIAnchorTarget) -> Entity {
     world.spawn((
-        UINode {
-            visible: false,
-            ..Default::default()
-        },
-        UIAnchoredPanel {
-            target,
-            owner: Some(owner),
-            open: true,
-            ..Default::default()
-        },
+        UINode::default().with_visible(false),
+        UIAnchoredPanel::new(target)
+            .with_owner(owner)
+            .with_open(true),
     ))
 }
 
@@ -591,11 +582,7 @@ fn a_node_target_with_no_rect_has_nothing_to_anchor_to() {
 fn a_dropdown_that_named_no_owner_is_still_exempt_from_its_own_trigger() {
     let mut world = World::default();
     let trigger = node(&mut world);
-    let spec = UIAnchoredPanel {
-        target: UIAnchorTarget::Node { entity: trigger },
-        open: true,
-        ..Default::default()
-    };
+    let spec = UIAnchoredPanel::new(UIAnchorTarget::Node { entity: trigger }).with_open(true);
     assert_eq!(spec.press_exempt_entity(), Some(trigger));
 
     let trigger_rect = anchor(Vec2::new(100.0, 60.0), Vec2::new(120.0, 30.0));
@@ -614,14 +601,11 @@ fn a_dropdown_that_named_no_owner_is_still_exempt_from_its_own_trigger() {
 fn an_owned_panel_keeps_exempting_its_owner_not_its_target() {
     let mut world = World::default();
     let row = node(&mut world);
-    let spec = UIAnchoredPanel {
-        target: UIAnchorTarget::Point {
-            position: Vec2::new(500.0, 300.0),
-        },
-        owner: Some(row),
-        open: true,
-        ..Default::default()
-    };
+    let spec = UIAnchoredPanel::new(UIAnchorTarget::Point {
+        position: Vec2::new(500.0, 300.0),
+    })
+    .with_owner(row)
+    .with_open(true);
     assert_eq!(spec.press_exempt_entity(), Some(row));
 }
 
@@ -756,5 +740,46 @@ fn focus_outside_every_panel_is_left_alone() {
         **world.get_resource::<FocusedWidget>().unwrap(),
         Some(trigger),
         "the trigger is not inside the panel, so closing it says nothing about focus"
+    );
+}
+
+#[test]
+fn opening_a_panel_focuses_its_focus_on_open_widget_once() {
+    let mut world = stack_world();
+    let trigger = node(&mut world);
+    let field = node(&mut world);
+    let menu = world.spawn((
+        UINode::default().with_visible(false),
+        UIAnchoredPanel::new(UIAnchorTarget::Node { entity: trigger })
+            .with_owner(trigger)
+            .with_focus_on_open(field),
+    ));
+    world.insert(ChildOf::new(menu), field);
+    run(&mut world);
+    assert_eq!(
+        **world.get_resource::<FocusedWidget>().unwrap(),
+        None,
+        "a closed panel does not take focus"
+    );
+
+    world
+        .get_component_for_entity_mut::<UIAnchoredPanel>(menu)
+        .unwrap()
+        .open = true;
+    run(&mut world);
+    assert_eq!(
+        **world.get_resource::<FocusedWidget>().unwrap(),
+        Some(field),
+        "opening the panel hands the keyboard to its field"
+    );
+
+    let mut focused = FocusedWidget::default();
+    *focused = Some(trigger);
+    world.insert_resource(focused);
+    run(&mut world);
+    assert_eq!(
+        **world.get_resource::<FocusedWidget>().unwrap(),
+        Some(trigger),
+        "focus moves only on the frame the panel opens, not every frame it stays open"
     );
 }

@@ -223,7 +223,7 @@ impl ExecutorState {
             let task = async move {
                 {
                     profiling::scope!(sys.name());
-                    unsafe { sys.run_unsafe(world_cell) };
+                    unsafe { sys.run_unsafe((), world_cell) };
                 }
                 context.system_completed(system_index);
             };
@@ -311,6 +311,8 @@ mod tests {
     }
 
     impl System for NonSendProbe {
+        type In = ();
+
         fn name(&self) -> &'static str {
             "NonSendProbe"
         }
@@ -321,7 +323,7 @@ mod tests {
             meta.set_non_send();
         }
 
-        unsafe fn run_unsafe(&mut self, _world: UnsafeWorldCell) {
+        unsafe fn run_unsafe(&mut self, _args: Self::In, _world: UnsafeWorldCell) {
             if self.running.swap(true, Ordering::SeqCst) {
                 self.overlapped.store(true, Ordering::SeqCst);
             }

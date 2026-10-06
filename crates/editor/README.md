@@ -21,7 +21,10 @@ an empty viewport. Switching projects closes all editors. Tabs scroll
 horizontally with the wheel or trackpad, and the active tab is revealed.
 
 The scene hierarchy supports selection, filtering, expansion, and keyboard
-navigation. The inspector uses typed property adapters. Right-drag looks around;
+navigation. The inspector uses typed property adapters. Its "add component" row
+adds any `register_editable` component the entity lacks, at its `Default` value;
+a card's ⋯ menu removes one. `register_inspectable` components, such as `Camera`,
+are edited and removed but never offered. Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the
 wheel dollies or adjusts flight speed while looking. F frames the selection;
 Shift-F frames the scene.

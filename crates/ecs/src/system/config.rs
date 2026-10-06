@@ -2,9 +2,12 @@ use std::any::TypeId;
 
 use typle::typle;
 
-use crate::system::{
-    BoxedSystem, IntoSystem,
-    set::{InternedSystemSet, SystemSet},
+use crate::{
+    System,
+    system::{
+        BoxedSystem, IntoSystem,
+        set::{InternedSystemSet, SystemSet},
+    },
 };
 
 /// A system or [`SystemSet`] that another system can be ordered against.
@@ -27,7 +30,7 @@ pub trait IntoDependencyTarget<Marker> {
     fn into_target(self) -> DependencyTarget;
 }
 
-impl<M, S: IntoSystem<M> + 'static> IntoDependencyTarget<SystemTarget<M>> for S {
+impl<M, S: IntoSystem<(), M> + 'static> IntoDependencyTarget<SystemTarget<M>> for S {
     fn into_target(self) -> DependencyTarget {
         let system = self.into_system();
         DependencyTarget::System {
@@ -178,10 +181,10 @@ pub trait IntoSystemConfig<Marker>: Sized {
     }
 }
 
-impl<M, F: IntoSystem<M> + 'static> IntoSystemConfig<M> for F {
+impl<M, F: IntoSystem<(), M> + 'static> IntoSystemConfig<M> for F {
     fn into_config(self) -> SystemConfig {
         SystemConfig(SystemNode::Single(SystemEntry {
-            system: self.into_system(),
+            system: self.into_boxed_system(),
             config: NodeConfig::default(),
         }))
     }
