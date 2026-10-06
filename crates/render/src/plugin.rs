@@ -118,9 +118,9 @@ impl RenderPlugin {
                 &wgpu::DeviceDescriptor {
                     required_features: wgpu::Features::empty(),
                     required_limits: if cfg!(target_arch = "wasm32") {
-                        Limits {
+                        wgpu::Limits {
                             max_color_attachments: adapter.limits().max_color_attachments,
-                            ..Limits::downlevel_webgl2_defaults()
+                            ..wgpu::Limits::downlevel_webgl2_defaults()
                         }
                         .using_resolution(adapter.limits())
                     } else {

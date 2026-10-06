@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base data-trunk-public-url />
+    <title>Still Life</title>
+    <style type="text/css">
+        html, body {
+            margin: 0;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas:focus {
+            outline: none;
+        }
+
+        #loading {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #8a8070;
+            font: italic 18px/1.4 Georgia, "Times New Roman", serif;
+            letter-spacing: 0.05em;
+            pointer-events: none;
+            z-index: 10;
+            background: #000;
+        }
+    </style>
+</head>
+
+<body data-want-lock="0">
+    <div id="loading">Unlocking Marrow House…</div>
+    <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z"
+        data-wasm-opt-params="--enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-reference-types --enable-multivalue" />
+    <script>
+        function canvas() { return document.querySelector("canvas"); }
+        var loading = document.getElementById("loading");
+
+        function fail(message) {
+            if (document.body.dataset.failed) return;
+            document.body.dataset.failed = "1";
+            loading.style.whiteSpace = "pre-line";
+            loading.style.textAlign = "center";
+            loading.style.letterSpacing = "0.05em";
+            loading.textContent = message;
+            if (!loading.isConnected) document.body.appendChild(loading);
+            var c = canvas();
+            if (c) c.style.display = "none";
+        }
+        var probe = document.createElement("canvas");
+        if (!probe.getContext("webgl2")) {
+            fail("The door will not open.\n\nthis browser has no WebGL2.\ntry a recent Chrome, Firefox, Edge or Safari,\nand check hardware acceleration is enabled.");
+        }
+        var consoleError = console.error;
+        console.error = function () {
+            consoleError.apply(console, arguments);
+            var text = Array.prototype.join.call(arguments, " ");
+            if (text.indexOf("panicked at") !== -1) {
+                fail("SOMETHING WENT WRONG\n\nthe game crashed while running.\nreloading the page usually helps.\n(details are in the browser console)");
+            }
+        };
+
+        document.addEventListener("pointerdown", function () {
+            var c = canvas();
+            if (!c) return;
+            c.focus();
+            if (document.body.dataset.wantLock === "1" && !document.pointerLockElement
+                && document.body.dataset.lockFailed !== "1") {
+                var request = c.requestPointerLock();
+                if (request && request.catch) request.catch(function () {});
+            }
+        }, true);
+        document.addEventListener("pointerlockerror", function () {
+            document.body.dataset.lockFailed = "1";
+        });
+        document.addEventListener("contextmenu", function (e) { e.preventDefault(); });
+
+        function ready() {
+            if (document.body.dataset.failed) return;
+            loading.remove();
+        }
+        new MutationObserver(function () {
+            var c = canvas();
+            if (c && !c.hasAttribute("tabindex")) c.setAttribute("tabindex", "0");
+            if (document.body.dataset.ready === "1") ready();
+        }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["data-ready"] });
+        setTimeout(ready, 60000);
+    </script>
+</body>
+
+</html>

@@ -31,7 +31,7 @@ tracy = ["profiling/profile-with-tracy"]
 crate-type = ["cdylib", "rlib"]
 
 [workspace]
-members = ["crates/*", "examples/*"]
+members = ["crates/*", "examples/*", "games/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -44,6 +44,7 @@ license = "MIT"
 [workspace.dependencies]
 concerto-animation = { path = "crates/animation", version = "0.1.0" }
 concerto-app = { path = "crates/app", version = "0.1.0" }
+concerto-audio = { path = "crates/audio", version = "0.1.0" }
 concerto-asset-build = { path = "crates/asset-build", version = "0.1.0" }
 concerto-asset-format = { path = "crates/asset-format", version = "0.1.0" }
 concerto-asset-import = { path = "crates/asset-import", version = "0.1.0" }
@@ -82,6 +83,7 @@ warnings = "deny"
 profiling = "1"
 concerto-app.workspace = true
 concerto-animation.workspace = true
+concerto-audio.workspace = true
 concerto-foundation.workspace = true
 concerto-render.workspace = true
 concerto-director.workspace = true
