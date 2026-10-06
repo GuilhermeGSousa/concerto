@@ -135,7 +135,13 @@ impl ApplicationHandler for ApplicationWindowHandler {
 
         match event {
             WinitWindowEvent::CloseRequested => {
-                event_loop.exit();
+                if !self
+                    .app
+                    .get_resource::<plugin::InterceptClose>()
+                    .is_some_and(|intercept| intercept.0)
+                {
+                    event_loop.exit();
+                }
             }
             WinitWindowEvent::RedrawRequested => {
                 let event_channel = self

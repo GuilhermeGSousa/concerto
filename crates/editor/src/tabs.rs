@@ -136,6 +136,11 @@ fn sync_tabs(
                     format!("{} · error", document.title)
                 }
             });
+        let title = if document.is_dirty() {
+            format!("• {title}")
+        } else {
+            title
+        };
         let kind = document
             .pending
             .as_ref()

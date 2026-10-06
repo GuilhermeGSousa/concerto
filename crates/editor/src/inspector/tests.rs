@@ -872,6 +872,75 @@ fn only_registered_components_offer_a_menu() {
 }
 
 #[test]
+fn the_scene_root_wrapper_shows_no_cards() {
+    let (mut world, target, _) = world();
+    world.insert(
+        SceneRoot {
+            asset_id: concerto_foundation::assets::AssetId::new(),
+            address: String::new(),
+        },
+        target,
+    );
+    update(&mut world);
+    assert!(
+        world
+            .get_resource::<InspectorData>()
+            .unwrap()
+            .entity
+            .is_none()
+    );
+    assert!(cards(&mut world).is_empty());
+}
+
+#[test]
+fn an_applied_structural_edit_marks_the_owning_document() {
+    use crate::asset_editor::{EditorDocument, EditorOwned};
+    let (mut world, entity, _) = structural_world();
+    let document = world.spawn(EditorDocument {
+        asset_type: "Scene",
+        title: String::new(),
+        current: None,
+        pending: None,
+        project_generation: 0,
+        request_generation: 0,
+        order: 0,
+        status: String::new(),
+        revision: 0,
+        saved_revision: 0,
+    });
+    world.insert(EditorOwned(document), entity);
+    let gain = TypeId::of::<Gain>();
+    let dirty = |world: &World| {
+        world
+            .get_component_for_entity::<EditorDocument>(document)
+            .unwrap()
+            .is_dirty()
+    };
+
+    world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .push(ComponentEdit::Remove {
+            entity,
+            component: gain,
+        });
+    apply_component_edits(&mut world);
+    assert!(!dirty(&world), "a dropped edit changes nothing");
+
+    world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .push(ComponentEdit::Add {
+            entity,
+            component: gain,
+        });
+    apply_component_edits(&mut world);
+    assert!(dirty(&world));
+}
+
+#[test]
 fn stale_structural_edits_are_dropped() {
     let (mut world, entity, _) = structural_world();
     let gain = TypeId::of::<Gain>();

@@ -14,7 +14,7 @@ use concerto_ui::{
 };
 use concerto_window::input::MouseButton;
 use concerto_window::plugin::{
-    CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
+    Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
 };
 use taffy::Position;
 use winit::window::ResizeDirection;
@@ -281,7 +281,7 @@ fn press_control(
     on: On<UIClick>,
     controls: Query<&Control>,
     window: Res<Window>,
-    mut close: ResMut<CloseRequest>,
+    mut guard: ResMut<crate::guard::UnsavedGuard>,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
@@ -294,7 +294,7 @@ fn press_control(
         Control::Maximise => window
             .window_handle
             .set_maximized(!window.window_handle.is_maximized()),
-        Control::Close => close.0 = true,
+        Control::Close => guard.request_quit(),
     }
 }
 

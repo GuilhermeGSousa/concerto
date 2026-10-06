@@ -123,3 +123,44 @@ fn name_is_the_full_type_path_and_distinguishes_generics() {
         "generic instantiations must not collide on one registry key"
     );
 }
+
+#[test]
+fn resolved_reference_serializes_as_its_index_inside_a_scope() {
+    let mut world = World::default();
+    let first = world.spawn(());
+    let second = world.spawn(());
+    let stranger = world.spawn(());
+    let indices = std::collections::HashMap::from([(first, 0), (second, 1)]);
+
+    let inside = concerto_ecs::component::scene::with_entity_indices(&indices, || {
+        (
+            serde_json::to_string(&SceneEntityRef::Entity(second)).ok(),
+            serde_json::to_string(&SceneEntityRef::Entity(stranger)).ok(),
+        )
+    });
+
+    assert_eq!(inside.0.as_deref(), Some("1"));
+    assert_eq!(
+        inside.1, None,
+        "an entity outside the captured tree must fail rather than serialize"
+    );
+    assert!(
+        serde_json::to_string(&SceneEntityRef::Entity(second)).is_err(),
+        "the map must not outlive its scope"
+    );
+}
+
+#[test]
+fn nested_scopes_restore_the_outer_map() {
+    let mut world = World::default();
+    let entity = world.spawn(());
+    let outer = std::collections::HashMap::from([(entity, 4)]);
+    let inner = std::collections::HashMap::new();
+
+    let after_inner = concerto_ecs::component::scene::with_entity_indices(&outer, || {
+        concerto_ecs::component::scene::with_entity_indices(&inner, || ());
+        serde_json::to_string(&SceneEntityRef::Entity(entity)).ok()
+    });
+
+    assert_eq!(after_inner.as_deref(), Some("4"));
+}

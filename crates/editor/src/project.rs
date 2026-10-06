@@ -18,7 +18,40 @@ pub struct AssetEntry {
     pub kind: String,
     pub display_name: String,
     pub folder: String,
-    pub provenance: ImportProvenance,
+    /// `None` for an asset authored in the editor rather than produced by `import`.
+    pub provenance: Option<ImportProvenance>,
+}
+
+impl AssetEntry {
+    /// Builds an entry whose display name and folder come from its project-relative `address`.
+    pub fn from_address(
+        id: AssetId,
+        address: &str,
+        kind: String,
+        provenance: Option<ImportProvenance>,
+    ) -> Self {
+        let path = Path::new(address);
+        let display_name = path
+            .file_stem()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| address.to_owned());
+        let folder = path
+            .parent()
+            .map(|value| value.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        Self {
+            id,
+            address: address.to_owned(),
+            kind,
+            display_name,
+            folder,
+            provenance,
+        }
+    }
+
+    fn sort_key(&self) -> (&String, &String, &String, &String) {
+        (&self.folder, &self.display_name, &self.kind, &self.address)
+    }
 }
 
 #[derive(Debug)]
@@ -31,6 +64,16 @@ pub struct Project {
 impl Project {
     pub fn scenes(&self) -> impl Iterator<Item = &AssetEntry> {
         self.assets.iter().filter(|asset| asset.kind == "Scene")
+    }
+
+    /// Adds `entry` to the catalogue and registry, replacing any entry with the same id.
+    pub fn insert(&mut self, entry: AssetEntry) {
+        self.registry.insert(entry.id, entry.address.clone());
+        self.assets.retain(|asset| asset.id != entry.id);
+        let at = self
+            .assets
+            .partition_point(|asset| asset.sort_key() < entry.sort_key());
+        self.assets.insert(at, entry);
     }
 
     pub fn filtered_assets<'a>(
@@ -103,35 +146,14 @@ pub fn discover_project(root: &Path) -> anyhow::Result<Project> {
     let mut assets = Vec::new();
     for (id, address) in registry.iter() {
         let header = read_content_asset_header(&root.join(address))?;
-        let Some(provenance) = header.provenance else {
-            continue;
-        };
-        let path = Path::new(address);
-        let display_name = path
-            .file_stem()
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_else(|| address.to_owned());
-        let folder = path
-            .parent()
-            .map(|value| value.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_default();
-        assets.push(AssetEntry {
+        assets.push(AssetEntry::from_address(
             id,
-            address: address.to_owned(),
-            kind: header.kind,
-            display_name,
-            folder,
-            provenance,
-        });
+            address,
+            header.kind,
+            header.provenance,
+        ));
     }
-    assets.sort_by(|a, b| {
-        (&a.folder, &a.display_name, &a.kind, &a.address).cmp(&(
-            &b.folder,
-            &b.display_name,
-            &b.kind,
-            &b.address,
-        ))
-    });
+    assets.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
     Ok(Project {
         root,
         assets,
@@ -183,6 +205,11 @@ fn process_commands(
     mut commands: ResMut<EditorCommands>,
     mut state: ResMut<ProjectState>,
     mut documents: ResMut<crate::asset_editor::AssetEditorCommands>,
+    mut guard: ResMut<crate::guard::UnsavedGuard>,
+    open_documents: concerto_ecs::Query<(
+        concerto_ecs::Entity,
+        &crate::asset_editor::EditorDocument,
+    )>,
     asset_server: concerto_ecs::Res<AssetServer>,
 ) {
     if state.job.as_ref().is_some_and(|j| j.is_finished()) {
@@ -201,7 +228,7 @@ fn process_commands(
                     return;
                 }
                 state.status = format!(
-                    "{} imported assets · {} scenes · {}",
+                    "{} assets · {} scenes · {}",
                     project.assets.len(),
                     project.scenes().count(),
                     project.root.display()
@@ -236,6 +263,14 @@ fn process_commands(
                 }
             }
             EditorCommand::OpenProject(path) => {
+                let dirty = crate::guard::dirty_documents(&open_documents);
+                if !dirty.is_empty() {
+                    guard.hold(
+                        crate::guard::GuardedIntent::Project(EditorCommand::OpenProject(path)),
+                        dirty,
+                    );
+                    continue;
+                }
                 state.status = "Opening project…".into();
                 state.job = Some(std::thread::spawn(move || {
                     discover_project(&path)
@@ -254,7 +289,7 @@ mod tests {
         CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset,
     };
     #[test]
-    fn discovers_only_scenes_without_writing_registry() {
+    fn discovers_imported_and_authored_assets_without_writing_registry() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(discover_project(dir.path()).unwrap().scenes().count(), 0);
         std::fs::create_dir(dir.path().join("content")).unwrap();
@@ -281,14 +316,50 @@ mod tests {
             .unwrap();
         }
         let project = discover_project(dir.path()).unwrap();
-        assert_eq!(project.assets.len(), 2);
-        assert_eq!(project.scenes().next().unwrap().id, id);
+        assert_eq!(project.assets.len(), 3);
+        let scenes: Vec<_> = project.scenes().collect();
+        assert_eq!(scenes.len(), 2);
+        assert_eq!(scenes[0].display_name, "authored");
+        assert!(scenes[0].provenance.is_none());
+        assert_eq!(scenes[1].id, id);
+        assert!(scenes[1].provenance.is_some());
         assert_eq!(project.assets[0].folder, "content");
         assert_eq!(project.filtered_assets("mesh", None, None).len(), 1);
-        assert_eq!(project.filtered_assets("", None, Some("Scene")).len(), 1);
+        assert_eq!(project.filtered_assets("", None, Some("Scene")).len(), 2);
         assert_eq!(project.filtered_assets("", Some("missing"), None).len(), 0);
         assert!(!dir.path().join("content/.registry.toml").exists());
     }
+
+    #[test]
+    fn inserting_keeps_the_catalogue_sorted_and_replaces_by_id() {
+        let mut project = Project {
+            root: PathBuf::new(),
+            assets: vec![],
+            registry: AssetRegistry::default(),
+        };
+        let id = AssetId::new();
+        for (id, address) in [
+            (AssetId::new(), "content/b.gasset"),
+            (id, "content/c.gasset"),
+            (AssetId::new(), "content/a.gasset"),
+            (id, "content/a/renamed.gasset"),
+        ] {
+            project.insert(AssetEntry::from_address(id, address, "Scene".into(), None));
+        }
+        let addresses: Vec<_> = project.assets.iter().map(|a| a.address.as_str()).collect();
+        assert_eq!(
+            addresses,
+            [
+                "content/a.gasset",
+                "content/b.gasset",
+                "content/a/renamed.gasset"
+            ]
+        );
+        assert_eq!(project.registry.get(id), Some("content/a/renamed.gasset"));
+        assert_eq!(project.assets[2].display_name, "renamed");
+        assert_eq!(project.assets[2].folder, "content/a");
+    }
+
     #[test]
     fn rejects_non_directory_and_corrupt_content() {
         let dir = tempfile::tempdir().unwrap();

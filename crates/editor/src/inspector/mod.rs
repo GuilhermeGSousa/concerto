@@ -123,7 +123,7 @@ fn collect_inspector_data(
     let mut data = InspectorData::default();
     if let Some(entity) = selection.entity() {
         if let Some(root) = selected.get_entity(entity) {
-            data.entity = Some(entity);
+            data.entity = root.is_none().then_some(entity);
             data.closable_scene = root.map(|_| entity);
         }
     }

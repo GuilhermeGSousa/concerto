@@ -407,8 +407,10 @@ pub fn apply_property_commits(world: &mut World) {
         return;
     };
     for commit in std::mem::take(&mut commits.0) {
-        if let Err(error) = apply_property_commit(world, commit) {
-            log::warn!("Property commit dropped: {error}");
+        let entity = commit.row.entity;
+        match apply_property_commit(world, commit) {
+            Ok(()) => crate::asset_editor::mark_entity_edited(world, entity),
+            Err(error) => log::warn!("Property commit dropped: {error}"),
         }
     }
 }
@@ -486,6 +488,62 @@ mod tests {
                 .0
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn an_applied_commit_marks_the_owning_document_and_a_dropped_one_does_not() {
+        use crate::asset_editor::{EditorDocument, EditorOwned};
+        let (mut world, entity) = world();
+        let document = world.spawn(EditorDocument {
+            asset_type: "Scene",
+            title: String::new(),
+            current: None,
+            pending: None,
+            project_generation: 0,
+            request_generation: 0,
+            order: 0,
+            status: String::new(),
+            revision: 0,
+            saved_revision: 0,
+        });
+        world.insert(EditorOwned(document), entity);
+        let row = row(&world, entity);
+        let mut stale = row.clone();
+        stale.editor_type = Some(TypeId::of::<u8>());
+        let dirty = |world: &World| {
+            world
+                .get_component_for_entity::<EditorDocument>(document)
+                .unwrap()
+                .is_dirty()
+        };
+
+        world
+            .get_resource_mut::<PropertyCommits>()
+            .unwrap()
+            .0
+            .push(PropertyCommit {
+                row: stale,
+                edit: Box::new(NumericEdit {
+                    slot: 0,
+                    number: 1.0,
+                }),
+            });
+        apply_property_commits(&mut world);
+        assert!(!dirty(&world));
+
+        world
+            .get_resource_mut::<PropertyCommits>()
+            .unwrap()
+            .push::<Vec3, NumericFields>(
+                &row,
+                NumericEdit {
+                    slot: 0,
+                    number: 4.0,
+                },
+            )
+            .unwrap();
+        apply_property_commits(&mut world);
+        assert!(dirty(&world));
     }
 
     #[test]

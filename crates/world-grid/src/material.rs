@@ -12,6 +12,8 @@ pub struct WorldGridUniform {
     pub fade_start: f32,
     pub fade_end: f32,
     pub surface_color: LinearRgba,
+    pub lit: f32,
+    pub _padding: [f32; 3],
 }
 
 #[derive(Asset, AsBindGroup, serde::Serialize, serde::Deserialize)]

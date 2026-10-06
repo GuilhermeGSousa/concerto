@@ -1,23 +1,33 @@
 //! One scene preview, replaced only after the next asset has loaded successfully.
-use std::{path::PathBuf, thread::JoinHandle};
+use std::{
+    path::{Path, PathBuf},
+    thread::JoinHandle,
+};
+
+use anyhow::Context;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{
-    Component, Entity, Query, Resource,
+    Component, Entity, Query, Resource, World,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
 };
 use concerto_foundation::{
-    assets::{Asset, AssetId, content::read_content_asset},
+    assets::{
+        Asset, AssetId,
+        asset_server::AssetServer,
+        content::{read_content_asset, save_content_asset_into},
+    },
     transform::Transform,
 };
-use concerto_scene::{scene::Scene, spawner::spawn_scene};
+use concerto_scene::{capture::capture_scene, scene::Scene, spawner::spawn_scene};
 
 use crate::{
     asset_editor::{
-        AssetEditor, AssetEditorAppExt, EditorDocument, EditorOwned, finish_asset_request,
+        AssetEditor, AssetEditorAppExt, EditorDocument, EditorOwned, SaveRequested,
+        finish_asset_request,
     },
-    project::ProjectState,
+    project::{AssetEntry, ProjectState},
     selection::Selection,
 };
 
@@ -44,6 +54,7 @@ impl SceneState {
 struct SceneEditorState {
     root: Option<Entity>,
     job: Option<SceneJob>,
+    referenced_assets: Vec<AssetId>,
 }
 struct SceneJob {
     request: u64,
@@ -80,7 +91,91 @@ impl Plugin for ScenePlugin {
         app.register_asset_editor::<Scene>(SceneEditor)
             .expect("ScenePlugin requires registered Scene assets and the asset-editor registry");
         app.add_system(Update, update_scenes);
+        app.add_system(Update, save_scenes);
     }
+}
+
+fn save_scenes(world: &mut World) {
+    let requested: Vec<Entity> = world
+        .query::<(Entity, &SaveRequested, &SceneEditorState), ()>()
+        .iter(world)
+        .map(|(editor, _, _)| editor)
+        .collect();
+    for editor in requested {
+        world.remove_component::<SaveRequested>(editor);
+        let status = match save_scene(world, editor) {
+            Ok(address) => format!("Saved {address}"),
+            Err(error) => format!("Save failed: {error:#}"),
+        };
+        if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(editor) {
+            document.status = status;
+        }
+    }
+}
+
+fn save_scene(world: &mut World, editor: Entity) -> anyhow::Result<String> {
+    let state = world
+        .get_component_for_entity::<SceneEditorState>(editor)
+        .context("Not a scene document")?;
+    let root = state.root.context("No scene is open")?;
+    let referenced_assets = state.referenced_assets.clone();
+    let document = world
+        .get_component_for_entity::<EditorDocument>(editor)
+        .context("The document was closed")?;
+    let revision = document.revision;
+    let source = document.current.clone().context("No scene is open")?;
+
+    let mut scene = capture_scene(world, root)?;
+    scene.referenced_assets = referenced_assets;
+
+    let project = world
+        .get_resource_mut::<ProjectState>()
+        .and_then(|state| state.project.as_mut())
+        .context("Open a project before saving")?;
+    let address = if source.provenance.is_some() {
+        authored_address(&project.root, &source)
+    } else {
+        source.address.clone()
+    };
+    let id = save_content_asset_into(&scene, &project.root, &address, &mut project.registry)?;
+    project.registry.save(&project.root)?;
+    let saved = AssetEntry::from_address(id, &address, Scene::name().into(), None);
+    project.insert(saved.clone());
+    let project_root = project.root.clone();
+    let registry = project.registry.clone();
+    if let Some(server) = world.get_resource::<AssetServer>() {
+        server.publish_project_content(&project_root, registry)?;
+    }
+
+    if let Some(scene_root) = world.get_component_for_entity_mut::<SceneRoot>(root) {
+        scene_root.asset_id = id;
+        scene_root.address = address.clone();
+    }
+    if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(editor) {
+        document.title = saved.display_name.clone();
+        document.current = Some(saved);
+        document.mark_saved(revision);
+    }
+    Ok(address)
+}
+
+fn authored_address(root: &Path, source: &AssetEntry) -> String {
+    let extension = Path::new(&source.address)
+        .extension()
+        .map(|extension| extension.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "gasset".into());
+    let stem = if source.folder.is_empty() {
+        format!("{}-level", source.display_name)
+    } else {
+        format!("{}/{}-level", source.folder, source.display_name)
+    };
+    (1..)
+        .map(|attempt| match attempt {
+            1 => format!("{stem}.{extension}"),
+            _ => format!("{stem}-{attempt}.{extension}"),
+        })
+        .find(|address| !root.join(address).exists())
+        .expect("an unbounded range always yields a free address")
 }
 
 fn update_scenes(
@@ -148,6 +243,11 @@ fn update_scenes(
                 .unwrap_or_else(|_| Err("Scene worker failed".into()));
             if crate::asset_editor::asset_request_is_current(&doc, job.request, project.generation)
             {
+                let result = if doc.is_dirty() {
+                    Err("unsaved changes were made while it loaded".into())
+                } else {
+                    result
+                };
                 match result {
                     Ok(scene) => {
                         let asset = doc.pending.as_ref().unwrap();
@@ -166,6 +266,7 @@ fn update_scenes(
                             .entity();
                         spawn_scene(&mut commands, &scene, root);
                         state.root = Some(root);
+                        state.referenced_assets = scene.referenced_assets;
                         selection.select_entity(root);
                         viewport.reset = true;
                         finish_asset_request(&mut doc, job.request, project.generation, Ok(()));
@@ -235,10 +336,10 @@ mod tests {
             kind: Scene::name().into(),
             display_name: name.into(),
             folder: String::new(),
-            provenance: ImportProvenance {
+            provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: name.into(),
-            },
+            }),
         }
     }
     fn fixture(root: &std::path::Path, asset: &AssetEntry) {
@@ -257,7 +358,7 @@ mod tests {
             asset_id: asset.id,
             references: vec![],
             kind: Scene::name().into(),
-            provenance: Some(asset.provenance.clone()),
+            provenance: asset.provenance.clone(),
         };
         std::fs::write(
             root.join(&asset.address),
@@ -269,12 +370,15 @@ mod tests {
         let mut world = World::new();
         world.register_component::<Transform>();
         world.register_component_type::<Transform>();
+        world.register_component::<concerto_ecs::entity::hierarchy::ChildOf>();
+        world.register_component::<concerto_ecs::entity::hierarchy::Children>();
         world.insert_resource(SceneState::default());
         world.insert_resource(crate::viewport::ViewportCommands::default());
         world.insert_resource(crate::viewport::FlyCamera::default());
         world.insert_resource(Selection::default());
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(crate::guard::UnsavedGuard::default());
         let mut registry = AssetEditorRegistry::default();
         registry.register::<Scene>(SceneEditor).unwrap();
         world.insert_resource(registry);
@@ -552,6 +656,203 @@ mod tests {
                 .entity()
                 .is_none()
         );
+    }
+
+    fn save(world: &mut World, editor: Entity) {
+        world.insert(SaveRequested, editor);
+        super::save_scenes(world);
+    }
+    fn node(world: &World, editor: Entity) -> Entity {
+        *world
+            .get_component_for_entity::<concerto_ecs::entity::hierarchy::Children>(root(
+                world, editor,
+            ))
+            .unwrap()
+            .iter()
+            .next()
+            .unwrap()
+    }
+    fn edit(world: &mut World, editor: Entity, x: f32) {
+        let node = node(world, editor);
+        world
+            .get_component_for_entity_mut::<Transform>(node)
+            .unwrap()
+            .translation
+            .x = x;
+        crate::asset_editor::mark_entity_edited(world, node);
+    }
+    fn document(world: &World, editor: Entity) -> &EditorDocument {
+        world
+            .get_component_for_entity::<EditorDocument>(editor)
+            .unwrap()
+    }
+    fn saved_x(dir: &std::path::Path, asset: &AssetEntry) -> f32 {
+        let scene = load_scene(dir.into(), asset.address.clone(), asset.id).unwrap();
+        serde_json::from_str::<Transform>(&scene.nodes[0].components[0].data)
+            .unwrap()
+            .translation
+            .x
+    }
+
+    #[test]
+    fn saving_an_imported_scene_writes_an_authored_copy_and_rebinds_the_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = entry("first");
+        fixture(dir.path(), &a);
+        let import = std::fs::read(dir.path().join(&a.address)).unwrap();
+        let mut world = world(dir.path());
+        let editor = open(&mut world, &a);
+        settle(&mut world, editor);
+        edit(&mut world, editor, 9.0);
+        assert!(document(&world, editor).is_dirty());
+
+        save(&mut world, editor);
+
+        let doc = document(&world, editor);
+        let copy = doc.current.clone().unwrap();
+        assert!(!doc.is_dirty());
+        assert_eq!(doc.status, "Saved first-level.gasset");
+        assert_eq!(doc.title, "first-level");
+        assert_eq!(copy.address, "first-level.gasset");
+        assert_ne!(copy.id, a.id);
+        assert!(copy.provenance.is_none());
+        assert_eq!(
+            std::fs::read(dir.path().join(&a.address)).unwrap(),
+            import,
+            "the import must not be touched"
+        );
+        let header = concerto_foundation::assets::content::read_content_asset_header(
+            &dir.path().join(&copy.address),
+        )
+        .unwrap();
+        assert_eq!(header.asset_id, copy.id);
+        assert!(header.provenance.is_none());
+        assert_eq!(saved_x(dir.path(), &copy), 9.0);
+        assert_eq!(
+            world
+                .get_component_for_entity::<SceneRoot>(root(&world, editor))
+                .unwrap()
+                .asset_id,
+            copy.id
+        );
+        assert!(
+            world
+                .get_component_for_entity::<SaveRequested>(editor)
+                .is_none()
+        );
+        let project = world.get_resource::<ProjectState>().unwrap();
+        assert!(
+            project
+                .project
+                .as_ref()
+                .unwrap()
+                .assets
+                .iter()
+                .any(|asset| asset.id == copy.id)
+        );
+        assert_eq!(
+            AssetRegistry::load(dir.path()).unwrap().get(copy.id),
+            Some("first-level.gasset")
+        );
+    }
+
+    #[test]
+    fn a_second_save_overwrites_the_copy_in_place() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = entry("first");
+        fixture(dir.path(), &a);
+        let mut world = world(dir.path());
+        let editor = open(&mut world, &a);
+        settle(&mut world, editor);
+        edit(&mut world, editor, 1.0);
+        save(&mut world, editor);
+        let copy = document(&world, editor).current.clone().unwrap();
+
+        edit(&mut world, editor, 2.0);
+        save(&mut world, editor);
+
+        let again = document(&world, editor).current.clone().unwrap();
+        assert_eq!(again, copy);
+        assert_eq!(saved_x(dir.path(), &copy), 2.0);
+        assert!(!dir.path().join("first-level-2.gasset").exists());
+        assert!(!document(&world, editor).is_dirty());
+    }
+
+    #[test]
+    fn a_taken_address_gets_a_numeric_suffix() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = entry("first");
+        fixture(dir.path(), &a);
+        std::fs::write(dir.path().join("first-level.gasset"), b"taken").unwrap();
+        std::fs::write(dir.path().join("first-level-2.gasset"), b"taken").unwrap();
+        let mut world = world(dir.path());
+        let editor = open(&mut world, &a);
+        settle(&mut world, editor);
+        edit(&mut world, editor, 1.0);
+
+        save(&mut world, editor);
+
+        assert_eq!(
+            document(&world, editor).current.as_ref().unwrap().address,
+            "first-level-3.gasset"
+        );
+        assert_eq!(
+            std::fs::read(dir.path().join("first-level.gasset")).unwrap(),
+            b"taken"
+        );
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_document_dirty_and_reports_why() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = entry("first");
+        fixture(dir.path(), &a);
+        let mut world = world(dir.path());
+        let editor = open(&mut world, &a);
+        settle(&mut world, editor);
+        edit(&mut world, editor, 1.0);
+        world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .project
+            .as_mut()
+            .unwrap()
+            .root = dir.path().join(&a.address);
+
+        save(&mut world, editor);
+
+        let doc = document(&world, editor);
+        assert!(doc.is_dirty());
+        assert!(doc.status.starts_with("Save failed: "), "{}", doc.status);
+        assert_eq!(doc.current.as_ref().unwrap().id, a.id);
+        assert!(
+            world
+                .get_component_for_entity::<SaveRequested>(editor)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_edit_made_while_a_replacement_loads_cancels_the_replacement() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = entry("first");
+        let b = entry("second");
+        fixture(dir.path(), &a);
+        fixture(dir.path(), &b);
+        let mut world = world(dir.path());
+        let editor = open(&mut world, &a);
+        settle(&mut world, editor);
+        let old = root(&world, editor);
+        open(&mut world, &b);
+        edit(&mut world, editor, 3.0);
+
+        settle(&mut world, editor);
+
+        assert_eq!(root(&world, editor), old);
+        let doc = document(&world, editor);
+        assert_eq!(doc.current.as_ref().unwrap().id, a.id);
+        assert!(doc.is_dirty());
+        assert!(doc.status.contains("unsaved changes"), "{}", doc.status);
     }
 
     #[test]

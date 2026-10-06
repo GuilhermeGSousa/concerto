@@ -39,6 +39,20 @@ define_action!(
     CollapseRow
 );
 
+define_action!(
+    /// Write the active document to disk.
+    Save
+);
+
+define_action!(
+    /// Close the unsaved-changes prompt without acting.
+    DismissPrompt
+);
+
+define_context!(
+    /// Active while the unsaved-changes prompt is open.
+    PromptContext
+);
 define_context!(
     /// Active while the pointer is over the 3D viewport.
     ViewportContext
@@ -57,6 +71,8 @@ impl Plugin for ActionsPlugin {
 }
 
 fn install_default_bindings(mut actions: ResMut<ActionMap>) {
+    actions.bind_global(Save, Shortcut::ctrl(KeyCode::KeyS));
+    actions.bind(DismissPrompt, Shortcut::key(KeyCode::Escape), PromptContext);
     actions.bind(FrameSelected, Shortcut::key(KeyCode::KeyF), ViewportContext);
     actions.bind(
         FrameAll,

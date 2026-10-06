@@ -1,8 +1,8 @@
 # Concerto editor
 
 The engine-native editor uses the engine's ECS, renderer, assets, scene, and UI
-crates. It opens imported content and allows temporary inspector edits. It does
-not import or save assets; importing belongs to the `import` CLI.
+crates. It opens project content, edits scenes through the inspector, and saves
+them. It does not import assets; importing belongs to the `import` CLI.
 
 ```sh
 cargo run -p concerto-editor -- --project examples/render-test
@@ -12,13 +12,29 @@ Add `--decorated` to use the window manager's title bar.
 
 Selecting a supported asset in Curiosities opens its editor tab. Each asset type
 has one editor: another Scene reuses the Scene tab. The old preview, camera,
-selection, and temporary edits remain until its replacement loads successfully.
+selection, and edits remain until its replacement loads successfully.
 A failed replacement preserves them. Selecting the displayed asset cancels a
 pending replacement. Unsupported assets remain selectable without opening a tab.
 
-Closing a tab discards its temporary state. With no tabs open, the editor shows
-an empty viewport. Switching projects closes all editors. Tabs scroll
-horizontally with the wheel or trackpad, and the active tab is revealed.
+With no tabs open, the editor shows an empty viewport. Switching projects closes
+all editors. Tabs scroll horizontally with the wheel or trackpad, and the active
+tab is revealed.
+
+## Saving
+
+An edited document is dirty until it is saved, and its tab shows a dot. Ctrl+S
+saves the active document. A scene that came from `import` is never overwritten:
+its first save writes an authored copy beside it, named `<name>-level`, and the
+tab switches to that copy; later saves overwrite the copy. Re-importing the
+source leaves the copy alone. A failed save reports why in Chatter and leaves
+the document dirty.
+
+Replacing the open scene, closing a dirty tab, switching project, and closing
+the window all ask first when there are unsaved changes: Save, Discard, or
+Cancel. Escape cancels.
+
+The scene root shown in the hierarchy is the editor's wrapper around the scene,
+not part of it, so the inspector shows nothing for it.
 
 The scene hierarchy supports selection, filtering, expansion, and keyboard
 navigation. The inspector uses typed property adapters. Its "add component" row
@@ -89,10 +105,16 @@ Call `finish_asset_request` with a mutable document borrow, the captured request
 generation, the live `ProjectState::generation`, and success or an error to update the tab's current asset and status. Failed loads must leave
 the previous presentation intact.
 
+To take part in saving, call `EditorDocument::mark_edited` when the user changes
+something, or `mark_entity_edited` for an entity under an `EditorOwned` root.
+Ctrl+S and the unsaved-changes prompt add `SaveRequested` to the document: write
+the asset, call `mark_saved` with the revision you captured, and remove the
+marker. On failure remove the marker and leave the document dirty.
+
 Register custom interaction systems in `Update` after `EditorPlugin`; lifecycle
 processing runs before viewport and transform propagation. Workspace visibility
 uses resource change detection and host component changes; tab switches release
 transient input without resetting the camera pose. Loading and
-temporary state belong to the custom editor.
+saving belong to the custom editor.
 Only the Scene editor currently owns a 3D preview; multiple independent 3D
 editor worlds and render suppression are not implemented.

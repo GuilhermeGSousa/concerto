@@ -48,8 +48,10 @@ pub fn apply_component_edits(world: &mut World) {
         return;
     };
     for edit in std::mem::take(&mut edits.0) {
-        if let Err(error) = apply_component_edit(world, edit) {
-            log::warn!("Component edit {edit:?} dropped: {error}");
+        let (ComponentEdit::Add { entity, .. } | ComponentEdit::Remove { entity, .. }) = edit;
+        match apply_component_edit(world, edit) {
+            Ok(()) => crate::asset_editor::mark_entity_edited(world, entity),
+            Err(error) => log::warn!("Component edit {edit:?} dropped: {error}"),
         }
     }
 }

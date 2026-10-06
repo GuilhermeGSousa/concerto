@@ -20,7 +20,6 @@ use concerto_render::{
     assets::texture::Texture,
     components::{
         camera::{Camera, RenderTarget},
-        light::Light,
         render_entity::SyncWithRenderWorld,
     },
 };
@@ -161,8 +160,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, viewport: &EditorView
 }
 
 const SKY: Color = Color::srgba(0.086, 0.094, 0.157, 1.0);
-const GROUND: Color = Color::srgba(0.055, 0.063, 0.114, 1.0);
 const GRID_LINES: Color = Color::srgba(0.247, 0.259, 0.322, 0.6);
+const GRID_SURFACE: Color = Color::srgba(0.247, 0.259, 0.322, 0.0);
 
 fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<FlyCamera>) {
     let mut transform = Transform::IDENTITY;
@@ -182,15 +181,10 @@ fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<F
     cmd.spawn((
         concerto_world_grid::WorldGrid {
             line_color: GRID_LINES,
-            surface_color: GROUND,
+            surface_color: GRID_SURFACE,
+            lit: false,
             ..Default::default()
         },
-        SyncWithRenderWorld,
-        EditorHelper,
-    ));
-    cmd.spawn((
-        Light::directional_light().with_intensity(3.0),
-        Transform::from_rotation(Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(-0.5)),
         SyncWithRenderWorld,
         EditorHelper,
     ));

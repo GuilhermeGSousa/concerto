@@ -150,6 +150,10 @@ impl HasWindowHandle for Window {
 #[derive(Resource, Default)]
 pub struct CloseRequest(pub bool);
 
+/// When set, the window's own close button only emits its `WindowEvent`; the app exits through [`CloseRequest`].
+#[derive(Resource, Default)]
+pub struct InterceptClose(pub bool);
+
 /// What a left press would do to the window, were it to land here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WindowGesture {
@@ -247,6 +251,7 @@ impl Plugin for WindowPlugin {
         app.add_system(LateUpdate, resolve_actions);
         app.insert_resource(WindowClipboard::default());
         app.insert_resource(CloseRequest::default());
+        app.insert_resource(InterceptClose::default());
         app.insert_resource(WindowGestureRegion::default());
         app.insert_resource(Window::new(window));
         app.insert_resource(WindowEventLoopProxy(event_loop.create_proxy()));

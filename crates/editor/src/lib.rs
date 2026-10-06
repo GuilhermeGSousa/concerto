@@ -5,6 +5,7 @@ pub mod content;
 pub mod diagnostics;
 pub mod dock;
 pub mod fonts;
+pub mod guard;
 pub mod hierarchy;
 pub mod inspector;
 pub mod marks;
@@ -43,9 +44,15 @@ impl Plugin for EditorPlugin {
         app.insert_resource(asset_editor::AssetEditorRegistry::default());
         app.insert_resource(asset_editor::AssetEditorCommands::default());
         app.insert_resource(asset_editor::ActiveEditor::default());
+        app.insert_resource(guard::UnsavedGuard::default());
+        app.register_plugin(guard::GuardPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             asset_editor::process_editor_commands,
+        );
+        app.add_system(
+            concerto_app::schedule_groups::LateUpdate,
+            asset_editor::request_save,
         );
         app.register_plugin(scene::ScenePlugin);
         app.add_system(

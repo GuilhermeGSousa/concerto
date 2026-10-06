@@ -61,6 +61,8 @@ fn document(world: &mut World, order: u64) -> Entity {
         request_generation: 1,
         order,
         status: String::new(),
+        revision: 0,
+        saved_revision: 0,
     })
 }
 fn tick(app: &mut App) {
@@ -72,6 +74,37 @@ fn tabs(world: &mut World) -> Vec<(Entity, Entity)> {
         .iter(world)
         .map(|(entity, tab)| (entity, tab.document))
         .collect()
+}
+
+#[test]
+fn a_dirty_document_shows_a_dot_until_it_is_saved() {
+    let (mut app, _, _) = setup();
+    let world = app.main_mut().world_mut();
+    let doc = document(world, 10);
+    tick(&mut app);
+    let labels = |world: &mut World| -> Vec<String> {
+        world
+            .query::<&concerto_ui::text::UIText, ()>()
+            .iter(world)
+            .map(|text| text.text.clone())
+            .collect()
+    };
+    let world = app.main_mut().world_mut();
+    assert!(labels(world).contains(&"Document 10".to_string()));
+    world
+        .get_component_for_entity_mut::<EditorDocument>(doc)
+        .unwrap()
+        .mark_edited();
+    tick(&mut app);
+    let world = app.main_mut().world_mut();
+    assert!(labels(world).contains(&"• Document 10".to_string()));
+    world
+        .get_component_for_entity_mut::<EditorDocument>(doc)
+        .unwrap()
+        .mark_saved(1);
+    tick(&mut app);
+    let world = app.main_mut().world_mut();
+    assert!(labels(world).contains(&"Document 10".to_string()));
 }
 
 #[test]

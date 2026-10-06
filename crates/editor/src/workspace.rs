@@ -188,6 +188,7 @@ mod tests {
     fn resources(world: &mut World) {
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(AssetEditorRegistry::default());
         world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(PanelRegistry::default());
@@ -374,6 +375,7 @@ mod tests {
         world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(PanelRegistry::default());
         world.insert_resource(ViewportCommands::default());
@@ -387,10 +389,10 @@ mod tests {
             kind: "Notes".into(),
             display_name: "notes".into(),
             folder: String::new(),
-            provenance: ImportProvenance {
+            provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: "notes".into(),
-            },
+            }),
         };
         world
             .get_resource_mut::<AssetEditorCommands>()
