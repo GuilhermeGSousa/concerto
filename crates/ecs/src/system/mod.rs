@@ -49,7 +49,7 @@ pub trait System: Send + Sync + 'static {
 
     fn fill_access(&self, _meta: &mut SystemMetadata, _access: &mut SystemAccess);
 
-    fn run_and_apply<'i>(&mut self, args: SysArg<'_, Self>, world: &mut World) {
+    fn run_and_apply(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         self.run(args, world);
         self.apply(world);
     }
