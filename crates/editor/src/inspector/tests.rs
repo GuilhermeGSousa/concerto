@@ -365,7 +365,7 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
 
 #[test]
 fn unsupported_values_build_an_explicit_read_only_row() {
-    #[derive(Component, concerto_editable::Editable)]
+    #[derive(Component, concerto_editable::Editable, Default)]
     struct Unsupported {
         title: String,
     }
@@ -405,7 +405,7 @@ fn labels_capitalise_the_field_name() {
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
     use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
-    #[derive(Component)]
+    #[derive(Component, Default)]
     struct Dynamic {
         reverse: bool,
         show_b: bool,
@@ -688,4 +688,316 @@ fn inspector_access_only_blocks_component_and_declared_resource_writes() {
     component.write_component::<Transform>();
     assert!(!SystemAccess::are_disjoint(&access, &component));
     assert!(!SystemAccess::are_disjoint(&component, &access));
+}
+
+#[derive(Component, concerto_editable::Editable, Default)]
+struct Gain {
+    amount: f32,
+}
+
+fn structural_world() -> (World, Entity, Entity) {
+    use concerto_ecs::events::event_channel::EventChannel;
+    let (mut world, entity, stack) = world();
+    registry_mut(&mut world).register_component::<Gain>();
+    world.insert_resource(ComponentEdits::default());
+    world.insert_resource(EventChannel::<concerto_ui::text_input::UITextInputSubmitted>::default());
+    update(&mut world);
+    (world, entity, stack)
+}
+
+fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+    let mut system = system.into_system();
+    system.initialize(world);
+    system.run_and_apply((), world);
+}
+
+fn click(world: &mut World, entity: Entity) {
+    world.trigger_on(
+        entity,
+        concerto_ui::interaction::UIClick {
+            position: glam::Vec2::ZERO,
+            button: concerto_window::input::MouseButton::Left,
+        },
+    );
+}
+
+fn only<T: Component>(world: &mut World) -> Entity {
+    let mut query = world.query::<(Entity, &T), ()>();
+    let found: Vec<Entity> = query.iter(world).map(|(entity, _)| entity).collect();
+    assert_eq!(found.len(), 1, "expected exactly one match");
+    found[0]
+}
+
+fn is_open(world: &World, panel: Entity) -> bool {
+    world
+        .get_component_for_entity::<concerto_ui::anchor::UIAnchoredPanel>(panel)
+        .unwrap()
+        .open
+}
+
+fn open_add_menu(world: &mut World) -> Entity {
+    let menu = only::<add_component::AddComponentMenu>(world);
+    world
+        .get_component_for_entity_mut::<concerto_ui::anchor::UIAnchoredPanel>(menu)
+        .unwrap()
+        .open = true;
+    run(world, populate_add_component_menu);
+    menu
+}
+
+fn card_names(world: &mut World) -> Vec<&'static str> {
+    let mut names: Vec<_> = cards(world).iter().map(|(_, card)| card.name).collect();
+    names.sort();
+    names
+}
+
+fn queued(world: &World) -> Vec<ComponentEdit> {
+    world.get_resource::<ComponentEdits>().unwrap().0.clone()
+}
+
+#[test]
+fn clicking_a_menu_entry_adds_the_component_and_closes_the_menu() {
+    let (mut world, entity, _) = structural_world();
+    let menu = open_add_menu(&mut world);
+    let entry = only::<add_component::AddComponentEntry>(&mut world);
+
+    click(&mut world, entry);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&world, menu));
+
+    apply_component_edits(&mut world);
+    assert!(queued(&world).is_empty());
+    assert!(world.get_component_for_entity::<Gain>(entity).is_some());
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Gain", "Transform"]);
+}
+
+#[test]
+fn submitting_the_search_adds_the_highlighted_entry() {
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_ui::text_input::UITextInputSubmitted;
+    let (mut world, entity, _) = structural_world();
+    let menu = open_add_menu(&mut world);
+    let search = only::<add_component::AddComponentSearch>(&mut world);
+    let stray = world.spawn(());
+    for field in [stray, search] {
+        world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: String::new(),
+            });
+    }
+
+    run(&mut world, add_component::add_highlighted_component);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&world, menu));
+}
+
+#[test]
+fn a_cards_menu_removes_its_component() {
+    let (mut world, entity, _) = structural_world();
+    world.insert(Gain::default(), entity);
+    update(&mut world);
+    let menu = only::<component_menu::ComponentMenu>(&mut world);
+    let buttons: Vec<Entity> = {
+        let mut query = world.query::<(Entity, &component_menu::ComponentMenuButton), ()>();
+        query
+            .iter(&mut world)
+            .filter(|(_, button)| button.component == TypeId::of::<Gain>())
+            .map(|(entity, _)| entity)
+            .collect()
+    };
+    assert_eq!(buttons.len(), 1);
+    let button = buttons[0];
+
+    click(&mut world, button);
+    assert!(is_open(&world, menu));
+    click(&mut world, button);
+    assert!(!is_open(&world, menu));
+    click(&mut world, button);
+    let panel = world
+        .get_component_for_entity::<concerto_ui::anchor::UIAnchoredPanel>(menu)
+        .unwrap();
+    assert!(panel.open);
+    assert_eq!(panel.owner, Some(button));
+
+    let remove = only::<component_menu::RemoveComponentItem>(&mut world);
+    click(&mut world, remove);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Remove {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&world, menu));
+
+    apply_component_edits(&mut world);
+    assert!(world.get_component_for_entity::<Gain>(entity).is_none());
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Transform"]);
+    assert_eq!(
+        world
+            .query::<&component_menu::ComponentMenu, ()>()
+            .iter(&mut world)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn only_registered_components_offer_a_menu() {
+    let (mut world, entity, _) = structural_world();
+    world.register_component_type::<Tag>();
+    world.insert(Tag, entity);
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Tag", "Transform"]);
+    let mut query = world.query::<&component_menu::ComponentMenuButton, ()>();
+    let components: Vec<TypeId> = query.iter(&mut world).map(|b| b.component).collect();
+    assert_eq!(components, [TypeId::of::<Transform>()]);
+}
+
+#[test]
+fn stale_structural_edits_are_dropped() {
+    let (mut world, entity, _) = structural_world();
+    let gain = TypeId::of::<Gain>();
+    let transform = TypeId::of::<Transform>();
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Add {
+                entity,
+                component: transform
+            }
+        ),
+        Err(EditError::Rejected)
+    );
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Remove {
+                entity,
+                component: gain
+            }
+        ),
+        Err(EditError::NotFound)
+    );
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Add {
+                entity,
+                component: TypeId::of::<Plumbing>()
+            }
+        ),
+        Err(EditError::UnregisteredComponent)
+    );
+    let gone = world.spawn(());
+    world.despawn(gone);
+    for edit in [
+        ComponentEdit::Add {
+            entity: gone,
+            component: gain,
+        },
+        ComponentEdit::Remove {
+            entity: gone,
+            component: gain,
+        },
+    ] {
+        assert_eq!(
+            apply_component_edit(&mut world, edit),
+            Err(EditError::MissingTarget)
+        );
+    }
+    world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .extend([
+            ComponentEdit::Add {
+                entity: gone,
+                component: gain,
+            },
+            ComponentEdit::Add {
+                entity,
+                component: gain,
+            },
+        ]);
+    apply_component_edits(&mut world);
+    assert!(queued(&world).is_empty());
+    assert!(world.get_component_for_entity::<Gain>(entity).is_some());
+}
+
+#[test]
+fn inspectable_components_are_edited_and_removed_but_never_added() {
+    #[derive(Component, concerto_editable::Editable)]
+    struct Lens {
+        focal: f32,
+    }
+    let lens = TypeId::of::<Lens>();
+    let (mut world, entity, _) = structural_world();
+    registry_mut(&mut world).register_inspectable::<Lens>();
+    update(&mut world);
+
+    open_add_menu(&mut world);
+    let entry = only::<add_component::AddComponentEntry>(&mut world);
+    click(&mut world, entry);
+    assert_eq!(
+        queued(&world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .clear();
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Add {
+                entity,
+                component: lens
+            }
+        ),
+        Err(EditError::Rejected)
+    );
+
+    world.insert(Lens { focal: 35.0 }, entity);
+    update(&mut world);
+    assert_eq!(card_names(&mut world), ["Lens", "Transform"]);
+    assert!(
+        rows(&mut world)
+            .iter()
+            .any(|(_, row)| row.component == lens)
+    );
+    let mut buttons = world.query::<&component_menu::ComponentMenuButton, ()>();
+    assert!(buttons.iter(&mut world).any(|b| b.component == lens));
+    assert_eq!(
+        apply_component_edit(
+            &mut world,
+            ComponentEdit::Remove {
+                entity,
+                component: lens
+            }
+        ),
+        Ok(())
+    );
+    assert!(world.get_component_for_entity::<Lens>(entity).is_none());
 }

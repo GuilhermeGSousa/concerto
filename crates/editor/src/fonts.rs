@@ -78,6 +78,8 @@ pub mod glyph {
     pub const CORNERS_IN: char = '\u{E1CE}';
     /// `x` — dismissing, and the window's close button.
     pub const X: char = '\u{E4F6}';
+    /// `dots-three` — a menu of further actions.
+    pub const DOTS_THREE: char = '\u{E1FE}';
     /// `dot` — a leaf row with nothing to expand.
     pub const DOT: char = '\u{ECDE}';
 }

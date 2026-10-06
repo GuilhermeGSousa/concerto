@@ -3,15 +3,19 @@ use super::*;
 
 use super::registry::InspectionSource;
 use concerto_color::Color;
-use concerto_ecs::component::Tick;
+use concerto_ecs::{
+    component::Tick, events::event_reader::EventReader, query::filter::With, signal::On,
+};
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, toggle_owned_panels},
-    text_input::UITextInput,
+    interaction::UIClick,
+    text_input::{UITextInput, UITextInputSubmitted},
 };
+use concerto_window::input::MouseButton;
 
 const MENU_WIDTH: f32 = 272.0;
 const MENU_LIST_MAX_HEIGHT: f32 = 320.0;
-const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
+pub(super) const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
 const ROW_HEIGHT: f32 = 30.0;
 const MARK_SIZE: f32 = 7.0;
 
@@ -26,6 +30,17 @@ pub(super) struct AddComponentMenu {
 /// Marks the menu's search field, which outlives the inspector's rebuilds.
 #[derive(Component)]
 pub(super) struct AddComponentSearch;
+
+/// A row of the menu's list and the component it adds.
+#[derive(Component, Clone, Copy)]
+pub(super) struct AddComponentEntry {
+    entity: Entity,
+    component: TypeId,
+}
+
+/// Marks the entry that submitting the search adds.
+#[derive(Component)]
+pub(super) struct HighlightedEntry;
 
 /// What the menu's list was last built from.
 #[derive(Component, PartialEq)]
@@ -259,8 +274,22 @@ pub(super) fn populate_add_component_menu(
             );
         }
 
-        for (index, (_, component)) in addable.iter().enumerate() {
-            spawn_entry(&mut cmd, menu.list, component.name, index == 0, &theme);
+        for (index, (type_id, component)) in addable.iter().enumerate() {
+            let Some(entity) = target else {
+                break;
+            };
+            let entry = AddComponentEntry {
+                entity,
+                component: *type_id,
+            };
+            spawn_entry(
+                &mut cmd,
+                menu.list,
+                entry,
+                component.name,
+                index == 0,
+                &theme,
+            );
         }
 
         cmd.insert(contents, entity);
@@ -270,20 +299,23 @@ pub(super) fn populate_add_component_menu(
 fn spawn_entry(
     cmd: &mut CommandQueue,
     list: Entity,
+    entry: AddComponentEntry,
     name: &str,
     highlighted: bool,
     theme: &UITheme,
 ) {
     let mut list = cmd.entity(list);
-    let row = list
-        .spawn_child_queue(
+    let mut row = list
+        .spawn_child_queue((
             theme
                 .pressable()
                 .selected(highlighted)
                 .row()
                 .gap(8.0)
-                .padding(UIRect::axes(6.0, 8.0)),
-        )
+                .padding(UIRect::axes(6.0, 8.0))
+                .on_click(add_clicked_component),
+            entry,
+        ))
         .add_child(
             theme
                 .canvas()
@@ -306,6 +338,57 @@ fn spawn_entry(
                 .min_width(UIValue::Px(0.0)),
         );
     if highlighted {
+        row.insert(HighlightedEntry);
         row.add_child(theme.label("↵").muted().mono().font_size(9.5).no_wrap());
+    }
+}
+
+fn add_clicked_component(
+    on: On<UIClick>,
+    entries: Query<&AddComponentEntry>,
+    menus: Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
+    mut edits: ResMut<ComponentEdits>,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    if let Some(entry) = entries.get_entity(on.entity()) {
+        queue_add(*entry, &menus, &mut edits);
+    }
+}
+
+/// Adds the highlighted entry when the search field is submitted.
+pub(super) fn add_highlighted_component(
+    mut submitted: EventReader<UITextInputSubmitted>,
+    searches: Query<&AddComponentSearch>,
+    entries: Query<&AddComponentEntry, With<HighlightedEntry>>,
+    menus: Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
+    mut edits: ResMut<ComponentEdits>,
+) {
+    for event in submitted.read() {
+        if searches.get_entity(event.entity).is_none() {
+            continue;
+        }
+        if let Some(entry) = entries.iter().next() {
+            queue_add(*entry, &menus, &mut edits);
+        }
+    }
+}
+
+fn queue_add(
+    entry: AddComponentEntry,
+    menus: &Query<&mut UIAnchoredPanel, With<AddComponentMenu>>,
+    edits: &mut ComponentEdits,
+) {
+    let mut open = false;
+    for mut panel in menus.iter() {
+        open |= panel.open;
+        panel.open = false;
+    }
+    if open {
+        edits.0.push(ComponentEdit::Add {
+            entity: entry.entity,
+            component: entry.component,
+        });
     }
 }

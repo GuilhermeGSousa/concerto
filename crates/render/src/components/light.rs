@@ -56,6 +56,12 @@ impl SceneComponent for Light {
     }
 }
 
+impl Default for Light {
+    fn default() -> Self {
+        Self::point_light()
+    }
+}
+
 impl Light {
     pub fn point_light() -> Self {
         Self {

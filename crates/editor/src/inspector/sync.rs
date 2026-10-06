@@ -2,6 +2,7 @@
 use super::*;
 
 use super::add_component::{AddComponentMenu, spawn_add_component};
+use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::registry::InspectionSource;
 use concerto_ecs::{component::Tick, query::filter::With};
 
@@ -25,6 +26,7 @@ pub(super) fn sync_inspected_components(
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
     cards: Query<&InspectedComponent>,
     menus: Query<(Entity, &AddComponentMenu)>,
+    component_menus: Query<&ComponentMenu>,
     mut cmd: CommandQueue,
 ) {
     let Some((stack_entity, stack, children)) = stacks.iter().next() else {
@@ -57,11 +59,21 @@ pub(super) fn sync_inspected_components(
         let mut components = source.visible_components(target);
         components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
         for (type_id, name) in components {
-            let (entity, card) = spawn_card(&mut cmd, stack_entity, target, type_id, name, &theme);
+            let removable = source.is_registered(type_id);
+            let (entity, card) = spawn_card(
+                &mut cmd,
+                stack_entity,
+                target,
+                type_id,
+                name,
+                removable,
+                &theme,
+            );
             refresh_card(&source, &mut cmd, entity, card, &theme);
         }
 
         spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
+        ensure_component_menu(&mut cmd, &component_menus, &theme);
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
             if let Some(card) = cards.get_entity(entity) {
@@ -106,6 +118,7 @@ fn spawn_card(
     target: Entity,
     type_id: TypeId,
     name: &'static str,
+    removable: bool,
     theme: &UITheme,
 ) -> (Entity, InspectedComponent) {
     let mut stack_queue = cmd.entity(stack);
@@ -120,17 +133,19 @@ fn spawn_card(
 
     card_queue =
         card_queue.add_child_with(theme.row().fixed().gap(theme.spacing_xs + 2.0), |header| {
-            header
-                .add_child(theme.label(name).single_line().grow())
-                .add_child((
-                    theme
-                        .canvas()
-                        .fill(theme.accent)
-                        .radius(6.5)
-                        .size(UIValue::Px(22.0), UIValue::Px(13.0))
-                        .fixed(),
-                    UIDisabled,
-                ));
+            let mut header = header.add_child(theme.label(name).single_line().grow());
+            if removable {
+                header = header.add_child(menu_button(theme, target, type_id));
+            }
+            header.add_child((
+                theme
+                    .canvas()
+                    .fill(theme.accent)
+                    .radius(6.5)
+                    .size(UIValue::Px(22.0), UIValue::Px(13.0))
+                    .fixed(),
+                UIDisabled,
+            ));
         });
 
     let body = card_queue.spawn_child_queue(body_node(theme)).entity();

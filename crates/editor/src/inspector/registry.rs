@@ -32,6 +32,8 @@ pub(crate) struct EditableComponent {
     pub collect: fn(&InspectorRegistry, &ComponentMetadata, Entity, Tick) -> Option<Vec<Property>>,
     pub apply:
         fn(&mut World, Entity, &PropertyPath, &dyn ErasedEditor, &dyn Any) -> Result<(), EditError>,
+    pub insert: Option<fn(&mut World, Entity)>,
+    pub remove: fn(&mut World, Entity),
 }
 
 pub(crate) trait ErasedEditor: Send + Sync {
@@ -104,7 +106,16 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
-    pub fn register_component<T: Component + Editable>(&mut self) {
+    pub fn register_component<T: Component + Editable + Default>(&mut self) {
+        self.register::<T>(Some(|world, entity| world.insert(T::default(), entity)));
+    }
+
+    /// Registers a component the inspector edits and removes but never offers to add.
+    pub fn register_inspectable<T: Component + Editable>(&mut self) {
+        self.register::<T>(None);
+    }
+
+    fn register<T: Component + Editable>(&mut self, insert: Option<fn(&mut World, Entity)>) {
         let path = std::any::type_name::<T>();
         self.components.insert(
             TypeId::of::<T>(),
@@ -112,6 +123,8 @@ impl InspectorRegistry {
                 name: path.rsplit("::").next().unwrap_or(path),
                 collect: collect_typed::<T>,
                 apply: apply_typed::<T>,
+                insert,
+                remove: |world, entity| world.remove_component::<T>(entity),
             },
         );
     }
@@ -246,17 +259,23 @@ impl InspectionSource<'_> {
         self.components
             .has_component_changed_since(entity, id, tick)
     }
-    /// Registered components `entity` does not carry yet, with how many are registered in total.
+    pub fn is_registered(&self, id: TypeId) -> bool {
+        self.registry.component(id).is_some()
+    }
+    /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, EditableComponent)>, usize) {
         let present = self.components.component_ids(entity);
-        let addable = self
-            .registry
-            .components
-            .iter()
+        let addable = || {
+            self.registry
+                .components
+                .iter()
+                .filter(|(_, component)| component.insert.is_some())
+        };
+        let missing = addable()
             .filter(|(id, _)| !present.contains(id))
             .map(|(&id, &component)| (id, component))
             .collect();
-        (addable, self.registry.components.len())
+        (missing, addable().count())
     }
     pub fn visible_components(&self, entity: Entity) -> Vec<(TypeId, &'static str)> {
         self.components
@@ -321,7 +340,9 @@ fn apply_typed<T: Component + Editable>(
 }
 
 pub trait EditableApp {
-    fn register_editable<T: Component + Editable>(&mut self) -> &mut Self;
+    fn register_editable<T: Component + Editable + Default>(&mut self) -> &mut Self;
+    /// Registers a component the inspector edits and removes but never offers to add.
+    fn register_inspectable<T: Component + Editable>(&mut self) -> &mut Self;
     fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
         &mut self,
         editor: E,
@@ -329,8 +350,12 @@ pub trait EditableApp {
 }
 
 impl EditableApp for App {
-    fn register_editable<T: Component + Editable>(&mut self) -> &mut Self {
+    fn register_editable<T: Component + Editable + Default>(&mut self) -> &mut Self {
         registry(self).register_component::<T>();
+        self
+    }
+    fn register_inspectable<T: Component + Editable>(&mut self) -> &mut Self {
+        registry(self).register_inspectable::<T>();
         self
     }
     fn register_property_editor<T: Editable, E: PropertyEditor<T>>(

@@ -24,7 +24,7 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
-#[derive(Component, Editable)]
+#[derive(Component, Editable, Default)]
 pub struct Setting {
     pub title: String,
     pub enabled: bool,

@@ -25,12 +25,17 @@ use crate::scene::SceneRoot;
 use crate::selection::Selection;
 
 mod add_component;
+mod component_menu;
+mod edits;
 mod numeric;
 mod registry;
 mod rows;
 mod sync;
 
-use add_component::{clear_add_component_search, populate_add_component_menu};
+use add_component::{
+    add_highlighted_component, clear_add_component_search, populate_add_component_menu,
+};
+pub use edits::{ComponentEdit, ComponentEdits, apply_component_edit, apply_component_edits};
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
@@ -84,22 +89,25 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(InspectorScroll::default());
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
+        app.insert_resource(ComponentEdits::default());
         app.register_editable::<Transform>()
             .register_editable::<Light>()
-            .register_editable::<Camera>();
+            .register_inspectable::<Camera>();
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
             region: Region::Side,
         });
         app.add_system(Startup, build_panel);
-        app.add_system(Update, apply_property_commits);
+        app.add_system(Update, apply_property_commits)
+            .add_system(Update, apply_component_edits);
         app.add_system(LateUpdate, select_numeric_field_on_focus)
             .add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(LateUpdate, add_highlighted_component)
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)

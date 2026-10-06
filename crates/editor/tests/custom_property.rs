@@ -16,7 +16,7 @@ use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
 
-#[derive(Component, Editable)]
+#[derive(Component, Editable, Default)]
 struct Container {
     setting: Setting,
     gain: f32,

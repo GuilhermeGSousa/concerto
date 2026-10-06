@@ -61,6 +61,7 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
         ("CORNERS_OUT", CORNERS_OUT),
         ("CORNERS_IN", CORNERS_IN),
         ("X", X),
+        ("DOTS_THREE", DOTS_THREE),
         ("DOT", DOT),
     ];
     for (name, icon) in icons {
