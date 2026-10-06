@@ -5,6 +5,7 @@ use concerto_app::{
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource,
     command::CommandQueue,
+    component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
 };
 use std::any::TypeId;
@@ -25,8 +26,10 @@ use crate::scene::SceneRoot;
 use crate::selection::Selection;
 
 mod add_component;
+mod boolean;
 mod component_menu;
 mod edits;
+mod name_field;
 mod numeric;
 mod registry;
 mod rows;
@@ -36,9 +39,12 @@ use add_component::{
     add_highlighted_component, clear_add_component_search, populate_add_component_menu,
 };
 pub use edits::{ComponentEdit, ComponentEdits, apply_component_edit, apply_component_edits};
+pub use name_field::{FocusNameField, NameField};
+use name_field::{name_field, update_name_field};
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
+use boolean::refresh_bool_fields;
 use concerto_foundation::transform::Transform;
 use concerto_render::components::{camera::Camera, light::Light};
 use numeric::{
@@ -90,6 +96,7 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
         app.insert_resource(ComponentEdits::default());
+        app.insert_resource(FocusNameField::default());
         app.register_editable::<Transform>()
             .register_editable::<Light>()
             .register_inspectable::<Camera>();
@@ -105,12 +112,14 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, collect_inspector_data)
+            .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
             .add_system(LateUpdate, add_highlighted_component)
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)
+            .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, sync_inspector_scroll);
     }
 }
@@ -141,7 +150,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
         .add_child_with(theme.column().grow().clipped(), |details| {
-            details.add_child_with(
+            details.add_child(name_field(theme)).add_child_with(
                 (
                     UINode::default()
                         .with_flex_grow(1.0)

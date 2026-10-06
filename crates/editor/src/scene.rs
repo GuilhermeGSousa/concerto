@@ -833,6 +833,38 @@ mod tests {
     }
 
     #[test]
+    fn created_duplicated_and_renamed_entities_survive_a_save_and_reload() {
+        use crate::entity_ops::{EntityEdit, apply_entity_edit};
+        let dir = tempfile::tempdir().unwrap();
+        let a = entry("first");
+        fixture(dir.path(), &a);
+        let mut world = world(dir.path());
+        world.register_component::<concerto_ecs::component::name::Name>();
+        world.add_listener(apply_entity_edit);
+        let editor = open(&mut world, &a);
+        settle(&mut world, editor);
+        let original = node(&world, editor);
+
+        world.trigger(EntityEdit::Create { parent: original });
+        let created = world.get_resource::<Selection>().unwrap().entity().unwrap();
+        world.trigger(EntityEdit::Rename {
+            entity: created,
+            name: "lamp".into(),
+        });
+        world.trigger(EntityEdit::Duplicate(original));
+        assert!(document(&world, editor).is_dirty());
+        save(&mut world, editor);
+
+        let copy = document(&world, editor).current.clone().unwrap();
+        let scene = load_scene(dir.path().into(), copy.address, copy.id).unwrap();
+        let names: Vec<_> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
+        assert_eq!(names, ["first", "lamp", "first", "lamp"]);
+        assert_eq!(scene.nodes[0].children, [1]);
+        assert_eq!(scene.nodes[2].children, [3]);
+        assert!(scene.nodes[1].children.is_empty());
+    }
+
+    #[test]
     fn an_edit_made_while_a_replacement_loads_cancels_the_replacement() {
         let dir = tempfile::tempdir().unwrap();
         let a = entry("first");

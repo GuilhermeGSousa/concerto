@@ -5,7 +5,7 @@ use concerto_app::{
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
-    resources::RenderContext,
+    resources::RenderContext, sets::RenderSet,
 };
 use glyphon::{Cache, SwashCache, Viewport};
 
@@ -169,7 +169,7 @@ impl Plugin for UIPlugin {
             .add_system(Extract, extract_text_nodes)
             .add_system(Render, update_text_viewport)
             .add_system(Render, prepare_text_renderer)
-            .add_system(Render, ui_renderpass);
+            .add_system(Render, ui_renderpass.after(RenderSet::Overlay));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

@@ -1,6 +1,6 @@
 # Entity Operations — Design
 
-**Status:** awaiting review
+**Status:** implemented
 **Branch:** `functional-editor`
 **Builds on:** `2026-10-06-scene-dirty-tracking-and-save-design.md`
 

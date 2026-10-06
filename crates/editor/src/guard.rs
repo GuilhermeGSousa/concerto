@@ -260,24 +260,21 @@ fn build_prompt(mut cmd: CommandQueue, theme: Res<UITheme>) {
                         .height(UIValue::Px(theme.control_height)),
                     PromptMessage,
                 ))
-                .add_child_with(
-                    theme.row().justify(taffy::AlignContent::End),
-                    |mut row| {
-                        for (label, choice) in [
-                            ("Cancel", GuardChoice::Cancel),
-                            ("Discard", GuardChoice::Discard),
-                            ("Save", GuardChoice::Save),
-                        ] {
-                            row = row.add_child((
-                                theme
-                                    .button(label)
-                                    .width(UIValue::Px(96.0))
-                                    .on_click(press_prompt_button),
-                                PromptButton(choice),
-                            ));
-                        }
-                    },
-                );
+                .add_child_with(theme.row().justify(taffy::AlignContent::End), |mut row| {
+                    for (label, choice) in [
+                        ("Cancel", GuardChoice::Cancel),
+                        ("Discard", GuardChoice::Discard),
+                        ("Save", GuardChoice::Save),
+                    ] {
+                        row = row.add_child((
+                            theme
+                                .button(label)
+                                .width(UIValue::Px(96.0))
+                                .on_click(press_prompt_button),
+                            PromptButton(choice),
+                        ));
+                    }
+                });
         },
     );
 }
@@ -367,9 +364,9 @@ mod tests {
         world.insert_resource(AssetEditorCommands::default());
         world.insert_resource(EditorCommands::default());
         world.insert_resource(CloseRequest::default());
-        world.insert_resource(
-            concerto_ecs::events::event_channel::EventChannel::<WindowEvent>::default(),
-        );
+        world.insert_resource(concerto_ecs::events::event_channel::EventChannel::<
+            WindowEvent,
+        >::default());
         world
     }
 

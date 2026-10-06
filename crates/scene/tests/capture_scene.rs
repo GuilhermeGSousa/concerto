@@ -8,9 +8,9 @@ use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_render::components::camera::Camera;
-use concerto_scene::capture::capture_scene;
+use concerto_scene::capture::{capture_scene, capture_subtree};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
-use concerto_scene::spawner::spawn_scene;
+use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world};
 use glam::Vec3;
 use serde_json::Value;
 use uuid::Uuid;
@@ -134,7 +134,10 @@ fn resolved_skeleton_references_capture_as_node_indices() {
     world.insert(
         SkeletonComponent {
             skeleton: AssetHandle::<Skeleton>::weak(AssetId::from_path("rig#skeleton")),
-            bones: vec![SceneEntityRef::Entity(bone_b), SceneEntityRef::Entity(bone_a)],
+            bones: vec![
+                SceneEntityRef::Entity(bone_b),
+                SceneEntityRef::Entity(bone_a),
+            ],
             bone_ids: vec![Uuid::from_u128(1), Uuid::from_u128(2)],
             root: Some(SceneEntityRef::Entity(bone_a)),
         },
@@ -143,7 +146,11 @@ fn resolved_skeleton_references_capture_as_node_indices() {
 
     let captured = capture_scene(&world, root).unwrap();
 
-    let names: Vec<_> = captured.nodes.iter().map(|node| node.name.as_str()).collect();
+    let names: Vec<_> = captured
+        .nodes
+        .iter()
+        .map(|node| node.name.as_str())
+        .collect();
     assert_eq!(names, ["a", "b", "mesh"]);
     let skeleton: SkeletonComponent =
         serde_json::from_str(&captured.nodes[2].components[0].data).unwrap();
@@ -190,4 +197,88 @@ fn two_captures_of_the_same_world_are_identical() {
     let second = bincode::serialize(&capture_scene(&world, root).unwrap()).unwrap();
 
     assert_eq!(first, second);
+}
+
+fn skinned(world: &mut World, parent: Entity, bones_inside: bool) -> Entity {
+    let group = world.spawn(Name::new("group"));
+    let mesh = world.spawn(Name::new("mesh"));
+    let bone = world.spawn(Name::new("bone"));
+    world.entity_mut(parent).add_child(group);
+    world.entity_mut(group).add_child(mesh);
+    world
+        .entity_mut(if bones_inside { group } else { parent })
+        .add_child(bone);
+    world.insert(
+        SkeletonComponent {
+            skeleton: AssetHandle::<Skeleton>::weak(AssetId::from_path("rig#skeleton")),
+            bones: vec![SceneEntityRef::Entity(bone)],
+            bone_ids: vec![Uuid::from_u128(1)],
+            root: Some(SceneEntityRef::Entity(bone)),
+        },
+        mesh,
+    );
+    group
+}
+
+#[test]
+fn a_subtree_capture_starts_at_the_entity_and_remaps_inner_references() {
+    let mut world = world();
+    let root = world.spawn(());
+    let sibling = world.spawn(Name::new("sibling"));
+    world.entity_mut(root).add_child(sibling);
+    let group = skinned(&mut world, root, true);
+
+    let captured = capture_subtree(&world, group).unwrap();
+
+    let names: Vec<_> = captured
+        .nodes
+        .iter()
+        .map(|node| node.name.as_str())
+        .collect();
+    assert_eq!(names, ["group", "mesh", "bone"]);
+    assert_eq!(captured.nodes[0].children, [1, 2]);
+    let skeleton: SkeletonComponent =
+        serde_json::from_str(&captured.nodes[1].components[0].data).unwrap();
+    assert_eq!(skeleton.bones, [SceneEntityRef::Index(2)]);
+}
+
+#[test]
+fn a_subtree_referring_outside_itself_cannot_be_captured() {
+    let mut world = world();
+    let root = world.spawn(());
+    let group = skinned(&mut world, root, false);
+
+    assert!(capture_subtree(&world, group).is_err());
+}
+
+#[test]
+fn spawning_through_the_world_matches_the_queued_spawner() {
+    let scene = Scene {
+        nodes: vec![
+            node("first root", vec![1, 2], vec![serialized(&transform(1.0))]),
+            node("child", vec![], vec![serialized(&Camera::default())]),
+            node("sibling", vec![], vec![]),
+            node("second root", vec![], vec![serialized(&transform(2.0))]),
+        ],
+        referenced_assets: vec![],
+    };
+    let mut world = world();
+    let queued = spawn(&mut world, scene.clone());
+    let direct = world.spawn(Transform::IDENTITY);
+
+    let spawned = spawn_scene_in_world(&mut world, &scene, direct);
+
+    assert_eq!(spawned.node_entities.len(), 4);
+    assert_eq!(
+        spawned.root_entities,
+        [spawned.node_entities[0], spawned.node_entities[3]]
+    );
+    assert_eq!(
+        comparable(&capture_scene(&world, direct).unwrap()),
+        comparable(&capture_scene(&world, queued).unwrap())
+    );
+    assert_eq!(
+        comparable(&capture_scene(&world, direct).unwrap()),
+        comparable(&scene)
+    );
 }

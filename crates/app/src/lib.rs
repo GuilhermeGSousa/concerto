@@ -31,6 +31,7 @@ use concerto_ecs::{
         Event,
     },
     resource::{ResMut, Resource},
+    signal::{listener::IntoListener, Signal},
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
     IntoSetConfig, IntoSystemConfig, World,
 };
@@ -193,6 +194,12 @@ impl App {
 
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
+        self
+    }
+
+    /// Runs `system` every time a `T` is triggered in the main world.
+    pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) -> &mut Self {
+        self.main_mut().world_mut().add_listener(system);
         self
     }
 

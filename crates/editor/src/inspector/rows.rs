@@ -40,6 +40,10 @@ pub trait PropertyEditor<T: Editable>: Send + Sync + 'static {
     );
     /// Validate before mutating. On error the target must remain unchanged.
     fn apply(&self, value: &mut T, edit: &Self::Edit) -> Result<(), EditError>;
+    /// Whether the widgets `build` spawns keep themselves current from the row's [`PropertyRowValue`], so a value change leaves the row in place.
+    fn follows_snapshot(&self) -> bool {
+        false
+    }
 }
 
 /// Captured at rebuild, so a queued edit always addresses its original target.

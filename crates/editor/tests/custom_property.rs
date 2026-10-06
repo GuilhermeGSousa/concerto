@@ -83,7 +83,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
         ]
     );
     assert!(!fallback[0].has_editor());
-    assert!(!fallback[1].has_editor());
+    assert!(fallback[1].has_editor());
     assert!(fallback[2].has_editor());
     assert!(
         fallback[0]

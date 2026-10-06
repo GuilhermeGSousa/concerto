@@ -45,6 +45,26 @@ define_action!(
 );
 
 define_action!(
+    /// Delete the selected entity and its descendants.
+    DeleteEntity
+);
+define_action!(
+    /// Copy the selected entity and its descendants beside it.
+    DuplicateEntity
+);
+define_action!(
+    /// Edit the selected entity's name.
+    RenameEntity
+);
+define_action!(
+    /// Show the handles that move the selected entity.
+    GizmoTranslate
+);
+define_action!(
+    /// Show the handles that rotate the selected entity.
+    GizmoRotate
+);
+define_action!(
     /// Close the unsaved-changes prompt without acting.
     DismissPrompt
 );
@@ -79,6 +99,26 @@ fn install_default_bindings(mut actions: ResMut<ActionMap>) {
         Shortcut::key(KeyCode::KeyF).with_shift(),
         ViewportContext,
     );
+
+    actions.bind(DeleteEntity, Shortcut::key(KeyCode::Delete), TreeContext);
+    actions.bind(
+        DeleteEntity,
+        Shortcut::key(KeyCode::Delete),
+        ViewportContext,
+    );
+    actions.bind(DuplicateEntity, Shortcut::ctrl(KeyCode::KeyD), TreeContext);
+    actions.bind(
+        DuplicateEntity,
+        Shortcut::ctrl(KeyCode::KeyD),
+        ViewportContext,
+    );
+    actions.bind(RenameEntity, Shortcut::key(KeyCode::F2), TreeContext);
+    actions.bind(
+        GizmoTranslate,
+        Shortcut::key(KeyCode::KeyW),
+        ViewportContext,
+    );
+    actions.bind(GizmoRotate, Shortcut::key(KeyCode::KeyE), ViewportContext);
 
     actions.bind(SelectNext, Shortcut::key(KeyCode::ArrowDown), TreeContext);
     actions.bind(SelectPrevious, Shortcut::key(KeyCode::ArrowUp), TreeContext);

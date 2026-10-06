@@ -12,10 +12,19 @@ use crate::scene::{Scene, SceneNode, SerializedComponent};
 /// Reads every descendant of `root` back into a [`Scene`]; the inverse of
 /// [`spawn_scene`](crate::spawner::spawn_scene). `referenced_assets` is left empty.
 pub fn capture_scene(world: &World, root: Entity) -> anyhow::Result<Scene> {
+    capture(world, child_entities(world, root))
+}
+
+/// Like [`capture_scene`], but `entity` itself is node 0.
+pub fn capture_subtree(world: &World, entity: Entity) -> anyhow::Result<Scene> {
+    capture(world, vec![entity])
+}
+
+fn capture(world: &World, roots: Vec<Entity>) -> anyhow::Result<Scene> {
     let mut entities = Vec::new();
     let mut children = Vec::new();
-    for child in child_entities(world, root) {
-        collect(world, child, &mut entities, &mut children);
+    for root in roots {
+        collect(world, root, &mut entities, &mut children);
     }
     let indices: HashMap<Entity, usize> = entities
         .iter()

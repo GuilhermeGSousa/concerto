@@ -241,16 +241,20 @@ fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
 }
 
 #[test]
-fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
+fn value_changes_keep_numeric_rows_and_registering_an_adapter_rebuilds_the_stack() {
     let (mut world, entity, _) = world();
     update(&mut world);
     let original_card = cards(&mut world)[0].0;
     let original_rows = rows(&mut world);
+    let mut slots = world.query::<(Entity, &numeric::NumericSlot), ()>();
+    let fields: Vec<Entity> = slots.iter(&mut world).map(|(entity, _)| entity).collect();
+    assert_eq!(fields.len(), 9);
     world
         .get_component_for_entity_mut::<Transform>(entity)
         .unwrap()
         .translation
         .x = 8.0;
+    update(&mut world);
     update(&mut world);
     let translation = rows(&mut world)
         .iter()
@@ -260,7 +264,12 @@ fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
     assert!(
         original_rows
             .iter()
-            .all(|(entity, _)| !world.entity_is_valid(*entity))
+            .all(|(entity, _)| world.entity_is_valid(*entity)),
+        "a row whose editor follows its snapshot must survive a value change"
+    );
+    assert!(
+        fields.iter().all(|field| world.entity_is_valid(*field)),
+        "a field that may hold focus must not be respawned under the pointer"
     );
     assert!(world.entity_is_valid(original_card));
     assert!(matches!(
@@ -1069,4 +1078,292 @@ fn inspectable_components_are_edited_and_removed_but_never_added() {
         Ok(())
     );
     assert!(world.get_component_for_entity::<Lens>(entity).is_none());
+}
+
+mod name_field {
+    use super::*;
+    use crate::entity_ops::{EntityEdit, apply_entity_edit};
+    use concerto_ecs::{component::name::Name, events::event_channel::EventChannel, signal::On};
+    use concerto_ui::{
+        focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+    };
+
+    #[derive(Resource, Default)]
+    struct Renames(u32);
+
+    struct Fixture {
+        world: World,
+        field: Entity,
+        root: Entity,
+        first: Entity,
+        second: Entity,
+    }
+
+    fn fixture() -> Fixture {
+        let (mut world, _, _) = world();
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(FocusNameField::default());
+        world.insert_resource(Renames::default());
+        world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
+        world.insert_resource(EventChannel::<UITextInputCancelled>::default());
+        world.insert_resource(EventChannel::<UIFocusLost>::default());
+        world.insert_resource(EventChannel::<UIFocusGained>::default());
+        world.add_listener(apply_entity_edit);
+        world.add_listener(|_: On<EntityEdit>, mut renames: ResMut<Renames>| renames.0 += 1);
+        let field = world.spawn((
+            UINode::default().with_visible(false),
+            UITextInput::new("Name"),
+            NameField::default(),
+        ));
+        let root = world.spawn(SceneRoot {
+            asset_id: concerto_foundation::assets::AssetId::new(),
+            address: String::new(),
+        });
+        let first = world.spawn(Name::new("first"));
+        let second = world.spawn(Name::new("second"));
+        world.entity_mut(root).add_child(first);
+        world.entity_mut(root).add_child(second);
+        let mut fixture = Fixture {
+            world,
+            field,
+            root,
+            first,
+            second,
+        };
+        fixture.select(first);
+        fixture
+    }
+
+    impl Fixture {
+        fn step(&mut self) {
+            for mut system in [
+                collect_inspector_data.into_boxed_system(),
+                update_name_field.into_boxed_system(),
+            ] {
+                system.initialize(&mut self.world);
+                system.run_and_apply((), &mut self.world);
+            }
+            self.world
+                .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+                .unwrap()
+                .update();
+            self.world
+                .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+                .unwrap()
+                .update();
+            self.world
+                .get_resource_mut::<EventChannel<UIFocusLost>>()
+                .unwrap()
+                .update();
+            self.world
+                .get_resource_mut::<EventChannel<UIFocusGained>>()
+                .unwrap()
+                .update();
+        }
+        fn select(&mut self, entity: Entity) {
+            self.world
+                .get_resource_mut::<Selection>()
+                .unwrap()
+                .select_entity(entity);
+            self.step();
+        }
+        fn focus(&mut self) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(self.field);
+        }
+        fn blur(&mut self) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = None;
+            let field = self.field;
+            self.world
+                .get_resource_mut::<EventChannel<UIFocusLost>>()
+                .unwrap()
+                .push_event(UIFocusLost(field));
+        }
+        fn type_text(&mut self, text: &str) {
+            self.focus();
+            self.world
+                .get_component_for_entity_mut::<UITextInput>(self.field)
+                .unwrap()
+                .value = text.into();
+        }
+        fn text(&self) -> &str {
+            &self
+                .world
+                .get_component_for_entity::<UITextInput>(self.field)
+                .unwrap()
+                .value
+        }
+        fn visible(&self) -> bool {
+            self.world
+                .get_component_for_entity::<UINode>(self.field)
+                .unwrap()
+                .visible
+        }
+        fn name(&self, entity: Entity) -> &str {
+            self.world
+                .get_component_for_entity::<Name>(entity)
+                .unwrap()
+                .as_str()
+        }
+        fn renames(&self) -> u32 {
+            self.world.get_resource::<Renames>().unwrap().0
+        }
+    }
+
+    #[test]
+    fn the_field_shows_the_selected_name_and_hides_for_the_root() {
+        let mut f = fixture();
+        assert_eq!(f.text(), "first");
+        assert!(f.visible());
+        f.select(f.second);
+        assert_eq!(f.text(), "second");
+        f.select(f.root);
+        assert!(!f.visible());
+        assert_eq!(f.text(), "");
+    }
+
+    #[test]
+    fn submitting_a_changed_name_renames_and_an_unchanged_one_does_nothing() {
+        let mut f = fixture();
+        f.type_text("first");
+        let field = f.field;
+        f.world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: "first".into(),
+            });
+        f.step();
+        assert_eq!(f.renames(), 0);
+
+        f.type_text("lamp");
+        f.world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: "lamp".into(),
+            });
+        f.step();
+        assert_eq!(f.name(f.first), "lamp");
+        assert_eq!(f.renames(), 1);
+    }
+
+    #[test]
+    fn losing_focus_to_another_selection_renames_the_entity_being_edited() {
+        let mut f = fixture();
+        f.type_text("lamp");
+        f.blur();
+        f.select(f.second);
+        assert_eq!(f.name(f.first), "lamp");
+        assert_eq!(f.name(f.second), "second");
+        assert_eq!(f.text(), "second");
+    }
+
+    #[test]
+    fn escape_restores_the_name_and_releases_focus() {
+        let mut f = fixture();
+        f.type_text("lamp");
+        let field = f.field;
+        f.world
+            .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+            .unwrap()
+            .push_event(UITextInputCancelled { entity: field });
+        f.step();
+        assert_eq!(f.text(), "first");
+        assert_eq!(f.name(f.first), "first");
+        assert!(f.world.get_resource::<FocusedWidget>().unwrap().is_none());
+        assert_eq!(f.renames(), 0);
+    }
+
+    #[test]
+    fn a_focus_request_focuses_the_visible_field_with_its_text_selected() {
+        let mut f = fixture();
+        f.world.get_resource_mut::<FocusNameField>().unwrap().0 = true;
+        f.step();
+        assert_eq!(
+            **f.world.get_resource::<FocusedWidget>().unwrap(),
+            Some(f.field)
+        );
+        let input = f
+            .world
+            .get_component_for_entity::<UITextInput>(f.field)
+            .unwrap();
+        assert_eq!((input.selection_anchor, input.cursor), (Some(0), 5));
+
+        **f.world.get_resource_mut::<FocusedWidget>().unwrap() = None;
+        f.select(f.root);
+        f.world.get_resource_mut::<FocusNameField>().unwrap().0 = true;
+        f.step();
+        assert!(f.world.get_resource::<FocusedWidget>().unwrap().is_none());
+    }
+}
+
+mod bool_field {
+    use super::*;
+    use concerto_ui::checkbox::UICheckbox;
+
+    #[derive(Component, concerto_editable::Editable)]
+    struct Switch {
+        on: bool,
+    }
+
+    fn fixture() -> (World, Entity) {
+        let (mut world, entity, _) = world();
+        world.insert_resource(PropertyCommits::default());
+        registry_mut(&mut world).register_inspectable::<Switch>();
+        world.insert(Switch { on: false }, entity);
+        update(&mut world);
+        update(&mut world);
+        (world, entity)
+    }
+
+    fn checked(world: &World, checkbox: Entity) -> bool {
+        world
+            .get_component_for_entity::<UICheckbox>(checkbox)
+            .unwrap()
+            .checked
+    }
+
+    #[test]
+    fn a_bool_property_is_shown_as_a_checkbox_holding_its_value() {
+        let (mut world, _) = fixture();
+        let checkbox = only::<UICheckbox>(&mut world);
+        assert!(!checked(&world, checkbox));
+        let mut texts = world.query::<&UIText, ()>();
+        assert!(
+            texts
+                .iter(&mut world)
+                .all(|text| text.text != "Unsupported type")
+        );
+    }
+
+    #[test]
+    fn toggling_the_checkbox_commits_the_new_value() {
+        let (mut world, entity) = fixture();
+        let checkbox = only::<UICheckbox>(&mut world);
+
+        click(&mut world, checkbox);
+        apply_property_commits(&mut world);
+
+        assert!(world.get_component_for_entity::<Switch>(entity).unwrap().on);
+    }
+
+    #[test]
+    fn a_value_changed_elsewhere_reaches_the_same_checkbox() {
+        let (mut world, entity) = fixture();
+        let checkbox = only::<UICheckbox>(&mut world);
+
+        world
+            .get_component_for_entity_mut::<Switch>(entity)
+            .unwrap()
+            .on = true;
+        update(&mut world);
+        update(&mut world);
+        run(&mut world, boolean::refresh_bool_fields);
+
+        assert_eq!(only::<UICheckbox>(&mut world), checkbox);
+        assert!(checked(&world, checkbox));
+    }
 }

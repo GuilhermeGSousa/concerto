@@ -8,14 +8,14 @@ use concerto_ecs::entity::hierarchy::Children;
 use concerto_ecs::system::NonSendMarker;
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
-    events::event_reader::EventReader,
+    events::event_reader::EventReader, signal::listener::IntoListener,
 };
 use concerto_foundation::{
     assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
     time::Time,
     transform::{GlobalTransform, Transform},
 };
-use concerto_mesh::{Mesh, MeshComponent, mesh::Aabb};
+use concerto_mesh::Aabb;
 use concerto_render::{
     assets::texture::Texture,
     components::{
@@ -48,7 +48,7 @@ use crate::selection::Selection;
 pub struct ViewportRegion;
 
 #[derive(Component)]
-struct EditorCamera;
+pub(crate) struct EditorCamera;
 
 #[derive(Component)]
 pub struct EditorHelper;
@@ -85,6 +85,16 @@ impl Default for FlyCamera {
 }
 
 impl FlyCamera {
+    /// Whether the pointer is currently steering the camera.
+    pub(crate) fn navigating(&self) -> bool {
+        self.looking || self.panning
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_looking(&mut self, looking: bool) {
+        self.looking = looking;
+    }
+
     fn rotation(&self) -> Quat {
         Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
     }
@@ -155,6 +165,8 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, viewport: &EditorView
             },
             Interactable,
             ViewportRegion,
+            crate::picking::press_viewport.into_listener(),
+            crate::picking::click_viewport.into_listener(),
         ))
         .entity()
 }
@@ -305,7 +317,7 @@ fn capture_pointer(window: &concerto_window::plugin::Window, capture: bool) {
     }
 }
 
-fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Entity> {
+pub(crate) fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Entity> {
     let mut found = HashSet::new();
     let mut stack = vec![root];
     while let Some(entity) = stack.pop() {
@@ -335,8 +347,7 @@ fn sync_viewport_context(
 #[allow(clippy::too_many_arguments)]
 fn frame_requested_bounds(
     mut fired: EventReader<ActionFired>,
-    meshes: Res<AssetStore<Mesh>>,
-    mesh_nodes: Query<(Entity, &MeshComponent, &GlobalTransform)>,
+    bounded: Query<(Entity, &Aabb, &GlobalTransform)>,
     children: Query<&Children>,
     cameras: Query<(&EditorCamera, &Camera, &mut Transform)>,
     selection: Res<Selection>,
@@ -349,12 +360,12 @@ fn frame_requested_bounds(
         commands.frame_all |= action.is(FrameAll);
     }
     let bounds = if commands.frame_all {
-        scene_bounds(&mesh_nodes, &meshes, None)
+        scene_bounds(&bounded, None)
     } else if frame_selected {
         selection
             .entity()
             .map(|entity| subtree(entity, &children))
-            .and_then(|set| scene_bounds(&mesh_nodes, &meshes, Some(&set)))
+            .and_then(|set| scene_bounds(&bounded, Some(&set)))
     } else {
         None
     };
@@ -377,22 +388,15 @@ fn frame_requested_bounds(
 }
 
 fn scene_bounds(
-    nodes: &Query<(Entity, &MeshComponent, &GlobalTransform)>,
-    meshes: &AssetStore<Mesh>,
+    nodes: &Query<(Entity, &Aabb, &GlobalTransform)>,
     subtree: Option<&HashSet<Entity>>,
 ) -> Option<Aabb> {
     let mut result: Option<Aabb> = None;
-    for (entity, mesh_component, transform) in nodes.iter() {
+    for (entity, bounds, transform) in nodes.iter() {
         if subtree.is_some_and(|set| !set.contains(&entity)) {
             continue;
         }
-        let Some(bounds) = meshes
-            .get(&mesh_component.handle)
-            .and_then(Mesh::local_aabb)
-            .map(|bounds| bounds.transformed(transform.matrix()))
-        else {
-            continue;
-        };
+        let bounds = bounds.transformed(transform.matrix());
         result = Some(match result {
             Some(current) => Aabb {
                 min: current.min.min(bounds.min),

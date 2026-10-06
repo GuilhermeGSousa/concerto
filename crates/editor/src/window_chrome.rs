@@ -13,9 +13,7 @@ use concerto_ui::{
     transform::UIValue,
 };
 use concerto_window::input::MouseButton;
-use concerto_window::plugin::{
-    Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
-};
+use concerto_window::plugin::{Window, WindowGesture, WindowGestureRegion, WindowGestureZone};
 use taffy::Position;
 use winit::window::ResizeDirection;
 

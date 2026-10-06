@@ -37,10 +37,40 @@ The scene root shown in the hierarchy is the editor's wrapper around the scene,
 not part of it, so the inspector shows nothing for it.
 
 The scene hierarchy supports selection, filtering, expansion, and keyboard
-navigation. The inspector uses typed property adapters. Its "add component" row
+navigation. Right-click a row to add a child, duplicate, rename, or delete it;
+the `+` in the panel header adds a child to the selection, or to the scene when
+nothing is selected. Delete removes the selected entity and its descendants,
+Ctrl+D duplicates it beside itself, and F2 edits its name in the field at the
+top of the inspector. New and duplicated entities go last among their siblings.
+The scene root can be given children but not deleted, duplicated, or renamed.
+A duplicate fails when the entity refers to something outside itself, such as a
+skinned mesh copied without its bones; Chatter says why.
+
+Panels change the scene's entities by triggering the `EntityEdit` signal, for
+example `cmd.trigger(EntityEdit::Delete(entity))`. One listener applies it,
+marks the document dirty, and moves the selection. The inspector uses typed property adapters. Its "add component" row
 adds any `register_editable` component the entity lacks, at its `Default` value;
 a card's ⋯ menu removes one. `register_inspectable` components, such as `Camera`,
-are edited and removed but never offered. Right-drag looks around;
+are edited and removed but never offered.
+
+Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
+to it, and draws a box around it; clicking empty space clears the selection. A
+press that moves more than a few pixels is not a click. Picking tests the
+mesh's triangles, so a mesh seen through a gap in another is the one selected.
+Limits: a skinned mesh is picked and boxed in its bind pose; a click selects
+the mesh entity itself, which in an imported model is often a child of the node
+you think of as the object; transparent texels still count as a hit; and
+entities without a mesh are selected from the hierarchy.
+
+The selected entity shows a transform gizmo: red, green, and blue handles for
+the world X, Y, and Z axes, with the one under the pointer in yellow. W shows
+arrows that move the entity along an axis; E shows rings that rotate it about
+one. Drag a handle with the left button. A ring seen nearly edge-on cannot be
+dragged; orbit a little first. The gizmo keeps its size on screen, is hidden
+while the camera is being flown, and is not shown for the scene root. A drag
+marks the scene dirty when it ends.
+
+Right-drag looks around;
 WASD and Q/E move while looking, Shift boosts speed, middle-drag pans, and the
 wheel dollies or adjusts flight speed while looking. F frames the selection;
 Shift-F frames the scene.

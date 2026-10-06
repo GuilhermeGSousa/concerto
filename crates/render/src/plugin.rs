@@ -187,6 +187,7 @@ impl Plugin for RenderPlugin {
         app.register_asset::<Mesh>()
             .register_asset::<Texture>()
             .register_asset::<Skeleton>();
+        app.add_system(Update, concerto_mesh::update_mesh_bounds);
 
         app.set_extract_fn(extract);
         app.add_render_system(Extract, extract_cameras)
@@ -203,7 +204,13 @@ impl Plugin for RenderPlugin {
 
         app.configure_render_sets(
             Render,
-            (RenderSet::Lights, RenderSet::Shadows, RenderSet::Draw).chain(),
+            (
+                RenderSet::Lights,
+                RenderSet::Shadows,
+                RenderSet::Draw,
+                RenderSet::Overlay,
+            )
+                .chain(),
         )
         .add_render_system(Render, clear_cameras)
         .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))

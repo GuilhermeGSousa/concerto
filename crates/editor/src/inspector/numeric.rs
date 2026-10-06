@@ -139,6 +139,9 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn apply(&self, value: &mut T, edit: &NumericEdit) -> Result<(), EditError> {
         value.edit(edit)
     }
+    fn follows_snapshot(&self) -> bool {
+        true
+    }
     fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &NumericSnapshot, theme: &UITheme) {
         let mut row_queue = cmd.entity(row);
         for slot in 0..slot_count(value) {

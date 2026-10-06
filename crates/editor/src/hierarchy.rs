@@ -1,8 +1,12 @@
 //! The world tree: live entities, walked through `Children`, rooted at the scenes that were spawned into the world.
 use crate::actions::{
-    CollapseRow, ExpandRow, SelectFirst, SelectLast, SelectNext, SelectPrevious, TreeContext,
+    CollapseRow, DeleteEntity, DuplicateEntity, ExpandRow, RenameEntity, SelectFirst, SelectLast,
+    SelectNext, SelectPrevious, TreeContext,
 };
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
+use crate::entity_ops::EntityEdit;
+use crate::fonts::{glyph, icon};
+use crate::inspector::FocusNameField;
 use crate::marks::{self, Mark};
 use crate::scene::{SceneRoot, SceneState};
 use crate::selection::Selection;
@@ -15,7 +19,7 @@ use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource,
     command::CommandQueue,
     component::name::Name,
-    entity::hierarchy::Children,
+    entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
     signal::{
         On,
@@ -23,6 +27,7 @@ use concerto_ecs::{
     },
 };
 use concerto_ui::{
+    anchor::{UIAnchorTarget, UIAnchoredPanel},
     elements::prelude::*,
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
@@ -61,9 +66,20 @@ pub struct HierarchyState {
     filter: String,
     visible: std::ops::Range<usize>,
     reveal: Option<usize>,
+    pending_reveal: Option<Entity>,
 }
 
 impl HierarchyState {
+    /// Expands the ancestors of `entity` and scrolls its row into view on the next rebuild.
+    pub fn reveal_entity(&mut self, entity: Entity) {
+        self.pending_reveal = Some(entity);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pending_reveal(&self) -> Option<Entity> {
+        self.pending_reveal
+    }
+
     fn row(&self, slot: usize) -> Option<Row> {
         self.rows.get(self.visible.start + slot).copied()
     }
@@ -93,6 +109,26 @@ enum Label {
 struct MarkSlot(usize);
 
 #[derive(Component)]
+struct AddEntityButton;
+
+/// The shared row menu and the entity it was opened for.
+#[derive(Component)]
+struct RowMenu {
+    target: Option<Entity>,
+}
+
+#[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
+enum RowMenuItem {
+    AddChild,
+    Duplicate,
+    Rename,
+    Delete,
+}
+
+const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
+const MENU_WIDTH: f32 = 168.0;
+
+#[derive(Component)]
 struct RowSlot(usize);
 
 pub struct HierarchyPlugin;
@@ -111,7 +147,9 @@ impl Plugin for HierarchyPlugin {
             .add_system(LateUpdate, sync_tree_scroll)
             .add_system(LateUpdate, sync_tree_context)
             .add_system(LateUpdate, keyboard_tree)
+            .add_system(LateUpdate, entity_shortcuts)
             .add_system(LateUpdate, sync_disabled)
+            .add_system(LateUpdate, sync_entity_controls)
             .add_system(LateUpdate, render_tree)
             .add_system(LateUpdate, render_marks);
     }
@@ -153,7 +191,23 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
         ),
         |mut tree| {
             tree = tree
-                .add_child((line(42.0), theme.text("WORLD"), Label::Title))
+                .add_child_with(theme.row().height(UIValue::Px(42.0)).fixed(), |header| {
+                    header
+                        .add_child((
+                            line(42.0).with_flex_grow(1.0).with_flex_shrink(1.0),
+                            theme.text("WORLD"),
+                            Label::Title,
+                        ))
+                        .add_child((
+                            theme
+                                .pressable()
+                                .size(UIValue::Px(24.0), UIValue::Px(24.0))
+                                .padding(UIRect::axes(4.0, 5.0))
+                                .on_click(add_entity),
+                            icon(theme, glyph::PLUS, theme.font_size_md).muted(),
+                            AddEntityButton,
+                        ));
+                })
                 .add_child((
                     theme
                         .text_field("Search entities…")
@@ -243,14 +297,149 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
             tree.add_child((line(46.0), theme.text(""), Label::Position));
         },
     );
+
+    let mut menu = cmd.spawn((
+        theme
+            .context_menu()
+            .fill(MENU_FILL)
+            .width(UIValue::Px(MENU_WIDTH))
+            .padding(theme.spacing_xs),
+        RowMenu { target: None },
+    ));
+    for (label, item) in [
+        ("Add child", RowMenuItem::AddChild),
+        ("Duplicate", RowMenuItem::Duplicate),
+        ("Rename", RowMenuItem::Rename),
+        ("Delete", RowMenuItem::Delete),
+    ] {
+        let color = if item == RowMenuItem::Delete {
+            theme.error
+        } else {
+            theme.text
+        };
+        menu = menu.add_child_with(
+            (
+                theme
+                    .pressable()
+                    .row()
+                    .padding(UIRect::axes(6.0, 8.0))
+                    .on_click(press_row_menu_item),
+                item,
+            ),
+            |entry| {
+                entry.add_child(theme.label(label).font_size(12.5).color(color).no_wrap());
+            },
+        );
+    }
+}
+
+fn add_entity(
+    on: On<UIClick>,
+    selection: Res<Selection>,
+    roots: Query<(Entity, &SceneRoot)>,
+    mut cmd: CommandQueue,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let root = roots.iter().next().map(|(entity, _)| entity);
+    if let Some(parent) = selection.entity().or(root) {
+        cmd.trigger(EntityEdit::Create { parent });
+    }
+}
+
+fn press_row_menu_item(
+    on: On<UIClick>,
+    items: Query<&RowMenuItem>,
+    menus: Query<(&RowMenu, &mut UIAnchoredPanel)>,
+    mut focus_name: ResMut<FocusNameField>,
+    mut cmd: CommandQueue,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(item) = items.get_entity(on.entity()) else {
+        return;
+    };
+    for (menu, mut panel) in menus.iter() {
+        if let Some(target) = menu.target.filter(|_| panel.open) {
+            match *item {
+                RowMenuItem::AddChild => cmd.trigger(EntityEdit::Create { parent: target }),
+                RowMenuItem::Duplicate => cmd.trigger(EntityEdit::Duplicate(target)),
+                RowMenuItem::Rename => focus_name.0 = true,
+                RowMenuItem::Delete => cmd.trigger(EntityEdit::Delete(target)),
+            }
+        }
+        panel.open = false;
+    }
+}
+
+fn entity_shortcuts(
+    mut fired: EventReader<ActionFired>,
+    selection: Res<Selection>,
+    mut focus_name: ResMut<FocusNameField>,
+    mut cmd: CommandQueue,
+) {
+    for action in fired.read() {
+        let Some(entity) = selection.entity() else {
+            continue;
+        };
+        if action.is(DeleteEntity) {
+            cmd.trigger(EntityEdit::Delete(entity));
+        } else if action.is(DuplicateEntity) {
+            cmd.trigger(EntityEdit::Duplicate(entity));
+        } else if action.is(RenameEntity) {
+            focus_name.0 = true;
+        }
+    }
+}
+
+fn sync_entity_controls(
+    roots: Query<&SceneRoot>,
+    menus: Query<&RowMenu>,
+    buttons: Query<(Entity, &AddEntityButton, Option<&UIDisabled>)>,
+    items: Query<(Entity, &RowMenuItem, Option<&UIDisabled>)>,
+    mut cmd: CommandQueue,
+) {
+    let mut set_disabled = |entity: Entity, wanted: bool, current: bool| {
+        if wanted && !current {
+            cmd.insert(UIDisabled, entity);
+        } else if !wanted && current {
+            cmd.remove::<UIDisabled>(entity);
+        }
+    };
+    let no_scene = roots.iter().next().is_none();
+    for (entity, _, disabled) in buttons.iter() {
+        set_disabled(entity, no_scene, disabled.is_some());
+    }
+    let on_root = menus
+        .iter()
+        .next()
+        .and_then(|menu| menu.target)
+        .is_some_and(|target| roots.get_entity(target).is_some());
+    for (entity, item, disabled) in items.iter() {
+        set_disabled(
+            entity,
+            on_root && *item != RowMenuItem::AddChild,
+            disabled.is_some(),
+        );
+    }
 }
 
 fn rebuild_rows(
     roots: Query<(Entity, &SceneRoot)>,
     children: Query<&Children>,
+    parents: Query<&ChildOf>,
     names: Query<&Name>,
     mut state: ResMut<HierarchyState>,
 ) {
+    let revealed = state.pending_reveal.take();
+    let mut ancestor = revealed.and_then(|entity| parents.get_entity(entity));
+    while let Some(parent) = ancestor {
+        state.expanded.insert(parent.parent());
+        ancestor = parents.get_entity(parent.parent());
+    }
+
     let mut root_entities: Vec<Entity> = roots.iter().map(|(entity, _)| entity).collect();
     root_entities.sort_by_key(|entity| (entity.index(), entity.generation()));
 
@@ -266,6 +455,9 @@ fn rebuild_rows(
         }
     }
     state.rows = rows;
+    if let Some(index) = revealed.and_then(|entity| state.index_of(entity)) {
+        state.reveal = Some(index);
+    }
 }
 
 fn child_entities(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
@@ -354,11 +546,25 @@ fn sync_tree_scroll(
 }
 
 fn select_row(slot: usize) -> Listener<UIClick> {
-    (move |on: On<UIClick>, state: Res<HierarchyState>, mut selection: ResMut<Selection>| {
-        if on.signal().button == MouseButton::Left
-            && let Some(row) = state.row(slot)
-        {
-            selection.select_entity(row.entity);
+    (move |on: On<UIClick>,
+           state: Res<HierarchyState>,
+           mut selection: ResMut<Selection>,
+           menus: Query<(&mut RowMenu, &mut UIAnchoredPanel)>| {
+        let Some(row) = state.row(slot) else {
+            return;
+        };
+        match on.signal().button {
+            MouseButton::Left => selection.select_entity(row.entity),
+            MouseButton::Right => {
+                selection.select_entity(row.entity);
+                for (mut menu, mut panel) in menus.iter() {
+                    menu.target = Some(row.entity);
+                    panel.target = UIAnchorTarget::from_point(on.signal().position);
+                    panel.owner = Some(on.entity());
+                    panel.open = true;
+                }
+            }
+            _ => {}
         }
     })
     .into_listener()
@@ -530,6 +736,7 @@ fn entity_label(entity: Entity, names: &Query<&Name>, roots: &Query<&SceneRoot>)
     }
     names
         .get_entity(entity)
+        .filter(|name| !name.as_str().is_empty())
         .map(|name| name.as_str().to_string())
         .unwrap_or_else(|| format!("Entity {}", entity.index()))
 }
@@ -598,5 +805,314 @@ fn render_marks(
             )
         });
         marks::apply(mark, &theme, selected_row(slot.0), &mut node, &mut material);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::asset_editor::{EditorDocument, EditorOwned};
+    use concerto_ecs::{
+        IntoSystem, System, World, events::event_channel::EventChannel, query::filter::With,
+    };
+    use concerto_foundation::{assets::AssetId, transform::Transform};
+    use concerto_window::input::actions::ActionLabel;
+    use glam::Vec2;
+
+    struct Fixture {
+        world: World,
+        root: Entity,
+        node: Entity,
+    }
+
+    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+        let mut system = system.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
+
+    fn build(mut cmd: CommandQueue, theme: Res<UITheme>) {
+        let parent = cmd.spawn(UINode::default()).entity();
+        spawn_panel(&mut cmd, parent, &theme);
+    }
+
+    fn fixture() -> Fixture {
+        let mut world = World::new();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        world.insert_resource(UITheme::default());
+        world.insert_resource(HierarchyState::default());
+        world.insert_resource(Selection::default());
+        world.insert_resource(FocusNameField::default());
+        world.insert_resource(EventChannel::<ActionFired>::default());
+        world.add_listener(crate::entity_ops::apply_entity_edit);
+        run(&mut world, build);
+        let document = world.spawn(EditorDocument {
+            asset_type: "Scene",
+            title: "level".into(),
+            current: None,
+            pending: None,
+            project_generation: 0,
+            request_generation: 0,
+            order: 0,
+            status: String::new(),
+            revision: 0,
+            saved_revision: 0,
+        });
+        let root = world.spawn((
+            Transform::IDENTITY,
+            SceneRoot {
+                asset_id: AssetId::new(),
+                address: "level.gasset".into(),
+            },
+            EditorOwned(document),
+        ));
+        let node = world.spawn((Name::new("node"), Transform::IDENTITY));
+        world.entity_mut(root).add_child(node);
+        let mut fixture = Fixture { world, root, node };
+        fixture.refresh();
+        fixture
+    }
+
+    impl Fixture {
+        fn refresh(&mut self) {
+            run(&mut self.world, rebuild_rows);
+            let state = self.world.get_resource_mut::<HierarchyState>().unwrap();
+            state.visible = 0..state.rows.len();
+            run(&mut self.world, sync_entity_controls);
+        }
+        fn expand(&mut self, entity: Entity) {
+            self.world
+                .get_resource_mut::<HierarchyState>()
+                .unwrap()
+                .expanded
+                .insert(entity);
+            self.refresh();
+        }
+        fn click(&mut self, entity: Entity, button: MouseButton) {
+            self.world.trigger_on(
+                entity,
+                UIClick {
+                    position: Vec2::new(40.0, 60.0),
+                    button,
+                },
+            );
+            self.refresh();
+        }
+        fn row_label(&mut self, entity: Entity) -> Entity {
+            let slot = self
+                .world
+                .get_resource::<HierarchyState>()
+                .unwrap()
+                .index_of(entity)
+                .expect("the entity has a visible row");
+            self.world
+                .query::<(Entity, &Label), ()>()
+                .iter(&mut self.world)
+                .find(|(_, label)| matches!(label, Label::Row(at) if *at == slot))
+                .unwrap()
+                .0
+        }
+        fn item(&mut self, wanted: RowMenuItem) -> Entity {
+            self.world
+                .query::<(Entity, &RowMenuItem), ()>()
+                .iter(&mut self.world)
+                .find(|(_, item)| **item == wanted)
+                .unwrap()
+                .0
+        }
+        fn menu(&mut self) -> (Option<Entity>, bool, UIAnchorTarget) {
+            let (menu, panel) = self
+                .world
+                .query::<(&RowMenu, &UIAnchoredPanel), ()>()
+                .iter(&mut self.world)
+                .next()
+                .unwrap();
+            (menu.target, panel.open, panel.target)
+        }
+        fn selected(&self) -> Option<Entity> {
+            self.world.get_resource::<Selection>().unwrap().entity()
+        }
+        fn children(&self, entity: Entity) -> Vec<Entity> {
+            self.world
+                .get_component_for_entity::<Children>(entity)
+                .map(|children| children.iter().copied().collect())
+                .unwrap_or_default()
+        }
+        fn disabled(&self, entity: Entity) -> bool {
+            self.world
+                .get_component_for_entity::<UIDisabled>(entity)
+                .is_some()
+        }
+        fn fire(&mut self, action: impl ActionLabel) {
+            let channel = self
+                .world
+                .get_resource_mut::<EventChannel<ActionFired>>()
+                .unwrap();
+            channel.update();
+            channel.update();
+            channel.push_event(ActionFired {
+                action: action.intern(),
+            });
+            run(&mut self.world, entity_shortcuts);
+            self.refresh();
+        }
+        fn rename_requested(&mut self) -> bool {
+            std::mem::take(&mut self.world.get_resource_mut::<FocusNameField>().unwrap().0)
+        }
+    }
+
+    #[test]
+    fn right_clicking_a_row_selects_it_and_opens_the_menu_at_the_pointer() {
+        let mut f = fixture();
+        f.expand(f.root);
+        let label = f.row_label(f.node);
+        f.click(label, MouseButton::Right);
+        assert_eq!(f.selected(), Some(f.node));
+        let (target, open, anchor) = f.menu();
+        assert_eq!(target, Some(f.node));
+        assert!(open);
+        assert!(matches!(
+            anchor,
+            UIAnchorTarget::Point { position } if position == Vec2::new(40.0, 60.0)
+        ));
+        for item in [
+            RowMenuItem::AddChild,
+            RowMenuItem::Duplicate,
+            RowMenuItem::Rename,
+            RowMenuItem::Delete,
+        ] {
+            let entity = f.item(item);
+            assert!(!f.disabled(entity), "{item:?}");
+        }
+    }
+
+    #[test]
+    fn menu_items_apply_their_edit_to_the_row_and_close_the_menu() {
+        let mut f = fixture();
+        f.expand(f.root);
+
+        let label = f.row_label(f.node);
+        f.click(label, MouseButton::Right);
+        let add = f.item(RowMenuItem::AddChild);
+        f.click(add, MouseButton::Left);
+        assert_eq!(f.children(f.node).len(), 1);
+        assert!(!f.menu().1);
+
+        let label = f.row_label(f.node);
+        f.click(label, MouseButton::Right);
+        let duplicate = f.item(RowMenuItem::Duplicate);
+        f.click(duplicate, MouseButton::Left);
+        assert_eq!(f.children(f.root).len(), 2);
+        let copy = f.selected().unwrap();
+        assert_ne!(copy, f.node);
+
+        let label = f.row_label(copy);
+        f.click(label, MouseButton::Right);
+        let rename = f.item(RowMenuItem::Rename);
+        f.click(rename, MouseButton::Left);
+        assert!(f.rename_requested());
+        assert!(f.world.entity_is_valid(copy));
+
+        let label = f.row_label(copy);
+        f.click(label, MouseButton::Right);
+        let delete = f.item(RowMenuItem::Delete);
+        f.click(delete, MouseButton::Left);
+        assert!(!f.world.entity_is_valid(copy));
+        assert_eq!(f.children(f.root), [f.node]);
+    }
+
+    #[test]
+    fn a_closed_menu_does_nothing_when_an_item_is_clicked() {
+        let mut f = fixture();
+        let delete = f.item(RowMenuItem::Delete);
+        f.click(delete, MouseButton::Left);
+        assert!(f.world.entity_is_valid(f.node));
+    }
+
+    #[test]
+    fn the_scene_root_only_offers_add_child() {
+        let mut f = fixture();
+        let label = f.row_label(f.root);
+        f.click(label, MouseButton::Right);
+        for (item, disabled) in [
+            (RowMenuItem::AddChild, false),
+            (RowMenuItem::Duplicate, true),
+            (RowMenuItem::Rename, true),
+            (RowMenuItem::Delete, true),
+        ] {
+            let entity = f.item(item);
+            assert_eq!(f.disabled(entity), disabled, "{item:?}");
+        }
+    }
+
+    #[test]
+    fn the_add_button_targets_the_selection_or_the_root_and_needs_a_scene() {
+        let mut f = fixture();
+        let button = f
+            .world
+            .query::<Entity, With<AddEntityButton>>()
+            .iter(&mut f.world)
+            .next()
+            .unwrap();
+        assert!(!f.disabled(button));
+        f.click(button, MouseButton::Left);
+        assert_eq!(f.children(f.root).len(), 2);
+
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .select_entity(f.node);
+        f.click(button, MouseButton::Left);
+        assert_eq!(f.children(f.node).len(), 1);
+
+        f.world.despawn(f.root);
+        f.refresh();
+        assert!(f.disabled(button));
+    }
+
+    #[test]
+    fn shortcuts_act_on_the_selection_and_do_nothing_without_one() {
+        let mut f = fixture();
+        f.fire(DeleteEntity);
+        assert!(f.world.entity_is_valid(f.node));
+
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .select_entity(f.node);
+        f.fire(RenameEntity);
+        assert!(f.rename_requested());
+
+        f.fire(DuplicateEntity);
+        assert_eq!(f.children(f.root).len(), 2);
+
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .select_entity(f.node);
+        f.fire(DeleteEntity);
+        assert!(!f.world.entity_is_valid(f.node));
+        assert_eq!(f.children(f.root).len(), 1);
+    }
+
+    #[test]
+    fn an_edit_that_selects_an_entity_expands_its_ancestors_and_reveals_its_row() {
+        let mut f = fixture();
+        assert!(
+            f.world
+                .get_resource::<HierarchyState>()
+                .unwrap()
+                .index_of(f.node)
+                .is_none()
+        );
+        f.world.trigger(EntityEdit::Create { parent: f.node });
+        let created = f.selected().unwrap();
+        run(&mut f.world, rebuild_rows);
+        let state = f.world.get_resource::<HierarchyState>().unwrap();
+        assert!(state.expanded.contains(&f.root));
+        assert!(state.expanded.contains(&f.node));
+        assert_eq!(state.reveal, state.index_of(created));
+        assert!(state.reveal.is_some());
     }
 }

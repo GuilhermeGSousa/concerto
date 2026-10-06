@@ -1,7 +1,17 @@
-use concerto_app::{Plugin, schedule_groups::Render};
-use concerto_render::{device::RenderDevice, layouts::CameraLayout, resources::RenderContext};
+use concerto_app::{
+    Plugin,
+    schedule_groups::{Extract, First, Render},
+};
+use concerto_ecs::IntoSystemConfig;
+use concerto_render::{
+    device::RenderDevice, layouts::CameraLayout, resources::RenderContext, sets::RenderSet,
+};
 
-use crate::{pipeline::GizmoPipeline, render::render_gizmos, storage::GizmoStorage};
+use crate::{
+    pipeline::GizmoPipeline,
+    render::{clear_gizmos, extract_gizmos, render_gizmos},
+    storage::{GizmoStorage, RenderGizmos},
+};
 
 /// Registers immediate-mode debug gizmos.
 ///
@@ -16,7 +26,10 @@ pub struct DebugGizmosPlugin;
 impl Plugin for DebugGizmosPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.insert_resource(GizmoStorage::default());
-        app.add_system(Render, render_gizmos);
+        app.add_system(First, clear_gizmos);
+        app.render_mut().insert_resource(RenderGizmos::default());
+        app.add_render_system(Extract, extract_gizmos)
+            .add_render_system(Render, render_gizmos.in_set(RenderSet::Overlay));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -39,6 +52,6 @@ impl Plugin for DebugGizmosPlugin {
 
         let pipeline = GizmoPipeline::new(device, camera_layout, surface_format);
 
-        app.insert_resource(pipeline);
+        app.render_mut().insert_resource(pipeline);
     }
 }

@@ -46,6 +46,7 @@ pub(crate) trait ErasedEditor: Send + Sync {
         theme: &UITheme,
     ) -> Result<(), EditError>;
     fn apply(&self, value: &mut dyn Editable, edit: &dyn Any) -> Result<(), EditError>;
+    fn follows_snapshot(&self) -> bool;
 }
 
 struct Adapter<T, E> {
@@ -80,6 +81,9 @@ impl<T: Editable, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
             .ok_or(EditError::TypeMismatch)?;
         self.editor.apply(value, edit)
     }
+    fn follows_snapshot(&self) -> bool {
+        self.editor.follows_snapshot()
+    }
 }
 
 pub(crate) struct RegisteredEditor {
@@ -101,6 +105,7 @@ impl Default for InspectorRegistry {
             editors: HashMap::new(),
         };
         super::numeric::register_defaults(&mut registry);
+        super::boolean::register_defaults(&mut registry);
         registry
     }
 }
@@ -261,6 +266,14 @@ impl InspectionSource<'_> {
     }
     pub fn is_registered(&self, id: TypeId) -> bool {
         self.registry.component(id).is_some()
+    }
+    pub fn follows_snapshot(&self, property: &Property) -> bool {
+        self.registry
+            .editor(property.type_id)
+            .is_some_and(|editor| {
+                Some(editor.editor_type) == property.editor_type
+                    && editor.adapter.follows_snapshot()
+            })
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, EditableComponent)>, usize) {

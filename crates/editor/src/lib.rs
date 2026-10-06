@@ -4,11 +4,14 @@ pub mod asset_editor;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
+pub mod entity_ops;
 pub mod fonts;
+pub mod gizmo;
 pub mod guard;
 pub mod hierarchy;
 pub mod inspector;
 pub mod marks;
+pub mod picking;
 pub mod project;
 pub mod scene;
 pub mod selection;
@@ -54,6 +57,7 @@ impl Plugin for EditorPlugin {
             concerto_app::schedule_groups::LateUpdate,
             asset_editor::request_save,
         );
+        app.add_listener(entity_ops::apply_entity_edit);
         app.register_plugin(scene::ScenePlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
@@ -68,6 +72,8 @@ impl Plugin for EditorPlugin {
             workspace::reset_workspace_input,
         );
         app.register_plugin(viewport::ViewportPlugin);
+        app.register_plugin(picking::PickingPlugin);
+        app.register_plugin(gizmo::GizmoPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);
         app.register_plugin(window_chrome::WindowChromePlugin {

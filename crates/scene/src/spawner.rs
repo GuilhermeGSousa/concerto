@@ -4,6 +4,7 @@ use concerto_ecs::{
     entity::Entity,
     query::Query,
     resource::Res,
+    World,
 };
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
@@ -62,6 +63,53 @@ pub fn spawn_scene(cmd: &mut CommandQueue<'_, '_>, scene: &Scene, parent: Entity
         .collect::<Vec<_>>();
     for root in &root_entities {
         cmd.add_child(parent, *root);
+    }
+
+    SpawnedScene {
+        node_entities,
+        root_entities,
+    }
+}
+
+/// [`spawn_scene`] for callers holding the [`World`] itself; the scene exists when this returns.
+pub fn spawn_scene_in_world(world: &mut World, scene: &Scene, parent: Entity) -> SpawnedScene {
+    let node_entities: Vec<Entity> = scene
+        .nodes
+        .iter()
+        .map(|node| world.spawn(Name::new(node.name.clone())))
+        .collect();
+
+    for (index, node) in scene.nodes.iter().enumerate() {
+        for component in &node.components {
+            world.apply_scene_component(
+                &component.type_name,
+                &component.data,
+                node_entities[index],
+                &node_entities,
+            );
+        }
+    }
+
+    let mut has_parent = vec![false; scene.nodes.len()];
+    for (index, node) in scene.nodes.iter().enumerate() {
+        for &child in &node.children {
+            let Some(&child_entity) = node_entities.get(child) else {
+                continue;
+            };
+            world
+                .entity_mut(node_entities[index])
+                .add_child(child_entity);
+            has_parent[child] = true;
+        }
+    }
+
+    let root_entities = node_entities
+        .iter()
+        .enumerate()
+        .filter_map(|(index, entity)| (!has_parent[index]).then_some(*entity))
+        .collect::<Vec<_>>();
+    for root in &root_entities {
+        world.entity_mut(parent).add_child(*root);
     }
 
     SpawnedScene {

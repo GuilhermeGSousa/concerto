@@ -2,13 +2,13 @@
 
 use anyhow::{Result, bail};
 use concerto_app::App;
+use concerto_ecs::events::event_reader::EventReader;
 use concerto_ecs::{
     Component, Entity, Query, Resource, World,
     command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::ChildOf,
     resource::{Res, ResMut},
 };
-use concerto_ecs::events::event_reader::EventReader;
 use concerto_foundation::assets::Asset;
 use concerto_window::input::actions::ActionFired;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -87,18 +87,43 @@ impl EditorDocument {
 
 /// Marks the document owning `entity`, found through its nearest [`EditorOwned`] ancestor, as edited.
 pub fn mark_entity_edited(world: &mut World, entity: Entity) {
+    if let Some(document) = owning_document(world, entity)
+        .and_then(|document| world.get_component_for_entity_mut::<EditorDocument>(document))
+    {
+        document.mark_edited();
+    }
+}
+
+/// [`mark_entity_edited`] for a system that holds queries instead of the world.
+pub fn mark_edited_with(
+    entity: Entity,
+    owners: &Query<&EditorOwned>,
+    parents: &Query<&ChildOf>,
+    documents: &Query<&mut EditorDocument>,
+) {
     let mut current = entity;
     let document = loop {
-        if let Some(owner) = world.get_component_for_entity::<EditorOwned>(current) {
+        if let Some(owner) = owners.get_entity(current) {
             break owner.0;
         }
-        let Some(parent) = world.get_component_for_entity::<ChildOf>(current) else {
+        let Some(parent) = parents.get_entity(current) else {
             return;
         };
         current = parent.parent();
     };
-    if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
+    if let Some(mut document) = documents.get_entity(document) {
         document.mark_edited();
+    }
+}
+
+/// The document named by the nearest [`EditorOwned`] on `entity` or its ancestors.
+pub fn owning_document(world: &World, entity: Entity) -> Option<Entity> {
+    let mut current = entity;
+    loop {
+        if let Some(owner) = world.get_component_for_entity::<EditorOwned>(current) {
+            return Some(owner.0);
+        }
+        current = world.get_component_for_entity::<ChildOf>(current)?.parent();
     }
 }
 
@@ -687,7 +712,10 @@ mod tests {
             .mark_edited();
 
         open(&mut w, "a");
-        assert!(asking_about(&w).is_empty(), "reselecting the open asset is harmless");
+        assert!(
+            asking_about(&w).is_empty(),
+            "reselecting the open asset is harmless"
+        );
 
         open(&mut w, "b");
         let doc = w.get_component_for_entity::<EditorDocument>(e).unwrap();

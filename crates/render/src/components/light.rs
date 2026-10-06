@@ -44,8 +44,6 @@ pub struct Light {
     pub intensity: f32,
     pub shadowmaps_enabled: bool,
     pub light_type: LightType,
-    /// Distance at which a point or spot light's contribution smoothly reaches
-    /// zero.
     #[serde(default)]
     pub range: f32,
 }
@@ -58,7 +56,7 @@ impl SceneComponent for Light {
 
 impl Default for Light {
     fn default() -> Self {
-        Self::point_light()
+        Self::spot_light(45.0)
     }
 }
 
