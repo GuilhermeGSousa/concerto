@@ -2,7 +2,7 @@
 
 The engine-native editor uses the engine's ECS, renderer, assets, scene, and UI
 crates. It opens project content, edits scenes through the inspector, and saves
-them. It does not import assets; importing belongs to the `import` CLI.
+them. It also imports source files into the open project; see Importing.
 
 ```sh
 cargo run -p concerto-editor -- --project examples/render-test
@@ -19,6 +19,26 @@ pending replacement. Unsupported assets remain selectable without opening a tab.
 With no tabs open, the editor shows an empty viewport. Switching projects closes
 all editors. Tabs scroll horizontally with the wheel or trackpad, and the active
 tab is revealed.
+
+## Importing
+
+**Import…** beside the Curiosities search opens a file picker for glTF, OBJ, and
+image sources; several files can be picked at once. A dialog then lists each
+file with the project-relative destination it will be copied to, which you can
+edit before confirming. Enter confirms and Escape cancels. Files are imported
+one at a time, and the catalogue refreshes after each without closing open tabs.
+
+Importing over an existing destination replaces it and keeps its asset IDs, so
+everything that refers to those assets stays wired. A file that is already
+inside the project is imported where it is, not copied.
+
+Limitation: only the picked file is copied. A source that refers to sibling
+files, such as an OBJ's `.mtl` or a glTF's `.bin` and external textures, fails
+when imported from outside the project. Copy the siblings beside the destination
+yourself, then import again. Chatter names the first failure of a batch; the log
+has every one in full.
+
+The `import` CLI still exists and does the same work from a terminal.
 
 ## Saving
 
