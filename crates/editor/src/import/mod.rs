@@ -1,7 +1,8 @@
 //! Importing source files into the open project.
 
+use std::collections::HashMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use anyhow::{Context, bail};
 use concerto_import::ImportedAsset;
@@ -49,6 +50,105 @@ fn copy_atomically(source: &Path, target: &Path, parent: &Path) -> anyhow::Resul
         .map_err(|error| error.error)
         .with_context(context)?;
     Ok(())
+}
+
+/// A file chosen for import, and where it will be copied to.
+#[derive(Debug, Clone)]
+pub struct StagedImport {
+    pub source: PathBuf,
+    /// Project-relative, e.g. `assets/hero.glb`.
+    pub destination: String,
+    pub state: RowState,
+}
+
+/// What importing a row would do, or why it cannot be imported.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RowState {
+    New,
+    Replaces,
+    Rejected(String),
+}
+
+impl StagedImport {
+    /// Whether this row may be queued.
+    pub fn importable(&self) -> bool {
+        !matches!(self.state, RowState::Rejected(_))
+    }
+}
+
+/// Proposes a destination under `assets/` for each picked source.
+pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
+    sources
+        .into_iter()
+        .map(|source| {
+            let name = source
+                .file_name()
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            StagedImport {
+                destination: format!("assets/{name}"),
+                source,
+                state: RowState::New,
+            }
+        })
+        .collect()
+}
+
+/// Re-decides every row's state against the project on disk.
+pub fn validate_rows(rows: &mut [StagedImport], project_root: &Path) {
+    let mut counts: HashMap<String, usize> = HashMap::new();
+    for row in rows.iter() {
+        *counts.entry(normalised(&row.destination)).or_default() += 1;
+    }
+    for row in rows.iter_mut() {
+        row.state = row_state(row, project_root, counts[&normalised(&row.destination)]);
+    }
+}
+
+fn normalised(destination: &str) -> String {
+    Path::new(destination)
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn row_state(row: &StagedImport, project_root: &Path, occurrences: usize) -> RowState {
+    if row.destination.is_empty() || row.destination.ends_with('/') {
+        return RowState::Rejected("needs a file name".into());
+    }
+    let destination = Path::new(&row.destination);
+    if destination.is_absolute()
+        || destination
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        return RowState::Rejected("must stay inside the project, without '..'".into());
+    }
+    if occurrences > 1 {
+        return RowState::Rejected(
+            "another file claims this destination; it is listed twice".into(),
+        );
+    }
+    let source_extension = extension_of(&row.source);
+    if !concerto_import::supported_extension(&source_extension) {
+        return RowState::Rejected(format!("no importer handles '.{source_extension}'"));
+    }
+    if extension_of(destination) != source_extension {
+        return RowState::Rejected(format!("extension must stay '.{source_extension}'"));
+    }
+    if project_root.join(&row.destination).exists() {
+        RowState::Replaces
+    } else {
+        RowState::New
+    }
+}
+
+fn extension_of(path: &Path) -> String {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
 }
 
 #[cfg(test)]
@@ -182,5 +282,107 @@ mod tests {
                 .all(|name| !name.to_string_lossy().starts_with(".tmp")),
             "no staging file remains, got: {names:?}"
         );
+    }
+
+    fn rows(pairs: &[(&str, &str)]) -> Vec<StagedImport> {
+        pairs
+            .iter()
+            .map(|(source, destination)| StagedImport {
+                source: PathBuf::from(source),
+                destination: (*destination).to_string(),
+                state: RowState::New,
+            })
+            .collect()
+    }
+
+    fn rejection(row: &StagedImport) -> &str {
+        match &row.state {
+            RowState::Rejected(reason) => reason,
+            other => panic!("expected a rejection, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn staging_prefills_a_destination_under_assets() {
+        let staged = stage_sources(vec![PathBuf::from("/home/someone/hero.glb")]);
+        assert_eq!(staged.len(), 1);
+        assert_eq!(staged[0].destination, "assets/hero.glb");
+        assert!(matches!(staged[0].state, RowState::New));
+    }
+
+    #[test]
+    fn a_destination_escaping_the_project_is_rejected() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let mut staged = rows(&[
+            ("/tmp/a.obj", "../outside/a.obj"),
+            ("/tmp/b.obj", "/etc/b.obj"),
+        ]);
+        validate_rows(&mut staged, project.path());
+        assert!(rejection(&staged[0]).contains("project"));
+        assert!(rejection(&staged[1]).contains("project"));
+    }
+
+    #[test]
+    fn a_destination_without_a_file_name_is_rejected() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let mut staged = rows(&[("/tmp/a.obj", ""), ("/tmp/b.obj", "assets/")]);
+        validate_rows(&mut staged, project.path());
+        assert!(rejection(&staged[0]).contains("file name"));
+        assert!(rejection(&staged[1]).contains("file name"));
+    }
+
+    #[test]
+    fn a_destination_that_changes_the_extension_is_rejected() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let mut staged = rows(&[("/tmp/hero.glb", "assets/hero.png")]);
+        validate_rows(&mut staged, project.path());
+        assert!(
+            rejection(&staged[0]).contains("extension"),
+            "the importer is chosen from the destination extension, so it must match the source"
+        );
+    }
+
+    #[test]
+    fn an_unsupported_source_is_rejected_by_its_extension() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let mut staged = rows(&[("/tmp/notes.txt", "assets/notes.txt")]);
+        validate_rows(&mut staged, project.path());
+        assert!(rejection(&staged[0]).contains("txt"));
+    }
+
+    #[test]
+    fn an_occupied_destination_is_marked_as_a_replacement_not_a_rejection() {
+        let project = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(project.path().join("assets")).expect("assets");
+        std::fs::write(project.path().join("assets/hero.glb"), b"old").expect("write");
+        let mut staged = rows(&[("/tmp/hero.glb", "assets/hero.glb")]);
+        validate_rows(&mut staged, project.path());
+        assert!(matches!(staged[0].state, RowState::Replaces));
+        assert!(staged[0].importable());
+    }
+
+    #[test]
+    fn two_rows_sharing_a_destination_are_both_rejected() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let mut staged = rows(&[
+            ("/one/hero.glb", "assets/hero.glb"),
+            ("/two/hero.glb", "assets/hero.glb"),
+        ]);
+        validate_rows(&mut staged, project.path());
+        assert!(rejection(&staged[0]).contains("twice"));
+        assert!(rejection(&staged[1]).contains("twice"));
+        assert!(!staged[0].importable() && !staged[1].importable());
+    }
+
+    #[test]
+    fn destinations_that_normalise_to_the_same_path_collide() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let mut staged = rows(&[
+            ("/one/a.obj", "assets/a.obj"),
+            ("/two/a.obj", "assets//a.obj"),
+        ]);
+        validate_rows(&mut staged, project.path());
+        assert!(rejection(&staged[0]).contains("twice"));
+        assert!(rejection(&staged[1]).contains("twice"));
     }
 }
