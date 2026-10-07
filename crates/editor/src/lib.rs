@@ -9,6 +9,7 @@ pub mod fonts;
 pub mod gizmo;
 pub mod guard;
 pub mod hierarchy;
+pub mod import;
 pub mod inspector;
 pub mod marks;
 pub mod picking;
