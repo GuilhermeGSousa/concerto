@@ -258,13 +258,15 @@ fn drive_picker(
     mut state: ResMut<ProjectState>,
 ) {
     if picker.job.as_ref().is_some_and(|job| job.is_finished()) {
-        let picked = picker
+        let finished = picker
             .job
             .take()
             .expect("the job was just observed as finished")
-            .join()
-            .unwrap_or(None);
-        accept_picked(picked, &mut staging, &mut state);
+            .join();
+        match finished {
+            Ok(picked) => accept_picked(picked, &mut staging, &mut state),
+            Err(_) => state.status = "The file picker failed.".into(),
+        }
     }
     if !std::mem::take(&mut picker.requested)
         || picker.job.is_some()
@@ -366,9 +368,19 @@ mod tests {
     }
 
     #[test]
-    fn the_picker_filter_lists_every_extension_the_importers_handle() {
-        for extension in ["png", "jpg", "jpeg", "gltf", "glb", "obj"] {
-            assert!(SUPPORTED_EXTENSIONS.contains(&extension), "{extension}");
+    fn every_common_asset_extension_an_importer_accepts_is_in_the_picker_filter() {
+        let candidates = [
+            "png", "jpg", "jpeg", "gltf", "glb", "obj", "bmp", "tga", "gif", "webp", "tiff", "tif",
+            "hdr", "exr", "dds", "ktx2", "fbx", "dae", "ply", "stl", "usd", "usdz", "blend", "3ds",
+            "mtl",
+        ];
+        for extension in candidates {
+            if concerto_import::supported_extension(extension) {
+                assert!(
+                    SUPPORTED_EXTENSIONS.contains(&extension),
+                    "an importer handles '.{extension}' but the picker filter omits it"
+                );
+            }
         }
     }
 
