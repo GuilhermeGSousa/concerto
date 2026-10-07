@@ -30,6 +30,7 @@ use concerto_foundation::assets::AssetId;
 pub const PANEL_ID: &str = "concerto.curiosities";
 
 const ROW_HEIGHT: f32 = 28.0;
+const SEARCH_HEIGHT: f32 = 30.0;
 const ROWS: usize = 24;
 
 const KINDS: [(&str, Option<&str>); 5] = [
@@ -119,32 +120,43 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
             .with_padding(UIRect::all(10.0))
             .clipped(),
         |mut panel| {
-            panel = panel.add_child_with(
-                theme
-                    .card()
-                    .radius_sm()
-                    .height(UIValue::Px(30.0))
-                    .fixed()
-                    .row()
-                    .padding(UIRect::axes(0.0, 8.0))
-                    .gap(6.0),
-                |search| {
-                    search
-                        .add_child(theme.label("⌕").muted().no_wrap())
-                        .add_child((
-                            theme
-                                .text_field("Find imported assets…")
-                                .bare()
-                                .height(UIValue::Auto)
-                                .padding(0.0)
-                                .single_line()
-                                .grow()
-                                .shrink(1.0)
-                                .min_width(UIValue::Px(0.0)),
-                            Filter,
-                        ));
-                },
-            );
+            panel = panel.add_child_with(theme.row().gap(6.0).fixed(), |bar| {
+                bar.add_child_with(
+                    theme
+                        .card()
+                        .radius_sm()
+                        .height(UIValue::Px(SEARCH_HEIGHT))
+                        .grow()
+                        .shrink(1.0)
+                        .min_width(UIValue::Px(0.0))
+                        .row()
+                        .padding(UIRect::axes(0.0, 8.0))
+                        .gap(6.0),
+                    |search| {
+                        search
+                            .add_child(theme.label("⌕").muted().no_wrap())
+                            .add_child((
+                                theme
+                                    .text_field("Find imported assets…")
+                                    .bare()
+                                    .height(UIValue::Auto)
+                                    .padding(0.0)
+                                    .single_line()
+                                    .grow()
+                                    .shrink(1.0)
+                                    .min_width(UIValue::Px(0.0)),
+                                Filter,
+                            ));
+                    },
+                )
+                .add_child(
+                    theme
+                        .button("Import…")
+                        .height(UIValue::Px(SEARCH_HEIGHT))
+                        .padding(UIRect::axes(6.0, 10.0))
+                        .on_click(request_import),
+                );
+            });
 
             panel = panel.add_child_with(
                 UINode::default()
@@ -157,7 +169,6 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                         tags =
                             tags.add_child((theme.chip(*name).on_click(select_kind), Tag(index)));
                     }
-                    tags.add_child(theme.chip("Import…").on_click(request_import));
                 },
             );
 
@@ -250,10 +261,8 @@ fn update_filter(
             reset = true;
         }
     }
-    if reset {
-        if let Some((_, mut area)) = views.iter().next() {
-            area.offset = 0.0;
-        }
+    if reset && let Some((_, mut area)) = views.iter().next() {
+        area.offset = 0.0;
     }
 }
 
@@ -277,9 +286,18 @@ fn select_kind(
     }
 }
 
-fn request_import(on: On<UIClick>, mut picker: ResMut<crate::import::ImportPicker>) {
-    if on.signal().button == MouseButton::Left {
+fn request_import(
+    on: On<UIClick>,
+    mut picker: ResMut<crate::import::ImportPicker>,
+    mut project: ResMut<ProjectState>,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    if project.project.is_some() {
         picker.request();
+    } else if !project.busy() {
+        project.status = "Open a project before importing.".into();
     }
 }
 
@@ -509,5 +527,70 @@ mod tests {
         );
 
         assert_eq!(opened(&world), [id]);
+    }
+
+    fn parent(world: &World, entity: Entity) -> Entity {
+        world
+            .get_component_for_entity::<ChildOf>(entity)
+            .unwrap()
+            .parent()
+    }
+
+    fn import_buttons(world: &mut World) -> Vec<Entity> {
+        world
+            .query::<(Entity, &UIText), ()>()
+            .iter(world)
+            .filter(|(_, text)| text.text == "Import…")
+            .map(|(entity, _)| entity)
+            .collect()
+    }
+
+    #[test]
+    fn import_is_one_button_beside_the_search_not_a_chip_among_the_filters() {
+        let (mut world, _, _) = fixture();
+
+        let buttons = import_buttons(&mut world);
+        assert_eq!(buttons.len(), 1);
+        let button = buttons[0];
+        let tag = world
+            .query::<(Entity, &Tag), ()>()
+            .iter(&mut world)
+            .next()
+            .unwrap()
+            .0;
+        let filter = world
+            .query::<(Entity, &Filter), ()>()
+            .iter(&mut world)
+            .next()
+            .unwrap()
+            .0;
+        let search_card = parent(&world, filter);
+
+        assert_ne!(parent(&world, button), parent(&world, tag));
+        assert_eq!(parent(&world, button), parent(&world, search_card));
+        let style = world
+            .get_component_for_entity::<UIInteractionStyle>(button)
+            .expect("a pressable, so it reacts to the pointer");
+        assert_ne!(style.normal, style.hovered);
+    }
+
+    #[test]
+    fn clicking_import_with_no_project_open_says_what_to_do_first() {
+        let (mut world, _, _) = fixture();
+        world.insert_resource(crate::import::ImportPicker::default());
+        world.insert_resource(ProjectState::default());
+        let button = import_buttons(&mut world)[0];
+
+        world.trigger_on(
+            button,
+            UIClick {
+                position: Vec2::ZERO,
+                button: MouseButton::Left,
+            },
+        );
+
+        let status = &world.get_resource::<ProjectState>().unwrap().status;
+        assert!(status.contains("project"), "got: {status}");
+        assert!(status.contains("import"), "got: {status}");
     }
 }
