@@ -157,6 +157,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                         tags =
                             tags.add_child((theme.chip(*name).on_click(select_kind), Tag(index)));
                     }
+                    tags.add_child(theme.chip("Import…").on_click(request_import));
                 },
             );
 
@@ -273,6 +274,12 @@ fn select_kind(
     state.visible = 0..0;
     if let Some((_, mut area)) = views.iter().next() {
         area.offset = 0.0;
+    }
+}
+
+fn request_import(on: On<UIClick>, mut picker: ResMut<crate::import::ImportPicker>) {
+    if on.signal().button == MouseButton::Left {
+        picker.request();
     }
 }
 

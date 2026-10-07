@@ -212,6 +212,74 @@ impl ImportQueue {
     }
 }
 
+const SUPPORTED_EXTENSIONS: &[&str] = &["gltf", "glb", "obj", "png", "jpg", "jpeg"];
+
+/// The native file picker running on its own thread.
+#[derive(Resource, Default)]
+pub struct ImportPicker {
+    job: Option<JoinHandle<Option<Vec<PathBuf>>>>,
+    requested: bool,
+}
+
+impl ImportPicker {
+    /// Asks for a picker on the next frame.
+    pub fn request(&mut self) {
+        self.requested = true;
+    }
+
+    /// Whether a picker is currently open.
+    pub fn is_picking(&self) -> bool {
+        self.job.is_some()
+    }
+}
+
+/// Turns the picker's result into validated staging rows.
+pub fn accept_picked(
+    sources: Option<Vec<PathBuf>>,
+    staging: &mut ImportStaging,
+    state: &mut ProjectState,
+) {
+    let Some(sources) = sources else {
+        state.status = "Import cancelled.".into();
+        return;
+    };
+    let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
+        return;
+    };
+    let mut rows = stage_sources(sources);
+    validate_rows(&mut rows, &root);
+    staging.rows = rows;
+    staging.visible = !staging.rows.is_empty();
+}
+
+fn drive_picker(
+    mut picker: ResMut<ImportPicker>,
+    mut staging: ResMut<ImportStaging>,
+    mut state: ResMut<ProjectState>,
+) {
+    if picker.job.as_ref().is_some_and(|job| job.is_finished()) {
+        let picked = picker
+            .job
+            .take()
+            .expect("the job was just observed as finished")
+            .join()
+            .unwrap_or(None);
+        accept_picked(picked, &mut staging, &mut state);
+    }
+    if !std::mem::take(&mut picker.requested)
+        || picker.job.is_some()
+        || staging.visible
+        || state.project.is_none()
+    {
+        return;
+    }
+    picker.job = Some(std::thread::spawn(|| {
+        rfd::FileDialog::new()
+            .add_filter("Assets", SUPPORTED_EXTENSIONS)
+            .pick_files()
+    }));
+}
+
 /// Runs queued imports one at a time and refreshes the catalogue after each.
 pub struct ImportPlugin;
 
@@ -219,9 +287,11 @@ impl Plugin for ImportPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ImportQueue::default());
         app.insert_resource(ImportStaging::default());
+        app.insert_resource(ImportPicker::default());
         app.register_plugin(dialog::DialogPlugin);
         app.add_system(Update, finish_import);
         app.add_system(Update, drive_imports);
+        app.add_system(Update, drive_picker);
     }
 }
 
@@ -284,6 +354,23 @@ fn finish_import(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_picker_filter_lists_only_extensions_an_importer_handles() {
+        for extension in SUPPORTED_EXTENSIONS {
+            assert!(
+                concerto_import::supported_extension(extension),
+                "{extension}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_picker_filter_lists_every_extension_the_importers_handle() {
+        for extension in ["png", "jpg", "jpeg", "gltf", "glb", "obj"] {
+            assert!(SUPPORTED_EXTENSIONS.contains(&extension), "{extension}");
+        }
+    }
 
     fn source_dir() -> tempfile::TempDir {
         let fixture =
