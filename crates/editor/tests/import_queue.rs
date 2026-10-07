@@ -30,6 +30,7 @@ fn editor(root: &Path) -> App {
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(UnsavedGuard::default());
     app.insert_resource(AssetServer::new());
+    app.insert_resource(concerto_ui::theme::UITheme::default());
     let mut state = ProjectState::default();
     state.project = Some(discover_project(root).expect("discover"));
     app.insert_resource(state);

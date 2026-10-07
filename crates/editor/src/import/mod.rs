@@ -1,5 +1,7 @@
 //! Importing source files into the open project.
 
+pub mod dialog;
+
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -101,13 +103,22 @@ pub fn stage_sources(sources: Vec<PathBuf>) -> Vec<StagedImport> {
 
 /// Re-decides every row's state against the project on disk.
 pub fn validate_rows(rows: &mut [StagedImport], project_root: &Path) {
-    let mut counts: HashMap<String, usize> = HashMap::new();
-    for row in rows.iter() {
-        *counts.entry(normalised(&row.destination)).or_default() += 1;
-    }
+    let counts = destination_counts(rows);
     for row in rows.iter_mut() {
         row.state = row_state(row, project_root, counts[&normalised(&row.destination)]);
     }
+}
+
+pub(crate) fn destinations_clash(rows: &[StagedImport]) -> bool {
+    destination_counts(rows).values().any(|&count| count > 1)
+}
+
+fn destination_counts(rows: &[StagedImport]) -> HashMap<String, usize> {
+    let mut counts = HashMap::new();
+    for row in rows {
+        *counts.entry(normalised(&row.destination)).or_default() += 1;
+    }
+    counts
 }
 
 fn normalised(destination: &str) -> String {
@@ -156,6 +167,13 @@ fn extension_of(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 
+/// Rows awaiting the user's confirmation, and whether the dialog is shown.
+#[derive(Resource, Default)]
+pub struct ImportStaging {
+    pub rows: Vec<StagedImport>,
+    pub visible: bool,
+}
+
 /// Queued imports and the single worker running one of them.
 #[derive(Resource, Default)]
 pub struct ImportQueue {
@@ -200,6 +218,8 @@ pub struct ImportPlugin;
 impl Plugin for ImportPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ImportQueue::default());
+        app.insert_resource(ImportStaging::default());
+        app.register_plugin(dialog::DialogPlugin);
         app.add_system(Update, finish_import);
         app.add_system(Update, drive_imports);
     }
