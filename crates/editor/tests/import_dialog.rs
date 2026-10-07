@@ -3,6 +3,7 @@ use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{Entity, events::event_channel::EventChannel};
 use concerto_editor::{
     actions::{ConfirmImport, ImportDialogContext},
+    guard::UnsavedGuard,
     import::{
         ImportPlugin, ImportQueue, ImportStaging, RowState, dialog, stage_sources, validate_rows,
     },
@@ -128,6 +129,7 @@ fn editor(sources: &[&str]) -> (App, tempfile::TempDir) {
     app.insert_resource(UITheme::default());
     app.insert_resource(ActionMap::default());
     app.insert_resource(FocusedWidget::default());
+    app.insert_resource(UnsavedGuard::default());
     app.register_event::<UITextInputChanged>();
     app.register_event::<ActionFired>();
     let mut state = ProjectState::default();

@@ -12,7 +12,7 @@ use concerto_ui::{
     elements::prelude::*,
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
-    node::UINode,
+    node::{UINode, UIRect},
     scroll::{UIScrollArea, UIVirtualList},
     text::UIText,
     text_input::{UITextInput, UITextInputChanged},
@@ -26,12 +26,17 @@ use concerto_window::input::{
 use taffy::FlexDirection;
 
 use crate::actions::{CancelImport, ConfirmImport, ImportDialogContext};
+use crate::guard::UnsavedGuard;
 use crate::import::{
     ImportQueue, ImportStaging, RowState, StagedImport, destinations_clash, validate_rows,
 };
 use crate::project::ProjectState;
 
 const DIALOG_LAYER: i32 = 200;
+const CARD_WIDTH: f32 = 720.0;
+const NAME_WIDTH: f32 = 140.0;
+const STATUS_WIDTH: f32 = 190.0;
+const SCROLLBAR_GUTTER: f32 = 12.0;
 const ROW_HEIGHT: f32 = 30.0;
 const VISIBLE_ROWS: usize = 10;
 const OVERSCAN: usize = 1;
@@ -92,7 +97,19 @@ pub fn cancel(staging: &mut ImportStaging) {
     staging.visible = false;
 }
 
+fn confirm_checked(staging: &mut ImportStaging, queue: &mut ImportQueue, project: &ProjectState) {
+    let root = project.project.as_ref().map(|project| &project.root);
+    if let Some(root) = root {
+        validate_rows(&mut staging.rows, root);
+    }
+    confirm(staging, queue);
+    if let Some(root) = root {
+        queue.bind(root);
+    }
+}
+
 fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
+    let raised = theme.surface_raised.to_srgba();
     cmd.spawn((
         theme
             .canvas()
@@ -110,7 +127,9 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
         (
             theme
                 .popup()
-                .width(UIValue::Px(460.0))
+                .fill(Color::srgba(raised.r, raised.g, raised.b, 1.0))
+                .width(UIValue::Px(CARD_WIDTH))
+                .max_width(UIValue::Percent(94.0))
                 .padding(theme.spacing_md)
                 .gap(theme.spacing_md),
             Interactable,
@@ -125,7 +144,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
             .add_child_with(
                 (
                     UINode::default()
-                        .with_height(UIValue::Px(VISIBLE_ROWS as f32 * ROW_HEIGHT))
+                        .with_height(UIValue::Px(0.0))
                         .with_flex_shrink(0.0)
                         .with_flex_direction(FlexDirection::Column)
                         .clipped(),
@@ -143,7 +162,14 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                     for slot in 0..SLOTS {
                         pool = pool.add_child_with(
                             (
-                                theme.row().height(UIValue::Px(ROW_HEIGHT)).fixed(),
+                                theme
+                                    .row()
+                                    .height(UIValue::Px(ROW_HEIGHT))
+                                    .padding(UIRect {
+                                        right: SCROLLBAR_GUTTER,
+                                        ..Default::default()
+                                    })
+                                    .fixed(),
                                 DialogRow(slot),
                             ),
                             |row| {
@@ -152,7 +178,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                                         .label("")
                                         .muted()
                                         .single_line()
-                                        .width(UIValue::Px(120.0))
+                                        .width(UIValue::Px(NAME_WIDTH))
                                         .fixed(),
                                     DialogName(slot),
                                 ))
@@ -170,7 +196,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                                         .label("")
                                         .small()
                                         .single_line()
-                                        .width(UIValue::Px(150.0))
+                                        .width(UIValue::Px(STATUS_WIDTH))
                                         .fixed(),
                                     DialogStatus(slot),
                                 ));
@@ -207,9 +233,10 @@ fn press_confirm(
     on: On<UIClick>,
     mut staging: ResMut<ImportStaging>,
     mut queue: ResMut<ImportQueue>,
+    project: Res<ProjectState>,
 ) {
     if on.signal().button == MouseButton::Left {
-        confirm(&mut staging, &mut queue);
+        confirm_checked(&mut staging, &mut queue, &project);
     }
 }
 
@@ -252,15 +279,17 @@ fn press_keys(
     mut fired: EventReader<ActionFired>,
     mut staging: ResMut<ImportStaging>,
     mut queue: ResMut<ImportQueue>,
+    project: Res<ProjectState>,
+    guard: Res<UnsavedGuard>,
 ) {
     for action in fired.read() {
-        if !staging.visible {
+        if !staging.visible || guard.asking() {
             continue;
         }
         if action.is(CancelImport) {
             cancel(&mut staging);
         } else if action.is(ConfirmImport) {
-            confirm(&mut staging, &mut queue);
+            confirm_checked(&mut staging, &mut queue, &project);
         }
     }
 }
@@ -268,15 +297,22 @@ fn press_keys(
 fn sync_dialog(
     staging: Res<ImportStaging>,
     roots: Query<(&DialogRoot, &mut UINode)>,
-    views: Query<(&mut DialogView, &mut UIScrollArea, &mut UIVirtualList)>,
-    fields: Query<&DialogField>,
+    views: Query<(
+        &mut DialogView,
+        &mut UIScrollArea,
+        &mut UIVirtualList,
+        &mut UINode,
+    )>,
+    fields: Query<(Entity, &DialogField)>,
     mut actions: ResMut<ActionMap>,
     mut focus: ResMut<FocusedWidget>,
 ) {
     let open = staging.visible;
+    let mut opened = false;
     for (_, mut node) in roots.iter() {
         if node.visible != open {
             node.visible = open;
+            opened = open;
         }
     }
     if actions.is_active(ImportDialogContext) != open {
@@ -287,9 +323,13 @@ fn sync_dialog(
         }
     }
     let mut rebound = false;
-    for (mut view, mut area, mut list) in views.iter() {
+    for (mut view, mut area, mut list, mut node) in views.iter() {
         list.item_count = staging.rows.len();
         area.content_extent = staging.rows.len() as f32 * ROW_HEIGHT;
+        let height = UIValue::Px(staging.rows.len().min(VISIBLE_ROWS) as f32 * ROW_HEIGHT);
+        if node.height != height {
+            node.height = height;
+        }
         if !open {
             area.offset = 0.0;
         }
@@ -299,6 +339,12 @@ fn sync_dialog(
     }
     if (!open || rebound) && (**focus).is_some_and(|entity| fields.get_entity(entity).is_some()) {
         **focus = None;
+    }
+    if opened {
+        **focus = fields
+            .iter()
+            .find(|(_, field)| field.0 == 0)
+            .map(|(entity, _)| entity);
     }
 }
 
@@ -346,7 +392,7 @@ fn render_dialog(
     }
     for (status, mut label) in statuses.iter() {
         let (value, color) = match staged(status.0).map(|row| &row.state) {
-            Some(RowState::Replaces) => ("replaces existing, keeps asset IDs", theme.warning),
+            Some(RowState::Replaces) => ("replaces existing", theme.warning),
             Some(RowState::Rejected(reason)) => (reason.as_str(), theme.error),
             Some(RowState::New) | None => ("", theme.text_muted),
         };
@@ -379,6 +425,7 @@ fn render_dialog(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::guard::{GuardedIntent, UnsavedGuard};
     use crate::import::stage_sources;
     use crate::project::Project;
     use concerto_ecs::{
@@ -411,6 +458,7 @@ mod tests {
         world.insert_resource(ActionMap::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(ImportQueue::default());
+        world.insert_resource(UnsavedGuard::default());
         world.insert_resource(EventChannel::<UITextInputChanged>::default());
         world.insert_resource(EventChannel::<ActionFired>::default());
         let mut state = ProjectState::default();
@@ -473,6 +521,16 @@ mod tests {
                 .unwrap()
                 .1
                 .visible
+        }
+
+        fn list_height(&mut self) -> UIValue {
+            self.world
+                .query::<(&DialogView, &UINode), ()>()
+                .iter(&mut self.world)
+                .next()
+                .unwrap()
+                .1
+                .height
         }
 
         fn shown_rows(&mut self) -> usize {
@@ -822,5 +880,84 @@ mod tests {
         dialog.fire(CancelImport);
 
         assert_eq!(**dialog.focus(), Some(elsewhere));
+    }
+
+    #[test]
+    fn opening_puts_the_caret_in_the_first_destination_once() {
+        let mut dialog = fixture(2);
+        let first = dialog.field(0);
+        assert_eq!(**dialog.focus(), Some(first));
+
+        **dialog.focus() = None;
+        dialog.frame();
+        assert_eq!(
+            **dialog.focus(),
+            None,
+            "only the frame that opens the dialog takes the focus"
+        );
+    }
+
+    #[test]
+    fn the_keys_do_nothing_while_the_unsaved_changes_prompt_is_asking() {
+        let mut dialog = fixture(2);
+        let document = dialog.world.spawn(UINode::default());
+        dialog
+            .world
+            .get_resource_mut::<UnsavedGuard>()
+            .unwrap()
+            .hold(GuardedIntent::Quit, vec![document]);
+
+        dialog.fire(ConfirmImport);
+        assert_eq!(dialog.queued(), 0, "Enter belongs to the prompt on top");
+        assert!(dialog.open());
+
+        dialog.fire(CancelImport);
+        assert!(dialog.open());
+        assert_eq!(dialog.staging().rows.len(), 2);
+    }
+
+    #[test]
+    fn the_import_button_rechecks_the_rows_before_queueing_them() {
+        let mut dialog = fixture(2);
+        dialog.staging().rows[0].destination = "../outside.obj".into();
+        let import = dialog.button("Import");
+
+        dialog.click(import, MouseButton::Left);
+        dialog.frame();
+
+        assert_eq!(dialog.queued(), 1, "the row that went stale is left out");
+    }
+
+    #[test]
+    fn the_confirm_key_rechecks_the_rows_before_queueing_them() {
+        let mut dialog = fixture(1);
+        dialog.staging().rows[0].destination = "../outside.obj".into();
+
+        dialog.fire(ConfirmImport);
+
+        assert_eq!(dialog.queued(), 0);
+        assert!(dialog.open(), "nothing importable is left, so it stays");
+        assert!(dialog.status(0).contains("project"));
+    }
+
+    #[test]
+    fn the_list_is_as_tall_as_its_rows_up_to_the_visible_ten() {
+        let mut dialog = fixture(2);
+        assert_eq!(dialog.list_height(), UIValue::Px(2.0 * ROW_HEIGHT));
+
+        let mut dialog = fixture(SLOTS + 8);
+        assert_eq!(
+            dialog.list_height(),
+            UIValue::Px(VISIBLE_ROWS as f32 * ROW_HEIGHT)
+        );
+    }
+
+    #[test]
+    fn a_replacing_row_says_so_in_two_words() {
+        let mut dialog = fixture(1);
+        dialog.staging().rows[0].state = RowState::Replaces;
+        dialog.frame();
+
+        assert_eq!(dialog.status(0), "replaces existing");
     }
 }
