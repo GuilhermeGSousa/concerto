@@ -122,3 +122,34 @@ fn a_frame_without_a_request_is_harmless() {
             .is_picking()
     );
 }
+
+#[test]
+fn a_source_already_inside_the_project_is_staged_where_it_is() {
+    let project = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(project.path().join("assets/props")).expect("props");
+    let inside = project.path().join("assets/props/hero.obj");
+    std::fs::write(&inside, b"o Hero\n").expect("write");
+    let mut state = state(project.path());
+    let mut staging = ImportStaging::default();
+    accept_picked(Some(vec![inside]), &mut staging, &mut state);
+    assert_eq!(staging.rows[0].destination, "assets/props/hero.obj");
+    assert_eq!(
+        staging.rows[0].state,
+        RowState::Replaces,
+        "it is imported in place rather than duplicated under assets/"
+    );
+}
+
+#[test]
+fn a_source_outside_the_project_is_still_staged_under_assets() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let elsewhere = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir_all(elsewhere.path().join("assets/props")).expect("props");
+    let outside = elsewhere.path().join("assets/props/hero.obj");
+    std::fs::write(&outside, b"o Hero\n").expect("write");
+    let mut state = state(project.path());
+    let mut staging = ImportStaging::default();
+    accept_picked(Some(vec![outside]), &mut staging, &mut state);
+    assert_eq!(staging.rows[0].destination, "assets/hero.obj");
+    assert_eq!(staging.rows[0].state, RowState::New);
+}

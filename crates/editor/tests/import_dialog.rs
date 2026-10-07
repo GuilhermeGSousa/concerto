@@ -3,7 +3,9 @@ use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{Entity, events::event_channel::EventChannel};
 use concerto_editor::{
     actions::{ConfirmImport, ImportDialogContext},
-    import::{ImportPlugin, ImportQueue, ImportStaging, RowState, dialog, stage_sources},
+    import::{
+        ImportPlugin, ImportQueue, ImportStaging, RowState, dialog, stage_sources, validate_rows,
+    },
     project::{Project, ProjectState},
 };
 use concerto_foundation::assets::content::AssetRegistry;
@@ -100,6 +102,24 @@ fn cancelling_discards_the_rows_without_queueing_them() {
     assert!(staging.rows.is_empty());
     assert!(!staging.visible);
     assert_eq!(queue.remaining(), 0);
+}
+
+#[test]
+fn rows_blanked_to_skip_them_do_not_block_the_rest() {
+    let project = tempfile::tempdir().expect("tempdir");
+    let mut staging = staged(&["/one/hero.obj", "/two/tree.obj", "/three/rock.obj"]);
+    staging.rows[0].destination.clear();
+    staging.rows[1].destination.clear();
+    validate_rows(&mut staging.rows, project.path());
+    let mut queue = ImportQueue::default();
+
+    assert!(matches!(staging.rows[0].state, RowState::Rejected(_)));
+    assert!(matches!(staging.rows[1].state, RowState::Rejected(_)));
+    assert!(dialog::can_confirm(&staging));
+    dialog::confirm(&mut staging, &mut queue);
+
+    assert_eq!(queue.remaining(), 1, "only the row with a destination");
+    assert!(!staging.visible);
 }
 
 fn editor(sources: &[&str]) -> (App, tempfile::TempDir) {
