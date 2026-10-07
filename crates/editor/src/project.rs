@@ -164,6 +164,7 @@ pub fn discover_project(root: &Path) -> anyhow::Result<Project> {
 pub enum EditorCommand {
     OpenProject(PathBuf),
     OpenAsset(AssetId),
+    RefreshCatalogue,
 }
 
 #[derive(Resource, Default)]
@@ -260,6 +261,23 @@ fn process_commands(
                             asset: asset.clone(),
                             project_generation: state.generation,
                         });
+                }
+            }
+            EditorCommand::RefreshCatalogue => {
+                let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
+                    continue;
+                };
+                match discover_project(&root) {
+                    Ok(project) => {
+                        if let Err(error) = asset_server
+                            .publish_project_content(&project.root, project.registry.clone())
+                        {
+                            state.status = format!("Could not refresh project assets: {error:#}");
+                            continue;
+                        }
+                        state.project = Some(project);
+                    }
+                    Err(error) => state.status = format!("Could not refresh catalogue: {error:#}"),
                 }
             }
             EditorCommand::OpenProject(path) => {
