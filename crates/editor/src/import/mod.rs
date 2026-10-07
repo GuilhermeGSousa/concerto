@@ -1,12 +1,17 @@
 //! Importing source files into the open project.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
+use std::thread::JoinHandle;
 
 use anyhow::{Context, bail};
+use concerto_app::{App, Plugin, schedule_groups::Update};
+use concerto_ecs::{ResMut, Resource};
 use concerto_import::ImportedAsset;
 use concerto_import::config::ContentConfig;
+
+use crate::project::{EditorCommand, EditorCommands, ProjectState};
 
 /// Copies a source into the project at `destination`, then imports it.
 pub fn import_source_into(
@@ -149,6 +154,111 @@ fn extension_of(path: &Path) -> String {
         .and_then(|value| value.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase()
+}
+
+/// Queued imports and the single worker running one of them.
+#[derive(Resource, Default)]
+pub struct ImportQueue {
+    pending: VecDeque<StagedImport>,
+    job: Option<JoinHandle<Result<Vec<ImportedAsset>, String>>>,
+    current: Option<String>,
+    failures: Vec<String>,
+    done: usize,
+    total: usize,
+}
+
+impl ImportQueue {
+    /// Queues every importable row; rejected rows are dropped.
+    pub fn enqueue(&mut self, rows: Vec<StagedImport>) {
+        let rows: Vec<_> = rows.into_iter().filter(StagedImport::importable).collect();
+        if rows.is_empty() {
+            return;
+        }
+        if self.job.is_none() && self.pending.is_empty() {
+            self.done = 0;
+            self.total = 0;
+            self.failures.clear();
+        }
+        self.total += rows.len();
+        self.pending.extend(rows);
+    }
+
+    /// Whether a worker thread is importing a row right now.
+    pub fn is_running(&self) -> bool {
+        self.job.is_some()
+    }
+
+    /// How many rows are still waiting to start.
+    pub fn remaining(&self) -> usize {
+        self.pending.len()
+    }
+}
+
+/// Runs queued imports one at a time and refreshes the catalogue after each.
+pub struct ImportPlugin;
+
+impl Plugin for ImportPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(ImportQueue::default());
+        app.add_system(Update, finish_import);
+        app.add_system(Update, drive_imports);
+    }
+}
+
+fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>) {
+    if queue.job.is_some() {
+        return;
+    }
+    let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
+        return;
+    };
+    let Some(row) = queue.pending.pop_front() else {
+        return;
+    };
+    let name = row
+        .source
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_else(|| row.destination.clone());
+    state.status = format!("Importing {name} ({} of {})…", queue.done + 1, queue.total);
+    queue.current = Some(name);
+    queue.job = Some(std::thread::spawn(move || {
+        import_source_into(&row.source, &row.destination, &root)
+            .map_err(|error| format!("{error:#}"))
+    }));
+}
+
+fn finish_import(
+    mut queue: ResMut<ImportQueue>,
+    mut state: ResMut<ProjectState>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    if !queue.job.as_ref().is_some_and(|job| job.is_finished()) {
+        return;
+    }
+    let result = queue
+        .job
+        .take()
+        .expect("the job was just observed as finished")
+        .join()
+        .unwrap_or_else(|_| Err("the import worker panicked".into()));
+    let name = queue.current.take().unwrap_or_default();
+    queue.done += 1;
+    let headline = match result {
+        Ok(written) => {
+            commands.0.push_back(EditorCommand::RefreshCatalogue);
+            format!("Imported {name} · {} assets", written.len())
+        }
+        Err(error) => {
+            queue.failures.push(format!("{name} ({error})"));
+            format!("Could not import {name}")
+        }
+    };
+    state.status = if queue.failures.is_empty() {
+        headline
+    } else {
+        format!("{headline} · failed: {}", queue.failures.join("; "))
+    };
 }
 
 #[cfg(test)]

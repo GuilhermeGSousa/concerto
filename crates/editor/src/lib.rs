@@ -43,6 +43,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(project::ProjectPlugin);
         app.register_plugin(hierarchy::HierarchyPlugin);
         app.register_plugin(content::ContentPlugin);
+        app.register_plugin(import::ImportPlugin);
         app.register_plugin(diagnostics::DiagnosticsPlugin);
         app.register_plugin(inspector::InspectorPlugin);
         app.insert_resource(asset_editor::AssetEditorRegistry::default());
