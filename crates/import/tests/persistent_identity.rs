@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, write_content_asset, AssetRegistry,
-    ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
+    read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
+    AssetRegistry, ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
 use concerto_foundation::assets::AssetId;
 use concerto_scene::scene::Scene;
@@ -116,6 +116,52 @@ fn reimport_updates_a_moved_output_in_place_and_preserves_its_uuid() {
     assert_eq!(
         AssetRegistry::load(&project.0).unwrap().get(id),
         Some(moved_address)
+    );
+}
+
+#[test]
+fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
+    let project = Project::new();
+    let source = project.source("assets/triangle.gltf");
+    let first = project.import(&source);
+    let scene_address = output(&first, "scene").to_owned();
+    let scene_path = project.path(&scene_address);
+    let raw = std::fs::read(&scene_path).unwrap();
+    let (imported, payload) = read_content_asset(&raw).unwrap();
+    let mut scene: Scene = bincode::deserialize(payload).unwrap();
+    scene.nodes[0].name = "Edited in the editor".into();
+    let mut registry = AssetRegistry::load(&project.0).unwrap();
+    save_content_asset_into(&scene, &project.0, &scene_address, &mut registry).unwrap();
+    registry.save(&project.0).unwrap();
+    let saved = std::fs::read(&scene_path).unwrap();
+    let other = first
+        .iter()
+        .find(|asset| asset.sub_asset_name != "scene")
+        .unwrap();
+    let other_path = project.path(&other.address);
+    let fresh = std::fs::read(&other_path).unwrap();
+    let (header, _) = read_content_asset(&fresh).unwrap();
+    std::fs::write(&other_path, write_content_asset(&header, b"stale").unwrap()).unwrap();
+    rename_node(&source, "Changed in the source");
+
+    let second = project.import(&source);
+
+    assert_eq!(std::fs::read(&scene_path).unwrap(), saved);
+    assert_eq!(std::fs::read(&other_path).unwrap(), fresh);
+    assert_eq!(second.len(), first.len() - 1);
+    assert!(second.iter().all(|asset| asset.sub_asset_name != "scene"));
+    assert_eq!(
+        AssetRegistry::load(&project.0)
+            .unwrap()
+            .get(imported.asset_id),
+        Some(scene_address.as_str())
+    );
+    let metadata: toml::Value =
+        toml::from_str(&std::fs::read_to_string(sidecar(&source)).unwrap()).unwrap();
+    assert_eq!(
+        AssetId::from_simple_hex(metadata["outputs"]["scene"]["asset_id"].as_str().unwrap())
+            .unwrap(),
+        imported.asset_id
     );
 }
 

@@ -1,8 +1,5 @@
 //! One scene preview, replaced only after the next asset has loaded successfully.
-use std::{
-    path::{Path, PathBuf},
-    thread::JoinHandle,
-};
+use std::{path::PathBuf, thread::JoinHandle};
 
 use anyhow::Context;
 
@@ -132,11 +129,7 @@ fn save_scene(world: &mut World, editor: Entity) -> anyhow::Result<String> {
         .get_resource_mut::<ProjectState>()
         .and_then(|state| state.project.as_mut())
         .context("Open a project before saving")?;
-    let address = if source.provenance.is_some() {
-        authored_address(&project.root, &source)
-    } else {
-        source.address.clone()
-    };
+    let address = source.address;
     let id = save_content_asset_into(&scene, &project.root, &address, &mut project.registry)?;
     project.registry.save(&project.root)?;
     let saved = AssetEntry::from_address(id, &address, Scene::name().into(), None);
@@ -157,25 +150,6 @@ fn save_scene(world: &mut World, editor: Entity) -> anyhow::Result<String> {
         document.mark_saved(revision);
     }
     Ok(address)
-}
-
-fn authored_address(root: &Path, source: &AssetEntry) -> String {
-    let extension = Path::new(&source.address)
-        .extension()
-        .map(|extension| extension.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "gasset".into());
-    let stem = if source.folder.is_empty() {
-        format!("{}-level", source.display_name)
-    } else {
-        format!("{}/{}-level", source.folder, source.display_name)
-    };
-    (1..)
-        .map(|attempt| match attempt {
-            1 => format!("{stem}.{extension}"),
-            _ => format!("{stem}-{attempt}.{extension}"),
-        })
-        .find(|address| !root.join(address).exists())
-        .expect("an unbounded range always yields a free address")
 }
 
 fn update_scenes(
@@ -695,11 +669,10 @@ mod tests {
     }
 
     #[test]
-    fn saving_an_imported_scene_writes_an_authored_copy_and_rebinds_the_document() {
+    fn saving_an_imported_scene_overwrites_it_in_place() {
         let dir = tempfile::tempdir().unwrap();
         let a = entry("first");
         fixture(dir.path(), &a);
-        let import = std::fs::read(dir.path().join(&a.address)).unwrap();
         let mut world = world(dir.path());
         let editor = open(&mut world, &a);
         settle(&mut world, editor);
@@ -709,31 +682,25 @@ mod tests {
         save(&mut world, editor);
 
         let doc = document(&world, editor);
-        let copy = doc.current.clone().unwrap();
+        let saved = doc.current.clone().unwrap();
         assert!(!doc.is_dirty());
-        assert_eq!(doc.status, "Saved first-level.gasset");
-        assert_eq!(doc.title, "first-level");
-        assert_eq!(copy.address, "first-level.gasset");
-        assert_ne!(copy.id, a.id);
-        assert!(copy.provenance.is_none());
-        assert_eq!(
-            std::fs::read(dir.path().join(&a.address)).unwrap(),
-            import,
-            "the import must not be touched"
-        );
-        let header = concerto_foundation::assets::content::read_content_asset_header(
-            &dir.path().join(&copy.address),
-        )
-        .unwrap();
-        assert_eq!(header.asset_id, copy.id);
-        assert!(header.provenance.is_none());
-        assert_eq!(saved_x(dir.path(), &copy), 9.0);
+        assert_eq!(doc.status, "Saved first.gasset");
+        assert_eq!(doc.title, "first");
+        assert_eq!(saved.address, a.address);
+        assert_eq!(saved.id, a.id);
+        assert_eq!(saved_x(dir.path(), &a), 9.0);
+        let files: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|file| file.unwrap().file_name())
+            .filter(|name| name.to_string_lossy().ends_with(".gasset"))
+            .collect();
+        assert_eq!(files, ["first.gasset"]);
         assert_eq!(
             world
                 .get_component_for_entity::<SceneRoot>(root(&world, editor))
                 .unwrap()
                 .asset_id,
-            copy.id
+            a.id
         );
         assert!(
             world
@@ -741,65 +708,19 @@ mod tests {
                 .is_none()
         );
         let project = world.get_resource::<ProjectState>().unwrap();
-        assert!(
-            project
-                .project
-                .as_ref()
-                .unwrap()
-                .assets
-                .iter()
-                .any(|asset| asset.id == copy.id)
-        );
+        let catalogue = &project.project.as_ref().unwrap().assets;
+        assert_eq!(catalogue.len(), 1);
+        assert_eq!(catalogue[0].id, a.id);
         assert_eq!(
-            AssetRegistry::load(dir.path()).unwrap().get(copy.id),
-            Some("first-level.gasset")
+            AssetRegistry::load(dir.path()).unwrap().get(a.id),
+            Some("first.gasset")
         );
-    }
-
-    #[test]
-    fn a_second_save_overwrites_the_copy_in_place() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = entry("first");
-        fixture(dir.path(), &a);
-        let mut world = world(dir.path());
-        let editor = open(&mut world, &a);
-        settle(&mut world, editor);
-        edit(&mut world, editor, 1.0);
-        save(&mut world, editor);
-        let copy = document(&world, editor).current.clone().unwrap();
 
         edit(&mut world, editor, 2.0);
         save(&mut world, editor);
 
-        let again = document(&world, editor).current.clone().unwrap();
-        assert_eq!(again, copy);
-        assert_eq!(saved_x(dir.path(), &copy), 2.0);
-        assert!(!dir.path().join("first-level-2.gasset").exists());
-        assert!(!document(&world, editor).is_dirty());
-    }
-
-    #[test]
-    fn a_taken_address_gets_a_numeric_suffix() {
-        let dir = tempfile::tempdir().unwrap();
-        let a = entry("first");
-        fixture(dir.path(), &a);
-        std::fs::write(dir.path().join("first-level.gasset"), b"taken").unwrap();
-        std::fs::write(dir.path().join("first-level-2.gasset"), b"taken").unwrap();
-        let mut world = world(dir.path());
-        let editor = open(&mut world, &a);
-        settle(&mut world, editor);
-        edit(&mut world, editor, 1.0);
-
-        save(&mut world, editor);
-
-        assert_eq!(
-            document(&world, editor).current.as_ref().unwrap().address,
-            "first-level-3.gasset"
-        );
-        assert_eq!(
-            std::fs::read(dir.path().join("first-level.gasset")).unwrap(),
-            b"taken"
-        );
+        assert_eq!(document(&world, editor).current, Some(saved));
+        assert_eq!(saved_x(dir.path(), &a), 2.0);
     }
 
     #[test]
@@ -855,8 +776,7 @@ mod tests {
         assert!(document(&world, editor).is_dirty());
         save(&mut world, editor);
 
-        let copy = document(&world, editor).current.clone().unwrap();
-        let scene = load_scene(dir.path().into(), copy.address, copy.id).unwrap();
+        let scene = load_scene(dir.path().into(), a.address, a.id).unwrap();
         let names: Vec<_> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["first", "lamp", "first", "lamp"]);
         assert_eq!(scene.nodes[0].children, [1]);

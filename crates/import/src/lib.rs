@@ -41,7 +41,8 @@ pub struct ImportedAsset {
 
 /// Import a source and rebuild its project's registry. The source's committed
 /// `.import.toml` sidecar owns output UUIDs; scanning content headers finds their
-/// current locations, including files moved since the previous import.
+/// current locations, including files moved since the previous import. An output
+/// that has lost its import provenance belongs to the editor and is not rewritten.
 ///
 /// The complete plan is validated before writing. Files are staged and replaced
 /// individually; this is not a multi-file transaction or a concurrent writer API.
@@ -173,6 +174,16 @@ pub fn import_source(
                 sub_asset.name
             );
         }
+        if headers
+            .get(&sub_asset.asset_id)
+            .is_some_and(|header| header.provenance.is_none())
+        {
+            log::warn!(
+                "'{}' was saved from the editor; leaving it untouched",
+                sub_asset.name
+            );
+            continue;
+        }
         let address = registry
             .get(sub_asset.asset_id)
             .map(str::to_owned)
@@ -284,7 +295,7 @@ fn validate_ownership(
     for (key, output) in &metadata.outputs {
         if let Some(header) = headers.get(&output.asset_id) {
             let Some(provenance) = &header.provenance else {
-                bail!("metadata output '{key}' claims an asset without import provenance");
+                continue;
             };
             if provenance.sub_asset != *key {
                 bail!(

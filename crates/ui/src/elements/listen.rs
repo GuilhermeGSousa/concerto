@@ -8,7 +8,11 @@ use concerto_ecs::{
 
 use super::{InteractionSpec, Interactive, Layout, Shape, Themed, Typography};
 use crate::{
-    interaction::UIClick, material::UIMaterial, node::UINode, text::UIText, theme::UITheme,
+    interaction::{UIClick, UIDoubleClick},
+    material::UIMaterial,
+    node::UINode,
+    text::UIText,
+    theme::UITheme,
 };
 
 /// An element with a signal listener attached.
@@ -35,6 +39,14 @@ pub trait Listen: IntoBundle {
 
     /// Runs `listener` when a button is released over this element after pressing it.
     fn on_click<M>(self, listener: impl IntoListener<UIClick, M>) -> Listening<Self, UIClick> {
+        self.on(listener)
+    }
+
+    /// Runs `listener` on the second click of a quick pair on this element.
+    fn on_double_click<M>(
+        self,
+        listener: impl IntoListener<UIDoubleClick, M>,
+    ) -> Listening<Self, UIDoubleClick> {
         self.on(listener)
     }
 }
