@@ -26,6 +26,16 @@ fn registered_importers() -> Vec<Box<dyn Importer>> {
     ]
 }
 
+/// Whether any registered importer handles this extension, given without a dot.
+pub fn supported_extension(extension: &str) -> bool {
+    let extension = extension.to_ascii_lowercase();
+    registered_importers().iter().any(|importer| {
+        importer
+            .supported_extensions()
+            .contains(&extension.as_str())
+    })
+}
+
 /// One content asset written by [`import_source`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedAsset {
@@ -351,4 +361,22 @@ fn replace(file: tempfile::NamedTempFile, path: &Path) -> anyhow::Result<()> {
         .map_err(|err| err.error)
         .with_context(|| format!("replacing '{}'", path.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supported_extensions_are_matched_without_regard_to_case() {
+        assert!(supported_extension("obj"));
+        assert!(supported_extension("GLB"), "matching is case-insensitive");
+        assert!(supported_extension("gltf"));
+        assert!(supported_extension("png"));
+        assert!(!supported_extension("txt"));
+        assert!(
+            !supported_extension(".obj"),
+            "the caller passes an extension, not a suffix with its dot"
+        );
+    }
 }
