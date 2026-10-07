@@ -32,13 +32,15 @@ Importing over an existing destination replaces it and keeps its asset IDs, so
 everything that refers to those assets stays wired. A file that is already
 inside the project is imported where it is, not copied.
 
-Limitation: only the picked file is copied. A source that refers to sibling
-files, such as an OBJ's `.mtl` or a glTF's `.bin` and external textures, fails
-when imported from outside the project. Copy the siblings beside the destination
-yourself, then import again. Chatter names the first failure of a batch; the log
-has every one in full.
+The files a source refers to come along with it: an OBJ's `.mtl` and the
+textures it names, a glTF's `.bin` buffers and external images. Each keeps its
+position relative to the source, and replaces a file already there. If one would
+land outside the project, the import fails and nothing is copied; pick a
+destination deeper inside the project. Chatter names the first failure of a
+batch; the log has every one in full.
 
-The `import` CLI still exists and does the same work from a terminal.
+The `import` CLI does the same work from a terminal; `--to <destination>` brings
+in a source from outside the project.
 
 ## Saving
 

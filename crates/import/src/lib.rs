@@ -1,11 +1,11 @@
 //! Offline import of source files into persistent UUID-addressed content assets.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
-use concerto_asset_import::{ImportContext, Importer, SubAssetIdResolver};
+use concerto_asset_import::{DependencyEntry, ImportContext, Importer, SubAssetIdResolver};
 use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, AssetRegistry, ContentAssetHeader,
     ImportProvenance, CONTENT_FORMAT_VERSION, REGISTRY_FILE_NAME,
@@ -49,6 +49,14 @@ pub struct ImportedAsset {
     pub kind: String,
 }
 
+/// What [`import_source_into`] wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedSource {
+    pub assets: Vec<ImportedAsset>,
+    /// Project-relative paths of the files copied along with the source.
+    pub siblings: Vec<String>,
+}
+
 /// Import a source and rebuild its project's registry. The source's committed
 /// `.import.toml` sidecar owns output UUIDs; scanning content headers finds their
 /// current locations, including files moved since the previous import. An output
@@ -67,11 +75,77 @@ pub fn import_source(
         .with_context(|| format!("resolving source '{}'", source.display()))?;
     std::fs::create_dir_all(project_root)?;
     let project_root = project_root.canonicalize()?;
-    let extension = source
-        .extension()
+    Ok(import_placed(&source, &source, &project_root, config)?.assets)
+}
+
+/// Imports `source` into the project as `destination`, copying it and every file it refers to; nothing is copied unless the import succeeds.
+pub fn import_source_into(
+    source: &Path,
+    destination: &str,
+    project_root: &Path,
+    config: &ContentConfig,
+) -> anyhow::Result<ImportedSource> {
+    validate_config(config)?;
+    let source = source
+        .canonicalize()
+        .with_context(|| format!("resolving source '{}'", source.display()))?;
+    let relative = Path::new(destination);
+    if destination.is_empty()
+        || destination.ends_with(['/', '\\'])
+        || relative.is_absolute()
+        || relative
+            .components()
+            .any(|part| !matches!(part, Component::Normal(_)))
+    {
+        bail!("destination '{destination}' must be a file inside the project, without '.' or '..'");
+    }
+    let extension = extension_of(&source);
+    if extension_of(relative) != extension {
+        bail!("destination '{destination}' must keep the source's extension '.{extension}'");
+    }
+    std::fs::create_dir_all(project_root)?;
+    let project_root = project_root.canonicalize()?;
+    let placed = placed_path(&project_root.join(relative));
+    if !placed.starts_with(&project_root) {
+        bail!("destination '{destination}' resolves outside the project");
+    }
+    import_placed(&source, &placed, &project_root, config)
+}
+
+fn extension_of(path: &Path) -> String {
+    path.extension()
         .and_then(|e| e.to_str())
         .unwrap_or_default()
-        .to_ascii_lowercase();
+        .to_ascii_lowercase()
+}
+
+fn placed_path(target: &Path) -> PathBuf {
+    let mut missing = Vec::new();
+    let mut existing = target;
+    loop {
+        if let Ok(resolved) = existing.canonicalize() {
+            return missing
+                .iter()
+                .rev()
+                .fold(resolved, |path, name| path.join(name));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name);
+                existing = parent;
+            }
+            _ => return target.to_path_buf(),
+        }
+    }
+}
+
+fn import_placed(
+    read: &Path,
+    source: &Path,
+    project_root: &Path,
+    config: &ContentConfig,
+) -> anyhow::Result<ImportedSource> {
+    let extension = extension_of(read);
     let importers = registered_importers();
     let Some(importer) = importers
         .iter()
@@ -87,13 +161,13 @@ pub fn import_source(
         "obj" => "obj",
         _ => "image",
     };
-    let relative_source = source.strip_prefix(&project_root).unwrap_or(&source);
+    let relative_source = source.strip_prefix(project_root).unwrap_or(source);
     let provenance_source = relative_source.to_string_lossy().replace('\\', "/");
-    let sidecar = sidecar_path(&source);
+    let sidecar = sidecar_path(source);
 
     // Fail on malformed headers and duplicate IDs before touching any output.
     let mut registry =
-        AssetRegistry::from_content_tree(&project_root, &config.root, &config.extension)?;
+        AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
     let mut headers = HashMap::new();
     for (id, address) in registry.iter() {
         headers.insert(id, read_content_asset_header(&project_root.join(address))?);
@@ -114,7 +188,7 @@ pub fn import_source(
         let mut outputs = BTreeMap::new();
         for (id, header) in &headers {
             if let Some(provenance) = &header.provenance {
-                if metadata::provenance_path(&provenance.source, &project_root) == source
+                if metadata::provenance_path(&provenance.source, project_root) == source
                     && outputs
                         .insert(
                             provenance.sub_asset.clone(),
@@ -137,14 +211,7 @@ pub fn import_source(
             outputs,
         }
     };
-    validate_ownership(
-        &metadata,
-        &sidecar,
-        &source,
-        &project_root,
-        config,
-        &headers,
-    )?;
+    validate_ownership(&metadata, &sidecar, source, project_root, config, &headers)?;
 
     // The callback cannot return errors. All existing identities are validated
     // beforehand; only allocating new identities happens during the import.
@@ -163,11 +230,11 @@ pub fn import_source(
             .entry(sub_name.to_string())
             .or_default()
     });
-    let mut ctx = ImportContext::with_sub_asset_id_resolver(source.clone(), resolver);
+    let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver);
     importer
-        .import(&source, &mut ctx)
+        .import(read, &mut ctx)
         .map_err(|err| anyhow::anyhow!("{err:?}"))
-        .with_context(|| format!("importing '{}'", source.display()))?;
+        .with_context(|| format!("importing '{}'", read.display()))?;
     let outputs = ctx.into_parts();
     let emitted: HashSet<AssetId> = outputs.sub_assets.iter().map(|s| s.asset_id).collect();
     let mut names = HashSet::new();
@@ -242,10 +309,19 @@ pub fn import_source(
         });
     }
     drop(resolved);
+    let copies = if read == source {
+        Vec::new()
+    } else {
+        planned_copies(read, source, project_root, &outputs.dependencies)?
+    };
 
     // Staging all bytes first catches write errors before replacing old files.
     // Publish metadata first so a retry retains newly allocated identities even
     // if later replacements fail. Full crash recovery is a separate concern.
+    let copied: Vec<_> = copies
+        .iter()
+        .map(|(from, to)| stage_copy(from, to).map(|file| (to, file)))
+        .collect::<anyhow::Result<_>>()?;
     let metadata_text = toml::to_string_pretty(&metadata)?;
     let metadata_file = stage(&sidecar, metadata_text.as_bytes())?;
     let staged: Vec<_> = plan
@@ -264,12 +340,66 @@ pub fn import_source(
     })?;
     let registry_path = project_root.join(REGISTRY_FILE_NAME);
     let registry_file = stage(&registry_path, registry_text.as_bytes())?;
+    for (path, file) in copied {
+        replace(file, path)?;
+    }
     replace(metadata_file, &sidecar)?;
     for (path, file) in staged {
         replace(file, path)?;
     }
     replace(registry_file, &registry_path)?;
-    Ok(written)
+    let siblings = copies
+        .iter()
+        .skip(1)
+        .map(|(_, to)| {
+            to.strip_prefix(project_root)
+                .unwrap_or(to)
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .collect();
+    Ok(ImportedSource {
+        assets: written,
+        siblings,
+    })
+}
+
+fn planned_copies(
+    read: &Path,
+    placed: &Path,
+    project_root: &Path,
+    dependencies: &[DependencyEntry],
+) -> anyhow::Result<Vec<(PathBuf, PathBuf)>> {
+    let read_dir = read.parent().context("source has no parent directory")?;
+    let placed_dir = placed
+        .parent()
+        .context("destination has no parent directory")?;
+    let mut copies = vec![(read.to_path_buf(), placed.to_path_buf())];
+    for dependency in dependencies {
+        let from = metadata::normalize(&dependency.path);
+        let Ok(relative) = dependency.path.strip_prefix(read_dir) else {
+            bail!(
+                "'{}' refers to '{}', which is not addressed relative to it",
+                read.display(),
+                dependency.path.display()
+            );
+        };
+        let to = metadata::normalize(&placed_dir.join(relative));
+        if !to.starts_with(project_root) {
+            bail!(
+                "'{}' would land outside the project; choose a destination deeper inside it",
+                relative.display()
+            );
+        }
+        if from == to || copies.iter().any(|copy| copy.0 == from && copy.1 == to) {
+            continue;
+        }
+        if copies.iter().any(|copy| copy.1 == to) {
+            bail!("two files would be copied to '{}'", to.display());
+        }
+        copies.push((from, to));
+    }
+    Ok(copies)
 }
 
 fn validate_config(config: &ContentConfig) -> anyhow::Result<()> {
@@ -353,6 +483,22 @@ fn stage(path: &Path, bytes: &[u8]) -> anyhow::Result<tempfile::NamedTempFile> {
     file.write_all(bytes)
         .with_context(|| format!("writing staged '{}'", path.display()))?;
     file.flush()?;
+    Ok(file)
+}
+
+fn stage_copy(from: &Path, to: &Path) -> anyhow::Result<tempfile::NamedTempFile> {
+    let parent = to.parent().context("output path has no parent")?;
+    let reading = || format!("reading '{}'", from.display());
+    let staging = || format!("staging '{}'", to.display());
+    let mut reader = std::fs::File::open(from).with_context(reading)?;
+    let permissions = reader.metadata().with_context(reading)?.permissions();
+    std::fs::create_dir_all(parent).with_context(|| format!("creating '{}'", parent.display()))?;
+    let mut file = tempfile::NamedTempFile::new_in(parent).with_context(staging)?;
+    std::io::copy(&mut reader, &mut file).with_context(staging)?;
+    file.flush().with_context(staging)?;
+    file.as_file()
+        .set_permissions(permissions)
+        .with_context(staging)?;
     Ok(file)
 }
 

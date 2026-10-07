@@ -47,7 +47,16 @@ sidecar inside the project, beside its source.
 **The dialog edits the source path, not the output path.** `content_address`
 already derives `content/props/hero/mesh_0.gasset` from a project-relative
 source of `assets/props/hero.glb`, so steering the source steers the output.
-The `import` crate needs no changes.
+
+**Sibling files come along (amended 2026-10-07).** A source's importer already
+records every external file it reads: an OBJ's `.mtl` and its textures, a
+glTF's `.bin` buffers and image URIs. `import::import_source_into` runs the
+importer against the original file, where those siblings still are, then copies
+the source and each recorded file into the project, every sibling keeping its
+position relative to the source. Nothing is copied unless the import succeeds;
+a sibling that would land outside the project fails the import; a sibling
+already at the destination is replaced. Siblings are not rows in the dialog,
+because they are only known once the importer has run.
 
 **Re-importing over an existing destination is the intended path.** Overwriting
 `assets/hero.glb` reuses the existing sidecar, so every sub-asset keeps its
@@ -126,11 +135,10 @@ pub fn import_source_into(
 ```
 
 1. `ContentConfig::load_or_default(project_root)`.
-2. Resolve `project_root.join(destination)`; skip the copy when it is already
-   the source (an in-project file kept at its own path).
-3. Copy via stage-to-temp then `persist`, matching the `stage`/`replace`
-   discipline in `import/src/lib.rs`.
-4. `import_source(&destination_path, project_root, &config)`.
+2. `import::import_source_into(source, destination, project_root, &config)`,
+   which imports from the original location and then stages and persists the
+   source and its siblings with the import crate's own `stage`/`replace`
+   discipline. A source already at its destination is imported in place.
 
 ### `crates/editor/src/import/dialog.rs`
 
@@ -197,11 +205,6 @@ next row; one bad file does not abandon the batch.
 anything already in it. Re-importing a changed `hero.glb` rewrites the `.gasset`
 and the catalogue, but a viewport already displaying that mesh keeps the old
 bytes until the project is reopened. Hot-reload is a separate feature.
-
-**Multi-file glTF is the user's responsibility.** A bare `.gltf` references
-`.bin` buffers and textures by relative URI. The picker is multi-select, so the
-user selects those files alongside it and gives them destinations that preserve
-the relative layout. The editor does not parse URIs or follow references.
 
 **Drag and drop.** `WindowEvent::DroppedFile` already reaches the ECS event
 channel for free, but it carries no cursor position and `CursorMoved` is not

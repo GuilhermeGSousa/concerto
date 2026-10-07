@@ -3,80 +3,24 @@
 pub mod dialog;
 
 use std::collections::{HashMap, VecDeque};
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::thread::JoinHandle;
 
-use anyhow::{Context, bail};
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{IntoSystemConfig, ResMut, Resource};
-use concerto_import::ImportedAsset;
+use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
-use concerto_import::metadata::sidecar_path;
 
 use crate::project::{EditorCommand, EditorCommands, ProjectState};
 
-/// Copies a source into the project at `destination`, then imports it; refuses a destination the dialog would reject.
+/// Imports a source into the project at `destination`, bringing the files it refers to along.
 pub fn import_source_into(
     source: &Path,
     destination: &str,
     project_root: &Path,
-) -> anyhow::Result<Vec<ImportedAsset>> {
-    let extension = extension_of(source);
-    if !concerto_import::supported_extension(&extension) {
-        bail!("no importer handles '.{extension}'");
-    }
-    if let Some(problem) = placement_problem(destination) {
-        bail!("cannot import to '{destination}': {problem}");
-    }
-    if extension_of(Path::new(destination)) != extension {
-        bail!("cannot import to '{destination}': extension must stay '.{extension}'");
-    }
+) -> anyhow::Result<ImportedSource> {
     let config = ContentConfig::load_or_default(project_root)?;
-    let target = project_root.join(destination);
-    let parent = match target.parent() {
-        Some(parent) if !parent.as_os_str().is_empty() => parent,
-        _ => project_root,
-    };
-    std::fs::create_dir_all(parent).with_context(|| format!("creating '{}'", parent.display()))?;
-    let same = source
-        .canonicalize()
-        .ok()
-        .zip(target.canonicalize().ok())
-        .is_some_and(|(source, target)| source == target);
-    let sidecar = sidecar_path(&target);
-    let fresh_copy = !same && !target.exists();
-    let fresh_sidecar = fresh_copy && !sidecar.exists();
-    if !same {
-        copy_atomically(source, &target, parent)?;
-    }
-    let imported = concerto_import::import_source(&target, project_root, &config);
-    if imported.is_err() && fresh_copy {
-        let _ = std::fs::remove_file(&target);
-        if fresh_sidecar {
-            let _ = std::fs::remove_file(&sidecar);
-        }
-    }
-    imported
-}
-
-fn copy_atomically(source: &Path, target: &Path, parent: &Path) -> anyhow::Result<()> {
-    let reading = || format!("reading '{}'", source.display());
-    let writing = || format!("writing '{}'", target.display());
-    let mut reader = std::fs::File::open(source).with_context(reading)?;
-    let permissions = reader.metadata().with_context(reading)?.permissions();
-    let mut staged = tempfile::NamedTempFile::new_in(parent).with_context(writing)?;
-    std::io::copy(&mut reader, &mut staged).with_context(writing)?;
-    staged.flush().with_context(writing)?;
-    staged
-        .as_file()
-        .set_permissions(permissions)
-        .with_context(writing)?;
-    staged
-        .persist(target)
-        .map_err(|error| error.error)
-        .with_context(writing)?;
-    Ok(())
+    concerto_import::import_source_into(source, destination, project_root, &config)
 }
 
 /// A file chosen for import, and where it will be copied to.
@@ -206,7 +150,7 @@ pub struct ImportStaging {
 #[derive(Resource, Default)]
 pub struct ImportQueue {
     pending: VecDeque<QueuedImport>,
-    job: Option<JoinHandle<Result<Vec<ImportedAsset>, String>>>,
+    job: Option<JoinHandle<Result<ImportedSource, String>>>,
     current: Option<String>,
     failures: Vec<(String, String)>,
     done: usize,
@@ -422,9 +366,17 @@ fn finish_import(
         });
     queue.done += 1;
     let imported = match result {
-        Ok(written) => {
+        Ok(imported) => {
             commands.0.push_back(EditorCommand::RefreshCatalogue);
-            format!("Imported {name} · {} assets", written.len())
+            let siblings = match imported.siblings.len() {
+                0 => String::new(),
+                1 => " · 1 sibling file".into(),
+                count => format!(" · {count} sibling files"),
+            };
+            format!(
+                "Imported {name} · {} assets{siblings}",
+                imported.assets.len()
+            )
         }
         Err(reason) => {
             queue.failures.push((name, reason));
@@ -516,51 +468,59 @@ mod tests {
     }
 
     fn source_dir() -> tempfile::TempDir {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures/square.obj");
-        let text = std::fs::read_to_string(fixture).expect("the obj fixture exists");
+        let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
         let dir = tempfile::tempdir().expect("tempdir");
-        let without_materials: String = text
-            .lines()
-            .filter(|line| !line.starts_with("mtllib") && !line.starts_with("usemtl"))
-            .map(|line| format!("{line}\n"))
-            .collect();
-        std::fs::write(dir.path().join("square.obj"), without_materials).expect("write source");
+        for name in ["square.obj", "square.mtl"] {
+            std::fs::copy(fixtures.join(name), dir.path().join(name)).expect("copy the fixture");
+        }
         dir
     }
 
     #[test]
-    fn an_external_source_is_copied_to_its_destination_and_imported() {
+    fn an_external_source_is_imported_with_the_files_it_refers_to() {
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
-        let written = import_source_into(
+        let imported = import_source_into(
+            &source.path().join("square.obj"),
+            "assets/props/square.obj",
+            project.path(),
+        )
+        .expect("import succeeds");
+        assert!(project.path().join("assets/props/square.obj").is_file());
+        assert!(
+            project.path().join("assets/props/square.mtl").is_file(),
+            "the material library comes along"
+        );
+        assert_eq!(imported.siblings, ["assets/props/square.mtl"]);
+        assert!(!imported.assets.is_empty());
+        for asset in &imported.assets {
+            assert!(project.path().join(&asset.address).is_file());
+        }
+    }
+
+    #[test]
+    fn the_project_content_config_decides_where_assets_are_written() {
+        let source = source_dir();
+        let project = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            project.path().join("content.toml"),
+            "root = \"cooked\"\nextension = \"bin\"\n",
+        )
+        .expect("write config");
+        let imported = import_source_into(
             &source.path().join("square.obj"),
             "assets/square.obj",
             project.path(),
         )
         .expect("import succeeds");
-        assert!(
-            project.path().join("assets/square.obj").is_file(),
-            "the source is copied into the project"
-        );
-        assert!(!written.is_empty(), "the import emits at least one asset");
-        assert!(
-            project.path().join(&written[0].address).is_file(),
-            "the content asset is written at its registered address"
-        );
-    }
-
-    #[test]
-    fn a_destination_at_the_project_root_needs_no_parent_directory() {
-        let source = source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        import_source_into(
-            &source.path().join("square.obj"),
-            "square.obj",
-            project.path(),
-        )
-        .expect("a destination with no parent directory still imports");
-        assert!(project.path().join("square.obj").is_file());
+        assert!(!imported.assets.is_empty());
+        for asset in &imported.assets {
+            assert!(
+                asset.address.starts_with("cooked/") && asset.address.ends_with(".bin"),
+                "got {}",
+                asset.address
+            );
+        }
     }
 
     #[test]
@@ -568,15 +528,18 @@ mod tests {
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir_all(project.path().join("assets")).expect("assets");
+        for name in ["square.obj", "square.mtl"] {
+            std::fs::copy(
+                source.path().join(name),
+                project.path().join("assets").join(name),
+            )
+            .expect("seed the source");
+        }
         let inside = project.path().join("assets/square.obj");
-        std::fs::copy(source.path().join("square.obj"), &inside).expect("seed the source");
-        let before = std::fs::metadata(&inside).expect("metadata").len();
-        import_source_into(&inside, "assets/square.obj", project.path()).expect("import succeeds");
-        assert_eq!(
-            std::fs::metadata(&inside).expect("metadata").len(),
-            before,
-            "an in-project source at its own destination is not copied over itself"
-        );
+        let imported =
+            import_source_into(&inside, "assets/square.obj", project.path()).expect("import");
+        assert!(imported.siblings.is_empty(), "nothing needed copying");
+        assert!(!imported.assets.is_empty());
     }
 
     #[test]
@@ -594,62 +557,6 @@ mod tests {
             !project.path().join("assets/notes.txt").exists(),
             "nothing is copied when the extension is refused"
         );
-    }
-
-    #[test]
-    fn importing_the_same_source_twice_keeps_every_asset_id() {
-        let source = source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        let first = import_source_into(
-            &source.path().join("square.obj"),
-            "assets/square.obj",
-            project.path(),
-        )
-        .expect("first import");
-        let second = import_source_into(
-            &source.path().join("square.obj"),
-            "assets/square.obj",
-            project.path(),
-        )
-        .expect("second import");
-        let ids = |assets: &[concerto_import::ImportedAsset]| {
-            assets.iter().map(|a| a.asset_id).collect::<Vec<_>>()
-        };
-        assert_eq!(
-            ids(&first),
-            ids(&second),
-            "re-importing reuses the sidecar, so asset identities are stable"
-        );
-    }
-
-    #[test]
-    fn a_copy_leaves_no_staging_files_behind() {
-        let source = source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        import_source_into(
-            &source.path().join("square.obj"),
-            "assets/square.obj",
-            project.path(),
-        )
-        .expect("import");
-        let names: Vec<_> = std::fs::read_dir(project.path().join("assets"))
-            .expect("assets")
-            .map(|entry| entry.expect("entry").file_name())
-            .collect();
-        assert!(
-            names
-                .iter()
-                .all(|name| !name.to_string_lossy().starts_with(".tmp")),
-            "no staging file remains, got: {names:?}"
-        );
-    }
-
-    fn broken_source_dir() -> tempfile::TempDir {
-        let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures/square.obj");
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::copy(fixture, dir.path().join("square.obj")).expect("copy the fixture");
-        dir
     }
 
     #[test]
@@ -683,56 +590,6 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_import_removes_the_copy_it_just_made() {
-        let source = broken_source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        import_source_into(
-            &source.path().join("square.obj"),
-            "assets/props/square.obj",
-            project.path(),
-        )
-        .expect_err("the material library is missing, so the import fails");
-        let copy = project.path().join("assets/props/square.obj");
-        assert!(!copy.exists(), "a retry must not look like a replacement");
-        assert!(!concerto_import::metadata::sidecar_path(&copy).exists());
-    }
-
-    #[test]
-    fn a_failed_import_keeps_a_destination_that_was_already_there() {
-        let source = broken_source_dir();
-        let project = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(project.path().join("assets")).expect("assets");
-        let existing = project.path().join("assets/square.obj");
-        let sidecar = concerto_import::metadata::sidecar_path(&existing);
-        std::fs::write(&existing, b"old").expect("seed the destination");
-        std::fs::write(&sidecar, b"").expect("seed the sidecar");
-        import_source_into(
-            &source.path().join("square.obj"),
-            "assets/square.obj",
-            project.path(),
-        )
-        .expect_err("the material library is missing, so the import fails");
-        assert!(existing.is_file());
-        assert!(sidecar.is_file());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_copy_keeps_the_permissions_of_its_source() {
-        use std::os::unix::fs::PermissionsExt;
-        let source = source_dir();
-        let path = source.path().join("square.obj");
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).expect("chmod");
-        let project = tempfile::tempdir().expect("tempdir");
-        import_source_into(&path, "assets/square.obj", project.path()).expect("import");
-        let mode = std::fs::metadata(project.path().join("assets/square.obj"))
-            .expect("metadata")
-            .permissions()
-            .mode();
-        assert_eq!(mode & 0o777, 0o640);
-    }
-
-    #[test]
     fn replacing_a_source_with_new_bytes_keeps_every_asset_id() {
         let source = source_dir();
         let path = source.path().join("square.obj");
@@ -753,8 +610,8 @@ mod tests {
         let ids = |assets: &[concerto_import::ImportedAsset]| {
             assets.iter().map(|a| a.asset_id).collect::<Vec<_>>()
         };
-        assert!(!first.is_empty());
-        assert_eq!(ids(&first), ids(&second));
+        assert!(!first.assets.is_empty());
+        assert_eq!(ids(&first.assets), ids(&second.assets));
     }
 
     #[test]
@@ -762,7 +619,7 @@ mod tests {
         use concerto_foundation::assets::content::{AssetRegistry, REGISTRY_FILE_NAME};
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
-        let written = import_source_into(
+        let imported = import_source_into(
             &source.path().join("square.obj"),
             "assets/square.obj",
             project.path(),
@@ -770,8 +627,8 @@ mod tests {
         .expect("import");
         assert!(project.path().join(REGISTRY_FILE_NAME).is_file());
         let registry = AssetRegistry::load(project.path()).expect("registry");
-        assert!(!written.is_empty());
-        for asset in &written {
+        assert!(!imported.assets.is_empty());
+        for asset in &imported.assets {
             assert_eq!(registry.get(asset.asset_id), Some(asset.address.as_str()));
         }
     }

@@ -57,9 +57,14 @@ imported assets/UAL1.glb -> 126 assets
 ### Flags
 
 ```
-concerto-import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]
+concerto-import <source> [--to <destination>] [--config <content.toml>] [--ext <ext>] [--content-root <dir>]
 ```
 
+- `--to <destination>` — bring in a source from outside the project: copy it
+  to this project-relative path, along with every file it refers to (an OBJ's
+  `.mtl` and textures, a glTF's `.bin` buffers and images), each keeping its
+  position relative to the source, then import it there. Nothing is copied
+  unless the import succeeds.
 - `--config <content.toml>` — load config from an explicit file; its parent
   directory becomes the project root. Without it, `import` reads
   `content.toml` from the current directory if present, otherwise uses the

@@ -10,16 +10,12 @@ use concerto_foundation::assets::asset_server::AssetServer;
 use std::path::{Path, PathBuf};
 
 fn scratch_source() -> (tempfile::TempDir, PathBuf) {
-    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures/square.obj");
-    let text = std::fs::read_to_string(fixture).expect("the obj fixture exists");
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../obj/tests/fixtures");
     let dir = tempfile::tempdir().expect("tempdir");
-    let without_materials: String = text
-        .lines()
-        .filter(|line| !line.starts_with("mtllib") && !line.starts_with("usemtl"))
-        .map(|line| format!("{line}\n"))
-        .collect();
+    for name in ["square.obj", "square.mtl"] {
+        std::fs::copy(fixtures.join(name), dir.path().join(name)).expect("copy the fixture");
+    }
     let path = dir.path().join("square.obj");
-    std::fs::write(&path, without_materials).expect("write source");
     (dir, path)
 }
 
@@ -108,8 +104,25 @@ fn a_batch_imports_every_row_and_shows_up_in_the_catalogue() {
     let state = app.get_resource::<ProjectState>().expect("state");
     assert_eq!(
         state.project.as_ref().expect("project").assets.len(),
-        4,
-        "both imports reached the catalogue, a mesh and a scene each"
+        6,
+        "both imports reached the catalogue, a mesh, a material and a scene each"
+    );
+}
+
+#[test]
+fn the_outcome_counts_the_files_that_came_along_with_the_source() {
+    let (_source, path) = scratch_source();
+    let project = tempfile::tempdir().expect("tempdir");
+    let mut app = editor(project.path());
+    app.get_resource_mut::<ImportQueue>()
+        .expect("queue")
+        .enqueue(stage_sources(vec![path]));
+    drain(&mut app);
+
+    assert!(project.path().join("assets/square.mtl").is_file());
+    assert_eq!(
+        status(&app),
+        "Imported square.obj · 3 assets · 1 sibling file"
     );
 }
 
@@ -229,7 +242,8 @@ fn a_failure_leads_the_final_status_in_a_form_that_can_be_read() {
 
     let status = status(&app);
     assert!(
-        status.starts_with("1 of 3 failed: crate.obj — assets/square.mtl: "),
+        status.starts_with("1 of 3 failed: crate.obj — ")
+            && status.contains("square.mtl: No such file"),
         "got: {status}"
     );
     assert_eq!(status.matches("crate.obj").count(), 1, "got: {status}");
