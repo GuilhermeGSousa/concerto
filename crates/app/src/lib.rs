@@ -24,12 +24,13 @@ use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::{
-    component::scene::SceneComponent,
+    component::{scene::SceneComponent, Component},
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
         Event,
     },
+    query::trait_query::ImplementedBy,
     resource::{ResMut, Resource},
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
     IntoSetConfig, IntoSystemConfig, World,
@@ -199,6 +200,19 @@ impl App {
     /// Registers a [`SceneComponent`] so scenes can spawn it by type name.
     pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {
         self.main_mut().register_scene_component::<T>();
+        self
+    }
+
+    /// Registers `C` as an implementor of the `#[queryable]` trait `Dyn`, so `All<&Dyn>`
+    /// queries visit it. Implementors are shared by the main and render worlds.
+    pub fn register_component_as<Dyn, C>(&mut self) -> &mut Self
+    where
+        Dyn: ImplementedBy<C> + ?Sized,
+        C: Component,
+    {
+        self.main_mut()
+            .world_mut()
+            .register_component_as::<Dyn, C>();
         self
     }
 

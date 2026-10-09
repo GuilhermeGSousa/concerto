@@ -216,6 +216,16 @@ where
 
         result
     }
+
+    fn refresh_state(state: &mut Self::State) -> bool {
+        let mut changed = false;
+
+        for typle_index!(i) in 0..T::LEN {
+            changed |= <T<{ i }>>::refresh_state(&mut state[[i]]);
+        }
+
+        changed
+    }
 }
 
 #[allow(unused_mut)]

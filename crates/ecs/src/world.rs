@@ -12,6 +12,7 @@ use crate::entity::entity_store::EntityStore;
 use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
+use crate::query::trait_query::{self, ImplementedBy};
 use crate::resource::ResourceStorage;
 use crate::signal::listener::{IntoListener, Listener, Listeners};
 use crate::signal::{EntitySignal, Signal};
@@ -500,6 +501,21 @@ impl World {
     pub fn register_component<T: Component>(&mut self) {
         self.component_registry.register_component::<T>();
         self.register_component_lifetimes::<T>();
+    }
+
+    /// Records `C` as an implementor of the [`#[queryable]`](crate::queryable) trait `Dyn`,
+    /// so that `All<&Dyn>` queries visit it.
+    ///
+    /// Implementors are shared by every world in the process (see
+    /// [`trait_query`](crate::query::trait_query)). Registering the same pair twice does
+    /// nothing.
+    pub fn register_component_as<Dyn, C>(&mut self)
+    where
+        Dyn: ImplementedBy<C> + ?Sized,
+        C: Component,
+    {
+        self.register_component::<C>();
+        trait_query::register::<Dyn, C>();
     }
 
     pub fn register_component_type<T: SceneComponent>(&mut self) {

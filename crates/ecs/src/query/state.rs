@@ -25,6 +25,13 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
     }
 
     pub(crate) fn update_archetypes(&mut self, world: UnsafeWorldCell) {
+        let data_changed = T::refresh_state(&mut self.data_state);
+        let filter_changed = F::refresh_state(&mut self.filter_state);
+        if data_changed || filter_changed {
+            self.matched_archetypes.clear();
+            self.current_archetype_count = 0;
+        }
+
         if world.archetypes().len() == self.current_archetype_count {
             return;
         }
@@ -36,6 +43,10 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
         }
 
         self.current_archetype_count = world.archetypes().len();
+    }
+
+    pub(crate) fn data_state(&self) -> &T::State {
+        &self.data_state
     }
 
     pub(crate) fn matched_archetypes(&self) -> Ones<'_> {

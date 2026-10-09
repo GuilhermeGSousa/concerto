@@ -1,12 +1,15 @@
 use std::ops::{Deref, DerefMut};
 
-use crate::component::{Component, Tick};
+use crate::component::Tick;
 
 /// A mutable reference to a component that automatically marks the component as changed.
 ///
 /// Obtained from a `Query<&mut T>`.  Deref gives `&T`; DerefMut gives `&mut T` and
 /// records a change tick so that [`Changed<T>`](super::query_filter::Changed) filters work.
-pub struct Mut<'w, T: Component> {
+///
+/// `T` may be unsized so that a trait query can hand out `Mut<dyn Trait>` over a concrete
+/// component's storage.
+pub struct Mut<'w, T: ?Sized> {
     data: &'w mut T,
     changed_tick: &'w mut Tick,
     current_tick: Tick,
@@ -15,7 +18,7 @@ pub struct Mut<'w, T: Component> {
 
 impl<'w, T> Mut<'w, T>
 where
-    T: Component,
+    T: ?Sized,
 {
     pub fn new(data: &'w mut T, changed_tick: &'w mut Tick, current_tick: Tick) -> Self {
         Self {
@@ -29,7 +32,7 @@ where
 
 impl<'w, T> Deref for Mut<'w, T>
 where
-    T: Component,
+    T: ?Sized,
 {
     type Target = &'w mut T;
 
@@ -40,7 +43,7 @@ where
 
 impl<'w, T> DerefMut for Mut<'w, T>
 where
-    T: Component,
+    T: ?Sized,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
         if !self.was_changed {

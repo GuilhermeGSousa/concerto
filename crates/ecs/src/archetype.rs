@@ -75,6 +75,18 @@ impl Archetype {
         }
     }
 
+    /// A type-erased pointer to `component_id`'s value at `row`, or `None` if this archetype
+    /// has no such column.
+    pub(crate) fn get_component_ptr(
+        &self,
+        component_id: ComponentId,
+        row: TableRowIndex,
+    ) -> Option<*const u8> {
+        self.data_table
+            .get_column(component_id)
+            .map(|column| column.get_ptr(row))
+    }
+
     pub fn was_entity_added(
         &self,
         component_id: ComponentId,

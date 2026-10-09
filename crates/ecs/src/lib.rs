@@ -30,6 +30,9 @@
 //!     .run(&mut world);
 //! ```
 
+// Lets macro-generated `::concerto_ecs::` paths resolve inside this crate too.
+extern crate self as concerto_ecs;
+
 pub mod archetype;
 pub mod command;
 pub mod common;
@@ -49,11 +52,13 @@ pub mod world;
 
 pub use command::CommandQueue;
 pub use component::Component;
+pub use concerto_ecs_macros::queryable;
 pub use entity::{Entity, EntityWorldMut};
 pub use events::Event;
 pub use query::{
     Query,
     filter::{Added, Changed, Or, With, Without},
+    trait_query::All,
 };
 pub use resource::{Res, ResMut, Resource};
 pub use system::{

@@ -10,6 +10,13 @@ pub trait WorldQuery {
     fn init_state(world: &mut World) -> Self::State;
 
     fn matches(state: &Self::State, archetype: &Archetype) -> bool;
+
+    /// Brings `state` up to date with anything that changes which archetypes match, such as
+    /// a newly registered trait implementor. Returns `true` if it changed, in which case
+    /// every archetype is matched again.
+    fn refresh_state(_state: &mut Self::State) -> bool {
+        false
+    }
 }
 
 impl<T: Component> WorldQuery for &T {
@@ -96,5 +103,15 @@ where
         }
 
         result
+    }
+
+    fn refresh_state(state: &mut Self::State) -> bool {
+        let mut changed = false;
+
+        for typle_index!(i) in 0..T::LEN {
+            changed |= <T<{ i }>>::refresh_state(&mut state[[i]]);
+        }
+
+        changed
     }
 }

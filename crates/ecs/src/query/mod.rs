@@ -6,6 +6,7 @@ use typle::typle;
 pub mod change_detection;
 pub mod filter;
 pub mod state;
+pub mod trait_query;
 pub mod world_query;
 
 use crate::{
@@ -55,7 +56,11 @@ pub trait QueryData: WorldQuery {
     fn component_ids() -> Vec<ComponentId>;
 
     /// Fetches the data for `entity` from `world`, returning `None` if not possible.
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>>;
+    fn fetch<'w>(
+        state: &Self::State,
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>>;
 
     /// Registers component access with the scheduler's access tracker.
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess);
@@ -75,6 +80,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     pub fn iter(&self) -> QueryIter<'world, 'state, T, F> {
         QueryIter {
             world: self.world,
+            data_state: self.state.data_state(),
             matched_archetypes: self.state.matched_archetypes(),
             current_entities: &[],
             current_row: 0,
@@ -89,7 +95,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         if !F::filter(self.world, entity) {
             return None;
         }
-        T::fetch(self.world, entity)
+        T::fetch(self.state.data_state(), self.world, entity)
     }
 
     /// Returns `true` if `entity` matches this query.
@@ -98,8 +104,9 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     }
 }
 
-pub struct QueryIter<'world, 'state, T, F> {
+pub struct QueryIter<'world, 'state, T: QueryData, F> {
     world: UnsafeWorldCell<'world>,
+    data_state: &'state T::State,
     matched_archetypes: Ones<'state>,
     current_entities: &'world [Entity],
     current_row: usize,
@@ -138,7 +145,7 @@ where
                 continue;
             }
 
-            return T::fetch(self.world, entity);
+            return T::fetch(self.data_state, self.world, entity);
         }
     }
 }
@@ -184,7 +191,11 @@ where
         vec![TypeId::of::<T>()]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    fn fetch<'w>(
+        _state: &Self::State,
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>> {
         let world = world.world();
         world
             .entity_store()
@@ -209,7 +220,11 @@ where
         vec![TypeId::of::<T>()]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    fn fetch<'w>(
+        _state: &Self::State,
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>> {
         let world = world.world_mut();
 
         world
@@ -237,7 +252,11 @@ impl QueryData for Entity {
         vec![]
     }
 
-    fn fetch<'w>(_world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    fn fetch<'w>(
+        _state: &Self::State,
+        _world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>> {
         Some(entity)
     }
 
@@ -256,7 +275,11 @@ where
         vec![]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    fn fetch<'w>(
+        _state: &Self::State,
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>> {
         let world = world.world();
         world
             .entity_store()
@@ -281,7 +304,11 @@ where
         vec![]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    fn fetch<'w>(
+        _state: &Self::State,
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>> {
         let world = world.world_mut();
 
         world.entity_store().find_location(entity).map(|location| {
@@ -320,9 +347,13 @@ where
         }
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    fn fetch<'w>(
+        state: &Self::State,
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+    ) -> Option<Self::Item<'w>> {
         Some(typle_for!(i in .. => {
-                <T<{i}>>::fetch(world, entity)?
+                <T<{i}>>::fetch(&state[[i]], world, entity)?
             }
         ))
     }

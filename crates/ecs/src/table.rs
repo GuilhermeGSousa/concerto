@@ -73,6 +73,14 @@ impl Column {
         self.data.is_empty()
     }
 
+    /// A pointer to the value at `row`, for callers that know its type only through a
+    /// cast function, such as a trait query turning it into a `&dyn Trait`.
+    pub(crate) fn get_ptr(&self, row: TableRowIndex) -> *const u8 {
+        debug_assert!(*row < self.len(), "row {} out of bounds", *row);
+        let size = self.data.element_layout().size();
+        self.data.as_bytes().as_ptr().wrapping_add(*row * size)
+    }
+
     pub(crate) unsafe fn get_unsafe<T: 'static>(&self, row: TableRowIndex) -> Option<&T> {
         unsafe { self.data.get_unchecked(*row).downcast_ref() }
     }
