@@ -32,21 +32,15 @@
 //! }
 //! ```
 //!
-//! # The registry is shared by every world
+//! # Registration is per world
 //!
-//! That a component implements a trait is a fact about its type, and a [`ComponentId`] is a
-//! [`TypeId`], so implementors are recorded once per process rather than per [`World`]. This
-//! is what lets an `Extracted<Query<All<&dyn Trait>>>` (whose state is initialized against the
-//! render world) see implementors registered on the main world.
+//! Like components and scene types, implementors are registered on a [`World`], and a trait
+//! query only visits implementors registered on the world it queries.
 
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
     marker::PhantomData,
-    sync::{
-        LazyLock, PoisonError, RwLock,
-        atomic::{AtomicUsize, Ordering},
-    },
 };
 
 use crate::{
@@ -126,89 +120,94 @@ where
     Trait::cast(unsafe { &*ptr.cast::<C>() })
 }
 
-/// Every registered implementor, keyed by the trait object's `TypeId`.
-///
-/// Each value is a `&'static [TraitImpl<Dyn>]`. A registration leaks a fresh slice rather
-/// than growing the old one, so query state and query items can hold the slice they saw
-/// without borrowing the registry. The leak is bounded by the number of registrations.
-static REGISTRY: LazyLock<RwLock<HashMap<TypeId, Box<dyn Any + Send + Sync>>>> =
-    LazyLock::new(Default::default);
-
-/// Bumped by every registration, so query state can skip the lock when nothing changed.
-static GENERATION: AtomicUsize = AtomicUsize::new(0);
-
-fn implementors<Dyn: ?Sized + 'static>() -> &'static [TraitImpl<Dyn>] {
-    REGISTRY
-        .read()
-        .unwrap_or_else(PoisonError::into_inner)
-        .get(&TypeId::of::<Dyn>())
-        .and_then(|impls| impls.downcast_ref::<&'static [TraitImpl<Dyn>]>())
-        .copied()
-        .unwrap_or(&[])
-}
-
-/// Records `C` as an implementor of `Trait`. Registering the same pair again does nothing.
-pub(crate) fn register<Trait, C>()
-where
-    Trait: ImplementedBy<C> + ?Sized,
-    C: Component,
-{
-    type Dyn<Trait> = <Trait as QueryableTrait>::Static;
-
-    let mut registry = REGISTRY.write().unwrap_or_else(PoisonError::into_inner);
-    let current = registry
-        .get(&TypeId::of::<Dyn<Trait>>())
-        .and_then(|impls| impls.downcast_ref::<&'static [TraitImpl<Dyn<Trait>>]>())
-        .copied()
-        .unwrap_or(&[]);
-
-    if current
-        .iter()
-        .any(|existing| existing.component_id == ComponentId::of::<C>())
-    {
-        return;
-    }
-
-    let mut next = current.to_vec();
-    next.push(TraitImpl::of::<Trait, C>());
-    let next: &'static [TraitImpl<Dyn<Trait>>] = Box::leak(next.into_boxed_slice());
-    registry.insert(TypeId::of::<Dyn<Trait>>(), Box::new(next));
-
-    GENERATION.fetch_add(1, Ordering::Release);
-}
-
-/// Query state for a trait query: the implementors of `Dyn` known when it was last refreshed.
-pub struct TraitQueryState<Dyn: ?Sized + 'static> {
-    impls: &'static [TraitImpl<Dyn>],
+/// The implementors of every queryable trait registered on one [`World`].
+#[derive(Default)]
+pub(crate) struct TraitRegistry {
+    /// Keyed by the trait object's `TypeId`; each value is a `Vec<TraitImpl<Dyn>>` that
+    /// only ever grows, so a query state can remember a prefix of it by length.
+    implementors: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
+    /// Bumped by every registration, so query state can skip the lookup when nothing changed.
     generation: usize,
 }
 
+impl TraitRegistry {
+    /// Records `C` as an implementor of `Trait`. Registering the same pair again does nothing.
+    pub(crate) fn register<Trait, C>(&mut self)
+    where
+        Trait: ImplementedBy<C> + ?Sized,
+        C: Component,
+    {
+        let implementors = self
+            .implementors
+            .entry(TypeId::of::<Trait::Static>())
+            .or_insert_with(|| Box::new(Vec::<TraitImpl<Trait::Static>>::new()))
+            .downcast_mut::<Vec<TraitImpl<Trait::Static>>>()
+            .expect("trait registry entry holds the implementors of another trait");
+
+        if implementors
+            .iter()
+            .any(|existing| existing.component_id == ComponentId::of::<C>())
+        {
+            return;
+        }
+
+        implementors.push(TraitImpl::of::<Trait, C>());
+        self.generation += 1;
+    }
+
+    fn implementors<Dyn: ?Sized + 'static>(&self) -> &[TraitImpl<Dyn>] {
+        self.implementors
+            .get(&TypeId::of::<Dyn>())
+            .map(|implementors| {
+                implementors
+                    .downcast_ref::<Vec<TraitImpl<Dyn>>>()
+                    .expect("trait registry entry holds the implementors of another trait")
+                    .as_slice()
+            })
+            .unwrap_or(&[])
+    }
+}
+
+/// Query state for a trait query: the implementors of `Dyn` known when it was last refreshed.
+///
+/// Implementors are only ever appended, so the state keeps their component ids (to match
+/// archetypes, which happens without a world) and fetches visit the same-length prefix of
+/// the world's list.
+pub struct TraitQueryState<Dyn: ?Sized + 'static> {
+    component_ids: Vec<ComponentId>,
+    generation: usize,
+    _marker: PhantomData<fn() -> *const Dyn>,
+}
+
 impl<Dyn: ?Sized + 'static> TraitQueryState<Dyn> {
-    fn new() -> Self {
-        // Read the generation first: a registration racing with this can only make the
-        // snapshot newer than the generation it is stamped with, never older.
-        let generation = GENERATION.load(Ordering::Acquire);
+    fn new(world: &World) -> Self {
+        let registry = world.trait_registry();
         Self {
-            impls: implementors::<Dyn>(),
-            generation,
+            component_ids: registry
+                .implementors::<Dyn>()
+                .iter()
+                .map(|implementor| implementor.component_id)
+                .collect(),
+            generation: registry.generation,
+            _marker: PhantomData,
         }
     }
 
-    fn refresh(&mut self) -> bool {
-        if GENERATION.load(Ordering::Acquire) == self.generation {
+    fn refresh(&mut self, world: &World) -> bool {
+        if world.trait_registry().generation == self.generation {
             return false;
         }
 
-        let refreshed = Self::new();
-        let changed = refreshed.impls.len() != self.impls.len();
+        let refreshed = Self::new(world);
+        let changed = refreshed.component_ids != self.component_ids;
         *self = refreshed;
         changed
     }
 
     fn matches(&self, archetype: &Archetype) -> bool {
-        self.impls
+        self.component_ids
             .iter()
-            .any(|implementor| archetype.contains(implementor.component_id))
+            .any(|component_id| archetype.contains(*component_id))
     }
 }
 
@@ -233,16 +232,16 @@ pub struct All<Q> {
 impl<Dyn: QueryableTrait + ?Sized> WorldQuery for All<&Dyn> {
     type State = TraitQueryState<Dyn::Static>;
 
-    fn init_state(_world: &mut World) -> Self::State {
-        TraitQueryState::new()
+    fn init_state(world: &mut World) -> Self::State {
+        TraitQueryState::new(world)
     }
 
     fn matches(state: &Self::State, archetype: &Archetype) -> bool {
         state.matches(archetype)
     }
 
-    fn refresh_state(state: &mut Self::State) -> bool {
-        state.refresh()
+    fn refresh_state(state: &mut Self::State, world: &World) -> bool {
+        state.refresh(world)
     }
 }
 
@@ -261,10 +260,14 @@ impl<Dyn: QueryableTrait + ?Sized> QueryData for All<&Dyn> {
         let world = world.world();
         let location = world.entity_store().find_location(entity)?;
         let archetype = world.archetypes().get(location.archetype_index as usize)?;
+        // The state was refreshed against this world when the query was created, and
+        // implementors are only appended, so this prefix is exactly what it matched.
+        let implementors =
+            &world.trait_registry().implementors::<Dyn::Static>()[..state.component_ids.len()];
         let iter = TraitIter {
             archetype,
             row: location.row,
-            impls: state.impls.iter(),
+            impls: implementors.iter(),
             _marker: PhantomData,
         };
 
@@ -284,7 +287,7 @@ impl<Dyn: QueryableTrait + ?Sized> ReadOnlyQueryData for All<&Dyn> {}
 pub struct TraitIter<'w, Dyn: QueryableTrait + ?Sized> {
     archetype: &'w Archetype,
     row: TableRowIndex,
-    impls: std::slice::Iter<'static, TraitImpl<Dyn::Static>>,
+    impls: std::slice::Iter<'w, TraitImpl<Dyn::Static>>,
     _marker: PhantomData<fn() -> *const Dyn>,
 }
 

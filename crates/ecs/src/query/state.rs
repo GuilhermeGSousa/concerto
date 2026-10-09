@@ -25,8 +25,8 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
     }
 
     pub(crate) fn update_archetypes(&mut self, world: UnsafeWorldCell) {
-        let data_changed = T::refresh_state(&mut self.data_state);
-        let filter_changed = F::refresh_state(&mut self.filter_state);
+        let data_changed = T::refresh_state(&mut self.data_state, world.world());
+        let filter_changed = F::refresh_state(&mut self.filter_state, world.world());
         if data_changed || filter_changed {
             self.matched_archetypes.clear();
             self.current_archetype_count = 0;

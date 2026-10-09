@@ -12,7 +12,7 @@ use crate::entity::entity_store::EntityStore;
 use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
-use crate::query::trait_query::{self, ImplementedBy};
+use crate::query::trait_query::{ImplementedBy, TraitRegistry};
 use crate::resource::ResourceStorage;
 use crate::signal::listener::{IntoListener, Listener, Listeners};
 use crate::signal::{EntitySignal, Signal};
@@ -51,6 +51,7 @@ pub struct World {
     archetypes: Vec<Archetype>,
     resources: AnyMap,
     component_registry: ComponentRegistry,
+    trait_registry: TraitRegistry,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
@@ -504,18 +505,19 @@ impl World {
     }
 
     /// Records `C` as an implementor of the [`#[queryable]`](crate::queryable) trait `Dyn`,
-    /// so that `All<&Dyn>` queries visit it.
-    ///
-    /// Implementors are shared by every world in the process (see
-    /// [`trait_query`](crate::query::trait_query)). Registering the same pair twice does
-    /// nothing.
+    /// so that this world's `All<&Dyn>` queries visit it. Registering the same pair twice
+    /// does nothing.
     pub fn register_component_as<Dyn, C>(&mut self)
     where
         Dyn: ImplementedBy<C> + ?Sized,
         C: Component,
     {
         self.register_component::<C>();
-        trait_query::register::<Dyn, C>();
+        self.trait_registry.register::<Dyn, C>();
+    }
+
+    pub(crate) fn trait_registry(&self) -> &TraitRegistry {
+        &self.trait_registry
     }
 
     pub fn register_component_type<T: SceneComponent>(&mut self) {

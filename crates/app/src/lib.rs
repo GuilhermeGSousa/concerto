@@ -203,8 +203,8 @@ impl App {
         self
     }
 
-    /// Registers `C` as an implementor of the `#[queryable]` trait `Dyn`, so `All<&Dyn>`
-    /// queries visit it. Implementors are shared by the main and render worlds.
+    /// Registers `C` as an implementor of the `#[queryable]` trait `Dyn` on the main world,
+    /// so its `All<&Dyn>` queries visit it.
     pub fn register_component_as<Dyn, C>(&mut self) -> &mut Self
     where
         Dyn: ImplementedBy<C> + ?Sized,

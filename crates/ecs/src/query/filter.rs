@@ -217,11 +217,11 @@ where
         result
     }
 
-    fn refresh_state(state: &mut Self::State) -> bool {
+    fn refresh_state(state: &mut Self::State, world: &World) -> bool {
         let mut changed = false;
 
         for typle_index!(i) in 0..T::LEN {
-            changed |= <T<{ i }>>::refresh_state(&mut state[[i]]);
+            changed |= <T<{ i }>>::refresh_state(&mut state[[i]], world);
         }
 
         changed

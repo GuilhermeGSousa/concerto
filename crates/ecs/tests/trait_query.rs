@@ -1,8 +1,6 @@
 //! Covers `All<&dyn Trait>` queries: which entities match, what each yields and in what
 //! order, registration timing, and how a system holding one is scheduled.
-//!
-//! The implementor registry is shared by the whole process and tests run in parallel, so
-//! every test queries a trait of its own.
+
 use concerto_ecs::{
     All, Component, Entity, IntoSystem, Query, ResMut, Resource, Schedule, System, With, World,
     queryable,
@@ -132,18 +130,19 @@ fn picks_up_implementors_registered_after_the_query_was_created() {
 }
 
 #[test]
-fn implementors_are_shared_between_worlds() {
-    // `Extracted` initializes query state on the render world and runs it on the main world.
-    named_trait!(Shared);
-    let mut main = World::new();
-    let mut render = World::new();
-    main.register_component_as::<dyn Shared, Door>();
-    main.spawn(Door);
+fn implementors_are_registered_per_world() {
+    named_trait!(PerWorld);
+    let mut registered = World::new();
+    let mut unregistered = World::new();
+    registered.register_component_as::<dyn PerWorld, Door>();
+    registered.spawn(Door);
+    unregistered.spawn(Door);
 
-    let mut query = render.query::<All<&dyn Shared>, ()>();
-    let rows: Vec<Vec<String>> = query.iter(&mut main).map(names).collect();
+    let mut query = registered.query::<All<&dyn PerWorld>, ()>();
+    assert_eq!(query.iter(&mut registered).count(), 1);
 
-    assert_eq!(rows, vec![vec!["door".to_string()]]);
+    let mut query = unregistered.query::<All<&dyn PerWorld>, ()>();
+    assert_eq!(query.iter(&mut unregistered).count(), 0);
 }
 
 #[test]
