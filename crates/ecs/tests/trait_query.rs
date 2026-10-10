@@ -1,5 +1,5 @@
-//! Covers `All<&dyn Trait>` queries: which entities match, what each yields and in what
-//! order, registration timing, and how a system holding one is scheduled.
+//! Covers `All<&dyn Trait>` queries: which entities match, what each yields, registration
+//! timing, and how a system holding one is scheduled.
 
 use concerto_ecs::{
     All, Component, Entity, IntoSystem, Query, ResMut, Resource, Schedule, System, With, World,
@@ -48,7 +48,7 @@ fn names<'a, T: Named + ?Sized + 'a>(items: impl Iterator<Item = &'a T>) -> Vec<
 }
 
 #[test]
-fn yields_every_implementor_on_an_entity_in_registration_order() {
+fn yields_every_implementor_on_an_entity() {
     named_trait!(Every);
     let mut world = World::new();
     world.register_component_as::<dyn Every, Lever>();
@@ -56,9 +56,10 @@ fn yields_every_implementor_on_an_entity_in_registration_order() {
     world.spawn((Door, Lever(1)));
 
     let mut query = world.query::<All<&dyn Every>, ()>();
-    let rows: Vec<Vec<String>> = query.iter(&mut world).map(names).collect();
+    let mut rows: Vec<Vec<String>> = query.iter(&mut world).map(names).collect();
+    rows.iter_mut().for_each(|row| row.sort());
 
-    assert_eq!(rows, vec![vec!["lever 1".to_string(), "door".to_string()]]);
+    assert_eq!(rows, vec![vec!["door".to_string(), "lever 1".to_string()]]);
 }
 
 #[test]

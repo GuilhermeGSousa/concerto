@@ -214,7 +214,7 @@ impl<Dyn: ?Sized + 'static> TraitQueryState<Dyn> {
 /// Fetches every component on an entity that implements a trait.
 ///
 /// `All<&dyn Trait>` yields a [`TraitIter`] over the entity's implementors of `Trait`, in
-/// registration order. An entity matches if it has at least one.
+/// no particular order. An entity matches if it has at least one.
 ///
 /// The trait must be marked [`#[queryable]`](crate::queryable) and each implementor
 /// registered with [`World::register_component_as`]; unregistered implementors are not

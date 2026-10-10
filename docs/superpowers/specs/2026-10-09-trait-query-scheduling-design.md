@@ -3,9 +3,15 @@
 **Status:** proposed. Read-only trait queries (`All<&dyn Trait>`) have landed with
 conservative access. This plan makes their reads and writes precise, which unlocks
 `All<&mut dyn Trait>`.
-**Decided:** implementors are registered per `World`. Trait queries are specific to the world
-they query. An implementor registered after a system querying its trait was initialized is
-logged as a warning and then panics.
+**Decided:**
+- Implementors are registered per `World`, and trait queries are specific to the world they
+  query.
+- An implementor registered after a system querying its trait was initialized is logged as
+  a warning, then panics.
+- Reading the access of an uninitialized system panics.
+- `Query` moves mutable access behind `&mut self` (phase 3) before mutable trait queries
+  land (phase 4).
+- The order in which `All` yields an entity's implementors is unspecified.
 **Touches:** `crates/ecs` (system/input, system/schedule, system/access, query, table,
 trait_query), every `SystemInput` and `QueryData` implementation (in `ecs`, plus
 `app/extractor.rs`, `debug-gizmos/gizmos.rs` and `editor/inspector/registry.rs`), and four
@@ -48,7 +54,7 @@ exactly the components its state covers:
 `SystemAccess::are_disjoint` and `add_implicit_edges` do not change. Precise access feeds
 the existing conflict rules, and those rules already treat a declared write correctly. The
 scheduler needs nothing more for writes than for reads. What writes add is a set of
-soundness obligations on the fetch side, covered in phase 3.
+soundness obligations on the fetch side, covered in phases 3 and 4.
 
 ## Phase 1 — Stateful `fill_access`, initialize before access
 
@@ -88,8 +94,8 @@ in `CompiledScheduleData` has been initialized. No system runs during compile, s
 `initialize` earlier is not observable.
 
 **Uninitialized systems.** `FunctionSystem::fill_access` panics with
-"`fill_access` called before `initialize`" when it has no state (see open question 1).
-These callers read access from systems that were never initialized and must initialize on
+"`fill_access` called before `initialize`" when it has no state. A conservative fallback was
+rejected: it would let a scheduling bug slip by silently. These callers read access from systems that were never initialized and must initialize on
 a fresh `World` first:
 
 - `crates/editor/src/workspace.rs:211`
@@ -134,7 +140,7 @@ could then race a `Chest` writer. So:
   generation too but are ignored: the check compares implementor lists, not counters.
 - The check runs in `QueryState::update_archetypes`, from `Query::new`, before any item is
   produced. So a pinned query never touches an undeclared column, even for one fetch. For
-  writes (phase 3), this ordering is what keeps the panic ahead of any data race.
+  writes (phase 4), this ordering is what keeps the panic ahead of any data race.
 
 Suggested mechanism: a `pinned: bool` on `QueryState`, set by `Query::init_state` and passed
 through `WorldQuery::refresh_state(state, world, pinned)`. The trait query implements the
@@ -156,7 +162,47 @@ in `Plugin::build`".
 - Registering an implementor of an unrelated trait after `initialize` does not panic.
 - An ad-hoc `World::query` still picks up late implementors (the existing test).
 
-## Phase 3 — Precise writes: `All<&mut dyn Trait>`
+## Phase 3 — Mutable access behind `&mut self`
+
+Independent of phases 1 and 2; it must land before phase 4.
+
+**The hole.** `Query::iter(&self)` and `Query::get_entity(&self)` return items for the whole
+`'world` lifetime. With `Query<&mut T>`, two calls can hold two `Mut<T>` to the same
+component in safe code:
+
+```rust
+let a = query.get_entity(e).unwrap();
+let b = query.get_entity(e).unwrap(); // second `&mut` to the same component
+```
+
+`All<&mut dyn T>` would inherit this, so it is fixed for every query first.
+
+**API.**
+- `QueryData` gains `type ReadOnly: ReadOnlyQueryData<State = Self::State>`: `&mut T` maps
+  to `&T`, `Option<&mut T>` to `Option<&T>`, `All<&mut dyn T>` to `All<&dyn T>`, tuples
+  element-wise, and read-only data to itself. Sharing `State` lets the read-only view reuse
+  the query's matched archetypes and trait snapshot.
+- `iter(&self)`, `get_entity(&self)` and `contains_entity(&self)` yield
+  `T::ReadOnly` items. Reading through a mutable query still needs only `&self`.
+- `iter_mut(&mut self)` and `get_mut(&mut self, entity)` yield `T::Item<'_>`, borrowed from
+  the query. The borrow checker then rejects two live mutable items from one query.
+- `get_many_mut<const N: usize>(&mut self, [Entity; N]) -> Option<[T::Item<'_>; N]>`
+  covers the legitimate "two entities at once" case. It returns `None` if any entity
+  repeats or does not match.
+
+**Migration.** Mechanical, and the compiler finds every site. On queries with mutable data,
+`.iter()` becomes `.iter_mut()` and `.get_entity(e)` becomes `.get_mut(e)`, and the binding
+becomes `mut`. Sites that only read keep compiling, now with read-only items. There are at
+least 112 mutable query types across 48 files (single-line matches only), and 106
+`get_entity` calls, not all of them on mutable queries.
+
+**Tests.**
+- `compile_fail` doctests: two live `get_mut` results from one query, and mutating through
+  an item from `iter()`.
+- `get_many_mut` returns `None` for a repeated entity and for a non-matching one.
+- `iter()` on `Query<&mut T>` does not mark components as changed.
+
+## Phase 4 — Precise writes: `All<&mut dyn Trait>`
 
 ### Declared access
 
@@ -205,12 +251,9 @@ real alias, and the check has no false positives. It needs per-element access co
 from state, which phase 1 provides. It also catches the plain-component case
 (`Query<(&mut A, &A)>`), which is accepted today.
 
-**Not covered:** aliasing across separate `Query` parameters, and repeated calls on one
-query. `Query::iter` and `Query::get_entity` take `&self` and return items for `'world`, so
-two calls can hold two `Mut`s to the same component. That is already true for
-`Query<&mut T>` today. Trait writes inherit it, and do not make it worse. Fixing it is a
-general `Query` change (`iter_mut(&mut self)`, `get_mut`) and is out of scope here. See
-open question 3.
+**Not covered here:**
+- Repeated calls on one query are handled by phase 3: mutable items borrow the query.
+- Aliasing across separate `Query` parameters in one system remains open (open question 1).
 
 ### Tests
 
@@ -221,7 +264,7 @@ open question 3.
   `Query<(&mut Door, All<&dyn Unrelated>)>` is accepted.
 - The read and write fetch tests pass under Miri.
 
-## Phase 4 — Optional follow-ups
+## Phase 5 — Optional follow-ups
 
 - `One<&dyn T>` / `One<&mut dyn T>` (exactly one implementor, else no match), and filters
   `WithAny<dyn T>` / `WithoutAny<dyn T>`. Filters need no access: they only match
@@ -231,8 +274,9 @@ open question 3.
   the trait name alongside the expanded ids in `SystemAccess`, for diagnostics only.
 - Fetch cost. Each fetch currently looks the trait up in the registry's map and probes
   every implementor's column. Caching each matched archetype's implementor columns in the
-  state would remove both. It would also give phase 3 a natural place to take column base
-  pointers once.
+  state would remove both. It would also give phase 4 a natural place to take column base
+  pointers once. Because yield order is unspecified, the cache can use whatever column
+  order is cheapest.
 
 ## Non-goals
 
@@ -251,17 +295,13 @@ open question 3.
 
 ## Open questions
 
-1. **Uninitialized `fill_access`.** Panic (proposed) or fall back to conservative access
-   (`read_all_components` / `write_world`) for states that do not exist yet. The fallback
-   avoids touching editor tests but lets a scheduling bug slip by silently.
-2. **Implementor order.** `All` yields in registration order, which depends on plugin
-   order. Should there be an explicit order (an `order` key at registration), for traits
-   where order matters, such as instance-data contributors patching the same field?
-3. **Borrow-checked mutable queries.** Should `Query` move mutable access behind
-   `&mut self` (`iter_mut`, `get_mut`) before or alongside phase 3? It closes the
-   repeated-call aliasing hole for both plain and trait queries, but touches every system
-   that mutates through a query.
-4. **Filter access generally.** `Changed<T>` and `Added<T>` read ticks without declaring
+1. **Aliasing across `Query` parameters.** `fn f(a: Query<&mut Door>, b: Query<All<&dyn A>>)`
+   can hold `&mut Door` and `&dyn A` to the same `Door` at once. That is already true for
+   plain components (`Query<&mut A>` beside `Query<&A>`). A check across parameters needs
+   the access model to understand `With`/`Without`, or it would reject disjoint pairs such
+   as `Query<&mut T, With<X>>` beside `Query<&T, Without<X>>`. Should that land with this
+   plan, or separately?
+2. **Filter access generally.** `Changed<T>` and `Added<T>` read ticks without declaring
    reads. That is harmless today because ticks are only written alongside data that is
    declared, but it is worth confirming before trait-level change filters
    (`ChangedAny<dyn T>`) arrive.
