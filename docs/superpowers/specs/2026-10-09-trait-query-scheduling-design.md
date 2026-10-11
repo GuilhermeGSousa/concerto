@@ -186,20 +186,21 @@ let b = query.get_entity(e).unwrap(); // second `&mut` to the same component
   `T::ReadOnly` items. Reading through a mutable query still needs only `&self`.
 - `iter_mut(&mut self)` and `get_mut(&mut self, entity)` yield `T::Item<'_>`, borrowed from
   the query. The borrow checker then rejects two live mutable items from one query.
-- `get_many_mut<const N: usize>(&mut self, [Entity; N]) -> Option<[T::Item<'_>; N]>`
-  covers the legitimate "two entities at once" case. It returns `None` if any entity
-  repeats or does not match.
+- No multi-entity accessor. Code that mutates two entities from one query does it one after
+  the other, ending the first borrow before taking the second, as `sync_split_panes` in
+  `crates/ui/src/scroll.rs` already does. A `get_many_mut` can be added when a system
+  genuinely needs both live at once (a swap, or a constraint between two bodies).
 
 **Migration.** Mechanical, and the compiler finds every site. On queries with mutable data,
 `.iter()` becomes `.iter_mut()` and `.get_entity(e)` becomes `.get_mut(e)`, and the binding
 becomes `mut`. Sites that only read keep compiling, now with read-only items. There are at
 least 112 mutable query types across 48 files (single-line matches only), and 106
-`get_entity` calls, not all of them on mutable queries.
+`get_entity` calls, not all of them on mutable queries. A site that holds two mutable items
+from one query at once stops compiling and is restructured to take them in sequence.
 
 **Tests.**
 - `compile_fail` doctests: two live `get_mut` results from one query, and mutating through
   an item from `iter()`.
-- `get_many_mut` returns `None` for a repeated entity and for a non-matching one.
 - `iter()` on `Query<&mut T>` does not mark components as changed.
 
 ## Phase 4 — Precise writes: `All<&mut dyn Trait>`
