@@ -28,7 +28,9 @@ __pycache__/
 # VS Code
 .vscode/
 
-.claude
+.claude/*
+!.claude/skills
+!.claude/agents
 
 # Superpowers subagent-driven-development scratch workspaces
 .superpowers/
@@ -36,3 +38,9 @@ __pycache__/
 # Obsidian
 .obsidian
 .trash
+# Specs and plans stay local
+.agents/specs/
+.agents/plans/
+specs/
+
+.claude
