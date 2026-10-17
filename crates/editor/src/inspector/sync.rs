@@ -9,7 +9,8 @@ use concerto_ecs::{component::Tick, query::filter::With};
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
 pub struct InspectedComponent {
-    pub entity: Entity,
+    /// The entity the card shows a component of, in the edit `App`'s world.
+    pub scene_entity: Entity,
     pub type_id: TypeId,
     pub name: &'static str,
     body: Entity,
@@ -19,12 +20,29 @@ pub struct InspectedComponent {
 #[derive(Component)]
 pub(super) struct BuildPropertyWidget;
 
+pub(super) fn forget_scene(
+    _: On<EditTargetChanged>,
+    stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
+    mut cmd: CommandQueue,
+) {
+    for (stack, _, children) in stacks.iter() {
+        if children.is_some() {
+            cmd.entity(stack).despawn_children();
+        }
+        cmd.insert(ComponentStack::default(), stack);
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn sync_inspected_components(
-    source: InspectionSource,
+    source: Editor<InspectionSource>,
+    registry: Res<InspectorRegistry>,
     data: Res<InspectorData>,
     theme: Res<UITheme>,
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
     cards: Query<&InspectedComponent>,
+    bodies: Query<&Children>,
+    rows: Query<(&PropertyRow, &PropertyRowValue)>,
     menus: Query<(Entity, &AddComponentMenu)>,
     component_menus: Query<&ComponentMenu>,
     mut cmd: CommandQueue,
@@ -32,10 +50,12 @@ pub(super) fn sync_inspected_components(
     let Some((stack_entity, stack, children)) = stacks.iter().next() else {
         return;
     };
-    let target = data.entity.filter(|&entity| source.entity_is_valid(entity));
+    let target = data
+        .scene_entity
+        .filter(|&entity| source.entity_is_valid(entity));
     let structural_version = target.and_then(|entity| source.structural_version(entity));
-    let registry_tick = Some(source.registry_tick());
-    let rebuild = stack.target != target
+    let registry_tick = Some(registry.changed_tick());
+    let rebuild = stack.scene_target != target
         || stack.structural_version != structural_version
         || stack.registry_tick != registry_tick;
     if rebuild {
@@ -44,7 +64,7 @@ pub(super) fn sync_inspected_components(
         }
         cmd.insert(
             ComponentStack {
-                target,
+                scene_target: target,
                 structural_version,
                 registry_tick,
             },
@@ -69,7 +89,9 @@ pub(super) fn sync_inspected_components(
                 removable,
                 &theme,
             );
-            refresh_card(&source, &mut cmd, entity, card, &theme);
+            refresh_card(
+                &source, &registry, &mut cmd, entity, card, &theme, &bodies, &rows,
+            );
         }
 
         spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
@@ -77,39 +99,100 @@ pub(super) fn sync_inspected_components(
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {
             if let Some(card) = cards.get_entity(entity) {
-                refresh_card(&source, &mut cmd, entity, *card, &theme);
+                refresh_card(
+                    &source, &registry, &mut cmd, entity, *card, &theme, &bodies, &rows,
+                );
             }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn refresh_card(
     source: &InspectionSource,
+    registry: &Res<InspectorRegistry>,
     cmd: &mut CommandQueue,
     entity: Entity,
     mut card: InspectedComponent,
     theme: &UITheme,
+    bodies: &Query<&Children>,
+    rows: &Query<(&PropertyRow, &PropertyRowValue)>,
 ) {
-    if card
-        .last_read_tick
-        .is_some_and(|tick| !source.has_component_changed_since(card.entity, card.type_id, tick))
-    {
+    if card.last_read_tick.is_some_and(|tick| {
+        !source.has_component_changed_since(card.scene_entity, card.type_id, tick)
+    }) {
         return;
     }
     let properties = source
-        .collect_component(card.entity, card.type_id)
+        .collect_component(
+            registry,
+            registry.changed_tick(),
+            card.scene_entity,
+            card.type_id,
+        )
         .unwrap_or_default();
-    if card.last_read_tick.is_some() {
-        cmd.entity(card.body).despawn_children();
-    }
-    let mut body = body_node(theme);
-    body.visible = !properties.is_empty();
-    cmd.insert(body, card.body);
-    for property in properties {
-        spawn_row(cmd, &card, property, theme);
+    let kept = card
+        .last_read_tick
+        .and_then(|_| kept_rows(source, registry, card.body, &properties, bodies, rows));
+    match kept {
+        Some(kept) => {
+            for (row, property) in kept.into_iter().zip(properties) {
+                if let Some(row) = row {
+                    cmd.insert(property.value, row);
+                }
+            }
+        }
+        None => {
+            if card.last_read_tick.is_some() {
+                cmd.entity(card.body).despawn_children();
+            }
+            let mut body = body_node(theme);
+            body.visible = !properties.is_empty();
+            cmd.insert(body, card.body);
+            for property in properties {
+                spawn_row(cmd, &card, property, theme);
+            }
+        }
     }
     card.last_read_tick = Some(source.current_tick());
     cmd.insert(card, entity);
+}
+
+fn kept_rows(
+    source: &InspectionSource,
+    registry: &InspectorRegistry,
+    body: Entity,
+    properties: &[Property],
+    bodies: &Query<&Children>,
+    rows: &Query<(&PropertyRow, &PropertyRowValue)>,
+) -> Option<Vec<Option<Entity>>> {
+    let existing: Vec<Entity> = bodies
+        .get_entity(body)
+        .map(|children| children.iter().copied().collect())
+        .unwrap_or_default();
+    if existing.len() != properties.len() {
+        return None;
+    }
+    existing
+        .into_iter()
+        .zip(properties)
+        .map(|(entity, property)| {
+            let (row, value) = rows.get_entity(entity)?;
+            let same_row = row.path == property.path
+                && row.type_id == property.type_id
+                && row.editor_type == property.editor_type
+                && row.registry_tick == property.registry_tick;
+            if !same_row {
+                None
+            } else if *value == property.value {
+                Some(None)
+            } else {
+                source
+                    .follows_snapshot(registry, property)
+                    .then_some(Some(entity))
+            }
+        })
+        .collect()
 }
 
 fn spawn_card(
@@ -151,7 +234,7 @@ fn spawn_card(
     let body = card_queue.spawn_child_queue(body_node(theme)).entity();
 
     let card = InspectedComponent {
-        entity: target,
+        scene_entity: target,
         type_id,
         name,
         body,
@@ -167,7 +250,7 @@ fn spawn_row(
     property: Property,
     theme: &UITheme,
 ) -> Entity {
-    let target = property.row(card.entity, card.type_id);
+    let target = property.row(card.scene_entity, card.type_id);
     let label = if property.path.depth() == 0 {
         card.name.to_string()
     } else {

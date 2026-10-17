@@ -19,6 +19,8 @@ pub struct WorldGrid {
     pub fade_start: f32,
     pub fade_end: f32,
     pub surface_color: Color,
+    /// Shade the grid with the scene's lights instead of drawing it at full brightness.
+    pub lit: bool,
 }
 
 impl Default for WorldGrid {
@@ -30,6 +32,7 @@ impl Default for WorldGrid {
             fade_start: 20.0,
             fade_end: 80.0,
             surface_color: Color::WHITE,
+            lit: true,
         }
     }
 }
@@ -59,6 +62,8 @@ fn world_grid_on_add(
         fade_start: grid.fade_start,
         fade_end: grid.fade_end,
         surface_color: grid.surface_color.to_linear(),
+        lit: grid.lit.into(),
+        _padding: [0.0; 3],
     };
 
     let (mesh_handle, material_handle) = {
@@ -103,5 +108,6 @@ pub(crate) fn on_world_grid_changed(
         material.uniform.fade_start = grid.fade_start;
         material.uniform.fade_end = grid.fade_end;
         material.uniform.surface_color = grid.surface_color.to_linear();
+        material.uniform.lit = grid.lit.into();
     });
 }

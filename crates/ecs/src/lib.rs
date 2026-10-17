@@ -46,6 +46,7 @@ pub mod table;
 pub mod utilities;
 pub mod utils;
 pub mod world;
+pub mod world_id;
 
 pub use command::CommandQueue;
 pub use component::Component;
@@ -57,8 +58,8 @@ pub use query::{
 };
 pub use resource::{Res, ResMut, Resource};
 pub use system::{
-    IntoSetConfig, IntoSystem, IntoSystemConfig, System, SystemConfig, SystemSet,
-    schedule::Schedule,
+    IntoSetConfig, IntoSystem, IntoSystemConfig, System, SystemConfig, SystemSet, SystemTag,
+    TagFilter, schedule::Schedule,
 };
 pub use world::World;
 
@@ -856,5 +857,18 @@ mod tests {
         let q = Query::new(world.as_unsafe_world_cell_mut(), &mut state);
         assert!(q.get_entity(e_with).is_some());
         assert!(q.get_entity(e_without).is_none());
+    }
+
+    #[test]
+    fn get_entity_on_an_entity_query_returns_none_for_a_despawned_entity() {
+        let mut world = World::new();
+        let alive = world.spawn(Position { x: 1.0, y: 0.0 });
+        let despawned = world.spawn(Position { x: 2.0, y: 0.0 });
+        world.despawn(despawned);
+
+        let mut state = world.query::<Entity, ()>();
+        let q = Query::new(world.as_unsafe_world_cell_mut(), &mut state);
+        assert_eq!(q.get_entity(alive), Some(alive));
+        assert_eq!(q.get_entity(despawned), None);
     }
 }

@@ -1,8 +1,9 @@
 use concerto_ecs::resource::Resource;
-use std::sync::Arc;
+
+use crate::draw_target::DrawTarget;
 
 #[derive(Resource)]
 pub struct RenderContext {
-    pub(crate) surface: Option<Arc<wgpu::Surface<'static>>>,
+    pub(crate) target: DrawTarget,
     pub surface_config: wgpu::SurfaceConfiguration,
 }

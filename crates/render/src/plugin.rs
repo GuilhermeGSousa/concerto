@@ -2,8 +2,8 @@ use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
     capabilities::RenderCapabilities,
     components::{
-        camera::{extract_cameras, sync_camera_aspect},
-        light::{extract_lights, update_changed_lights, RenderLights},
+        camera::{extract_cameras, sync_camera_aspect, Camera},
+        light::{extract_lights, update_changed_lights, Light, RenderLights},
         mesh::extract_meshes,
         render_entity::extract,
         shadows::{
@@ -14,6 +14,8 @@ use crate::{
         world_environment::WorldEnvironment,
     },
     device::RenderDevice,
+    draw_target::DrawTarget,
+    gpu::Gpu,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
     material_plugin::clear_cameras,
     queue::RenderQueue,
@@ -31,25 +33,25 @@ use crate::{
     },
 };
 use concerto_app::{
+    edit_time::AtEditTime,
     plugins::Plugin,
     schedule_groups::{Extract, LateRender, LateUpdate, Render, RenderMain, Update},
 };
 use concerto_color::Color;
-use concerto_ecs::{resource::Resource, IntoSetConfig, IntoSystemConfig, World};
-use std::sync::{Arc, Mutex};
-use wgpu::{Adapter, Device, Instance, Limits, MemoryHints, Queue};
+use concerto_ecs::{IntoSetConfig, IntoSystemConfig, World};
 
-#[doc(hidden)]
-pub struct RenderResources {
-    pub device: Device,
-    pub queue: Queue,
-    pub adapter: Adapter,
-    pub instance: Instance,
-    pub surface: Option<Arc<wgpu::Surface<'static>>>,
+fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
+    wgpu::SurfaceConfiguration {
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        format,
+        width: 0,
+        height: 0,
+        present_mode: wgpu::PresentMode::Fifo,
+        alpha_mode: wgpu::CompositeAlphaMode::Opaque,
+        view_formats: vec![],
+        desired_maximum_frame_latency: 2,
+    }
 }
-
-#[derive(Resource)]
-struct FutureRenderResources(Arc<Mutex<Option<RenderResources>>>);
 
 fn render_main(world: &mut World) {
     {
@@ -68,125 +70,38 @@ fn render_main(world: &mut World) {
     }
 }
 
-/// Sets up the GPU, the render world's schedules, extraction and presentation.
+/// Sets up the render world's schedules, extraction and presentation.
 ///
-/// Renders to the window if a [`Window`](concerto_window::plugin::Window) exists at build
-/// time, and offscreen otherwise.
+/// Builds on the [`Gpu`] and the [`DrawTarget`] its host inserted before the recipe ran.
 ///
 /// # Panics
 ///
-/// Panics during [`build`](Plugin::build) if no GPU adapter or device is available.
+/// Panics during [`build`](Plugin::build) if the `App` has no [`Gpu`] resource.
 pub struct RenderPlugin;
-
-impl RenderPlugin {
-    async fn initialize_renderer(
-        window_handle: Option<Arc<winit::window::Window>>,
-    ) -> RenderResources {
-        // wasm renders through WebGL2 (see the `webgl` feature and the
-        // downlevel_webgl2 limits below). `Instance::default()` enables every
-        // backend and prefers WebGPU, which yields no adapter on browsers
-        // without it, so pin wasm to GL and leave native on all backends.
-        let backends = if cfg!(target_arch = "wasm32") {
-            wgpu::Backends::GL
-        } else {
-            wgpu::Backends::all()
-        };
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends,
-            ..Default::default()
-        });
-
-        let surface = window_handle.as_ref().map(|handle| {
-            Arc::new(
-                instance
-                    .create_surface(Arc::clone(handle))
-                    .expect("Error creating surface."),
-            )
-        });
-
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface: surface.as_deref(),
-                force_fallback_adapter: false,
-            })
-            .await
-            .unwrap();
-
-        let (device, queue) = adapter
-            .request_device(
-                &wgpu::DeviceDescriptor {
-                    required_features: wgpu::Features::empty(),
-                    required_limits: if cfg!(target_arch = "wasm32") {
-                        Limits {
-                            max_color_attachments: adapter.limits().max_color_attachments,
-                            ..Limits::downlevel_webgl2_defaults()
-                        }
-                        .using_resolution(adapter.limits())
-                    } else {
-                        wgpu::Limits::default()
-                    },
-                    label: None,
-                    memory_hints: MemoryHints::Performance,
-                },
-                None,
-            )
-            .await
-            .unwrap();
-
-        RenderResources {
-            device,
-            queue,
-            adapter,
-            instance,
-            surface,
-        }
-    }
-}
 
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut concerto_app::App) {
+        assert!(
+            app.get_resource::<Gpu>().is_some(),
+            "RenderPlugin needs a Gpu resource: build the App through a host such as concerto::run"
+        );
+
         app.render_mut()
             .set_update_schedule(RenderMain)
             .add_system(RenderMain, render_main);
 
-        let future_render_resources_wrapper = Arc::new(Mutex::new(None));
-        app.insert_resource(FutureRenderResources(
-            future_render_resources_wrapper.clone(),
-        ));
-
-        let is_windowed = app
+        let has_window = app
             .get_resource::<concerto_window::plugin::Window>()
             .is_some();
-
-        if is_windowed {
-            let window = app
-                .get_resource::<concerto_window::plugin::Window>()
-                .unwrap();
-            let window_handle = Arc::clone(&window.window_handle);
-
-            let async_init = async move {
-                let resources = RenderPlugin::initialize_renderer(Some(window_handle)).await;
-                *future_render_resources_wrapper.lock().unwrap() = Some(resources);
-            };
-
-            #[cfg(target_arch = "wasm32")]
-            wasm_bindgen_futures::spawn_local(async_init);
-            #[cfg(not(target_arch = "wasm32"))]
-            pollster::block_on(async_init);
-        } else {
-            let async_init = async move {
-                let resources = RenderPlugin::initialize_renderer(None).await;
-                *future_render_resources_wrapper.lock().unwrap() = Some(resources);
-            };
-            pollster::block_on(async_init);
-        }
 
         app.register_plugin(RenderAssetPlugin::<RenderMesh>::new())
             .register_plugin(RenderAssetPlugin::<RenderTexture>::new());
         app.register_asset::<Mesh>()
             .register_asset::<Texture>()
             .register_asset::<Skeleton>();
+        app.register_editable::<Light>()
+            .register_inspectable::<Camera>();
+        app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);
         app.add_render_system(Extract, extract_cameras)
@@ -194,16 +109,21 @@ impl Plugin for RenderPlugin {
             .add_render_system(Extract, extract_lights)
             .add_render_system(Extract, extract_skeletons);
 
-        if is_windowed {
-            app.add_system(Update, update_window::request_window_resize)
-                .add_system(LateUpdate, sync_camera_aspect)
+        if has_window {
+            app.add_system(LateUpdate, sync_camera_aspect.at_edit_time())
                 .add_render_system(Extract, update_window::extract_window)
                 .add_render_system(Render, update_window::update_render_window);
         }
 
         app.configure_render_sets(
             Render,
-            (RenderSet::Lights, RenderSet::Shadows, RenderSet::Draw).chain(),
+            (
+                RenderSet::Lights,
+                RenderSet::Shadows,
+                RenderSet::Draw,
+                RenderSet::Overlay,
+            )
+                .chain(),
         )
         .add_render_system(Render, clear_cameras)
         .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))
@@ -220,74 +140,58 @@ impl Plugin for RenderPlugin {
         );
     }
 
-    fn ready(&self, app: &concerto_app::App) -> bool {
-        app.get_resource::<FutureRenderResources>()
-            .and_then(|future_render_resources| {
-                future_render_resources
-                    .0
-                    .try_lock()
-                    .map(|mutex| mutex.is_some())
-                    .ok()
-            })
-            .unwrap_or(true)
-    }
-
     fn finish(&self, app: &mut concerto_app::App) {
-        let RenderResources {
+        let gpu = app
+            .get_resource::<Gpu>()
+            .cloned()
+            .expect("RenderPlugin needs a Gpu resource");
+        let target = app
+            .get_resource::<DrawTarget>()
+            .cloned()
+            .unwrap_or(DrawTarget::None);
+
+        let size = app
+            .get_resource::<concerto_window::plugin::Window>()
+            .map_or((0, 0), |window| window.size());
+
+        let config = match &target {
+            DrawTarget::Surface(surface) => {
+                let surface_caps = surface.get_capabilities(&gpu.adapter);
+                let surface_format = surface_caps
+                    .formats
+                    .iter()
+                    .find(|f| f.is_srgb())
+                    .copied()
+                    .unwrap_or(surface_caps.formats[0]);
+                let (width, height) = if size.0 == 0 || size.1 == 0 {
+                    (0, 0)
+                } else {
+                    size
+                };
+                let config = wgpu::SurfaceConfiguration {
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    format: surface_format,
+                    width,
+                    height,
+                    present_mode: surface_caps.present_modes[0],
+                    alpha_mode: surface_caps.alpha_modes[0],
+                    view_formats: vec![],
+                    desired_maximum_frame_latency: 2,
+                };
+                if width != 0 {
+                    surface.configure(&gpu.device, &config);
+                }
+                config
+            }
+            DrawTarget::Texture(shared) => offscreen_config(shared.format()),
+            DrawTarget::None => offscreen_config(wgpu::TextureFormat::Rgba8Unorm),
+        };
+
+        let Gpu {
             device,
             queue,
             adapter,
-            instance: _instance,
-            surface,
-        } = app
-            .remove_resource::<FutureRenderResources>()
-            .unwrap()
-            .0
-            .lock()
-            .unwrap()
-            .take()
-            .unwrap();
-
-        let config = if let Some(ref surface) = surface {
-            let surface_caps = surface.get_capabilities(&adapter);
-            let surface_format = surface_caps
-                .formats
-                .iter()
-                .find(|f| f.is_srgb())
-                .copied()
-                .unwrap_or(surface_caps.formats[0]);
-
-            let window = app
-                .get_resource::<concerto_window::plugin::Window>()
-                .unwrap();
-            let size = window.size();
-
-            let config = wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: surface_format,
-                width: size.0,
-                height: size.1,
-                present_mode: surface_caps.present_modes[0],
-                alpha_mode: surface_caps.alpha_modes[0],
-                view_formats: vec![],
-                desired_maximum_frame_latency: 2,
-            };
-
-            surface.configure(&device, &config);
-            config
-        } else {
-            let surface_format = wgpu::TextureFormat::Rgba8Unorm;
-            wgpu::SurfaceConfiguration {
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                format: surface_format,
-                width: 0,
-                height: 0,
-                present_mode: wgpu::PresentMode::Fifo,
-                alpha_mode: wgpu::CompositeAlphaMode::Opaque,
-                view_formats: vec![],
-                desired_maximum_frame_latency: 2,
-            }
-        };
+        } = gpu;
 
         let camera_layouts = CameraLayout::new(&device);
 
@@ -315,7 +219,7 @@ impl Plugin for RenderPlugin {
         app.render_mut()
             .insert_resource(DummyRenderTexture::new(&device))
             .insert_resource(RenderContext {
-                surface,
+                target,
                 surface_config: config,
             })
             .insert_resource(RenderDevice {

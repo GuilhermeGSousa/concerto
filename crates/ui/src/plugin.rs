@@ -5,7 +5,7 @@ use concerto_app::{
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
-    resources::RenderContext,
+    resources::RenderContext, sets::RenderSet,
 };
 use glyphon::{Cache, SwashCache, Viewport};
 
@@ -19,8 +19,9 @@ use crate::{
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     material::UIMaterial,
     node::{
-        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes, extract_ui_materials,
-        extract_ui_nodes, sync_material_params, sync_viewport_textures,
+        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
+        extract_shared_viewports, extract_ui_materials, extract_ui_nodes, sync_material_params,
+        sync_shared_viewport_textures, sync_viewport_textures,
     },
     render::{prepare_text_renderer, ui_renderpass, update_text_viewport},
     resources::UIRenderDiagnostics,
@@ -145,6 +146,7 @@ impl Plugin for UIPlugin {
             (
                 sync_checkbox_material,
                 sync_viewport_textures,
+                sync_shared_viewport_textures,
                 apply_interaction_styles,
             )
                 .in_set(UiSet::Materials),
@@ -165,11 +167,15 @@ impl Plugin for UIPlugin {
 
         app.render_mut()
             .add_system(Extract, extract_ui_nodes)
+            .add_system(
+                Extract,
+                extract_shared_viewports.before(extract_ui_materials),
+            )
             .add_system(Extract, extract_ui_materials)
             .add_system(Extract, extract_text_nodes)
             .add_system(Render, update_text_viewport)
             .add_system(Render, prepare_text_renderer)
-            .add_system(Render, ui_renderpass);
+            .add_system(Render, ui_renderpass.after(RenderSet::Overlay));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

@@ -7,7 +7,7 @@ use std::{
     marker::PhantomData,
     mem,
     num::NonZero,
-    panic::{resume_unwind, AssertUnwindSafe},
+    panic::{catch_unwind, resume_unwind, AssertUnwindSafe},
     sync::Arc,
     thread::JoinHandle,
 };
@@ -45,13 +45,16 @@ impl TaskPool {
     /// Like [`new`](TaskPool::new), but worker threads are named `{name}-{i}`
     /// so they are identifiable in profilers and debuggers.
     pub fn with_name(name: &str) -> Self {
+        Self::with_threads(name, available_parallelism())
+    }
+
+    /// A pool of exactly `threads` workers named `{name}-{i}`.
+    pub fn with_threads(name: &str, threads: usize) -> Self {
         let executor = Arc::new(Executor::new());
 
         let (shutdown_send, shutdown_rcv) = async_channel::unbounded::<()>();
 
-        let num_threads = available_parallelism();
-
-        let threads = (0..num_threads)
+        let threads = (0..threads)
             .map(|i| {
                 let executor = Arc::clone(&executor);
                 let shutdown_rcv = shutdown_rcv.clone();
@@ -102,6 +105,7 @@ impl TaskPool {
         Task::new(Self::LOCAL_EXECUTOR.with(|local_executor| local_executor.spawn(future)))
     }
 
+    /// Runs `f` and every task it spawns; a panic in either is raised again only after every spawned task has finished.
     pub fn scope<'env, F, T>(&self, f: F) -> Vec<T>
     where
         F: for<'scope> FnOnce(&'scope ScopedTaskPool<'scope, 'env, T>),
@@ -155,26 +159,28 @@ impl TaskPool {
             FallibleTask<Result<T, Box<dyn core::any::Any + Send>>>,
         > = unsafe { mem::transmute(&spawned_tasks) };
 
-        let scope = ScopedTaskPool::new(executor, external_executor, spawned_tasks);
+        let scope = ScopedTaskPool::new(executor, external_executor, scope_executor, spawned_tasks);
         let scope: &'env ScopedTaskPool<'_, 'env, T> = unsafe { mem::transmute(&scope) };
-        f(scope);
+        let closure_panic = catch_unwind(AssertUnwindSafe(|| f(scope))).err();
 
-        if spawned_tasks.is_empty() {
-            Vec::new()
+        let (results, task_panic) = if spawned_tasks.is_empty() {
+            (Vec::new(), None)
         } else {
             pollster::block_on(async move {
                 let get_results = async {
                     let mut results = Vec::with_capacity(spawned_tasks.len());
+                    let mut panic = None;
                     while let Ok(task) = spawned_tasks.pop() {
-                        if let Some(result) = task.await {
-                            match result {
-                                Ok(val) => results.push(val),
-                                Err(error_payload) => resume_unwind(error_payload),
+                        match task.await {
+                            Some(Ok(val)) => results.push(val),
+                            Some(Err(error_payload)) => {
+                                panic.get_or_insert(error_payload);
                             }
+                            None => {}
                         }
                     }
 
-                    results
+                    (results, panic)
                 };
 
                 let scope_ticker = scope_executor.ticker().unwrap();
@@ -186,14 +192,20 @@ impl TaskPool {
 
                 Self::execute_scope(scope_ticker, external_ticker, get_results).await
             })
+        };
+
+        if let Some(payload) = closure_panic.or(task_panic) {
+            resume_unwind(payload);
         }
+
+        results
     }
 
-    async fn execute_scope<'scope, 'ticker, T>(
+    async fn execute_scope<'scope, 'ticker, R>(
         scope_ticker: ThreadExecutorTicker<'scope, 'ticker>,
         external_ticker: Option<ThreadExecutorTicker<'scope, 'ticker>>,
-        get_results: impl Future<Output = Vec<T>>,
-    ) -> Vec<T> {
+        get_results: impl Future<Output = R>,
+    ) -> R {
         let execute_forever = async {
             loop {
                 let tick_forever = async {
@@ -237,6 +249,7 @@ impl Default for TaskPool {
 pub struct ScopedTaskPool<'scope, 'env: 'scope, T: Send> {
     executor: &'scope Executor<'scope>,
     external_executor: &'scope ThreadExecutor<'scope>,
+    scope_executor: &'scope ThreadExecutor<'scope>,
     spawned_tasks: &'scope ConcurrentQueue<FallibleTask<Result<T, Box<dyn core::any::Any + Send>>>>,
     // Note: These are necessary to make both env + scope invariant
     // A simple &'a T/&'a mut T phantom type would make 'a covariant
@@ -249,6 +262,7 @@ impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
     pub fn new(
         executor: &'scope Executor<'scope>,
         external_executor: &'scope ThreadExecutor<'scope>,
+        scope_executor: &'scope ThreadExecutor<'scope>,
         spawned_tasks: &'scope ConcurrentQueue<
             FallibleTask<Result<T, Box<dyn core::any::Any + Send>>>,
         >,
@@ -256,6 +270,7 @@ impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
         Self {
             executor,
             external_executor,
+            scope_executor,
             spawned_tasks,
             env_marker: PhantomData,
             scope_marker: PhantomData,
@@ -274,6 +289,16 @@ impl<'scope, 'env, T: Send> ScopedTaskPool<'scope, 'env, T> {
     pub fn spawn_on_external<F: Future<Output = T> + 'scope + Send>(&self, f: F) {
         let task = self
             .external_executor
+            .spawn(AssertUnwindSafe(f).catch_unwind())
+            .fallible();
+
+        self.spawned_tasks.push(task).unwrap();
+    }
+
+    /// Spawns onto the thread that opened this scope and is waiting on it.
+    pub fn spawn_on_scope<F: Future<Output = T> + 'scope + Send>(&self, f: F) {
+        let task = self
+            .scope_executor
             .spawn(AssertUnwindSafe(f).catch_unwind())
             .fallible();
 
@@ -370,5 +395,67 @@ mod tests {
         // If Drop impl is broken this will hang or panic.
         let pool = TaskPool::new();
         drop(pool);
+    }
+
+    #[test]
+    fn a_task_spawned_on_the_scope_runs_on_the_thread_that_opened_it() {
+        let pool = TaskPool::with_threads("scope-test", 1);
+        let opener = std::thread::current().id();
+
+        let ran_on = pool.scope(|scope| {
+            scope.spawn_on_scope(async { std::thread::current().id() });
+        });
+
+        assert_eq!(ran_on, vec![opener]);
+    }
+
+    #[test]
+    fn a_scope_whose_task_panics_unwinds_only_after_its_other_tasks_finish() {
+        let pool = TaskPool::with_threads("panic-test", 2);
+        let finished: Vec<std::sync::atomic::AtomicBool> = (0..10)
+            .map(|_| std::sync::atomic::AtomicBool::new(false))
+            .collect();
+
+        for flag in &finished {
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                pool.scope(|scope| {
+                    scope.spawn(async { panic!("the task broke") });
+                    scope.spawn(async {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        flag.store(true, Ordering::SeqCst);
+                    });
+                    scope.spawn(async { panic!("a later task broke") });
+                })
+            }));
+
+            let payload = outcome.expect_err("the panic is raised again");
+            assert!(flag.load(Ordering::SeqCst));
+            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the task broke"));
+        }
+    }
+
+    #[test]
+    fn a_scope_whose_closure_panics_unwinds_only_after_its_tasks_finish() {
+        let pool = TaskPool::with_threads("closure-panic-test", 2);
+        let finished: Vec<std::sync::atomic::AtomicBool> = (0..10)
+            .map(|_| std::sync::atomic::AtomicBool::new(false))
+            .collect();
+
+        for flag in &finished {
+            let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                pool.scope(|scope| {
+                    scope.spawn(async { panic!("the task broke") });
+                    scope.spawn(async {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        flag.store(true, Ordering::SeqCst);
+                    });
+                    panic!("the closure broke");
+                })
+            }));
+
+            let payload = outcome.expect_err("the panic is raised again");
+            assert!(flag.load(Ordering::SeqCst));
+            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the closure broke"));
+        }
     }
 }

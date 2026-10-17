@@ -8,11 +8,11 @@
 //! use concerto_ui::plugin::UIPlugin;
 //! use concerto_window::plugin::WindowPlugin;
 //!
-//! let mut app = App::new();
-//! app.register_plugin(WindowPlugin)
-//!     .register_plugin(RenderPlugin)
-//!     .register_plugin(UIPlugin);
-//! app.run();
+//! fn game(app: &mut App) {
+//!     app.register_plugin(WindowPlugin)
+//!         .register_plugin(RenderPlugin)
+//!         .register_plugin(UIPlugin);
+//! }
 //! ```
 
 pub mod anchor;
@@ -37,7 +37,7 @@ pub mod widgets;
 mod resources;
 mod vertex;
 
-pub use node::UIViewport;
+pub use node::{UISharedViewport, UIViewport};
 pub use resources::UIRenderDiagnostics;
 
 #[cfg(test)]

@@ -1,3 +1,4 @@
+use concerto::window::input::{KeyCode, PhysicalKey};
 use concerto::{
     animation::{
         clip::AnimationClip,
@@ -23,7 +24,6 @@ use concerto::{
 use concerto::{asset_id, foundation::assets::AssetId};
 use concerto_color::Color;
 use glam::{Quat, Vec2, Vec3};
-use winit::keyboard::{KeyCode, PhysicalKey};
 
 const NINJA_SCENE: AssetId = asset_id!("content/ninja/scene.gasset");
 const IDLE_ANIM: AssetId = asset_id!("content/idle/animation_0.gasset");

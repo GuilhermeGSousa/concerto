@@ -140,6 +140,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     app.insert_resource(AssetEditorRegistry::default());
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(ActiveEditor::default());
+    app.insert_resource(concerto_editor::guard::UnsavedGuard::default());
     register(&mut app)?;
     let mut project = ProjectState::default();
     project.project = Some(Project {
@@ -182,7 +183,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             kind: header.kind,
             display_name: name.into(),
             folder: String::new(),
-            provenance,
+            provenance: Some(provenance),
         };
         world
             .get_resource_mut::<AssetEditorCommands>()

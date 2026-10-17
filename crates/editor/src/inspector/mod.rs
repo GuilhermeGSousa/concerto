@@ -3,9 +3,11 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource,
+    Component, Entity, Query, Res, ResMut, Resource, World,
     command::CommandQueue,
+    component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
+    signal::On,
 };
 use std::any::TypeId;
 
@@ -21,32 +23,36 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::scene::SceneRoot;
-use crate::selection::Selection;
+use crate::hosted::{EditTargetChanged, Editor, EditorSignals};
+use crate::tools::{scene::SceneRoot, selection::Selection};
 
 mod add_component;
+mod boolean;
 mod component_menu;
-mod edits;
+mod name_field;
 mod numeric;
 mod registry;
 mod rows;
 mod sync;
 
+pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
 use add_component::{
     add_highlighted_component, clear_add_component_search, populate_add_component_menu,
 };
-pub use edits::{ComponentEdit, ComponentEdits, apply_component_edit, apply_component_edits};
+pub use name_field::{FocusNameField, NameField};
+use name_field::{name_field, update_name_field};
 pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
-use concerto_foundation::transform::Transform;
-use concerto_render::components::{camera::Camera, light::Light};
+use boolean::refresh_bool_fields;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields,
     select_numeric_field_on_focus,
 };
 
-pub use registry::{EditableApp, InspectorRegistry, apply_property_commit, apply_property_commits};
+use crate::tools::edits::EditComponent;
+use registry::send_property_commits;
+pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub use rows::{
     EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
     PropertyRowValue,
@@ -55,10 +61,12 @@ pub use rows::{
 pub const PANEL_ID: &str = "concerto.ecs";
 
 /// Panel metadata. Component cards and property rows own inspection state in ECS.
-#[derive(Resource, Default, PartialEq)]
+#[derive(Resource, Debug, Default, PartialEq)]
 pub struct InspectorData {
-    pub entity: Option<Entity>,
-    pub closable_scene: Option<Entity>,
+    /// The entity being inspected, in the edit `App`'s world.
+    pub scene_entity: Option<Entity>,
+    /// The selected scene root, in the edit `App`'s world, when the root is what is selected.
+    pub closable_scene_root: Option<Entity>,
 }
 
 const PROPERTY_LABEL_WIDTH: f32 = 72.0;
@@ -76,7 +84,7 @@ struct DetailsView;
 
 #[derive(Component, Debug, Default)]
 struct ComponentStack {
-    target: Option<Entity>,
+    scene_target: Option<Entity>,
     structural_version: Option<EntityStructuralVersion>,
     registry_tick: Option<concerto_ecs::component::Tick>,
 }
@@ -90,41 +98,76 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
         app.insert_resource(ComponentEdits::default());
-        app.register_editable::<Transform>()
-            .register_editable::<Light>()
-            .register_inspectable::<Camera>();
+        app.insert_resource(FocusNameField::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
             region: Region::Side,
         });
+        install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
-        app.add_system(Update, apply_property_commits)
-            .add_system(Update, apply_component_edits);
+        app.add_system(Update, send_property_commits)
+            .add_system(Update, send_component_edits);
         app.add_system(LateUpdate, select_numeric_field_on_focus)
             .add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, collect_inspector_data)
+            .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
             .add_system(LateUpdate, add_highlighted_component)
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)
+            .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, sync_inspector_scroll);
     }
 }
 
-fn collect_inspector_data(
-    selection: Res<Selection>,
-    selected: Query<Option<&SceneRoot>>,
+pub(crate) fn install_listeners(world: &mut World) {
+    world.add_listener(forget_scene);
+    world.add_listener(sync::forget_scene);
+    world.add_listener(name_field::forget_scene);
+    world.add_listener(add_component::forget_scene);
+    world.add_listener(component_menu::forget_scene);
+}
+
+fn forget_scene(
+    _: On<EditTargetChanged>,
+    mut data: ResMut<InspectorData>,
+    mut commits: ResMut<PropertyCommits>,
+    mut edits: ResMut<ComponentEdits>,
+) {
+    if *data != InspectorData::default() {
+        *data = InspectorData::default();
+    }
+    if !commits.0.is_empty() {
+        commits.0.clear();
+    }
+    if !edits.0.is_empty() {
+        edits.0.clear();
+    }
+}
+
+fn send_component_edits(mut edits: ResMut<ComponentEdits>, mut scene: EditorSignals) {
+    if edits.0.is_empty() {
+        return;
+    }
+    for edit in std::mem::take(&mut edits.0) {
+        scene.trigger(EditComponent(edit));
+    }
+}
+
+pub(crate) fn collect_inspector_data(
+    selection: Editor<Res<Selection>>,
+    selected: Editor<Query<Option<&SceneRoot>>>,
     mut current: ResMut<InspectorData>,
 ) {
     let mut data = InspectorData::default();
     if let Some(entity) = selection.entity() {
         if let Some(root) = selected.get_entity(entity) {
-            data.entity = Some(entity);
-            data.closable_scene = root.map(|_| entity);
+            data.scene_entity = root.is_none().then_some(entity);
+            data.closable_scene_root = root.map(|_| entity);
         }
     }
     if *current != data {
@@ -141,7 +184,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
         .add_child_with(theme.column().grow().clipped(), |details| {
-            details.add_child_with(
+            details.add_child(name_field(theme)).add_child_with(
                 (
                     UINode::default()
                         .with_flex_grow(1.0)

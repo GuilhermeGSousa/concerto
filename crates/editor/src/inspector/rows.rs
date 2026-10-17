@@ -7,23 +7,7 @@ use concerto_ecs::{Component, Entity, Resource, command::CommandQueue, component
 use concerto_editable::{Editable, PropertyPath};
 use concerto_ui::theme::UITheme;
 
-/// A rejected edit leaves the target unchanged.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EditError {
-    Rejected,
-    TypeMismatch,
-    NotFound,
-    StaleEditor,
-    MissingTarget,
-    UnregisteredComponent,
-}
-
-impl std::fmt::Display for EditError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
-    }
-}
-impl std::error::Error for EditError {}
+pub use crate::tools::edits::{EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
 pub trait PropertyEditor<T: Editable>: Send + Sync + 'static {
@@ -40,28 +24,9 @@ pub trait PropertyEditor<T: Editable>: Send + Sync + 'static {
     );
     /// Validate before mutating. On error the target must remain unchanged.
     fn apply(&self, value: &mut T, edit: &Self::Edit) -> Result<(), EditError>;
-}
-
-/// Captured at rebuild, so a queued edit always addresses its original target.
-#[derive(Component, Clone, Debug)]
-pub struct PropertyRow {
-    pub entity: Entity,
-    pub component: TypeId,
-    pub path: PropertyPath,
-    pub type_id: TypeId,
-    pub(crate) editor_type: Option<TypeId>,
-    pub(crate) registry_tick: Tick,
-}
-
-impl PropertyRow {
-    /// Whether an adapter claimed this row when it was collected.
-    pub fn has_editor(&self) -> bool {
-        self.editor_type.is_some()
-    }
-
-    /// The registry's change tick at collection, which later edits are checked against.
-    pub fn registry_tick(&self) -> Tick {
-        self.registry_tick
+    /// Whether the widgets `build` spawns keep themselves current from the row's [`PropertyRowValue`], so a value change leaves the row in place.
+    fn follows_snapshot(&self) -> bool {
+        false
     }
 }
 
@@ -156,7 +121,7 @@ impl Property {
 /// An owned edit and its captured target. Construct through [`Self::new`].
 pub struct PropertyCommit {
     pub row: PropertyRow,
-    pub(crate) edit: Box<dyn Any + Send + Sync>,
+    pub(crate) edit: Arc<dyn Any + Send + Sync>,
 }
 
 impl PropertyCommit {
@@ -172,12 +137,12 @@ impl PropertyCommit {
         }
         Ok(Self {
             row: row.clone(),
-            edit: Box::new(edit),
+            edit: Arc::new(edit),
         })
     }
 }
 
-/// Edits awaiting the inspector's exclusive applying system.
+/// Edits waiting to be checked against the widget registry and sent to the scene.
 #[derive(Resource, Default)]
 pub struct PropertyCommits(pub Vec<PropertyCommit>);
 

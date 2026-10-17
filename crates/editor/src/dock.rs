@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 
 use concerto_app::{App, Plugin, schedule_groups::Startup};
-use concerto_ecs::{Entity, Res, ResMut, Resource, command::CommandQueue, system::NonSendMarker};
+use concerto_ecs::{Entity, Res, ResMut, Resource, command::CommandQueue};
 use concerto_ui::{
     elements::prelude::*,
     interaction::Interactable,
@@ -118,16 +118,13 @@ const RAIL: f32 = 238.0;
 const SIDE: f32 = 290.0;
 
 fn build_dock(
-    _: NonSendMarker,
     mut cmd: CommandQueue,
     mut registry: ResMut<PanelRegistry>,
     theme: Res<UITheme>,
-    window: Res<concerto_window::plugin::Window>,
+    mut window: ResMut<concerto_window::plugin::Window>,
 ) {
-    window.window_handle.set_title("Concerto");
-    window
-        .window_handle
-        .set_min_inner_size(Some(winit::dpi::PhysicalSize::new(900, 600)));
+    window.settings.title = "Concerto".to_string();
+    window.settings.min_size = Some(glam::Vec2::new(900.0, 600.0));
 
     let root = cmd
         .spawn(

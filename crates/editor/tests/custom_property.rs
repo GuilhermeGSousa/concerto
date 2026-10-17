@@ -2,14 +2,22 @@
 #[path = "../examples/custom_property.rs"]
 mod example;
 
-use concerto_app::App;
+use concerto_app::{App, edit_time::AtEditTime, editable::EditableComponents};
 use concerto_ecs::{
-    Component, Entity, IntoSystem, Res, ResMut, Resource, System, World, command::CommandQueue,
+    Component, Entity, IntoSystem, Query, Res, ResMut, Resource, System, World,
+    command::CommandQueue,
+    signal::{On, Signal},
 };
 use concerto_editable::{Editable, PropertyPath};
+use concerto_editor::hosted::{Editor, Hosted, HostedEventsAppExt, trigger_on};
 use concerto_editor::inspector::{
-    EditError, InspectorRegistry, Property, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyRowValue, apply_property_commit, apply_property_commits,
+    ComponentEdit, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyRow, PropertyRowValue,
+};
+use concerto_editor::tools::{
+    edits::EditComponent,
+    scene::SceneEdited,
+    selection::{Select, Selection},
 };
 use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
@@ -29,41 +37,146 @@ fn setting() -> Setting {
     }
 }
 
-fn world() -> (World, Entity, Entity) {
-    let mut registry = InspectorRegistry::default();
-    registry.register_component::<Container>();
-    registry.register_component::<Setting>();
-    registry.register_property_editor::<Setting, SettingEditor>(SettingEditor);
-    let mut world = World::default();
-    world.insert_resource(registry);
-    world.insert_resource(PropertyCommits::default());
-    let a = world.spawn(Container {
-        setting: setting(),
-        gain: 1.0,
-    });
-    let b = world.spawn(Container {
-        setting: setting(),
-        gain: 2.0,
-    });
-    world.tick();
-    (world, a, b)
+struct Despawn(Entity);
+impl Signal for Despawn {}
+
+fn despawn(on: On<Despawn>, mut cmd: CommandQueue) {
+    cmd.despawn(on.signal().0);
 }
 
-fn property(world: &World, entity: Entity) -> Property {
-    world
-        .get_resource::<InspectorRegistry>()
-        .unwrap()
-        .collect_component(world, entity, TypeId::of::<Container>())
-        .unwrap()
-        .remove(0)
+#[derive(Resource, Default)]
+struct Edits(usize);
+
+fn count_edit(_: On<Hosted<SceneEdited>>, mut edits: ResMut<Edits>) {
+    edits.0 += 1;
 }
 
-fn commit(world: &World, entity: Entity, edit: SettingEdit) -> PropertyCommit {
-    PropertyCommit::new::<Setting, SettingEditor>(
-        &property(world, entity).row(entity, TypeId::of::<Container>()),
-        edit,
-    )
-    .unwrap()
+#[derive(Resource, Default)]
+struct Seen {
+    containers: Vec<(Entity, String, bool)>,
+    settings: Vec<(Entity, bool)>,
+    selected: Option<Entity>,
+}
+
+fn look(
+    containers: Editor<Query<(Entity, &Container)>>,
+    settings: Editor<Query<(Entity, &Setting)>>,
+    selection: Editor<Res<Selection>>,
+    mut seen: ResMut<Seen>,
+) {
+    seen.containers = containers
+        .iter()
+        .map(|(entity, container)| {
+            (
+                entity,
+                container.setting.title.clone(),
+                container.setting.enabled,
+            )
+        })
+        .collect();
+    seen.settings = settings
+        .iter()
+        .map(|(entity, setting)| (entity, setting.enabled))
+        .collect();
+    seen.selected = selection.entity();
+}
+
+struct Inspecting {
+    editor: App,
+    document: Entity,
+    a: Entity,
+    b: Entity,
+    root: Entity,
+}
+
+fn inspecting() -> Inspecting {
+    let mut spawned = None;
+    let (mut editor, document) = example::headless_editor(|scene| {
+        scene
+            .register_editable::<Container>()
+            .add_listener(despawn.at_edit_time());
+        let world = scene.main_mut().world_mut();
+        let mut container = |gain| {
+            world.spawn(Container {
+                setting: setting(),
+                gain,
+            })
+        };
+        let (a, b) = (container(1.0), container(2.0));
+        spawned = Some((a, b, world.spawn(setting())));
+    });
+    editor
+        .insert_resource(Edits::default())
+        .insert_resource(Seen::default())
+        .forward_hosted_event::<SceneEdited>()
+        .add_listener(count_edit);
+    let (a, b, root) = spawned.unwrap();
+    Inspecting {
+        editor,
+        document,
+        a,
+        b,
+        root,
+    }
+}
+
+impl Inspecting {
+    fn world(&mut self) -> &mut World {
+        self.editor.main_mut().world_mut()
+    }
+    fn signal<S: Signal>(&mut self, signal: S) {
+        let document = self.document;
+        trigger_on(self.world(), document, signal);
+    }
+    fn select(&mut self, entity: Entity) {
+        self.signal(Select(Some(entity)));
+        self.editor.update();
+    }
+    fn seen(&mut self) -> &Seen {
+        let mut system = look.into_system();
+        system.initialize(self.world());
+        system.run_and_apply((), self.world());
+        self.world().get_resource::<Seen>().unwrap()
+    }
+    fn container(&mut self, entity: Entity) -> Option<(String, bool)> {
+        self.seen()
+            .containers
+            .iter()
+            .find(|(found, ..)| *found == entity)
+            .map(|(_, title, enabled)| (title.clone(), *enabled))
+    }
+    fn enabled(&mut self, entity: Entity) -> bool {
+        self.container(entity).unwrap().1
+    }
+    fn edits(&mut self) -> usize {
+        self.world().get_resource::<Edits>().unwrap().0
+    }
+    fn rows(&mut self) -> Vec<(Entity, PropertyRow, PropertyRowValue)> {
+        let world = self.world();
+        world
+            .query::<(Entity, &PropertyRow, &PropertyRowValue), ()>()
+            .iter(world)
+            .map(|(entity, row, value)| (entity, row.clone(), value.clone()))
+            .collect()
+    }
+    fn setting_row(&mut self) -> (Entity, PropertyRow, PropertyRowValue) {
+        self.rows()
+            .into_iter()
+            .find(|(_, row, _)| row.type_id == TypeId::of::<Setting>())
+            .expect("the inspector shows the selected entity's setting")
+    }
+    fn send(&mut self, commit: PropertyCommit) {
+        self.world()
+            .get_resource_mut::<PropertyCommits>()
+            .unwrap()
+            .0
+            .push(commit);
+        self.editor.update();
+    }
+}
+
+fn commit(row: &PropertyRow, edit: SettingEdit) -> PropertyCommit {
+    PropertyCommit::new::<Setting, SettingEditor>(row, edit).unwrap()
 }
 
 #[test]
@@ -83,7 +196,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
         ]
     );
     assert!(!fallback[0].has_editor());
-    assert!(!fallback[1].has_editor());
+    assert!(fallback[1].has_editor());
     assert!(fallback[2].has_editor());
     assert!(
         fallback[0]
@@ -111,248 +224,227 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
 }
 
 #[test]
-fn commits_use_captured_entity_and_live_value_and_validate_before_mutation() {
-    let (mut world, a, b) = world();
-    let mut selection = concerto_editor::selection::Selection::default();
-    selection.select_entity(b);
-    world.insert_resource(selection);
-    let toggle = commit(&world, a, SettingEdit::Toggle);
-    apply_property_commit(&mut world, toggle).unwrap();
-    assert!(
-        world
-            .get_component_for_entity::<Container>(a)
-            .unwrap()
-            .setting
-            .enabled
-    );
-    assert!(
-        !world
-            .get_component_for_entity::<Container>(b)
-            .unwrap()
-            .setting
-            .enabled
-    );
-    assert!(world.was_component_changed(a, TypeId::of::<Container>()));
-    assert!(!world.was_component_changed(b, TypeId::of::<Container>()));
+fn the_inspector_shows_a_registered_composite_of_the_scene_as_one_row() {
+    let mut w = inspecting();
+    w.select(w.a);
 
-    let invalid = commit(&world, a, SettingEdit::Rename(" ".into()));
+    let rows = w.rows();
+    let paths: Vec<_> = rows.iter().map(|(_, row, _)| row.path.clone()).collect();
     assert_eq!(
-        apply_property_commit(&mut world, invalid),
-        Err(EditError::Rejected)
+        paths,
+        [PropertyPath::new(["setting"]), PropertyPath::new(["gain"])]
     );
-    let value = &world
-        .get_component_for_entity::<Container>(a)
-        .unwrap()
-        .setting;
-    assert_eq!(value.title, "Shadows");
-    assert!(value.enabled);
-    let rename = commit(&world, a, SettingEdit::Rename("Lighting".into()));
-    apply_property_commit(&mut world, rename).unwrap();
-    assert_eq!(
-        world
-            .get_component_for_entity::<Container>(a)
-            .unwrap()
-            .setting
-            .title,
-        "Lighting"
+    let a = w.a;
+    assert!(rows.iter().all(|(_, row, _)| row.entity == a
+        && row.component == TypeId::of::<Container>()
+        && row.has_editor()));
+    let snapshot = rows[0].2.snapshot::<Setting, SettingEditor>().unwrap();
+    assert_eq!(snapshot.title, "Shadows");
+    assert!(!snapshot.enabled);
+}
+
+#[test]
+fn commits_use_captured_entity_and_live_value_and_validate_before_mutation() {
+    let mut w = inspecting();
+    w.select(w.a);
+    let row = w.setting_row().1;
+    w.select(w.b);
+    let selected = w.seen().selected;
+    assert_eq!(selected, Some(w.b));
+
+    w.send(commit(&row, SettingEdit::Toggle));
+    assert!(w.enabled(w.a));
+    assert!(!w.enabled(w.b));
+    assert_eq!(w.edits(), 1);
+
+    w.send(commit(&row, SettingEdit::Rename(" ".into())));
+    assert_eq!(w.container(w.a), Some(("Shadows".into(), true)));
+    assert_eq!(w.edits(), 1, "a refused edit is not reported as an edit");
+
+    w.send(commit(&row, SettingEdit::Toggle));
+    assert!(
+        !w.enabled(w.a),
+        "the edit is applied to the value as it is now"
     );
+    w.send(commit(&row, SettingEdit::Rename("Lighting".into())));
+    assert_eq!(w.container(w.a), Some(("Lighting".into(), false)));
+    assert_eq!(w.edits(), 3);
 }
 
 #[test]
 fn root_editors_and_owned_snapshots_work_without_cloning_the_domain_type() {
-    let (mut world, _, _) = world();
-    let entity = world.spawn(setting());
-    world.tick();
-    let property = world
-        .get_resource::<InspectorRegistry>()
-        .unwrap()
-        .collect_component(&world, entity, TypeId::of::<Setting>())
-        .unwrap()
-        .remove(0);
-    assert_eq!(property.path, PropertyPath::default());
-    assert!(!world.was_component_changed(entity, TypeId::of::<Setting>()));
-    let row = property.row(entity, TypeId::of::<Setting>());
-    let edit = PropertyCommit::new::<Setting, SettingEditor>(&row, SettingEdit::Toggle).unwrap();
-    apply_property_commit(&mut world, edit).unwrap();
+    let mut w = inspecting();
+    w.select(w.root);
+    let (_, row, value) = w.setting_row();
+    assert_eq!(row.path, PropertyPath::default());
+    assert_eq!(row.component, TypeId::of::<Setting>());
+
+    w.send(commit(&row, SettingEdit::Toggle));
+
+    let settings = w.seen().settings.clone();
+    assert_eq!(settings, [(w.root, true)]);
     assert!(
-        world
-            .get_component_for_entity::<Setting>(entity)
-            .unwrap()
-            .enabled
+        !value.snapshot::<Setting, SettingEditor>().unwrap().enabled,
+        "snapshot is independent of world mutation"
     );
     assert!(
-        !property
-            .value
+        w.setting_row()
+            .2
             .snapshot::<Setting, SettingEditor>()
             .unwrap()
             .enabled,
-        "snapshot is independent of world mutation"
+        "the inspector took a fresh snapshot of the changed value"
     );
 }
 
 #[test]
 fn replacing_an_adapter_invalidates_old_edits_even_for_the_same_adapter_type() {
-    let (mut world, a, _) = world();
-    let old = property(&world, a);
-    let edit = commit(&world, a, SettingEdit::Toggle);
-    world.tick();
-    ResMut::<InspectorRegistry>::new(world.as_unsafe_world_cell_mut())
+    let mut w = inspecting();
+    w.select(w.a);
+    let old = w.setting_row().1;
+    w.editor
         .register_property_editor::<Setting, SettingEditor>(SettingEditor);
-    assert_ne!(old.registry_tick(), property(&world, a).registry_tick());
-    assert_eq!(
-        apply_property_commit(&mut world, edit),
-        Err(EditError::StaleEditor)
-    );
-    assert!(
-        !world
-            .get_component_for_entity::<Container>(a)
-            .unwrap()
-            .setting
-            .enabled
-    );
-    let current = commit(&world, a, SettingEdit::Toggle);
-    apply_property_commit(&mut world, current).unwrap();
-    assert!(
-        world
-            .get_component_for_entity::<Container>(a)
-            .unwrap()
-            .setting
-            .enabled
-    );
+
+    w.send(commit(&old, SettingEdit::Toggle));
+    assert!(!w.enabled(w.a));
+    assert_eq!(w.edits(), 0);
+
+    let current = w.setting_row().1;
+    assert_ne!(old.registry_tick(), current.registry_tick());
+    w.send(commit(&current, SettingEdit::Toggle));
+    assert!(w.enabled(w.a));
+    assert_eq!(w.edits(), 1);
 }
 
 #[test]
-fn missing_targets_and_incompatible_paths_return_errors() {
-    let (mut world, a, b) = world();
-    let mut wrong_type = commit(&world, a, SettingEdit::Toggle);
+fn missing_targets_and_incompatible_paths_change_nothing_and_report_no_edit() {
+    let mut w = inspecting();
+    w.select(w.a);
+    let row = w.setting_row().1;
+
+    let mut wrong_type = commit(&row, SettingEdit::Toggle);
     wrong_type.row.path = PropertyPath::new(["gain"]);
-    assert_eq!(
-        apply_property_commit(&mut world, wrong_type),
-        Err(EditError::TypeMismatch)
-    );
-    let mut missing = commit(&world, a, SettingEdit::Toggle);
+    w.send(wrong_type);
+    let mut missing = commit(&row, SettingEdit::Toggle);
     missing.row.path = PropertyPath::new(["absent"]);
-    assert_eq!(
-        apply_property_commit(&mut world, missing),
-        Err(EditError::NotFound)
-    );
-    let removed = commit(&world, a, SettingEdit::Toggle);
-    world.remove_component::<Container>(a);
-    assert_eq!(
-        apply_property_commit(&mut world, removed),
-        Err(EditError::MissingTarget)
-    );
-    let despawned = commit(&world, b, SettingEdit::Toggle);
-    world.despawn(b);
-    assert_eq!(
-        apply_property_commit(&mut world, despawned),
-        Err(EditError::MissingTarget)
-    );
-}
+    w.send(missing);
+    assert_eq!(w.container(w.a), Some(("Shadows".into(), false)));
 
-#[test]
-fn collection_does_not_stamp_changed_ticks() {
-    let (world, a, _) = world();
-    assert_eq!(property(&world, a).path, PropertyPath::new(["setting"]));
-    assert!(!world.was_component_changed(a, TypeId::of::<Container>()));
+    w.signal(EditComponent(ComponentEdit::Remove {
+        entity: w.a,
+        component: TypeId::of::<Container>(),
+    }));
+    assert_eq!(w.edits(), 1, "removing the component is itself an edit");
+    w.send(commit(&row, SettingEdit::Toggle));
+    assert_eq!(w.container(w.a), None);
+
+    w.select(w.b);
+    let row = w.setting_row().1;
+    w.signal(Despawn(w.b));
+    w.send(commit(&row, SettingEdit::Toggle));
+    let left = w.seen().containers.len();
+    assert_eq!(left, 0);
+    assert_eq!(w.edits(), 1);
 }
 
 #[derive(Resource)]
 struct BuildRow {
-    property: Property,
-    target: Entity,
+    row: PropertyRow,
+    shown: PropertyRowValue,
 }
 
+#[derive(Resource)]
+struct Built(Entity);
+
 fn build_widget(data: Res<BuildRow>, mut cmd: CommandQueue) {
-    let row = cmd
-        .spawn((
-            data.property.row(data.target, TypeId::of::<Container>()),
-            data.property.value.clone(),
-        ))
-        .entity();
+    let row = cmd.spawn((data.row.clone(), data.shown.clone())).entity();
     SettingEditor.build(
         &mut cmd,
         row,
-        data.property
-            .value
-            .snapshot::<Setting, SettingEditor>()
-            .unwrap(),
+        data.shown.snapshot::<Setting, SettingEditor>().unwrap(),
         &UITheme::default(),
     );
+    cmd.insert_resource(Built(row));
 }
 
 #[test]
 fn custom_widget_build_click_commit_and_refresh_smoke_test() {
-    let (mut world, a, _) = world();
-    world.insert_resource(BuildRow {
-        property: property(&world, a),
-        target: a,
-    });
+    let mut w = inspecting();
+    w.select(w.a);
+    let (_, row, shown) = w.setting_row();
+    w.world().insert_resource(BuildRow { row, shown });
     let mut build = build_widget.into_system();
-    build.initialize(&mut world);
-    build.run_and_apply((), &mut world);
-    let mut query = world.query::<(Entity, &SettingButton), ()>();
-    let (button, row) = query
-        .iter(&mut world)
-        .map(|(entity, button)| (entity, button.0))
-        .next()
+    build.initialize(w.world());
+    build.run_and_apply((), w.world());
+    let row = w.world().get_resource::<Built>().unwrap().0;
+    let world = w.world();
+    let button = world
+        .query::<(Entity, &SettingButton), ()>()
+        .iter(world)
+        .find(|(_, button)| button.0 == row)
+        .map(|(entity, _)| entity)
         .unwrap();
-    assert!(
+    let text = |world: &World| {
         world
             .get_component_for_entity::<UIText>(button)
             .unwrap()
             .text
-            .contains("Off")
-    );
-    world.trigger_on(
+            .clone()
+    };
+    assert!(text(w.world()).contains("Off"));
+
+    w.world().trigger_on(
         button,
         UIClick {
             position: glam::Vec2::ZERO,
             button: MouseButton::Left,
         },
     );
-    assert_eq!(world.get_resource::<PropertyCommits>().unwrap().0.len(), 1);
-    apply_property_commits(&mut world);
+    assert_eq!(
+        w.world().get_resource::<PropertyCommits>().unwrap().0.len(),
+        1
+    );
+    w.editor.update();
     assert!(
-        world
+        w.world()
             .get_resource::<PropertyCommits>()
             .unwrap()
             .0
             .is_empty()
     );
-    assert!(
-        world
-            .get_component_for_entity::<Container>(a)
-            .unwrap()
-            .setting
-            .enabled
-    );
-    let refreshed = property(&world, a).value;
-    *world
+    assert!(w.enabled(w.a));
+
+    let refreshed = w
+        .rows()
+        .into_iter()
+        .find(|(entity, found, _)| *entity != row && found.type_id == TypeId::of::<Setting>())
+        .map(|(_, _, value)| value)
+        .expect("the inspector took a fresh snapshot");
+    *w.world()
         .get_component_for_entity_mut::<PropertyRowValue>(row)
         .unwrap() = refreshed;
-    let mut refresh = example::refresh_settings.into_system();
-    refresh.initialize(&mut world);
-    refresh.run_and_apply((), &mut world);
-    assert!(
-        world
-            .get_component_for_entity::<UIText>(button)
-            .unwrap()
-            .text
-            .contains("On")
-    );
+    w.editor.update();
+    assert!(text(w.world()).contains("On"));
 }
 
 #[test]
-fn app_registration_is_available_to_downstream_plugins() {
-    let mut app = App::new();
-    app.insert_resource(InspectorRegistry::default());
-    example::install(&mut app);
+fn registration_splits_between_the_recipe_and_the_editors_app() {
+    let mut editor = App::new();
+    editor.insert_resource(InspectorRegistry::default());
+    example::install(&mut editor);
     assert_eq!(
-        app.get_resource::<InspectorRegistry>()
+        editor
+            .get_resource::<InspectorRegistry>()
             .unwrap()
             .collect(&setting())
             .len(),
         1
     );
+    assert!(editor.get_resource::<EditableComponents>().is_none());
+
+    let mut scene = App::new();
+    example::register(&mut scene);
+    let table = scene.get_resource::<EditableComponents>().unwrap();
+    assert!(table.get(TypeId::of::<Setting>()).is_some());
+    assert!(scene.get_resource::<InspectorRegistry>().is_none());
 }

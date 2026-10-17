@@ -2,7 +2,10 @@ use std::{
     any::TypeId,
     collections::{BTreeMap, HashMap, HashSet},
     path::Path,
-    sync::{Arc, RwLock, Weak},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, RwLock, Weak,
+    },
 };
 
 use anyhow::Context;
@@ -41,6 +44,15 @@ enum AssetLoadEvent {
     LoadFailed { id: AssetId },
 }
 
+impl AssetLoadEvent {
+    fn id(&self) -> AssetId {
+        match self {
+            AssetLoadEvent::Loaded { asset } => asset.id,
+            AssetLoadEvent::LoadFailed { id } => *id,
+        }
+    }
+}
+
 pub struct AssetLoadContext {
     asset_server: AssetServer,
     asset_id: AssetId,
@@ -67,8 +79,13 @@ pub(crate) struct AssetInfo {
     handle: Weak<StrongAssetHandle>,
 }
 
+struct PendingLoad {
+    _task: Task<()>,
+    cancelled: Arc<AtomicBool>,
+}
+
 pub(crate) struct AssetServerData {
-    pending_tasks: RwLock<HashMap<AssetId, Task<()>>>,
+    pending_tasks: RwLock<HashMap<AssetId, PendingLoad>>,
     loaded_assets: RwLock<HashSet<AssetId>>,
     handle_provider: AssetHandleProvider,
     asset_load_event_sender: Sender<AssetLoadEvent>,
@@ -208,6 +225,24 @@ impl AssetServer {
         Ok(false)
     }
 
+    /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
+    pub fn cancel_pending(&self) {
+        let mut pending = self.data.pending_tasks.write().unwrap();
+        for load in pending.values() {
+            load.cancelled.store(true, Ordering::SeqCst);
+        }
+        let kept: Vec<_> = self
+            .data
+            .asset_load_event_receiver
+            .try_iter()
+            .filter(|event| !pending.contains_key(&event.id()))
+            .collect();
+        for event in kept {
+            let _ = self.data.asset_load_event_sender.send(event);
+        }
+        pending.clear();
+    }
+
     pub fn register_asset<A: Asset>(&mut self, asset: &AssetStore<A>) {
         self.data
             .handle_provider
@@ -232,7 +267,15 @@ impl AssetServer {
         // spawn duplicate loads for the same persistent UUID.
         let mut pending = self.data.pending_tasks.write().unwrap();
         if !pending.contains_key(&id) && !self.data.loaded_assets.read().unwrap().contains(&id) {
-            pending.insert(id, self.request_load::<A>(id));
+            let cancelled = Arc::new(AtomicBool::new(false));
+            let task = self.request_load::<A>(id, Arc::clone(&cancelled));
+            pending.insert(
+                id,
+                PendingLoad {
+                    _task: task,
+                    cancelled,
+                },
+            );
         }
         self.data.handle_provider.request_handle(id)
     }
@@ -258,8 +301,14 @@ impl AssetServer {
 
     /// Resolves the UUID through the registry before reading the cooked asset.
     /// A registry miss fails the load without attempting file I/O.
-    fn request_load<A: LoadableAsset>(&self, id: AssetId) -> Task<()> {
-        let sender = self.data.asset_load_event_sender.clone();
+    fn request_load<A: LoadableAsset>(&self, id: AssetId, cancelled: Arc<AtomicBool>) -> Task<()> {
+        let data = Arc::clone(&self.data);
+        let deliver = move |event| {
+            let _pending = data.pending_tasks.read().unwrap();
+            if !cancelled.load(Ordering::SeqCst) {
+                let _ = data.asset_load_event_sender.send(event);
+            }
+        };
 
         let server = self.clone();
         // No profiling scope around the async body: a scope guard must not be
@@ -273,7 +322,7 @@ impl AssetServer {
                         "no content asset registered for AssetId {id:?} (type {})",
                         std::any::type_name::<A>()
                     );
-                    sender.send(AssetLoadEvent::LoadFailed { id }).unwrap();
+                    deliver(AssetLoadEvent::LoadFailed { id });
                     return;
                 }
             };
@@ -294,11 +343,9 @@ impl AssetServer {
             .await;
             match asset {
                 Ok(asset) => {
-                    sender
-                        .send(AssetLoadEvent::Loaded {
-                            asset: LoadedAsset::new(id, asset),
-                        })
-                        .unwrap();
+                    deliver(AssetLoadEvent::Loaded {
+                        asset: LoadedAsset::new(id, asset),
+                    });
                 }
                 Err(error) => {
                     log::error!(
@@ -307,7 +354,7 @@ impl AssetServer {
                         std::any::type_name::<A>(),
                         error
                     );
-                    sender.send(AssetLoadEvent::LoadFailed { id }).unwrap();
+                    deliver(AssetLoadEvent::LoadFailed { id });
                 }
             }
         })
@@ -461,7 +508,8 @@ mod tests {
             .write()
             .unwrap()
             .remove(&id)
-            .expect("load spawns a task for an id that isn't loaded yet");
+            .expect("load spawns a task for an id that isn't loaded yet")
+            ._task;
         pollster::block_on(task);
     }
 
@@ -671,6 +719,126 @@ mod tests {
         AssetRegistry::new().save(&dir).unwrap();
         pollster::block_on(server.initialize()).unwrap();
         assert!(server.poll_initialize().unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn saved_fixture(dir: &std::path::Path, value: u32) -> AssetId {
+        let address = "content/fixture/value.gasset";
+        save_content_asset(
+            &FixtureAsset {
+                value,
+                initialized: false,
+            },
+            dir,
+            address,
+        )
+        .unwrap();
+        read_content_asset_header(&dir.join(address))
+            .unwrap()
+            .asset_id
+    }
+
+    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while !done() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "{what} never happened"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_load_that_finished_but_was_not_yet_handled_is_not_inserted_once_cancelled() {
+        let dir = temp_root("cancel-finished");
+        let id = saved_fixture(&dir, 5);
+        let (server, mut world) = fixture_server(&dir);
+        let handle = server.load::<FixtureAsset>(id);
+        wait_until("the load", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+
+        server.cancel_pending();
+        handle_asset_load_events(&mut world);
+
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        assert!(store.get(&handle).is_none());
+        assert!(server.data.pending_tasks.read().unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct GatedAsset(u32);
+
+    impl Asset for GatedAsset {
+        fn name() -> &'static str {
+            "GatedAsset"
+        }
+    }
+
+    type Gate = (Sender<()>, Receiver<()>);
+    static ENTERED: std::sync::OnceLock<Gate> = std::sync::OnceLock::new();
+    static RELEASED: std::sync::OnceLock<Gate> = std::sync::OnceLock::new();
+
+    fn gate(cell: &'static std::sync::OnceLock<Gate>) -> &'static Gate {
+        cell.get_or_init(crossbeam_channel::unbounded)
+    }
+
+    impl LoadableAsset for GatedAsset {
+        fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
+            gate(&ENTERED).0.send(()).unwrap();
+            gate(&RELEASED).1.recv().unwrap();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_load_cancelled_while_it_runs_never_inserts_its_asset() {
+        let dir = temp_root("cancel-running");
+        let address = "content/fixture/gated.gasset";
+        save_content_asset(&GatedAsset(3), &dir, address).unwrap();
+        let id = read_content_asset_header(&dir.join(address))
+            .unwrap()
+            .asset_id;
+        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        let store = AssetStore::<GatedAsset>::new();
+        server.register_asset(&store);
+        pollster::block_on(server.initialize()).unwrap();
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        let handle = server.load::<GatedAsset>(id);
+        let running = Arc::clone(&server.data.pending_tasks.read().unwrap()[&id].cancelled);
+        gate(&ENTERED)
+            .1
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap();
+
+        server.cancel_pending();
+        gate(&RELEASED).0.send(()).unwrap();
+        wait_until("the end of the load", || Arc::strong_count(&running) == 1);
+        handle_asset_load_events(&mut world);
+
+        let store = world.get_resource::<AssetStore<GatedAsset>>().unwrap();
+        assert!(store.get(&handle).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancelling_keeps_an_added_asset() {
+        let dir = temp_root("cancel-added");
+        let (server, mut world) = fixture_server(&dir);
+        let handle = server.add(FixtureAsset {
+            value: 8,
+            initialized: false,
+        });
+
+        server.cancel_pending();
+        handle_asset_load_events(&mut world);
+
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(8));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

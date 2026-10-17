@@ -89,6 +89,7 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
         if !F::filter(self.world, entity) {
             return None;
         }
+        self.world.world().entity_store().find_location(entity)?;
         T::fetch(self.world, entity)
     }
 

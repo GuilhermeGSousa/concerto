@@ -11,7 +11,7 @@ use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     query::Query,
-    resource::{Res, ResMut},
+    resource::{Res, ResMut, Resource},
     Entity,
 };
 use concerto_window::plugin::Window;
@@ -193,10 +193,16 @@ fn publish_render_target(
     render_textures.insert(handle.id(), target.clone());
 }
 
+/// While present, only the named camera is extracted into the render world.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExclusiveCamera(pub Entity);
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn extract_cameras(
+    exclusive: Extracted<Option<Res<ExclusiveCamera>>>,
     cameras: Extracted<
         Query<(
+            Entity,
             &Camera,
             Option<&CameraEnvironment>,
             &GlobalTransform,
@@ -212,7 +218,10 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (camera, environment, transform, render_entity) in cameras.iter() {
+    for (entity, camera, environment, transform, render_entity) in cameras.iter() {
+        if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
+            continue;
+        }
         let render_entity = **render_entity;
 
         let mut camera_uniform = CameraUniform::new();

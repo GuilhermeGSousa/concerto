@@ -39,9 +39,7 @@ pub struct EventReader<'world, 'state, T: Event + 'static> {
 impl<'w, 's, T: Event> EventReader<'w, 's, T> {
     /// Returns an iterator over every event not yet seen by this reader, and marks them read.
     pub fn read(&mut self) -> EventIterator<'_, T> {
-        let last_event_count =
-            std::mem::replace(&mut self.cursor.last_event_count, self.channel.event_count);
-        EventIterator::new(&self.channel, last_event_count)
+        self.channel.read_from(&mut self.cursor)
     }
 
     /// Number of events this reader has not read yet.

@@ -139,6 +139,9 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn apply(&self, value: &mut T, edit: &NumericEdit) -> Result<(), EditError> {
         value.edit(edit)
     }
+    fn follows_snapshot(&self) -> bool {
+        true
+    }
     fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &NumericSnapshot, theme: &UITheme) {
         let mut row_queue = cmd.entity(row);
         for slot in 0..slot_count(value) {
@@ -477,7 +480,8 @@ mod tests {
 
     #[test]
     fn transform_numeric_widget_submit_refresh_and_cancel_smoke_test() {
-        use super::super::{InspectorRegistry, Property, apply_property_commits};
+        use super::super::{InspectorRegistry, Property, send_property_commits};
+        use crate::hosted::testing::SceneFixture;
         use concerto_ecs::{
             IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel,
         };
@@ -511,31 +515,42 @@ mod tests {
                 &UITheme::default(),
             );
         }
-        let mut world = World::default();
-        let entity = world.spawn(Transform::IDENTITY);
-        let mut registry = InspectorRegistry::default();
-        registry.register_component::<Transform>();
-        let property = registry
-            .collect_component(&world, entity, TypeId::of::<Transform>())
-            .unwrap()
-            .remove(0);
-        world.insert_resource(registry);
+        fn translation(f: &SceneFixture, document: Entity, entity: Entity) -> Property {
+            f.world
+                .get_resource::<InspectorRegistry>()
+                .unwrap()
+                .collect_component(
+                    f.world
+                        .resource_changed_tick::<InspectorRegistry>()
+                        .unwrap(),
+                    f.scene_world(document),
+                    entity,
+                    TypeId::of::<Transform>(),
+                )
+                .unwrap()
+                .remove(0)
+        }
+        let mut f = SceneFixture::new();
+        f.world.insert_resource(InspectorRegistry::default());
+        let document = f.open();
+        let entity = f.scene_entity(document, "first");
+        let property = translation(&f, document, entity);
+        let world: &mut World = &mut f.world;
         world.insert_resource(Build { property, entity });
-        world.insert_resource(PropertyCommits::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
         world.insert_resource(EventChannel::<UIFocusLost>::default());
         world.insert_resource(EventChannel::<UITextInputCancelled>::default());
         let mut build = build.into_system();
-        build.initialize(&mut world);
-        build.run_and_apply((), &mut world);
+        build.initialize(world);
+        build.run_and_apply((), world);
         let mut refresh = refresh_numeric_fields.into_system();
-        refresh.initialize(&mut world);
-        refresh.run_and_apply((), &mut world);
+        refresh.initialize(world);
+        refresh.run_and_apply((), world);
         let mut fields = world.query::<(Entity, &NumericSlot), ()>();
-        assert_eq!(fields.iter(&mut world).count(), 3);
+        assert_eq!(fields.iter(world).count(), 3);
         let (field, row) = fields
-            .iter(&mut world)
+            .iter(world)
             .find(|(_, slot)| slot.slot == 0)
             .map(|(entity, slot)| (entity, slot.row))
             .unwrap();
@@ -551,7 +566,7 @@ mod tests {
             .get_component_for_entity_mut::<UITextInput>(field)
             .unwrap()
             .value = "2.5".into();
-        refresh.run_and_apply((), &mut world);
+        refresh.run_and_apply((), world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)
@@ -568,28 +583,25 @@ mod tests {
                 value: "2.5".into(),
             });
         let mut submit = commit_numeric_fields.into_system();
-        submit.initialize(&mut world);
-        submit.run_and_apply((), &mut world);
-        apply_property_commits(&mut world);
+        submit.initialize(world);
+        submit.run_and_apply((), world);
+        let mut send = send_property_commits.into_system();
+        send.initialize(world);
+        send.run_and_apply((), world);
         assert_eq!(
-            world
+            f.scene_world(document)
                 .get_component_for_entity::<Transform>(entity)
                 .unwrap()
                 .translation,
             Vec3::new(2.5, 0.0, 0.0)
         );
-        let snapshot = world
-            .get_resource::<InspectorRegistry>()
-            .unwrap()
-            .collect_component(&world, entity, TypeId::of::<Transform>())
-            .unwrap()
-            .remove(0)
-            .value;
+        let snapshot = translation(&f, document, entity).value;
+        let world: &mut World = &mut f.world;
         *world
             .get_component_for_entity_mut::<PropertyRowValue>(row)
             .unwrap() = snapshot;
         **world.get_resource_mut::<FocusedWidget>().unwrap() = None;
-        refresh.run_and_apply((), &mut world);
+        refresh.run_and_apply((), world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)
@@ -607,8 +619,8 @@ mod tests {
             .unwrap()
             .push_event(UITextInputCancelled { entity: field });
         let mut cancel = cancel_numeric_fields.into_system();
-        cancel.initialize(&mut world);
-        cancel.run_and_apply((), &mut world);
+        cancel.initialize(world);
+        cancel.run_and_apply((), world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)

@@ -6,7 +6,9 @@ use concerto_ecs::resource::{Res, ResMut};
 use concerto_foundation::transform::systems::{
     propagate_global_transforms, update_simple_entities,
 };
+use concerto_foundation::transform::Transform;
 
+use crate::edit_time::AtEditTime;
 use crate::schedule_groups::{LateUpdate, Update};
 use crate::App;
 
@@ -30,7 +32,7 @@ pub enum PluginsState {
 /// 1. [`build`](Plugin::build) is called immediately on registration.
 /// 2. [`ready`](Plugin::ready) is polled until all plugins return `true`.
 /// 3. [`finish`](Plugin::finish) is called once to complete any deferred setup.
-pub trait Plugin {
+pub trait Plugin: Send + Sync + 'static {
     /// Adds systems, resources, and other configuration to the app.
     fn build(&self, app: &mut App);
 
@@ -78,8 +80,8 @@ impl Plugin for TimePlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Time::new());
         app.insert_resource(FrameStats::new());
-        app.add_system(Update, update_time);
-        app.add_system(LateUpdate, update_frame_stats);
+        app.add_system(Update, update_time.at_edit_time());
+        app.add_system(LateUpdate, update_frame_stats.at_edit_time());
     }
 }
 
@@ -90,7 +92,7 @@ impl Plugin for AssetManagerPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(AssetServer::new());
         app.register_event::<AssetLifetimeEvent>();
-        app.add_system(LateUpdate, handle_asset_load_events);
+        app.add_system(LateUpdate, handle_asset_load_events.at_edit_time());
     }
 
     fn ready(&self, app: &App) -> bool {
@@ -107,8 +109,9 @@ pub struct TransformPlugin;
 
 impl Plugin for TransformPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(LateUpdate, update_simple_entities)
-            .add_system(LateUpdate, propagate_global_transforms);
+        app.register_editable::<Transform>();
+        app.add_system(LateUpdate, update_simple_entities.at_edit_time())
+            .add_system(LateUpdate, propagate_global_transforms.at_edit_time());
     }
 }
 

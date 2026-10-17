@@ -7,6 +7,10 @@ use crate::{
     utilities::TypeIdMap,
 };
 
+/// Marks an entity that `World::add_listener` spawned to hold a listener and nothing else.
+#[derive(Component)]
+pub struct GlobalListener;
+
 pub struct Listener<S: Signal> {
     // Taken while running so the system can safely access or reshape the world.
     state: Option<ListenerState<S>>,

@@ -6,8 +6,7 @@ mod frame_stats;
 mod instant;
 
 pub use frame_stats::FrameStats;
-
-use crate::time::instant::Instant;
+pub use instant::Instant;
 
 #[derive(Resource)]
 pub struct Time {

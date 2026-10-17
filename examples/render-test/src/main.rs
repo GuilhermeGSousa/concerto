@@ -75,21 +75,10 @@ struct Cube;
 #[derive(Component)]
 struct Projectile(Vec3);
 
-fn main() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Debug).expect("Couldn't initialize logger");
-        } else {
-            env_logger::init();
-        }
-    }
-
-    let mut app = App::new();
-
+fn game(app: &mut App) {
     #[cfg(feature = "terminal")]
     {
-        app.register_plugin(DefaultPlugins::headless())
+        app.register_plugin(DefaultPlugins::default())
             .register_plugin(TerminalRendererPlugin)
             .add_system(Startup, spawn_camera_terminal)
             .add_system(Startup, spawn_scene)
@@ -113,8 +102,23 @@ fn main() {
             .add_system(Update, draw_gizmos);
         app.register_plugin(DebugGizmosPlugin);
     }
+}
 
-    app.run();
+fn main() {
+    cfg_if::cfg_if! {
+        if #[cfg(target_arch = "wasm32")] {
+            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+            console_log::init_with_level(log::Level::Debug).expect("Couldn't initialize logger");
+        } else {
+            env_logger::init();
+        }
+    }
+
+    #[cfg(feature = "terminal")]
+    concerto_terminal_renderer::run(game);
+
+    #[cfg(not(feature = "terminal"))]
+    concerto::run(game);
 }
 
 #[cfg(feature = "terminal")]
@@ -144,6 +148,7 @@ fn spawn_camera_terminal(
             intensity: 100.0,
             light_type: LightType::Point,
             range: 0.0,
+            shadowmaps_enabled: false,
         },
         TerminalOutput,
         Transform::from_translation_rotation(Vec3::ZERO, Quat::IDENTITY),

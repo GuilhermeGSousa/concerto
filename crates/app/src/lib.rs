@@ -31,72 +31,103 @@ use concerto_ecs::{
         Event,
     },
     resource::{ResMut, Resource},
+    signal::Signal,
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
-    IntoSetConfig, IntoSystemConfig, World,
+    IntoSetConfig, IntoSystemConfig, SystemTag, TagFilter, World,
 };
 use log::info;
-use runner::AppExit;
 
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, handle::AssetLifetimeEvent, Asset,
+    asset_server::AssetServer, asset_store::AssetStore, handle::AssetLifetimeEvent, Asset, AssetId,
 };
 
 use crate::{
+    edit_time::{AppListener, AtEditTime, EditTime},
     plugins::PluginsState,
-    runner::run_once,
     schedule_groups::{First, Update},
     subapp::{SubApp, SubApps},
 };
 
+pub mod edit_time;
+pub mod editable;
 pub mod extractor;
 pub mod main_schedule;
 pub mod plugins;
-pub mod runner;
 pub mod schedule_groups;
 pub mod subapp;
 
 pub use plugins::Plugin;
+
+/// The scene a game starts in, declared with [`App::set_startup_scene`].
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StartupScene(pub AssetId);
 
 pub(crate) struct HokeyPokeyPlugin;
 impl Plugin for HokeyPokeyPlugin {
     fn build(&self, _: &mut App) {}
 }
 
-fn compile(schedules: Schedules, world: &mut World) -> CompiledSchedules {
+fn compile(schedules: Schedules, world: &mut World, filter: &TagFilter) -> CompiledSchedules {
     #[cfg(all(feature = "multithreaded", not(target_arch = "wasm32")))]
     {
-        schedules.compile::<MultiThreadedExecutor>(world)
+        schedules.compile_filtered::<MultiThreadedExecutor>(world, filter)
     }
     #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
     {
-        schedules.compile::<SingleThreadedExecutor>(world)
+        schedules.compile_filtered::<SingleThreadedExecutor>(world, filter)
     }
 }
 
 /// The top-level container: the main and render [`SubApp`]s and the registered [`Plugin`]s.
 pub struct App {
-    runner: runner::RunnerFn,
     subapps: SubApps,
     plugins: Vec<Box<dyn Plugin>>,
+    plugin_types: std::collections::HashSet<std::any::TypeId>,
     plugin_state: PluginsState,
+    editing: bool,
 }
 
 impl App {
     pub fn new() -> App {
         Self {
-            runner: Box::new(runner::run_once),
             subapps: SubApps::default(),
             plugins: Vec::new(),
+            plugin_types: Default::default(),
             plugin_state: PluginsState::Building,
+            editing: false,
         }
     }
 
+    /// Creates an edit `App`: only main-world systems and listeners marked `at_edit_time` run in it.
+    pub fn for_editing() -> App {
+        App {
+            editing: true,
+            ..App::new()
+        }
+    }
+
+    /// Declares the scene a game starts in; `ScenePlugin` spawns it in a game `App`, never in an edit `App`.
+    pub fn set_startup_scene(&mut self, id: AssetId) -> &mut Self {
+        self.insert_resource(StartupScene(id))
+    }
+
+    /// Whether this `App` was created by [`App::for_editing`].
+    pub fn is_editing(&self) -> bool {
+        self.editing
+    }
+
     /// Builds `plugin` immediately and keeps it for [`Plugin::ready`] and [`Plugin::finish`].
-    pub fn register_plugin(&mut self, plugin: impl Plugin + 'static) -> &mut Self {
+    pub fn register_plugin<P: Plugin>(&mut self, plugin: P) -> &mut Self {
         info!("Registering plugin: {}", plugin.name());
+        self.plugin_types.insert(std::any::TypeId::of::<P>());
         plugin.build(self);
         self.plugins.push(Box::new(plugin));
         self
+    }
+
+    /// Whether a plugin of type `P` has been registered on this app.
+    pub fn is_plugin_added<P: Plugin>(&self) -> bool {
+        self.plugin_types.contains(&std::any::TypeId::of::<P>())
     }
 
     /// Registers an asset type and the system that tracks its handles; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
@@ -110,25 +141,15 @@ impl App {
 
         self.add_system(
             Update,
-            |mut asset_store: ResMut<AssetStore<A>>,
-             asset_server: ResMut<AssetServer>,
-             events: EventWriter<AssetLifetimeEvent>| {
+            (|mut asset_store: ResMut<AssetStore<A>>,
+              asset_server: ResMut<AssetServer>,
+              events: EventWriter<AssetLifetimeEvent>| {
                 asset_store.track_assets(asset_server, events);
-            },
+            })
+            .at_edit_time(),
         );
 
         self.main_mut().insert_resource(asset_store);
-        self
-    }
-
-    pub fn run(mut self) {
-        let runner = std::mem::replace(&mut self.runner, Box::new(run_once));
-        (runner)(self);
-    }
-
-    /// Replaces the runner, for example with a window event loop.
-    pub fn set_runner(&mut self, f: impl FnOnce(App) -> AppExit + 'static) -> &mut Self {
-        self.runner = Box::new(f);
         self
     }
 
@@ -187,12 +208,19 @@ impl App {
         let event_channel = EventChannel::<T>::new();
 
         self.insert_resource(event_channel);
-        self.add_system(First, update_event_channel::<T>);
+        self.add_system(First, update_event_channel::<T>.at_edit_time());
         self
     }
 
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
+        self
+    }
+
+    /// Runs `listener` every time a `T` is triggered in the main world; an edit `App` keeps only marked ones.
+    pub fn add_listener<T: Signal, M>(&mut self, listener: impl AppListener<T, M>) -> &mut Self {
+        let editing = self.editing;
+        listener.add_to(self.main_mut().world_mut(), editing);
         self
     }
 
@@ -231,8 +259,6 @@ impl App {
         profiling::scope!("App::update");
 
         self.subapps.update();
-
-        profiling::finish_frame!();
     }
 
     pub fn main(&self) -> &SubApp {
@@ -297,8 +323,16 @@ impl App {
             .remove_resource::<Schedules>()
             .expect("Schedules resource not found!");
 
+        let filter = if self.editing {
+            TagFilter {
+                include: vec![EditTime.intern()],
+                exclude: Vec::new(),
+            }
+        } else {
+            TagFilter::default()
+        };
         let world = self.main_mut().world_mut();
-        let compiled_schedules = compile(schedules, world);
+        let compiled_schedules = compile(schedules, world, &filter);
         self.insert_resource(compiled_schedules);
     }
 
@@ -310,14 +344,17 @@ impl App {
             .expect("Schedules resource not found on render subapp!");
 
         let world = self.render_mut().world_mut();
-        let compiled_schedules = compile(schedules, world);
+        let compiled_schedules = compile(schedules, world, &TagFilter::default());
         self.subapps
             .render_mut()
             .insert_resource(compiled_schedules);
     }
 
     /// Sets the function that copies main-world data into the render world each frame.
-    pub fn set_extract_fn(&mut self, extract_fn: impl FnMut(&mut World, &mut World) + 'static) {
+    pub fn set_extract_fn(
+        &mut self,
+        extract_fn: impl FnMut(&mut World, &mut World) + Send + Sync + 'static,
+    ) {
         self.subapps.set_extract_fn(extract_fn);
     }
 }
@@ -343,6 +380,157 @@ mod tests {
         seen.0 += events.read().count();
     }
 
+    use crate::edit_time::AtEditTime;
+    use concerto_ecs::{
+        signal::{On, Signal},
+        system::schedule::ScheduleLabel,
+    };
+    use concerto_foundation::assets::handle::AssetHandle;
+
+    #[derive(Resource, Default)]
+    struct Count(u32);
+
+    fn count(mut count: ResMut<Count>) {
+        count.0 += 1;
+    }
+
+    struct Ping;
+    impl Signal for Ping {}
+
+    fn hear(_: On<Ping>, mut count: ResMut<Count>) {
+        count.0 += 1;
+    }
+
+    fn counted_after_one_frame(mut app: App, marked: bool) -> u32 {
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .insert_resource(Count::default());
+        if marked {
+            app.add_system(Update, count.at_edit_time());
+        } else {
+            app.add_system(Update, count);
+        }
+        app.finish_plugin_build();
+        app.update();
+        app.get_resource::<Count>().unwrap().0
+    }
+
+    fn heard_after_one_ping(mut app: App, marked: bool) -> u32 {
+        app.insert_resource(Count::default());
+        if marked {
+            app.add_listener(hear.at_edit_time());
+        } else {
+            app.add_listener(hear);
+        }
+        app.main_mut().world_mut().trigger(Ping);
+        app.get_resource::<Count>().unwrap().0
+    }
+
+    #[test]
+    fn an_app_for_editing_reports_its_role() {
+        assert!(App::for_editing().is_editing());
+        assert!(!App::new().is_editing());
+    }
+
+    #[test]
+    fn only_marked_systems_run_in_an_edit_app() {
+        assert_eq!(counted_after_one_frame(App::new(), false), 1);
+        assert_eq!(counted_after_one_frame(App::new(), true), 1);
+        assert_eq!(counted_after_one_frame(App::for_editing(), false), 0);
+        assert_eq!(counted_after_one_frame(App::for_editing(), true), 1);
+    }
+
+    fn count_ten(mut count: ResMut<Count>) {
+        count.0 += 10;
+    }
+
+    #[test]
+    fn marking_a_tuple_marks_every_system_in_it() {
+        let mut app = App::for_editing();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .insert_resource(Count::default())
+            .add_system(Update, (count, count_ten).at_edit_time());
+        app.finish_plugin_build();
+        app.update();
+        assert_eq!(app.get_resource::<Count>().unwrap().0, 11);
+    }
+
+    #[test]
+    fn only_marked_listeners_are_added_to_an_edit_app() {
+        assert_eq!(heard_after_one_ping(App::new(), false), 1);
+        assert_eq!(heard_after_one_ping(App::new(), true), 1);
+        assert_eq!(heard_after_one_ping(App::for_editing(), false), 0);
+        assert_eq!(heard_after_one_ping(App::for_editing(), true), 1);
+    }
+
+    #[derive(Resource, Default)]
+    struct RenderTicks(u32);
+
+    #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    struct RenderTick;
+
+    fn tick_render(mut ticks: ResMut<RenderTicks>) {
+        ticks.0 += 1;
+    }
+
+    #[test]
+    fn the_render_world_of_an_edit_app_runs_unmarked_systems() {
+        let mut app = App::for_editing();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin);
+        app.render_mut().set_update_schedule(RenderTick);
+        app.render_mut().insert_resource(RenderTicks::default());
+        app.add_render_system(RenderTick, tick_render);
+        app.finish_plugin_build();
+        app.update();
+        assert_eq!(
+            app.render()
+                .world()
+                .get_resource::<RenderTicks>()
+                .unwrap()
+                .0,
+            1
+        );
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Note;
+
+    impl Asset for Note {
+        fn name() -> &'static str {
+            "Note"
+        }
+    }
+
+    #[test]
+    fn a_dropped_asset_is_freed_in_an_edit_app() {
+        let mut app = App::for_editing();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::AssetManagerPlugin)
+            .register_asset::<Note>();
+        app.finish_plugin_build();
+
+        let handle = app.get_resource::<AssetServer>().unwrap().add(Note);
+        let id = handle.id();
+        app.update();
+        let weak = AssetHandle::<Note>::weak(id);
+        assert!(app
+            .get_resource::<AssetStore<Note>>()
+            .unwrap()
+            .get(&weak)
+            .is_some());
+
+        drop(handle);
+        app.update();
+        assert!(app
+            .get_resource::<AssetStore<Note>>()
+            .unwrap()
+            .get(&weak)
+            .is_none());
+    }
+
     #[test]
     fn externally_queued_events_survive_until_late_update() {
         let mut app = App::new();
@@ -361,5 +549,51 @@ mod tests {
         assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
         app.update();
         assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
+    }
+}
+
+#[cfg(test)]
+mod thread_safety_tests {
+    use super::*;
+
+    struct Marked;
+    impl Plugin for Marked {
+        fn build(&self, _: &mut App) {}
+    }
+
+    struct Absent;
+    impl Plugin for Absent {
+        fn build(&self, _: &mut App) {}
+    }
+
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn an_app_can_cross_threads() {
+        assert_send_sync::<App>();
+    }
+
+    #[test]
+    fn a_registered_plugin_is_reported_as_added() {
+        let mut app = App::new();
+        app.register_plugin(Marked);
+
+        assert!(app.is_plugin_added::<Marked>());
+        assert!(!app.is_plugin_added::<Absent>());
+    }
+
+    #[test]
+    fn a_plugin_registered_by_another_plugin_is_reported_as_added() {
+        struct Outer;
+        impl Plugin for Outer {
+            fn build(&self, app: &mut App) {
+                app.register_plugin(Marked);
+            }
+        }
+        let mut app = App::new();
+        app.register_plugin(Outer);
+
+        assert!(app.is_plugin_added::<Marked>());
+        assert!(app.is_plugin_added::<Outer>());
     }
 }
