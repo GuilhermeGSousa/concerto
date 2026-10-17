@@ -57,9 +57,14 @@ imported assets/UAL1.glb -> 126 assets
 ### Flags
 
 ```
-concerto-import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]
+concerto-import <source> [--to <destination>] [--config <content.toml>] [--ext <ext>] [--content-root <dir>]
 ```
 
+- `--to <destination>` — bring in a source from outside the project: copy it
+  to this project-relative path, along with every file it refers to (an OBJ's
+  `.mtl` and textures, a glTF's `.bin` buffers and images), each keeping its
+  position relative to the source, then import it there. Nothing is copied
+  unless the import succeeds.
 - `--config <content.toml>` — load config from an explicit file; its parent
   directory becomes the project root. Without it, `import` reads
   `content.toml` from the current directory if present, otherwise uses the
@@ -281,6 +286,25 @@ internally from the registry when reading asset bytes.
 
 Configure the root before content loading starts; changing projects requires a
 separate server. Procedural assets can still be inserted with `AssetServer::add`.
+
+### The startup scene
+
+A game declares the scene it starts in from its recipe, the
+`pub fn game(app: &mut App)` that its `main` passes to `concerto::run`:
+
+```rust
+app.register_plugin(DefaultPlugins)
+    .set_startup_scene(asset_id!("content/forest/scene.gasset"));
+```
+
+`ScenePlugin` (part of `DefaultPlugins`) spawns that scene from a `Startup`
+system in the game's `App`. The editor builds its edit `App`s from the same
+recipe and does not spawn the startup scene in them. Load any other scene with
+`asset_server.load::<Scene>` as above.
+
+`concerto::run` sets up logging before it builds the `App`: `env_logger`
+natively (filtered by `RUST_LOG`), and the browser console with a panic hook on
+wasm. A game does not call `env_logger::init()` itself.
 
 ## Editor-authored assets
 
