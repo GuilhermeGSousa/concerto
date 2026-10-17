@@ -55,17 +55,40 @@ impl<T: ReadOnlySystemInput + 'static> DerefMut for Editor<'_, '_, T> {
     }
 }
 
-impl<T: ReadOnlySystemInput + 'static> SystemInput for Editor<'_, '_, T> {
-    type State = T::State;
+/// An [`Editor`] parameter's state, rebuilt from its first form whenever the edit target is another world.
+pub struct EditorState<S> {
+    built_for: Option<WorldId>,
+    first: S,
+    current: S,
+}
+
+impl<S> EditorState<S> {
+    fn for_world(&self, scene: &World) -> Option<&S> {
+        (self.built_for == Some(scene.id())).then_some(&self.current)
+    }
+}
+
+impl<T: ReadOnlySystemInput + 'static> SystemInput for Editor<'_, '_, T>
+where
+    T::State: Clone,
+{
+    type State = EditorState<T::State>;
     type Data<'world, 'state> = Editor<'world, 'state, T>;
 
     fn init_state(world: &mut World) -> Self::State {
-        T::init_state(world)
+        let first = T::init_state(world);
+        EditorState {
+            built_for: None,
+            current: first.clone(),
+            first,
+        }
     }
 
     fn validate(state: &Self::State, world: UnsafeWorldCell) -> bool {
-        edit_target(world)
-            .is_some_and(|(_, scene)| T::validate(state, scene.as_unsafe_world_cell()))
+        edit_target(world).is_some_and(|(_, scene)| {
+            let current = state.for_world(scene).unwrap_or(&state.first);
+            T::validate(current, scene.as_unsafe_world_cell())
+        })
     }
 
     fn get_data<'world, 'state>(
@@ -73,7 +96,14 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Editor<'_, '_, T> {
         world: UnsafeWorldCell<'world>,
     ) -> Self::Data<'world, 'state> {
         let (_, scene) = edit_target(world).expect("validated before the system ran");
-        Editor(T::get_data(state, scene.as_unsafe_world_cell()))
+        if state.for_world(scene).is_none() {
+            state.current = state.first.clone();
+            state.built_for = Some(scene.id());
+        }
+        Editor(T::get_data(
+            &mut state.current,
+            scene.as_unsafe_world_cell(),
+        ))
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -81,7 +111,10 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Editor<'_, '_, T> {
     }
 }
 
-impl<T: ReadOnlySystemInput + 'static> ReadOnlySystemInput for Editor<'_, '_, T> {}
+impl<T: ReadOnlySystemInput + 'static> ReadOnlySystemInput for Editor<'_, '_, T> where
+    T::State: Clone
+{
+}
 
 type QueuedSignal = Box<dyn FnOnce(&mut HostedApp) + Send + Sync>;
 
@@ -306,6 +339,109 @@ mod tests {
         system.run_and_apply((), &mut world);
 
         assert_eq!(world.get_resource::<Seen>().unwrap().0, vec![2]);
+    }
+
+    #[derive(Component)]
+    struct Other;
+
+    fn hosting(spawn: impl FnOnce(&mut World)) -> HostedApp {
+        hosted_now(plain_recipe, |app| spawn(app.main_mut().world_mut()))
+    }
+
+    fn markers_after_replacing(
+        first: impl FnOnce(&mut World),
+        second: impl FnOnce(&mut World),
+    ) -> Vec<u32> {
+        let (mut world, document) = seam_world(1);
+        world.insert(hosting(first), document);
+        announce(&mut world);
+        let mut system = read_markers.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        world.insert(hosting(second), document);
+        announce(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let mut seen = seen(&world).to_vec();
+        seen.sort_unstable();
+        seen
+    }
+
+    #[test]
+    fn a_query_follows_a_replacement_with_the_same_number_of_archetypes() {
+        let seen = markers_after_replacing(
+            |world| {
+                world.spawn(Other);
+                world.spawn(Marker(1));
+            },
+            |world| {
+                world.spawn(Marker(2));
+                world.spawn(Other);
+            },
+        );
+
+        assert_eq!(seen, vec![2]);
+    }
+
+    #[test]
+    fn a_query_follows_a_replacement_with_fewer_archetypes() {
+        let seen = markers_after_replacing(
+            |world| {
+                world.spawn(Marker(1));
+                world.spawn((Marker(3), Other));
+                world.spawn(Other);
+            },
+            |world| {
+                world.spawn(Marker(2));
+            },
+        );
+
+        assert_eq!(seen, vec![2]);
+    }
+
+    #[test]
+    fn a_query_follows_a_replacement_with_more_archetypes() {
+        let seen = markers_after_replacing(
+            |world| {
+                world.spawn(Marker(1));
+            },
+            |world| {
+                world.spawn(Other);
+                world.spawn((Marker(2), Other));
+                world.spawn(Marker(4));
+            },
+        );
+
+        assert_eq!(seen, vec![2, 4]);
+    }
+
+    #[test]
+    fn a_query_reads_the_first_app_again_after_another_was_edited() {
+        let (mut world, first) = seam_world(1);
+        world.insert(
+            hosting(|world| {
+                world.spawn(Marker(1));
+            }),
+            first,
+        );
+        let second = world.spawn(hosting(|world| {
+            world.spawn(Other);
+            world.spawn(Marker(2));
+        }));
+        announce(&mut world);
+        let mut system = read_markers.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(second);
+        announce(&mut world);
+        system.run_and_apply((), &mut world);
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(first);
+        announce(&mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(seen(&world), [1]);
     }
 
     #[derive(Resource, Default)]

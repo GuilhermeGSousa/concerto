@@ -10,3 +10,17 @@ impl Default for WorldId {
         Self(NEXT.fetch_add(1, Ordering::Relaxed))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::World;
+
+    #[test]
+    fn two_worlds_have_different_ids_and_a_world_keeps_its_own() {
+        let first = World::new();
+        let second = World::new();
+
+        assert_ne!(first.id(), second.id());
+        assert_eq!(first.id(), first.id());
+    }
+}
