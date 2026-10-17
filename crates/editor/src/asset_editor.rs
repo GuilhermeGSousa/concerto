@@ -10,6 +10,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::Asset;
 use concerto_window::input::actions::ActionFired;
+use derive_more::Deref;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::project::AssetEntry;
@@ -107,7 +108,7 @@ pub(crate) fn request_save(
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, Deref)]
 pub struct ActiveEditor(pub Option<Entity>);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
