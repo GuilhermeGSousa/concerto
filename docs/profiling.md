@@ -87,7 +87,9 @@ matches Tracy **v0.13.1**.
 
 What you should see:
 
-- **Frame marks** once per `App::update` (i.e. after present).
+- **Frame marks** once per frame of the host's own `App` (i.e. after present).
+  An `App` hosted inside another, such as the editor's edit `App`, does not
+  mark frames.
 - Zones: `App::update` → `schedule::update` / `schedule::render` / … →
   `system` zones, one per ECS system, running in parallel across the named
   `compute-N` threads. `fixed_update_step` zones tick at ~30 Hz.
@@ -125,7 +127,7 @@ CPU frame times and logs a summary once per second (avg / p99 / worst, FPS):
 RUST_LOG=info cargo run --profile profiling -p render-test
 ```
 
-Apps using `DefaultPlugins` (non-headless) also get a small on-screen
+Apps using `DefaultPlugins` also get a small on-screen
 frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
 `ui` crate).
 
@@ -152,4 +154,4 @@ frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
   feature the GPU appears as its own row in Tracy.
 - Benchmark repeatability: present-mode override (e.g. `ENGINE_PRESENT_MODE`),
   fixed-camera flag in render-test, and a headless scheduler micro-benchmark
-  using `ScheduleRunnerPlugin`.
+  built on `concerto::headless`.

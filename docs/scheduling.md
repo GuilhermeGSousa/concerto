@@ -13,7 +13,7 @@ use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 ```
 
 - `IntoSystemConfig` gives a system, or a tuple of systems, `.after`, `.before`,
-  `.in_set` and `.chain`.
+  `.in_set`, `.chain` and `.tagged`.
 - `IntoSetConfig` gives a set, or a tuple of sets, `.after`, `.before` and `.chain`.
 
 ## Adding systems
@@ -114,7 +114,9 @@ app.add_system(LateUpdate, app_widget.after(UiSet::Input).before(UiSet::Layout))
 ```
 
 The render crate exports `RenderSet { Lights, Shadows, Draw, Present }` the same
-way.
+way, and the window crate exports `FoldInput`, the set in `First` that folds
+window events into `Input`; a system that decides `InputGate` for the frame runs
+before it.
 
 ## The "constraint is ignored" warning
 
@@ -134,6 +136,54 @@ members is silent by design: a plugin contributing no systems to a set is normal
 
 Naming a system that was added more than once orders against every copy and logs
 a separate warning.
+
+## Tags
+
+A tag is a type deriving `SystemTag`; bring the trait into scope for the derive, as
+with `SystemSet`. A system carries tags through `.tagged(MyTag)`, and on a tuple it
+tags every system in it:
+
+```rust
+#[derive(SystemTag, Clone, PartialEq, Eq, Hash, Debug)]
+struct Preview;
+
+app.add_system(Update, (spin, bob).tagged(Preview));
+```
+
+Tags never affect ordering, and `compile` ignores them. `compile_filtered` takes a
+`TagFilter { include, exclude }`: a system runs when `include` is empty or it carries
+an included tag, and it carries no excluded tag. The others stay in the schedule as
+stand-ins. Explicit orderings through them hold, they declare no access and add no
+sync point, and they do nothing when run. The implicit edges a replaced
+system's own data access or sync point would have added are gone, but a stand-in is
+still ordered by registration against sync points and against systems that take the
+whole world, because empty access still conflicts with whole-world access. A
+component only stand-ins would have queried is never registered.
+
+## Edit time
+
+An `App` created with `App::for_editing()` is an edit `App`. `concerto-app`'s
+`AtEditTime` trait gives `.at_edit_time()`: on a system, or a tuple of systems, it adds
+the `EditTime` tag to each, and on a listener it marks it.
+
+```rust
+use concerto_app::edit_time::AtEditTime;
+
+app.add_system(LateUpdate, propagate.at_edit_time());
+app.add_listener(on_select.at_edit_time());
+```
+
+- An edit `App` compiles its main world with `include: [EditTime]`, so every unmarked
+  main-world system is a stand-in there. Its render world compiles without a filter.
+- In an edit `App`, `App::add_listener` adds only marked listeners and drops the others
+  without a word. A listener added through `World::add_listener` or inserted directly
+  on an entity is never filtered, even from a plugin's `build`.
+- Component lifecycle callbacks and plugin `build` are outside the mark. A plugin may
+  check `app.is_editing()` in `build` only to skip resources its unmarked systems alone
+  use.
+- `register_event` and `register_asset` mark the systems they add.
+- An edit `App` has no `PhysicsPipeline`, so a marked system must not require it;
+  `PhysicsState` is present and empty.
 
 ## Rules
 
