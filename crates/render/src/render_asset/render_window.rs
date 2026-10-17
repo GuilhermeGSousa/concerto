@@ -22,6 +22,11 @@ impl RenderWindow {
         self.texture = Some(frame);
     }
 
+    pub(crate) fn set_offscreen(&mut self, view: TextureView) {
+        self.view = Some(view);
+        self.texture = None;
+    }
+
     pub fn get_view(&self) -> Option<&TextureView> {
         self.view.as_ref()
     }

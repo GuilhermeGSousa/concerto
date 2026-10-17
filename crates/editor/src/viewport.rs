@@ -1,115 +1,45 @@
-//! Texture-backed editor viewport and fly navigation.
+//! The viewport panel: shows the edit target's picture and tells the host where it is.
 use concerto_app::{
     App, Plugin,
-    schedule_groups::{LateUpdate, Startup, Update},
+    schedule_groups::{First, LateUpdate, Startup, Update},
 };
 use concerto_color::Color;
-use concerto_ecs::entity::hierarchy::Children;
-use concerto_ecs::system::NonSendMarker;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, command::CommandQueue,
     events::event_reader::EventReader,
 };
-use concerto_foundation::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
-    time::Time,
-    transform::{GlobalTransform, Transform},
-};
-use concerto_mesh::{Mesh, MeshComponent, mesh::Aabb};
-use concerto_render::{
-    assets::texture::Texture,
-    components::{
-        camera::{Camera, RenderTarget},
-        light::Light,
-        render_entity::SyncWithRenderWorld,
-    },
-};
 use concerto_ui::{
-    UIViewport,
+    UISharedViewport,
+    elements::prelude::*,
+    focus::FocusedWidget,
     interaction::{HoveredNode, Interactable},
     material::UIMaterial,
-    node::{UILayout, UINode},
+    node::{UIInset, UILayout, UINode, UIRect},
+    sets::UiSet,
+    text::UIText,
+    theme::UITheme,
     transform::UIValue,
 };
-use concerto_window::{
-    input::{
-        Input, KeyCode, MouseButton, PhysicalKey,
-        actions::{ActionFired, ActionMap},
-    },
-    winit_events::WindowEvent,
-};
-use glam::{Quat, Vec3};
-use std::collections::HashSet;
+use concerto_window::input::actions::{ActionFired, ActionMap};
+use taffy::Position;
 
-use crate::actions::{FrameAll, FrameSelected, ViewportContext};
+use crate::actions::{FrameAll, FrameSelected, GizmoRotate, GizmoTranslate, ViewportContext};
+use crate::asset_editor::ActiveEditor;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::selection::Selection;
+use crate::hosted::{
+    EditorSignals, HostedApp,
+    input::{InputOwner, ViewportShown, ViewportView},
+};
+use crate::tools::{
+    camera::{FrameSelection, SKY},
+    gizmo::{GizmoMode, SetGizmoMode},
+};
 
 #[derive(Component)]
 pub struct ViewportRegion;
 
 #[derive(Component)]
-struct EditorCamera;
-
-#[derive(Component)]
-pub struct EditorHelper;
-
-#[derive(Resource)]
-pub struct EditorViewport {
-    pub texture: AssetHandle<Texture>,
-}
-
-/// A first-person fly camera with Unreal's controls.
-#[derive(Resource)]
-pub struct FlyCamera {
-    pub position: Vec3,
-    /// Radians around world up, applied before pitch.
-    pub yaw: f32,
-    pub pitch: f32,
-    /// Metres per second, adjusted by the wheel while looking around.
-    pub speed: f32,
-    looking: bool,
-    panning: bool,
-}
-
-impl Default for FlyCamera {
-    fn default() -> Self {
-        Self {
-            position: Vec3::new(0.0, 2.5, 8.0),
-            yaw: 0.0,
-            pitch: -0.15,
-            speed: 6.0,
-            looking: false,
-            panning: false,
-        }
-    }
-}
-
-impl FlyCamera {
-    fn rotation(&self) -> Quat {
-        Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
-    }
-
-    fn forward(&self) -> Vec3 {
-        self.rotation() * -Vec3::Z
-    }
-}
-
-const LOOK_SENSITIVITY: f32 = 0.0025;
-const MAX_PITCH: f32 = 1.55;
-const SPEED_STEP: f32 = 1.15;
-const MIN_SPEED: f32 = 0.05;
-const MAX_SPEED: f32 = 500.0;
-const BOOST: f32 = 4.0;
-const PAN_PER_PIXEL: f32 = 0.0015;
-const DOLLY_PER_NOTCH: f32 = 0.25;
-
-#[derive(Resource, Default)]
-pub struct ViewportCommands {
-    pub frame_all: bool,
-    pub(crate) reset: bool,
-    pub(crate) release_navigation: bool,
-}
+struct InputHint;
 
 pub struct ViewportPlugin;
 impl Plugin for ViewportPlugin {
@@ -119,210 +49,150 @@ impl Plugin for ViewportPlugin {
             title: "Scene",
             region: Region::Scene,
         });
-        let texture = app
-            .get_resource::<AssetServer>()
-            .expect("ViewportPlugin requires AssetManagerPlugin")
-            .add(Texture::render_target(800, 600));
-        app.insert_resource(EditorViewport { texture })
-            .insert_resource(FlyCamera::default())
-            .insert_resource(ViewportCommands::default())
-            .add_system(Startup, spawn_camera)
-            .add_system(Startup, build_panel)
-            .add_system(Update, navigate)
-            .add_system(Update, sync_viewport_size)
+        app.add_system(Startup, build_panel)
+            .add_system(Update, viewport_shortcuts)
             .add_system(LateUpdate, sync_viewport_context)
-            .add_system(LateUpdate, frame_requested_bounds)
-            .add_system(LateUpdate, zoom);
+            .add_system(
+                LateUpdate,
+                show_edit_target_picture.before(UiSet::Materials),
+            )
+            .add_system(LateUpdate, show_input_owner.before(UiSet::Materials))
+            .add_system(
+                First,
+                publish_viewport_view
+                    .before(crate::hosted::input::route_play_input)
+                    .before(crate::hosted::input::step_edit_target),
+            );
     }
 }
 
 pub const PANEL_ID: &str = "concerto.scene";
 
-fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, viewport: Res<EditorViewport>) {
+const INPUT_BORDER: f32 = 2.0;
+
+fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<UITheme>) {
     if let Some(body) = registry.body(PANEL_ID) {
-        spawn_panel(&mut cmd, body, &viewport);
+        let viewport = spawn_panel(&mut cmd, body);
+        cmd.entity(viewport).add_child((
+            theme
+                .card()
+                .padding(UIRect::axes(theme.spacing_xs, theme.spacing_sm))
+                .node(|node| {
+                    node.with_position(Position::Absolute)
+                        .with_inset(UIInset {
+                            left: UIValue::Px(theme.spacing_sm),
+                            top: UIValue::Px(theme.spacing_sm),
+                            ..Default::default()
+                        })
+                        .with_visible(false)
+                }),
+            theme.text("").small(),
+            InputHint,
+        ));
     }
 }
 
-pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, viewport: &EditorViewport) -> Entity {
+pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity) -> Entity {
     cmd.entity(parent)
         .spawn_child_queue((
             UINode::default()
                 .with_flex_grow(1.0)
                 .with_min_size(UIValue::Px(320.0), UIValue::Px(240.0)),
-            UIMaterial::flat(Color::WHITE),
-            UIViewport {
-                texture: viewport.texture.clone(),
-            },
+            UIMaterial::flat(SKY),
+            UISharedViewport::new(),
             Interactable,
             ViewportRegion,
         ))
         .entity()
 }
 
-const SKY: Color = Color::srgba(0.086, 0.094, 0.157, 1.0);
-const GROUND: Color = Color::srgba(0.055, 0.063, 0.114, 1.0);
-const GRID_LINES: Color = Color::srgba(0.247, 0.259, 0.322, 0.6);
-
-fn spawn_camera(mut cmd: CommandQueue, viewport: Res<EditorViewport>, fly: Res<FlyCamera>) {
-    let mut transform = Transform::IDENTITY;
-    apply_fly_transform(&fly, &mut transform);
-    cmd.spawn((
-        Camera {
-            aspect: 4.0 / 3.0,
-            clear_color: SKY,
-            render_target: RenderTarget::texture(viewport.texture.clone()),
-            ..Default::default()
-        },
-        transform,
-        SyncWithRenderWorld,
-        EditorCamera,
-        EditorHelper,
-    ));
-    cmd.spawn((
-        concerto_world_grid::WorldGrid {
-            line_color: GRID_LINES,
-            surface_color: GROUND,
-            ..Default::default()
-        },
-        SyncWithRenderWorld,
-        EditorHelper,
-    ));
-    cmd.spawn((
-        Light::directional_light().with_intensity(3.0),
-        Transform::from_rotation(Quat::from_rotation_x(-0.8) * Quat::from_rotation_y(-0.5)),
-        SyncWithRenderWorld,
-        EditorHelper,
-    ));
-}
-
-/// Apply workspace navigation requests.
-pub(crate) fn apply_workspace_navigation(
-    commands: &mut ViewportCommands,
-    fly: &mut FlyCamera,
-) -> bool {
-    if !commands.release_navigation && !commands.reset {
-        return false;
+fn show_edit_target_picture(
+    active: Res<ActiveEditor>,
+    hosted: Query<&HostedApp>,
+    viewports: Query<(&ViewportRegion, &mut UISharedViewport, &mut UIMaterial)>,
+) {
+    let picture = active
+        .0
+        .and_then(|document| hosted.get_entity(document))
+        .map(|hosted| hosted.picture().clone());
+    let drawn = picture
+        .as_ref()
+        .is_some_and(|picture| picture.get().is_some());
+    let colour = if drawn { Color::WHITE } else { SKY }.to_linear();
+    for (_, mut viewport, mut material) in viewports.iter() {
+        let unchanged = match (&viewport.picture, &picture) {
+            (Some(shown), Some(wanted)) => shown.is_same(wanted),
+            (None, None) => true,
+            _ => false,
+        };
+        if !unchanged {
+            viewport.picture = picture.clone();
+        }
+        if material.color != colour {
+            material.color = colour;
+        }
     }
-    let captured = fly.looking;
-    fly.looking = false;
-    fly.panning = false;
-    if commands.reset {
-        *fly = FlyCamera::default();
-        commands.frame_all = false;
-    }
-    commands.reset = false;
-    commands.release_navigation = false;
-    captured
 }
 
-fn apply_fly_transform(fly: &FlyCamera, transform: &mut Transform) {
-    transform.translation = fly.position;
-    transform.rotation = fly.rotation();
-}
-
-#[allow(clippy::too_many_arguments)]
-fn navigate(
-    _: NonSendMarker,
-    input: Res<Input>,
-    time: Res<Time>,
+fn publish_viewport_view(
     window: Res<concerto_window::plugin::Window>,
     hovered: Res<HoveredNode>,
-    regions: Query<&ViewportRegion>,
-    cameras: Query<(&EditorCamera, &mut Transform)>,
-    mut fly: ResMut<FlyCamera>,
-    mut commands: ResMut<ViewportCommands>,
+    focus: Res<FocusedWidget>,
+    regions: Query<(Entity, &ViewportRegion, &UILayout)>,
+    mut shown: ResMut<ViewportShown>,
 ) {
-    if commands.release_navigation || commands.reset {
-        if apply_workspace_navigation(&mut commands, &mut fly) {
-            capture_pointer(&window, false);
-        }
-    }
-    let over_viewport = (**hovered).is_some_and(|entity| regions.get_entity(entity).is_some());
-    if input.is_mouse_button_just_pressed(MouseButton::Right) && over_viewport {
-        fly.looking = true;
-        capture_pointer(&window, true);
-    }
-    if input.is_mouse_button_just_released(MouseButton::Right) {
-        fly.looking = false;
-        capture_pointer(&window, false);
-    }
-    if input.is_mouse_button_just_pressed(MouseButton::Middle) && over_viewport {
-        fly.panning = true;
-    }
-    if input.is_mouse_button_just_released(MouseButton::Middle) {
-        fly.panning = false;
-    }
-
-    let delta = input.mouse_delta();
-    if fly.looking {
-        fly.yaw -= delta.x * LOOK_SENSITIVITY;
-        fly.pitch = (fly.pitch - delta.y * LOOK_SENSITIVITY).clamp(-MAX_PITCH, MAX_PITCH);
-    }
-    if fly.panning {
-        let rotation = fly.rotation();
-        let scale = fly.speed * PAN_PER_PIXEL;
-        fly.position +=
-            (rotation * Vec3::X) * -delta.x * scale + (rotation * Vec3::Y) * delta.y * scale;
-    }
-    if fly.looking {
-        let step = fly.speed * speed_scale(&input) * time.delta().as_secs_f32();
-        let movement = movement(&input, fly.rotation()) * step;
-        fly.position += movement;
-    }
-
-    for (_, mut transform) in cameras.iter() {
-        apply_fly_transform(&fly, &mut transform);
+    let scale = window.scale_factor() as f32;
+    let next = regions.iter().next().and_then(|(region, _, layout)| {
+        let size = (
+            (layout.rect.size.x * scale).round() as u32,
+            (layout.rect.size.y * scale).round() as u32,
+        );
+        (size.0 > 0 && size.1 > 0).then_some(ViewportView {
+            origin: layout.rect.min * scale,
+            size,
+            over: **hovered == Some(region),
+            typing: focus.is_some(),
+        })
+    });
+    if shown.0 != next {
+        shown.0 = next;
     }
 }
 
-fn movement(input: &Input, rotation: Quat) -> Vec3 {
-    let held = |code| input.is_held(PhysicalKey::Code(code));
-    let axis = |positive, negative| match (held(positive), held(negative)) {
-        (true, false) => 1.0,
-        (false, true) => -1.0,
-        _ => 0.0,
+fn show_input_owner(
+    active: Res<ActiveEditor>,
+    theme: Res<UITheme>,
+    owners: Query<&InputOwner>,
+    viewports: Query<(&ViewportRegion, &mut UIMaterial)>,
+    hints: Query<(&InputHint, &mut UINode, &mut UIText)>,
+) {
+    let owner = active
+        .0
+        .and_then(|document| owners.get_entity(document))
+        .copied();
+    let (border, hint) = match owner {
+        Some(InputOwner::Game) => (Some(theme.accent), "Shift+F1 to release"),
+        Some(InputOwner::Editor) => (Some(theme.text_muted), "Click to play"),
+        None => (None, ""),
     };
-    let local = Vec3::new(
-        axis(KeyCode::KeyD, KeyCode::KeyA),
-        0.0,
-        -axis(KeyCode::KeyW, KeyCode::KeyS),
-    );
-    let vertical = Vec3::Y * axis(KeyCode::KeyE, KeyCode::KeyQ);
-    (rotation * local + vertical).normalize_or_zero()
-}
-
-fn speed_scale(input: &Input) -> f32 {
-    let shift = input.is_held(PhysicalKey::Code(KeyCode::ShiftLeft))
-        || input.is_held(PhysicalKey::Code(KeyCode::ShiftRight));
-    if shift { BOOST } else { 1.0 }
-}
-
-fn capture_pointer(window: &concerto_window::plugin::Window, capture: bool) {
-    let handle = &window.window_handle;
-    handle.set_cursor_visible(!capture);
-    let mode = if capture {
-        winit::window::CursorGrabMode::Confined
-    } else {
-        winit::window::CursorGrabMode::None
-    };
-    if handle.set_cursor_grab(mode).is_err() && capture {
-        let _ = handle.set_cursor_grab(winit::window::CursorGrabMode::Locked);
-    }
-}
-
-fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Entity> {
-    let mut found = HashSet::new();
-    let mut stack = vec![root];
-    while let Some(entity) = stack.pop() {
-        if !found.insert(entity) {
-            continue;
+    let width = if border.is_some() { INPUT_BORDER } else { 0.0 };
+    let colour = border.unwrap_or(Color::TRANSPARENT).to_linear();
+    for (_, mut material) in viewports.iter() {
+        if material.border_width != width {
+            material.border_width = width;
         }
-        if let Some(kids) = children.get_entity(entity) {
-            stack.extend(kids.iter().copied());
+        if material.border_color != colour {
+            material.border_color = colour;
         }
     }
-    found
+    for (_, mut node, mut text) in hints.iter() {
+        if node.visible != owner.is_some() {
+            node.visible = owner.is_some();
+        }
+        if text.text != hint {
+            text.text = hint.into();
+        }
+    }
 }
 
 fn sync_viewport_context(
@@ -338,191 +208,384 @@ fn sync_viewport_context(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn frame_requested_bounds(
-    mut fired: EventReader<ActionFired>,
-    meshes: Res<AssetStore<Mesh>>,
-    mesh_nodes: Query<(Entity, &MeshComponent, &GlobalTransform)>,
-    children: Query<&Children>,
-    cameras: Query<(&EditorCamera, &Camera, &mut Transform)>,
-    selection: Res<Selection>,
-    mut commands: ResMut<ViewportCommands>,
-    mut fly: ResMut<FlyCamera>,
-) {
-    let mut frame_selected = false;
+fn viewport_shortcuts(mut fired: EventReader<ActionFired>, mut scene: EditorSignals) {
     for action in fired.read() {
-        frame_selected |= action.is(FrameSelected);
-        commands.frame_all |= action.is(FrameAll);
-    }
-    let bounds = if commands.frame_all {
-        scene_bounds(&mesh_nodes, &meshes, None)
-    } else if frame_selected {
-        selection
-            .entity()
-            .map(|entity| subtree(entity, &children))
-            .and_then(|set| scene_bounds(&mesh_nodes, &meshes, Some(&set)))
-    } else {
-        None
-    };
-    commands.frame_all = false;
-
-    let Some(bounds) = bounds else {
-        return;
-    };
-    let radius = bounds.extent().length().max(0.02) * 0.5;
-    let fovy = cameras
-        .iter()
-        .next()
-        .map(|(_, camera, _)| camera.fovy)
-        .unwrap_or(0.78);
-    let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
-    fly.position = bounds.center() - fly.forward() * distance;
-    for (_, _, mut transform) in cameras.iter() {
-        apply_fly_transform(&fly, &mut transform);
-    }
-}
-
-fn scene_bounds(
-    nodes: &Query<(Entity, &MeshComponent, &GlobalTransform)>,
-    meshes: &AssetStore<Mesh>,
-    subtree: Option<&HashSet<Entity>>,
-) -> Option<Aabb> {
-    let mut result: Option<Aabb> = None;
-    for (entity, mesh_component, transform) in nodes.iter() {
-        if subtree.is_some_and(|set| !set.contains(&entity)) {
-            continue;
+        if action.is(GizmoTranslate) {
+            scene.trigger(SetGizmoMode(GizmoMode::Translate));
+        } else if action.is(GizmoRotate) {
+            scene.trigger(SetGizmoMode(GizmoMode::Rotate));
+        } else if action.is(FrameSelected) {
+            scene.trigger(FrameSelection);
+        } else if action.is(FrameAll) {
+            scene.trigger(crate::tools::camera::FrameAll);
         }
-        let Some(bounds) = meshes
-            .get(&mesh_component.handle)
-            .and_then(Mesh::local_aabb)
-            .map(|bounds| bounds.transformed(transform.matrix()))
-        else {
-            continue;
-        };
-        result = Some(match result {
-            Some(current) => Aabb {
-                min: current.min.min(bounds.min),
-                max: current.max.max(bounds.max),
-            },
-            None => bounds,
-        });
-    }
-    result
-}
-
-fn zoom(
-    mut events: EventReader<WindowEvent>,
-    hovered: Res<HoveredNode>,
-    regions: Query<&ViewportRegion>,
-    cameras: Query<(&EditorCamera, &mut Transform)>,
-    mut fly: ResMut<FlyCamera>,
-) {
-    if (**hovered).is_none_or(|entity| regions.get_entity(entity).is_none()) {
-        return;
-    }
-    let mut moved = false;
-    for event in events.read() {
-        if let winit::event::WindowEvent::MouseWheel { delta, .. } = &**event {
-            let amount = match delta {
-                winit::event::MouseScrollDelta::LineDelta(_, value) => f64::from(*value),
-                winit::event::MouseScrollDelta::PixelDelta(value) => value.y / 32.0,
-            } as f32;
-            if fly.looking {
-                fly.speed = (fly.speed * SPEED_STEP.powf(amount)).clamp(MIN_SPEED, MAX_SPEED);
-            } else {
-                let step = fly.forward() * amount * fly.speed * DOLLY_PER_NOTCH;
-                fly.position += step;
-                moved = true;
-            }
-        }
-    }
-    if moved {
-        for (_, mut transform) in cameras.iter() {
-            apply_fly_transform(&fly, &mut transform);
-        }
-    }
-}
-
-fn sync_viewport_size(
-    layouts: Query<(&ViewportRegion, &UILayout)>,
-    cameras: Query<(&EditorCamera, &mut Camera)>,
-    viewport: Res<EditorViewport>,
-    mut textures: ResMut<AssetStore<Texture>>,
-    window: Res<concerto_window::plugin::Window>,
-) {
-    let Some((_, layout)) = layouts.iter().next() else {
-        return;
-    };
-    let scale = window.scale_factor() as f32;
-    let width = (layout.rect.size.x * scale).round().max(1.0) as u32;
-    let height = (layout.rect.size.y * scale).round().max(1.0) as u32;
-    if let Some(texture) = textures.get_mut(&viewport.texture) {
-        texture.width = width;
-        texture.height = height;
-    }
-    for (_, mut camera) in cameras.iter() {
-        camera.aspect = width as f32 / height as f32;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hosted::testing::{host_world, hosted_now, plain_recipe};
+    use concerto_app::edit_time::AtEditTime;
+    use concerto_ecs::{
+        IntoSystem, Resource, System, World, events::event_channel::EventChannel, signal::On,
+    };
+    use concerto_ui::node::UIBox;
+    use concerto_window::{input::actions::ActionLabel, plugin::Window};
+    use glam::Vec2;
 
-    #[test]
-    fn workspace_navigation_requests_release_capture_and_only_reset_pose_on_replacement() {
-        let mut fly = FlyCamera {
-            position: Vec3::splat(12.0),
-            looking: true,
-            panning: true,
-            ..Default::default()
+    #[derive(Resource, Default)]
+    struct Sent(Vec<&'static str>);
+
+    fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+        let mut system = system.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
+
+    fn panel_world(scale: f64) -> (World, Entity) {
+        let mut world = World::new();
+        world.insert_resource(Window::new((1600, 1200), scale));
+        world.insert_resource(HoveredNode::default());
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(ViewportShown::default());
+        let rect = UIBox {
+            min: Vec2::new(100.0, 50.0),
+            size: Vec2::new(400.0, 300.0),
         };
-        let mut commands = ViewportCommands {
-            release_navigation: true,
-            ..Default::default()
-        };
-        assert!(apply_workspace_navigation(&mut commands, &mut fly));
-        assert!(!fly.looking && !fly.panning);
-        assert_eq!(fly.position, Vec3::splat(12.0));
-        assert!(!commands.release_navigation);
-        commands.reset = true;
-        commands.frame_all = true;
-        assert!(!apply_workspace_navigation(&mut commands, &mut fly));
-        assert_eq!(fly.position, FlyCamera::default().position);
-        assert!(!commands.reset && !commands.frame_all);
+        let region = world.spawn((
+            ViewportRegion,
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+        ));
+        (world, region)
+    }
+
+    fn view(world: &mut World) -> Option<ViewportView> {
+        run(world, publish_viewport_view);
+        world.get_resource::<ViewportShown>().unwrap().0
+    }
+
+    #[derive(Resource)]
+    struct PanelRect(UIBox);
+
+    #[derive(Resource, Default)]
+    struct SeenByTheStep(Option<ViewportView>);
+
+    fn lay_out_by_command(
+        rect: Res<PanelRect>,
+        regions: Query<(Entity, &ViewportRegion)>,
+        mut cmd: CommandQueue,
+    ) {
+        for (region, _) in regions.iter() {
+            cmd.insert(
+                UILayout {
+                    rect: rect.0,
+                    content_rect: rect.0,
+                    clip_rect: rect.0,
+                    paint_order: 0,
+                },
+                region,
+            );
+        }
+    }
+
+    fn note_what_the_step_saw(shown: Res<ViewportShown>, mut seen: ResMut<SeenByTheStep>) {
+        seen.0 = shown.0;
+    }
+
+    fn rect(x: f32, y: f32, width: f32, height: f32) -> UIBox {
+        UIBox {
+            min: Vec2::new(x, y),
+            size: Vec2::new(width, height),
+        }
     }
 
     #[test]
-    fn the_camera_looks_where_its_angles_point() {
-        let fly = FlyCamera {
-            yaw: std::f32::consts::FRAC_PI_2,
-            pitch: 0.0,
-            ..Default::default()
-        };
-        let mut transform = Transform::IDENTITY;
-        apply_fly_transform(&fly, &mut transform);
-        assert_eq!(transform.translation, fly.position);
-        assert!((fly.forward() - Vec3::NEG_X).length() < 0.001);
+    fn the_step_sees_the_viewport_where_the_layout_of_the_frame_before_put_it() {
+        let mut app = App::new();
+        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
+            .register_plugin(concerto_app::plugins::TimePlugin)
+            .register_plugin(concerto_window::plugin::WindowPlugin)
+            .insert_resource(ActiveEditor::default())
+            .insert_resource(PanelRegistry::default())
+            .insert_resource(HoveredNode::default())
+            .insert_resource(FocusedWidget::default())
+            .insert_resource(UITheme::default())
+            .register_plugin(crate::hosted::HostedPlugin)
+            .register_plugin(ViewportPlugin)
+            .insert_resource(PanelRect(rect(100.0, 50.0, 400.0, 300.0)))
+            .insert_resource(SeenByTheStep::default())
+            .add_system(LateUpdate, lay_out_by_command.in_set(UiSet::Layout))
+            .add_system(
+                concerto_app::schedule_groups::First,
+                note_what_the_step_saw.after(crate::hosted::input::step_edit_target),
+            );
+        let world = app.main_mut().world_mut();
+        let document = world.spawn(hosted_now(plain_recipe, |_| {}));
+        world.spawn(ViewportRegion);
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+        app.finish_plugin_build();
+        for _ in 0..3 {
+            app.update();
+        }
+
+        app.get_resource_mut::<PanelRect>().unwrap().0 = rect(120.0, 60.0, 500.0, 350.0);
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.get_resource::<SeenByTheStep>().unwrap().0,
+            Some(ViewportView {
+                origin: Vec2::new(120.0, 60.0),
+                size: (500, 350),
+                over: false,
+                typing: false,
+            })
+        );
+        let hosted = app
+            .main()
+            .world()
+            .get_component_for_entity::<HostedApp>(document)
+            .unwrap();
+        assert_eq!(hosted.window().unwrap().size(), (500, 350));
     }
 
     #[test]
-    fn movement_is_relative_to_where_the_camera_faces() {
-        let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-        let mut input = Input::new();
-        let press = |input: &mut Input, code| {
-            input.update_key_input(PhysicalKey::Code(code), winit::event::ElementState::Pressed)
+    fn the_view_is_the_panel_in_physical_pixels_and_is_over_it_only_when_it_is_the_hovered_node() {
+        let (mut world, region) = panel_world(2.0);
+        let menu = world.spawn(());
+
+        let away = ViewportView {
+            origin: Vec2::new(200.0, 100.0),
+            size: (800, 600),
+            over: false,
+            typing: false,
         };
-        press(&mut input, KeyCode::KeyW);
+        assert_eq!(view(&mut world), Some(away));
+
+        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(region);
+        assert_eq!(view(&mut world), Some(ViewportView { over: true, ..away }));
+
+        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(menu);
+        assert_eq!(
+            view(&mut world),
+            Some(away),
+            "a node drawn above the viewport takes the pointer from it"
+        );
+    }
+
+    #[test]
+    fn the_view_says_when_a_widget_has_the_keyboard() {
+        let (mut world, _) = panel_world(1.0);
+        let field = world.spawn(());
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+
+        assert!(view(&mut world).unwrap().typing);
+    }
+
+    #[test]
+    fn a_panel_with_no_area_is_not_shown_and_an_unchanged_view_is_not_written_again() {
+        let (mut world, region) = panel_world(1.0);
+        view(&mut world);
+        let written = world.resource_changed_tick::<ViewportShown>();
+        world.tick();
+        view(&mut world);
+        assert_eq!(world.resource_changed_tick::<ViewportShown>(), written);
+
+        world
+            .get_component_for_entity_mut::<UILayout>(region)
+            .unwrap()
+            .rect
+            .size = Vec2::new(400.0, 0.0);
+        assert_eq!(view(&mut world), None);
+
+        world.despawn(region);
+        assert_eq!(view(&mut world), None);
+    }
+
+    #[test]
+    fn the_panel_shows_the_picture_of_the_active_documents_app_or_nothing() {
+        let (mut world, document) = host_world(plain_recipe);
+        let other = world.spawn(hosted_now(plain_recipe, |_| {}));
+        let panel = world.spawn((
+            ViewportRegion,
+            UISharedViewport::new(),
+            UIMaterial::flat(Color::WHITE),
+        ));
+        let shows = |world: &mut World, document: Option<Entity>| {
+            world.get_resource_mut::<ActiveEditor>().unwrap().0 = document;
+            run(world, show_edit_target_picture);
+            let shown = world
+                .get_component_for_entity::<UISharedViewport>(panel)
+                .unwrap()
+                .picture
+                .clone();
+            match (shown, document) {
+                (Some(shown), Some(document)) => shown.is_same(
+                    world
+                        .get_component_for_entity::<HostedApp>(document)
+                        .unwrap()
+                        .picture(),
+                ),
+                (None, None) => true,
+                _ => false,
+            }
+        };
+
+        assert!(shows(&mut world, Some(document)));
+        assert!(shows(&mut world, Some(other)));
+        assert!(shows(&mut world, None));
+
+        let bare = world.spawn(());
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(bare);
+        run(&mut world, show_edit_target_picture);
         assert!(
-            (movement(&input, rotation) - Vec3::NEG_X).length() < 0.001,
-            "forward follows the camera, not the world"
+            world
+                .get_component_for_entity::<UISharedViewport>(panel)
+                .unwrap()
+                .picture
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_panel_with_nothing_drawn_to_show_is_the_colour_of_an_empty_scene() {
+        let (mut world, document) = host_world(plain_recipe);
+        let mut build = (|mut cmd: CommandQueue| {
+            let parent = cmd.spawn(UINode::default()).entity();
+            spawn_panel(&mut cmd, parent);
+        })
+        .into_system();
+        build.initialize(&mut world);
+        build.run_and_apply((), &mut world);
+        let colour = |world: &mut World| {
+            run(world, show_edit_target_picture);
+            world
+                .query::<(&ViewportRegion, &UIMaterial), ()>()
+                .iter(world)
+                .next()
+                .unwrap()
+                .1
+                .color
+        };
+        let empty = SKY.to_linear();
+        assert!(colour(&mut world) == empty, "its App has drawn nothing yet");
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        assert!(colour(&mut world) == empty);
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+        world
+            .query::<(&ViewportRegion, &mut UIMaterial), ()>()
+            .iter(&mut world)
+            .next()
+            .unwrap()
+            .1
+            .color = Color::WHITE.to_linear();
+        assert!(colour(&mut world) == empty);
+    }
+
+    fn noting_recipe(app: &mut App) {
+        plain_recipe(app);
+        app.insert_resource(Sent::default())
+            .add_listener(
+                (|on: On<SetGizmoMode>, mut sent: ResMut<Sent>| {
+                    sent.0.push(match on.signal().0 {
+                        GizmoMode::Translate => "translate",
+                        GizmoMode::Rotate => "rotate",
+                    });
+                })
+                .at_edit_time(),
+            )
+            .add_listener(
+                (|_: On<FrameSelection>, mut sent: ResMut<Sent>| {
+                    sent.0.push("frame selection");
+                })
+                .at_edit_time(),
+            )
+            .add_listener(
+                (|_: On<crate::tools::camera::FrameAll>, mut sent: ResMut<Sent>| {
+                    sent.0.push("frame all");
+                })
+                .at_edit_time(),
+            );
+    }
+
+    #[test]
+    fn the_viewport_shows_who_has_input_while_playing() {
+        let mut world = World::new();
+        world.insert_resource(UITheme::default());
+        let document = world.spawn(());
+        world.insert_resource(ActiveEditor(Some(document)));
+        let region = world.spawn((ViewportRegion, UIMaterial::flat(Color::WHITE)));
+        let hint = world.spawn((
+            UINode::default().with_visible(false),
+            UIText::default(),
+            InputHint,
+        ));
+        let shown = |world: &mut World| {
+            run(world, show_input_owner);
+            let border = world
+                .get_component_for_entity::<UIMaterial>(region)
+                .unwrap()
+                .border_width;
+            let visible = world
+                .get_component_for_entity::<UINode>(hint)
+                .unwrap()
+                .visible;
+            let text = world
+                .get_component_for_entity::<UIText>(hint)
+                .unwrap()
+                .text
+                .clone();
+            (border > 0.0, visible, text)
+        };
+
+        assert_eq!(shown(&mut world), (false, false, String::new()));
+
+        world.insert(InputOwner::Game, document);
+        assert_eq!(
+            shown(&mut world),
+            (true, true, "Shift+F1 to release".to_owned())
         );
 
-        press(&mut input, KeyCode::KeyE);
-        let diagonal = movement(&input, rotation);
-        assert!(
-            (diagonal.length() - 1.0).abs() < 0.001,
-            "forward and up together must not fly faster than either alone"
+        world.insert(InputOwner::Editor, document);
+        assert_eq!(shown(&mut world), (true, true, "Click to play".to_owned()));
+
+        world.remove_component::<InputOwner>(document);
+        let (border, visible, _) = shown(&mut world);
+        assert!(!border && !visible);
+    }
+
+    #[test]
+    fn each_viewport_shortcut_triggers_its_signal_in_the_edit_target() {
+        let (mut world, document) = host_world(noting_recipe);
+        world.insert_resource(EventChannel::<ActionFired>::default());
+        let channel = world
+            .get_resource_mut::<EventChannel<ActionFired>>()
+            .unwrap();
+        for action in [
+            GizmoRotate.intern(),
+            GizmoTranslate.intern(),
+            FrameSelected.intern(),
+            FrameAll.intern(),
+            crate::actions::Save.intern(),
+        ] {
+            channel.push_event(ActionFired { action });
+        }
+
+        run(&mut world, viewport_shortcuts);
+
+        let hosted = world
+            .get_component_for_entity::<HostedApp>(document)
+            .unwrap();
+        assert_eq!(
+            hosted.world().get_resource::<Sent>().unwrap().0,
+            ["rotate", "translate", "frame selection", "frame all"]
         );
     }
 }

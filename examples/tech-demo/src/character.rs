@@ -24,6 +24,7 @@ use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
     ecs::{CommandQueue, Component, Res},
     foundation::assets::asset_server::AssetServer,
+    reflect::Reflect,
 };
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,7 @@ pub(crate) struct Player;
 #[derive(Component)]
 pub(crate) struct AnimationsReady;
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Reflect, Default, Serialize, Deserialize)]
 pub(crate) struct PlayerSpawner {
     should_spawn: bool,
 }
@@ -87,7 +88,7 @@ pub(crate) fn spawn_character(
                 // Origin at the capsule's bottom so the GLTF skeleton root sits on
                 // the ground instead of floating at the capsule center.
                 offset,
-                Transform::from_translation_rotation(Vec3::new(0.0, 10.0, -5.0), Quat::IDENTITY),
+                Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation),
                 GroundProbe::default(),
             ))
             .entity();
@@ -305,5 +306,44 @@ pub(crate) fn update_movement(
             movement
                 .set_target_velocity(Vec3::new(player_input.x, 0.0, player_input.y) * PLAYER_SPEED);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto::ecs::{IntoSystem, System, With, World};
+    use concerto::foundation::{
+        assets::{asset_server::AssetServer, asset_store::AssetStore},
+        transform::Transform,
+    };
+    use concerto::physics::physics_state::PhysicsState;
+    use concerto::scene::scene::Scene;
+    use glam::{Quat, Vec3};
+
+    use super::{Player, PlayerSpawner, spawn_character};
+
+    #[test]
+    fn the_character_spawns_at_the_spawn_point() {
+        let mut world = World::new();
+        world.insert_resource(PhysicsState::new());
+        let mut server = AssetServer::new();
+        server.register_asset(&AssetStore::<Scene>::new());
+        world.insert_resource(server);
+        let spawn_point = Vec3::new(3.0, 1.5, -7.0);
+        world.spawn((
+            Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),
+            PlayerSpawner { should_spawn: true },
+        ));
+
+        let mut system = spawn_character.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let characters: Vec<Vec3> = world
+            .query::<&Transform, With<Player>>()
+            .iter(&mut world)
+            .map(|transform| transform.translation)
+            .collect();
+        assert_eq!(characters, vec![spawn_point]);
     }
 }

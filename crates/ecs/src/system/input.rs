@@ -31,6 +31,11 @@ pub trait SystemInput {
         world: UnsafeWorldCell<'world>,
     ) -> Self::Data<'world, 'state>;
 
+    /// Whether the system may run this time; a `false` skips it.
+    fn validate(_state: &Self::State, _world: UnsafeWorldCell) -> bool {
+        true
+    }
+
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess);
@@ -57,6 +62,10 @@ where
         world: UnsafeWorldCell<'world>,
     ) -> Self::Data<'world, 'state> {
         typle_for!(i in .. => <T<{i}>>::get_data(&mut state[[i]], world))
+    }
+
+    fn validate(state: &Self::State, world: UnsafeWorldCell) -> bool {
+        typle_all!(i in .. => <T<{i}>>::validate(&state[[i]], world))
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -109,6 +118,10 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
         StaticSystemInput(P::get_data(state, world))
     }
 
+    fn validate(state: &Self::State, world: UnsafeWorldCell) -> bool {
+        P::validate(state, world)
+    }
+
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         P::fill_access(meta, access);
     }
@@ -134,4 +147,40 @@ impl<'s, T: FromWorld + Send + 'static> SystemInput for SystemLocal<'s, T> {
     }
 
     fn fill_access(_meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use crate::resource::Resource;
+
+    #[derive(Resource)]
+    pub(crate) struct GateOpen(pub bool);
+
+    pub(crate) struct Gate;
+
+    impl SystemInput for Gate {
+        type State = ();
+        type Data<'world, 'state> = Gate;
+
+        fn init_state(_world: &mut World) -> Self::State {}
+
+        fn get_data<'world, 'state>(
+            _state: &'state mut Self::State,
+            _world: UnsafeWorldCell<'world>,
+        ) -> Self::Data<'world, 'state> {
+            Gate
+        }
+
+        fn validate(_state: &Self::State, world: UnsafeWorldCell) -> bool {
+            world
+                .world()
+                .get_resource::<GateOpen>()
+                .is_some_and(|open| open.0)
+        }
+
+        fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
+            access.read_resource::<GateOpen>();
+        }
+    }
 }

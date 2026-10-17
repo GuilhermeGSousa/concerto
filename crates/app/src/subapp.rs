@@ -47,7 +47,10 @@ impl SubApps {
         self.render.update();
     }
 
-    pub fn set_extract_fn(&mut self, extract_fn: impl FnMut(&mut World, &mut World) + 'static) {
+    pub fn set_extract_fn(
+        &mut self,
+        extract_fn: impl FnMut(&mut World, &mut World) + Send + Sync + 'static,
+    ) {
         self.extract_fn = Some(Box::new(extract_fn));
     }
 }

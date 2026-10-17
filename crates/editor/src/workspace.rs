@@ -4,6 +4,7 @@ use concerto_ecs::{
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     query::change_detection::DetectChanges,
+    signal::On,
 };
 use concerto_foundation::assets::Asset;
 use concerto_ui::{
@@ -18,8 +19,7 @@ use concerto_window::input::actions::ActionMap;
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, EditorHosts, EditorOwned},
     dock::PanelRegistry,
-    hierarchy::HierarchyState,
-    viewport::ViewportCommands,
+    hosted::EditTargetChanged,
 };
 
 /// Build contextual containers for new documents.
@@ -125,29 +125,39 @@ fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
     }
 }
 
-/// Clear transient UI state on a tab transition or successful scene replacement.
 pub(crate) fn reset_workspace_input(
     active: Res<ActiveEditor>,
-    mut viewport: ResMut<ViewportCommands>,
     mut focus: ResMut<FocusedWidget>,
     mut hovered: ResMut<HoveredNode>,
     mut input: ResMut<UIInputState>,
     mut actions: ResMut<ActionMap>,
-    mut hierarchy: ResMut<HierarchyState>,
 ) {
-    let reset = viewport.has_changed() && viewport.reset;
-    if !active.has_changed() && !reset {
-        return;
+    if active.has_changed() {
+        clear_transient_input(&mut focus, &mut hovered, &mut input, &mut actions);
     }
+}
+
+pub(crate) fn reset_input_for_edit_target(
+    _: On<EditTargetChanged>,
+    mut focus: ResMut<FocusedWidget>,
+    mut hovered: ResMut<HoveredNode>,
+    mut input: ResMut<UIInputState>,
+    mut actions: ResMut<ActionMap>,
+) {
+    clear_transient_input(&mut focus, &mut hovered, &mut input, &mut actions);
+}
+
+fn clear_transient_input(
+    focus: &mut FocusedWidget,
+    hovered: &mut HoveredNode,
+    input: &mut UIInputState,
+    actions: &mut ActionMap,
+) {
     **focus = None;
     **hovered = None;
     *input = UIInputState::default();
     actions.pop_context(crate::actions::TreeContext);
     actions.pop_context(crate::actions::ViewportContext);
-    viewport.release_navigation = true;
-    if reset {
-        *hierarchy = HierarchyState::default();
-    }
 }
 
 #[cfg(test)]
@@ -188,15 +198,14 @@ mod tests {
     fn resources(world: &mut World) {
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(AssetEditorRegistry::default());
         world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(PanelRegistry::default());
-        world.insert_resource(ViewportCommands::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());
-        world.insert_resource(HierarchyState::default());
     }
 
     #[test]
@@ -235,10 +244,6 @@ mod tests {
             .unwrap()
             .set_captured(MouseButton::Left, Some(first));
         world
-            .get_resource_mut::<ViewportCommands>()
-            .unwrap()
-            .release_navigation = false;
-        world
             .get_component_for_entity_mut::<UINode>(first)
             .unwrap()
             .visible = false;
@@ -259,12 +264,6 @@ mod tests {
                 .unwrap()
                 .captured(MouseButton::Left),
             Some(first)
-        );
-        assert!(
-            !world
-                .get_resource::<ViewportCommands>()
-                .unwrap()
-                .release_navigation
         );
 
         let second = world.spawn(UINode::default().with_visible(false));
@@ -303,16 +302,10 @@ mod tests {
                 .captured(MouseButton::Left)
                 .is_none()
         );
-        assert!(
-            world
-                .get_resource::<ViewportCommands>()
-                .unwrap()
-                .release_navigation
-        );
     }
 
     #[test]
-    fn panel_changes_refresh_visibility_and_scene_resets_clear_input() {
+    fn panel_changes_refresh_visibility_and_a_new_edit_target_clears_input() {
         let mut world = World::new();
         resources(&mut world);
         let editor = world.spawn(());
@@ -351,17 +344,35 @@ mod tests {
 
         world.tick();
         **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(host);
-        let mut reset =
-            (|mut commands: ResMut<ViewportCommands>| commands.reset = true).into_system();
-        reset.initialize(&mut world);
-        reset.run_and_apply((), &mut world);
+        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(host);
+        world
+            .get_resource_mut::<UIInputState>()
+            .unwrap()
+            .set_captured(MouseButton::Left, Some(host));
+        world
+            .get_resource_mut::<ActionMap>()
+            .unwrap()
+            .push_context(crate::actions::ViewportContext);
         sync_workspace(&mut world);
+        assert_eq!(**world.get_resource::<FocusedWidget>().unwrap(), Some(host));
+
+        world.add_listener(reset_input_for_edit_target);
+        world.trigger(EditTargetChanged { document: None });
+
         assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
+        assert!(world.get_resource::<HoveredNode>().unwrap().is_none());
         assert!(
             world
-                .get_resource::<ViewportCommands>()
+                .get_resource::<UIInputState>()
                 .unwrap()
-                .release_navigation
+                .captured(MouseButton::Left)
+                .is_none()
+        );
+        assert!(
+            !world
+                .get_resource::<ActionMap>()
+                .unwrap()
+                .is_active(crate::actions::ViewportContext)
         );
     }
 
@@ -374,23 +385,22 @@ mod tests {
         world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(PanelRegistry::default());
-        world.insert_resource(ViewportCommands::default());
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());
-        world.insert_resource(HierarchyState::default());
         let asset = crate::project::AssetEntry {
             id: AssetId::new(),
             address: "notes.gasset".into(),
             kind: "Notes".into(),
             display_name: "notes".into(),
             folder: String::new(),
-            provenance: ImportProvenance {
+            provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: "notes".into(),
-            },
+            }),
         };
         world
             .get_resource_mut::<AssetEditorCommands>()

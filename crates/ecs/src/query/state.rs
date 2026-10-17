@@ -14,6 +14,21 @@ pub struct QueryState<T: QueryData, F: QueryFilter = ()> {
     matched_archetypes: FixedBitSet,
 }
 
+impl<T: QueryData, F: QueryFilter> Clone for QueryState<T, F>
+where
+    T::State: Clone,
+    F::State: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            data_state: self.data_state.clone(),
+            filter_state: self.filter_state.clone(),
+            current_archetype_count: self.current_archetype_count,
+            matched_archetypes: self.matched_archetypes.clone(),
+        }
+    }
+}
+
 impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
     pub(crate) fn new(world: &mut World) -> Self {
         Self {

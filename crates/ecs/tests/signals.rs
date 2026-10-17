@@ -393,3 +393,79 @@ fn queued_entity_signals_are_deferred_and_observe_command_order() {
     system.apply(&mut world);
     assert_eq!(world.get_resource::<Calls>().unwrap().0, [11, 22]);
 }
+
+#[derive(Resource)]
+struct GateOpen(bool);
+
+struct Gate;
+
+impl concerto_ecs::system::input::SystemInput for Gate {
+    type State = ();
+    type Data<'world, 'state> = Gate;
+
+    fn init_state(_world: &mut World) -> Self::State {}
+
+    fn get_data<'world, 'state>(
+        _state: &'state mut Self::State,
+        _world: concerto_ecs::world::UnsafeWorldCell<'world>,
+    ) -> Self::Data<'world, 'state> {
+        Gate
+    }
+
+    fn validate(_state: &Self::State, world: concerto_ecs::world::UnsafeWorldCell) -> bool {
+        world
+            .world()
+            .get_resource::<GateOpen>()
+            .is_some_and(|open| open.0)
+    }
+
+    fn fill_access(
+        _meta: &mut concerto_ecs::system::meta::SystemMetadata,
+        access: &mut concerto_ecs::system::access::SystemAccess,
+    ) {
+        access.read_resource::<GateOpen>();
+    }
+}
+
+#[test]
+fn a_listener_whose_parameter_declines_does_not_run() {
+    let mut world = World::new();
+    world.insert_resource(Calls::default());
+    world.insert_resource(GateOpen(false));
+    world.add_listener(|on: On<TestSignal>, _: Gate, mut calls: ResMut<Calls>| {
+        calls.0.push(on.signal().0);
+    });
+
+    world.trigger(TestSignal(1));
+    assert!(world.get_resource::<Calls>().unwrap().0.is_empty());
+
+    world.insert_resource(GateOpen(true));
+    world.trigger(TestSignal(2));
+    assert_eq!(world.get_resource::<Calls>().unwrap().0, vec![2]);
+}
+
+#[test]
+fn a_global_listener_entity_is_marked_and_an_attached_listener_is_not() {
+    use concerto_ecs::{query::filter::With, signal::listener::GlobalListener};
+
+    let mut world = World::new();
+    world.add_listener(|_: On<TestSignal>| {});
+    let attached = world.spawn((TestComponent, (|_: On<Poke>| {}).into_listener()));
+
+    let marked: Vec<Entity> = world
+        .query::<Entity, With<GlobalListener>>()
+        .iter(&mut world)
+        .collect();
+    let listeners: Vec<Entity> = world
+        .query::<Entity, With<Listener<TestSignal>>>()
+        .iter(&mut world)
+        .collect();
+
+    assert_eq!(marked, listeners);
+    assert_eq!(marked.len(), 1);
+    assert!(
+        world
+            .get_component_for_entity::<GlobalListener>(attached)
+            .is_none()
+    );
+}

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use anyhow::bail;
 
 use concerto_import::config::{project_root_of, ContentConfig};
-use concerto_import::import_source;
+use concerto_import::{import_source, import_source_into};
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -13,12 +13,14 @@ fn main() -> anyhow::Result<()> {
     let mut config_path: Option<PathBuf> = None;
     let mut extension: Option<String> = None;
     let mut content_root: Option<String> = None;
+    let mut destination: Option<String> = None;
 
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--config" => config_path = args.next().map(PathBuf::from),
             "--ext" => extension = args.next(),
             "--content-root" => content_root = args.next(),
+            "--to" => destination = args.next(),
             other if other.starts_with("--") => bail!("unknown flag '{other}'"),
             other => source = Some(PathBuf::from(other)),
         }
@@ -26,7 +28,7 @@ fn main() -> anyhow::Result<()> {
 
     let Some(source) = source else {
         eprintln!(
-            "usage: concerto-import <source> [--config <content.toml>] [--ext <ext>] [--content-root <dir>]"
+            "usage: concerto-import <source> [--to <project-relative destination>] [--config <content.toml>] [--ext <ext>] [--content-root <dir>]"
         );
         std::process::exit(2);
     };
@@ -52,7 +54,16 @@ fn main() -> anyhow::Result<()> {
         config.root = root;
     }
 
-    let written = import_source(&source, &project_root, &config)?;
+    let written = match destination {
+        Some(destination) => {
+            let imported = import_source_into(&source, &destination, &project_root, &config)?;
+            for sibling in &imported.siblings {
+                println!("  copied {sibling}");
+            }
+            imported.assets
+        }
+        None => import_source(&source, &project_root, &config)?,
+    };
     println!("imported {} -> {} assets", source.display(), written.len());
     for asset in &written {
         println!("  {} -> {}", asset.sub_asset_name, asset.address);

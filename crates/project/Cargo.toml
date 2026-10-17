@@ -1,0 +1,22 @@
+[package]
+name = "concerto-project"
+version.workspace = true
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+name = "concerto_project"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cargo-concerto"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+toml_edit = "0.22"
+
+[dev-dependencies]
+tempfile = "3"

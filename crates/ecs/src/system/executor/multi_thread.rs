@@ -17,6 +17,7 @@ use crate::{
     World,
     system::{
         BoxedSystem,
+        access::SystemAccess,
         executor::SystemExecutor,
         meta::SystemMetadata,
         schedule::{CompiledScheduleData, is_sync_point},
@@ -61,6 +62,7 @@ struct Environment<'env> {
     executor: &'env MultiThreadedExecutor,
     systems: &'env [SyncUnsafeCell<BoxedSystem>],
     system_meta: &'env [SystemMetadata],
+    system_access: &'env [SystemAccess],
     world_cell: UnsafeWorldCell<'env>,
 }
 
@@ -96,6 +98,11 @@ impl SystemExecutor for MultiThreadedExecutor {
             return;
         }
 
+        debug_assert_eq!(
+            compiled_data.system_access.len(),
+            compiled_data.systems.len()
+        );
+
         self.state
             .get_mut()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -111,6 +118,7 @@ impl SystemExecutor for MultiThreadedExecutor {
             systems: SyncUnsafeCell::from_mut(compiled_data.systems.as_mut_slice())
                 .as_slice_of_cells(),
             system_meta: compiled_data.system_meta.as_slice(),
+            system_access: compiled_data.system_access.as_slice(),
             world_cell: world.as_unsafe_world_cell_mut(),
         };
 
@@ -208,6 +216,7 @@ impl ExecutorState {
 
         for system_index in ready_systems.ones() {
             let is_send = context.environment.system_meta[system_index].is_send();
+            let is_exclusive = context.environment.system_access[system_index].is_exclusive();
             if !is_send {
                 if self.local_thread_running {
                     continue;
@@ -223,15 +232,19 @@ impl ExecutorState {
             let task = async move {
                 {
                     profiling::scope!(sys.name());
-                    unsafe { sys.run_unsafe((), world_cell) };
+                    if sys.validate(world_cell) {
+                        unsafe { sys.run_unsafe((), world_cell) };
+                    }
                 }
                 context.system_completed(system_index);
             };
 
-            if is_send {
-                context.scope.spawn(task);
-            } else {
+            if !is_send {
                 context.scope.spawn_on_external(task);
+            } else if is_exclusive {
+                context.scope.spawn_on_scope(task);
+            } else {
+                context.scope.spawn(task);
             }
         }
 
@@ -391,8 +404,6 @@ mod tests {
 
     #[test]
     fn non_send_system_in_a_schedule_run_by_an_exclusive_system_runs_on_calling_thread() {
-        // How the app runs a frame: `Main` holds one exclusive system that runs
-        // `Update` and the rest, and that system itself goes to a worker.
         let mut world = World::new();
         world.insert_resource(MainThreadExecutor::new());
         world.insert_resource(RanOn::default());
@@ -409,5 +420,114 @@ mod tests {
             world.get_resource::<RanOn>().unwrap().0,
             Some(std::thread::current().id())
         );
+    }
+
+    #[derive(Resource, Default)]
+    struct ExclusiveRanOn(Option<ThreadId>);
+
+    #[test]
+    fn an_exclusive_system_runs_on_the_thread_that_runs_its_schedule() {
+        let mut world = World::new();
+        world.insert_resource(MainThreadExecutor::new());
+        world.insert_resource(ExclusiveRanOn::default());
+
+        let mut schedules = Schedules::default();
+        schedules.add_system(Outer, |world: &mut World| {
+            world.get_resource_mut::<ExclusiveRanOn>().unwrap().0 =
+                Some(std::thread::current().id());
+        });
+        let compiled = schedules.compile::<MultiThreadedExecutor>(&mut world);
+        world.insert_resource(compiled);
+
+        world.run_schedule(Outer);
+
+        assert_eq!(
+            world.get_resource::<ExclusiveRanOn>().unwrap().0,
+            Some(std::thread::current().id())
+        );
+    }
+
+    use crate::system::input::test_support::{Gate, GateOpen};
+
+    #[derive(Resource, Default)]
+    struct Ran {
+        gated: usize,
+        neighbour: usize,
+    }
+
+    fn gated(_: Gate, mut ran: ResMut<Ran>) {
+        ran.gated += 1;
+    }
+
+    fn neighbour(mut ran: ResMut<Ran>) {
+        ran.neighbour += 1;
+    }
+
+    #[test]
+    fn a_declined_system_is_skipped_and_its_neighbours_run() {
+        let mut world = World::new();
+        world.insert_resource(MainThreadExecutor::new());
+        world.insert_resource(Ran::default());
+        world.insert_resource(GateOpen(false));
+
+        let mut schedules = Schedules::default();
+        schedules.add_system(Outer, gated);
+        schedules.add_system(Outer, neighbour);
+        let compiled = schedules.compile::<MultiThreadedExecutor>(&mut world);
+        world.insert_resource(compiled);
+
+        world.run_schedule(Outer);
+        let ran = world.get_resource::<Ran>().unwrap();
+        assert_eq!((ran.gated, ran.neighbour), (0, 1));
+
+        world.insert_resource(GateOpen(true));
+        world.run_schedule(Outer);
+        let ran = world.get_resource::<Ran>().unwrap();
+        assert_eq!((ran.gated, ran.neighbour), (1, 2));
+    }
+
+    #[derive(Resource, Default)]
+    struct Finished {
+        slow: AtomicBool,
+        dependant: AtomicBool,
+    }
+
+    fn breaks(_: crate::resource::Res<Finished>) {
+        panic!("the system broke");
+    }
+
+    fn after_breaks(finished: crate::resource::Res<Finished>) {
+        finished.dependant.store(true, Ordering::SeqCst);
+    }
+
+    fn slow(finished: crate::resource::Res<Finished>) {
+        std::thread::sleep(Duration::from_millis(100));
+        finished.slow.store(true, Ordering::SeqCst);
+    }
+
+    #[test]
+    fn a_panicking_system_is_raised_after_its_running_neighbours_finish_and_its_dependants_never_run()
+     {
+        use crate::IntoSystemConfig;
+        for _ in 0..5 {
+            let mut world = World::new();
+            world.insert_resource(MainThreadExecutor::new());
+            world.insert_resource(Finished::default());
+            let mut schedule = Schedule::new();
+            schedule
+                .add_system(breaks)
+                .add_system(after_breaks.after(breaks))
+                .add_system(slow);
+            let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
+
+            let outcome =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
+
+            let payload = outcome.expect_err("the panic is raised again");
+            assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
+            let finished = world.get_resource::<Finished>().unwrap();
+            assert!(finished.slow.load(Ordering::SeqCst));
+            assert!(!finished.dependant.load(Ordering::SeqCst));
+        }
     }
 }

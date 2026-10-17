@@ -6,10 +6,10 @@
 //! use concerto_app::App;
 //! use concerto_render::{plugin::RenderPlugin, shadow_pipeline::ShadowPipelinePlugin};
 //!
-//! let mut app = App::new();
-//! app.register_plugin(RenderPlugin)
-//!     .register_plugin(ShadowPipelinePlugin);
-//! app.run();
+//! fn game(app: &mut App) {
+//!     app.register_plugin(RenderPlugin)
+//!         .register_plugin(ShadowPipelinePlugin);
+//! }
 //! ```
 
 // Allow the `concerto_render_macros`-generated code (which uses `concerto_render::` paths) to
@@ -20,6 +20,8 @@ pub mod assets;
 pub mod capabilities;
 pub mod components;
 pub mod device;
+pub mod draw_target;
+pub mod gpu;
 pub mod importers;
 pub mod layouts;
 pub mod material_plugin;
@@ -33,10 +35,13 @@ pub mod shadow_pipeline;
 pub mod systems;
 pub mod wgpu_wrapper;
 
+#[doc(hidden)]
+pub use bytemuck;
 pub use wgpu;
 
 pub use concerto_render_macros::AsBindGroup;
 
 pub use assets::material::Material;
+pub use components::camera::ExclusiveCamera;
 pub use components::material::MaterialComponent;
 pub use material_plugin::{MaterialPipeline, MaterialPlugin, RenderMaterial};

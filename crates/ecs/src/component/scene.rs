@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::{cell::Cell, collections::HashMap, ptr};
 
 use crate::{component::Component, entity::Entity, resource::Resource, world::World};
 
@@ -26,11 +27,39 @@ impl Serialize for SceneEntityRef {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Index(index) => index.serialize(serializer),
-            Self::Entity(_) => Err(serde::ser::Error::custom(
-                "a resolved scene entity cannot be serialized",
-            )),
+            Self::Entity(entity) => match captured_index(*entity) {
+                Some(index) => index.serialize(serializer),
+                None => Err(serde::ser::Error::custom(
+                    "a resolved scene entity cannot be serialized outside the scene being captured",
+                )),
+            },
         }
     }
+}
+
+thread_local! {
+    static ENTITY_INDICES: Cell<*const HashMap<Entity, usize>> = const { Cell::new(ptr::null()) };
+}
+
+struct RestoreIndices(*const HashMap<Entity, usize>);
+
+impl Drop for RestoreIndices {
+    fn drop(&mut self) {
+        ENTITY_INDICES.set(self.0);
+    }
+}
+
+/// Runs `f` with resolved [`SceneEntityRef`]s on this thread serializing as their index in `indices`.
+pub fn with_entity_indices<R>(indices: &HashMap<Entity, usize>, f: impl FnOnce() -> R) -> R {
+    let _restore = RestoreIndices(ENTITY_INDICES.replace(indices));
+    f()
+}
+
+fn captured_index(entity: Entity) -> Option<usize> {
+    let indices = ENTITY_INDICES.get();
+    // SAFETY: the pointer is only non-null while the `with_entity_indices` call that set it is
+    // on this thread's stack, which keeps its borrow of the map alive.
+    unsafe { indices.as_ref() }?.get(&entity).copied()
 }
 
 impl<'de> Deserialize<'de> for SceneEntityRef {

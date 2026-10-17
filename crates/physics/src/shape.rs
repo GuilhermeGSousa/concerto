@@ -95,6 +95,7 @@ pub(crate) fn generate_mesh_shapes(
     mut mesh_shapes: ResMut<PhysicsMeshShapes>,
     mut cmd: CommandQueue,
 ) {
+    // TODO: move this logic to component lifecycles
     for (entity, mesh_comp) in meshes_to_generate.iter() {
         let Some(mesh) = meshes.get(&mesh_comp.handle) else {
             continue;

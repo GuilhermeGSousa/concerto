@@ -2,6 +2,7 @@ use concerto_ecs::World;
 use concerto_foundation::time::Time;
 
 use crate::{
+    edit_time::AtEditTime,
     schedule_groups::{First, FixedUpdate, LateFixedUpdate, LateUpdate, Main, Update},
     Plugin,
 };
@@ -56,7 +57,7 @@ fn run_main(world: &mut World) {
 impl Plugin for MainSchedulePlugin {
     fn build(&self, app: &mut crate::App) {
         app.main_mut().set_update_schedule(Main);
-        app.add_system(Main, run_main);
+        app.add_system(Main, run_main.at_edit_time());
 
         #[cfg(all(feature = "multithreaded", not(target_arch = "wasm32")))]
         {

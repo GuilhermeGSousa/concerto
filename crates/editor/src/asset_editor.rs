@@ -2,12 +2,14 @@
 
 use anyhow::{Result, bail};
 use concerto_app::App;
+use concerto_ecs::events::event_reader::EventReader;
 use concerto_ecs::{
     Component, Entity, Query, Resource,
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
 };
 use concerto_foundation::assets::Asset;
+use concerto_window::input::actions::ActionFired;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::project::AssetEntry;
@@ -15,6 +17,10 @@ use crate::project::AssetEntry;
 /// Installs an editor's components when its document is created.
 pub trait AssetEditor: Send + Sync + 'static {
     fn build(&self, _editor: &mut EntityCommandQueue) {}
+    /// Whether this editor's tabs show a close button.
+    fn closable(&self) -> bool {
+        true
+    }
 }
 
 /// Registered asset editor implementations, keyed by asset type.
@@ -35,6 +41,13 @@ impl AssetEditorRegistry {
     /// Returns the registered asset kind matching `kind`, if it has an editor.
     pub fn editor_kind(&self, kind: &str) -> Option<&'static str> {
         self.editors.get_key_value(kind).map(|(kind, _)| *kind)
+    }
+
+    /// Whether a tab of `kind` shows a close button; a kind with no editor does.
+    pub fn closable(&self, kind: &str) -> bool {
+        self.editors
+            .get(kind)
+            .is_none_or(|editor| editor.closable())
     }
 }
 
@@ -62,6 +75,36 @@ pub struct EditorDocument {
     pub request_generation: u64,
     pub order: u64,
     pub status: String,
+}
+
+/// On a document whose content differs from what is on disk.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct Unsaved;
+
+/// Asks the editor owning this document to write it to disk; that editor removes the marker.
+#[derive(Component)]
+pub struct SaveRequested;
+
+pub(crate) fn request_save(
+    mut fired: EventReader<ActionFired>,
+    active: Res<ActiveEditor>,
+    documents: Query<&EditorDocument>,
+    unsaved: Query<&Unsaved>,
+    mut commands: CommandQueue,
+) {
+    let save = fired
+        .read()
+        .fold(false, |save, action| save | action.is(crate::actions::Save));
+    let Some(entity) = active.0.filter(|_| save) else {
+        return;
+    };
+    if unsaved.get_entity(entity).is_some()
+        && documents
+            .get_entity(entity)
+            .is_some_and(|document| document.pending.is_none())
+    {
+        commands.insert(SaveRequested, entity);
+    }
 }
 
 #[derive(Resource, Default)]
@@ -132,13 +175,21 @@ pub fn process_editor_commands(
     registry: Res<AssetEditorRegistry>,
     project: Res<crate::project::ProjectState>,
     mut active: ResMut<ActiveEditor>,
+    mut guard: ResMut<crate::guard::UnsavedGuard>,
     documents: Query<(Entity, &EditorDocument)>,
+    unsaved: Query<&Unsaved>,
     owned: Query<(Entity, &EditorOwned)>,
+    states: Query<&crate::hosted::PlayState>,
     mut commands: CommandQueue,
 ) {
     if requests.0.is_empty() {
         return;
     }
+    let stop_game = |entity: Entity, commands: &mut CommandQueue| {
+        if states.get_entity(entity).is_some_and(|state| state.is_on()) {
+            commands.trigger(crate::hosted::StopPlay(entity));
+        }
+    };
     let mut next_active = active.0;
     let mut staged: Vec<_> = documents.iter().map(|(e, d)| (e, d.clone())).collect();
     let mut created = HashSet::new();
@@ -159,6 +210,19 @@ pub fn process_editor_commands(
                 if let Some((entity, doc)) =
                     staged.iter_mut().find(|(_, d)| d.asset_type == asset_type)
                 {
+                    let is_unsaved =
+                        !created.contains(entity) && unsaved.get_entity(*entity).is_some();
+                    if is_unsaved && !doc.current.as_ref().is_some_and(|a| a.id == asset.id) {
+                        stop_game(*entity, &mut commands);
+                        guard.hold(
+                            crate::guard::GuardedIntent::Editor(AssetEditorCommand::Open {
+                                asset,
+                                project_generation,
+                            }),
+                            vec![*entity],
+                        );
+                        continue;
+                    }
                     if !doc.pending.as_ref().is_some_and(|a| a.id == asset.id) {
                         doc.request_generation += 1;
                         doc.project_generation = project_generation;
@@ -200,6 +264,14 @@ pub fn process_editor_commands(
             }
             AssetEditorCommand::Close(entity) => {
                 if let Some(index) = staged.iter().position(|(e, _)| *e == entity) {
+                    if !created.contains(&entity) && unsaved.get_entity(entity).is_some() {
+                        stop_game(entity, &mut commands);
+                        guard.hold(
+                            crate::guard::GuardedIntent::Editor(AssetEditorCommand::Close(entity)),
+                            vec![entity],
+                        );
+                        continue;
+                    }
                     let (_, doc) = staged.remove(index);
                     closed.insert(entity);
                     if next_active == Some(entity) {
@@ -237,6 +309,7 @@ pub fn process_editor_commands(
         }
     }
     for entity in closed {
+        stop_game(entity, &mut commands);
         commands.despawn(entity);
     }
 }
@@ -293,16 +366,17 @@ mod tests {
             kind: "TestAsset".into(),
             display_name: path.into(),
             folder: String::new(),
-            provenance: concerto_foundation::assets::content::ImportProvenance {
+            provenance: Some(concerto_foundation::assets::content::ImportProvenance {
                 source: path.into(),
                 sub_asset: String::new(),
-            },
+            }),
         }
     }
     fn world() -> World {
         let mut w = World::new();
         w.insert_resource(AssetEditorCommands::default());
         w.insert_resource(ActiveEditor::default());
+        w.insert_resource(crate::guard::UnsavedGuard::default());
         let mut project = crate::project::ProjectState::default();
         project.generation = 1;
         w.insert_resource(project);
@@ -529,6 +603,126 @@ mod tests {
         assert!(!w.entity_is_valid(child));
         assert!(!w.entity_is_valid(grandchild));
     }
+    fn fire_save(w: &mut World) {
+        use concerto_ecs::events::event_channel::EventChannel;
+        use concerto_window::input::actions::ActionLabel;
+        if w.get_resource::<EventChannel<ActionFired>>().is_none() {
+            w.insert_resource(EventChannel::<ActionFired>::default());
+        }
+        let channel = w.get_resource_mut::<EventChannel<ActionFired>>().unwrap();
+        channel.update();
+        channel.update();
+        channel.push_event(ActionFired {
+            action: crate::actions::Save.intern(),
+        });
+        let mut system = request_save.into_system();
+        system.initialize(w);
+        system.run_and_apply((), w);
+    }
+
+    #[test]
+    fn the_save_action_asks_only_an_unsaved_document_with_no_replacement_pending() {
+        let mut w = world();
+        let e = open(&mut w, "a");
+        finish(&mut w, e);
+        let requested = |w: &World| w.get_component_for_entity::<SaveRequested>(e).is_some();
+
+        fire_save(&mut w);
+        assert!(!requested(&w), "a clean document has nothing to save");
+
+        w.insert(Unsaved, e);
+        w.get_component_for_entity_mut::<EditorDocument>(e)
+            .unwrap()
+            .pending = Some(asset("b"));
+        fire_save(&mut w);
+        assert!(!requested(&w), "a replacement is loading");
+
+        w.get_component_for_entity_mut::<EditorDocument>(e)
+            .unwrap()
+            .pending = None;
+        fire_save(&mut w);
+        assert!(requested(&w));
+    }
+
+    fn finish(w: &mut World, e: Entity) {
+        let g = w
+            .get_component_for_entity::<EditorDocument>(e)
+            .unwrap()
+            .request_generation;
+        assert!(finish_asset_request(w, e, g, Ok(())));
+    }
+    fn push(w: &mut World, command: AssetEditorCommand) {
+        w.get_resource_mut::<AssetEditorCommands>()
+            .unwrap()
+            .0
+            .push_back(command);
+        process_editor_commands(w);
+    }
+    fn asking_about(w: &World) -> Vec<Entity> {
+        w.get_resource::<crate::guard::UnsavedGuard>()
+            .unwrap()
+            .documents()
+            .to_vec()
+    }
+
+    #[test]
+    fn replacing_or_closing_a_dirty_document_is_held_for_the_guard() {
+        let mut w = world();
+        let e = open(&mut w, "a");
+        finish(&mut w, e);
+        w.insert(Unsaved, e);
+
+        open(&mut w, "a");
+        assert!(
+            asking_about(&w).is_empty(),
+            "reselecting the open asset is harmless"
+        );
+
+        open(&mut w, "b");
+        let doc = w.get_component_for_entity::<EditorDocument>(e).unwrap();
+        assert!(doc.pending.is_none());
+        assert_eq!(asking_about(&w), [e]);
+
+        w.insert_resource(crate::guard::UnsavedGuard::default());
+        push(&mut w, AssetEditorCommand::Close(e));
+        assert!(w.entity_is_valid(e));
+        assert_eq!(asking_about(&w), [e]);
+        assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, Some(e));
+
+        w.insert_resource(crate::guard::UnsavedGuard::default());
+        w.remove_component::<Unsaved>(e);
+        push(&mut w, AssetEditorCommand::Close(e));
+        assert!(!w.entity_is_valid(e));
+        assert!(asking_about(&w).is_empty());
+    }
+
+    #[test]
+    fn the_close_command_closes_a_scene_document_whose_tab_has_no_close_button() {
+        let mut w = world();
+        let registry = w.get_resource_mut::<AssetEditorRegistry>().unwrap();
+        registry
+            .register::<concerto_scene::scene::Scene>(crate::scene::SceneEditor)
+            .unwrap();
+        assert!(!registry.closable(concerto_scene::scene::Scene::name()));
+        assert!(registry.closable(TestAsset::name()));
+        assert!(registry.closable("Unknown"));
+        let mut scene = asset("scene");
+        scene.kind = concerto_scene::scene::Scene::name().into();
+        w.get_resource_mut::<AssetEditorCommands>()
+            .unwrap()
+            .0
+            .push_back(AssetEditorCommand::Open {
+                asset: scene,
+                project_generation: 1,
+            });
+        process_editor_commands(&mut w);
+        let e = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
+        finish(&mut w, e);
+        push(&mut w, AssetEditorCommand::Close(e));
+        assert!(!w.entity_is_valid(e));
+        assert!(w.get_resource::<ActiveEditor>().unwrap().0.is_none());
+    }
+
     #[derive(serde::Serialize, serde::Deserialize)]
     struct ThirdAsset;
     impl Asset for ThirdAsset {

@@ -13,10 +13,11 @@ use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
 use crate::resource::ResourceStorage;
-use crate::signal::listener::{IntoListener, Listener, Listeners};
+use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners};
 use crate::signal::{EntitySignal, Signal};
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
 use crate::table::MutableCellAccessor;
+use crate::world_id::WorldId;
 use crate::{
     archetype::Archetype,
     common::generate_type_id,
@@ -47,6 +48,7 @@ use crate::{component::Tick, system::meta::SystemMetadata};
 /// ```
 #[derive(Default)]
 pub struct World {
+    id: WorldId,
     archetypes: Vec<Archetype>,
     resources: AnyMap,
     component_registry: ComponentRegistry,
@@ -66,6 +68,11 @@ impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
         Self::default()
+    }
+
+    /// This world's identity, which it keeps when moved.
+    pub fn id(&self) -> WorldId {
+        self.id
     }
 
     /// Spawns a new entity with the given component bundle and returns its [`Entity`] handle.
@@ -641,7 +648,7 @@ impl World {
 
     pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
         self.register_component_lifetimes::<Listener<T>>();
-        self.spawn(system.into_listener());
+        self.spawn((system.into_listener(), GlobalListener));
     }
 
     /// Runs matching listeners in registration order, applying each system's commands.

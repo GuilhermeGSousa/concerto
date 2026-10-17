@@ -30,12 +30,15 @@ type ErasedApply = fn(&str, Entity, &mut SceneSpawnContext<'_>) -> Result<(), se
 /// Serializes `T` off `entity`, or `None` when the entity does not carry it.
 type ErasedRead = fn(&World, Entity) -> Option<Value>;
 
+type ErasedToJson = fn(&World, Entity) -> Option<String>;
+
 /// What a tool can learn about one registered scene component without knowing
 /// its Rust type.
 pub struct TypeInfo {
     name: &'static str,
     short: &'static str,
     read: ErasedRead,
+    to_json: ErasedToJson,
 }
 
 impl TypeInfo {
@@ -59,6 +62,15 @@ impl TypeInfo {
     pub fn read(&self, world: &World, entity: Entity) -> Option<Value> {
         (self.read)(world, entity)
     }
+
+    /// The component's value as the JSON text a scene file stores, `None` in the same cases as [`read`](Self::read).
+    pub fn to_json(&self, world: &World, entity: Entity) -> Option<String> {
+        (self.to_json)(world, entity)
+    }
+}
+
+fn to_json_typed<T: SceneComponent>(world: &World, entity: Entity) -> Option<String> {
+    serde_json::to_string(world.get_component_for_entity::<T>(entity)?).ok()
 }
 
 fn read_typed<T: SceneComponent>(world: &World, entity: Entity) -> Option<Value> {
@@ -140,6 +152,7 @@ impl ComponentRegistry {
                 name: full,
                 short,
                 read: read_typed::<T>,
+                to_json: to_json_typed::<T>,
             },
         );
 

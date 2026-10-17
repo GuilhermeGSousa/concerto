@@ -10,6 +10,7 @@ use concerto_ecs::{
     query::Query,
     resource::{Res, ResMut, Resource},
     system::input::SystemInputData,
+    IntoSystemConfig,
 };
 
 use crate::{
@@ -32,6 +33,7 @@ use crate::{
         AssetPreparationError, RenderAsset, RenderAssetPlugin, RenderAssets,
     },
     resources::RenderContext,
+    sets::RenderSet,
     shader::create_shader_module,
     Material,
 };
@@ -382,7 +384,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // RenderPlugin, which iterates over all entities with RenderEntity
         // regardless of material type.
         app.add_render_system(Extract, extract_materials::<M>)
-            .add_render_system(Render, material_renderpass::<M>);
+            .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {

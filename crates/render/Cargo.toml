@@ -13,7 +13,7 @@ crate-type = ["cdylib", "rlib"]
 profiling = "1"
 concerto-app.workspace = true
 concerto-color.workspace = true
-concerto-editable.workspace = true
+concerto-reflect.workspace = true
 concerto-foundation.workspace = true
 concerto-ecs.workspace = true
 concerto-mesh.workspace = true
@@ -33,10 +33,8 @@ wgpu = { version = "24.0.1", default-features = false, features = [
 ] }
 wgpu-types = { version = "24", default-features = false, features = ["serde"] }
 cfg-if = "1.0.0"
-pollster = "0.4.0"
 send_wrapper = { version = "0.6.0" }
 anyhow = "1.0.97"
-winit = { version = "0.30" }
 offset-allocator = { version = "0.2.0" }
 derive_more = { version = "2", features = ["full"] }
 concerto-asset-import.workspace = true
@@ -51,8 +49,8 @@ default-features = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 console_error_panic_hook = "0.1.7"
 console_log = "1.0.0"
-wasm-bindgen-futures = "0.4"
 web-sys = { version = "0.3" }
 
 [dev-dependencies]
 naga = { version = "24", features = ["glsl-out"] }
+pollster = "0.4.0"

@@ -1,5 +1,5 @@
 use crate::{
-    events::Event,
+    events::{Event, event_cursor::EventCursor, event_reader::EventIterator},
     resource::{ResMut, Resource},
 };
 
@@ -66,6 +66,13 @@ impl<T: Event + 'static> EventChannel<T> {
         id
     }
 
+    /// Returns the events written since `cursor` last read, and moves it past them.
+    pub fn read_from<'a>(&'a self, cursor: &mut EventCursor<T>) -> EventIterator<'a, T> {
+        let unread = EventIterator::new(self, cursor.last_event_count);
+        cursor.last_event_count = self.event_count;
+        unread
+    }
+
     /// Swaps the buffers and drops the events that have now expired.
     ///
     /// Must be called once per frame per event type, or the buffers grow forever.
@@ -96,4 +103,40 @@ impl<T: Event + 'static> Default for EventChannel<T> {
 /// Registered automatically by [`App::register_event`].
 pub fn update_event_channel<T: Event + 'static>(mut channel: ResMut<EventChannel<T>>) {
     channel.update();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[derive(Event, Debug, PartialEq, Clone)]
+    struct Note(u32);
+
+    fn read(channel: &EventChannel<Note>, cursor: &mut EventCursor<Note>) -> Vec<u32> {
+        channel.read_from(cursor).map(|note| note.0).collect()
+    }
+
+    #[test]
+    fn a_held_cursor_reads_each_event_once() {
+        let mut channel = EventChannel::<Note>::new();
+        let mut cursor = EventCursor::default();
+        channel.push_event(Note(1));
+        channel.push_event(Note(2));
+
+        assert_eq!(read(&channel, &mut cursor), vec![1, 2]);
+        assert!(read(&channel, &mut cursor).is_empty());
+
+        channel.push_event(Note(3));
+        assert_eq!(read(&channel, &mut cursor), vec![3]);
+    }
+
+    #[test]
+    fn an_event_written_between_two_updates_is_still_readable_after_the_next() {
+        let mut channel = EventChannel::<Note>::new();
+        let mut cursor = EventCursor::default();
+        channel.update();
+        channel.push_event(Note(7));
+        channel.update();
+
+        assert_eq!(read(&channel, &mut cursor), vec![7]);
+    }
 }
