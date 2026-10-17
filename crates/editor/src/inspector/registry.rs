@@ -15,7 +15,7 @@ use concerto_ecs::{
     entity::EntityStructuralVersion,
     system::{
         access::SystemAccess,
-        input::{ComponentMetadata, ReadOnlySystemInput, SystemInput},
+        input::{ComponentMetadata, ReadOnlySystemInput, SystemInput, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
@@ -265,14 +265,15 @@ impl SystemInput for InspectionSource<'_> {
     type State = ();
     type Data<'world, 'state> = InspectionSource<'world>;
     fn init_state(_: &mut World) {}
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut (),
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        InspectionSource {
-            components: ComponentMetadata::get_data(state, world),
-            table: Res::new(world),
-        }
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares exactly the access of its two parts.
+        Ok(InspectionSource {
+            components: unsafe { ComponentMetadata::get_data(state, world) }?,
+            table: unsafe { Res::new(world) }?,
+        })
     }
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         ComponentMetadata::fill_access(meta, access);
@@ -300,11 +301,9 @@ impl EditableApp for App {
 
 fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
     let world = app.main_mut().world_mut();
-    assert!(
-        world.get_resource::<InspectorRegistry>().is_some(),
-        "InspectorPlugin must be registered first"
-    );
-    ResMut::new(world.as_unsafe_world_cell_mut())
+    // SAFETY: the exclusive borrow of the world covers any access.
+    unsafe { ResMut::new(world.as_unsafe_world_cell_mut()) }
+        .expect("InspectorPlugin must be registered first")
 }
 
 fn checked(
@@ -518,7 +517,9 @@ mod tests {
         let mut s = sending();
         let row = s.row();
         s.f.world.tick();
-        ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut())
+        // SAFETY: the exclusive borrow of the world covers any access.
+        unsafe { ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut()) }
+            .unwrap()
             .register_property_editor::<Vec3, _>(NumericFields);
         s.commits()
             .push::<Vec3, NumericFields>(

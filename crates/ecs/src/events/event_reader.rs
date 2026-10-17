@@ -5,7 +5,7 @@ use crate::{
     events::{Event, event_channel::EventChannel, event_cursor::EventCursor},
     resource::Res,
     system::{
-        input::{SystemInput, SystemLocal},
+        input::{SystemInput, SystemLocal, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
@@ -72,14 +72,15 @@ where
         <CursorParam<T>>::init_state(world)
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        EventReader {
-            channel: <ChannelParam<T>>::get_data(&mut (), world),
-            cursor: <CursorParam<T>>::get_data(state, world),
-        }
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares exactly the access of its two parts.
+        Ok(EventReader {
+            channel: unsafe { <ChannelParam<T>>::get_data(&mut (), world) }?,
+            cursor: unsafe { <CursorParam<T>>::get_data(state, world) }?,
+        })
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {

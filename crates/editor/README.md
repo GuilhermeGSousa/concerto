@@ -66,9 +66,9 @@ A panel reaches the scene in two ways and no other:
 
 - `Editor<T>` reads the edit `App`'s world: `Editor<Query<&Name>>`,
   `Editor<Res<Selection>>`. `T` is any read-only system parameter.
-  `Editor<Res<T>>` panics if the scene's world has no `T`, so name only
-  resources the tools always insert, such as `Selection` and
-  `ReflectComponents`.
+  `Editor<Res<T>>` skips its system with a warning on every frame the scene's
+  world has no `T`, so name only resources the tools always insert, such as
+  `Selection` and `ReflectComponents`.
 - `EditorSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
   The listeners run when the system's commands are applied.
 

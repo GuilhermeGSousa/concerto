@@ -77,9 +77,11 @@ passing test suite says nothing about what is on screen. Use the
 ## Code rules
 
 **Comments.** Write none, in any file type, except a one-line `///` on a public
-item. That covers Rust, WGSL, TOML, YAML, and shell. Design reasoning goes in
-your reply or in the spec. Leave existing comments alone unless the code they
-describe changes.
+item. That covers Rust, WGSL, TOML, YAML, and shell. Two exceptions: an
+`unsafe` block may carry one `// SAFETY:` line saying why it is sound, and an
+`unsafe fn` may carry a `# Safety` section in its doc comment. Design reasoning
+goes in your reply or in the spec. Leave existing comments alone unless the
+code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
@@ -94,7 +96,10 @@ with exclusive access when the queue is applied: the typed `CommandQueue`
 methods (`spawn`, `insert`, `remove`, `despawn`, `insert_resource`), or
 `cmd.trigger(signal)` with a listener that does the exclusive work. The only
 existing systems that take `&mut World` are `run_main` and `render_main`, which
-run the main and render schedules; they are not a pattern to copy.
+run the main and render schedules; they are not a pattern to copy. A system
+whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
+on every run until the resource exists; take `Option<Res<T>>` when absence is
+normal.
 
 **No revision counters.** Do not add a number that is bumped to say "this
 changed" and compared somewhere else. State that changed is read through change

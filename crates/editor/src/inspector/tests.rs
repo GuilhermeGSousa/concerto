@@ -269,7 +269,8 @@ impl PropertyEditor<Transform> for WholeTransform {
 }
 
 fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
-    ResMut::new(world.as_unsafe_world_cell_mut())
+    // SAFETY: the exclusive borrow of the world covers any access.
+    unsafe { ResMut::new(world.as_unsafe_world_cell_mut()) }.unwrap()
 }
 
 #[test]

@@ -6,7 +6,7 @@ use concerto_ecs::{
     signal::Signal,
     system::{
         access::SystemAccess,
-        input::{ReadOnlySystemInput, SystemInput, SystemInputData},
+        input::{ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
@@ -16,8 +16,11 @@ use concerto_ecs::{
 use super::{HostedApp, PlayState, outbound};
 use crate::asset_editor::ActiveEditor;
 
-fn edit_target<'w>(world: UnsafeWorldCell<'w>) -> Option<(Entity, &'w World)> {
-    let world = world.world();
+/// # Safety
+/// The caller must hold the access [`read_edit_target`] declares.
+unsafe fn edit_target<'w>(world: UnsafeWorldCell<'w>) -> Option<(Entity, &'w World)> {
+    // SAFETY: reads only what `read_edit_target` declares, which the caller holds.
+    let world = unsafe { world.world() };
     let document = world.get_resource::<ActiveEditor>()?.0?;
     if world.get_component_for_entity::<PlayState>(document) == Some(&PlayState::Starting) {
         return None;
@@ -27,6 +30,12 @@ fn edit_target<'w>(world: UnsafeWorldCell<'w>) -> Option<(Entity, &'w World)> {
         .world();
     let announced = world.get_resource::<LastEditTarget>()?.0;
     (announced == Some((document, scene.id()))).then_some((document, scene))
+}
+
+fn no_edit_target<T: ?Sized>() -> ValidationError {
+    ValidationError::skip::<T>(
+        "no scene is open, its game is starting, or the edit target is not announced yet",
+    )
 }
 
 fn read_edit_target(access: &mut SystemAccess) {
@@ -84,26 +93,19 @@ where
         }
     }
 
-    fn validate(state: &Self::State, world: UnsafeWorldCell) -> bool {
-        edit_target(world).is_some_and(|(_, scene)| {
-            let current = state.for_world(scene).unwrap_or(&state.first);
-            T::validate(current, scene.as_unsafe_world_cell())
-        })
-    }
-
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        let (_, scene) = edit_target(world).expect("validated before the system ran");
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: `fill_access` declares what `edit_target` reads.
+        let (_, scene) = unsafe { edit_target(world) }.ok_or_else(no_edit_target::<Self>)?;
         if state.for_world(scene).is_none() {
             state.current = state.first.clone();
             state.built_for = Some(scene.id());
         }
-        Editor(T::get_data(
-            &mut state.current,
-            scene.as_unsafe_world_cell(),
-        ))
+        // SAFETY: the scene's world belongs to its hosted `App`, which no system runs while the
+        // editor's systems do, and `T` only reads it.
+        unsafe { T::get_data(&mut state.current, scene.as_unsafe_world_cell()) }.map(Editor)
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -147,20 +149,20 @@ impl SystemInput for EditorSignals<'_> {
         SignalQueue::default()
     }
 
-    fn validate(_state: &Self::State, world: UnsafeWorldCell) -> bool {
-        edit_target(world).is_some()
-    }
-
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        let target = edit_target(world).map(|(document, scene)| (document, scene.id()));
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: `fill_access` declares what `edit_target` reads.
+        let target = unsafe { edit_target(world) }.map(|(document, scene)| (document, scene.id()));
         if state.made_for != target {
             state.signals.clear();
         }
         state.made_for = target;
-        EditorSignals { queue: state }
+        if target.is_none() {
+            return Err(no_edit_target::<Self>());
+        }
+        Ok(EditorSignals { queue: state })
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -300,6 +302,22 @@ mod tests {
         run(&mut world, read_markers);
 
         assert_eq!(world.get_resource::<Seen>().unwrap().0, vec![1]);
+    }
+
+    #[derive(Resource)]
+    struct NotInTheScene;
+
+    fn read_missing(_: Editor<Res<NotInTheScene>>, mut runs: ResMut<Runs>) {
+        runs.0 += 1;
+    }
+
+    #[test]
+    fn a_resource_missing_from_the_scene_skips_the_system_instead_of_panicking() {
+        let (mut world, _) = seam_world(1);
+
+        run(&mut world, read_missing);
+
+        assert_eq!(runs(&world), 0);
     }
 
     #[test]

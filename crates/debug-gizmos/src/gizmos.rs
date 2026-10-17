@@ -1,7 +1,10 @@
 use concerto_color::Color;
 use concerto_ecs::{
     resource::ResMut,
-    system::{access::SystemAccess, input::SystemInput},
+    system::{
+        access::SystemAccess,
+        input::{SystemInput, ValidationError},
+    },
     world::UnsafeWorldCell,
 };
 use concerto_foundation::transform::Transform;
@@ -225,14 +228,15 @@ impl<'w> SystemInput for DebugGizmos<'w> {
 
     fn init_state(_world: &mut concerto_ecs::World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        DebugGizmos {
-            storage: ResMut::new(world),
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        Ok(DebugGizmos {
+            // SAFETY: `fill_access` declares write access to the gizmo storage.
+            storage: unsafe { ResMut::new(world) }?,
             width: 1.0,
-        }
+        })
     }
 
     fn fill_access(

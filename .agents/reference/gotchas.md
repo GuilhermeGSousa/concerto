@@ -26,6 +26,16 @@ fix the entry in the same commit as the change that made it false.
   used on wasm, applies each system's commands right after it, which hides
   this. To make `b` see `a`'s decision, have `a` change data `b` reads, or
   register `a` before `b`.
+- **A missing resource skips the system and warns every frame.** A system
+  input declines through `SystemInput::get_data`, which returns a
+  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter` and
+  `Extracted` decline as `Missing`, which logs a warning on every skipped run;
+  `Editor<T>` and `EditorSignals` decline as `Skip`, which is silent. A warning
+  flood in the log names the system and the missing type. Use `Option<Res<T>>`
+  where absence is normal.
+- **`Added<T>` and `Changed<T>` read `T`.** A query filtered by them conflicts
+  with any system writing `T`, so the two never run in parallel. `With<T>` and
+  `Without<T>` read only archetypes and do not conflict.
 - **`.after()` and `.before()` reference a system; they do not add it.**
   Something else must add the target to the same schedule.
 - **A system takes at most twelve parameters.** A thirteenth fails with an

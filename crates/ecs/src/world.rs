@@ -24,7 +24,7 @@ use crate::{
     component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
-    system::input::SystemInput,
+    system::input::{SystemInput, ValidationError},
     table::TableRowIndex,
     utilities::TypeIdMap,
 };
@@ -720,11 +720,12 @@ impl SystemInput for &World {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        world.world()
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares read access to the whole world.
+        Ok(unsafe { world.world() })
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -738,11 +739,12 @@ impl SystemInput for &mut World {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        world.world_mut()
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares write access to the whole world.
+        Ok(unsafe { world.world_mut() })
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -771,12 +773,26 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
-    pub fn world(&self) -> &'w World {
+    /// Borrows the whole world for reading.
+    ///
+    /// # Safety
+    /// The caller may read only what its declared access covers, and nothing may write
+    /// that data while the borrow is alive.
+    pub unsafe fn world(&self) -> &'w World {
+        // SAFETY: the pointer came from a live world borrowed for `'w`; the caller upholds
+        // the access rules.
         unsafe { &*self.ptr }
     }
 
-    pub fn world_mut(&self) -> &'w mut World {
+    /// Borrows the whole world for writing.
+    ///
+    /// # Safety
+    /// The caller must have exclusive access to everything it touches, and no other
+    /// reference into the world may be used while the borrow is alive.
+    pub unsafe fn world_mut(&self) -> &'w mut World {
         self.assert_mutable();
+        // SAFETY: the pointer came from a live, mutably borrowed world; the caller upholds
+        // exclusivity.
         unsafe { &mut *self.ptr }
     }
 
@@ -791,7 +807,8 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_add_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
         if let Some(lifetimes) = world.component_lifetimes.get(id)
             && let Some(add) = lifetimes.on_add
         {
@@ -806,7 +823,8 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
 
         if let Some(lifetimes) = world.component_lifetimes.get(id)
             && let Some(replace) = lifetimes.on_replace
@@ -816,7 +834,8 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_remove_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
 
         if let Some(lifetimes) = world.component_lifetimes.get(id)
             && let Some(remove) = lifetimes.on_remove
@@ -835,7 +854,8 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
 
         if let Some(lifetimes) = world.component_lifetimes.get(id)
             && let Some(despawn) = lifetimes.on_despawn
@@ -844,8 +864,10 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
-    pub(crate) fn archetypes(&self) -> &[Archetype] {
-        self.world().archetypes()
+    pub(crate) fn archetypes(&self) -> &'w [Archetype] {
+        // SAFETY: archetypes change only under exclusive access, so no running system can
+        // alter them while this is read.
+        unsafe { self.world() }.archetypes()
     }
 }
 
@@ -861,7 +883,8 @@ pub struct RestrictedWorld<'w> {
 
 impl<'w> RestrictedWorld<'w> {
     fn commands(&mut self) -> CommandQueue<'_, '_> {
-        self.world_cell.world_mut().make_command_queue()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.make_command_queue()
     }
 
     /// Reserves an entity and queues its spawn after the enclosing operation.
@@ -891,21 +914,23 @@ impl<'w> RestrictedWorld<'w> {
     }
 
     pub fn get_component_for_entity<T: Component>(&self, entity: Entity) -> Option<&T> {
-        self.world_cell.world().get_component_for_entity(entity)
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world() }.get_component_for_entity(entity)
     }
 
     pub fn get_component_for_entity_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        self.world_cell
-            .world_mut()
-            .get_component_for_entity_mut(entity)
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.get_component_for_entity_mut(entity)
     }
 
     pub fn get_resource<T: Resource>(&self) -> Option<&T> {
-        self.world_cell.world().get_resource()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world() }.get_resource()
     }
 
     pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
-        self.world_cell.world_mut().get_resource_mut::<T>()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.get_resource_mut::<T>()
     }
 }
 

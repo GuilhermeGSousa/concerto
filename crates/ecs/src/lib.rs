@@ -854,7 +854,8 @@ mod tests {
         // `get_entity` lives on `Query`, not `QueryState`, so this one still goes
         // through `Query::new` rather than the `world.query().iter()` shorthand.
         let mut state = world.query::<&Health, ()>();
-        let q = Query::new(world.as_unsafe_world_cell_mut(), &mut state);
+        // SAFETY: the exclusive borrow of `world` covers any access.
+        let q = unsafe { Query::new(world.as_unsafe_world_cell_mut(), &mut state) };
         assert!(q.get_entity(e_with).is_some());
         assert!(q.get_entity(e_without).is_none());
     }
@@ -867,7 +868,8 @@ mod tests {
         world.despawn(despawned);
 
         let mut state = world.query::<Entity, ()>();
-        let q = Query::new(world.as_unsafe_world_cell_mut(), &mut state);
+        // SAFETY: the exclusive borrow of `world` covers any access.
+        let q = unsafe { Query::new(world.as_unsafe_world_cell_mut(), &mut state) };
         assert_eq!(q.get_entity(alive), Some(alive));
         assert_eq!(q.get_entity(despawned), None);
     }

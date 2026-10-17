@@ -61,7 +61,8 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
         &'state mut self,
         world: &'world mut World,
     ) -> QueryIter<'world, 'state, T, F> {
-        Query::new(world.as_unsafe_world_cell_mut(), self).iter()
+        // SAFETY: the exclusive borrow of `world` covers any access.
+        unsafe { Query::new(world.as_unsafe_world_cell_mut(), self) }.iter()
     }
 
     fn add_archetype(&mut self, archetype: &Archetype) {

@@ -1,7 +1,7 @@
 use std::mem;
 
 use concerto_ecs::{
-    system::input::{ReadOnlySystemInput, SystemInput, SystemInputData},
+    system::input::{ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError},
     Resource, World,
 };
 use derive_more::{Deref, DerefMut};
@@ -56,23 +56,21 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
         T::init_state(world)
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: concerto_ecs::world::UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        let main_world = world
-            .world()
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: `fill_access` declares read access to `MainWorld`.
+        let main_world = unsafe { world.world() }
             .get_resource::<MainWorld>()
-            .expect("MainWorld not found — `Extract` is only valid in the `Extract` update group");
-
-        Extracted(T::get_data(state, main_world.as_unsafe_world_cell()))
-    }
-
-    fn validate(state: &Self::State, world: concerto_ecs::world::UnsafeWorldCell) -> bool {
-        world
-            .world()
-            .get_resource::<MainWorld>()
-            .is_some_and(|main_world| T::validate(state, main_world.as_unsafe_world_cell()))
+            .ok_or_else(|| {
+                ValidationError::missing::<MainWorld>(
+                    "`Extract` systems run only while the main world is lent to the render world",
+                )
+            })?;
+        // SAFETY: the main world is lent whole to the render world for `Extract`, and `T`
+        // only reads it.
+        unsafe { T::get_data(state, main_world.as_unsafe_world_cell()) }.map(Extracted)
     }
 
     fn fill_access(
@@ -106,6 +104,25 @@ mod tests {
         system.initialize(&mut render);
         system.run_and_apply((), &mut render);
         render.get_resource::<Seen>().unwrap().0
+    }
+
+    #[derive(Resource, Default)]
+    struct Ran(bool);
+
+    fn extracts(_: Extracted<Option<Res<Counter>>>, mut ran: ResMut<Ran>) {
+        ran.0 = true;
+    }
+
+    #[test]
+    fn an_extracting_system_is_skipped_without_a_main_world() {
+        let mut render = World::new();
+        render.insert_resource(Ran::default());
+        let mut system = extracts.into_system();
+        system.initialize(&mut render);
+
+        system.run_and_apply((), &mut render);
+
+        assert!(!render.get_resource::<Ran>().unwrap().0);
     }
 
     #[test]

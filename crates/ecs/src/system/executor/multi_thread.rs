@@ -187,7 +187,9 @@ impl ExecutorState {
             profiling::scope!("apply_deferred");
             for unapplied_system in self.unapplied_systems.ones() {
                 let sys = unsafe { &mut *environment.systems[unapplied_system].get() };
-                sys.apply(environment.world_cell.world_mut());
+                // SAFETY: a sync point declares the whole world and has just finished, and no
+                // system starts until the deferred work is applied.
+                sys.apply(unsafe { environment.world_cell.world_mut() });
             }
             self.unapplied_systems.clear();
         }
@@ -232,9 +234,9 @@ impl ExecutorState {
             let task = async move {
                 {
                     profiling::scope!(sys.name());
-                    if sys.validate(world_cell) {
-                        unsafe { sys.run_unsafe((), world_cell) };
-                    }
+                    // SAFETY: the executor starts a system only once no running system
+                    // conflicts with its declared access.
+                    unsafe { sys.run_unsafe((), world_cell) };
                 }
                 context.system_completed(system_index);
             };

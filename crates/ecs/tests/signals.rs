@@ -405,18 +405,21 @@ impl concerto_ecs::system::input::SystemInput for Gate {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
-        _world: concerto_ecs::world::UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        Gate
-    }
-
-    fn validate(_state: &Self::State, world: concerto_ecs::world::UnsafeWorldCell) -> bool {
-        world
-            .world()
+        world: concerto_ecs::world::UnsafeWorldCell<'world>,
+    ) -> Result<Self::Data<'world, 'state>, concerto_ecs::system::input::ValidationError> {
+        // SAFETY: reads only `GateOpen`, which `fill_access` declares.
+        let open = unsafe { world.world() }
             .get_resource::<GateOpen>()
-            .is_some_and(|open| open.0)
+            .is_some_and(|open| open.0);
+        if open {
+            Ok(Gate)
+        } else {
+            Err(concerto_ecs::system::input::ValidationError::skip::<Self>(
+                "the gate is closed",
+            ))
+        }
     }
 
     fn fill_access(

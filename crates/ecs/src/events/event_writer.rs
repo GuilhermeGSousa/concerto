@@ -2,7 +2,10 @@ use crate::{
     World,
     events::{Event, event_channel::EventChannel},
     resource::ResMut,
-    system::{input::SystemInput, meta::SystemMetadata},
+    system::{
+        input::{SystemInput, ValidationError},
+        meta::SystemMetadata,
+    },
     world::UnsafeWorldCell,
 };
 
@@ -23,10 +26,15 @@ pub struct EventWriter<'world, T: Event + 'static> {
 }
 
 impl<'w, T: Event> EventWriter<'w, T> {
-    pub fn new(world: UnsafeWorldCell<'w>) -> Self {
-        Self {
-            channel: ResMut::new(world),
-        }
+    /// Borrows `T`'s channel from `world`, or reports it missing.
+    ///
+    /// # Safety
+    /// The caller must hold write access to `T`'s [`EventChannel`].
+    pub unsafe fn new(world: UnsafeWorldCell<'w>) -> Result<Self, ValidationError> {
+        Ok(Self {
+            // SAFETY: the caller holds write access to the channel.
+            channel: unsafe { ResMut::new(world) }?,
+        })
     }
 
     /// Enqueues `event` so that [`EventReader`](super::event_reader::EventReader)s can read it
@@ -45,11 +53,12 @@ where
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        EventWriter::new(world)
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: `fill_access` declares write access to the channel.
+        unsafe { EventWriter::new(world) }
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {

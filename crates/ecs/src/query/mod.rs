@@ -17,7 +17,7 @@ use crate::{
     },
     system::{
         access::SystemAccess,
-        input::{ReadOnlySystemInput, SystemInput},
+        input::{ReadOnlySystemInput, SystemInput, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
@@ -55,7 +55,10 @@ pub trait QueryData: WorldQuery {
     fn component_ids() -> Vec<ComponentId>;
 
     /// Fetches the data for `entity` from `world`, returning `None` if not possible.
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>>;
+    ///
+    /// # Safety
+    /// The caller must hold the access [`QueryData::fill_access`] declares.
+    unsafe fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>>;
 
     /// Registers component access with the scheduler's access tracker.
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess);
@@ -65,7 +68,10 @@ pub trait ReadOnlyQueryData: QueryData {}
 
 impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
     /// Constructs a new query by scanning the world's archetypes for matches.
-    pub fn new(world: UnsafeWorldCell<'world>, state: &'state mut QueryState<T, F>) -> Self {
+    ///
+    /// # Safety
+    /// The caller must hold the access `T` and `F` declare for as long as the query lives.
+    pub unsafe fn new(world: UnsafeWorldCell<'world>, state: &'state mut QueryState<T, F>) -> Self {
         state.update_archetypes(world);
 
         Self { world, state }
@@ -86,11 +92,17 @@ impl<'world, 'state, T: QueryData, F: QueryFilter> Query<'world, 'state, T, F> {
 
     /// Fetches the query data for a specific entity, returning `None` if it doesn't match.
     pub fn get_entity(&self, entity: Entity) -> Option<T::Item<'world>> {
-        if !F::filter(self.world, entity) {
+        // SAFETY: the query's system declared the access of `T` and `F`, and holds it while
+        // the query lives.
+        if !unsafe { F::filter(self.world, entity) } {
             return None;
         }
-        self.world.world().entity_store().find_location(entity)?;
-        T::fetch(self.world, entity)
+        // SAFETY: as above; the entity store is read only to locate `entity`.
+        unsafe { self.world.world() }
+            .entity_store()
+            .find_location(entity)?;
+        // SAFETY: as above.
+        unsafe { T::fetch(self.world, entity) }
     }
 
     /// Returns `true` if `entity` matches this query.
@@ -117,7 +129,7 @@ where
     type Item = T::Item<'world>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let archetypes = self.world.world().archetypes();
+        let archetypes = self.world.archetypes();
         loop {
             if self.current_row == self.current_len {
                 let archetype_index = self.matched_archetypes.next()?;
@@ -135,11 +147,14 @@ where
 
             let entity = self.current_entities[self.current_row];
             self.current_row += 1;
-            if !F::filter(self.world, entity) {
+            // SAFETY: the query's system declared the access of `T` and `F`, and holds it
+            // while the iterator lives.
+            if !unsafe { F::filter(self.world, entity) } {
                 continue;
             }
 
-            return T::fetch(self.world, entity);
+            // SAFETY: as above.
+            return unsafe { T::fetch(self.world, entity) };
         }
     }
 }
@@ -156,15 +171,17 @@ where
         QueryState::<T, F>::new(world)
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        Query::new(world, state)
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: `fill_access` declares the access of `T` and `F`, which the caller holds.
+        Ok(unsafe { Query::new(world, state) })
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
         T::fill_access(meta, access);
+        F::fill_access(access);
     }
 }
 
@@ -185,8 +202,9 @@ where
         vec![TypeId::of::<T>()]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
-        let world = world.world();
+    unsafe fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+        // SAFETY: the caller holds read access to `T`, declared in `fill_access`.
+        let world = unsafe { world.world() };
         world
             .entity_store()
             .find_location(entity)
@@ -210,8 +228,9 @@ where
         vec![TypeId::of::<T>()]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
-        let world = world.world_mut();
+    unsafe fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+        // SAFETY: the caller holds write access to `T`, declared in `fill_access`.
+        let world = unsafe { world.world_mut() };
 
         world
             .entity_store()
@@ -238,7 +257,7 @@ impl QueryData for Entity {
         vec![]
     }
 
-    fn fetch<'w>(_world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    unsafe fn fetch<'w>(_world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
         Some(entity)
     }
 
@@ -257,8 +276,9 @@ where
         vec![]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
-        let world = world.world();
+    unsafe fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+        // SAFETY: the caller holds read access to `T`, declared in `fill_access`.
+        let world = unsafe { world.world() };
         world
             .entity_store()
             .find_location(entity)
@@ -282,8 +302,9 @@ where
         vec![]
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
-        let world = world.world_mut();
+    unsafe fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+        // SAFETY: the caller holds write access to `T`, declared in `fill_access`.
+        let world = unsafe { world.world_mut() };
 
         world.entity_store().find_location(entity).map(|location| {
             let current_tick = world.current_tick();
@@ -321,9 +342,9 @@ where
         }
     }
 
-    fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
+    unsafe fn fetch<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> Option<Self::Item<'w>> {
         Some(typle_for!(i in .. => {
-                <T<{i}>>::fetch(world, entity)?
+                unsafe { <T<{i}>>::fetch(world, entity) }?
             }
         ))
     }

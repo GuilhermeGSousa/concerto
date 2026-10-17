@@ -19,7 +19,7 @@ pub use config::{
 pub use set::{InternedSystemSet, IntoSetConfig, SetConfig, SystemSet};
 pub use tag::{SystemTag, TagFilter};
 
-use input::SystemInput;
+use input::{SystemInput, ValidationError, ValidationKind};
 use typle::typle;
 
 use crate::{
@@ -57,16 +57,9 @@ pub trait System: Send + Sync + 'static {
         self.apply(world);
     }
 
-    /// Whether every parameter agrees to run against `world` now.
-    fn validate(&mut self, _world: UnsafeWorldCell) -> bool {
-        true
-    }
-
     fn run(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
-        if !self.validate(world_cell) {
-            return;
-        }
+        // SAFETY: the exclusive borrow of `world` rules out any other running system.
         unsafe { self.run_unsafe(args, world_cell) };
     }
 
@@ -105,10 +98,6 @@ impl System for BoxedSystem {
 
     fn initialize(&mut self, world: &mut World) {
         (**self).initialize(world);
-    }
-
-    fn validate(&mut self, world: UnsafeWorldCell) -> bool {
-        (**self).validate(world)
     }
 }
 
@@ -203,20 +192,20 @@ where
         F::Inputs::apply(state, world);
     }
 
-    fn validate(&mut self, world: UnsafeWorldCell) -> bool {
-        let state = self
-            .system_state
-            .as_ref()
-            .expect("Attempted to validate uninitialized system.");
-        F::Inputs::validate(state, world)
-    }
-
     unsafe fn run_unsafe(&mut self, args: SysArg<'_, Self>, world: UnsafeWorldCell) {
         let state = self
             .system_state
             .as_mut()
             .expect("Attempted to run uninitialized system.");
-        self.func.call(args, F::Inputs::get_data(state, world));
+        // SAFETY: the caller guarantees no conflicting system runs, and the inputs touch
+        // only the access they declared for this system.
+        match unsafe { F::Inputs::get_data(state, world) } {
+            Ok(data) => self.func.call(args, data),
+            Err(error) if error.kind == ValidationKind::Missing => {
+                log::warn!("{} skipped: {error}", std::any::type_name::<F>());
+            }
+            Err(_) => {}
+        }
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -286,10 +275,6 @@ where
         self.system.fill_access(meta, access);
     }
 
-    fn validate(&mut self, world: UnsafeWorldCell) -> bool {
-        self.system.validate(world)
-    }
-
     unsafe fn run_unsafe(&mut self, _args: Self::In, world: UnsafeWorldCell) {
         unsafe { self.system.run_unsafe(self.args.clone(), world) };
     }
@@ -335,11 +320,11 @@ impl SystemInput for NonSendMarker {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        NonSendMarker
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        Ok(NonSendMarker)
     }
 
     fn fill_access(meta: &mut SystemMetadata, _access: &mut SystemAccess) {
