@@ -11,9 +11,9 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data, bounds, ray tests; extra passes; a renderer that draws to a terminal |
 | Simulation | `physics`, `jolt-ffi`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
-| Tooling | `editor`, `editable`, `project` | the editor; structural property access for the inspector; `cargo concerto`, which creates game projects and their editor crates |
+| Tooling | `editor`, `reflect`, `project` | the editor; structural, path-addressed access to a value's fields, which the inspector uses; `cargo concerto`, which creates game projects and their editor crates |
 
-`ecs`, `foundation`, `render`, and `editable` each have a `macros` sub-crate.
+`ecs`, `foundation`, `render`, and `reflect` each have a `macros` sub-crate.
 `jolt-ffi` builds Jolt from the submodule at `crates/jolt-ffi/vendor/JoltPhysics`.
 
 ## Plugins
@@ -160,6 +160,6 @@ host re-raises each in the editor's world as a `Hosted<E>` signal, which the
 editor turns into the dirty mark, the status, the tree's scroll position, and
 the saved file.
 The inspector edits components through `PropertyEditor<T>` adapters over
-`editable`. Each asset type has one editor, registered with
+`reflect`. Each asset type has one editor, registered with
 `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
 covers all of it.

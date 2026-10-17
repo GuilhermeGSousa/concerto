@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 concerto-asset-format.workspace = true
-concerto-editable.workspace = true
+concerto-reflect.workspace = true
 concerto-ecs.workspace = true
 concerto-tasks.workspace = true
 bytemuck = { version = "1.22.0", features = ["derive"] }

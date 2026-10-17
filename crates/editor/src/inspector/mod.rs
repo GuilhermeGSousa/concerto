@@ -11,7 +11,7 @@ use concerto_ecs::{
 };
 use std::any::TypeId;
 
-use concerto_editable::PropertyPath;
+use concerto_reflect::PropertyPath;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},

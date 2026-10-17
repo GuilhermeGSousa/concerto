@@ -1,5 +1,5 @@
 [package]
-name = "concerto-editable"
+name = "concerto-reflect"
 version.workspace = true
 edition = "2024"
 description.workspace = true
@@ -7,6 +7,6 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-concerto-editable-macros.workspace = true
+concerto-reflect-macros.workspace = true
 concerto-color.workspace = true
 glam = "0.30.1"

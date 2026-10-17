@@ -7,14 +7,14 @@ use std::{
 use concerto_app::{
     App,
     edit_time::AtEditTime,
-    editable::{EditableComponent, EditableComponents},
+    reflect::{ReflectComponent, ReflectComponents},
 };
 use concerto_ecs::{
     Component, Entity, Resource, World,
     component::Tick,
     signal::{On, Signal},
 };
-use concerto_editable::{PropertyPath, with_property_mut};
+use concerto_reflect::{PropertyPath, with_property_mut};
 
 use crate::{
     inspector::ErasedEditor,
@@ -75,7 +75,7 @@ impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
         let component = world
-            .get_resource::<EditableComponents>()
+            .get_resource::<ReflectComponents>()
             .and_then(|table| table.get(self.row.component))
             .ok_or(EditError::UnregisteredComponent)?;
         apply_through(
@@ -91,7 +91,7 @@ impl CommitProperty {
 
 fn apply_through(
     world: &mut World,
-    component: EditableComponent,
+    component: ReflectComponent,
     entity: Entity,
     path: &PropertyPath,
     editor: &dyn ErasedEditor,
@@ -135,7 +135,7 @@ pub fn apply_component_edit(world: &mut World, edit: ComponentEdit) -> Result<()
     let (ComponentEdit::Add { entity, component } | ComponentEdit::Remove { entity, component }) =
         edit;
     let registered = world
-        .get_resource::<EditableComponents>()
+        .get_resource::<ReflectComponents>()
         .and_then(|table| table.get(component))
         .ok_or(EditError::UnregisteredComponent)?;
     if !world.entity_is_valid(entity) {
@@ -173,8 +173,8 @@ pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
 
 pub(crate) fn build(app: &mut App) {
     let world = app.main_mut().world_mut();
-    if world.get_resource::<EditableComponents>().is_none() {
-        world.insert_resource(EditableComponents::default());
+    if world.get_resource::<ReflectComponents>().is_none() {
+        world.insert_resource(ReflectComponents::default());
     }
     app.add_listener(commit_property.at_edit_time())
         .add_listener(edit_component.at_edit_time());
@@ -186,12 +186,12 @@ mod tests {
     use crate::tools::scene::testing::{tools_app, written};
     use concerto_foundation::transform::Transform;
 
-    #[derive(Component, concerto_editable::Editable, Default)]
+    #[derive(Component, concerto_reflect::Reflect, Default)]
     struct Gain {
         amount: f32,
     }
 
-    #[derive(Component, concerto_editable::Editable)]
+    #[derive(Component, concerto_reflect::Reflect)]
     struct Lens {
         focal: f32,
     }
@@ -201,9 +201,9 @@ mod tests {
 
     fn fixture() -> (App, Entity) {
         let mut app = tools_app();
-        app.register_editable::<Transform>()
-            .register_editable::<Gain>()
-            .register_inspectable::<Lens>();
+        app.register_reflect::<Transform>()
+            .register_reflect::<Gain>()
+            .register_reflect_readonly::<Lens>();
         let entity = app.main_mut().world_mut().spawn(Transform::IDENTITY);
         (app, entity)
     }
@@ -226,7 +226,7 @@ mod tests {
     fn the_tools_bring_an_empty_table_when_no_plugin_registered_a_component() {
         let mut app = tools_app();
         assert!(
-            app.get_resource::<EditableComponents>()
+            app.get_resource::<ReflectComponents>()
                 .is_some_and(|table| table.iter().next().is_none())
         );
         let world = app.main_mut().world_mut();
@@ -243,11 +243,11 @@ mod tests {
         let mut app = App::new();
         app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
             .register_plugin(concerto_app::plugins::TimePlugin)
-            .register_editable::<Gain>();
+            .register_reflect::<Gain>();
 
         crate::tools::build_core(&mut app);
 
-        let table = app.get_resource::<EditableComponents>().unwrap();
+        let table = app.get_resource::<ReflectComponents>().unwrap();
         assert!(table.get(TypeId::of::<Gain>()).is_some());
     }
 
@@ -310,7 +310,7 @@ mod tests {
     }
 
     #[test]
-    fn an_inspectable_component_is_removed_but_never_added() {
+    fn a_readonly_component_is_removed_but_never_added() {
         let (mut app, entity) = fixture();
         let world = app.main_mut().world_mut();
         assert_eq!(

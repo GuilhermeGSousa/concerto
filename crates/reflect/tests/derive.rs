@@ -1,18 +1,18 @@
 use std::any::{Any, TypeId};
 
-use concerto_editable::{
-    Editable, PathError, PropertyPath, PropertyVisitor, with_property, with_property_mut,
+use concerto_reflect::{
+    PathError, PropertyPath, PropertyVisitor, Reflect, with_property, with_property_mut,
 };
 use glam::{Quat, Vec3};
 
-#[derive(Editable)]
+#[derive(Reflect)]
 struct Inner {
     weight: f32,
     label: String,
     enabled: bool,
 }
 
-#[derive(Editable)]
+#[derive(Reflect)]
 struct Outer {
     position: Vec3,
     rotation: Quat,
@@ -35,7 +35,7 @@ fn outer() -> Outer {
 fn derive_visits_fields_in_declaration_order_with_concrete_types() {
     struct Fields(Vec<(&'static str, TypeId)>);
     impl PropertyVisitor for Fields {
-        fn field(&mut self, name: &'static str, value: &dyn Editable) {
+        fn field(&mut self, name: &'static str, value: &dyn Reflect) {
             self.0.push((name, (value as &dyn Any).type_id()));
         }
     }

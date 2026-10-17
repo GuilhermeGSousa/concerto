@@ -46,7 +46,7 @@ pub enum RenderTarget {
     Texture(AssetHandle<Texture>),
 }
 
-impl concerto_editable::Editable for RenderTarget {}
+impl concerto_reflect::Reflect for RenderTarget {}
 
 #[allow(dead_code)]
 impl RenderTarget {
@@ -59,7 +59,7 @@ impl RenderTarget {
     }
 }
 
-#[derive(Component, concerto_editable::Editable, Serialize, Deserialize)]
+#[derive(Component, concerto_reflect::Reflect, Serialize, Deserialize)]
 pub struct Camera {
     pub aspect: f32,
     pub fovy: f32,

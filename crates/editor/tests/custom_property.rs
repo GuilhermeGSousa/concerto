@@ -2,13 +2,12 @@
 #[path = "../examples/custom_property.rs"]
 mod example;
 
-use concerto_app::{App, edit_time::AtEditTime, editable::EditableComponents};
+use concerto_app::{App, edit_time::AtEditTime, reflect::ReflectComponents};
 use concerto_ecs::{
     Component, Entity, IntoSystem, Query, Res, ResMut, Resource, System, World,
     command::CommandQueue,
     signal::{On, Signal},
 };
-use concerto_editable::{Editable, PropertyPath};
 use concerto_editor::hosted::{Editor, Hosted, HostedEventsAppExt, trigger_on};
 use concerto_editor::inspector::{
     ComponentEdit, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
@@ -19,12 +18,13 @@ use concerto_editor::tools::{
     scene::SceneEdited,
     selection::{Select, Selection},
 };
+use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
 
-#[derive(Component, Editable, Default)]
+#[derive(Component, Reflect, Default)]
 struct Container {
     setting: Setting,
     gain: f32,
@@ -93,7 +93,7 @@ fn inspecting() -> Inspecting {
     let mut spawned = None;
     let (mut editor, document) = example::headless_editor(|scene| {
         scene
-            .register_editable::<Container>()
+            .register_reflect::<Container>()
             .add_listener(despawn.at_edit_time());
         let world = scene.main_mut().world_mut();
         let mut container = |gain| {
@@ -440,11 +440,11 @@ fn registration_splits_between_the_recipe_and_the_editors_app() {
             .len(),
         1
     );
-    assert!(editor.get_resource::<EditableComponents>().is_none());
+    assert!(editor.get_resource::<ReflectComponents>().is_none());
 
     let mut scene = App::new();
     example::register(&mut scene);
-    let table = scene.get_resource::<EditableComponents>().unwrap();
+    let table = scene.get_resource::<ReflectComponents>().unwrap();
     assert!(table.get(TypeId::of::<Setting>()).is_some());
     assert!(scene.get_resource::<InspectorRegistry>().is_none());
 }

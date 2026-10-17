@@ -99,8 +99,8 @@ impl Plugin for RenderPlugin {
         app.register_asset::<Mesh>()
             .register_asset::<Texture>()
             .register_asset::<Skeleton>();
-        app.register_editable::<Light>()
-            .register_inspectable::<Camera>();
+        app.register_reflect::<Light>()
+            .register_reflect_readonly::<Camera>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);

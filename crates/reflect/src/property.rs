@@ -1,4 +1,4 @@
-use crate::{Editable, PropertyVisitor, PropertyVisitorMut};
+use crate::{PropertyVisitor, PropertyVisitorMut, Reflect};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct PropertyPath(Vec<&'static str>);
@@ -40,17 +40,17 @@ impl std::error::Error for PathError {}
 
 /// Access a leaf, composite value, or root without retaining a borrowed value.
 pub fn with_property(
-    root: &dyn Editable,
+    root: &dyn Reflect,
     path: &PropertyPath,
-    callback: &mut dyn FnMut(&dyn Editable),
+    callback: &mut dyn FnMut(&dyn Reflect),
 ) -> Result<(), PathError> {
     access(root, path.segments(), callback)
 }
 
 fn access(
-    value: &dyn Editable,
+    value: &dyn Reflect,
     segments: &[&'static str],
-    callback: &mut dyn FnMut(&dyn Editable),
+    callback: &mut dyn FnMut(&dyn Reflect),
 ) -> Result<(), PathError> {
     let Some((name, rest)) = segments.split_first() else {
         callback(value);
@@ -59,11 +59,11 @@ fn access(
     struct Access<'a> {
         name: &'static str,
         rest: &'a [&'static str],
-        callback: &'a mut dyn FnMut(&dyn Editable),
+        callback: &'a mut dyn FnMut(&dyn Reflect),
         result: Option<Result<(), PathError>>,
     }
     impl PropertyVisitor for Access<'_> {
-        fn field(&mut self, name: &'static str, value: &dyn Editable) {
+        fn field(&mut self, name: &'static str, value: &dyn Reflect) {
             if self.result.is_none() && name == self.name {
                 self.result = Some(access(value, self.rest, self.callback));
             }
@@ -82,17 +82,17 @@ fn access(
 /// Mutably access a leaf, composite value, or root. The callback owns any
 /// validation policy; this function only resolves the path.
 pub fn with_property_mut(
-    root: &mut dyn Editable,
+    root: &mut dyn Reflect,
     path: &PropertyPath,
-    callback: &mut dyn FnMut(&mut dyn Editable),
+    callback: &mut dyn FnMut(&mut dyn Reflect),
 ) -> Result<(), PathError> {
     access_mut(root, path.segments(), callback)
 }
 
 fn access_mut(
-    value: &mut dyn Editable,
+    value: &mut dyn Reflect,
     segments: &[&'static str],
-    callback: &mut dyn FnMut(&mut dyn Editable),
+    callback: &mut dyn FnMut(&mut dyn Reflect),
 ) -> Result<(), PathError> {
     let Some((name, rest)) = segments.split_first() else {
         callback(value);
@@ -101,11 +101,11 @@ fn access_mut(
     struct Access<'a> {
         name: &'static str,
         rest: &'a [&'static str],
-        callback: &'a mut dyn FnMut(&mut dyn Editable),
+        callback: &'a mut dyn FnMut(&mut dyn Reflect),
         result: Option<Result<(), PathError>>,
     }
     impl PropertyVisitorMut for Access<'_> {
-        fn field(&mut self, name: &'static str, value: &mut dyn Editable) {
+        fn field(&mut self, name: &'static str, value: &mut dyn Reflect) {
             if self.result.is_none() && name == self.name {
                 self.result = Some(access_mut(value, self.rest, self.callback));
             }

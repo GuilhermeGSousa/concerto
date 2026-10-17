@@ -9,7 +9,7 @@ use concerto_ecs::{
     resource::{Res, Resource},
     Changed,
 };
-use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
+use concerto_reflect::{PropertyVisitor, PropertyVisitorMut, Reflect};
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
@@ -38,7 +38,7 @@ const MAX_LIGHTS: usize = 128;
 /// outside that same tick — resolved to either a real layer index or `-1`.
 const SHADOW_LAYER_REQUESTED: i32 = -2;
 
-#[derive(Component, Editable, Serialize, Deserialize)]
+#[derive(Component, Reflect, Serialize, Deserialize)]
 pub struct Light {
     pub color: Color,
     pub intensity: f32,
@@ -154,7 +154,7 @@ pub enum LightType {
     Directional,
 }
 
-impl Editable for LightType {
+impl Reflect for LightType {
     fn visit(&self, visitor: &mut dyn PropertyVisitor) {
         if let LightType::Spot { cone_angle } = self {
             visitor.field("cone_angle", cone_angle);

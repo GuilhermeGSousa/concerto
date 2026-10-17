@@ -3,7 +3,7 @@ use crate::{
     hosted::{HostedApp, testing::SceneFixture},
     tools::selection::Select,
 };
-use concerto_app::editable::EditableComponents;
+use concerto_app::reflect::ReflectComponents;
 use concerto_ecs::{
     IntoSystem, System,
     component::scene::{SceneComponent, SceneSpawnContext},
@@ -23,9 +23,9 @@ impl Inspecting {
     fn scene(&mut self) -> &mut World {
         self.f.scene_world_mut(self.document)
     }
-    fn editable(&mut self) -> &mut EditableComponents {
+    fn reflect_components(&mut self) -> &mut ReflectComponents {
         self.scene()
-            .get_resource_mut::<EditableComponents>()
+            .get_resource_mut::<ReflectComponents>()
             .unwrap()
     }
     fn select(&mut self, entity: Option<Entity>) {
@@ -193,7 +193,7 @@ fn stacked_names(world: &World, stack: Entity) -> Vec<&'static str> {
 }
 
 #[test]
-fn lists_editable_and_scene_components_as_queryable_cards_and_hides_plumbing() {
+fn lists_reflected_and_scene_components_as_queryable_cards_and_hides_plumbing() {
     let (mut w, entity, stack) = inspecting();
     w.scene().register_component_type::<Tag>();
     w.scene().insert((Tag, Plumbing), entity);
@@ -398,12 +398,12 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
 
 #[test]
 fn unsupported_values_build_an_explicit_read_only_row() {
-    #[derive(Component, concerto_editable::Editable, Default)]
+    #[derive(Component, concerto_reflect::Reflect, Default)]
     struct Unsupported {
         title: String,
     }
     let (mut w, _, _) = inspecting();
-    w.editable().register::<Unsupported>();
+    w.reflect_components().register::<Unsupported>();
     let entity = w.scene().spawn(Unsupported {
         title: "Example".into(),
     });
@@ -431,7 +431,7 @@ fn labels_capitalise_the_field_name() {
 
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
-    use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
+    use concerto_reflect::{PropertyVisitor, PropertyVisitorMut, Reflect};
     #[derive(Component, Default)]
     struct Dynamic {
         reverse: bool,
@@ -439,7 +439,7 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
         a: f32,
         b: f32,
     }
-    impl Editable for Dynamic {
+    impl Reflect for Dynamic {
         fn visit(&self, visitor: &mut dyn PropertyVisitor) {
             if self.reverse && self.show_b {
                 visitor.field("b", &self.b);
@@ -457,7 +457,7 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
         }
     }
     let (mut w, _, _) = inspecting();
-    w.editable().register::<Dynamic>();
+    w.reflect_components().register::<Dynamic>();
     let target = w.scene().spawn(Dynamic {
         reverse: false,
         show_b: true,
@@ -735,14 +735,14 @@ fn inspector_access_blocks_writes_to_the_hosted_app_and_the_widget_registry_only
     assert!(!SystemAccess::are_disjoint(&access, &hosted));
     assert!(!SystemAccess::are_disjoint(&hosted, &access));
     let mut table = SystemAccess::default();
-    table.write_resource::<EditableComponents>();
+    table.write_resource::<ReflectComponents>();
     assert!(
         SystemAccess::are_disjoint(&access, &table),
         "the table it reads is the scene's, not one in the editor's world"
     );
 }
 
-#[derive(Component, concerto_editable::Editable, Default)]
+#[derive(Component, concerto_reflect::Reflect, Default)]
 struct Gain {
     amount: f32,
 }
@@ -750,7 +750,7 @@ struct Gain {
 fn structural() -> (Inspecting, Entity, Entity) {
     use concerto_ecs::events::event_channel::EventChannel;
     let (mut w, entity, stack) = inspecting();
-    w.editable().register::<Gain>();
+    w.reflect_components().register::<Gain>();
     w.f.world
         .insert_resource(EventChannel::<concerto_ui::text_input::UITextInputSubmitted>::default());
     w.update();
@@ -941,14 +941,14 @@ fn the_scene_root_wrapper_shows_no_cards() {
 }
 
 #[test]
-fn inspectable_components_are_edited_and_removed_but_never_added() {
-    #[derive(Component, concerto_editable::Editable)]
+fn readonly_components_are_edited_and_removed_but_never_added() {
+    #[derive(Component, concerto_reflect::Reflect)]
     struct Lens {
         focal: f32,
     }
     let lens = TypeId::of::<Lens>();
     let (mut w, entity, _) = structural();
-    w.editable().register_inspectable::<Lens>();
+    w.reflect_components().register_readonly::<Lens>();
     w.update();
 
     open_add_menu(&mut w.f.world);
@@ -1379,14 +1379,14 @@ mod bool_field {
     use super::*;
     use concerto_ui::checkbox::UICheckbox;
 
-    #[derive(Component, concerto_editable::Editable)]
+    #[derive(Component, concerto_reflect::Reflect)]
     struct Switch {
         on: bool,
     }
 
     fn fixture() -> (Inspecting, Entity) {
         let (mut w, entity, _) = inspecting();
-        w.editable().register_inspectable::<Switch>();
+        w.reflect_components().register_readonly::<Switch>();
         w.scene().insert(Switch { on: false }, entity);
         w.update();
         w.update();

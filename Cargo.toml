@@ -52,8 +52,8 @@ concerto-debug-gizmos = { path = "crates/debug-gizmos", version = "0.1.0" }
 concerto-director = { path = "crates/director", version = "0.1.0" }
 concerto-ecs = { path = "crates/ecs", version = "0.1.0" }
 concerto-ecs-macros = { path = "crates/ecs/macros", version = "0.1.0" }
-concerto-editable = { path = "crates/editable", version = "0.1.0" }
-concerto-editable-macros = { path = "crates/editable/macros", version = "0.1.0" }
+concerto-reflect = { path = "crates/reflect", version = "0.1.0" }
+concerto-reflect-macros = { path = "crates/reflect/macros", version = "0.1.0" }
 concerto-editor = { path = "crates/editor", version = "0.1.0" }
 concerto-foundation = { path = "crates/foundation", version = "0.1.0" }
 concerto-foundation-macros = { path = "crates/foundation/macros", version = "0.1.0" }
@@ -91,7 +91,7 @@ concerto-gameplay.workspace = true
 concerto-window.workspace = true
 concerto-winit.workspace = true
 concerto-ecs.workspace = true
-concerto-editable.workspace = true
+concerto-reflect.workspace = true
 concerto-color.workspace = true
 concerto-ui.workspace = true
 concerto-scene.workspace = true

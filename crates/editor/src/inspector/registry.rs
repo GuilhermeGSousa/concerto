@@ -7,7 +7,7 @@ use std::{
 
 use concerto_app::{
     App,
-    editable::{EditableComponent, EditableComponents},
+    reflect::{ReflectComponent, ReflectComponents},
 };
 use concerto_ecs::{Entity, ResMut, Resource, World, command::CommandQueue, component::Tick};
 use concerto_ecs::{
@@ -20,7 +20,7 @@ use concerto_ecs::{
     },
     world::UnsafeWorldCell,
 };
-use concerto_editable::{Editable, PropertyPath, PropertyVisitor};
+use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
@@ -31,7 +31,7 @@ use crate::tools::edits::CommitProperty;
 
 /// A registered property editor with its value and edit types erased.
 pub trait ErasedEditor: Send + Sync {
-    fn snapshot(&self, value: &dyn Editable) -> Result<PropertyRowValue, EditError>;
+    fn snapshot(&self, value: &dyn Reflect) -> Result<PropertyRowValue, EditError>;
     fn build(
         &self,
         cmd: &mut CommandQueue,
@@ -39,7 +39,7 @@ pub trait ErasedEditor: Send + Sync {
         snapshot: &PropertyRowValue,
         theme: &UITheme,
     ) -> Result<(), EditError>;
-    fn apply(&self, value: &mut dyn Editable, edit: &dyn Any) -> Result<(), EditError>;
+    fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError>;
     fn follows_snapshot(&self) -> bool;
 }
 
@@ -48,8 +48,8 @@ struct Adapter<T, E> {
     marker: PhantomData<fn() -> T>,
 }
 
-impl<T: Editable, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
-    fn snapshot(&self, value: &dyn Editable) -> Result<PropertyRowValue, EditError> {
+impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
+    fn snapshot(&self, value: &dyn Reflect) -> Result<PropertyRowValue, EditError> {
         let value = (value as &dyn Any)
             .downcast_ref::<T>()
             .ok_or(EditError::TypeMismatch)?;
@@ -66,7 +66,7 @@ impl<T: Editable, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
         self.editor.build(cmd, row, snapshot, theme);
         Ok(())
     }
-    fn apply(&self, value: &mut dyn Editable, edit: &dyn Any) -> Result<(), EditError> {
+    fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError> {
         let value = (value as &mut dyn Any)
             .downcast_mut::<T>()
             .ok_or(EditError::TypeMismatch)?;
@@ -103,7 +103,7 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
-    pub fn register_property_editor<T: Editable, E: PropertyEditor<T>>(&mut self, editor: E) {
+    pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self, editor: E) {
         self.editors.insert(
             TypeId::of::<T>(),
             RegisteredEditor {
@@ -121,7 +121,7 @@ impl InspectorRegistry {
     }
 
     /// Collect fresh owned snapshots, preferring an editor for each node over its children.
-    pub fn collect(&self, root: &dyn Editable) -> Vec<Property> {
+    pub fn collect(&self, root: &dyn Reflect) -> Vec<Property> {
         let mut collector = Collect {
             registry: self,
             path: Vec::new(),
@@ -139,12 +139,12 @@ impl InspectorRegistry {
         entity: Entity,
         component: TypeId,
     ) -> Option<Vec<Property>> {
-        let entry = scene.get_resource::<EditableComponents>()?.get(component)?;
+        let entry = scene.get_resource::<ReflectComponents>()?.get(component)?;
         let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
         Some(self.collect_at(registry_tick, value))
     }
 
-    fn collect_at(&self, registry_tick: Tick, root: &dyn Editable) -> Vec<Property> {
+    fn collect_at(&self, registry_tick: Tick, root: &dyn Reflect) -> Vec<Property> {
         let mut properties = self.collect(root);
         for property in &mut properties {
             property.registry_tick = registry_tick;
@@ -160,7 +160,7 @@ struct Collect<'a> {
 }
 
 impl Collect<'_> {
-    fn node(&mut self, value: &dyn Editable) {
+    fn node(&mut self, value: &dyn Reflect) {
         let type_id = (value as &dyn Any).type_id();
         if let Some(editor) = self.registry.editor(type_id) {
             match editor.adapter.snapshot(value) {
@@ -190,7 +190,7 @@ impl Collect<'_> {
 }
 
 impl PropertyVisitor for Collect<'_> {
-    fn field(&mut self, name: &'static str, value: &dyn Editable) {
+    fn field(&mut self, name: &'static str, value: &dyn Reflect) {
         self.path.push(name);
         self.node(value);
         self.path.pop();
@@ -199,7 +199,7 @@ impl PropertyVisitor for Collect<'_> {
 
 pub(super) struct InspectionSource<'w> {
     components: ComponentMetadata<'w>,
-    table: Res<'w, EditableComponents>,
+    table: Res<'w, ReflectComponents>,
 }
 
 impl InspectionSource<'_> {
@@ -225,7 +225,7 @@ impl InspectionSource<'_> {
         })
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
-    pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, EditableComponent)>, usize) {
+    pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, ReflectComponent)>, usize) {
         let present = self.components.component_ids(entity);
         let addable = || {
             self.table
@@ -276,20 +276,20 @@ impl SystemInput for InspectionSource<'_> {
     }
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         ComponentMetadata::fill_access(meta, access);
-        Res::<EditableComponents>::fill_access(meta, access);
+        Res::<ReflectComponents>::fill_access(meta, access);
     }
 }
 impl ReadOnlySystemInput for InspectionSource<'_> {}
 
 pub trait EditableApp {
-    fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
+    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(
         &mut self,
         editor: E,
     ) -> &mut Self;
 }
 
 impl EditableApp for App {
-    fn register_property_editor<T: Editable, E: PropertyEditor<T>>(
+    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(
         &mut self,
         editor: E,
     ) -> &mut Self {
@@ -415,8 +415,8 @@ mod tests {
         }
     }
 
-    fn table() -> EditableComponents {
-        let mut table = EditableComponents::default();
+    fn table() -> ReflectComponents {
+        let mut table = ReflectComponents::default();
         table.register::<Transform>();
         table
     }
@@ -634,7 +634,7 @@ mod tests {
             },
         )
         .unwrap();
-        scene.insert_resource(EditableComponents::default());
+        scene.insert_resource(ReflectComponents::default());
         let commit = checked(&registry, Tick::default(), edit).unwrap();
         assert_eq!(
             commit.apply(&mut scene),

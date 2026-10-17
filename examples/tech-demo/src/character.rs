@@ -23,8 +23,8 @@ use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
     ecs::{CommandQueue, Component, Res},
-    editable::Editable,
     foundation::assets::asset_server::AssetServer,
+    reflect::Reflect,
 };
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -51,7 +51,7 @@ pub(crate) struct Player;
 #[derive(Component)]
 pub(crate) struct AnimationsReady;
 
-#[derive(Component, Editable, Default, Serialize, Deserialize)]
+#[derive(Component, Reflect, Default, Serialize, Deserialize)]
 pub(crate) struct PlayerSpawner {
     should_spawn: bool,
 }

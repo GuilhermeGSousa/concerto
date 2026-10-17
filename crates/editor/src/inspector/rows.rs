@@ -4,13 +4,13 @@ use std::{
 };
 
 use concerto_ecs::{Component, Entity, Resource, command::CommandQueue, component::Tick};
-use concerto_editable::{Editable, PropertyPath};
+use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::theme::UITheme;
 
 pub use crate::tools::edits::{EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
-pub trait PropertyEditor<T: Editable>: Send + Sync + 'static {
+pub trait PropertyEditor<T: Reflect>: Send + Sync + 'static {
     type Snapshot: Clone + PartialEq + Send + Sync + 'static;
     type Edit: Send + Sync + 'static;
 
@@ -43,7 +43,7 @@ pub(crate) struct Snapshot {
 pub struct PropertyRowValue(pub(crate) Option<Snapshot>);
 
 impl PropertyRowValue {
-    pub(crate) fn new<T: Editable, E: PropertyEditor<T>>(value: E::Snapshot) -> Self {
+    pub(crate) fn new<T: Reflect, E: PropertyEditor<T>>(value: E::Snapshot) -> Self {
         Self(Some(Snapshot {
             data: Arc::new(value),
             value_type: TypeId::of::<T>(),
@@ -59,7 +59,7 @@ impl PropertyRowValue {
     }
 
     /// Returns `None` for an unsupported row or a different value/adapter type.
-    pub fn snapshot<T: Editable, E: PropertyEditor<T>>(&self) -> Option<&E::Snapshot> {
+    pub fn snapshot<T: Reflect, E: PropertyEditor<T>>(&self) -> Option<&E::Snapshot> {
         let snapshot = self.0.as_ref()?;
         if snapshot.value_type != TypeId::of::<T>() || snapshot.editor_type != TypeId::of::<E>() {
             return None;
@@ -125,7 +125,7 @@ pub struct PropertyCommit {
 }
 
 impl PropertyCommit {
-    pub fn new<T: Editable, E: PropertyEditor<T>>(
+    pub fn new<T: Reflect, E: PropertyEditor<T>>(
         row: &PropertyRow,
         edit: E::Edit,
     ) -> Result<Self, EditError> {
@@ -147,7 +147,7 @@ impl PropertyCommit {
 pub struct PropertyCommits(pub Vec<PropertyCommit>);
 
 impl PropertyCommits {
-    pub fn push<T: Editable, E: PropertyEditor<T>>(
+    pub fn push<T: Reflect, E: PropertyEditor<T>>(
         &mut self,
         row: &PropertyRow,
         edit: E::Edit,

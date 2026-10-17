@@ -68,7 +68,7 @@ A panel reaches the scene in two ways and no other:
   `Editor<Res<Selection>>`. `T` is any read-only system parameter.
   `Editor<Res<T>>` panics if the scene's world has no `T`, so name only
   resources the tools always insert, such as `Selection` and
-  `EditableComponents`.
+  `ReflectComponents`.
 - `EditorSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
   The listeners run when the system's commands are applied.
 
@@ -212,9 +212,9 @@ document: `SceneEdited`, which marks the scene's document dirty;
 `SceneStatus`, which carries why an edit was refused to Chatter;
 `RevealEntity`, which the hierarchy scrolls to; and `SceneCaptured`, the scene
 as data, which a save writes to disk. The inspector uses typed property adapters. Its "add component" row
-adds any `register_editable` component the entity lacks, at its `Default` value;
-a card's ⋯ menu removes one. `register_inspectable` components, such as `Camera`,
-are edited and removed but never offered.
+adds any `register_reflect` component the entity lacks, at its `Default` value;
+a card's ⋯ menu removes one. `register_reflect_readonly` components, such as
+`Camera`, are edited and removed but never offered.
 
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
 to it, and draws a box around it; clicking empty space clears the selection. A
@@ -241,20 +241,20 @@ Shift-F frames the scene.
 ## Custom property editors
 
 The inspector edits live component values through typed `PropertyEditor<T>`
-adapters. `editable` provides structural access; adapters own snapshots, widgets,
-and validated edits. A registered editor can handle a whole struct or an opaque
-type, and can replace any built-in numeric editor. Snapshots are cached per
+adapters. `concerto-reflect` provides structural access; adapters own snapshots,
+widgets, and validated edits. A registered editor can handle a whole struct or an
+opaque type, and can replace any built-in numeric editor. Snapshots are cached per
 component, with snapshots owned by property-row entities. Component cards carry
 `InspectedComponent` and can be accessed through ordinary ECS queries.
 Unchanged components reuse their snapshots;
 component changes, selection changes, and editor registration changes refresh
 them. Widget input and focused edit buffers continue updating every frame.
 
-Registration is split between the two `App`s. A component is made editable in
+Registration is split between the two `App`s. A component is reflected in
 the scene's `App`, by the plugin that owns it or by the recipe, with
-`App::register_editable` or `App::register_inspectable` from `concerto-app`:
+`App::register_reflect` or `App::register_reflect_readonly` from `concerto-app`:
 `TransformPlugin` registers `Transform`, and `RenderPlugin` registers `Light`
-and `Camera`. Both fill the `EditableComponents` resource, which is part of the
+and `Camera`. Both fill the `ReflectComponents` resource, which is part of the
 engine and needs no editor. The widget is registered on the editor's own
 `App`, through `EditableApp::register_property_editor`, which needs
 `InspectorPlugin` first. A recipe that adds a component of its own looks like
@@ -263,7 +263,7 @@ this:
 ```rust,ignore
 fn recipe(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins);
-    app.register_editable::<Setting>();
+    app.register_reflect::<Setting>();
 }
 ```
 

@@ -1,52 +1,52 @@
 use std::{any::TypeId, collections::HashMap};
 
 use concerto_ecs::{system::input::ComponentMetadata, Component, Entity, Resource, World};
-use concerto_editable::Editable;
+use concerto_reflect::Reflect;
 
 use crate::App;
 
-/// How to read, change, add, and remove one editable component on a world.
+/// How to read, change, add, and remove one reflected component on a world.
 #[derive(Clone, Copy)]
-pub struct EditableComponent {
+pub struct ReflectComponent {
     pub name: &'static str,
-    pub read: for<'w> fn(&ComponentMetadata<'w>, Entity) -> Option<&'w dyn Editable>,
-    pub edit: fn(&mut World, Entity, &mut dyn FnMut(&mut dyn Editable)) -> bool,
+    pub read: for<'w> fn(&ComponentMetadata<'w>, Entity) -> Option<&'w dyn Reflect>,
+    pub edit: fn(&mut World, Entity, &mut dyn FnMut(&mut dyn Reflect)) -> bool,
     pub insert: Option<fn(&mut World, Entity)>,
     pub remove: fn(&mut World, Entity),
 }
 
 /// The components an editor may show and change, registered by the plugins that own them.
 #[derive(Resource, Default)]
-pub struct EditableComponents {
-    components: HashMap<TypeId, EditableComponent>,
+pub struct ReflectComponents {
+    components: HashMap<TypeId, ReflectComponent>,
 }
 
-impl EditableComponents {
+impl ReflectComponents {
     /// Registers a component the editor may also add, at its default value.
-    pub fn register<T: Component + Editable + Default>(&mut self) {
+    pub fn register<T: Component + Reflect + Default>(&mut self) {
         self.insert::<T>(Some(|world, entity| world.insert(T::default(), entity)));
     }
 
     /// Registers a component the editor edits and removes but never offers to add.
-    pub fn register_inspectable<T: Component + Editable>(&mut self) {
+    pub fn register_readonly<T: Component + Reflect>(&mut self) {
         self.insert::<T>(None);
     }
 
-    pub fn get(&self, id: TypeId) -> Option<EditableComponent> {
+    pub fn get(&self, id: TypeId) -> Option<ReflectComponent> {
         self.components.get(&id).copied()
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = (TypeId, EditableComponent)> + '_ {
+    pub fn iter(&self) -> impl Iterator<Item = (TypeId, ReflectComponent)> + '_ {
         self.components
             .iter()
             .map(|(&id, &component)| (id, component))
     }
 
-    fn insert<T: Component + Editable>(&mut self, insert: Option<fn(&mut World, Entity)>) {
+    fn insert<T: Component + Reflect>(&mut self, insert: Option<fn(&mut World, Entity)>) {
         let path = std::any::type_name::<T>();
         self.components.insert(
             TypeId::of::<T>(),
-            EditableComponent {
+            ReflectComponent {
                 name: path.rsplit("::").next().unwrap_or(path),
                 read: read::<T>,
                 edit: edit::<T>,
@@ -57,19 +57,19 @@ impl EditableComponents {
     }
 }
 
-fn read<'w, T: Component + Editable>(
+fn read<'w, T: Component + Reflect>(
     components: &ComponentMetadata<'w>,
     entity: Entity,
-) -> Option<&'w dyn Editable> {
+) -> Option<&'w dyn Reflect> {
     components
         .get::<T>(entity)
-        .map(|value| value as &dyn Editable)
+        .map(|value| value as &dyn Reflect)
 }
 
-fn edit<T: Component + Editable>(
+fn edit<T: Component + Reflect>(
     world: &mut World,
     entity: Entity,
-    visit: &mut dyn FnMut(&mut dyn Editable),
+    visit: &mut dyn FnMut(&mut dyn Reflect),
 ) -> bool {
     let Some(value) = world.get_component_for_entity_mut::<T>(entity) else {
         return false;
@@ -80,23 +80,23 @@ fn edit<T: Component + Editable>(
 
 impl App {
     /// Registers a component the editor may show, change, add, and remove.
-    pub fn register_editable<T: Component + Editable + Default>(&mut self) -> &mut Self {
-        self.editable_components().register::<T>();
+    pub fn register_reflect<T: Component + Reflect + Default>(&mut self) -> &mut Self {
+        self.reflect_components().register::<T>();
         self
     }
 
     /// Registers a component the editor may show, change, and remove, but not add.
-    pub fn register_inspectable<T: Component + Editable>(&mut self) -> &mut Self {
-        self.editable_components().register_inspectable::<T>();
+    pub fn register_reflect_readonly<T: Component + Reflect>(&mut self) -> &mut Self {
+        self.reflect_components().register_readonly::<T>();
         self
     }
 
-    fn editable_components(&mut self) -> &mut EditableComponents {
+    fn reflect_components(&mut self) -> &mut ReflectComponents {
         let world = self.main_mut().world_mut();
-        if world.get_resource::<EditableComponents>().is_none() {
-            world.insert_resource(EditableComponents::default());
+        if world.get_resource::<ReflectComponents>().is_none() {
+            world.insert_resource(ReflectComponents::default());
         }
-        world.get_resource_mut::<EditableComponents>().unwrap()
+        world.get_resource_mut::<ReflectComponents>().unwrap()
     }
 }
 
@@ -105,16 +105,16 @@ mod tests {
     use super::*;
     use crate::{plugins::TransformPlugin, App};
     use concerto_ecs::{system::input::ComponentMetadata, Component};
-    use concerto_editable::Editable;
     use concerto_foundation::transform::Transform;
+    use concerto_reflect::Reflect;
     use std::any::TypeId;
 
-    #[derive(Component, Editable, Default)]
+    #[derive(Component, Reflect, Default)]
     struct Health {
         points: f32,
     }
 
-    #[derive(Component, Editable)]
+    #[derive(Component, Reflect)]
     struct Lens {
         length: f32,
     }
@@ -126,7 +126,7 @@ mod tests {
             .register_plugin(crate::plugins::TimePlugin)
             .register_plugin(TransformPlugin);
 
-        let table = app.get_resource::<EditableComponents>().unwrap();
+        let table = app.get_resource::<ReflectComponents>().unwrap();
         let entry = table.get(TypeId::of::<Transform>()).unwrap();
         assert_eq!(entry.name, "Transform");
         assert!(entry.insert.is_some());
@@ -135,10 +135,10 @@ mod tests {
     #[test]
     fn a_recipe_registers_its_own_components() {
         let mut app = App::new();
-        app.register_editable::<Health>()
-            .register_inspectable::<Lens>();
+        app.register_reflect::<Health>()
+            .register_reflect_readonly::<Lens>();
 
-        let table = app.get_resource::<EditableComponents>().unwrap();
+        let table = app.get_resource::<ReflectComponents>().unwrap();
         assert!(table.get(TypeId::of::<Health>()).unwrap().insert.is_some());
         assert!(table.get(TypeId::of::<Lens>()).unwrap().insert.is_none());
     }
@@ -146,9 +146,9 @@ mod tests {
     #[test]
     fn an_entry_reads_edits_inserts_and_removes_its_component() {
         let mut app = App::new();
-        app.register_editable::<Health>();
+        app.register_reflect::<Health>();
         let entry = app
-            .get_resource::<EditableComponents>()
+            .get_resource::<ReflectComponents>()
             .unwrap()
             .get(TypeId::of::<Health>())
             .unwrap();

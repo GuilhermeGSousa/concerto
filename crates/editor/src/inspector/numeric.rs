@@ -1,7 +1,7 @@
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
 };
-use concerto_editable::Editable;
+use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusGained, UIFocusLost},
@@ -38,7 +38,7 @@ pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistr
     registry.register_property_editor::<Quat, _>(NumericFields);
 }
 
-pub(crate) trait NumericValue: Editable {
+pub(crate) trait NumericValue: Reflect {
     fn numbers(&self) -> NumericSnapshot;
     fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError>;
 }

@@ -1,5 +1,5 @@
 [package]
-name = "concerto-editable-macros"
+name = "concerto-reflect-macros"
 version.workspace = true
 edition = "2024"
 description.workspace = true

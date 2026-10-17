@@ -26,7 +26,7 @@ pub fn game(app: &mut App) {
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
         .register_scene_component::<PlayerSpawner>()
-        .register_editable::<PlayerSpawner>();
+        .register_reflect::<PlayerSpawner>();
 
     app.add_system(Update, spawn_character)
         .add_system(Startup, spawn_grounded_overlay)
@@ -41,14 +41,14 @@ mod tests {
     use std::any::TypeId;
 
     use concerto::{
-        app::{StartupScene, editable::EditableComponents},
+        app::{StartupScene, reflect::ReflectComponents},
         asset_id,
     };
 
     use crate::{character::PlayerSpawner, game};
 
     #[test]
-    fn the_recipe_declares_the_forest_and_makes_the_spawner_editable() {
+    fn the_recipe_declares_the_forest_and_registers_the_spawner_for_reflection() {
         let Some(app) = concerto::headless(game) else {
             return;
         };
@@ -58,8 +58,8 @@ mod tests {
             Some(&StartupScene(asset_id!("content/forest/scene.gasset")))
         );
         let spawner = app
-            .get_resource::<EditableComponents>()
-            .and_then(|editable| editable.get(TypeId::of::<PlayerSpawner>()));
+            .get_resource::<ReflectComponents>()
+            .and_then(|reflected| reflected.get(TypeId::of::<PlayerSpawner>()));
         assert!(spawner.is_some_and(|spawner| spawner.insert.is_some()));
     }
 }
@@ -68,12 +68,12 @@ mod tests {
 mod derives {
     use concerto::{
         ecs::{Component, Event, Resource, SystemSet, SystemTag, system::schedule::ScheduleLabel},
-        editable::Editable,
         foundation::assets::{Asset, handle::AssetHandle},
+        reflect::Reflect,
         render::{AsBindGroup, assets::texture::Texture},
     };
 
-    #[derive(Component, Editable, Default)]
+    #[derive(Component, Reflect, Default)]
     struct Health {
         value: f32,
     }
