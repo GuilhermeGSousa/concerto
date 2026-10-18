@@ -1453,7 +1453,7 @@ mod tests {
             state
                 .rows()
                 .iter()
-                .all(|row| hosted.world().entity_is_valid(row.scene_entity))
+                .all(|row| hosted.world_for_test().entity_is_valid(row.scene_entity))
         );
     }
 

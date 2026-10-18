@@ -78,8 +78,13 @@ impl HostedApp {
             .is_some_and(|dirty| dirty.0)
     }
 
-    pub(crate) fn world(&self) -> &World {
+    fn world(&self) -> &World {
         self.app.main().world()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn world_for_test(&self) -> &World {
+        self.world()
     }
 
     pub(crate) fn push(&mut self, event: WindowEvent) {

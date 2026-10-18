@@ -584,7 +584,7 @@ mod tests {
             .get_component_for_entity::<HostedApp>(document)
             .unwrap();
         assert_eq!(
-            hosted.world().get_resource::<Sent>().unwrap().0,
+            hosted.world_for_test().get_resource::<Sent>().unwrap().0,
             ["rotate", "translate", "frame selection", "frame all"]
         );
     }

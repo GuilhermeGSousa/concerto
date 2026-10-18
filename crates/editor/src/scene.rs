@@ -681,7 +681,7 @@ mod tests {
         f.world
             .get_component_for_entity::<HostedApp>(document)
             .unwrap()
-            .world()
+            .world_for_test()
             .id()
     }
 
@@ -872,7 +872,7 @@ mod tests {
                 recipe: plain_recipe,
             });
         let old = hosted_now(plain_recipe, |_| {});
-        let before = old.world().id();
+        let before = old.world_for_test().id();
         let world = app.main_mut().world_mut();
         let document = world.spawn((
             EditorDocument {
@@ -911,7 +911,7 @@ mod tests {
                 world
                     .get_component_for_entity::<HostedApp>(document)
                     .unwrap()
-                    .world()
+                    .world_for_test()
                     .id(),
                 before
             );
