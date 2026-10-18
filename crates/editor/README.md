@@ -64,12 +64,12 @@ open scene: <panic message>", as a failed load does.
 
 A panel reaches the scene in two ways and no other:
 
-- `Editor<T>` reads the edit `App`'s world: `Editor<Query<&Name>>`,
-  `Editor<Res<Selection>>`. `T` is any read-only system parameter.
-  `Editor<Res<T>>` skips its system with a warning on every frame the scene's
+- `EditWorld<T>` reads the edit `App`'s world: `EditWorld<Query<&Name>>`,
+  `EditWorld<Res<Selection>>`. `T` is any read-only system parameter.
+  `EditWorld<Res<T>>` skips its system with a warning on every frame the scene's
   world has no `T`, so name only resources the tools always insert, such as
   `Selection` and `ReflectComponents`.
-- `EditorSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
+- `EditWorldSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
   The listeners run when the system's commands are applied.
 
 Both reach the document marked `EditTarget`: the front tab's scene, once it
@@ -78,8 +78,8 @@ marker, which includes while its game is starting. While the game plays, both
 reach the running game's world instead of the scene's. Code changes the target
 only by triggering `SetEditTarget`; its listener moves the marker. A panel
 therefore keeps what it shows in a resource of its own, fills it in a system
-that takes `Editor<T>`, and empties it in an `On<Remove<EditTarget>>` listener.
-`has_changed()` and `Changed<T>` mean nothing through `Editor<T>`; the two
+that takes `EditWorld<T>`, and empties it in an `On<Remove<EditTarget>>` listener.
+`has_changed()` and `Changed<T>` mean nothing through `EditWorld<T>`; the two
 worlds keep separate clocks.
 
 An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
@@ -203,7 +203,7 @@ The scene root can be given children but not deleted, duplicated, or renamed.
 A duplicate fails when the entity refers to something outside itself, such as a
 skinned mesh copied without its bones; Chatter says why.
 
-Panels change the scene only by triggering signals through `EditorSignals`,
+Panels change the scene only by triggering signals through `EditWorldSignals`,
 for example `scene.trigger(EntityEdit::Delete(entity))` or
 `scene.trigger(Select(Some(entity)))`. The scene tools in `src/tools/` own the
 listeners: one applies each kind of edit and moves the selection. The tools

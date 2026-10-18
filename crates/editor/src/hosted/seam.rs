@@ -41,11 +41,11 @@ fn read_edit_target(access: &mut SystemAccess) {
 }
 
 /// Reads the edit target's main world. The system is skipped while no document is the edit target.
-pub struct Editor<'world, 'state, T: ReadOnlySystemInput + 'static>(
+pub struct EditWorld<'world, 'state, T: ReadOnlySystemInput + 'static>(
     SystemInputData<'world, 'state, T>,
 );
 
-impl<'world, 'state, T: ReadOnlySystemInput + 'static> Deref for Editor<'world, 'state, T> {
+impl<'world, 'state, T: ReadOnlySystemInput + 'static> Deref for EditWorld<'world, 'state, T> {
     type Target = SystemInputData<'world, 'state, T>;
 
     fn deref(&self) -> &Self::Target {
@@ -53,36 +53,36 @@ impl<'world, 'state, T: ReadOnlySystemInput + 'static> Deref for Editor<'world, 
     }
 }
 
-impl<T: ReadOnlySystemInput + 'static> DerefMut for Editor<'_, '_, T> {
+impl<T: ReadOnlySystemInput + 'static> DerefMut for EditWorld<'_, '_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.0
     }
 }
 
 /// An [`Editor`] parameter's state, rebuilt from its first form whenever the edit target is another world.
-pub struct EditorState<S> {
+pub struct EditWorldState<S> {
     targets: Targets,
     built_for: Option<WorldId>,
     first: S,
     current: S,
 }
 
-impl<S> EditorState<S> {
+impl<S> EditWorldState<S> {
     fn for_world(&self, scene: &World) -> Option<&S> {
         (self.built_for == Some(scene.id())).then_some(&self.current)
     }
 }
 
-impl<T: ReadOnlySystemInput + 'static> SystemInput for Editor<'_, '_, T>
+impl<T: ReadOnlySystemInput + 'static> SystemInput for EditWorld<'_, '_, T>
 where
     T::State: Clone,
 {
-    type State = EditorState<T::State>;
-    type Data<'world, 'state> = Editor<'world, 'state, T>;
+    type State = EditWorldState<T::State>;
+    type Data<'world, 'state> = EditWorld<'world, 'state, T>;
 
     fn init_state(world: &mut World) -> Self::State {
         let first = T::init_state(world);
-        EditorState {
+        EditWorldState {
             targets: world.query(),
             built_for: None,
             current: first.clone(),
@@ -103,7 +103,7 @@ where
         }
         // SAFETY: the scene's world belongs to its hosted `App`, which no system runs while the
         // editor's systems do, and `T` only reads it.
-        unsafe { T::get_data(&mut state.current, scene.as_unsafe_world_cell()) }.map(Editor)
+        unsafe { T::get_data(&mut state.current, scene.as_unsafe_world_cell()) }.map(EditWorld)
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -111,7 +111,7 @@ where
     }
 }
 
-impl<T: ReadOnlySystemInput + 'static> ReadOnlySystemInput for Editor<'_, '_, T> where
+impl<T: ReadOnlySystemInput + 'static> ReadOnlySystemInput for EditWorld<'_, '_, T> where
     T::State: Clone
 {
 }
@@ -126,11 +126,11 @@ pub struct SignalQueue {
 }
 
 /// Sends signals to the edit target. The system is skipped while no document is the edit target.
-pub struct EditorSignals<'state> {
+pub struct EditWorldSignals<'state> {
     queue: &'state mut SignalQueue,
 }
 
-impl EditorSignals<'_> {
+impl EditWorldSignals<'_> {
     /// Queues `signal`; its listeners run in the edit target when this system's commands are applied.
     pub fn trigger<S: Signal>(&mut self, signal: S) {
         self.queue
@@ -139,9 +139,9 @@ impl EditorSignals<'_> {
     }
 }
 
-impl SystemInput for EditorSignals<'_> {
+impl SystemInput for EditWorldSignals<'_> {
     type State = SignalQueue;
-    type Data<'world, 'state> = EditorSignals<'state>;
+    type Data<'world, 'state> = EditWorldSignals<'state>;
 
     fn init_state(world: &mut World) -> Self::State {
         SignalQueue {
@@ -165,7 +165,7 @@ impl SystemInput for EditorSignals<'_> {
         if target.is_none() {
             return Err(no_edit_target::<Self>());
         }
-        Ok(EditorSignals { queue: state })
+        Ok(EditWorldSignals { queue: state })
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -228,7 +228,7 @@ mod tests {
     }
 
     fn read_markers(
-        markers: Editor<Query<&Marker>>,
+        markers: EditWorld<Query<&Marker>>,
         mut seen: ResMut<Seen>,
         mut runs: ResMut<Runs>,
     ) {
@@ -274,7 +274,7 @@ mod tests {
     #[derive(Resource)]
     struct NotInTheScene;
 
-    fn read_missing(_: Editor<Res<NotInTheScene>>, mut runs: ResMut<Runs>) {
+    fn read_missing(_: EditWorld<Res<NotInTheScene>>, mut runs: ResMut<Runs>) {
         runs.0 += 1;
     }
 
@@ -433,7 +433,7 @@ mod tests {
     #[derive(Resource, Default)]
     struct FramesSeen(Vec<usize>);
 
-    fn read_frames(frames: Editor<Res<Frames>>, mut seen: ResMut<FramesSeen>) {
+    fn read_frames(frames: EditWorld<Res<Frames>>, mut seen: ResMut<FramesSeen>) {
         let frames: &Frames = &frames;
         seen.0.push(frames.0);
     }
@@ -502,16 +502,16 @@ mod tests {
         world.get_resource_mut::<Hearing>().unwrap().0 = Some(system);
     }
 
-    fn say_five(mut scene: EditorSignals) {
+    fn say_five(mut scene: EditWorldSignals) {
         scene.trigger(Say(5));
     }
 
-    fn count_and_say(mut scene: EditorSignals, mut runs: ResMut<Runs>) {
+    fn count_and_say(mut scene: EditWorldSignals, mut runs: ResMut<Runs>) {
         runs.0 += 1;
         scene.trigger(Say(5));
     }
 
-    fn say_one_two_three(mut scene: EditorSignals) {
+    fn say_one_two_three(mut scene: EditWorldSignals) {
         scene.trigger(Say(1));
         scene.trigger(Say(2));
         scene.trigger(Say(3));
@@ -612,7 +612,7 @@ mod tests {
     struct Poke(u32);
     impl Signal for Poke {}
 
-    fn say_when_poked(on: On<Poke>, mut scene: EditorSignals) {
+    fn say_when_poked(on: On<Poke>, mut scene: EditWorldSignals) {
         scene.trigger(Say(on.signal().0));
     }
 
@@ -718,8 +718,8 @@ mod tests {
         let mut writer = SystemAccess::default();
         writer.write_component::<HostedApp>();
 
-        assert!(conflict(&access_of::<Editor<Query<&Marker>>>(), &writer));
-        assert!(conflict(&access_of::<EditorSignals>(), &writer));
+        assert!(conflict(&access_of::<EditWorld<Query<&Marker>>>(), &writer));
+        assert!(conflict(&access_of::<EditWorldSignals>(), &writer));
     }
 
     #[test]
@@ -727,14 +727,14 @@ mod tests {
         let mut writer = SystemAccess::default();
         writer.write_component::<crate::hosted::EditTarget>();
 
-        assert!(conflict(&access_of::<Editor<Query<&Marker>>>(), &writer));
-        assert!(conflict(&access_of::<EditorSignals>(), &writer));
+        assert!(conflict(&access_of::<EditWorld<Query<&Marker>>>(), &writer));
+        assert!(conflict(&access_of::<EditWorldSignals>(), &writer));
     }
 
     #[test]
     fn systems_that_read_the_edit_target_can_run_in_parallel() {
-        let markers = access_of::<Editor<Query<&Marker>>>();
-        let frames = access_of::<Editor<Res<Frames>>>();
+        let markers = access_of::<EditWorld<Query<&Marker>>>();
+        let frames = access_of::<EditWorld<Res<Frames>>>();
 
         assert!(parallel(&markers, &markers));
         assert!(parallel(&markers, &frames));
@@ -746,14 +746,14 @@ mod tests {
         writer.write_component::<Marker>();
         writer.write_resource::<Frames>();
 
-        assert!(parallel(&access_of::<Editor<Query<&Marker>>>(), &writer));
-        assert!(parallel(&access_of::<Editor<Res<Frames>>>(), &writer));
+        assert!(parallel(&access_of::<EditWorld<Query<&Marker>>>(), &writer));
+        assert!(parallel(&access_of::<EditWorld<Res<Frames>>>(), &writer));
     }
 
     #[test]
     fn only_the_signalling_parameter_needs_a_sync_point() {
-        assert!(!access_of::<Editor<Query<&Marker>>>().needs_apply());
-        assert!(access_of::<EditorSignals>().needs_apply());
+        assert!(!access_of::<EditWorld<Query<&Marker>>>().needs_apply());
+        assert!(access_of::<EditWorldSignals>().needs_apply());
     }
 
     #[derive(Resource, Default)]

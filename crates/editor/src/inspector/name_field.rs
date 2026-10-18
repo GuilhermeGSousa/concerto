@@ -48,11 +48,11 @@ pub(super) fn update_name_field(
     mut cancelled: EventReader<UITextInputCancelled>,
     mut gained: EventReader<UIFocusGained>,
     data: Res<InspectorData>,
-    names: Editor<Query<&Name>>,
+    names: EditWorld<Query<&Name>>,
     fields: Query<(Entity, &mut NameField, &mut UITextInput, &mut UINode)>,
     mut focused: ResMut<FocusedWidget>,
     mut focus_request: ResMut<FocusNameField>,
-    mut scene: EditorSignals,
+    mut scene: EditWorldSignals,
 ) {
     let Some((entity, mut field, mut input, mut node)) = fields.iter().next() else {
         return;

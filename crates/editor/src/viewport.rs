@@ -27,7 +27,7 @@ use crate::actions::{FrameAll, FrameSelected, GizmoRotate, GizmoTranslate, Viewp
 use crate::asset_editor::ActiveEditor;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::hosted::{
-    EditorSignals, HostedApp,
+    EditWorldSignals, HostedApp,
     input::{InputOwner, ViewportShown, ViewportView},
 };
 use crate::tools::{
@@ -206,7 +206,7 @@ fn sync_viewport_context(
     }
 }
 
-fn viewport_shortcuts(mut fired: EventReader<ActionFired>, mut scene: EditorSignals) {
+fn viewport_shortcuts(mut fired: EventReader<ActionFired>, mut scene: EditWorldSignals) {
     for action in fired.read() {
         if action.is(GizmoTranslate) {
             scene.trigger(SetGizmoMode(GizmoMode::Translate));

@@ -86,8 +86,8 @@ code they describe changes.
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
 an extract system, `Extracted`. In the editor crate a system may also take
-`Editor<T>`, which reads the world of the scene being edited, or of the running
-game while playing, and `EditorSignals`, which sends signals to it. Both skip
+`EditWorld<T>`, which reads the world of the scene being edited, or of the running
+game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
 the system while no document is the edit target: no scene is open, or its game
 is starting. Nothing
 else reaches that world. Do not write a system that takes `&World` or

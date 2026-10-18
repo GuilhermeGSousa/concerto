@@ -11,7 +11,7 @@ use concerto_ecs::{
     events::event_reader::EventReader,
     signal::{On, Signal},
 };
-use concerto_editor::hosted::{Editor, Hosted, HostedEventsAppExt, trigger_on};
+use concerto_editor::hosted::{EditWorld, Hosted, HostedEventsAppExt, trigger_on};
 use concerto_editor::inspector::{
     ComponentEdit, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRow, PropertyRowValue,
@@ -62,9 +62,9 @@ struct Seen {
 }
 
 fn look(
-    containers: Editor<Query<(Entity, &Container)>>,
-    settings: Editor<Query<(Entity, &Setting)>>,
-    selection: Editor<Res<Selection>>,
+    containers: EditWorld<Query<(Entity, &Container)>>,
+    settings: EditWorld<Query<(Entity, &Setting)>>,
+    selection: EditWorld<Res<Selection>>,
     mut seen: ResMut<Seen>,
 ) {
     seen.containers = containers

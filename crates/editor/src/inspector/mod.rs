@@ -23,7 +23,7 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::hosted::{EditTarget, Editor, EditorSignals};
+use crate::hosted::{EditTarget, EditWorld, EditWorldSignals};
 use crate::tools::{scene::SceneRoot, selection::Selection};
 
 mod add_component;
@@ -149,7 +149,7 @@ fn forget_scene(
     }
 }
 
-fn send_component_edits(mut edits: ResMut<ComponentEdits>, mut scene: EditorSignals) {
+fn send_component_edits(mut edits: ResMut<ComponentEdits>, mut scene: EditWorldSignals) {
     if edits.0.is_empty() {
         return;
     }
@@ -159,8 +159,8 @@ fn send_component_edits(mut edits: ResMut<ComponentEdits>, mut scene: EditorSign
 }
 
 pub(crate) fn collect_inspector_data(
-    selection: Editor<Res<Selection>>,
-    selected: Editor<Query<Option<&SceneRoot>>>,
+    selection: EditWorld<Res<Selection>>,
+    selected: EditWorld<Query<Option<&SceneRoot>>>,
     mut current: ResMut<InspectorData>,
 ) {
     let mut data = InspectorData::default();

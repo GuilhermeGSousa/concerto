@@ -35,7 +35,7 @@ pub(super) fn forget_scene(
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_inspected_components(
-    source: Editor<InspectionSource>,
+    source: EditWorld<InspectionSource>,
     registry: Res<InspectorRegistry>,
     data: Res<InspectorData>,
     theme: Res<UITheme>,

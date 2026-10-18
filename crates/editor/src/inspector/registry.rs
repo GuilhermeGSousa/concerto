@@ -26,7 +26,7 @@ use concerto_ui::theme::UITheme;
 use super::rows::{
     EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
 };
-use crate::hosted::EditorSignals;
+use crate::hosted::EditWorldSignals;
 use crate::tools::edits::CommitProperty;
 
 /// A registered property editor with its value and edit types erased.
@@ -328,7 +328,7 @@ fn checked(
 pub(super) fn send_property_commits(
     mut commits: ResMut<PropertyCommits>,
     registry: Res<InspectorRegistry>,
-    mut scene: EditorSignals,
+    mut scene: EditWorldSignals,
 ) {
     if commits.0.is_empty() {
         return;

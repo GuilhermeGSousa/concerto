@@ -38,7 +38,7 @@ use super::{
     HostRequest, HostRole, Hosted, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp, PlayState,
     events::forward_events,
     input::{HostCursor, Routing, ViewportShown, ViewportView},
-    seam::EditorSignals,
+    seam::EditWorldSignals,
     target::SetEditTarget,
 };
 use crate::{
@@ -495,7 +495,7 @@ impl SceneFixture {
 
     pub(crate) fn signal<S: Signal>(&mut self, signal: S) {
         let mut signal = Some(signal);
-        let mut system = (move |mut scene: EditorSignals| {
+        let mut system = (move |mut scene: EditWorldSignals| {
             if let Some(signal) = signal.take() {
                 scene.trigger(signal);
             }

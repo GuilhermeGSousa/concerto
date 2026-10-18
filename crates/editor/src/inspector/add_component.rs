@@ -224,7 +224,7 @@ pub(super) fn clear_add_component_search(
 
 /// Rebuilds the open menu's list when the target, the registry or the search text changes.
 pub(super) fn populate_add_component_menu(
-    source: Editor<InspectionSource>,
+    source: EditWorld<InspectionSource>,
     registry: Res<InspectorRegistry>,
     data: Res<InspectorData>,
     theme: Res<UITheme>,

@@ -32,7 +32,7 @@ use concerto_window::{
 };
 
 pub use events::{Hosted, HostedAppEvents, HostedEventsAppExt};
-pub use seam::{Editor, EditorSignals};
+pub use seam::{EditWorld, EditWorldSignals};
 pub use target::{EditTarget, SetEditTarget};
 
 pub const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;

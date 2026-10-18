@@ -152,7 +152,7 @@ size and input into it. An edit `App` that is not stepped still
 takes signals, which is how a tab that is not in front is saved.
 
 Panels reach the edit `App`, or the play `App` while playing, through two
-system parameters: `Editor<T>` reads its world, and `EditorSignals` triggers
+system parameters: `EditWorld<T>` reads its world, and `EditWorldSignals` triggers
 signals such as `EntityEdit` and `Select` in it. The scene tools in
 `crates/editor/src/tools/` apply each change and report back through the
 `SceneEdited`, `SceneStatus`, and `RevealEntity` events. A `forward_events::<E>`

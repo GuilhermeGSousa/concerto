@@ -660,7 +660,7 @@ mod tests {
     use crate::{
         asset_editor::{AssetEditorCommand, AssetEditorCommands},
         hosted::{
-            EditorSignals, PlayState,
+            EditWorldSignals, PlayState,
             testing::{SceneFixture, scene_entry, write_scene_file},
         },
         inspector::InspectorData,
@@ -706,7 +706,7 @@ mod tests {
         let mut f = SceneFixture::new();
         let document = f.open();
         let first = f.scene_entity(document, "first");
-        fn rename(mut scene: EditorSignals, target: Res<RenameTarget>) {
+        fn rename(mut scene: EditWorldSignals, target: Res<RenameTarget>) {
             scene.trigger(EntityEdit::Rename {
                 entity: target.0,
                 name: "renamed".into(),

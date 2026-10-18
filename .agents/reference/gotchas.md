@@ -30,7 +30,7 @@ fix the entry in the same commit as the change that made it false.
   input declines through `SystemInput::get_data`, which returns a
   `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter` and
   `Extracted` decline as `Missing`, which logs a warning on every skipped run;
-  `Editor<T>` and `EditorSignals` decline as `Skip`, which is silent. A warning
+  `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
   flood in the log names the system and the missing type. Use `Option<Res<T>>`
   where absence is normal.
 - **`Added<T>` and `Changed<T>` read `T`.** A query filtered by them conflicts
@@ -112,7 +112,7 @@ fix the entry in the same commit as the change that made it false.
 - **Hosted events arrive in the editor a frame after a signal wrote them.**
   `forward_events::<E>` runs in `First`, after the hosted step. An event written
   during the step reaches `EventReader<Hosted<E>>` systems in the same frame;
-  one written by a signal (`EditorSignals`, `hosted::trigger_on`) arrives on the
+  one written by a signal (`EditWorldSignals`, `hosted::trigger_on`) arrives on the
   next frame. Decisions that must not lag, such as Play's "save first", read
   the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event.
 - **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
@@ -123,11 +123,11 @@ fix the entry in the same commit as the change that made it false.
   `App` finishes building.
 - **Change detection does not cross the seam.** `has_changed()` and
   `Changed<T>` compare against the tick of the world they are read in. Through
-  `Editor<T>` they give no usable answer; a panel learns of a change from a
+  `EditWorld<T>` they give no usable answer; a panel learns of a change from a
   `Hosted<E>` event.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
-  looked up through `Editor<…>`.
+  looked up through `EditWorld<…>`.
 - **Tools run in the edit `App`.** A system added to the editor `App` never
   sees a scene entity, and a component used only by tools must be registered
   there for its hooks to fire. A tool's system or listener must be marked
@@ -136,7 +136,7 @@ fix the entry in the same commit as the change that made it false.
   so nothing from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
-- **`Editor<T>` and `EditorSignals` skip their system** while no document
+- **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
   has `EditTarget`: no scene is open in the front tab, or its game is
   starting. Whatever such a system drew stays on screen unless an
   `On<Remove<EditTarget>>` listener empties it. A skipped system does not

@@ -6,7 +6,7 @@ use crate::actions::{
 use crate::asset_editor::{ActiveEditor, EditorDocument};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{glyph, icon};
-use crate::hosted::{EditTarget, Editor, EditorSignals, PlayState};
+use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState};
 use crate::inspector::FocusNameField;
 use crate::marks::{self, Mark};
 use crate::scene::SceneState;
@@ -429,12 +429,12 @@ fn playing(active: &ActiveEditor, states: &Query<&PlayState>) -> bool {
 
 fn add_entity(
     on: On<UIClick>,
-    selection: Editor<Res<Selection>>,
-    roots: Editor<Query<(Entity, &SceneRoot)>>,
-    entities: Editor<Query<Entity>>,
+    selection: EditWorld<Res<Selection>>,
+    roots: EditWorld<Query<(Entity, &SceneRoot)>>,
+    entities: EditWorld<Query<Entity>>,
     active: Res<ActiveEditor>,
     states: Query<&PlayState>,
-    mut scene: EditorSignals,
+    mut scene: EditWorldSignals,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
@@ -460,7 +460,7 @@ fn press_row_menu_item(
     items: Query<&RowMenuItem>,
     menus: Query<(&RowMenu, &mut UIAnchoredPanel)>,
     mut focus_name: ResMut<FocusNameField>,
-    mut scene: EditorSignals,
+    mut scene: EditWorldSignals,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
@@ -485,9 +485,9 @@ fn press_row_menu_item(
 
 fn entity_shortcuts(
     mut fired: EventReader<ActionFired>,
-    selection: Editor<Res<Selection>>,
+    selection: EditWorld<Res<Selection>>,
     mut focus_name: ResMut<FocusNameField>,
-    mut scene: EditorSignals,
+    mut scene: EditWorldSignals,
 ) {
     for action in fired.read() {
         let Some(entity) = selection.entity() else {
@@ -504,7 +504,7 @@ fn entity_shortcuts(
 }
 
 fn sync_row_menu_items(
-    roots: Editor<Query<&SceneRoot>>,
+    roots: EditWorld<Query<&SceneRoot>>,
     menus: Query<&RowMenu>,
     items: Query<(Entity, &RowMenuItem, Option<&UIDisabled>)>,
     mut cmd: CommandQueue,
@@ -525,11 +525,11 @@ fn sync_row_menu_items(
 }
 
 pub(crate) fn rebuild_rows(
-    roots: Editor<Query<(Entity, &SceneRoot)>>,
-    top_level: Editor<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
-    children: Editor<Query<&Children>>,
-    parents: Editor<Query<&ChildOf>>,
-    names: Editor<Query<&Name>>,
+    roots: EditWorld<Query<(Entity, &SceneRoot)>>,
+    top_level: EditWorld<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
+    children: EditWorld<Query<&Children>>,
+    parents: EditWorld<Query<&ChildOf>>,
+    names: EditWorld<Query<&Name>>,
     active: Res<ActiveEditor>,
     states: Query<&PlayState>,
     mut state: ResMut<HierarchyState>,
@@ -660,7 +660,7 @@ fn select_row(slot: usize) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            state: Res<HierarchyState>,
            menus: Query<(&mut RowMenu, &mut UIAnchoredPanel)>,
-           mut scene: EditorSignals| {
+           mut scene: EditWorldSignals| {
         let Some(row) = state.row(slot) else {
             return;
         };
@@ -710,8 +710,8 @@ fn sync_tree_context(
 fn keyboard_tree(
     mut actions: EventReader<ActionFired>,
     mut state: ResMut<HierarchyState>,
-    selection: Editor<Res<Selection>>,
-    mut scene: EditorSignals,
+    selection: EditWorld<Res<Selection>>,
+    mut scene: EditWorldSignals,
 ) {
     if state.rows.is_empty() {
         return;
@@ -783,13 +783,13 @@ fn sync_disabled(
 
 #[allow(clippy::too_many_arguments)]
 fn describe_rows(
-    selection: Editor<Res<Selection>>,
-    names: Editor<Query<&Name>>,
-    roots: Editor<Query<&SceneRoot>>,
-    children: Editor<Query<&Children>>,
-    cameras: Editor<Query<&concerto_render::components::camera::Camera>>,
-    lights: Editor<Query<&concerto_render::components::light::Light>>,
-    meshes: Editor<Query<&concerto_mesh::MeshComponent>>,
+    selection: EditWorld<Res<Selection>>,
+    names: EditWorld<Query<&Name>>,
+    roots: EditWorld<Query<&SceneRoot>>,
+    children: EditWorld<Query<&Children>>,
+    cameras: EditWorld<Query<&concerto_render::components::camera::Camera>>,
+    lights: EditWorld<Query<&concerto_render::components::light::Light>>,
+    meshes: EditWorld<Query<&concerto_mesh::MeshComponent>>,
     active: Res<ActiveEditor>,
     documents: Query<&EditorDocument>,
     mut state: ResMut<HierarchyState>,
