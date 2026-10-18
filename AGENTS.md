@@ -96,7 +96,9 @@ with exclusive access when the queue is applied: the typed `CommandQueue`
 methods (`spawn`, `insert`, `remove`, `despawn`, `insert_resource`), or
 `cmd.trigger(signal)` with a listener that does the exclusive work. The only
 existing systems that take `&mut World` are `run_main` and `render_main`, which
-run the main and render schedules; they are not a pattern to copy. A system
+run the main and render schedules; they are not a pattern to copy. To react
+when a component appears or disappears, listen for its lifecycle signals,
+`On<Add<T>>`, `On<Replace<T>>`, `On<Remove<T>>` and `On<Despawn<T>>`. A system
 whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
 on every run until the resource exists; take `Option<Res<T>>` when absence is
 normal.

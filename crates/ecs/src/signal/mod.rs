@@ -1,8 +1,16 @@
-use crate::{Entity, system::input::SystemArg};
+use crate::{Entity, World, signal::listener::Listener, system::input::SystemArg};
 
+pub mod lifecycle;
 pub mod listener;
 
-pub trait Signal: Send + Sync + 'static {}
+pub trait Signal: Send + Sync + 'static {
+    /// Prepares a listener for this signal as it is registered; lifecycle signals check it here.
+    fn listener_added(_world: &mut World, _listener: &mut Listener<Self>)
+    where
+        Self: Sized,
+    {
+    }
+}
 
 pub trait EntitySignal: Signal {}
 

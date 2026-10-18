@@ -647,8 +647,10 @@ impl World {
     }
 
     pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
+        let mut listener = system.into_listener();
+        T::listener_added(self, &mut listener);
         self.register_component_lifetimes::<Listener<T>>();
-        self.spawn((system.into_listener(), GlobalListener));
+        self.spawn((listener, GlobalListener));
     }
 
     /// Runs matching listeners in registration order, applying each system's commands.
@@ -809,11 +811,15 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_add_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(add) = lifetimes.on_add
-        {
-            add(self.into_restricted(), ComponentLifecycleContext { entity });
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_add, lifetimes.signal_add);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn trigger_on_replace(&self, entity: Entity, ids: &[ComponentId]) {
@@ -825,23 +831,29 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(replace) = lifetimes.on_replace
-        {
-            replace(self.into_restricted(), ComponentLifecycleContext { entity });
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_replace, lifetimes.signal_replace);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn trigger_on_remove_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(remove) = lifetimes.on_remove
-        {
-            remove(self.into_restricted(), ComponentLifecycleContext { entity });
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_remove, lifetimes.signal_remove);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     /// Despawning removes every component, so each one's `on_remove` runs before the
@@ -856,12 +868,15 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(despawn) = lifetimes.on_despawn
-        {
-            despawn(self.into_restricted(), ComponentLifecycleContext { entity });
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_despawn, lifetimes.signal_despawn);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn archetypes(&self) -> &'w [Archetype] {

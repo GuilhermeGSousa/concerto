@@ -45,6 +45,13 @@ fix the entry in the same commit as the change that made it false.
   component that only stand-ins would have queried is never registered in that
   world, so its lifecycle callbacks never fire. Likewise, in an edit `App` an
   unmarked listener given to `App::add_listener` is silently dropped.
+- **Lifecycle signals run inside the operation.** `On<Add<T>>`, `Replace<T>`,
+  `Remove<T>` and `Despawn<T>` listeners run right after `T`'s hook, in the
+  middle of the spawn, insert, remove or despawn. They see the new value on add
+  and the old value otherwise; their `CommandQueue` applies when the operation's
+  commands flush. `add_listener` panics for one that takes `&World` or
+  `&mut World`, and registering one registers `T`, so its signals fire even if
+  nothing queries it. An overwrite fires `Replace`, then `Add`.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that
