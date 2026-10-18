@@ -11,13 +11,14 @@ use concerto_ecs::{
         hierarchy::{ChildOf, Children},
     },
     query::{Query, filter::Without},
-    resource::{Res, Resource},
+    resource::{Res, ResMut, Resource},
 };
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_render::{
     assets::{material::AsBindGroup, texture::Texture},
     components::render_entity::{RenderEntity, SyncWithRenderWorld},
     device::RenderDevice,
+    draw_target::SharedTexture,
     render_asset::{
         RenderAssets,
         render_texture::{DummyRenderTexture, RenderTexture},
@@ -1167,6 +1168,62 @@ pub(crate) fn sync_viewport_textures(viewports: Query<(&UIViewport, &mut UIMater
     }
 }
 
+/// Shows the picture another `App` draws into a [`SharedTexture`].
+#[derive(Component)]
+pub struct UISharedViewport {
+    pub picture: Option<SharedTexture>,
+    id: AssetId,
+}
+
+impl UISharedViewport {
+    pub fn new() -> Self {
+        Self {
+            picture: None,
+            id: AssetId::new(),
+        }
+    }
+}
+
+impl Default for UISharedViewport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub(crate) fn sync_shared_viewport_textures(
+    viewports: Query<(&UISharedViewport, &mut UIMaterial)>,
+) {
+    for (viewport, mut material) in viewports.iter() {
+        let drawn = viewport
+            .picture
+            .as_ref()
+            .is_some_and(|picture| picture.get().is_some());
+        let bound = material
+            .texture
+            .as_ref()
+            .is_some_and(|handle| handle.id() == viewport.id);
+        if drawn && !bound {
+            material.texture = Some(AssetHandle::weak(viewport.id));
+        } else if !drawn && material.texture.is_some() {
+            material.texture = None;
+        }
+    }
+}
+
+pub(crate) fn extract_shared_viewports(
+    viewports: Extracted<Query<&UISharedViewport>>,
+    mut render_textures: ResMut<RenderAssets<RenderTexture>>,
+) {
+    for viewport in viewports.iter() {
+        match viewport.picture.as_ref().and_then(SharedTexture::get) {
+            Some(texture) => render_textures.insert(viewport.id, texture),
+            None => {
+                render_textures.remove(&viewport.id);
+            }
+        }
+    }
+}
+
 /// Extracts [`UIMaterial`] changes into GPU-side [`RenderUIMaterial`] bind groups.
 pub(crate) fn extract_ui_materials(
     computed_nodes: Extracted<Query<(&UIMaterial, &RenderEntity)>>,
@@ -1615,6 +1672,49 @@ mod tests {
 
         material.flags[1] = std::f32::consts::FRAC_PI_4;
         assert_ne!(before, material_signature(&material, &textures));
+    }
+
+    #[test]
+    fn a_shared_viewport_without_a_picture_binds_no_texture() {
+        let mut world = concerto_ecs::World::new();
+        let node = world.spawn((
+            UIMaterial::flat(concerto_color::Color::WHITE),
+            UISharedViewport::new(),
+        ));
+        let mut system = concerto_ecs::IntoSystem::into_system(sync_shared_viewport_textures);
+        concerto_ecs::System::initialize(&mut system, &mut world);
+
+        concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
+
+        assert!(
+            world
+                .get_component_for_entity::<UIMaterial>(node)
+                .unwrap()
+                .texture
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_shared_viewport_with_an_empty_slot_binds_no_texture() {
+        let mut world = concerto_ecs::World::new();
+        let mut viewport = UISharedViewport::new();
+        viewport.picture = Some(concerto_render::draw_target::SharedTexture::new(
+            concerto_render::wgpu::TextureFormat::Rgba8Unorm,
+        ));
+        let node = world.spawn((UIMaterial::flat(concerto_color::Color::WHITE), viewport));
+        let mut system = concerto_ecs::IntoSystem::into_system(sync_shared_viewport_textures);
+        concerto_ecs::System::initialize(&mut system, &mut world);
+
+        concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
+
+        assert!(
+            world
+                .get_component_for_entity::<UIMaterial>(node)
+                .unwrap()
+                .texture
+                .is_none()
+        );
     }
 
     #[test]

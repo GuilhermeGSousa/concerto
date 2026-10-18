@@ -14,10 +14,9 @@ use concerto_ui::{
 };
 use concerto_window::input::MouseButton;
 use concerto_window::plugin::{
-    CloseRequest, Window, WindowGesture, WindowGestureRegion, WindowGestureZone,
+    ResizeDirection, Window, WindowCommand, WindowGesture, WindowGestureRegion, WindowGestureZone,
 };
 use taffy::Position;
-use winit::window::ResizeDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region, TOP_STRIP};
 use crate::fonts::{glyph, icon};
@@ -82,11 +81,11 @@ fn build_controls(
     mut cmd: CommandQueue,
     registry: Res<PanelRegistry>,
     style: Res<WindowStyle>,
-    window: Res<Window>,
+    mut window: ResMut<Window>,
     theme: Res<UITheme>,
 ) {
-    window.window_handle.set_decorations(style.decorated);
-    window.window_handle.focus_window();
+    window.settings.decorations = style.decorated;
+    window.send(WindowCommand::Focus);
     if style.decorated {
         return;
     }
@@ -280,8 +279,8 @@ fn push_zone(
 fn press_control(
     on: On<UIClick>,
     controls: Query<&Control>,
-    window: Res<Window>,
-    mut close: ResMut<CloseRequest>,
+    mut window: ResMut<Window>,
+    mut guard: ResMut<crate::guard::UnsavedGuard>,
 ) {
     if on.signal().button != MouseButton::Left {
         return;
@@ -290,16 +289,17 @@ fn press_control(
         return;
     };
     match control {
-        Control::Minimise => window.window_handle.set_minimized(true),
-        Control::Maximise => window
-            .window_handle
-            .set_maximized(!window.window_handle.is_maximized()),
-        Control::Close => close.0 = true,
+        Control::Minimise => window.send(WindowCommand::Minimise),
+        Control::Maximise => {
+            let maximised = window.is_maximised();
+            window.send(WindowCommand::SetMaximised(!maximised));
+        }
+        Control::Close => guard.request_quit(),
     }
 }
 
 fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut UIText)>) {
-    let mark = if window.window_handle.is_maximized() {
+    let mark = if window.is_maximised() {
         glyph::CORNERS_IN
     } else {
         glyph::CORNERS_OUT

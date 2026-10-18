@@ -1,7 +1,11 @@
 use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 
-use super::{Asset, AssetId};
-use concerto_ecs::Event;
+use super::{asset_server::AssetServer, Asset, AssetId, LoadableAsset};
+use concerto_ecs::{reflect::ReflectSceneLeaf, Event};
+use concerto_reflect::{
+    decode_leaf, encode_leaf, FromType, GetTypeRegistration, Leaf, LeafError, Reflect, ReflectMut,
+    ReflectRef, TypeRegistration,
+};
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -102,6 +106,77 @@ impl<'de, A: Asset> Deserialize<'de> for AssetHandle<A> {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let id = AssetId::deserialize(deserializer)?;
         Ok(AssetHandle::weak(id))
+    }
+}
+
+impl<A: Asset> Default for AssetHandle<A> {
+    /// The empty handle: weak, naming no asset.
+    fn default() -> Self {
+        Self::weak(AssetId::nil())
+    }
+}
+
+impl<A: Asset> Leaf for AssetHandle<A> {
+    fn encode(&self) -> Result<Vec<u8>, LeafError> {
+        encode_leaf(&self.id())
+    }
+
+    fn decode(&mut self, bytes: &[u8]) -> Result<(), LeafError> {
+        let mut id = AssetId::nil();
+        decode_leaf(&mut id, bytes)?;
+        if !id.is_nil() {
+            log::warn!(
+                "{} was read without its scene type data, so it stays weak and loads nothing; \
+                 register it with App::register_type",
+                std::any::type_name::<Self>()
+            );
+        }
+        *self = Self::weak(id);
+        Ok(())
+    }
+}
+
+impl<A: Asset> Reflect for AssetHandle<A> {
+    fn reflect_ref(&self) -> ReflectRef<'_> {
+        ReflectRef::Leaf(self)
+    }
+
+    fn reflect_mut(&mut self) -> ReflectMut<'_> {
+        ReflectMut::Leaf(self)
+    }
+}
+
+impl<A: LoadableAsset> GetTypeRegistration for AssetHandle<A> {
+    fn get_type_registration() -> TypeRegistration {
+        let mut registration = TypeRegistration::of::<Self>();
+        registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
+        registration
+    }
+}
+
+impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
+    fn from_type() -> Self {
+        Self {
+            spawn: |leaf, bytes, spawn| {
+                let handle = (leaf as &mut dyn std::any::Any)
+                    .downcast_mut::<AssetHandle<A>>()
+                    .ok_or_else(|| LeafError("not this asset's handle".into()))?;
+                let mut id = AssetId::nil();
+                decode_leaf(&mut id, bytes)?;
+                *handle = match spawn.world.get_resource::<AssetServer>() {
+                    Some(server) if !id.is_nil() => server.load::<A>(id),
+                    _ => AssetHandle::weak(id),
+                };
+                Ok(())
+            },
+            capture: |leaf, capture| {
+                let handle = (leaf as &dyn std::any::Any)
+                    .downcast_ref::<AssetHandle<A>>()
+                    .ok_or_else(|| LeafError("not this asset's handle".into()))?;
+                capture.reference(handle.id());
+                encode_leaf(&handle.id())
+            },
+        }
     }
 }
 

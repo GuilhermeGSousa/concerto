@@ -30,6 +30,15 @@ impl AssetId {
         AssetId(Uuid::new_v4())
     }
 
+    /// The id that names no asset.
+    pub const fn nil() -> Self {
+        AssetId(Uuid::nil())
+    }
+
+    pub fn is_nil(&self) -> bool {
+        self.0.is_nil()
+    }
+
     /// Derives a deterministic UUID for legacy content and callers that need
     /// a namespaced path hash. Imported asset identity is minted and persisted
     /// separately; runtime content loading must resolve it through the registry.

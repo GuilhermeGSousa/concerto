@@ -18,15 +18,20 @@ use concerto_ui::{
     theme::{ButtonVariant, UITheme},
     transform::UIValue,
 };
+use concerto_window::events::{ScrollDelta, WindowEvent};
 use concerto_window::input::MouseButton;
-use concerto_window::winit_events::WindowEvent;
-use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::window_chrome::WindowChromeControl;
 use crate::{
-    asset_editor::{ActiveEditor, AssetEditorCommand, AssetEditorCommands, EditorDocument},
+    asset_editor::{
+        ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
+        Unsaved,
+    },
     fonts::{glyph, icon},
+    hosted::{PlayState, toggle_play},
 };
+use concerto_foundation::assets::Asset;
+use concerto_scene::scene::Scene;
 
 /// Entity in the tab bar that activates the associated document.
 #[derive(Component)]
@@ -37,6 +42,12 @@ pub struct EditorTab {
 /// Close button nested in an [`EditorTab`].
 #[derive(Component)]
 pub struct EditorTabClose {
+    pub document: Entity,
+}
+
+/// Play/Stop button nested in the Scene tab, which cannot be closed.
+#[derive(Component)]
+pub struct EditorTabPlay {
     pub document: Entity,
 }
 
@@ -62,7 +73,13 @@ pub struct TabsPlugin;
 impl Plugin for TabsPlugin {
     fn build(&self, app: &mut App) {
         app.add_system(LateUpdate, scroll_tabs)
-            .add_system(LateUpdate, sync_tabs.before(UiSet::Materials));
+            .add_system(LateUpdate, sync_tabs.before(UiSet::Materials))
+            .add_system(
+                LateUpdate,
+                sync_play_buttons
+                    .after(UiSet::Input)
+                    .before(UiSet::Materials),
+            );
     }
 }
 
@@ -96,16 +113,55 @@ fn close_tab(
     }
 }
 
+fn play_label(state: Option<&PlayState>) -> &'static str {
+    match state {
+        Some(PlayState::Starting) => "Starting…",
+        Some(PlayState::Playing) => "Stop",
+        Some(PlayState::Editing) | None => "Play",
+    }
+}
+
+pub(crate) fn press_play(
+    on: On<UIClick>,
+    plays: Query<&EditorTabPlay>,
+    states: Query<&PlayState>,
+    mut cmd: CommandQueue,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(play) = plays.get_entity(on.entity()) else {
+        return;
+    };
+    toggle_play(
+        play.document,
+        states.get_entity(play.document).copied(),
+        &mut cmd,
+    );
+}
+
+fn sync_play_buttons(buttons: Query<(&EditorTabPlay, &mut UIText)>, states: Query<&PlayState>) {
+    for (play, mut text) in buttons.iter() {
+        let label = play_label(states.get_entity(play.document));
+        if text.text != label {
+            text.text = label.into();
+        }
+    }
+}
+
 fn sync_tabs(
     mut cmd: CommandQueue,
     contents: Query<Entity, With<TabStripContent>>,
     documents: Query<(Entity, &EditorDocument)>,
+    unsaved: Query<&Unsaved>,
     labels: Query<(&TabLabel, &mut UIText)>,
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
     tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
+    registry: Res<AssetEditorRegistry>,
+    states: Query<&PlayState>,
 ) {
     let Some(content) = contents.iter().next() else {
         return;
@@ -136,6 +192,11 @@ fn sync_tabs(
                     format!("{} · error", document.title)
                 }
             });
+        let title = if unsaved.get_entity(entity).is_some() {
+            format!("• {title}")
+        } else {
+            title
+        };
         let kind = document
             .pending
             .as_ref()
@@ -175,6 +236,9 @@ fn sync_tabs(
             } else {
                 theme.text_muted
             };
+            let closable = registry.closable(document.asset_type);
+            let plays = document.asset_type == Scene::name();
+            let play = play_label(states.get_entity(entity));
             cmd.entity(content).add_child_with(
                 (
                     theme
@@ -191,7 +255,7 @@ fn sync_tabs(
                     WindowChromeControl,
                 ),
                 |button| {
-                    button
+                    let button = button
                         .add_child((
                             UINode::default()
                                 .with_width(UIValue::Px(16.0))
@@ -205,8 +269,9 @@ fn sync_tabs(
                                 .color(ink)
                                 .max_width(UIValue::Px(220.0)),
                             TabLabel { document: entity },
-                        ))
-                        .add_child((
+                        ));
+                    if closable {
+                        button.add_child((
                             UINode::default()
                                 .with_size(UIValue::Px(18.0), UIValue::Px(24.0))
                                 .with_padding(UIRect::axes(3.0, 3.0))
@@ -218,6 +283,23 @@ fn sync_tabs(
                             close_tab.into_listener(),
                             WindowChromeControl,
                         ));
+                    } else if plays {
+                        button.add_child((
+                            theme
+                                .button(play)
+                                .height(UIValue::Px(22.0))
+                                .padding(UIRect::axes(0.0, theme.spacing_sm))
+                                .margin(UIRect {
+                                    left: theme.spacing_sm,
+                                    ..UIRect::default()
+                                })
+                                .small()
+                                .z_index(71)
+                                .on_click(press_play),
+                            EditorTabPlay { document: entity },
+                            WindowChromeControl,
+                        ));
+                    }
                 },
             );
         }
@@ -263,16 +345,17 @@ fn scroll_tabs(
         if !over_strip {
             continue;
         }
-        if let WinitWindowEvent::MouseWheel { delta: wheel, .. } = &**event {
-            delta += match wheel {
-                MouseScrollDelta::LineDelta(x, y) => -if x.abs() > 0.0 { *x } else { *y } * 28.0,
-                MouseScrollDelta::PixelDelta(value) => {
-                    -if value.x.abs() > 0.0 {
-                        value.x
-                    } else {
-                        value.y
-                    } as f32
+        if let WindowEvent::MouseWheel { delta: wheel } = event {
+            let along = |value: &glam::Vec2| {
+                if value.x.abs() > 0.0 {
+                    value.x
+                } else {
+                    value.y
                 }
+            };
+            delta += match wheel {
+                ScrollDelta::Lines(lines) => -along(lines) * 28.0,
+                ScrollDelta::Pixels(pixels) => -along(pixels),
             };
         }
     }

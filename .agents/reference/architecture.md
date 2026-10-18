@@ -11,9 +11,9 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data, bounds, ray tests; extra passes; a renderer that draws to a terminal |
 | Simulation | `physics`, `jolt-ffi`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
-| Tooling | `editor`, `editable`, `project` | the editor; structural property access for the inspector; `cargo concerto`, which creates game projects and their editor crates |
+| Tooling | `editor`, `reflect`, `project` | the editor; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry` and the inspector and scenes read; `cargo concerto`, which creates game projects and their editor crates |
 
-`ecs`, `foundation`, `render`, and `editable` each have a `macros` sub-crate.
+`ecs`, `foundation`, `render`, and `reflect` each have a `macros` sub-crate.
 `jolt-ffi` builds Jolt from the submodule at `crates/jolt-ffi/vendor/JoltPhysics`.
 
 ## Plugins
@@ -87,9 +87,13 @@ time. The running game never reads them.
   `<source>.import.toml` beside the source to pin each sub-asset's UUID.
 - Code names an asset with `asset_id!("content/hero/mesh_0.gasset")`, resolved
   at compile time. The runtime finds files by UUID through the registry.
-- A scene is a tree of nodes whose components are serialized by type name.
-  A component takes part by implementing `SceneComponent` and being registered
-  with `App::register_component`.
+- A scene is a tree of nodes whose components are stored by type name as
+  reflected values (`concerto_reflect::ReflectedValue`), with field and variant
+  names. A component takes part by deriving `Reflect` and `Default` with
+  `#[reflect(SceneComponent)]` and being registered with `App::register_type`.
+  Asset handles are stored as their `AssetId` and entity references as node
+  indices, through `ReflectSceneLeaf` type data; capture lists every asset a
+  handle names in `referenced_assets`.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 
@@ -152,14 +156,17 @@ size and input into it. An edit `App` that is not stepped still
 takes signals, which is how a tab that is not in front is saved.
 
 Panels reach the edit `App`, or the play `App` while playing, through two
-system parameters: `Editor<T>` reads its world, and `EditorSignals` triggers
+system parameters: `EditWorld<T>` reads its world, and `EditWorldSignals` triggers
 signals such as `EntityEdit` and `Select` in it. The scene tools in
 `crates/editor/src/tools/` apply each change and report back through the
-`SceneEdited`, `SceneStatus`, `RevealEntity`, and `SceneCaptured` events. The
-host re-raises each in the editor's world as a `Hosted<E>` signal, which the
-editor turns into the dirty mark, the status, the tree's scroll position, and
-the saved file.
+`SceneEdited`, `SceneStatus`, and `RevealEntity` events. A `forward_events::<E>`
+system per type, registered with `forward_hosted_event::<E>()`, reads them
+through `HostedAppEvents<E>` in `First` and writes `Hosted<E>` events in the
+editor's world, which systems read with `EventReader<Hosted<E>>`. Whether the
+scene has unsaved edits is state, `SceneDirty`, kept in the edit `App`: edits set
+it and a successful save clears it, and the editor's `Unsaved` follows it. A save
+asks the edit `App` for the scene directly with `HostedApp::capture_scene`.
 The inspector edits components through `PropertyEditor<T>` adapters over
-`editable`. Each asset type has one editor, registered with
+`reflect`. Each asset type has one editor, registered with
 `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
 covers all of it.

@@ -8,9 +8,8 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     ecs::{
-        CommandQueue, Component, Entity, Query, Res,
+        CommandQueue, Component, Entity, Query, Res, ResMut,
         signal::{On, listener::IntoListener},
-        system::NonSendMarker,
     },
     ui::{
         UIRenderDiagnostics,
@@ -32,7 +31,7 @@ use concerto::{
         transform::UIValue,
     },
     window::input::MouseButton,
-    window::plugin::Window,
+    window::plugin::{Window, WindowCommand},
 };
 use glam::Vec2;
 
@@ -63,16 +62,10 @@ fn menu_row(cmd: &mut CommandQueue, theme: &UITheme, panel: Entity, name: &str) 
     row
 }
 
-fn spawn_showcase(
-    _: NonSendMarker,
-    mut cmd: CommandQueue,
-    theme: Res<UITheme>,
-    window: Res<Window>,
-) {
-    window.window_handle.set_title("Concerto UI Showcase");
-
-    let _ = window.request_inner_size(Vec2::new(1100.0, 700.0));
-    window.set_min_inner_size(Some(Vec2::new(900.0, 700.0)));
+fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut<Window>) {
+    window.settings.title = "Concerto UI Showcase".to_string();
+    window.send(WindowCommand::RequestSize(Vec2::new(1100.0, 700.0)));
+    window.settings.min_size = Some(Vec2::new(900.0, 700.0));
 
     let root = cmd
         .spawn(
@@ -579,12 +572,14 @@ fn update_virtual_rows(lists: Query<&UIVirtualList>, rows: Query<(&VirtualRow, &
     }
 }
 
-fn main() {
-    env_logger::init();
-    let mut app = App::new();
+fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins::default())
         .add_system(Startup, spawn_showcase)
         .add_system(Update, update_diagnostics)
         .add_system(Update, update_virtual_rows);
-    app.run();
+}
+
+fn main() {
+    env_logger::init();
+    concerto::run(game);
 }

@@ -2,7 +2,6 @@ pub mod actions;
 use concerto_ecs::resource::Resource;
 use glam::Vec2;
 use std::collections::HashMap;
-use winit::event::ElementState;
 
 pub use winit::event::MouseButton;
 pub use winit::keyboard::{KeyCode, PhysicalKey};
@@ -37,10 +36,11 @@ impl ButtonState {
         }
     }
 
-    fn apply(&mut self, state: ElementState) {
-        match state {
-            ElementState::Pressed => self.press(),
-            ElementState::Released => self.release(),
+    fn apply(&mut self, pressed: bool) {
+        if pressed {
+            self.press()
+        } else {
+            self.release()
         }
     }
 
@@ -104,6 +104,14 @@ impl Input {
         self.input_map.get(&key).is_some_and(|state| state.pressed)
     }
 
+    /// Every key held now, whether it went down this frame or earlier.
+    pub fn held_keys(&self) -> impl Iterator<Item = PhysicalKey> + '_ {
+        self.input_map
+            .iter()
+            .filter(|(_, state)| state.held())
+            .map(|(key, _)| *key)
+    }
+
     pub fn is_held(&self, key: PhysicalKey) -> bool {
         self.input_map.get(&key).is_some_and(|state| state.held())
     }
@@ -164,19 +172,27 @@ impl Input {
         self.typed_chars.clear();
     }
 
-    pub fn update_key_input(&mut self, key: PhysicalKey, state: ElementState) {
-        self.input_map.entry(key).or_default().apply(state);
+    /// Releases every held key and mouse button, as when the window loses focus.
+    pub fn release_all(&mut self) {
+        self.input_map.values_mut().for_each(ButtonState::release);
+        self.mouse_button_map
+            .values_mut()
+            .for_each(ButtonState::release);
+    }
+
+    pub fn update_key_input(&mut self, key: PhysicalKey, pressed: bool) {
+        self.input_map.entry(key).or_default().apply(pressed);
     }
 
     pub fn update_mouse_position(&mut self, x: f64, y: f64) {
         self.mouse_position = Vec2::new(x as f32, y as f32);
     }
 
-    pub fn update_mouse_button(&mut self, button: MouseButton, state: ElementState) {
+    pub fn update_mouse_button(&mut self, button: MouseButton, pressed: bool) {
         self.mouse_button_map
             .entry(button)
             .or_default()
-            .apply(state);
+            .apply(pressed);
     }
 
     /// Adds one raw mouse-motion event.
@@ -198,33 +214,49 @@ mod tests {
     const KEY: PhysicalKey = PhysicalKey::Code(KeyCode::KeyW);
 
     #[test]
+    fn held_keys_are_the_keys_down_or_pressed_this_frame() {
+        let shift = PhysicalKey::Code(KeyCode::ShiftLeft);
+        let tapped = PhysicalKey::Code(KeyCode::KeyQ);
+        let mut input = Input::new();
+        input.update_key_input(KEY, true);
+        input.update_key_input(tapped, true);
+        input.update_key_input(tapped, false);
+        input.update();
+        input.update_key_input(shift, true);
+
+        let held: std::collections::HashSet<_> = input.held_keys().collect();
+
+        assert_eq!(held, [KEY, shift].into());
+    }
+
+    #[test]
     fn a_tap_within_one_frame_is_seen_and_does_not_stick() {
         let mut input = Input::new();
-        input.update_key_input(KEY, ElementState::Pressed);
-        input.update_key_input(KEY, ElementState::Released);
+        input.update_key_input(KEY, true);
+        input.update_key_input(KEY, false);
         assert!(input.is_just_pressed(KEY));
         assert!(input.is_held(KEY));
         input.update();
         assert!(!input.is_held(KEY));
         assert!(input.get_key_state(KEY) == InputState::Up);
-        input.update_mouse_button(MouseButton::Left, ElementState::Pressed);
-        input.update_mouse_button(MouseButton::Left, ElementState::Released);
+        input.update_mouse_button(MouseButton::Left, true);
+        input.update_mouse_button(MouseButton::Left, false);
         assert!(input.is_mouse_button_just_pressed(MouseButton::Left));
         input.update();
-        input.update_mouse_button(MouseButton::Left, ElementState::Pressed);
+        input.update_mouse_button(MouseButton::Left, true);
         assert!(input.is_mouse_button_just_pressed(MouseButton::Left));
     }
 
     #[test]
     fn held_keys_go_pressed_down_released_up() {
         let mut input = Input::new();
-        input.update_key_input(KEY, ElementState::Pressed);
+        input.update_key_input(KEY, true);
         assert!(input.get_key_state(KEY) == InputState::Pressed);
         input.update();
         assert!(input.get_key_state(KEY) == InputState::Down);
-        input.update_key_input(KEY, ElementState::Pressed);
+        input.update_key_input(KEY, true);
         assert!(!input.is_just_pressed(KEY));
-        input.update_key_input(KEY, ElementState::Released);
+        input.update_key_input(KEY, false);
         assert!(input.is_just_released(KEY));
         input.update();
         assert!(input.get_key_state(KEY) == InputState::Up);

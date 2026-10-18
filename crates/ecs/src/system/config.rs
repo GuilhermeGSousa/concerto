@@ -7,6 +7,7 @@ use crate::{
     system::{
         BoxedSystem, IntoSystem,
         set::{InternedSystemSet, SystemSet},
+        tag::{InternedSystemTag, SystemTag},
     },
 };
 
@@ -51,6 +52,7 @@ pub(crate) struct NodeConfig {
     pub(crate) sets: Vec<InternedSystemSet>,
     pub(crate) after: Vec<DependencyTarget>,
     pub(crate) before: Vec<DependencyTarget>,
+    pub(crate) tags: Vec<InternedSystemTag>,
 }
 
 pub(crate) struct SystemEntry {
@@ -101,6 +103,13 @@ impl SystemConfig {
     pub fn in_set(mut self, set: impl SystemSet) -> Self {
         let set = set.intern();
         self.for_each_entry(&mut |entry| entry.config.sets.push(set));
+        self
+    }
+
+    /// Gives every system in this config `tag`; only a [`TagFilter`](crate::TagFilter) reads it.
+    pub fn tagged(mut self, tag: impl SystemTag) -> Self {
+        let tag = tag.intern();
+        self.for_each_entry(&mut |entry| entry.config.tags.push(tag));
         self
     }
 
@@ -170,6 +179,10 @@ pub trait IntoSystemConfig<Marker>: Sized {
 
     fn before<M>(self, target: impl IntoDependencyTarget<M>) -> SystemConfig {
         self.into_config().before(target)
+    }
+
+    fn tagged(self, tag: impl SystemTag) -> SystemConfig {
+        self.into_config().tagged(tag)
     }
 
     fn in_set(self, set: impl SystemSet) -> SystemConfig {

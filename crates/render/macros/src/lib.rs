@@ -226,25 +226,62 @@ fn parse_material_attr(attrs: &[syn::Attribute]) -> MaterialAttr {
     result
 }
 
+fn render_root_for(dependencies: &[&str]) -> TokenStream2 {
+    if dependencies.contains(&"concerto-render") {
+        quote!(::concerto_render)
+    } else if dependencies.contains(&"concerto") {
+        quote!(::concerto::render)
+    } else {
+        quote!(::concerto_render)
+    }
+}
+
+fn render_root() -> TokenStream2 {
+    use proc_macro_crate::{crate_name, FoundCrate};
+
+    let mut dependencies = Vec::new();
+    match crate_name("concerto-render") {
+        Ok(FoundCrate::Name(name)) if name != "concerto_render" => {
+            let ident = Ident::new(&name, proc_macro2::Span::call_site());
+            return quote!(::#ident);
+        }
+        Ok(_) => dependencies.push("concerto-render"),
+        Err(_) => {}
+    }
+    match crate_name("concerto") {
+        Ok(FoundCrate::Name(name)) if name != "concerto" => {
+            let ident = Ident::new(&name, proc_macro2::Span::call_site());
+            if dependencies.is_empty() {
+                return quote!(::#ident::render);
+            }
+        }
+        Ok(_) => dependencies.push("concerto"),
+        Err(_) => {}
+    }
+    render_root_for(&dependencies)
+}
+
 /// Generate the `bind_group_layout` method body.
 fn gen_bind_group_layout(bindings: &[BindingField<'_>], struct_name: &Ident) -> TokenStream2 {
+    let render = render_root();
+    let wgpu = quote!(#render::wgpu);
     let struct_label = struct_name.to_string() + "_layout";
     let entries: Vec<TokenStream2> = bindings
         .iter()
         .map(|b| match &b.kind {
             BindingKind::Texture { index, dimension } => {
                 let view_dim = match dimension {
-                    TextureViewDimension::D2 => quote! { wgpu::TextureViewDimension::D2 },
-                    TextureViewDimension::Cube => quote! { wgpu::TextureViewDimension::Cube },
+                    TextureViewDimension::D2 => quote! { #wgpu::TextureViewDimension::D2 },
+                    TextureViewDimension::Cube => quote! { #wgpu::TextureViewDimension::Cube },
                 };
                 quote! {
-                    wgpu::BindGroupLayoutEntry {
+                    #wgpu::BindGroupLayoutEntry {
                         binding: #index,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
+                        visibility: #wgpu::ShaderStages::FRAGMENT,
+                        ty: #wgpu::BindingType::Texture {
                             multisampled: false,
                             view_dimension: #view_dim,
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            sample_type: #wgpu::TextureSampleType::Float { filterable: true },
                         },
                         count: None,
                     }
@@ -252,21 +289,21 @@ fn gen_bind_group_layout(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
             }
             BindingKind::Sampler { index } => {
                 quote! {
-                    wgpu::BindGroupLayoutEntry {
+                    #wgpu::BindGroupLayoutEntry {
                         binding: #index,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        visibility: #wgpu::ShaderStages::FRAGMENT,
+                        ty: #wgpu::BindingType::Sampler(#wgpu::SamplerBindingType::Filtering),
                         count: None,
                     }
                 }
             }
             BindingKind::Uniform { index } => {
                 quote! {
-                    wgpu::BindGroupLayoutEntry {
+                    #wgpu::BindGroupLayoutEntry {
                         binding: #index,
-                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
+                        visibility: #wgpu::ShaderStages::VERTEX | #wgpu::ShaderStages::FRAGMENT,
+                        ty: #wgpu::BindingType::Buffer {
+                            ty: #wgpu::BufferBindingType::Uniform,
                             has_dynamic_offset: false,
                             min_binding_size: None,
                         },
@@ -278,8 +315,8 @@ fn gen_bind_group_layout(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
         .collect();
 
     quote! {
-        fn bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        fn bind_group_layout(device: &#wgpu::Device) -> #wgpu::BindGroupLayout {
+            device.create_bind_group_layout(&#wgpu::BindGroupLayoutDescriptor {
                 label: Some(#struct_label),
                 entries: &[ #(#entries),* ],
             })
@@ -307,6 +344,8 @@ fn is_option_asset_handle(ty: &Type) -> bool {
 
 /// Generate the `create_bind_group` method body.
 fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> TokenStream2 {
+    let render = render_root();
+    let wgpu = quote!(#render::wgpu);
     let bind_group_label = struct_name.to_string() + "_bind_group";
     let mut entry_stmts: Vec<TokenStream2> = Vec::new();
 
@@ -319,17 +358,17 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
                     entry_stmts.push(quote! {
                         if let Some(tex_handle) = &self.#field_name {
                             if let Some(tex) = render_textures.get(&tex_handle.id()) {
-                                entries.push(wgpu::BindGroupEntry {
+                                entries.push(#wgpu::BindGroupEntry {
                                     binding: #index,
-                                    resource: wgpu::BindingResource::TextureView(&tex.view),
+                                    resource: #wgpu::BindingResource::TextureView(&tex.view),
                                 });
                             } else {
-                                return Err(concerto_render::render_asset::AssetPreparationError::NotReady);
+                                return Err(#render::render_asset::AssetPreparationError::NotReady);
                             }
                         } else {
-                            entries.push(wgpu::BindGroupEntry {
+                            entries.push(#wgpu::BindGroupEntry {
                                 binding: #index,
-                                resource: wgpu::BindingResource::TextureView(&dummy_texture.view),
+                                resource: #wgpu::BindingResource::TextureView(&dummy_texture.view),
                             });
                         }
                     });
@@ -357,17 +396,17 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
                         entry_stmts.push(quote! {
                             if let Some(tex_handle) = &self.#tex_field_name {
                                 if let Some(tex) = render_textures.get(&tex_handle.id()) {
-                                    entries.push(wgpu::BindGroupEntry {
+                                    entries.push(#wgpu::BindGroupEntry {
                                         binding: #index,
-                                        resource: wgpu::BindingResource::Sampler(&tex.sampler),
+                                        resource: #wgpu::BindingResource::Sampler(&tex.sampler),
                                     });
                                 } else {
-                                    return Err(concerto_render::render_asset::AssetPreparationError::NotReady);
+                                    return Err(#render::render_asset::AssetPreparationError::NotReady);
                                 }
                             } else {
-                                entries.push(wgpu::BindGroupEntry {
+                                entries.push(#wgpu::BindGroupEntry {
                                     binding: #index,
-                                    resource: wgpu::BindingResource::Sampler(&dummy_texture.sampler),
+                                    resource: #wgpu::BindingResource::Sampler(&dummy_texture.sampler),
                                 });
                             }
                         });
@@ -375,9 +414,9 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
                 } else {
                     // Standalone sampler — always use dummy.
                     entry_stmts.push(quote! {
-                        entries.push(wgpu::BindGroupEntry {
+                        entries.push(#wgpu::BindGroupEntry {
                             binding: #index,
-                            resource: wgpu::BindingResource::Sampler(&dummy_texture.sampler),
+                            resource: #wgpu::BindingResource::Sampler(&dummy_texture.sampler),
                         });
                     });
                 }
@@ -386,15 +425,15 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
                 let buf_label = format!("{}_{}_uniform", struct_name, field_name);
                 entry_stmts.push(quote! {
                     let uniform_buf = device.create_buffer_init(
-                        &wgpu::util::BufferInitDescriptor {
+                        &#wgpu::util::BufferInitDescriptor {
                             label: Some(#buf_label),
-                            contents: bytemuck::cast_slice(&[self.#field_name]),
-                            usage: wgpu::BufferUsages::UNIFORM,
+                            contents: #render::bytemuck::cast_slice(&[self.#field_name]),
+                            usage: #wgpu::BufferUsages::UNIFORM,
                         },
                     );
-                    entries.push(wgpu::BindGroupEntry {
+                    entries.push(#wgpu::BindGroupEntry {
                         binding: #index,
-                        resource: wgpu::BindingResource::Buffer(
+                        resource: #wgpu::BindingResource::Buffer(
                             uniform_buf.as_entire_buffer_binding(),
                         ),
                     });
@@ -406,15 +445,15 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
     quote! {
         fn create_bind_group(
             &self,
-            device: &wgpu::Device,
-            render_textures: &concerto_render::render_asset::RenderAssets<concerto_render::render_asset::render_texture::RenderTexture>,
-            dummy_texture: &concerto_render::render_asset::render_texture::DummyRenderTexture,
-            layout: &wgpu::BindGroupLayout,
-        ) -> Result<wgpu::BindGroup, concerto_render::render_asset::AssetPreparationError> {
-            use wgpu::util::DeviceExt;
-            let mut entries: Vec<wgpu::BindGroupEntry<'_>> = Vec::new();
+            device: &#wgpu::Device,
+            render_textures: &#render::render_asset::RenderAssets<#render::render_asset::render_texture::RenderTexture>,
+            dummy_texture: &#render::render_asset::render_texture::DummyRenderTexture,
+            layout: &#wgpu::BindGroupLayout,
+        ) -> Result<#wgpu::BindGroup, #render::render_asset::AssetPreparationError> {
+            use #wgpu::util::DeviceExt;
+            let mut entries: Vec<#wgpu::BindGroupEntry<'_>> = Vec::new();
             #(#entry_stmts)*
-            Ok(device.create_bind_group(&wgpu::BindGroupDescriptor {
+            Ok(device.create_bind_group(&#wgpu::BindGroupDescriptor {
                 layout,
                 entries: &entries,
                 label: Some(#bind_group_label),
@@ -425,6 +464,8 @@ fn gen_create_bind_group(bindings: &[BindingField<'_>], struct_name: &Ident) -> 
 
 /// Generate the body of `impl Material for <Name>` from the parsed attribute.
 fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
+    let render = render_root();
+    let wgpu = quote!(#render::wgpu);
     let camera_fn = m
         .camera
         .map(|val| {
@@ -457,11 +498,11 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
         .as_deref()
         .map(|cm| {
             let expr = match cm {
-                "front" => quote! { Some(wgpu::Face::Front) },
+                "front" => quote! { Some(#wgpu::Face::Front) },
                 "none" => quote! { None },
-                _ => quote! { Some(wgpu::Face::Back) },
+                _ => quote! { Some(#wgpu::Face::Back) },
             };
-            quote! { fn cull_mode() -> Option<wgpu::Face> { #expr } }
+            quote! { fn cull_mode() -> Option<#wgpu::Face> { #expr } }
         })
         .unwrap_or_default();
 
@@ -470,10 +511,10 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
         .as_deref()
         .map(|topo| {
             let expr = match topo {
-                "line_list" => quote! { wgpu::PrimitiveTopology::LineList },
-                _ => quote! { wgpu::PrimitiveTopology::TriangleList },
+                "line_list" => quote! { #wgpu::PrimitiveTopology::LineList },
+                _ => quote! { #wgpu::PrimitiveTopology::TriangleList },
             };
-            quote! { fn topology() -> wgpu::PrimitiveTopology { #expr } }
+            quote! { fn topology() -> #wgpu::PrimitiveTopology { #expr } }
         })
         .unwrap_or_default();
 
@@ -493,25 +534,25 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
             let expr = match ds {
                 "none" => quote! { None },
                 "read_only" => quote! {
-                    Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
+                    Some(#wgpu::DepthStencilState {
+                        format: #wgpu::TextureFormat::Depth32Float,
                         depth_write_enabled: false,
-                        depth_compare: wgpu::CompareFunction::LessEqual,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
+                        depth_compare: #wgpu::CompareFunction::LessEqual,
+                        stencil: #wgpu::StencilState::default(),
+                        bias: #wgpu::DepthBiasState::default(),
                     })
                 },
                 _ => quote! {
-                    Some(wgpu::DepthStencilState {
-                        format: wgpu::TextureFormat::Depth32Float,
+                    Some(#wgpu::DepthStencilState {
+                        format: #wgpu::TextureFormat::Depth32Float,
                         depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::Less,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
+                        depth_compare: #wgpu::CompareFunction::Less,
+                        stencil: #wgpu::StencilState::default(),
+                        bias: #wgpu::DepthBiasState::default(),
                     })
                 },
             };
-            quote! { fn depth_stencil() -> Option<wgpu::DepthStencilState> { #expr } }
+            quote! { fn depth_stencil() -> Option<#wgpu::DepthStencilState> { #expr } }
         })
         .unwrap_or_default();
 
@@ -520,7 +561,7 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
         .as_ref()
         .map(|expr| {
             quote! {
-                fn vertex_layouts() -> Vec<wgpu::VertexBufferLayout<'static>> { #expr }
+                fn vertex_layouts() -> Vec<#wgpu::VertexBufferLayout<'static>> { #expr }
             }
         })
         .unwrap_or_default();
@@ -530,16 +571,16 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
         .as_deref()
         .map(|b| {
             let expr = match b {
-                "alpha" => quote! { Some(wgpu::BlendState::ALPHA_BLENDING) },
+                "alpha" => quote! { Some(#wgpu::BlendState::ALPHA_BLENDING) },
                 "none" => quote! { None },
-                _ => quote! { Some(wgpu::BlendState::REPLACE) },
+                _ => quote! { Some(#wgpu::BlendState::REPLACE) },
             };
-            quote! { fn blend_state() -> Option<wgpu::BlendState> { #expr } }
+            quote! { fn blend_state() -> Option<#wgpu::BlendState> { #expr } }
         })
         .unwrap_or_default();
 
     quote! {
-        impl concerto_render::assets::material::Material for #name {
+        impl #render::assets::material::Material for #name {
             #camera_fn
             #lighting_fn
             #skeleton_fn
@@ -584,18 +625,19 @@ fn gen_material_impl(name: &Ident, m: &MaterialAttr) -> TokenStream2 {
 /// keys are absent fall back to the trait's default implementations.
 #[proc_macro_derive(AsBindGroup, attributes(texture, sampler, uniform, material))]
 pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
+    let render = render_root();
     let input = parse_macro_input!(input as DeriveInput);
     let name = &input.ident;
 
     let mat_attr = parse_material_attr(&input.attrs);
 
     let vertex_shader_expr = match mat_attr.vertex_shader {
-        Some(ref expr) => quote! { concerto_render::assets::material::ShaderRef::Source(#expr) },
-        None => quote! { concerto_render::assets::material::ShaderRef::Default },
+        Some(ref expr) => quote! { #render::assets::material::ShaderRef::Source(#expr) },
+        None => quote! { #render::assets::material::ShaderRef::Default },
     };
     let fragment_shader_expr = match mat_attr.fragment_shader {
-        Some(ref expr) => quote! { concerto_render::assets::material::ShaderRef::Source(#expr) },
-        None => quote! { concerto_render::assets::material::ShaderRef::Default },
+        Some(ref expr) => quote! { #render::assets::material::ShaderRef::Source(#expr) },
+        None => quote! { #render::assets::material::ShaderRef::Default },
     };
 
     let named_fields = match &input.data {
@@ -625,12 +667,12 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
     let material_impl = gen_material_impl(name, &mat_attr);
 
     let expanded = quote! {
-        impl concerto_render::assets::material::AsBindGroup for #name {
-            fn vertex_shader() -> concerto_render::assets::material::ShaderRef {
+        impl #render::assets::material::AsBindGroup for #name {
+            fn vertex_shader() -> #render::assets::material::ShaderRef {
                 #vertex_shader_expr
             }
 
-            fn fragment_shader() -> concerto_render::assets::material::ShaderRef {
+            fn fragment_shader() -> #render::assets::material::ShaderRef {
                 #fragment_shader_expr
             }
 
@@ -643,4 +685,29 @@ pub fn derive_as_bind_group(input: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::render_root_for;
+
+    #[test]
+    fn a_crate_depending_on_concerto_reaches_render_through_it() {
+        assert_eq!(
+            render_root_for(&["concerto"]).to_string(),
+            ":: concerto :: render"
+        );
+    }
+
+    #[test]
+    fn a_crate_depending_on_concerto_render_uses_it_directly() {
+        assert_eq!(
+            render_root_for(&["concerto-render"]).to_string(),
+            ":: concerto_render"
+        );
+        assert_eq!(
+            render_root_for(&["concerto-render", "concerto"]).to_string(),
+            ":: concerto_render"
+        );
+    }
 }

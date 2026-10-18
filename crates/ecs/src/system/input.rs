@@ -1,7 +1,11 @@
 mod component_reader;
 pub use component_reader::ComponentMetadata;
 
-use std::ops::{Deref, DerefMut};
+use std::{
+    borrow::Cow,
+    fmt,
+    ops::{Deref, DerefMut},
+};
 
 use crate::{
     system::{access::SystemAccess, meta::SystemMetadata},
@@ -20,16 +24,64 @@ impl SystemArg for () {
     type Arg<'i> = ();
 }
 
+/// Why a system input declined, which skips its system or listener.
+#[derive(Debug, Clone)]
+pub struct ValidationError {
+    pub input: &'static str,
+    pub kind: ValidationKind,
+    pub message: Cow<'static, str>,
+}
+
+/// Whether a decline is expected and silent, or data the system needs is missing and warns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationKind {
+    Skip,
+    Missing,
+}
+
+impl ValidationError {
+    /// The input `T` chose not to run now; its system is skipped silently.
+    pub fn skip<T: ?Sized>(message: impl Into<Cow<'static, str>>) -> Self {
+        Self::new::<T>(ValidationKind::Skip, message)
+    }
+
+    /// The input `T` lacks data its system needs; its system is skipped with a warning.
+    pub fn missing<T: ?Sized>(message: impl Into<Cow<'static, str>>) -> Self {
+        Self::new::<T>(ValidationKind::Missing, message)
+    }
+
+    fn new<T: ?Sized>(kind: ValidationKind, message: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            input: std::any::type_name::<T>(),
+            kind,
+            message: message.into(),
+        }
+    }
+}
+
+impl fmt::Display for ValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}: {}", self.input, self.message)
+    }
+}
+
+impl std::error::Error for ValidationError {}
+
 pub trait SystemInput {
     type State: Send + Sync + Sized;
     type Data<'world, 'state>;
 
     fn init_state(world: &mut World) -> Self::State;
 
-    fn get_data<'world, 'state>(
+    /// Builds the input's data for one run, or declines with why.
+    ///
+    /// # Safety
+    /// `world` may be used only for what [`SystemInput::fill_access`] declared, and no
+    /// running system may hold access that conflicts with it.
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state>;
+    ) -> Result<Self::Data<'world, 'state>, ValidationError>;
 
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
@@ -52,11 +104,12 @@ where
         typle_for!(i in .. => <T<{i}>>::init_state(world))
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        typle_for!(i in .. => <T<{i}>>::get_data(&mut state[[i]], world))
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: the tuple's access is the union of its parts', which the caller upholds.
+        Ok(typle_for!(i in .. => unsafe { <T<{i}>>::get_data(&mut state[[i]], world) }?))
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -102,11 +155,12 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
         P::init_state(world)
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        StaticSystemInput(P::get_data(state, world))
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares exactly `P`'s access.
+        unsafe { P::get_data(state, world) }.map(StaticSystemInput)
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -126,12 +180,49 @@ impl<'s, T: FromWorld + Send + 'static> SystemInput for SystemLocal<'s, T> {
         SyncCell::new(T::from_world(world))
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        SystemLocal(state.get())
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        Ok(SystemLocal(state.get()))
     }
 
     fn fill_access(_meta: &mut SystemMetadata, _access: &mut SystemAccess) {}
+}
+
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use crate::resource::Resource;
+
+    #[derive(Resource)]
+    pub(crate) struct GateOpen(pub bool);
+
+    pub(crate) struct Gate;
+
+    impl SystemInput for Gate {
+        type State = ();
+        type Data<'world, 'state> = Gate;
+
+        fn init_state(_world: &mut World) -> Self::State {}
+
+        unsafe fn get_data<'world, 'state>(
+            _state: &'state mut Self::State,
+            world: UnsafeWorldCell<'world>,
+        ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+            // SAFETY: reads only `GateOpen`, which `fill_access` declares.
+            let open = unsafe { world.world() }
+                .get_resource::<GateOpen>()
+                .is_some_and(|open| open.0);
+            if open {
+                Ok(Gate)
+            } else {
+                Err(ValidationError::skip::<Self>("the gate is closed"))
+            }
+        }
+
+        fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
+            access.read_resource::<GateOpen>();
+        }
+    }
 }

@@ -1,19 +1,12 @@
-//! Covers the serde component registry: a registered type deserializes from
-//! JSON and is applied; an unregistered type name is reported rather than
-//! panicking.
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use concerto_ecs::{Component, Entity, World};
-use serde::{Deserialize, Serialize};
+//! Covers finding a scene component by name: a registered type spawns from its
+//! stored value; an unregistered type name is reported rather than panicking.
+use concerto_ecs::{Component, World, reflect::ReflectSceneComponent};
+use concerto_reflect::{Reflect, ReflectedValue, to_value};
 
-#[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Component, Reflect, Default, PartialEq, Debug)]
+#[reflect(SceneComponent)]
 struct Registered {
     value: u32,
-}
-
-impl SceneComponent for Registered {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
 }
 
 // Two distinct types whose final `::` segment is the same identifier, so they
@@ -21,40 +14,35 @@ impl SceneComponent for Registered {
 mod alias_clash_a {
     use super::*;
 
-    #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+    #[derive(Component, Reflect, Default, PartialEq, Debug)]
+    #[reflect(SceneComponent)]
     pub struct Widget {
         pub a: u32,
-    }
-
-    impl SceneComponent for Widget {
-        fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-            ctx.insert(self, entity);
-        }
     }
 }
 
 mod alias_clash_b {
     use super::*;
 
-    #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+    #[derive(Component, Reflect, Default, PartialEq, Debug)]
+    #[reflect(SceneComponent)]
     pub struct Widget {
         pub b: u32,
-    }
-
-    impl SceneComponent for Widget {
-        fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-            ctx.insert(self, entity);
-        }
     }
 }
 
 #[test]
 fn registered_component_is_deserialized_and_applied() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
-    let applied = world.apply_scene_component("Registered", r#"{"value":42}"#, entity, &[entity]);
+    let applied = world.apply_scene_component(
+        "Registered",
+        &stored(Registered { value: 42 }),
+        entity,
+        &[entity],
+    );
 
     assert!(
         applied,
@@ -70,11 +58,16 @@ fn registered_component_is_deserialized_and_applied() {
 #[test]
 fn short_name_alias_resolves_for_blender_authored_extras() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
     // Blender authors the bare identifier, not the full Rust path.
-    let applied = world.apply_scene_component("Registered", r#"{"value":7}"#, entity, &[entity]);
+    let applied = world.apply_scene_component(
+        "Registered",
+        &stored(Registered { value: 7 }),
+        entity,
+        &[entity],
+    );
 
     assert!(
         applied,
@@ -90,11 +83,15 @@ fn short_name_alias_resolves_for_blender_authored_extras() {
 #[test]
 fn full_type_path_also_resolves() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
-    let applied =
-        world.apply_scene_component(Registered::name(), r#"{"value":8}"#, entity, &[entity]);
+    let applied = world.apply_scene_component(
+        Registered::name(),
+        &stored(Registered { value: 8 }),
+        entity,
+        &[entity],
+    );
 
     assert!(
         applied,
@@ -111,11 +108,16 @@ fn full_type_path_also_resolves() {
 fn re_registering_the_same_type_is_idempotent() {
     let mut world = World::default();
     // Two plugins registering the same component, or one plugin added twice.
-    world.register_component_type::<Registered>();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
-    let applied = world.apply_scene_component("Registered", r#"{"value":5}"#, entity, &[entity]);
+    let applied = world.apply_scene_component(
+        "Registered",
+        &stored(Registered { value: 5 }),
+        entity,
+        &[entity],
+    );
 
     assert!(
         applied,
@@ -131,15 +133,20 @@ fn re_registering_the_same_type_is_idempotent() {
 #[test]
 fn a_genuine_two_type_short_name_clash_resolves_to_the_last_registered() {
     let mut world = World::default();
-    world.register_component_type::<alias_clash_a::Widget>();
-    world.register_component_type::<alias_clash_b::Widget>();
+    world.register_type::<alias_clash_a::Widget>();
+    world.register_type::<alias_clash_b::Widget>();
 
     let by_short = world.spawn(());
     let by_full_a = world.spawn(());
     let by_full_b = world.spawn(());
 
     // The shared short name resolves to the type registered last under it.
-    assert!(world.apply_scene_component("Widget", r#"{"b":2}"#, by_short, &[by_short]));
+    assert!(world.apply_scene_component(
+        "Widget",
+        &stored(alias_clash_b::Widget { b: 2 }),
+        by_short,
+        &[by_short]
+    ));
     assert_eq!(
         world.get_component_for_entity::<alias_clash_b::Widget>(by_short),
         Some(&alias_clash_b::Widget { b: 2 }),
@@ -155,7 +162,7 @@ fn a_genuine_two_type_short_name_clash_resolves_to_the_last_registered() {
     // Each canonical full type path still resolves to its own type.
     assert!(world.apply_scene_component(
         alias_clash_a::Widget::name(),
-        r#"{"a":1}"#,
+        &stored(alias_clash_a::Widget { a: 1 }),
         by_full_a,
         &[by_full_a],
     ));
@@ -167,7 +174,7 @@ fn a_genuine_two_type_short_name_clash_resolves_to_the_last_registered() {
 
     assert!(world.apply_scene_component(
         alias_clash_b::Widget::name(),
-        r#"{"b":9}"#,
+        &stored(alias_clash_b::Widget { b: 9 }),
         by_full_b,
         &[by_full_b],
     ));
@@ -183,7 +190,12 @@ fn unregistered_component_name_is_reported_not_fatal() {
     let mut world = World::default();
     let entity = world.spawn(());
 
-    let applied = world.apply_scene_component("NeverRegistered", "{}", entity, &[entity]);
+    let applied = world.apply_scene_component(
+        "NeverRegistered",
+        &ReflectedValue::Struct(Vec::new()),
+        entity,
+        &[entity],
+    );
 
     assert!(
         !applied,
@@ -192,21 +204,29 @@ fn unregistered_component_name_is_reported_not_fatal() {
 }
 
 #[test]
-fn malformed_json_does_not_panic() {
+fn stored_data_of_the_wrong_shape_spawns_the_default() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
-    let applied = world.apply_scene_component("Registered", "{ not json", entity, &[entity]);
+    let applied = world.apply_scene_component(
+        "Registered",
+        &ReflectedValue::List(Vec::new()),
+        entity,
+        &[entity],
+    );
 
     assert!(
-        !applied,
-        "malformed payloads must be skipped, not propagated as a panic"
+        applied,
+        "a known type still spawns when its data does not fit"
     );
-    assert!(
-        world
-            .get_component_for_entity::<Registered>(entity)
-            .is_none(),
-        "a failed deserialize must not leave a partial component behind"
+    assert_eq!(
+        world.get_component_for_entity::<Registered>(entity),
+        Some(&Registered::default()),
+        "data that does not fit is skipped, leaving the default"
     );
+}
+
+fn stored(value: impl Reflect) -> ReflectedValue {
+    to_value(&value).unwrap()
 }

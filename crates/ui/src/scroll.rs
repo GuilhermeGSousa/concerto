@@ -8,9 +8,8 @@ use concerto_ecs::{
     resource::Res,
     signal::{On, listener::IntoListener},
 };
+use concerto_window::events::{ScrollDelta, WindowEvent};
 use concerto_window::input::MouseButton;
-use concerto_window::winit_events::WindowEvent;
-use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::{
     interaction::{HoveredNode, Interactable, UIDrag},
@@ -111,10 +110,10 @@ pub(crate) fn update_scroll_areas(
     let Some(hovered) = **hovered else { return };
     let mut delta = 0.0;
     for event in events.read() {
-        if let WinitWindowEvent::MouseWheel { delta: wheel, .. } = &**event {
+        if let WindowEvent::MouseWheel { delta: wheel } = event {
             delta += match wheel {
-                MouseScrollDelta::LineDelta(_, y) => -*y * 28.0,
-                MouseScrollDelta::PixelDelta(value) => -value.y as f32,
+                ScrollDelta::Lines(lines) => -lines.y * 28.0,
+                ScrollDelta::Pixels(pixels) => -pixels.y,
             };
         }
     }

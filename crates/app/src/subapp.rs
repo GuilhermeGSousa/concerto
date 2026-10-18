@@ -1,5 +1,4 @@
 use concerto_ecs::{
-    component::scene::SceneComponent,
     system::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules},
     IntoSetConfig, IntoSystemConfig, Resource, World,
 };
@@ -47,7 +46,10 @@ impl SubApps {
         self.render.update();
     }
 
-    pub fn set_extract_fn(&mut self, extract_fn: impl FnMut(&mut World, &mut World) + 'static) {
+    pub fn set_extract_fn(
+        &mut self,
+        extract_fn: impl FnMut(&mut World, &mut World) + Send + Sync + 'static,
+    ) {
         self.extract_fn = Some(Box::new(extract_fn));
     }
 }
@@ -87,9 +89,9 @@ impl SubApp {
         self.world.get_resource_mut::<R>()
     }
 
-    /// Registers a [`SceneComponent`] so scenes can spawn it by type name.
-    pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {
-        self.world.register_component_type::<T>();
+    /// Registers `T` in this world's type registry with the type data its derive declared.
+    pub fn register_type<T: concerto_reflect::GetTypeRegistration>(&mut self) -> &mut Self {
+        self.world.register_type::<T>();
         self
     }
 

@@ -20,17 +20,7 @@ use crate::movement_animation::{setup_animations, spawn_character, update_moveme
 mod demo_overlay;
 mod movement_animation;
 
-fn main() {
-    cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-            console_log::init_with_level(log::Level::Debug).expect("Couldn't initialize logger");
-        } else {
-            env_logger::init();
-        }
-    }
-
-    let mut app = App::new();
+fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins::default());
     app.register_plugin(DebugGizmosPlugin);
 
@@ -46,8 +36,19 @@ fn main() {
         .add_system(Update, update_movement)
         .add_system(Update, update_overlay)
         .add_system(Update, draw_entity_gizmos);
+}
 
-    app.run();
+fn main() {
+    cfg_if::cfg_if! {
+        if #[cfg(target_arch = "wasm32")] {
+            std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+            console_log::init_with_level(log::Level::Debug).expect("Couldn't initialize logger");
+        } else {
+            env_logger::init();
+        }
+    }
+
+    concerto::run(game);
 }
 
 fn spawn_camera(mut cmd: CommandQueue) {

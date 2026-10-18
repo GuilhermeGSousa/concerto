@@ -59,8 +59,8 @@ mode, maximised, size.
   game must see, check `InputOwner` and, if it is `Editor`, push a click on the
   viewport's centre (`ViewportShown`'s origin plus half its size, already
   physical). Shift+F1 is `ShiftLeft` then `F1`.
-- **Reaching the game's world.** While playing, `Editor<T>` reads the play
-  `App`'s world and `EditorSignals` triggers in it, so the selftest finds and
+- **Reaching the game's world.** While playing, `EditWorld<T>` reads the play
+  `App`'s world and `EditWorldSignals` triggers in it, so the selftest finds and
   selects game entities the same way it does scene entities. A game's own
   marker types are not reachable from the editor crate; find its entities by
   engine components (`Transform`, `Children`, `Name`), and remember that

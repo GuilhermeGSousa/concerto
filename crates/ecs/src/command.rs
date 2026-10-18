@@ -163,32 +163,19 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(InsertResource::<T>::new(resource));
     }
 
-    pub fn insert_from_json(
-        &mut self,
-        component_name: String,
-        component_data: String,
-        entity: Entity,
-    ) {
-        self.queue_state.push(InsertErasedCommand::new(
-            component_name,
-            component_data,
-            entity,
-        ));
-    }
-
-    /// Queues a scene component for deserialization and application.
+    /// Queues a scene component to be spawned from `value`.
     /// `node_entities` lets the component resolve `SceneEntityRef`s to the
     /// other entities spawned for the same scene.
     pub fn apply_scene_component(
         &mut self,
         type_name: String,
-        data: String,
+        value: concerto_reflect::ReflectedValue,
         entity: Entity,
         node_entities: std::sync::Arc<[Entity]>,
     ) {
         self.queue_state.push(ApplySceneComponentCommand {
             type_name,
-            data,
+            value,
             entity,
             node_entities,
         });
@@ -341,11 +328,16 @@ impl SystemInput for CommandQueue<'_, '_> {
         CommandQueueState::new()
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        CommandQueue::new(state, world.world().entity_store())
+    ) -> Result<Self::Data<'world, 'state>, crate::system::input::ValidationError> {
+        // SAFETY: only the entity store is touched, whose reservations are atomic and which
+        // otherwise changes only under exclusive access.
+        Ok(CommandQueue::new(
+            state,
+            unsafe { world.world() }.entity_store(),
+        ))
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -410,31 +402,9 @@ impl<T: ComponentBundle> Command for InsertCommand<T> {
     }
 }
 
-pub(crate) struct InsertErasedCommand {
-    entity: Entity,
-    component_name: String,
-    component_data: String,
-}
-
-impl InsertErasedCommand {
-    pub fn new(component_name: String, component_data: String, entity: Entity) -> Self {
-        Self {
-            entity,
-            component_name,
-            component_data,
-        }
-    }
-}
-
-impl Command for InsertErasedCommand {
-    fn execute(self, world: &mut World) {
-        world.apply_scene_component(&self.component_name, &self.component_data, self.entity, &[]);
-    }
-}
-
 pub(crate) struct ApplySceneComponentCommand {
     type_name: String,
-    data: String,
+    value: concerto_reflect::ReflectedValue,
     entity: Entity,
     node_entities: std::sync::Arc<[Entity]>,
 }
@@ -443,7 +413,7 @@ impl Command for ApplySceneComponentCommand {
     fn execute(self, world: &mut World) {
         world.apply_scene_component(
             &self.type_name,
-            &self.data,
+            &self.value,
             self.entity,
             &self.node_entities,
         );

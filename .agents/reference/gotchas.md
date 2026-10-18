@@ -26,6 +26,16 @@ fix the entry in the same commit as the change that made it false.
   used on wasm, applies each system's commands right after it, which hides
   this. To make `b` see `a`'s decision, have `a` change data `b` reads, or
   register `a` before `b`.
+- **A missing resource skips the system and warns every frame.** A system
+  input declines through `SystemInput::get_data`, which returns a
+  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter` and
+  `Extracted` decline as `Missing`, which logs a warning on every skipped run;
+  `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
+  flood in the log names the system and the missing type. Use `Option<Res<T>>`
+  where absence is normal.
+- **`Added<T>` and `Changed<T>` read `T`.** A query filtered by them conflicts
+  with any system writing `T`, so the two never run in parallel. `With<T>` and
+  `Without<T>` read only archetypes and do not conflict.
 - **`.after()` and `.before()` reference a system; they do not add it.**
   Something else must add the target to the same schedule.
 - **A system takes at most twelve parameters.** A thirteenth fails with an
@@ -35,6 +45,13 @@ fix the entry in the same commit as the change that made it false.
   component that only stand-ins would have queried is never registered in that
   world, so its lifecycle callbacks never fire. Likewise, in an edit `App` an
   unmarked listener given to `App::add_listener` is silently dropped.
+- **Lifecycle signals run inside the operation.** `On<Add<T>>`, `Replace<T>`,
+  `Remove<T>` and `Despawn<T>` listeners run right after `T`'s hook, in the
+  middle of the spawn, insert, remove or despawn. They see the new value on add
+  and the old value otherwise; their `CommandQueue` applies when the operation's
+  commands flush. `add_listener` panics for one that takes `&World` or
+  `&mut World`, and registering one registers `T`, so its signals fire even if
+  nothing queries it. An overwrite fires `Replace`, then `Add`.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that
@@ -75,10 +92,25 @@ fix the entry in the same commit as the change that made it false.
 
 ## Scenes and assets
 
-- **A unit-struct scene component must accept `{}`.** serde reads a unit struct
-  only from `null`, and authored scene data carries `{}` for a marker. See
-  `MeshCollider` in `crates/physics/src/shape.rs`, which reads its payload with
-  `deserialize_ignored_any`.
+- **A type nothing registered is invisible.** Scenes spawn and capture, and the
+  inspector shows, only types registered with `app.register_type::<T>()` in that
+  `App`. The derive's `#[reflect(...)]` says what a type supports; registering
+  is a separate call, made once by the plugin that owns the type.
+- **`#[reflect(Component, Default, SceneComponent)]` names types at the use
+  site.** `ReflectComponent` and `ReflectSceneComponent` (from
+  `concerto_ecs::reflect`) and `ReflectDefault` (from `concerto_reflect`) must
+  be imported where the derive uses them.
+- **Everything a scene component reaches implements `Default`.** Loading starts
+  from `T::default()` and writes the stored fields into it, so the component,
+  every `Option` and `Vec` element type, and every enum variant's fields need
+  `Default`. A field the stored data lacks keeps its default.
+- **`#[reflect(opaque)]` makes a type a serde leaf.** It is stored as bytes
+  through its `Serialize` and `Deserialize`, so it needs both. Use it only for
+  values with no reflected inside; structs and enums derive `Reflect` plainly.
+- **A handle type must be registered to load from a scene.** A plugin that
+  registers a component holding `AssetHandle<A>` also registers
+  `AssetHandle<A>`, or the handle spawns weak and loads nothing, with a
+  warning.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
@@ -92,18 +124,25 @@ fix the entry in the same commit as the change that made it false.
   `EntityEdit`, `Select`, or `SetGizmoMode`; they do not mutate the scene, the
   selection, or the gizmo themselves. The listeners live in
   `crates/editor/src/tools/`, which names no document, tab, or panel type.
-- **A scene edit reaches its document through an event.** The tools write
-  `SceneEdited` in the edit `App`; the host re-raises it as `Hosted<SceneEdited>`
-  and a listener inserts `Unsaved`. Forwarding happens whenever the editor has
-  handed control to the edit `App` and has it back: after a step, after an
-  `EditorSignals` queue is applied, and after `hosted::trigger_on`.
+- **Hosted events arrive in the editor a frame after a signal wrote them.**
+  `forward_events::<E>` runs in `First`, after the hosted step. An event written
+  during the step reaches `EventReader<Hosted<E>>` systems in the same frame;
+  one written by a signal (`EditWorldSignals`, `hosted::trigger_on`) arrives on the
+  next frame. Decisions that must not lag, such as Play's "save first", read
+  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event.
+- **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
+  `follow_unsaved_edits` inserts or removes it each frame while the document is
+  `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
+  through `HostedApp::mark_saved` after a successful write.
+- **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
+  `App` finishes building.
 - **Change detection does not cross the seam.** `has_changed()` and
   `Changed<T>` compare against the tick of the world they are read in. Through
-  `Editor<T>` they give no usable answer; a panel learns of a change from a
-  `Hosted<E>` signal.
+  `EditWorld<T>` they give no usable answer; a panel learns of a change from a
+  `Hosted<E>` event.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
-  looked up through `Editor<…>`.
+  looked up through `EditWorld<…>`.
 - **Tools run in the edit `App`.** A system added to the editor `App` never
   sees a scene entity, and a component used only by tools must be registered
   there for its hooks to fire. A tool's system or listener must be marked
@@ -112,13 +151,20 @@ fix the entry in the same commit as the change that made it false.
   so nothing from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
-- **`Editor<T>` and `EditorSignals` skip their system** while the active tab
-  has no scene, while its game is starting, and from the moment its scene
-  changes until the host announces it in the next `First`. Whatever such a
-  system drew stays on screen unless a listener on `EditTargetChanged` empties
-  it.
-  A skipped system does not advance its event readers either, so on its next
-  run it reads the events of the frame it missed.
+- **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
+  has `EditTarget`: no scene is open in the front tab, or its game is
+  starting. Whatever such a system drew stays on screen unless an
+  `On<Remove<EditTarget>>` listener empties it. A skipped system does not
+  advance its event readers either, so on its next run it reads the events of
+  the frame it missed.
+- **Change the edit target with `SetEditTarget`, never by moving the marker.**
+  Its one listener moves `EditTarget` and enforces that at most the front tab's
+  document holds it, and only once it has an `App`. Re-targeting the same
+  document removes the marker and adds it again, so Play and Stop are a
+  `Remove` followed by an `Add`.
+- **`InViewport` follows `EditTarget` while the viewport is shown.**
+  `sync_in_viewport` keeps it in step in `First`, before the step. Its `Add`
+  focuses the `App`; its `Remove` unfocuses it and steps it once.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert
   `ExclusiveCamera` naming it at `Startup`, and `extract_cameras` skips every
   other camera while the resource exists, so a scene camera never gets a render
@@ -152,9 +198,12 @@ fix the entry in the same commit as the change that made it false.
   schedule is safe only because `TaskPool::scope` re-raises a task's panic
   after every task it spawned has finished; the panicked system's dependants
   never run.
-- **Asynchronous editor work must check its generation** before it mutates
-  anything, with `asset_request_is_current`. A result for a closed tab or a
-  switched project is discarded.
+- **Asynchronous editor work must check its request** before it mutates
+  anything: capture the `AssetEntry` it was started for and pass it to
+  `asset_request_is_current`. A result for a replaced or cancelled request is
+  discarded; a closed tab, and every tab after a project switch, is gone. A
+  late result of a request repeated for the same asset is accepted, since it
+  read the same file.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
   keys, buttons, wheel, or raw motion, and closing the gate releases whatever
   was held; the cursor position is still folded. The editor closes its own

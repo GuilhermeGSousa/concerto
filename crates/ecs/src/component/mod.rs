@@ -5,12 +5,15 @@ use std::{
 
 pub mod bundle;
 pub mod name;
-pub mod registry;
 pub mod scene;
 
 pub use concerto_ecs_macros::Component;
 
-use crate::{entity::Entity, world::RestrictedWorld};
+use crate::{
+    entity::Entity,
+    signal::lifecycle,
+    world::{RestrictedWorld, UnsafeWorldCell},
+};
 
 /// A unique identifier for a component type, based on its Rust [`TypeId`].
 pub type ComponentId = TypeId;
@@ -95,7 +98,13 @@ pub(crate) struct ComponentLifecycleCallbacks {
     pub(crate) on_replace: Option<ComponentLifecycleCallback>,
     pub(crate) on_remove: Option<ComponentLifecycleCallback>,
     pub(crate) on_despawn: Option<ComponentLifecycleCallback>,
+    pub(crate) signal_add: LifecycleDispatch,
+    pub(crate) signal_replace: LifecycleDispatch,
+    pub(crate) signal_remove: LifecycleDispatch,
+    pub(crate) signal_despawn: LifecycleDispatch,
 }
+
+pub(crate) type LifecycleDispatch = unsafe fn(UnsafeWorldCell, Entity);
 
 impl ComponentLifecycleCallbacks {
     pub(crate) fn from_component<T: Component>() -> Self {
@@ -104,6 +113,10 @@ impl ComponentLifecycleCallbacks {
             on_replace: T::on_replace(),
             on_remove: T::on_remove(),
             on_despawn: T::on_despawn(),
+            signal_add: lifecycle::dispatch::<lifecycle::Add<T>>,
+            signal_replace: lifecycle::dispatch::<lifecycle::Replace<T>>,
+            signal_remove: lifecycle::dispatch::<lifecycle::Remove<T>>,
+            signal_despawn: lifecycle::dispatch::<lifecycle::Despawn<T>>,
         }
     }
 }

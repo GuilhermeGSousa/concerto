@@ -5,7 +5,7 @@ use crate::{
     events::{Event, event_channel::EventChannel, event_cursor::EventCursor},
     resource::Res,
     system::{
-        input::{SystemInput, SystemLocal},
+        input::{SystemInput, SystemLocal, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
@@ -39,9 +39,7 @@ pub struct EventReader<'world, 'state, T: Event + 'static> {
 impl<'w, 's, T: Event> EventReader<'w, 's, T> {
     /// Returns an iterator over every event not yet seen by this reader, and marks them read.
     pub fn read(&mut self) -> EventIterator<'_, T> {
-        let last_event_count =
-            std::mem::replace(&mut self.cursor.last_event_count, self.channel.event_count);
-        EventIterator::new(&self.channel, last_event_count)
+        self.channel.read_from(&mut self.cursor)
     }
 
     /// Number of events this reader has not read yet.
@@ -74,14 +72,15 @@ where
         <CursorParam<T>>::init_state(world)
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        EventReader {
-            channel: <ChannelParam<T>>::get_data(&mut (), world),
-            cursor: <CursorParam<T>>::get_data(state, world),
-        }
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares exactly the access of its two parts.
+        Ok(EventReader {
+            channel: unsafe { <ChannelParam<T>>::get_data(&mut (), world) }?,
+            cursor: unsafe { <CursorParam<T>>::get_data(state, world) }?,
+        })
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {

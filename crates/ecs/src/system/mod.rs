@@ -7,7 +7,9 @@ pub mod meta;
 mod reachability;
 pub mod schedule;
 pub mod set;
+mod stand_in;
 mod sync_point;
+pub mod tag;
 
 use std::{any::TypeId, marker::PhantomData};
 
@@ -15,8 +17,9 @@ pub use config::{
     AlreadyConfigured, DependencyTarget, IntoDependencyTarget, IntoSystemConfig, SystemConfig,
 };
 pub use set::{InternedSystemSet, IntoSetConfig, SetConfig, SystemSet};
+pub use tag::{SystemTag, TagFilter};
 
-use input::SystemInput;
+use input::{SystemInput, ValidationError, ValidationKind};
 use typle::typle;
 
 use crate::{
@@ -56,6 +59,7 @@ pub trait System: Send + Sync + 'static {
 
     fn run(&mut self, args: SysArg<'_, Self>, world: &mut World) {
         let world_cell = world.as_unsafe_world_cell_mut();
+        // SAFETY: the exclusive borrow of `world` rules out any other running system.
         unsafe { self.run_unsafe(args, world_cell) };
     }
 
@@ -193,7 +197,15 @@ where
             .system_state
             .as_mut()
             .expect("Attempted to run uninitialized system.");
-        self.func.call(args, F::Inputs::get_data(state, world));
+        // SAFETY: the caller guarantees no conflicting system runs, and the inputs touch
+        // only the access they declared for this system.
+        match unsafe { F::Inputs::get_data(state, world) } {
+            Ok(data) => self.func.call(args, data),
+            Err(error) if error.kind == ValidationKind::Missing => {
+                log::warn!("{} skipped: {error}", std::any::type_name::<F>());
+            }
+            Err(_) => {}
+        }
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -308,14 +320,50 @@ impl SystemInput for NonSendMarker {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        NonSendMarker
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        Ok(NonSendMarker)
     }
 
     fn fill_access(meta: &mut SystemMetadata, _access: &mut SystemAccess) {
         meta.set_non_send();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        ResMut, Resource, World,
+        command::CommandQueue,
+        system::input::test_support::{Gate, GateOpen},
+    };
+
+    #[derive(Resource, Default)]
+    struct Runs(usize);
+
+    fn gated(_: Gate, mut runs: ResMut<Runs>, mut cmd: CommandQueue) {
+        runs.0 += 1;
+        cmd.insert_resource(GateOpen(false));
+    }
+
+    #[test]
+    fn a_system_whose_parameter_declines_does_not_run_or_queue() {
+        let mut world = World::new();
+        world.insert_resource(Runs::default());
+        world.insert_resource(GateOpen(false));
+        let mut system = gated.into_system();
+        system.initialize(&mut world);
+
+        system.run_and_apply((), &mut world);
+        assert_eq!(world.get_resource::<Runs>().unwrap().0, 0);
+        assert!(!world.get_resource::<GateOpen>().unwrap().0);
+
+        world.insert_resource(GateOpen(true));
+        system.run_and_apply((), &mut world);
+        assert_eq!(world.get_resource::<Runs>().unwrap().0, 1);
+        assert!(!world.get_resource::<GateOpen>().unwrap().0);
     }
 }

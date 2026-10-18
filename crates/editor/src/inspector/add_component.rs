@@ -34,7 +34,7 @@ pub(super) struct AddComponentSearch;
 /// A row of the menu's list and the component it adds.
 #[derive(Component, Clone, Copy)]
 pub(super) struct AddComponentEntry {
-    entity: Entity,
+    scene_entity: Entity,
     component: TypeId,
 }
 
@@ -45,10 +45,24 @@ pub(super) struct HighlightedEntry;
 /// What the menu's list was last built from.
 #[derive(Component, PartialEq)]
 pub(super) struct AddComponentMenuContents {
-    target: Option<Entity>,
+    scene_target: Option<Entity>,
     structural_version: Option<EntityStructuralVersion>,
     registry_tick: Tick,
     query: String,
+}
+
+pub(super) fn forget_scene(
+    _: On<Remove<EditTarget>>,
+    menus: Query<(Entity, &AddComponentMenu, &mut UIAnchoredPanel)>,
+    mut cmd: CommandQueue,
+) {
+    for (entity, menu, mut panel) in menus.iter() {
+        if panel.open {
+            panel.open = false;
+        }
+        cmd.entity(menu.list).despawn_children();
+        cmd.remove::<AddComponentMenuContents>(entity);
+    }
 }
 
 /// Spawns the "add component" row at the end of `stack` and anchors the menu to it.
@@ -210,7 +224,8 @@ pub(super) fn clear_add_component_search(
 
 /// Rebuilds the open menu's list when the target, the registry or the search text changes.
 pub(super) fn populate_add_component_menu(
-    source: InspectionSource,
+    source: EditWorld<InspectionSource>,
+    registry: Res<InspectorRegistry>,
     data: Res<InspectorData>,
     theme: Res<UITheme>,
     menus: Query<(
@@ -222,15 +237,17 @@ pub(super) fn populate_add_component_menu(
     inputs: Query<&UITextInput>,
     mut cmd: CommandQueue,
 ) {
-    let target = data.entity.filter(|&entity| source.entity_is_valid(entity));
+    let target = data
+        .scene_entity
+        .filter(|&entity| source.entity_is_valid(entity));
     for (entity, menu, panel, shown) in menus.iter() {
         if !panel.open {
             continue;
         }
         let contents = AddComponentMenuContents {
-            target,
+            scene_target: target,
             structural_version: target.and_then(|entity| source.structural_version(entity)),
-            registry_tick: source.registry_tick(),
+            registry_tick: registry.changed_tick(),
             query: inputs
                 .get_entity(menu.search)
                 .map(|input| input.value.trim().to_lowercase())
@@ -245,8 +262,8 @@ pub(super) fn populate_add_component_menu(
             Some(target) => source.addable_components(target),
             None => (Vec::new(), 0),
         };
-        addable.retain(|(_, component)| component.name.to_lowercase().contains(&contents.query));
-        addable.sort_by(|(_, a), (_, b)| a.name.cmp(b.name));
+        addable.retain(|(_, name)| name.to_lowercase().contains(&contents.query));
+        addable.sort_by(|(_, a), (_, b)| a.cmp(b));
 
         let count = if contents.query.is_empty() {
             String::new()
@@ -274,22 +291,15 @@ pub(super) fn populate_add_component_menu(
             );
         }
 
-        for (index, (type_id, component)) in addable.iter().enumerate() {
-            let Some(entity) = target else {
+        for (index, (type_id, name)) in addable.iter().enumerate() {
+            let Some(scene_entity) = target else {
                 break;
             };
             let entry = AddComponentEntry {
-                entity,
+                scene_entity,
                 component: *type_id,
             };
-            spawn_entry(
-                &mut cmd,
-                menu.list,
-                entry,
-                component.name,
-                index == 0,
-                &theme,
-            );
+            spawn_entry(&mut cmd, menu.list, entry, name, index == 0, &theme);
         }
 
         cmd.insert(contents, entity);
@@ -387,7 +397,7 @@ fn queue_add(
     }
     if open {
         edits.0.push(ComponentEdit::Add {
-            entity: entry.entity,
+            entity: entry.scene_entity,
             component: entry.component,
         });
     }

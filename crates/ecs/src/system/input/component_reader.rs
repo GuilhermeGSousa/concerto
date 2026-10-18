@@ -1,6 +1,6 @@
-use super::{ReadOnlySystemInput, SystemInput};
+use super::{ReadOnlySystemInput, SystemInput, ValidationError};
 use crate::{
-    component::{Component, ComponentId, Tick, registry::TypeInfo},
+    component::{Component, ComponentId, Tick},
     entity::{Entity, EntityStructuralVersion},
     system::{access::SystemAccess, meta::SystemMetadata},
     world::{UnsafeWorldCell, World},
@@ -18,29 +18,36 @@ impl<'w> ComponentMetadata<'w> {
         }
     }
 
+    fn read(&self) -> &'w World {
+        // SAFETY: built from a `&World`, or by `get_data` for a system that declared read
+        // access to every component; entity and type metadata change only under exclusive
+        // access.
+        unsafe { self.world.world() }
+    }
+
     /// See [`World::structural_version`].
     pub fn structural_version(&self, entity: Entity) -> Option<EntityStructuralVersion> {
-        self.world.world().structural_version(entity)
+        self.read().structural_version(entity)
     }
 
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
-        self.world.world().entity_is_valid(entity)
+        self.read().entity_is_valid(entity)
     }
 
     pub fn component_ids(&self, entity: Entity) -> &'w [ComponentId] {
-        self.world.world().component_ids(entity)
+        self.read().component_ids(entity)
     }
 
-    pub fn type_info(&self, id: ComponentId) -> Option<&'w TypeInfo> {
-        self.world.world().type_info(id)
+    pub fn registration(&self, id: ComponentId) -> Option<&'w concerto_reflect::TypeRegistration> {
+        self.read().registration(id)
     }
 
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&'w T> {
-        self.world.world().get_component_for_entity::<T>(entity)
+        self.read().get_component_for_entity::<T>(entity)
     }
 
     pub fn current_tick(&self) -> Tick {
-        self.world.world().current_tick()
+        self.read().current_tick()
     }
 
     pub fn has_component_changed_since(
@@ -49,9 +56,7 @@ impl<'w> ComponentMetadata<'w> {
         id: ComponentId,
         since: Tick,
     ) -> bool {
-        self.world
-            .world()
-            .has_component_changed_since(entity, id, since)
+        self.read().has_component_changed_since(entity, id, since)
     }
 }
 
@@ -59,11 +64,11 @@ impl SystemInput for ComponentMetadata<'_> {
     type State = ();
     type Data<'world, 'state> = ComponentMetadata<'world>;
     fn init_state(_: &mut World) {}
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _: &'state mut (),
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        ComponentMetadata { world }
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        Ok(ComponentMetadata { world })
     }
     fn fill_access(_: &mut SystemMetadata, access: &mut SystemAccess) {
         access.read_all_components();

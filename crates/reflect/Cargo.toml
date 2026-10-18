@@ -1,0 +1,19 @@
+[package]
+name = "concerto-reflect"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-reflect-macros.workspace = true
+concerto-color.workspace = true
+bincode = "1.3"
+glam = { version = "0.30.1", features = ["serde"] }
+log = "0.4.27"
+serde = { version = "1", features = ["derive"] }
+uuid = { version = "1.18.1", features = ["serde"] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }

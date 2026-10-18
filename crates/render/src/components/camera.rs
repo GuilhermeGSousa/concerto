@@ -1,22 +1,21 @@
 use concerto_app::extractor::Extracted;
 use concerto_color::{Color, LinearRgba};
 use concerto_foundation::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+    assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::GlobalTransform,
 };
 use encase::{ShaderType, UniformBuffer};
 
 use concerto_ecs::{
     command::CommandQueue,
-    component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     query::Query,
-    resource::{Res, ResMut},
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    resource::{Res, ResMut, Resource},
     Entity,
 };
 use concerto_window::plugin::Window;
 use glam::{Mat4, Vec3, Vec4};
-use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -40,13 +39,12 @@ pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(
 );
 
 #[allow(dead_code)]
-#[derive(Serialize, Deserialize)]
+#[derive(concerto_reflect::Reflect, Default)]
 pub enum RenderTarget {
+    #[default]
     MainWindow,
     Texture(AssetHandle<Texture>),
 }
-
-impl concerto_editable::Editable for RenderTarget {}
 
 #[allow(dead_code)]
 impl RenderTarget {
@@ -59,7 +57,8 @@ impl RenderTarget {
     }
 }
 
-#[derive(Component, concerto_editable::Editable, Serialize, Deserialize)]
+#[derive(Component, concerto_reflect::Reflect)]
+#[reflect(Component, SceneComponent)]
 pub struct Camera {
     pub aspect: f32,
     pub fovy: f32,
@@ -67,17 +66,6 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
-}
-
-impl SceneComponent for Camera {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let RenderTarget::Texture(handle) = &self.render_target {
-            if let Some(server) = ctx.get_resource::<AssetServer>() {
-                self.render_target = RenderTarget::Texture(server.load(handle.id()));
-            }
-        }
-        ctx.insert(self, entity);
-    }
 }
 
 impl Camera {
@@ -193,10 +181,16 @@ fn publish_render_target(
     render_textures.insert(handle.id(), target.clone());
 }
 
+/// While present, only the named camera is extracted into the render world.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExclusiveCamera(pub Entity);
+
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn extract_cameras(
+    exclusive: Extracted<Option<Res<ExclusiveCamera>>>,
     cameras: Extracted<
         Query<(
+            Entity,
             &Camera,
             Option<&CameraEnvironment>,
             &GlobalTransform,
@@ -212,7 +206,10 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (camera, environment, transform, render_entity) in cameras.iter() {
+    for (entity, camera, environment, transform, render_entity) in cameras.iter() {
+        if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
+            continue;
+        }
         let render_entity = **render_entity;
 
         let mut camera_uniform = CameraUniform::new();

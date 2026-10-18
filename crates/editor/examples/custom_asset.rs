@@ -72,8 +72,6 @@ pub fn load_dialogue(
         let Some(asset) = document.pending.clone() else {
             continue;
         };
-        let request = document.request_generation;
-        let generation = project.generation;
         let result = (|| -> Result<String> {
             let bytes = std::fs::read(root.join(&asset.address))?;
             let (header, payload) = read_content_asset(&bytes)?;
@@ -85,7 +83,7 @@ pub fn load_dialogue(
             anyhow::ensure!(!dialogue.text.trim().is_empty(), "Dialogue cannot be empty");
             Ok(dialogue.text)
         })();
-        if !asset_request_is_current(&document, request, generation) {
+        if !asset_request_is_current(&document, &asset) {
             continue;
         }
         match result {
@@ -97,20 +95,10 @@ pub fn load_dialogue(
                     },
                     state.widget,
                 );
-                assert!(finish_asset_request(
-                    &mut document,
-                    request,
-                    generation,
-                    Ok(())
-                ));
+                assert!(finish_asset_request(&mut document, &asset, Ok(())));
             }
             Err(error) => {
-                assert!(finish_asset_request(
-                    &mut document,
-                    request,
-                    generation,
-                    Err(error)
-                ));
+                assert!(finish_asset_request(&mut document, &asset, Err(error)));
             }
         }
     }
@@ -140,6 +128,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     app.insert_resource(AssetEditorRegistry::default());
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(ActiveEditor::default());
+    app.insert_resource(concerto_editor::guard::UnsavedGuard::default());
     register(&mut app)?;
     let mut project = ProjectState::default();
     project.project = Some(Project {
@@ -147,7 +136,6 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         assets: vec![],
         registry: AssetRegistry::default(),
     });
-    project.generation = 1;
     app.insert_resource(project);
     let world = app.main_mut().world_mut();
     world.register_component::<ChildOf>();
@@ -176,22 +164,27 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
                 &bincode::serialize(&Dialogue { text: text.into() })?,
             )?,
         )?;
+        world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .project
+            .as_mut()
+            .unwrap()
+            .registry
+            .insert(id, address.clone());
         let asset = AssetEntry {
             id,
             address,
             kind: header.kind,
             display_name: name.into(),
             folder: String::new(),
-            provenance,
+            provenance: Some(provenance),
         };
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset,
-                project_generation: 1,
-            });
+            .push_back(AssetEditorCommand::Open(asset));
         process.run_and_apply((), world);
         let mut load = load_dialogue.into_system();
         load.initialize(world);

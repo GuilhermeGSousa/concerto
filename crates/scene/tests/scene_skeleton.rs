@@ -1,7 +1,8 @@
-use concerto_ecs::component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext};
-use concerto_ecs::World;
+use concerto_ecs::component::scene::SceneEntityRef;
+use concerto_ecs::{Entity, World};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_reflect::to_value;
 use uuid::Uuid;
 
 fn authored_skeleton(root: Option<SceneEntityRef>) -> SkeletonComponent {
@@ -13,6 +14,16 @@ fn authored_skeleton(root: Option<SceneEntityRef>) -> SkeletonComponent {
     }
 }
 
+fn spawn(world: &mut World, skeleton: SkeletonComponent, owner: Entity, nodes: &[Entity]) {
+    world.register_type::<SkeletonComponent>();
+    assert!(world.apply_scene_component(
+        "SkeletonComponent",
+        &to_value(&skeleton).unwrap(),
+        owner,
+        nodes,
+    ));
+}
+
 #[test]
 fn skeleton_component_resolves_scene_references_in_place() {
     let mut world = World::default();
@@ -21,12 +32,16 @@ fn skeleton_component_resolves_scene_references_in_place() {
     let bone_b = world.spawn(());
     let nodes = [owner, bone_a, bone_b];
 
-    let mut ctx = SceneSpawnContext::new(&mut world, &nodes);
-    authored_skeleton(Some(SceneEntityRef::Index(1))).apply(owner, &mut ctx);
+    spawn(
+        &mut world,
+        authored_skeleton(Some(SceneEntityRef::Index(1))),
+        owner,
+        &nodes,
+    );
 
     let skeleton = world
         .get_component_for_entity::<SkeletonComponent>(owner)
-        .expect("apply must insert the same component type");
+        .expect("spawning must insert the same component type");
     assert_eq!(
         skeleton.bones(),
         &[
@@ -45,8 +60,7 @@ fn rootless_skeleton_component_supports_primitive_bindings() {
     let bone_b = world.spawn(());
     let nodes = [owner, bone_a, bone_b];
 
-    let mut ctx = SceneSpawnContext::new(&mut world, &nodes);
-    authored_skeleton(None).apply(owner, &mut ctx);
+    spawn(&mut world, authored_skeleton(None), owner, &nodes);
 
     let skeleton = world
         .get_component_for_entity::<SkeletonComponent>(owner)
@@ -64,13 +78,13 @@ fn invalid_references_remain_unresolved_without_shifting_bone_indices() {
     let mut skeleton = authored_skeleton(Some(SceneEntityRef::Index(9)));
     skeleton.bones = vec![SceneEntityRef::Index(9), SceneEntityRef::Index(1)];
 
-    let mut ctx = SceneSpawnContext::new(&mut world, &nodes);
-    skeleton.apply(owner, &mut ctx);
+    spawn(&mut world, skeleton, owner, &nodes);
 
     let skeleton = world
         .get_component_for_entity::<SkeletonComponent>(owner)
         .unwrap();
-    assert_eq!(skeleton.bones()[0], SceneEntityRef::Index(9));
+    assert_eq!(skeleton.bones()[0], SceneEntityRef::default());
+    assert_eq!(skeleton.bones()[0].entity(), None);
     assert_eq!(skeleton.bones()[1], SceneEntityRef::Entity(bone));
     assert_eq!(skeleton.root(), None);
 }

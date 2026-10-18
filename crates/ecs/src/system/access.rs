@@ -55,6 +55,11 @@ impl SystemAccess {
         self.writes_all
     }
 
+    /// Whether the system reads or writes the whole world.
+    pub fn reads_world(&self) -> bool {
+        self.reads_all || self.writes_all
+    }
+
     pub fn are_disjoint(a: &Self, b: &Self) -> bool {
         if a.writes_all || b.writes_all {
             return false;

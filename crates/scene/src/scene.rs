@@ -1,13 +1,13 @@
-use concerto_ecs::component::scene::SceneComponent;
 use concerto_foundation::assets::{Asset, AssetId, LoadableAsset};
+use concerto_reflect::{Reflect, ReflectedValue};
 use serde::{Deserialize, Serialize};
 
-/// One component's serialized payload: the registry key it was registered under
-/// plus its serde-JSON encoding.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// One component as scene data: the registry key it was registered under plus
+/// its reflected value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SerializedComponent {
     pub type_name: String,
-    pub data: String,
+    pub value: ReflectedValue,
 }
 
 /// One node in a [`Scene`]: a name, the indices of its children within
@@ -24,18 +24,12 @@ pub struct SceneNode {
 }
 
 impl SceneNode {
-    /// Serializes `component` and appends it to this node. Importers use this
-    /// rather than building [`SerializedComponent`] by hand, so the registry
-    /// key always comes from the component's [`SceneComponent`] registration
-    /// name, and only components that can be applied during scene spawning can
-    /// be authored through this method.
-    pub fn push_component<T: Serialize + SceneComponent>(
-        &mut self,
-        component: &T,
-    ) -> anyhow::Result<()> {
+    /// Stores `component` through reflection and appends it to this node, keyed
+    /// by its full type path, the name its registration resolves.
+    pub fn push_component<T: Reflect>(&mut self, component: &T) -> anyhow::Result<()> {
         self.components.push(SerializedComponent {
-            type_name: T::name().to_string(),
-            data: serde_json::to_string(component)?,
+            type_name: std::any::type_name::<T>().to_owned(),
+            value: concerto_reflect::to_value(component)?,
         });
         Ok(())
     }
@@ -47,9 +41,9 @@ impl SceneNode {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Scene {
     pub nodes: Vec<SceneNode>,
-    /// Every [`AssetId`] reachable from the nodes' components. Component
-    /// payloads are opaque strings, so [`Asset::referenced_sub_assets`]
-    /// cannot introspect them — the importer records the ids here as it emits.
+    /// Every [`AssetId`] reachable from the nodes' components, so
+    /// [`Asset::referenced_sub_assets`] need not decode them. Capture fills it
+    /// from the handles it finds; importers record the ids as they emit.
     pub referenced_assets: Vec<AssetId>,
 }
 

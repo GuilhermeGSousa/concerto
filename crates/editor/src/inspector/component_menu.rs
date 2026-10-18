@@ -4,7 +4,7 @@ use super::*;
 use super::add_component::MENU_FILL;
 
 use crate::fonts::{glyph, icon};
-use concerto_ecs::{component::bundle::IntoBundle, signal::On};
+use concerto_ecs::component::bundle::IntoBundle;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorTarget, UIAnchoredPanel},
     interaction::UIClick,
@@ -16,23 +16,36 @@ const MENU_WIDTH: f32 = 168.0;
 /// The persistent menu panel, pointed at whichever card's button was clicked last.
 #[derive(Component)]
 pub(super) struct ComponentMenu {
-    target: Option<ComponentMenuButton>,
+    scene_target: Option<ComponentMenuButton>,
 }
 
 /// A card's "⋯" button and the component it acts on.
 #[derive(Component, Clone, Copy)]
 pub(super) struct ComponentMenuButton {
-    pub entity: Entity,
+    pub scene_entity: Entity,
     pub component: TypeId,
 }
 
 #[derive(Component)]
 pub(super) struct RemoveComponentItem;
 
-/// The "⋯" button for the card showing `component` of `entity`.
+pub(super) fn forget_scene(
+    _: On<Remove<EditTarget>>,
+    menus: Query<(&mut ComponentMenu, &mut UIAnchoredPanel)>,
+) {
+    for (mut menu, mut panel) in menus.iter() {
+        if menu.scene_target.is_some() {
+            menu.scene_target = None;
+        }
+        if panel.open {
+            panel.open = false;
+        }
+    }
+}
+
 pub(super) fn menu_button(
     theme: &UITheme,
-    entity: Entity,
+    scene_entity: Entity,
     component: TypeId,
 ) -> impl IntoBundle<Bundle: 'static> + use<> {
     (
@@ -42,7 +55,10 @@ pub(super) fn menu_button(
             .padding(UIRect::axes(0.0, 4.0))
             .on_click(toggle_component_menu),
         icon(theme, glyph::DOTS_THREE, theme.font_size_lg).muted(),
-        ComponentMenuButton { entity, component },
+        ComponentMenuButton {
+            scene_entity,
+            component,
+        },
     )
 }
 
@@ -62,7 +78,7 @@ pub(super) fn ensure_component_menu(
             .width(UIValue::Px(MENU_WIDTH))
             .padding(theme.spacing_xs)
             .anchor_align(UIAnchorAlign::End),
-        ComponentMenu { target: None },
+        ComponentMenu { scene_target: None },
     ))
     .add_child_with(
         (
@@ -98,7 +114,7 @@ fn toggle_component_menu(
     };
     for (mut menu, mut panel) in menus.iter() {
         let closing = panel.open && panel.owner == Some(on.entity());
-        menu.target = Some(*button);
+        menu.scene_target = Some(*button);
         panel.target = UIAnchorTarget::from_node(on.entity());
         panel.owner = Some(on.entity());
         panel.open = !closing;
@@ -114,9 +130,9 @@ fn remove_component(
         return;
     }
     for (menu, mut panel) in menus.iter() {
-        if let Some(target) = menu.target.filter(|_| panel.open) {
+        if let Some(target) = menu.scene_target.filter(|_| panel.open) {
             edits.0.push(ComponentEdit::Remove {
-                entity: target.entity,
+                entity: target.scene_entity,
                 component: target.component,
             });
         }

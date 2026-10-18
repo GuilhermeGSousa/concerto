@@ -77,24 +77,31 @@ passing test suite says nothing about what is on screen. Use the
 ## Code rules
 
 **Comments.** Write none, in any file type, except a one-line `///` on a public
-item. That covers Rust, WGSL, TOML, YAML, and shell. Design reasoning goes in
-your reply or in the spec. Leave existing comments alone unless the code they
-describe changes.
+item. That covers Rust, WGSL, TOML, YAML, and shell. Two exceptions: an
+`unsafe` block may carry one `// SAFETY:` line saying why it is sound, and an
+`unsafe fn` may carry a `# Safety` section in its doc comment. Design reasoning
+goes in your reply or in the spec. Leave existing comments alone unless the
+code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
 an extract system, `Extracted`. In the editor crate a system may also take
-`Editor<T>`, which reads the world of the scene being edited, or of the running
-game while playing, and `EditorSignals`, which sends signals to it. Both skip
-the system while no scene is open, while its game is starting, and for the rest
-of the frame in which the open scene changes. Nothing
+`EditWorld<T>`, which reads the world of the scene being edited, or of the running
+game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
+the system while no document is the edit target: no scene is open, or its game
+is starting. Nothing
 else reaches that world. Do not write a system that takes `&World` or
 `&mut World`. Work that needs the whole world goes through commands, so it runs
 with exclusive access when the queue is applied: the typed `CommandQueue`
 methods (`spawn`, `insert`, `remove`, `despawn`, `insert_resource`), or
 `cmd.trigger(signal)` with a listener that does the exclusive work. The only
 existing systems that take `&mut World` are `run_main` and `render_main`, which
-run the main and render schedules; they are not a pattern to copy.
+run the main and render schedules; they are not a pattern to copy. To react
+when a component appears or disappears, listen for its lifecycle signals,
+`On<Add<T>>`, `On<Replace<T>>`, `On<Remove<T>>` and `On<Despawn<T>>`. A system
+whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
+on every run until the resource exists; take `Option<Res<T>>` when absence is
+normal.
 
 **No revision counters.** Do not add a number that is bumped to say "this
 changed" and compared somewhere else. State that changed is read through change

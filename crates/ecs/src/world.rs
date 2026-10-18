@@ -5,29 +5,32 @@ use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomDa
 
 use crate::command::{Command, CommandQueue, CommandQueueState};
 use crate::component::bundle::{ComponentBundle, IntoBundle, MergeRow, PushRow, ReplaceRow};
-use crate::component::registry::{ComponentRegistry, TypeInfo};
-use crate::component::scene::{SceneComponent, SceneSpawnContext};
+use crate::component::scene::SceneEntityRef;
 use crate::entity::EntityWorldMut;
 use crate::entity::entity_store::EntityStore;
 use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
+use crate::reflect::{AppTypeRegistry, ReflectSceneComponent, SceneComponentType};
 use crate::resource::ResourceStorage;
-use crate::signal::listener::{IntoListener, Listener, Listeners};
+use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners};
 use crate::signal::{EntitySignal, Signal};
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
 use crate::table::MutableCellAccessor;
+use crate::world_id::WorldId;
 use crate::{
     archetype::Archetype,
     common::generate_type_id,
     component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
-    system::input::SystemInput,
+    system::input::{SystemInput, ValidationError},
     table::TableRowIndex,
     utilities::TypeIdMap,
 };
 use crate::{component::Tick, system::meta::SystemMetadata};
+use concerto_reflect::ReflectedValue;
+use concerto_reflect::{GetTypeRegistration, TypeRegistration};
 
 /// The central container of the ECS.
 ///
@@ -47,9 +50,9 @@ use crate::{component::Tick, system::meta::SystemMetadata};
 /// ```
 #[derive(Default)]
 pub struct World {
+    id: WorldId,
     archetypes: Vec<Archetype>,
     resources: AnyMap,
-    component_registry: ComponentRegistry,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
@@ -65,7 +68,14 @@ unsafe impl Sync for World {}
 impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
-        Self::default()
+        let mut world = Self::default();
+        world.type_registry_mut();
+        world
+    }
+
+    /// This world's identity, which it keeps when moved.
+    pub fn id(&self) -> WorldId {
+        self.id
     }
 
     /// Spawns a new entity with the given component bundle and returns its [`Entity`] handle.
@@ -498,12 +508,21 @@ impl World {
     }
 
     pub fn register_component<T: Component>(&mut self) {
-        self.component_registry.register_component::<T>();
         self.register_component_lifetimes::<T>();
     }
 
-    pub fn register_component_type<T: SceneComponent>(&mut self) {
-        self.component_registry.register_scene_component::<T>();
+    /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
+    pub fn register_type<T: GetTypeRegistration>(&mut self) {
+        self.type_registry_mut().register::<T>();
+    }
+
+    fn type_registry_mut(&mut self) -> &mut AppTypeRegistry {
+        if self.get_resource::<AppTypeRegistry>().is_none() {
+            let mut registry = AppTypeRegistry::default();
+            registry.register::<SceneEntityRef>();
+            self.insert_resource(registry);
+        }
+        self.get_resource_mut::<AppTypeRegistry>().unwrap()
     }
 
     /// Every component `entity` carries, including ones that are not scene
@@ -515,9 +534,9 @@ impl World {
             .unwrap_or(&[])
     }
 
-    /// The read side of a registered scene component, or `None` if `id` is not one.
-    pub fn type_info(&self, id: ComponentId) -> Option<&TypeInfo> {
-        self.component_registry.type_info(&id)
+    /// The registration of the type `id`, or `None` if it was never registered.
+    pub fn registration(&self, id: ComponentId) -> Option<&TypeRegistration> {
+        self.get_resource::<AppTypeRegistry>()?.get(id)
     }
 
     /// The registered scene components `entity` currently carries.
@@ -526,51 +545,45 @@ impl World {
     /// [`register_component`](Self::register_component) — engine plumbing such
     /// as render-world mirrors — are deliberately not listed: this reports what
     /// a scene can describe, which is what a tool wants to show.
-    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = &TypeInfo> {
+    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = SceneComponentType<'_>> {
+        let registry = self.get_resource::<AppTypeRegistry>();
         self.component_ids(entity)
             .iter()
-            .filter_map(|component_id| self.component_registry.type_info(component_id))
+            .filter_map(move |component_id| {
+                let registration = registry?.get(*component_id)?;
+                let scene = *registration.data::<ReflectSceneComponent>()?;
+                Some(SceneComponentType::new(registration, scene))
+            })
     }
 
-    /// Deserializes `json` into the component registered under `type_name` and
-    /// applies it to `entity`. Returns `false` (having logged why) when the name
-    /// is unregistered or the payload does not parse — a scene may carry
-    /// components this application does not know about.
+    /// Spawns the component registered under `type_name` from `value` onto `entity`,
+    /// resolving node references through `node_entities`. Returns `false`, having
+    /// logged why, when no scene component is registered under that name; parts of
+    /// `value` that do not fit are skipped with a warning.
     pub fn apply_scene_component(
         &mut self,
         type_name: &str,
-        json: &str,
+        value: &ReflectedValue,
         entity: Entity,
         node_entities: &[Entity],
     ) -> bool {
-        let applied = self.apply_scene_component_internal(type_name, json, entity, node_entities);
-        self.flush_commands();
-        applied
-    }
-
-    fn apply_scene_component_internal(
-        &mut self,
-        type_name: &str,
-        json: &str,
-        entity: Entity,
-        node_entities: &[Entity],
-    ) -> bool {
-        let Some(apply) = self.component_registry.get_scene_component(type_name) else {
+        let spawn = self
+            .get_resource::<AppTypeRegistry>()
+            .and_then(|registry| registry.get_by_name(type_name))
+            .and_then(|registration| registration.data::<ReflectSceneComponent>())
+            .map(|scene| scene.spawn);
+        let Some(spawn) = spawn else {
             warn!(
-                "Skipping component '{type_name}': no type registered under that name \
-                 (register it with App::register_component)"
+                "Skipping component '{type_name}': no scene component registered under that name \
+                 (derive Reflect with #[reflect(SceneComponent)] and register it with App::register_type)"
             );
             return false;
         };
-
-        let mut ctx = SceneSpawnContext::new(self, node_entities);
-        match apply(json, entity, &mut ctx) {
-            Ok(()) => true,
-            Err(err) => {
-                warn!("Failed to deserialize component '{type_name}' from `{json}`: {err}");
-                false
-            }
+        for warning in spawn(self, entity, value, node_entities) {
+            warn!("Component '{type_name}': {warning}");
         }
+        self.flush_commands();
+        true
     }
 
     pub(crate) fn make_command_queue<'world>(&'world mut self) -> CommandQueue<'world, 'world> {
@@ -640,8 +653,10 @@ impl World {
     }
 
     pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
+        let mut listener = system.into_listener();
+        T::listener_added(self, &mut listener);
         self.register_component_lifetimes::<Listener<T>>();
-        self.spawn(system.into_listener());
+        self.spawn((listener, GlobalListener));
     }
 
     /// Runs matching listeners in registration order, applying each system's commands.
@@ -713,11 +728,12 @@ impl SystemInput for &World {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        world.world()
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares read access to the whole world.
+        Ok(unsafe { world.world() })
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -731,11 +747,12 @@ impl SystemInput for &mut World {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        world.world_mut()
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares write access to the whole world.
+        Ok(unsafe { world.world_mut() })
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -764,12 +781,26 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
-    pub fn world(&self) -> &'w World {
+    /// Borrows the whole world for reading.
+    ///
+    /// # Safety
+    /// The caller may read only what its declared access covers, and nothing may write
+    /// that data while the borrow is alive.
+    pub unsafe fn world(&self) -> &'w World {
+        // SAFETY: the pointer came from a live world borrowed for `'w`; the caller upholds
+        // the access rules.
         unsafe { &*self.ptr }
     }
 
-    pub fn world_mut(&self) -> &'w mut World {
+    /// Borrows the whole world for writing.
+    ///
+    /// # Safety
+    /// The caller must have exclusive access to everything it touches, and no other
+    /// reference into the world may be used while the borrow is alive.
+    pub unsafe fn world_mut(&self) -> &'w mut World {
         self.assert_mutable();
+        // SAFETY: the pointer came from a live, mutably borrowed world; the caller upholds
+        // exclusivity.
         unsafe { &mut *self.ptr }
     }
 
@@ -784,12 +815,17 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_add_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(add) = lifetimes.on_add
-        {
-            add(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_add, lifetimes.signal_add);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn trigger_on_replace(&self, entity: Entity, ids: &[ComponentId]) {
@@ -799,23 +835,31 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(replace) = lifetimes.on_replace
-        {
-            replace(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_replace, lifetimes.signal_replace);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn trigger_on_remove_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(remove) = lifetimes.on_remove
-        {
-            remove(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_remove, lifetimes.signal_remove);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     /// Despawning removes every component, so each one's `on_remove` runs before the
@@ -828,17 +872,23 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(despawn) = lifetimes.on_despawn
-        {
-            despawn(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_despawn, lifetimes.signal_despawn);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
-    pub(crate) fn archetypes(&self) -> &[Archetype] {
-        self.world().archetypes()
+    pub(crate) fn archetypes(&self) -> &'w [Archetype] {
+        // SAFETY: archetypes change only under exclusive access, so no running system can
+        // alter them while this is read.
+        unsafe { self.world() }.archetypes()
     }
 }
 
@@ -854,7 +904,8 @@ pub struct RestrictedWorld<'w> {
 
 impl<'w> RestrictedWorld<'w> {
     fn commands(&mut self) -> CommandQueue<'_, '_> {
-        self.world_cell.world_mut().make_command_queue()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.make_command_queue()
     }
 
     /// Reserves an entity and queues its spawn after the enclosing operation.
@@ -884,21 +935,23 @@ impl<'w> RestrictedWorld<'w> {
     }
 
     pub fn get_component_for_entity<T: Component>(&self, entity: Entity) -> Option<&T> {
-        self.world_cell.world().get_component_for_entity(entity)
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world() }.get_component_for_entity(entity)
     }
 
     pub fn get_component_for_entity_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        self.world_cell
-            .world_mut()
-            .get_component_for_entity_mut(entity)
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.get_component_for_entity_mut(entity)
     }
 
     pub fn get_resource<T: Resource>(&self) -> Option<&T> {
-        self.world_cell.world().get_resource()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world() }.get_resource()
     }
 
     pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
-        self.world_cell.world_mut().get_resource_mut::<T>()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.get_resource_mut::<T>()
     }
 }
 
