@@ -228,7 +228,14 @@ fn a_batch_starts_its_rows_in_the_order_they_were_queued() {
 #[test]
 fn a_failure_leads_the_final_status_in_a_form_that_can_be_read() {
     let (_sources, good) = named_sources(&["ok_a.obj", "ok_b.obj"]);
-    let (_broken, broken) = broken_sources(&["crate.obj"]);
+    let (broken_dir, broken) = broken_sources(&["crate.obj"]);
+    let not_found = std::fs::File::open(broken_dir.path().join("square.mtl"))
+        .expect_err("the material library is missing")
+        .to_string();
+    let not_found = not_found
+        .split(" (os error")
+        .next()
+        .expect("split yields at least one part");
     let project = tempfile::tempdir().expect("tempdir");
     let mut app = editor(project.path());
     app.get_resource_mut::<ImportQueue>()
@@ -243,7 +250,7 @@ fn a_failure_leads_the_final_status_in_a_form_that_can_be_read() {
     let status = status(&app);
     assert!(
         status.starts_with("1 of 3 failed: crate.obj — ")
-            && status.contains("square.mtl: No such file"),
+            && status.contains(&format!("square.mtl: {not_found}")),
         "got: {status}"
     );
     assert_eq!(status.matches("crate.obj").count(), 1, "got: {status}");
