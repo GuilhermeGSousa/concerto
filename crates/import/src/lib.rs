@@ -377,14 +377,14 @@ fn planned_copies(
     let mut copies = vec![(read.to_path_buf(), placed.to_path_buf())];
     for dependency in dependencies {
         let from = metadata::normalize(&dependency.path);
-        let Ok(relative) = dependency.path.strip_prefix(read_dir) else {
+        let Some(relative) = relative_to(&from, &metadata::normalize(read_dir)) else {
             bail!(
                 "'{}' refers to '{}', which is not addressed relative to it",
                 read.display(),
                 dependency.path.display()
             );
         };
-        let to = metadata::normalize(&placed_dir.join(relative));
+        let to = metadata::normalize(&placed_dir.join(&relative));
         if !to.starts_with(project_root) {
             bail!(
                 "'{}' would land outside the project; choose a destination deeper inside it",
@@ -400,6 +400,25 @@ fn planned_copies(
         copies.push((from, to));
     }
     Ok(copies)
+}
+
+fn relative_to(path: &Path, base: &Path) -> Option<PathBuf> {
+    let path: Vec<_> = path.components().collect();
+    let base: Vec<_> = base.components().collect();
+    let shared = path
+        .iter()
+        .zip(&base)
+        .take_while(|(part, other)| part == other)
+        .count();
+    if shared == 0 {
+        return None;
+    }
+    let mut relative: PathBuf = base[shared..]
+        .iter()
+        .map(|_| Component::ParentDir)
+        .collect();
+    relative.extend(&path[shared..]);
+    Some(relative)
 }
 
 fn validate_config(config: &ContentConfig) -> anyhow::Result<()> {
@@ -533,5 +552,28 @@ mod tests {
         let path = metadata::normalize(&root.join("assets").join("..").join("square.mtl"));
         assert_eq!(path, root.join("square.mtl"));
         assert!(path.starts_with(&root));
+    }
+
+    #[test]
+    fn a_dependency_whose_parent_steps_are_already_resolved_keeps_its_relative_position() {
+        let source = Path::new("/source");
+        let project = Path::new("/project");
+        let copies = planned_copies(
+            &source.join("models").join("tri.gltf"),
+            &project.join("assets").join("models").join("tri.gltf"),
+            project,
+            &[DependencyEntry {
+                path: source.join("triangle_ext.bin"),
+                content_hash: 0,
+            }],
+        )
+        .expect("the buffer lands inside the project");
+        assert_eq!(
+            copies[1],
+            (
+                source.join("triangle_ext.bin"),
+                project.join("assets").join("triangle_ext.bin")
+            )
+        );
     }
 }
