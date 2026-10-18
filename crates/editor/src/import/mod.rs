@@ -409,8 +409,9 @@ fn failure_summary(error: &str, project_root: &Path) -> String {
     let mut summary = debug_fields(cause).unwrap_or_else(|| cause.to_owned());
     let roots = [project_root.canonicalize().ok(), Some(project_root.into())];
     for root in roots.into_iter().flatten() {
-        let prefix = format!("{}{}", root.display(), std::path::MAIN_SEPARATOR);
-        summary = summary.replace(&prefix, "");
+        for separator in ['/', '\\'] {
+            summary = summary.replace(&format!("{}{separator}", root.display()), "");
+        }
     }
     if let Some(at) = summary
         .rfind(" (os error ")
@@ -656,6 +657,15 @@ mod tests {
             ),
             "mesh_0: a \"quoted\" word"
         );
+    }
+
+    #[test]
+    fn a_project_root_is_stripped_whichever_separator_follows_it() {
+        let summary = failure_summary(
+            "importing 'C:\\game\\assets\\a.obj': SourceUnreadable { source_path: \"C:\\\\game\\\\assets\\\\a.mtl\", message: \"missing\" }",
+            Path::new("C:\\game"),
+        );
+        assert_eq!(summary, "assets\\a.mtl: missing");
     }
 
     #[test]

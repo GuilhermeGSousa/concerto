@@ -59,7 +59,7 @@ impl Mesh {
                 .map(|vertex| Vec3::from(vertex.pos_coords))
         };
         let mut nearest: Option<f32> = None;
-        for triangle in self.indices.chunks_exact(3) {
+        for triangle in self.indices.as_chunks::<3>().0 {
             let (Some(a), Some(b), Some(c)) = (
                 position(triangle[0]),
                 position(triangle[1]),

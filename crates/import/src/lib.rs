@@ -525,4 +525,13 @@ mod tests {
             "the caller passes an extension, not a suffix with its dot"
         );
     }
+
+    #[test]
+    fn a_normalised_path_stays_under_the_canonical_directory_it_was_joined_to() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().canonicalize().expect("canonical tempdir");
+        let path = metadata::normalize(&root.join("assets").join("..").join("square.mtl"));
+        assert_eq!(path, root.join("square.mtl"));
+        assert!(path.starts_with(&root));
+    }
 }
