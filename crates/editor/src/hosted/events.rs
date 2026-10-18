@@ -138,7 +138,7 @@ impl HostedEventsAppExt for App {
         }
         self.register_event::<Hosted<E>>().add_system(
             First,
-            forward_events::<E>.after(super::seam::announce_edit_target),
+            forward_events::<E>.after(super::input::step_edit_target),
         )
     }
 }

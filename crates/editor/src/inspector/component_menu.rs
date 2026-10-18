@@ -30,12 +30,9 @@ pub(super) struct ComponentMenuButton {
 pub(super) struct RemoveComponentItem;
 
 pub(super) fn forget_scene(
-    target: Res<LastEditTarget>,
+    _: On<Remove<EditTarget>>,
     menus: Query<(&mut ComponentMenu, &mut UIAnchoredPanel)>,
 ) {
-    if !target.has_changed() {
-        return;
-    }
     for (mut menu, mut panel) in menus.iter() {
         if menu.scene_target.is_some() {
             menu.scene_target = None;

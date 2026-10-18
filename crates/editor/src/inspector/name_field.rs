@@ -23,12 +23,9 @@ pub(super) fn name_field(theme: &UITheme) -> impl IntoBundle<Bundle: 'static> + 
 }
 
 pub(super) fn forget_scene(
-    target: Res<LastEditTarget>,
+    _: On<Remove<EditTarget>>,
     fields: Query<(&mut NameField, &mut UITextInput, &mut UINode)>,
 ) {
-    if !target.has_changed() {
-        return;
-    }
     for (mut field, mut input, mut node) in fields.iter() {
         if field.scene_target.is_some() {
             field.scene_target = None;

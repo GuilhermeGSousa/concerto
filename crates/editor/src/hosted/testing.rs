@@ -38,7 +38,8 @@ use super::{
     HostRequest, HostRole, Hosted, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp, PlayState,
     events::forward_events,
     input::{HostCursor, Routing, ViewportShown, ViewportView},
-    seam::{EditorSignals, LastEditTarget},
+    seam::EditorSignals,
+    target::SetEditTarget,
 };
 use crate::{
     asset_editor::{
@@ -110,6 +111,7 @@ pub(crate) fn start_play(
     let pending = super::begin(play_request(recipe), extra, |_| {});
     world.insert(PendingPlayApp::new(pending), document);
     world.insert(PlayState::Starting, document);
+    world.trigger(SetEditTarget(None));
 }
 
 pub(crate) fn finish_play(world: &mut World) {
@@ -143,12 +145,11 @@ pub(crate) fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> 
 pub(crate) fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
+    world.insert_resource(Routing::default());
     super::install_listeners(&mut world);
-    let hosted = hosted_now(recipe, |_| {});
-    let scene = hosted.world().id();
-    let document = world.spawn(hosted);
+    let document = world.spawn(hosted_now(recipe, |_| {}));
     world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
-    world.insert_resource(LastEditTarget::naming(document, scene));
+    world.trigger(SetEditTarget(Some(document)));
     (world, document)
 }
 
@@ -289,7 +290,6 @@ impl SceneFixture {
 
         world.insert_resource(Routing::default());
         world.insert_resource(HostCursor::default());
-        world.insert_resource(LastEditTarget::default());
         world.insert_resource(ViewportShown(Some(ViewportView {
             origin: glam::Vec2::ZERO,
             size: (640, 480),
@@ -301,16 +301,16 @@ impl SceneFixture {
         world.insert_resource(concerto_window::input::Input::new());
         super::install_listeners(&mut world);
         crate::scene::install_listeners(&mut world);
+        crate::hierarchy::install_listeners(&mut world);
+        crate::inspector::install_listeners(&mut world);
 
         let mut systems = vec![
+            super::input::sync_in_viewport.into_boxed_system(),
             crate::scene::refuse_edited_replacements.into_boxed_system(),
             super::finish_pending.into_boxed_system(),
             super::finish_pending_play.into_boxed_system(),
             super::input::step_edit_target.into_boxed_system(),
-            super::seam::announce_edit_target.into_boxed_system(),
         ];
-        systems.extend(crate::hierarchy::forget_scene_systems());
-        systems.extend(crate::inspector::forget_scene_systems());
         let process_commands = systems.len();
         systems.extend([
             crate::asset_editor::process_editor_commands.into_boxed_system(),
@@ -376,6 +376,11 @@ impl SceneFixture {
         }
         self.deliver();
         self.world.tick();
+    }
+
+    pub(crate) fn activate(&mut self, document: Option<Entity>) {
+        self.world.get_resource_mut::<ActiveEditor>().unwrap().0 = document;
+        self.world.trigger(SetEditTarget(document));
     }
 
     pub(crate) fn deliver(&mut self) {

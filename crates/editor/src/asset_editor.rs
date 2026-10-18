@@ -276,6 +276,7 @@ pub fn process_editor_commands(
     }
     if active.0 != next_active {
         active.0 = next_active;
+        commands.trigger(crate::hosted::SetEditTarget(next_active));
     }
     for (entity, doc) in staged {
         if created.contains(&entity) {

@@ -88,8 +88,8 @@ code they describe changes.
 an extract system, `Extracted`. In the editor crate a system may also take
 `Editor<T>`, which reads the world of the scene being edited, or of the running
 game while playing, and `EditorSignals`, which sends signals to it. Both skip
-the system while no scene is open, while its game is starting, and for the rest
-of the frame in which the open scene changes. Nothing
+the system while no document is the edit target: no scene is open, or its game
+is starting. Nothing
 else reaches that world. Do not write a system that takes `&World` or
 `&mut World`. Work that needs the whole world goes through commands, so it runs
 with exclusive access when the queue is applied: the typed `CommandQueue`

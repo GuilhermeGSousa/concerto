@@ -16,7 +16,9 @@ use concerto_ecs::{
 use concerto_editor::{
     asset_editor::ActiveEditor,
     dock::PanelRegistry,
-    hosted::{HostRequest, HostRole, HostedPlugin, begin, finish_blocking, trigger_on},
+    hosted::{
+        HostRequest, HostRole, HostedPlugin, SetEditTarget, begin, finish_blocking, trigger_on,
+    },
     inspector::{
         EditError, EditableApp, InspectorPlugin, PropertyCommits, PropertyEditor, PropertyRow,
         PropertyRowValue, spawn_panel,
@@ -215,6 +217,7 @@ pub fn headless_editor(
     ));
     let document = world.spawn(scene);
     world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+    world.trigger(SetEditTarget(Some(document)));
     arrange_editor(&mut editor);
     editor.finish_plugin_build();
     (editor, document)

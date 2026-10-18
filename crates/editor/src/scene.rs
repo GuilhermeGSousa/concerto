@@ -366,10 +366,18 @@ fn play(on: On<Play>, world: &mut World) {
         }
     }
     match begin_play(world, document) {
-        Ok(pending) => world.insert(
-            (PendingPlayApp::new(pending), PlayState::Starting),
-            document,
-        ),
+        Ok(pending) => {
+            world.insert(
+                (PendingPlayApp::new(pending), PlayState::Starting),
+                document,
+            );
+            if world
+                .get_component_for_entity::<hosted::EditTarget>(document)
+                .is_some()
+            {
+                world.trigger(hosted::SetEditTarget(None));
+            }
+        }
         Err(error) => set_status(
             world,
             document,
@@ -952,7 +960,7 @@ mod tests {
         let mut f = SceneFixture::new();
         let document = f.open();
         f.rename(document, "first", "renamed");
-        f.world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        f.activate(None);
         f.frame();
         let frames_before = f.hosted_frames(document);
         f.world.insert(SaveRequested, document);
@@ -1022,7 +1030,7 @@ mod tests {
         let mut f = SceneFixture::new();
         let document = f.open();
         let first = f.scene_entity(document, "first");
-        f.world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        f.activate(None);
         f.frame();
         let frames = f.hosted_frames(document);
         let scene = f.scene_world_mut(document);
@@ -1444,7 +1452,7 @@ mod tests {
         let mut f = SceneFixture::new();
         let document = f.open();
         let root = f.scene_root(document);
-        f.world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        f.activate(None);
 
         hosted::trigger_on(
             &mut f.world,

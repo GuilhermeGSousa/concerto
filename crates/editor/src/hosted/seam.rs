@@ -1,7 +1,8 @@
 use std::ops::{Deref, DerefMut};
 
 use concerto_ecs::{
-    Entity, Query, Res, ResMut, Resource, World,
+    Entity, Query, With, World,
+    query::state::QueryState,
     signal::Signal,
     system::{
         access::SystemAccess,
@@ -12,39 +13,34 @@ use concerto_ecs::{
     world_id::WorldId,
 };
 
-use super::{HostedApp, PlayState};
-use crate::asset_editor::ActiveEditor;
+use super::{HostedApp, target::EditTarget};
+
+type Targets = QueryState<(Entity, &'static HostedApp), With<EditTarget>>;
 
 /// # Safety
 /// The caller must hold the access [`read_edit_target`] declares.
-unsafe fn edit_target<'w>(world: UnsafeWorldCell<'w>) -> Option<(Entity, &'w World)> {
-    // SAFETY: reads only what `read_edit_target` declares, which the caller holds.
-    let world = unsafe { world.world() };
-    let document = world.get_resource::<ActiveEditor>()?.0?;
-    if world.get_component_for_entity::<PlayState>(document) == Some(&PlayState::Starting) {
-        return None;
-    }
-    let scene = world
-        .get_component_for_entity::<HostedApp>(document)?
-        .world();
-    let announced = world.get_resource::<LastEditTarget>()?.0;
-    (announced == Some((document, scene.id()))).then_some((document, scene))
+unsafe fn edit_target<'w>(
+    world: UnsafeWorldCell<'w>,
+    targets: &mut Targets,
+) -> Option<(Entity, &'w World)> {
+    // SAFETY: the query reads only what `read_edit_target` declares, which the caller holds.
+    let targets = unsafe { Query::new(world, targets) };
+    targets
+        .iter()
+        .next()
+        .map(|(document, hosted)| (document, hosted.world()))
 }
 
 fn no_edit_target<T: ?Sized>() -> ValidationError {
-    ValidationError::skip::<T>(
-        "no scene is open, its game is starting, or the edit target is not announced yet",
-    )
+    ValidationError::skip::<T>("no document is the edit target")
 }
 
 fn read_edit_target(access: &mut SystemAccess) {
-    access.read_resource::<ActiveEditor>();
+    access.read_component::<EditTarget>();
     access.read_component::<HostedApp>();
-    access.read_component::<PlayState>();
-    access.read_resource::<LastEditTarget>();
 }
 
-/// Reads the edit target's main world. The system is skipped while there is no announced edit target, or its game is starting.
+/// Reads the edit target's main world. The system is skipped while no document is the edit target.
 pub struct Editor<'world, 'state, T: ReadOnlySystemInput + 'static>(
     SystemInputData<'world, 'state, T>,
 );
@@ -65,6 +61,7 @@ impl<T: ReadOnlySystemInput + 'static> DerefMut for Editor<'_, '_, T> {
 
 /// An [`Editor`] parameter's state, rebuilt from its first form whenever the edit target is another world.
 pub struct EditorState<S> {
+    targets: Targets,
     built_for: Option<WorldId>,
     first: S,
     current: S,
@@ -86,6 +83,7 @@ where
     fn init_state(world: &mut World) -> Self::State {
         let first = T::init_state(world);
         EditorState {
+            targets: world.query(),
             built_for: None,
             current: first.clone(),
             first,
@@ -97,7 +95,8 @@ where
         world: UnsafeWorldCell<'world>,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares what `edit_target` reads.
-        let (_, scene) = unsafe { edit_target(world) }.ok_or_else(no_edit_target::<Self>)?;
+        let (_, scene) =
+            unsafe { edit_target(world, &mut state.targets) }.ok_or_else(no_edit_target::<Self>)?;
         if state.for_world(scene).is_none() {
             state.current = state.first.clone();
             state.built_for = Some(scene.id());
@@ -120,13 +119,13 @@ impl<T: ReadOnlySystemInput + 'static> ReadOnlySystemInput for Editor<'_, '_, T>
 type QueuedSignal = Box<dyn FnOnce(&mut HostedApp) + Send + Sync>;
 
 /// The signals a system queued for one hosted `App`.
-#[derive(Default)]
 pub struct SignalQueue {
+    targets: Targets,
     made_for: Option<(Entity, WorldId)>,
     signals: Vec<QueuedSignal>,
 }
 
-/// Sends signals to the edit target. The system is skipped while there is no announced edit target, or its game is starting.
+/// Sends signals to the edit target. The system is skipped while no document is the edit target.
 pub struct EditorSignals<'state> {
     queue: &'state mut SignalQueue,
 }
@@ -144,8 +143,12 @@ impl SystemInput for EditorSignals<'_> {
     type State = SignalQueue;
     type Data<'world, 'state> = EditorSignals<'state>;
 
-    fn init_state(_world: &mut World) -> Self::State {
-        SignalQueue::default()
+    fn init_state(world: &mut World) -> Self::State {
+        SignalQueue {
+            targets: world.query(),
+            made_for: None,
+            signals: Vec::new(),
+        }
     }
 
     unsafe fn get_data<'world, 'state>(
@@ -153,7 +156,8 @@ impl SystemInput for EditorSignals<'_> {
         world: UnsafeWorldCell<'world>,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares what `edit_target` reads.
-        let target = unsafe { edit_target(world) }.map(|(document, scene)| (document, scene.id()));
+        let target = unsafe { edit_target(world, &mut state.targets) }
+            .map(|(document, scene)| (document, scene.id()));
         if state.made_for != target {
             state.signals.clear();
         }
@@ -189,40 +193,6 @@ impl SystemInput for EditorSignals<'_> {
     }
 }
 
-/// The edit target as it was when last announced; it is changed only when the target changes.
-#[derive(Resource, Default)]
-pub struct LastEditTarget(Option<(Entity, WorldId)>);
-
-impl LastEditTarget {
-    /// The document whose `App` is the edit target, if any.
-    pub fn document(&self) -> Option<Entity> {
-        self.0.map(|(document, _)| document)
-    }
-}
-
-#[cfg(test)]
-impl LastEditTarget {
-    pub(crate) fn naming(document: Entity, world: WorldId) -> Self {
-        Self(Some((document, world)))
-    }
-}
-
-/// Records the edit target in [`LastEditTarget`], changing it only when the target changes.
-pub fn announce_edit_target(
-    active: Res<ActiveEditor>,
-    hosted: Query<&HostedApp>,
-    mut last: ResMut<LastEditTarget>,
-) {
-    let now = active.0.and_then(|document| {
-        hosted
-            .get_entity(document)
-            .map(|hosted| (document, hosted.world().id()))
-    });
-    if last.0 != now {
-        last.0 = now;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -232,8 +202,7 @@ mod tests {
     };
     use concerto_app::App;
     use concerto_ecs::{
-        Component, IntoSystem, Query, Res, ResMut, Resource, System, World,
-        query::change_detection::DetectChanges, signal::On,
+        Component, IntoSystem, Query, Res, ResMut, Resource, System, World, signal::On,
     };
 
     #[derive(Component)]
@@ -273,8 +242,9 @@ mod tests {
         system.run_and_apply((), world);
     }
 
-    fn announce(world: &mut World) {
-        run(world, announce_edit_target);
+    fn retarget(world: &mut World) {
+        let active = world.get_resource::<ActiveEditor>().unwrap().0;
+        world.trigger(crate::hosted::SetEditTarget(active));
     }
 
     fn seam_world(value: u32) -> (World, concerto_ecs::Entity) {
@@ -321,6 +291,7 @@ mod tests {
     fn a_system_is_skipped_while_there_is_no_edit_target() {
         let (mut world, _) = seam_world(1);
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        retarget(&mut world);
 
         run(&mut world, read_markers);
 
@@ -335,7 +306,7 @@ mod tests {
         system.run_and_apply((), &mut world);
 
         world.insert(hosted_now(recipe_with(2), |_| {}), document);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
 
         assert_eq!(world.get_resource::<Seen>().unwrap().0, vec![2]);
@@ -350,7 +321,7 @@ mod tests {
         system.run_and_apply((), &mut world);
 
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
 
         assert_eq!(world.get_resource::<Seen>().unwrap().0, vec![2]);
@@ -369,13 +340,13 @@ mod tests {
     ) -> Vec<u32> {
         let (mut world, document) = seam_world(1);
         world.insert(hosting(first), document);
-        announce(&mut world);
+        retarget(&mut world);
         let mut system = read_markers.into_system();
         system.initialize(&mut world);
         system.run_and_apply((), &mut world);
 
         world.insert(hosting(second), document);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
 
         let mut seen = seen(&world).to_vec();
@@ -444,16 +415,16 @@ mod tests {
             world.spawn(Other);
             world.spawn(Marker(2));
         }));
-        announce(&mut world);
+        retarget(&mut world);
         let mut system = read_markers.into_system();
         system.initialize(&mut world);
         system.run_and_apply((), &mut world);
 
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(second);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(first);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
 
         assert_eq!(seen(&world), [1]);
@@ -488,7 +459,7 @@ mod tests {
         system.run_and_apply((), &mut world);
 
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
 
         assert_eq!(world.get_resource::<FramesSeen>().unwrap().0, vec![1, 3]);
@@ -603,7 +574,7 @@ mod tests {
         system.run((), &mut world);
 
         world.insert(hosted_now(recipe_with(2), |_| {}), document);
-        announce(&mut world);
+        retarget(&mut world);
         system.apply(&mut world);
 
         assert!(heard(&mut world).is_empty());
@@ -631,7 +602,7 @@ mod tests {
         system.run((), &mut world);
 
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
-        announce(&mut world);
+        retarget(&mut world);
         system.run_and_apply((), &mut world);
 
         assert_eq!(heard(&mut world), [5]);
@@ -659,7 +630,7 @@ mod tests {
     fn a_signalling_system_is_skipped_while_there_is_no_edit_target() {
         let (mut world, _) = hearing_world();
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        announce(&mut world);
+        retarget(&mut world);
 
         run(&mut world, count_and_say);
 
@@ -672,7 +643,7 @@ mod tests {
         let (mut world, _) = hearing_world();
         let bare = world.spawn(());
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(bare);
-        announce(&mut world);
+        retarget(&mut world);
 
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
@@ -682,17 +653,19 @@ mod tests {
     }
 
     #[test]
-    fn both_parameters_decline_from_a_change_of_active_document_until_it_is_announced() {
-        let (mut world, _) = hearing_world();
+    fn both_parameters_keep_reaching_the_target_until_another_document_is_made_it() {
+        let (mut world, document) = hearing_world();
         let other = world.spawn(hosted_now(recipe_with(2), |_| {}));
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
 
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
-        assert_eq!(runs(&world), 0);
-        assert!(heard(&mut world).is_empty());
+        assert_eq!(seen(&world), [1]);
+        assert_eq!(answered(&mut world), [document]);
+        world.get_resource_mut::<Runs>().unwrap().0 = 0;
+        world.get_resource_mut::<Answered>().unwrap().0.clear();
 
-        announce(&mut world);
+        retarget(&mut world);
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
 
@@ -702,16 +675,10 @@ mod tests {
     }
 
     #[test]
-    fn both_parameters_decline_from_a_replacement_of_the_hosted_app_until_it_is_announced() {
+    fn both_parameters_reach_an_app_replaced_on_the_target_at_once() {
         let (mut world, document) = hearing_world();
         world.insert(hosted_now(recipe_with(2), |_| {}), document);
 
-        run(&mut world, read_markers);
-        run(&mut world, count_and_say);
-        assert_eq!(runs(&world), 0);
-        assert!(heard(&mut world).is_empty());
-
-        announce(&mut world);
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
 
@@ -721,9 +688,9 @@ mod tests {
     }
 
     #[test]
-    fn both_parameters_decline_while_no_edit_target_was_ever_announced() {
+    fn both_parameters_decline_while_no_document_is_the_edit_target() {
         let (mut world, _) = hearing_world();
-        world.remove_resource::<LastEditTarget>();
+        world.trigger(crate::hosted::SetEditTarget(None));
 
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
@@ -756,18 +723,9 @@ mod tests {
     }
 
     #[test]
-    fn both_parameters_conflict_with_a_system_that_changes_the_active_document() {
+    fn both_parameters_conflict_with_a_system_that_moves_the_edit_target() {
         let mut writer = SystemAccess::default();
-        writer.write_resource::<ActiveEditor>();
-
-        assert!(conflict(&access_of::<Editor<Query<&Marker>>>(), &writer));
-        assert!(conflict(&access_of::<EditorSignals>(), &writer));
-    }
-
-    #[test]
-    fn both_parameters_conflict_with_the_system_that_announces_the_edit_target() {
-        let mut writer = SystemAccess::default();
-        writer.write_resource::<LastEditTarget>();
+        writer.write_component::<crate::hosted::EditTarget>();
 
         assert!(conflict(&access_of::<Editor<Query<&Marker>>>(), &writer));
         assert!(conflict(&access_of::<EditorSignals>(), &writer));
@@ -799,63 +757,57 @@ mod tests {
     }
 
     #[derive(Resource, Default)]
-    struct Targets(Vec<Option<concerto_ecs::Entity>>);
+    struct Moves(Vec<String>);
 
-    fn note_target(target: Res<LastEditTarget>, mut targets: ResMut<Targets>) {
-        if target.has_changed() {
-            targets.0.push(target.document());
-        }
+    fn note_add(
+        on: On<concerto_ecs::signal::lifecycle::Add<crate::hosted::EditTarget>>,
+        mut moves: ResMut<Moves>,
+    ) {
+        moves.0.push(format!("add {}", on.signal().entity.index()));
     }
 
-    struct Announcing {
-        announce: concerto_ecs::system::BoxedSystem,
-        note: concerto_ecs::system::BoxedSystem,
+    fn note_remove(
+        on: On<concerto_ecs::signal::lifecycle::Remove<crate::hosted::EditTarget>>,
+        mut moves: ResMut<Moves>,
+    ) {
+        moves
+            .0
+            .push(format!("remove {}", on.signal().entity.index()));
     }
 
-    impl Announcing {
-        fn new(world: &mut World) -> Self {
-            world.insert_resource(Targets::default());
-            let mut announce: concerto_ecs::system::BoxedSystem =
-                Box::new(announce_edit_target.into_system());
-            let mut note: concerto_ecs::system::BoxedSystem = Box::new(note_target.into_system());
-            announce.initialize(world);
-            note.initialize(world);
-            Self { announce, note }
-        }
+    fn watch_moves(world: &mut World) {
+        world.insert_resource(Moves::default());
+        world.add_listener(note_add);
+        world.add_listener(note_remove);
+    }
 
-        fn frame(&mut self, world: &mut World) {
-            self.announce.run_and_apply((), world);
-            self.note.run_and_apply((), world);
-            world.tick();
-        }
+    fn moves(world: &mut World) -> Vec<String> {
+        std::mem::take(&mut world.get_resource_mut::<Moves>().unwrap().0)
     }
 
     #[test]
-    fn a_change_of_edit_target_is_seen_once_for_each_of_the_four_ways() {
+    fn each_way_the_target_changes_is_a_remove_or_an_add() {
         let (mut world, document) = seam_world(1);
-        world.insert_resource(LastEditTarget::default());
-        let mut frames = Announcing::new(&mut world);
-
-        frames.frame(&mut world);
-        frames.frame(&mut world);
-        assert_eq!(
-            world.get_resource::<Targets>().unwrap().0,
-            vec![Some(document)]
-        );
+        watch_moves(&mut world);
+        let d = document.index();
 
         world.insert(hosted_now(recipe_with(2), |_| {}), document);
-        frames.frame(&mut world);
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
-        frames.frame(&mut world);
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
-        frames.frame(&mut world);
-        world.despawn(document);
-        frames.frame(&mut world);
-
+        retarget(&mut world);
         assert_eq!(
-            world.get_resource::<Targets>().unwrap().0,
-            vec![Some(document), Some(document), None, Some(document), None]
+            moves(&mut world),
+            [format!("remove {d}"), format!("add {d}")]
         );
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        retarget(&mut world);
+        assert_eq!(moves(&mut world), [format!("remove {d}")]);
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+        retarget(&mut world);
+        assert_eq!(moves(&mut world), [format!("add {d}")]);
+
+        world.despawn(document);
+        assert_eq!(moves(&mut world), [format!("remove {d}")]);
     }
 
     #[test]
@@ -871,26 +823,30 @@ mod tests {
     }
 
     #[test]
-    fn parking_and_returning_the_edit_app_are_announced_and_the_play_world_is_read_while_playing() {
+    fn parking_and_returning_the_edit_app_move_the_target_and_the_play_world_is_read_while_playing()
+    {
         let (mut world, document) = seam_world(1);
-        world.tick();
-        let mut frames = Announcing::new(&mut world);
+        watch_moves(&mut world);
+        let d = document.index();
         let mut system = read_markers.into_system();
         system.initialize(&mut world);
 
         play_now(&mut world, document, recipe_with(2), |_| {});
-        frames.frame(&mut world);
         system.run_and_apply((), &mut world);
         assert_eq!(seen(&world), [2]);
 
         world.trigger(crate::hosted::StopPlay(document));
-        frames.frame(&mut world);
         system.run_and_apply((), &mut world);
 
         assert_eq!(seen(&world), [1]);
         assert_eq!(
-            world.get_resource::<Targets>().unwrap().0,
-            vec![Some(document), Some(document)]
+            moves(&mut world),
+            [
+                format!("remove {d}"),
+                format!("add {d}"),
+                format!("remove {d}"),
+                format!("add {d}")
+            ]
         );
     }
 }

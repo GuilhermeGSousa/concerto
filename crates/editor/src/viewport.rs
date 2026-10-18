@@ -59,9 +59,7 @@ impl Plugin for ViewportPlugin {
             .add_system(LateUpdate, show_input_owner.before(UiSet::Materials))
             .add_system(
                 First,
-                publish_viewport_view
-                    .before(crate::hosted::input::route_play_input)
-                    .before(crate::hosted::input::step_edit_target),
+                publish_viewport_view.before(crate::hosted::input::route_play_input),
             );
     }
 }
@@ -329,6 +327,7 @@ mod tests {
         let document = world.spawn(hosted_now(plain_recipe, |_| {}));
         world.spawn(ViewportRegion);
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+        world.trigger(crate::hosted::SetEditTarget(Some(document)));
         app.finish_plugin_build();
         for _ in 0..3 {
             app.update();

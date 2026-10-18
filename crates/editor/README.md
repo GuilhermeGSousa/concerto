@@ -72,15 +72,15 @@ A panel reaches the scene in two ways and no other:
 - `EditorSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
   The listeners run when the system's commands are applied.
 
-Both follow the active tab, and a system that takes either is skipped while
-that tab has no scene, while its game is starting, and for the rest of the
-frame in which its scene changes. While the game plays, both reach the
-running game's world instead of the scene's. A panel therefore keeps what it
-shows in a resource of its own, fills it in a system that takes `Editor<T>`,
-and empties it in a system in `First`, ordered after `announce_edit_target`,
-that acts when `Res<LastEditTarget>` has changed; `LastEditTarget::document()`
-names the new target. `has_changed()` and `Changed<T>` mean nothing through
-`Editor<T>`; the two worlds keep separate clocks.
+Both reach the document marked `EditTarget`: the front tab's scene, once it
+has an `App`. A system that takes either is skipped while no document has the
+marker, which includes while its game is starting. While the game plays, both
+reach the running game's world instead of the scene's. Code changes the target
+only by triggering `SetEditTarget`; its listener moves the marker. A panel
+therefore keeps what it shows in a resource of its own, fills it in a system
+that takes `Editor<T>`, and empties it in an `On<Remove<EditTarget>>` listener.
+`has_changed()` and `Changed<T>` mean nothing through `Editor<T>`; the two
+worlds keep separate clocks.
 
 An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,

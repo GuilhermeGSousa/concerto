@@ -136,13 +136,20 @@ fix the entry in the same commit as the change that made it false.
   so nothing from the viewport half runs in a game. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
-- **`Editor<T>` and `EditorSignals` skip their system** while the active tab
-  has no scene, while its game is starting, and from the moment its scene
-  changes until the host announces it in the next `First`. Whatever such a
-  system drew stays on screen unless a system in `First`, ordered after
-  `announce_edit_target`, empties it when `Res<LastEditTarget>` has changed.
-  A skipped system does not advance its event readers either, so on its next
-  run it reads the events of the frame it missed.
+- **`Editor<T>` and `EditorSignals` skip their system** while no document
+  has `EditTarget`: no scene is open in the front tab, or its game is
+  starting. Whatever such a system drew stays on screen unless an
+  `On<Remove<EditTarget>>` listener empties it. A skipped system does not
+  advance its event readers either, so on its next run it reads the events of
+  the frame it missed.
+- **Change the edit target with `SetEditTarget`, never by moving the marker.**
+  Its one listener moves `EditTarget` and enforces that at most the front tab's
+  document holds it, and only once it has an `App`. Re-targeting the same
+  document removes the marker and adds it again, so Play and Stop are a
+  `Remove` followed by an `Add`.
+- **`InViewport` follows `EditTarget` while the viewport is shown.**
+  `sync_in_viewport` keeps it in step in `First`, before the step. Its `Add`
+  focuses the `App`; its `Remove` unfocuses it and steps it once.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert
   `ExclusiveCamera` naming it at `Startup`, and `extract_cameras` skips every
   other camera while the resource exists, so a scene camera never gets a render

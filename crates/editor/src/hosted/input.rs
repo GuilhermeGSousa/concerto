@@ -1,12 +1,14 @@
 use std::collections::HashSet;
 
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource,
+    Component, Entity, Query, Res, ResMut, Resource, With,
     command::CommandQueue,
     events::event_reader::EventReader,
-    signal::{On, Signal},
+    signal::{
+        On, Signal,
+        lifecycle::{Add, Remove},
+    },
     system::NonSendMarker,
-    world_id::WorldId,
 };
 use concerto_window::{
     InputGate,
@@ -19,8 +21,7 @@ use concerto_window::{
 };
 use glam::Vec2;
 
-use super::{HostedApp, ParkedEditApp, StopPlay};
-use crate::asset_editor::ActiveEditor;
+use super::{HostedApp, ParkedEditApp, StopPlay, target::EditTarget};
 
 /// Where a hosted `App` is told the pointer is once it has left the viewport.
 pub const POINTER_GONE: Vec2 = Vec2::splat(-1.0);
@@ -38,14 +39,99 @@ pub struct ViewportView {
 #[derive(Resource, Default)]
 pub struct ViewportShown(pub Option<ViewportView>);
 
-/// The buttons whose presses the host passed on, and the `App` it stepped last.
+/// The buttons whose presses the host passed on.
 #[derive(Resource, Default)]
 pub struct Routing {
     buttons: HashSet<MouseButton>,
-    stepped: Option<(Entity, WorldId)>,
     pointer_on_picture: Option<bool>,
     keys: HashSet<KeyCode>,
     playing: bool,
+}
+
+/// Marks the edit-target document while the viewport shows its picture.
+#[derive(Component)]
+pub struct InViewport;
+
+/// Keeps [`InViewport`] on the edit target exactly while the viewport is shown.
+pub(crate) fn sync_in_viewport(
+    shown: Res<ViewportShown>,
+    targets: Query<Entity, With<EditTarget>>,
+    marked: Query<Entity, With<InViewport>>,
+    mut cmd: CommandQueue,
+) {
+    let wanted = shown.0.and_then(|_| targets.iter().next());
+    for document in marked.iter() {
+        if Some(document) != wanted {
+            cmd.remove::<InViewport>(document);
+        }
+    }
+    if let Some(document) = wanted
+        && marked.get_entity(document).is_none()
+    {
+        cmd.insert(InViewport, document);
+    }
+}
+
+fn forget_routing(routing: &mut Routing) {
+    routing.buttons.clear();
+    routing.pointer_on_picture = None;
+}
+
+pub(crate) fn focus_shown_app(
+    on: On<Add<InViewport>>,
+    hosted: Query<&mut HostedApp>,
+    mut routing: ResMut<Routing>,
+) {
+    if let Some(mut app) = hosted.get_entity(on.signal().entity) {
+        app.push(WindowEvent::Focused(true));
+    }
+    forget_routing(&mut routing);
+}
+
+pub(crate) fn blur_hidden_app(
+    on: On<Remove<InViewport>>,
+    hosted: Query<&mut HostedApp>,
+    parked: Query<&ParkedEditApp>,
+    mut routing: ResMut<Routing>,
+    mut cmd: CommandQueue,
+) {
+    let document = on.signal().entity;
+    if let Some(mut app) = hosted.get_entity(document) {
+        app.push(WindowEvent::Focused(false));
+        app.step();
+        if app.drop_window_commands() && parked.get_entity(document).is_some() {
+            cmd.trigger(StopPlay(document));
+        }
+    }
+    forget_routing(&mut routing);
+}
+
+pub(crate) fn focus_new_target(
+    on: On<Add<EditTarget>>,
+    shown: Query<&InViewport>,
+    hosted: Query<&mut HostedApp>,
+    mut routing: ResMut<Routing>,
+) {
+    let document = on.signal().entity;
+    if shown.get_entity(document).is_some()
+        && let Some(mut app) = hosted.get_entity(document)
+    {
+        app.push(WindowEvent::Focused(true));
+    }
+    forget_routing(&mut routing);
+}
+
+pub(crate) fn blur_old_target(
+    on: On<Remove<EditTarget>>,
+    shown: Query<&InViewport>,
+    hosted: Query<&mut HostedApp>,
+) {
+    let document = on.signal().entity;
+    if shown.get_entity(document).is_some()
+        && let Some(mut app) = hosted.get_entity(document)
+    {
+        app.push(WindowEvent::Focused(false));
+    }
 }
 
 /// Who has the editor window's input while a document's game plays.
@@ -142,7 +228,7 @@ pub(crate) fn release_input(
 
 pub(crate) fn route_play_input(
     _: NonSendMarker,
-    active: Res<ActiveEditor>,
+    targets: Query<Entity, (With<EditTarget>, With<InViewport>)>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
     hosted: Query<&mut HostedApp>,
@@ -152,11 +238,15 @@ pub(crate) fn route_play_input(
     mut gate: ResMut<InputGate>,
     mut cmd: CommandQueue,
 ) {
-    let target = active.0.zip(shown.0).and_then(|(document, view)| {
-        let owner = owners.get_entity(document)?;
-        let app = hosted.get_entity(document)?;
-        Some((document, view, owner, app))
-    });
+    let target = targets
+        .iter()
+        .next()
+        .zip(shown.0)
+        .and_then(|(document, view)| {
+            let owner = owners.get_entity(document)?;
+            let app = hosted.get_entity(document)?;
+            Some((document, view, owner, app))
+        });
     routing.playing = target.is_some();
     let Some((document, view, mut owner, mut app)) = target else {
         for event in events.read() {
@@ -294,7 +384,7 @@ pub fn scale_correction(editor: f64, hosted: f64) -> Option<WindowEvent> {
 
 pub(crate) fn step_edit_target(
     _: NonSendMarker,
-    active: Res<ActiveEditor>,
+    targets: Query<Entity, (With<EditTarget>, With<InViewport>)>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
     hosted: Query<&mut HostedApp>,
@@ -306,32 +396,9 @@ pub(crate) fn step_edit_target(
     input: Res<Input>,
     mut cmd: CommandQueue,
 ) {
-    let entering = active.0.zip(shown.0).and_then(|(document, _)| {
-        hosted
-            .get_entity(document)
-            .map(|app| (document, app.world().id()))
-    });
-
-    let entered = routing.stepped != entering;
-    if entered {
-        if let Some((document, id)) = routing.stepped
-            && let Some(mut left) = hosted.get_entity(document)
-            && left.world().id() == id
-        {
-            left.push(WindowEvent::Focused(false));
-            left.step();
-            let closing = left.drop_window_commands();
-            if closing && parked.get_entity(document).is_some() {
-                cmd.trigger(StopPlay(document));
-            }
-        }
-        routing.buttons.clear();
-        routing.pointer_on_picture = None;
-        routing.stepped = entering;
-    }
-
-    let target = active
-        .0
+    let target = targets
+        .iter()
+        .next()
         .zip(shown.0)
         .and_then(|(document, view)| hosted.get_entity(document).map(|app| (document, view, app)));
     let Some((document, view, mut app)) = target else {
@@ -343,9 +410,6 @@ pub(crate) fn step_edit_target(
         return;
     };
 
-    if entered {
-        app.push(WindowEvent::Focused(true));
-    }
     if let Some(rescale) = app.window().and_then(|hosted_window| {
         scale_correction(window.scale_factor(), hosted_window.scale_factor())
     }) {
@@ -677,13 +741,17 @@ mod tests {
             app.register_plugin(MainSchedulePlugin)
                 .register_plugin(TimePlugin)
                 .register_plugin(WindowPlugin)
-                .insert_resource(ActiveEditor::default())
+                .insert_resource(crate::asset_editor::ActiveEditor::default())
                 .insert_resource(Stops::default())
                 .register_plugin(HostedPlugin);
             let world = app.main_mut().world_mut();
             world.add_listener(count_stop);
             let document = world.spawn(hosted_now(plain_recipe, |_| {}));
-            world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+            world
+                .get_resource_mut::<crate::asset_editor::ActiveEditor>()
+                .unwrap()
+                .0 = Some(document);
+            world.trigger(crate::hosted::SetEditTarget(Some(document)));
             app.get_resource_mut::<ViewportShown>().unwrap().0 = Some(ViewportView {
                 origin: ORIGIN,
                 size: (640, 480),

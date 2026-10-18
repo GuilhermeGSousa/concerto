@@ -2,6 +2,7 @@
 pub mod events;
 pub mod input;
 pub mod seam;
+pub mod target;
 #[cfg(test)]
 pub(crate) mod testing;
 
@@ -31,7 +32,8 @@ use concerto_window::{
 };
 
 pub use events::{Hosted, HostedAppEvents, HostedEventsAppExt};
-pub use seam::{Editor, EditorSignals, LastEditTarget};
+pub use seam::{Editor, EditorSignals};
+pub use target::{EditTarget, SetEditTarget};
 
 pub const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
@@ -270,6 +272,7 @@ pub(crate) fn finish_pending(
         if let Some(hosted) = pending.finish_if_ready() {
             cmd.remove::<PendingApp>(document);
             cmd.insert(hosted, document);
+            cmd.trigger(SetEditTarget(Some(document)));
         }
     }
 }
@@ -362,10 +365,12 @@ pub(crate) fn finish_pending_play(
             if failures.get_entity(document).is_some() {
                 cmd.remove::<PlayFailure>(document);
             }
+            cmd.trigger(SetEditTarget(Some(document)));
         } else if let Some(failure) = pending.failure() {
             let failure = PlayFailure(failure.to_owned());
             cmd.remove::<PendingPlayApp>(document);
             cmd.insert((failure, PlayState::Editing), document);
+            cmd.trigger(SetEditTarget(Some(document)));
         }
     }
 }
@@ -395,10 +400,16 @@ pub(crate) fn stop_play(
     }
     if stopped {
         cmd.insert(PlayState::Editing, document);
+        cmd.trigger(SetEditTarget(Some(document)));
     }
 }
 
 pub(crate) fn install_listeners(world: &mut World) {
+    world.add_listener(target::move_edit_target);
+    world.add_listener(input::focus_shown_app);
+    world.add_listener(input::blur_hidden_app);
+    world.add_listener(input::focus_new_target);
+    world.add_listener(input::blur_old_target);
     world.add_listener(stop_play);
     world.add_listener(input::release_input);
 }
@@ -411,15 +422,14 @@ impl Plugin for HostedPlugin {
         app.insert_resource(input::Routing::default())
             .insert_resource(input::HostCursor::default())
             .insert_resource(input::ViewportShown::default())
-            .insert_resource(seam::LastEditTarget::default())
             .add_system(
                 First,
                 (
                     input::route_play_input.before(concerto_window::FoldInput),
                     finish_pending,
                     finish_pending_play,
+                    input::sync_in_viewport,
                     input::step_edit_target,
-                    seam::announce_edit_target,
                 )
                     .chain(),
             );
@@ -512,17 +522,26 @@ mod tests {
             .0
     }
 
+    fn set_active(world: &mut World, document: Option<Entity>) {
+        world
+            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
+            .unwrap()
+            .0 = document;
+        world.trigger(SetEditTarget(document));
+    }
+
     fn run_step(world: &mut World) {
-        let mut system = concerto_ecs::IntoSystem::into_system(input::step_edit_target);
-        concerto_ecs::System::initialize(&mut system, world);
-        concerto_ecs::System::run_and_apply(&mut system, (), world);
+        stepper(world)(world);
     }
 
     fn stepper(world: &mut World) -> impl FnMut(&mut World) + use<> {
-        let mut system = concerto_ecs::IntoSystem::into_system(input::step_edit_target);
-        concerto_ecs::System::initialize(&mut system, world);
+        let mut sync = concerto_ecs::IntoSystem::into_system(input::sync_in_viewport);
+        let mut step = concerto_ecs::IntoSystem::into_system(input::step_edit_target);
+        concerto_ecs::System::initialize(&mut sync, world);
+        concerto_ecs::System::initialize(&mut step, world);
         move |world| {
-            concerto_ecs::System::run_and_apply(&mut system, (), world);
+            concerto_ecs::System::run_and_apply(&mut sync, (), world);
+            concerto_ecs::System::run_and_apply(&mut step, (), world);
         }
     }
 
@@ -651,10 +670,7 @@ mod tests {
     #[test]
     fn an_app_that_is_not_the_edit_target_is_not_stepped() {
         let (mut world, document) = stepping_world();
-        world
-            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-            .unwrap()
-            .0 = None;
+        set_active(&mut world, None);
 
         run_step(&mut world);
 
@@ -684,10 +700,7 @@ mod tests {
         run_step(&mut world);
         assert!(hosted_input(&world, document).is_mouse_button_held(MouseButton::Right));
 
-        world
-            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-            .unwrap()
-            .0 = None;
+        set_active(&mut world, None);
         run_step(&mut world);
         let after_leaving = frames(&world, document);
         run_step(&mut world);
@@ -788,10 +801,7 @@ mod tests {
     fn grabbing_world() -> World {
         let (mut world, _) = stepping_world();
         let document = world.spawn(hosted_now(grabbing_recipe, |_| {}));
-        world
-            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-            .unwrap()
-            .0 = Some(document);
+        set_active(&mut world, Some(document));
         world
     }
 
@@ -822,10 +832,7 @@ mod tests {
                 .grabbed
         );
 
-        world
-            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-            .unwrap()
-            .0 = None;
+        set_active(&mut world, None);
         run_step(&mut world);
         assert!(
             !world
@@ -845,6 +852,7 @@ mod tests {
         step(&mut world);
 
         world.insert(hosted_now(plain_recipe, |_| {}), document);
+        set_active(&mut world, Some(document));
         move_pointer_outside_the_viewport(&mut world);
         step(&mut world);
 
@@ -972,19 +980,16 @@ mod tests {
     }
 
     #[test]
-    fn an_app_that_replaced_the_stepped_one_as_it_left_the_front_is_not_stepped_for_it() {
+    fn the_app_on_a_document_leaving_the_front_ends_unfocused() {
         let (mut world, document) = stepping_world();
         let mut step = stepper(&mut world);
         step(&mut world);
 
         world.insert(hosted_now(plain_recipe, |_| {}), document);
-        world
-            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-            .unwrap()
-            .0 = None;
+        set_active(&mut world, None);
         step(&mut world);
 
-        assert_eq!(frames(&world, document), 0);
+        assert!(!hosted_window(&world, document).is_focused());
     }
 
     #[test]
@@ -1041,10 +1046,7 @@ mod tests {
         step(&mut world);
         assert_eq!(hear(&mut world), vec![(document, 1)]);
 
-        world
-            .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-            .unwrap()
-            .0 = None;
+        set_active(&mut world, None);
         step(&mut world);
         assert_eq!(hear(&mut world), vec![(document, 1), (document, 2)]);
     }

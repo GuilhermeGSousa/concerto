@@ -1064,15 +1064,9 @@ fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
             component: TypeId::of::<Gain>(),
         });
 
-    w.f.world
-        .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-        .unwrap()
-        .0 = None;
+    w.f.activate(None);
     w.f.frame();
-    w.f.world
-        .get_resource_mut::<crate::asset_editor::ActiveEditor>()
-        .unwrap()
-        .0 = Some(w.document);
+    w.f.activate(Some(w.document));
     w.f.frame();
 
     assert!(queued(&w.f.world).is_empty());
