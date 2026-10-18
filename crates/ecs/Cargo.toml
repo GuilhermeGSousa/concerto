@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 profiling = "1"
 concerto-tasks = { workspace = true, optional = true }
 concerto-ecs-macros.workspace = true
+concerto-reflect.workspace = true
 any_vec = "0.14.0"
 anymap3 = "1.0.1"
 typle = "0.10.6"

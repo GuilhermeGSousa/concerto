@@ -3,13 +3,14 @@ use crate::{
     hosted::{HostedApp, testing::SceneFixture},
     tools::selection::Select,
 };
-use concerto_app::reflect::ReflectComponents;
 use concerto_ecs::{
     IntoSystem, System, World,
     component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
+    reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
 };
 use concerto_foundation::transform::Transform;
+use concerto_reflect::{GetTypeRegistration, ReflectDefault};
 use concerto_ui::text::UIText;
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -23,10 +24,8 @@ impl Inspecting {
     fn scene(&mut self) -> &mut World {
         self.f.scene_world_mut(self.document)
     }
-    fn reflect_components(&mut self) -> &mut ReflectComponents {
-        self.scene()
-            .get_resource_mut::<ReflectComponents>()
-            .unwrap()
+    fn register<T: GetTypeRegistration>(&mut self) {
+        self.scene().register_type::<T>();
     }
     fn select(&mut self, entity: Option<Entity>) {
         self.scene().trigger(Select(entity));
@@ -169,7 +168,8 @@ fn rows(world: &mut World) -> Vec<(Entity, PropertyRow)> {
         .collect()
 }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, concerto_reflect::Reflect, Serialize, Deserialize)]
+#[reflect(opaque, SceneComponent)]
 struct Tag;
 impl SceneComponent for Tag {
     fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
@@ -195,7 +195,7 @@ fn stacked_names(world: &World, stack: Entity) -> Vec<&'static str> {
 #[test]
 fn lists_reflected_and_scene_components_as_queryable_cards_and_hides_plumbing() {
     let (mut w, entity, stack) = inspecting();
-    w.scene().register_component_type::<Tag>();
+    w.register::<Tag>();
     w.scene().insert((Tag, Plumbing), entity);
     w.update();
     assert_eq!(stacked_names(&w.f.world, stack), ["Tag", "Transform"]);
@@ -214,7 +214,7 @@ fn structural_changes_rebuild_the_entire_stack_once() {
     w.update();
     let old_card = cards(&mut w.f.world)[0].0;
     let old_rows = rows(&mut w.f.world);
-    w.scene().register_component_type::<Tag>();
+    w.register::<Tag>();
     w.scene().insert(Tag, entity);
     w.update();
     assert!(!w.f.world.entity_is_valid(old_card));
@@ -400,11 +400,12 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
 #[test]
 fn unsupported_values_build_an_explicit_read_only_row() {
     #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
     struct Unsupported {
         title: String,
     }
     let (mut w, _, _) = inspecting();
-    w.reflect_components().register::<Unsupported>();
+    w.register::<Unsupported>();
     let entity = w.scene().spawn(Unsupported {
         title: "Example".into(),
     });
@@ -432,7 +433,9 @@ fn labels_capitalise_the_field_name() {
 
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
-    use concerto_reflect::{PropertyVisitor, PropertyVisitorMut, Reflect};
+    use concerto_reflect::{
+        FromType, PropertyVisitor, PropertyVisitorMut, Reflect, TypeRegistration,
+    };
     #[derive(Component, Default)]
     struct Dynamic {
         reverse: bool,
@@ -457,8 +460,16 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
             }
         }
     }
+    impl GetTypeRegistration for Dynamic {
+        fn get_type_registration() -> TypeRegistration {
+            let mut registration = TypeRegistration::of::<Self>();
+            registration.insert(<ReflectComponent as FromType<Self>>::from_type());
+            registration.insert(<ReflectDefault as FromType<Self>>::from_type());
+            registration
+        }
+    }
     let (mut w, _, _) = inspecting();
-    w.reflect_components().register::<Dynamic>();
+    w.register::<Dynamic>();
     let target = w.scene().spawn(Dynamic {
         reverse: false,
         show_b: true,
@@ -736,7 +747,7 @@ fn inspector_access_blocks_writes_to_the_hosted_app_and_the_widget_registry_only
     assert!(!SystemAccess::are_disjoint(&access, &hosted));
     assert!(!SystemAccess::are_disjoint(&hosted, &access));
     let mut table = SystemAccess::default();
-    table.write_resource::<ReflectComponents>();
+    table.write_resource::<AppTypeRegistry>();
     assert!(
         SystemAccess::are_disjoint(&access, &table),
         "the table it reads is the scene's, not one in the editor's world"
@@ -744,6 +755,7 @@ fn inspector_access_blocks_writes_to_the_hosted_app_and_the_widget_registry_only
 }
 
 #[derive(Component, concerto_reflect::Reflect, Default)]
+#[reflect(Component, Default)]
 struct Gain {
     amount: f32,
 }
@@ -751,7 +763,7 @@ struct Gain {
 fn structural() -> (Inspecting, Entity, Entity) {
     use concerto_ecs::events::event_channel::EventChannel;
     let (mut w, entity, stack) = inspecting();
-    w.reflect_components().register::<Gain>();
+    w.register::<Gain>();
     w.f.world
         .insert_resource(EventChannel::<concerto_ui::text_input::UITextInputSubmitted>::default());
     w.update();
@@ -919,7 +931,7 @@ fn a_cards_menu_removes_its_component() {
 #[test]
 fn only_registered_components_offer_a_menu() {
     let (mut w, entity, _) = structural();
-    w.scene().register_component_type::<Tag>();
+    w.register::<Tag>();
     w.scene().insert(Tag, entity);
     w.update();
     assert_eq!(card_names(&mut w.f.world), ["Tag", "Transform"]);
@@ -944,12 +956,13 @@ fn the_scene_root_wrapper_shows_no_cards() {
 #[test]
 fn readonly_components_are_edited_and_removed_but_never_added() {
     #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
     struct Lens {
         focal: f32,
     }
     let lens = TypeId::of::<Lens>();
     let (mut w, entity, _) = structural();
-    w.reflect_components().register_readonly::<Lens>();
+    w.register::<Lens>();
     w.update();
 
     open_add_menu(&mut w.f.world);
@@ -1375,13 +1388,14 @@ mod bool_field {
     use concerto_ui::checkbox::UICheckbox;
 
     #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
     struct Switch {
         on: bool,
     }
 
     fn fixture() -> (Inspecting, Entity) {
         let (mut w, entity, _) = inspecting();
-        w.reflect_components().register_readonly::<Switch>();
+        w.register::<Switch>();
         w.scene().insert(Switch { on: false }, entity);
         w.update();
         w.update();

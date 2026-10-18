@@ -2,13 +2,16 @@ use concerto_app::extractor::extract as extract_main_world;
 use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
+    reflect::ReflectSceneComponent,
     Entity, With, Without, World,
 };
+use concerto_reflect::Reflect;
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
 /// Marks a main-world entity as needing a mirror entity in the render world.
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Reflect, Serialize, Deserialize)]
+#[reflect(opaque, SceneComponent)]
 pub struct SyncWithRenderWorld;
 
 impl SceneComponent for SyncWithRenderWorld {

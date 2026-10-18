@@ -11,6 +11,7 @@ use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     query::Query,
+    reflect::{ReflectComponent, ReflectSceneComponent},
     resource::{Res, ResMut, Resource},
     Entity,
 };
@@ -60,6 +61,7 @@ impl RenderTarget {
 }
 
 #[derive(Component, concerto_reflect::Reflect, Serialize, Deserialize)]
+#[reflect(Component, SceneComponent)]
 pub struct Camera {
     pub aspect: f32,
     pub fovy: f32,

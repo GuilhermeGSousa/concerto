@@ -4,14 +4,11 @@ use std::{
     sync::Arc,
 };
 
-use concerto_app::{
-    App,
-    edit_time::AtEditTime,
-    reflect::{ReflectComponent, ReflectComponents},
-};
+use concerto_app::{App, edit_time::AtEditTime};
 use concerto_ecs::{
     Component, Entity, Resource, World,
     component::Tick,
+    reflect::{AppTypeRegistry, ReflectComponent},
     signal::{On, Signal},
 };
 use concerto_reflect::{PropertyPath, with_property_mut};
@@ -71,10 +68,7 @@ impl Signal for CommitProperty {}
 impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
-        let component = world
-            .get_resource::<ReflectComponents>()
-            .and_then(|table| table.get(self.row.component))
-            .ok_or(EditError::UnregisteredComponent)?;
+        let component = reflected(world, self.row.component)?;
         apply_through(
             world,
             component,
@@ -131,10 +125,7 @@ impl Signal for EditComponent {}
 pub fn apply_component_edit(world: &mut World, edit: ComponentEdit) -> Result<(), EditError> {
     let (ComponentEdit::Add { entity, component } | ComponentEdit::Remove { entity, component }) =
         edit;
-    let registered = world
-        .get_resource::<ReflectComponents>()
-        .and_then(|table| table.get(component))
-        .ok_or(EditError::UnregisteredComponent)?;
+    let registered = reflected(world, component)?;
     if !world.entity_is_valid(entity) {
         return Err(EditError::MissingTarget);
     }
@@ -143,15 +134,25 @@ pub fn apply_component_edit(world: &mut World, edit: ComponentEdit) -> Result<()
         ComponentEdit::Add { .. } if present => Err(EditError::Rejected),
         ComponentEdit::Remove { .. } if !present => Err(EditError::NotFound),
         ComponentEdit::Add { .. } => {
-            let insert = registered.insert.ok_or(EditError::Rejected)?;
-            insert(world, entity);
-            Ok(())
+            if registered.insert_default(component, world, entity) {
+                Ok(())
+            } else {
+                Err(EditError::Rejected)
+            }
         }
         ComponentEdit::Remove { .. } => {
             (registered.remove)(world, entity);
             Ok(())
         }
     }
+}
+
+fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditError> {
+    world
+        .get_resource::<AppTypeRegistry>()
+        .and_then(|registry| registry.get_type_data::<ReflectComponent>(component))
+        .copied()
+        .ok_or(EditError::UnregisteredComponent)
 }
 
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
@@ -169,10 +170,6 @@ pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
 }
 
 pub(crate) fn build(app: &mut App) {
-    let world = app.main_mut().world_mut();
-    if world.get_resource::<ReflectComponents>().is_none() {
-        world.insert_resource(ReflectComponents::default());
-    }
     app.add_listener(commit_property.at_edit_time())
         .add_listener(edit_component.at_edit_time());
 }
@@ -185,13 +182,16 @@ mod tests {
         testing::{tools_app, written},
     };
     use concerto_foundation::transform::Transform;
+    use concerto_reflect::ReflectDefault;
 
     #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
     struct Gain {
         amount: f32,
     }
 
     #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
     struct Lens {
         focal: f32,
     }
@@ -201,9 +201,9 @@ mod tests {
 
     fn fixture() -> (App, Entity) {
         let mut app = tools_app();
-        app.register_reflect::<Transform>()
-            .register_reflect::<Gain>()
-            .register_reflect_readonly::<Lens>();
+        app.register_type::<Transform>()
+            .register_type::<Gain>()
+            .register_type::<Lens>();
         let entity = app.main_mut().world_mut().spawn(Transform::IDENTITY);
         (app, entity)
     }
@@ -223,12 +223,8 @@ mod tests {
     }
 
     #[test]
-    fn the_tools_bring_an_empty_table_when_no_plugin_registered_a_component() {
+    fn a_component_that_was_never_registered_cannot_be_edited() {
         let mut app = tools_app();
-        assert!(
-            app.get_resource::<ReflectComponents>()
-                .is_some_and(|table| table.iter().next().is_none())
-        );
         let world = app.main_mut().world_mut();
         let entity = world.spawn(());
 
@@ -236,19 +232,6 @@ mod tests {
             apply_component_edit(world, add::<Gain>(entity)),
             Err(EditError::UnregisteredComponent)
         );
-    }
-
-    #[test]
-    fn a_table_a_plugin_already_filled_is_kept() {
-        let mut app = App::new();
-        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
-            .register_plugin(concerto_app::plugins::TimePlugin)
-            .register_reflect::<Gain>();
-
-        crate::tools::build_core(&mut app);
-
-        let table = app.get_resource::<ReflectComponents>().unwrap();
-        assert!(table.get(TypeId::of::<Gain>()).is_some());
     }
 
     #[test]
@@ -310,7 +293,7 @@ mod tests {
     }
 
     #[test]
-    fn a_readonly_component_is_removed_but_never_added() {
+    fn a_component_without_default_is_removed_but_never_added() {
         let (mut app, entity) = fixture();
         let world = app.main_mut().world_mut();
         assert_eq!(

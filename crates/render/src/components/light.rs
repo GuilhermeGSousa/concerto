@@ -6,10 +6,11 @@ use concerto_ecs::{
     component::Component,
     entity::Entity,
     query::Query,
+    reflect::{ReflectComponent, ReflectSceneComponent},
     resource::{Res, Resource},
     Changed,
 };
-use concerto_reflect::{PropertyVisitor, PropertyVisitorMut, Reflect};
+use concerto_reflect::{PropertyVisitor, PropertyVisitorMut, Reflect, ReflectDefault};
 use derive_more::Deref;
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +40,7 @@ const MAX_LIGHTS: usize = 128;
 const SHADOW_LAYER_REQUESTED: i32 = -2;
 
 #[derive(Component, Reflect, Serialize, Deserialize)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct Light {
     pub color: Color,
     pub intensity: f32,

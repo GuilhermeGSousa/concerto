@@ -2,10 +2,12 @@
 //! JSON and is applied; an unregistered type name is reported rather than
 //! panicking.
 use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use concerto_ecs::{Component, Entity, World};
+use concerto_ecs::{Component, Entity, World, reflect::ReflectSceneComponent};
+use concerto_reflect::Reflect;
 use serde::{Deserialize, Serialize};
 
-#[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Component, Reflect, Serialize, Deserialize, PartialEq, Debug)]
+#[reflect(opaque, SceneComponent)]
 struct Registered {
     value: u32,
 }
@@ -21,7 +23,8 @@ impl SceneComponent for Registered {
 mod alias_clash_a {
     use super::*;
 
-    #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+    #[derive(Component, Reflect, Serialize, Deserialize, PartialEq, Debug)]
+    #[reflect(opaque, SceneComponent)]
     pub struct Widget {
         pub a: u32,
     }
@@ -36,7 +39,8 @@ mod alias_clash_a {
 mod alias_clash_b {
     use super::*;
 
-    #[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+    #[derive(Component, Reflect, Serialize, Deserialize, PartialEq, Debug)]
+    #[reflect(opaque, SceneComponent)]
     pub struct Widget {
         pub b: u32,
     }
@@ -51,7 +55,7 @@ mod alias_clash_b {
 #[test]
 fn registered_component_is_deserialized_and_applied() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
     let applied = world.apply_scene_component("Registered", r#"{"value":42}"#, entity, &[entity]);
@@ -70,7 +74,7 @@ fn registered_component_is_deserialized_and_applied() {
 #[test]
 fn short_name_alias_resolves_for_blender_authored_extras() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
     // Blender authors the bare identifier, not the full Rust path.
@@ -90,7 +94,7 @@ fn short_name_alias_resolves_for_blender_authored_extras() {
 #[test]
 fn full_type_path_also_resolves() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
     let applied =
@@ -111,8 +115,8 @@ fn full_type_path_also_resolves() {
 fn re_registering_the_same_type_is_idempotent() {
     let mut world = World::default();
     // Two plugins registering the same component, or one plugin added twice.
-    world.register_component_type::<Registered>();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
     let applied = world.apply_scene_component("Registered", r#"{"value":5}"#, entity, &[entity]);
@@ -131,8 +135,8 @@ fn re_registering_the_same_type_is_idempotent() {
 #[test]
 fn a_genuine_two_type_short_name_clash_resolves_to_the_last_registered() {
     let mut world = World::default();
-    world.register_component_type::<alias_clash_a::Widget>();
-    world.register_component_type::<alias_clash_b::Widget>();
+    world.register_type::<alias_clash_a::Widget>();
+    world.register_type::<alias_clash_b::Widget>();
 
     let by_short = world.spawn(());
     let by_full_a = world.spawn(());
@@ -194,7 +198,7 @@ fn unregistered_component_name_is_reported_not_fatal() {
 #[test]
 fn malformed_json_does_not_panic() {
     let mut world = World::default();
-    world.register_component_type::<Registered>();
+    world.register_type::<Registered>();
     let entity = world.spawn(());
 
     let applied = world.apply_scene_component("Registered", "{ not json", entity, &[entity]);

@@ -16,7 +16,7 @@ use concerto_mesh::mesh::{Mesh, MeshComponent};
 #[test]
 fn mesh_component_apply_inserts_the_component_preserving_its_asset_id() {
     let mut world = World::default();
-    world.register_component_type::<MeshComponent>();
+    world.register_type::<MeshComponent>();
     let entity = world.spawn(());
 
     let id = AssetId::from_path("models/character.gltf#mesh/0");
@@ -46,7 +46,7 @@ fn transform_apply_inserts_itself_unchanged() {
     use glam::Vec3;
 
     let mut world = World::default();
-    world.register_component_type::<Transform>();
+    world.register_type::<Transform>();
     let entity = world.spawn(());
 
     let mut transform = Transform::IDENTITY;

@@ -5,7 +5,6 @@ use std::{
 
 pub mod bundle;
 pub mod name;
-pub mod registry;
 pub mod scene;
 
 pub use concerto_ecs_macros::Component;

@@ -3,10 +3,12 @@ use std::{collections::HashMap, sync::Arc};
 use concerto_ecs::{
     component::scene::{SceneComponent, SceneSpawnContext},
     events::event_reader::EventReader,
+    reflect::ReflectSceneComponent,
     CommandQueue, Component, Entity, Query, Res, ResMut, Resource, With, Without,
 };
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetLifetimeEvent, AssetId};
 use concerto_mesh::{Mesh, MeshComponent};
+use concerto_reflect::Reflect;
 use log::warn;
 use serde::Serialize;
 
@@ -70,7 +72,8 @@ impl PhysicsMeshShapes {
     }
 }
 
-#[derive(Component, Serialize)]
+#[derive(Component, Reflect, Serialize)]
+#[reflect(opaque, SceneComponent)]
 pub struct MeshCollider;
 
 // The Blender add-on writes unit-struct extras as `{}`, but serde's derived

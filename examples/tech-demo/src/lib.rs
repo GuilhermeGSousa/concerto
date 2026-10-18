@@ -25,8 +25,7 @@ pub fn game(app: &mut App) {
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
-        .register_scene_component::<PlayerSpawner>()
-        .register_reflect::<PlayerSpawner>();
+        .register_type::<PlayerSpawner>();
 
     app.add_system(Update, spawn_character)
         .add_system(Startup, spawn_grounded_overlay)
@@ -41,8 +40,10 @@ mod tests {
     use std::any::TypeId;
 
     use concerto::{
-        app::{StartupScene, reflect::ReflectComponents},
+        app::StartupScene,
         asset_id,
+        ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+        reflect::ReflectDefault,
     };
 
     use crate::{character::PlayerSpawner, game};
@@ -58,9 +59,12 @@ mod tests {
             Some(&StartupScene(asset_id!("content/forest/scene.gasset")))
         );
         let spawner = app
-            .get_resource::<ReflectComponents>()
-            .and_then(|reflected| reflected.get(TypeId::of::<PlayerSpawner>()));
-        assert!(spawner.is_some_and(|spawner| spawner.insert.is_some()));
+            .get_resource::<AppTypeRegistry>()
+            .and_then(|registry| registry.get(TypeId::of::<PlayerSpawner>()))
+            .unwrap();
+        assert!(spawner.data::<ReflectComponent>().is_some());
+        assert!(spawner.data::<ReflectDefault>().is_some());
+        assert!(spawner.data::<ReflectSceneComponent>().is_some());
     }
 }
 

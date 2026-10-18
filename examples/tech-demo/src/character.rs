@@ -9,6 +9,7 @@ use concerto::animation::node::{AnimationClipNode, AnimationNodeKind};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
 use concerto::director::VirtualCamera;
 use concerto::ecs::component::scene::{SceneComponent, SceneSpawnContext};
+use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, ResMut, With, Without};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraPivot, EntityFollow};
@@ -24,7 +25,7 @@ use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
     ecs::{CommandQueue, Component, Res},
     foundation::assets::asset_server::AssetServer,
-    reflect::Reflect,
+    reflect::{Reflect, ReflectDefault},
 };
 use glam::{Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,7 @@ pub(crate) struct Player;
 pub(crate) struct AnimationsReady;
 
 #[derive(Component, Reflect, Default, Serialize, Deserialize)]
+#[reflect(Component, Default, SceneComponent)]
 pub(crate) struct PlayerSpawner {
     should_spawn: bool,
 }

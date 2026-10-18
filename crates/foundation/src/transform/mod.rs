@@ -3,7 +3,8 @@ use std::ops::Mul;
 use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto_ecs::component::{Component, ComponentLifecycleCallback};
 use concerto_ecs::entity::Entity;
-use concerto_reflect::Reflect;
+use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Affine3A, Mat4, Quat, Vec3};
 
 use crate::blend::Blendable;
@@ -11,6 +12,7 @@ use crate::blend::Blendable;
 pub mod systems;
 
 #[derive(Clone, Blendable, Reflect, serde::Serialize, serde::Deserialize)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,

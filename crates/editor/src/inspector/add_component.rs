@@ -262,8 +262,8 @@ pub(super) fn populate_add_component_menu(
             Some(target) => source.addable_components(target),
             None => (Vec::new(), 0),
         };
-        addable.retain(|(_, component)| component.name.to_lowercase().contains(&contents.query));
-        addable.sort_by(|(_, a), (_, b)| a.name.cmp(b.name));
+        addable.retain(|(_, name)| name.to_lowercase().contains(&contents.query));
+        addable.sort_by(|(_, a), (_, b)| a.cmp(b));
 
         let count = if contents.query.is_empty() {
             String::new()
@@ -291,7 +291,7 @@ pub(super) fn populate_add_component_menu(
             );
         }
 
-        for (index, (type_id, component)) in addable.iter().enumerate() {
+        for (index, (type_id, name)) in addable.iter().enumerate() {
             let Some(scene_entity) = target else {
                 break;
             };
@@ -299,14 +299,7 @@ pub(super) fn populate_add_component_menu(
                 scene_entity,
                 component: *type_id,
             };
-            spawn_entry(
-                &mut cmd,
-                menu.list,
-                entry,
-                component.name,
-                index == 0,
-                &theme,
-            );
+            spawn_entry(&mut cmd, menu.list, entry, name, index == 0, &theme);
         }
 
         cmd.insert(contents, entity);

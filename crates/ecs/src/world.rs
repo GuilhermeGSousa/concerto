@@ -5,13 +5,13 @@ use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomDa
 
 use crate::command::{Command, CommandQueue, CommandQueueState};
 use crate::component::bundle::{ComponentBundle, IntoBundle, MergeRow, PushRow, ReplaceRow};
-use crate::component::registry::{ComponentRegistry, TypeInfo};
-use crate::component::scene::{SceneComponent, SceneSpawnContext};
+use crate::component::scene::SceneSpawnContext;
 use crate::entity::EntityWorldMut;
 use crate::entity::entity_store::EntityStore;
 use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
+use crate::reflect::{AppTypeRegistry, ReflectSceneComponent, SceneComponentType};
 use crate::resource::ResourceStorage;
 use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners};
 use crate::signal::{EntitySignal, Signal};
@@ -29,6 +29,7 @@ use crate::{
     utilities::TypeIdMap,
 };
 use crate::{component::Tick, system::meta::SystemMetadata};
+use concerto_reflect::{GetTypeRegistration, TypeRegistration};
 
 /// The central container of the ECS.
 ///
@@ -51,7 +52,6 @@ pub struct World {
     id: WorldId,
     archetypes: Vec<Archetype>,
     resources: AnyMap,
-    component_registry: ComponentRegistry,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
@@ -67,7 +67,9 @@ unsafe impl Sync for World {}
 impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
-        Self::default()
+        let mut world = Self::default();
+        world.insert_resource(AppTypeRegistry::default());
+        world
     }
 
     /// This world's identity, which it keeps when moved.
@@ -505,12 +507,17 @@ impl World {
     }
 
     pub fn register_component<T: Component>(&mut self) {
-        self.component_registry.register_component::<T>();
         self.register_component_lifetimes::<T>();
     }
 
-    pub fn register_component_type<T: SceneComponent>(&mut self) {
-        self.component_registry.register_scene_component::<T>();
+    /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
+    pub fn register_type<T: GetTypeRegistration>(&mut self) {
+        if self.get_resource::<AppTypeRegistry>().is_none() {
+            self.insert_resource(AppTypeRegistry::default());
+        }
+        self.get_resource_mut::<AppTypeRegistry>()
+            .unwrap()
+            .register::<T>();
     }
 
     /// Every component `entity` carries, including ones that are not scene
@@ -522,9 +529,9 @@ impl World {
             .unwrap_or(&[])
     }
 
-    /// The read side of a registered scene component, or `None` if `id` is not one.
-    pub fn type_info(&self, id: ComponentId) -> Option<&TypeInfo> {
-        self.component_registry.type_info(&id)
+    /// The registration of the type `id`, or `None` if it was never registered.
+    pub fn registration(&self, id: ComponentId) -> Option<&TypeRegistration> {
+        self.get_resource::<AppTypeRegistry>()?.get(id)
     }
 
     /// The registered scene components `entity` currently carries.
@@ -533,10 +540,15 @@ impl World {
     /// [`register_component`](Self::register_component) — engine plumbing such
     /// as render-world mirrors — are deliberately not listed: this reports what
     /// a scene can describe, which is what a tool wants to show.
-    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = &TypeInfo> {
+    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = SceneComponentType<'_>> {
+        let registry = self.get_resource::<AppTypeRegistry>();
         self.component_ids(entity)
             .iter()
-            .filter_map(|component_id| self.component_registry.type_info(component_id))
+            .filter_map(move |component_id| {
+                let registration = registry?.get(*component_id)?;
+                let scene = *registration.data::<ReflectSceneComponent>()?;
+                Some(SceneComponentType::new(registration, scene))
+            })
     }
 
     /// Deserializes `json` into the component registered under `type_name` and
@@ -562,10 +574,15 @@ impl World {
         entity: Entity,
         node_entities: &[Entity],
     ) -> bool {
-        let Some(apply) = self.component_registry.get_scene_component(type_name) else {
+        let apply = self
+            .get_resource::<AppTypeRegistry>()
+            .and_then(|registry| registry.get_by_name(type_name))
+            .and_then(|registration| registration.data::<ReflectSceneComponent>())
+            .map(|scene| scene.apply);
+        let Some(apply) = apply else {
             warn!(
-                "Skipping component '{type_name}': no type registered under that name \
-                 (register it with App::register_component)"
+                "Skipping component '{type_name}': no scene component registered under that name \
+                 (derive Reflect with #[reflect(SceneComponent)] and register it with App::register_type)"
             );
             return false;
         };

@@ -39,6 +39,7 @@ pub mod events;
 pub mod intern;
 pub mod label;
 pub mod query;
+pub mod reflect;
 pub mod resource;
 pub mod signal;
 pub mod system;

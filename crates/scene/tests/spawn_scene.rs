@@ -71,8 +71,8 @@ fn spawn_fixture_scene(
 #[test]
 fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
-    world.register_component_type::<Camera>();
+    world.register_type::<Transform>();
+    world.register_type::<Camera>();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
 
@@ -130,7 +130,7 @@ fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
 #[test]
 fn spawned_nodes_carry_their_authored_name() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
+    world.register_type::<Transform>();
 
     let parent = world.spawn(());
     world.insert_resource(SceneFixture(Scene {
@@ -214,7 +214,7 @@ fn scene_round_trips_through_bincode_with_component_payloads() {
 #[test]
 fn unregistered_component_is_skipped_without_failing_the_node() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
+    world.register_type::<Transform>();
     let entity = world.spawn(());
 
     let applied_unknown =
@@ -242,8 +242,8 @@ fn unregistered_component_is_skipped_without_failing_the_node() {
 #[test]
 fn spawner_expands_nodes_and_upgrades_weak_handles() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
-    world.register_component_type::<MeshComponent>();
+    world.register_type::<Transform>();
+    world.register_type::<MeshComponent>();
     world.register_component::<SceneSpawnerComponent>();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();

@@ -3,9 +3,11 @@ use crate::{
     capabilities::RenderCapabilities,
     components::{
         camera::{extract_cameras, sync_camera_aspect, Camera},
+        camera_environment::CameraEnvironment,
         light::{extract_lights, update_changed_lights, Light, RenderLights},
+        material::MaterialComponent,
         mesh::extract_meshes,
-        render_entity::extract,
+        render_entity::{extract, SyncWithRenderWorld},
         shadows::{
             resize_shadow_maps, update_shadow_view_proj, RenderLighting, RenderPointShadowMaps,
             RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
@@ -99,8 +101,13 @@ impl Plugin for RenderPlugin {
         app.register_asset::<Mesh>()
             .register_asset::<Texture>()
             .register_asset::<Skeleton>();
-        app.register_reflect::<Light>()
-            .register_reflect_readonly::<Camera>();
+        app.register_type::<Light>()
+            .register_type::<Camera>()
+            .register_type::<CameraEnvironment>()
+            .register_type::<SyncWithRenderWorld>()
+            .register_type::<MaterialComponent>()
+            .register_type::<concerto_mesh::MeshComponent>()
+            .register_type::<concerto_mesh::SkeletonComponent>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);

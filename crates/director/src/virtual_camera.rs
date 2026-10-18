@@ -3,6 +3,8 @@ use concerto_ecs::component::{
     Component, ComponentLifecycleCallback,
     scene::{SceneComponent, SceneSpawnContext},
 };
+use concerto_ecs::reflect::ReflectSceneComponent;
+use concerto_reflect::Reflect;
 use concerto_render::components::camera::Camera;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -19,7 +21,8 @@ use crate::director::CameraDirector;
 /// Having the component *is* being in the [`CameraDirector`](crate::CameraDirector)'s
 /// stack, sorted by [`priority`](Self::priority); the top of that stack is live.
 /// Leave the stack by removing the component or despawning the entity.
-#[derive(Serialize, Deserialize)]
+#[derive(Reflect, Serialize, Deserialize)]
+#[reflect(opaque, SceneComponent)]
 pub struct VirtualCamera {
     /// Read-only: the director sorts the stack when the component is added, so
     /// an in-place edit would leave the stack out of order. Re-add the component
@@ -254,7 +257,7 @@ mod tests {
     fn spawn_from_json(json: &'static str) -> (World, Entity) {
         let mut world = World::new();
         world.register_component::<VirtualCamera>();
-        world.register_component_type::<VirtualCamera>();
+        world.register_type::<VirtualCamera>();
         world.insert_resource(CameraDirector::default());
 
         let node = world.spawn(());

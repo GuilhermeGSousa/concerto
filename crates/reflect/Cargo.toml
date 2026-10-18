@@ -10,3 +10,4 @@ license.workspace = true
 concerto-reflect-macros.workspace = true
 concerto-color.workspace = true
 glam = "0.30.1"
+log = "0.4.27"

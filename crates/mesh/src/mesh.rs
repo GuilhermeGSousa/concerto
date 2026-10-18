@@ -1,8 +1,9 @@
 use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use concerto_ecs::{Component, Entity};
+use concerto_ecs::{reflect::ReflectSceneComponent, Component, Entity};
 use concerto_foundation::assets::{
     asset_server::AssetServer, handle::AssetHandle, Asset, LoadableAsset,
 };
+use concerto_reflect::Reflect;
 use glam::{Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -161,7 +162,8 @@ impl Mesh {
     }
 }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Reflect, Serialize, Deserialize)]
+#[reflect(opaque, SceneComponent)]
 pub struct MeshComponent {
     pub handle: AssetHandle<Mesh>,
 }

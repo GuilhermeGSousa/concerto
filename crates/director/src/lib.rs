@@ -50,7 +50,7 @@ pub struct CameraDirectorPlugin;
 impl Plugin for CameraDirectorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CameraDirector::default());
-        app.register_scene_component::<VirtualCamera>();
+        app.register_type::<VirtualCamera>();
 
         app.add_system(Startup, main_camera::spawn_main_camera);
 

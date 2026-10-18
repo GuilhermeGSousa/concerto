@@ -7,12 +7,6 @@ use concerto_app::{
 use concerto_ecs::{CommandQueue, Res};
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::transform::Transform;
-use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
-use concerto_render::components::camera::Camera;
-use concerto_render::components::camera_environment::CameraEnvironment;
-use concerto_render::components::light::Light;
-use concerto_render::components::material::MaterialComponent;
-use concerto_render::components::render_entity::SyncWithRenderWorld;
 
 use crate::scene::Scene;
 use crate::spawner::{spawn_scene_components, SceneSpawnerComponent};
@@ -26,15 +20,6 @@ impl Plugin for ScenePlugin {
         // populated AssetStore for an empty one and add a duplicate tracking
         // system, breaking in-flight loads.
         app.register_asset::<Scene>();
-
-        app.register_scene_component::<Transform>();
-        app.register_scene_component::<MeshComponent>();
-        app.register_scene_component::<MaterialComponent>();
-        app.register_scene_component::<Camera>();
-        app.register_scene_component::<CameraEnvironment>();
-        app.register_scene_component::<Light>();
-        app.register_scene_component::<SyncWithRenderWorld>();
-        app.register_scene_component::<SkeletonComponent>();
 
         app.add_system(Update, spawn_scene_components.at_edit_time());
     }

@@ -92,6 +92,15 @@ fix the entry in the same commit as the change that made it false.
 
 ## Scenes and assets
 
+- **A type nothing registered is invisible.** Scenes spawn and capture, and the
+  inspector shows, only types registered with `app.register_type::<T>()` in that
+  `App`. The derive's `#[reflect(...)]` says what a type supports; registering
+  is a separate call, made once by the plugin that owns the type.
+- **`#[reflect(Component, Default, SceneComponent)]` names types at the use
+  site.** `ReflectComponent` and `ReflectSceneComponent` (from
+  `concerto_ecs::reflect`) and `ReflectDefault` (from `concerto_reflect`) must
+  be imported where the derive uses them. A type whose fields `Reflect` cannot
+  visit yet uses `#[reflect(opaque, SceneComponent)]`.
 - **A unit-struct scene component must accept `{}`.** serde reads a unit struct
   only from `null`, and authored scene data carries `{}` for a marker. See
   `MeshCollider` in `crates/physics/src/shape.rs`, which reads its payload with

@@ -24,7 +24,6 @@ use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::{
-    component::scene::SceneComponent,
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
@@ -52,7 +51,6 @@ pub mod edit_time;
 pub mod extractor;
 pub mod main_schedule;
 pub mod plugins;
-pub mod reflect;
 pub mod schedule_groups;
 pub mod subapp;
 
@@ -224,9 +222,9 @@ impl App {
         self
     }
 
-    /// Registers a [`SceneComponent`] so scenes can spawn it by type name.
-    pub fn register_scene_component<T: SceneComponent>(&mut self) -> &mut Self {
-        self.main_mut().register_scene_component::<T>();
+    /// Registers `T` in the main world's type registry with the type data its derive declared.
+    pub fn register_type<T: concerto_reflect::GetTypeRegistration>(&mut self) -> &mut Self {
+        self.main_mut().register_type::<T>();
         self
     }
 
@@ -595,5 +593,54 @@ mod thread_safety_tests {
 
         assert!(app.is_plugin_added::<Marked>());
         assert!(app.is_plugin_added::<Outer>());
+    }
+}
+
+#[cfg(test)]
+mod type_registration_tests {
+    use super::*;
+    use concerto_ecs::{
+        reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+        Component,
+    };
+    use concerto_foundation::transform::Transform;
+    use concerto_reflect::{Reflect, ReflectDefault};
+    use std::any::TypeId;
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Health {
+        points: f32,
+    }
+
+    fn registry(app: &App) -> &AppTypeRegistry {
+        app.get_resource::<AppTypeRegistry>().unwrap()
+    }
+
+    #[test]
+    fn the_transform_plugin_registers_transform_with_everything_it_declares() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .register_plugin(plugins::TransformPlugin);
+
+        let registration = registry(&app).get(TypeId::of::<Transform>()).unwrap();
+        assert_eq!(registration.short_name(), "Transform");
+        assert!(registration.data::<ReflectComponent>().is_some());
+        assert!(registration.data::<ReflectDefault>().is_some());
+        assert!(registration.data::<ReflectSceneComponent>().is_some());
+    }
+
+    #[test]
+    fn a_recipe_registers_its_own_types() {
+        let mut app = App::new();
+
+        app.register_type::<Health>();
+
+        let registration = registry(&app).get(TypeId::of::<Health>()).unwrap();
+        assert!(registration.data::<ReflectComponent>().is_some());
+        assert!(registration.data::<ReflectDefault>().is_some());
+        assert!(registration.data::<ReflectSceneComponent>().is_none());
+        let _ = Health::default().points;
     }
 }

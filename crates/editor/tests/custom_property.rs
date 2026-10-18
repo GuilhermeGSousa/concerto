@@ -2,13 +2,12 @@
 #[path = "../examples/custom_property.rs"]
 mod example;
 
-use concerto_app::{
-    App, edit_time::AtEditTime, reflect::ReflectComponents, schedule_groups::Update,
-};
+use concerto_app::{App, edit_time::AtEditTime, schedule_groups::Update};
 use concerto_ecs::{
     Component, Entity, IntoSystem, Query, Res, ResMut, Resource, System, World,
     command::CommandQueue,
     events::event_reader::EventReader,
+    reflect::{AppTypeRegistry, ReflectComponent},
     signal::{On, Signal},
 };
 use concerto_editor::hosted::{EditWorld, Hosted, HostedEventsAppExt, trigger_on};
@@ -21,13 +20,14 @@ use concerto_editor::tools::{
     scene::SceneEdited,
     selection::{Select, Selection},
 };
-use concerto_reflect::{PropertyPath, Reflect};
+use concerto_reflect::{PropertyPath, Reflect, ReflectDefault};
 use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::any::TypeId;
 
 #[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 struct Container {
     setting: Setting,
     gain: f32,
@@ -97,7 +97,7 @@ fn inspecting() -> Inspecting {
     let (editor, document) = example::headless_editor(
         |scene| {
             scene
-                .register_reflect::<Container>()
+                .register_type::<Container>()
                 .add_listener(despawn.at_edit_time());
             let world = scene.main_mut().world_mut();
             let mut container = |gain| {
@@ -448,11 +448,12 @@ fn registration_splits_between_the_recipe_and_the_editors_app() {
             .len(),
         1
     );
-    assert!(editor.get_resource::<ReflectComponents>().is_none());
+    let types = editor.get_resource::<AppTypeRegistry>().unwrap();
+    assert!(types.get(TypeId::of::<Setting>()).is_none());
 
     let mut scene = App::new();
     example::register(&mut scene);
-    let table = scene.get_resource::<ReflectComponents>().unwrap();
-    assert!(table.get(TypeId::of::<Setting>()).is_some());
+    let types = scene.get_resource::<AppTypeRegistry>().unwrap();
+    assert!(types.get(TypeId::of::<Setting>()).is_some());
     assert!(scene.get_resource::<InspectorRegistry>().is_none());
 }

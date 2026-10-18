@@ -1,6 +1,6 @@
 use super::{ReadOnlySystemInput, SystemInput, ValidationError};
 use crate::{
-    component::{Component, ComponentId, Tick, registry::TypeInfo},
+    component::{Component, ComponentId, Tick},
     entity::{Entity, EntityStructuralVersion},
     system::{access::SystemAccess, meta::SystemMetadata},
     world::{UnsafeWorldCell, World},
@@ -38,8 +38,8 @@ impl<'w> ComponentMetadata<'w> {
         self.read().component_ids(entity)
     }
 
-    pub fn type_info(&self, id: ComponentId) -> Option<&'w TypeInfo> {
-        self.read().type_info(id)
+    pub fn registration(&self, id: ComponentId) -> Option<&'w concerto_reflect::TypeRegistration> {
+        self.read().registration(id)
     }
 
     pub fn get<T: Component>(&self, entity: Entity) -> Option<&'w T> {

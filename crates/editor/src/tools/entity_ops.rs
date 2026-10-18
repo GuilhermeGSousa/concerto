@@ -211,9 +211,9 @@ mod tests {
     fn fixture() -> Fixture {
         let mut app = tools_app();
         let world = app.main_mut().world_mut();
-        world.register_component_type::<Transform>();
-        world.register_component_type::<SyncWithRenderWorld>();
-        world.register_component_type::<SkeletonComponent>();
+        world.register_type::<Transform>();
+        world.register_type::<SyncWithRenderWorld>();
+        world.register_type::<SkeletonComponent>();
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
         world.register_component::<Name>();

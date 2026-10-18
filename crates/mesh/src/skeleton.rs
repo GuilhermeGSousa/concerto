@@ -1,10 +1,12 @@
 use concerto_ecs::{
     component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext},
+    reflect::ReflectSceneComponent,
     Component, Entity,
 };
 use concerto_foundation::assets::{
     asset_server::AssetServer, handle::AssetHandle, Asset, LoadableAsset,
 };
+use concerto_reflect::Reflect;
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -24,7 +26,8 @@ impl From<Vec<Mat4>> for Skeleton {
 
 impl LoadableAsset for Skeleton {}
 
-#[derive(Component, Clone, Serialize, Deserialize)]
+#[derive(Component, Clone, Reflect, Serialize, Deserialize)]
+#[reflect(opaque, SceneComponent)]
 pub struct SkeletonComponent {
     pub skeleton: AssetHandle<Skeleton>,
     pub bones: Vec<SceneEntityRef>,

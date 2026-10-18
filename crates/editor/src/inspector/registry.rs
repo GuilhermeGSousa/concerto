@@ -5,14 +5,12 @@ use std::{
     sync::Arc,
 };
 
-use concerto_app::{
-    App,
-    reflect::{ReflectComponent, ReflectComponents},
-};
+use concerto_app::App;
 use concerto_ecs::{Entity, ResMut, Resource, World, command::CommandQueue, component::Tick};
 use concerto_ecs::{
     Res,
     entity::EntityStructuralVersion,
+    reflect::{AppTypeRegistry, ReflectComponent},
     system::{
         access::SystemAccess,
         input::{ComponentMetadata, ReadOnlySystemInput, SystemInput, ValidationError},
@@ -20,7 +18,7 @@ use concerto_ecs::{
     },
     world::UnsafeWorldCell,
 };
-use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect};
+use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
@@ -139,7 +137,9 @@ impl InspectorRegistry {
         entity: Entity,
         component: TypeId,
     ) -> Option<Vec<Property>> {
-        let entry = scene.get_resource::<ReflectComponents>()?.get(component)?;
+        let entry = scene
+            .get_resource::<AppTypeRegistry>()?
+            .get_type_data::<ReflectComponent>(component)?;
         let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
         Some(self.collect_at(registry_tick, value))
     }
@@ -199,7 +199,7 @@ impl PropertyVisitor for Collect<'_> {
 
 pub(super) struct InspectionSource<'w> {
     components: ComponentMetadata<'w>,
-    table: Res<'w, ReflectComponents>,
+    table: Res<'w, AppTypeRegistry>,
 }
 
 impl InspectionSource<'_> {
@@ -217,7 +217,7 @@ impl InspectionSource<'_> {
             .has_component_changed_since(entity, id, tick)
     }
     pub fn is_registered(&self, id: TypeId) -> bool {
-        self.table.get(id).is_some()
+        self.table.get_type_data::<ReflectComponent>(id).is_some()
     }
     pub fn follows_snapshot(&self, registry: &InspectorRegistry, property: &Property) -> bool {
         registry.editor(property.type_id).is_some_and(|editor| {
@@ -225,12 +225,16 @@ impl InspectionSource<'_> {
         })
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
-    pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, ReflectComponent)>, usize) {
+    pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {
         let present = self.components.component_ids(entity);
         let addable = || {
             self.table
                 .iter()
-                .filter(|(_, component)| component.insert.is_some())
+                .filter(|registration| {
+                    registration.data::<ReflectComponent>().is_some()
+                        && registration.data::<ReflectDefault>().is_some()
+                })
+                .map(|registration| (registration.type_id(), registration.short_name()))
         };
         let missing = addable().filter(|(id, _)| !present.contains(id)).collect();
         (missing, addable().count())
@@ -239,14 +243,7 @@ impl InspectionSource<'_> {
         self.components
             .component_ids(entity)
             .iter()
-            .filter_map(|&id| {
-                let name = self
-                    .table
-                    .get(id)
-                    .map(|c| c.name)
-                    .or_else(|| self.components.type_info(id).map(|info| info.short()))?;
-                Some((id, name))
-            })
+            .filter_map(|&id| Some((id, self.table.get(id)?.short_name())))
             .collect()
     }
     pub fn collect_component(
@@ -256,7 +253,8 @@ impl InspectionSource<'_> {
         entity: Entity,
         id: TypeId,
     ) -> Option<Vec<Property>> {
-        let value = (self.table.get(id)?.read)(&self.components, entity)?;
+        let value =
+            (self.table.get_type_data::<ReflectComponent>(id)?.read)(&self.components, entity)?;
         Some(registry.collect_at(registry_tick, value))
     }
 }
@@ -277,7 +275,7 @@ impl SystemInput for InspectionSource<'_> {
     }
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         ComponentMetadata::fill_access(meta, access);
-        Res::<ReflectComponents>::fill_access(meta, access);
+        Res::<AppTypeRegistry>::fill_access(meta, access);
     }
 }
 impl ReadOnlySystemInput for InspectionSource<'_> {}
@@ -414,16 +412,10 @@ mod tests {
         }
     }
 
-    fn table() -> ReflectComponents {
-        let mut table = ReflectComponents::default();
-        table.register::<Transform>();
-        table
-    }
-
     fn scene() -> (World, Entity) {
         let mut world = World::default();
         world.register_component::<Transform>();
-        world.insert_resource(table());
+        world.register_type::<Transform>();
         let entity = world.spawn(Transform::IDENTITY);
         world.tick();
         (world, entity)
@@ -635,7 +627,7 @@ mod tests {
             },
         )
         .unwrap();
-        scene.insert_resource(ReflectComponents::default());
+        scene.insert_resource(AppTypeRegistry::default());
         let commit = checked(&registry, Tick::default(), edit).unwrap();
         assert_eq!(
             commit.apply(&mut scene),

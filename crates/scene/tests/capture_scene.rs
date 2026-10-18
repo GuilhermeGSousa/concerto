@@ -17,9 +17,9 @@ use uuid::Uuid;
 
 fn world() -> World {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
-    world.register_component_type::<Camera>();
-    world.register_component_type::<SkeletonComponent>();
+    world.register_type::<Transform>();
+    world.register_type::<Camera>();
+    world.register_type::<SkeletonComponent>();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
     world.register_component::<Name>();

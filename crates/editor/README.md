@@ -68,7 +68,7 @@ A panel reaches the scene in two ways and no other:
   `EditWorld<Res<Selection>>`. `T` is any read-only system parameter.
   `EditWorld<Res<T>>` skips its system with a warning on every frame the scene's
   world has no `T`, so name only resources the tools always insert, such as
-  `Selection` and `ReflectComponents`.
+  `Selection` and `AppTypeRegistry`.
 - `EditWorldSignals` sends a signal to it: `scene.trigger(Select(Some(entity)))`.
   The listeners run when the system's commands are applied.
 
@@ -219,9 +219,10 @@ Whether the scene has unsaved edits is state kept in the edit `App`
 scene directly and writes it in the same step.
 
 The inspector uses typed property adapters. Its "add component" row
-adds any `register_reflect` component the entity lacks, at its `Default` value;
-a card's ⋯ menu removes one. `register_reflect_readonly` components, such as
-`Camera`, are edited and removed but never offered.
+adds any registered type declaring `#[reflect(Component, Default)]` that the
+entity lacks, at its `Default` value; a card's ⋯ menu removes one. A type that
+declares `Component` without `Default`, such as `Camera`, is edited and removed
+but never offered.
 
 Left-clicking a mesh in the viewport selects its entity, scrolls the hierarchy
 to it, and draws a box around it; clicking empty space clears the selection. A
@@ -257,12 +258,14 @@ Unchanged components reuse their snapshots;
 component changes, selection changes, and editor registration changes refresh
 them. Widget input and focused edit buffers continue updating every frame.
 
-Registration is split between the two `App`s. A component is reflected in
-the scene's `App`, by the plugin that owns it or by the recipe, with
-`App::register_reflect` or `App::register_reflect_readonly` from `concerto-app`:
-`TransformPlugin` registers `Transform`, and `RenderPlugin` registers `Light`
-and `Camera`. Both fill the `ReflectComponents` resource, which is part of the
-engine and needs no editor. The widget is registered on the editor's own
+Registration is split between the two `App`s. A component states what it
+supports on its derive, `#[derive(Reflect)] #[reflect(Component, Default)]`,
+and is registered in the scene's `App`, by the plugin that owns it or by the
+recipe, with `App::register_type::<T>()`: `TransformPlugin` registers
+`Transform`, and `RenderPlugin` registers `Light` and `Camera`. Registration
+fills the world's `AppTypeRegistry`, which is part of the engine and needs no
+editor. `ReflectComponent` and `ReflectDefault` must be in scope where the
+derive names them. The widget is registered on the editor's own
 `App`, through `EditableApp::register_property_editor`, which needs
 `InspectorPlugin` first. A recipe that adds a component of its own looks like
 this:
@@ -270,7 +273,7 @@ this:
 ```rust,ignore
 fn recipe(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins);
-    app.register_reflect::<Setting>();
+    app.register_type::<Setting>();
 }
 ```
 

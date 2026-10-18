@@ -11,6 +11,7 @@ use concerto_ecs::{
     Component, Entity, Query, Res, ResMut,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
+    reflect::ReflectComponent,
     signal::{On, listener::IntoListener},
 };
 use concerto_editor::{
@@ -25,7 +26,7 @@ use concerto_editor::{
     },
     tools::{EditToolsPlugin, selection::Select},
 };
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusGained, UIFocusLost},
@@ -40,6 +41,7 @@ use concerto_window::{input::MouseButton, plugin::WindowPlugin};
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
 #[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 pub struct Setting {
     pub title: String,
     pub enabled: bool,
@@ -155,7 +157,7 @@ pub fn refresh_settings(
 
 /// Makes `Setting` editable in a scene's `App`; call it from the recipe.
 pub fn register(app: &mut App) {
-    app.register_reflect::<Setting>();
+    app.register_type::<Setting>();
 }
 
 /// Gives the editor's own `App` the widget that edits a `Setting`.

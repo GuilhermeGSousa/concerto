@@ -2,6 +2,7 @@ extern crate self as concerto_reflect;
 
 mod leaves;
 mod property;
+mod registry;
 
 use std::any::Any;
 
@@ -26,6 +27,9 @@ use std::any::Any;
 /// ```
 pub use concerto_reflect_macros::Reflect;
 pub use property::{PathError, PropertyPath, with_property, with_property_mut};
+pub use registry::{
+    FromType, GetTypeRegistration, ReflectDefault, TypeData, TypeRegistration, TypeRegistry,
+};
 
 /// Structural access to a value. Opaque values use the default empty visitors;
 /// named structs usually implement traversal through `#[derive(Reflect)]`.
