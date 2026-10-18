@@ -1,21 +1,20 @@
 //! `App`s the editor holds as values: building, stepping, and the messages in and out.
+pub mod events;
 pub mod input;
-pub mod outbound;
 pub mod seam;
 #[cfg(test)]
 pub(crate) mod testing;
 
 use std::{
-    any::{Any, TypeId},
-    collections::HashMap,
+    any::Any,
     panic::{AssertUnwindSafe, catch_unwind},
 };
 
 use concerto_app::{App, Plugin, plugins::PluginsState, schedule_groups::First};
 use concerto_ecs::{
-    Component, Entity, Event, IntoSystemConfig, Query, World,
+    Component, Entity, IntoSystemConfig, Query, World,
     command::CommandQueue,
-    events::{event_channel::EventChannel, event_cursor::EventCursor},
+    events::event_channel::EventChannel,
     signal::{On, Signal},
     system::NonSendMarker,
 };
@@ -25,12 +24,13 @@ use concerto_render::{
     gpu::Gpu,
     wgpu,
 };
+use concerto_scene::scene::Scene;
 use concerto_window::{
     events::WindowEvent,
     plugin::{Window, WindowCommand},
 };
 
-pub use outbound::{Hosted, OutboundEvents};
+pub use events::{Hosted, HostedAppEvents, HostedEventsAppExt};
 pub use seam::{EditTargetChanged, Editor, EditorSignals};
 
 pub const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
@@ -56,13 +56,26 @@ pub struct HostRequest<'a> {
 pub struct HostedApp {
     app: App,
     picture: SharedTexture,
-    read: HashMap<TypeId, Box<dyn Any + Send + Sync>>,
 }
 
 impl HostedApp {
     /// The texture this `App` draws its window into.
     pub fn picture(&self) -> &SharedTexture {
         &self.picture
+    }
+
+    pub(crate) fn capture_scene(&mut self) -> Result<Scene, String> {
+        crate::tools::scene::capture_open_scene(self.app.main_mut().world_mut())
+    }
+
+    pub(crate) fn mark_saved(&mut self) {
+        crate::tools::scene::mark_saved(self.app.main_mut().world_mut());
+    }
+
+    pub(crate) fn scene_dirty(&self) -> bool {
+        self.world()
+            .get_resource::<crate::tools::scene::SceneDirty>()
+            .is_some_and(|dirty| dirty.0)
     }
 
     pub(crate) fn world(&self) -> &World {
@@ -97,19 +110,6 @@ impl HostedApp {
         if let Some(server) = self.app.get_resource::<AssetServer>() {
             server.cancel_pending();
         }
-    }
-
-    pub(crate) fn read_outbound<E: Event + Clone + Send + Sync + 'static>(&mut self) -> Vec<E> {
-        let Some(channel) = self.app.get_resource::<EventChannel<E>>() else {
-            return Vec::new();
-        };
-        let cursor = self
-            .read
-            .entry(TypeId::of::<E>())
-            .or_insert_with(|| Box::new(EventCursor::<E>::default()))
-            .downcast_mut::<EventCursor<E>>()
-            .expect("one cursor type per event type");
-        channel.read_from(cursor).cloned().collect()
     }
 }
 
@@ -196,14 +196,7 @@ pub fn begin(
         extra(&mut app);
     }));
     let (hosted, failure) = match built {
-        Ok(()) => (
-            Some(HostedApp {
-                app,
-                picture,
-                read: HashMap::new(),
-            }),
-            None,
-        ),
+        Ok(()) => (Some(HostedApp { app, picture }), None),
         Err(payload) => (None, Some(panic_message(payload, "the recipe"))),
     };
     PendingApp {
@@ -251,13 +244,11 @@ impl HostedApp {
     }
 }
 
-/// Triggers `signal` in the `App` hosted on `document`, then forwards what it wrote.
+/// Triggers `signal` in the `App` hosted on `document`; what its listeners write is forwarded in the next `First`.
 pub fn trigger_on<S: Signal>(world: &mut World, document: Entity, signal: S) {
-    let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) else {
-        return;
-    };
-    hosted.trigger(signal);
-    outbound::forward(world, document);
+    if let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) {
+        hosted.trigger(signal);
+    }
 }
 
 pub(crate) fn finish_pending(
@@ -274,7 +265,6 @@ pub(crate) fn finish_pending(
         if let Some(hosted) = pending.finish_if_ready() {
             cmd.remove::<PendingApp>(document);
             cmd.insert(hosted, document);
-            cmd.trigger(outbound::Forward(document));
         }
     }
 }
@@ -367,7 +357,6 @@ pub(crate) fn finish_pending_play(
             if failures.get_entity(document).is_some() {
                 cmd.remove::<PlayFailure>(document);
             }
-            cmd.trigger(outbound::Forward(document));
         } else if let Some(failure) = pending.failure() {
             let failure = PlayFailure(failure.to_owned());
             cmd.remove::<PendingPlayApp>(document);
@@ -405,30 +394,14 @@ pub(crate) fn stop_play(
 }
 
 pub(crate) fn install_listeners(world: &mut World) {
-    world.add_listener(outbound::forward_on_request);
     world.add_listener(stop_play);
     world.add_listener(input::release_input);
-}
-
-pub trait HostedEventsAppExt {
-    /// Marks `E` as leaving every hosted `App`.
-    fn forward_hosted_event<E: Event + Clone + Send + Sync + 'static>(&mut self) -> &mut Self;
-}
-
-impl HostedEventsAppExt for App {
-    fn forward_hosted_event<E: Event + Clone + Send + Sync + 'static>(&mut self) -> &mut Self {
-        self.get_resource_mut::<OutboundEvents>()
-            .expect("HostedPlugin must be registered first")
-            .register::<E>();
-        self
-    }
 }
 
 pub struct HostedPlugin;
 
 impl Plugin for HostedPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(OutboundEvents::default());
         install_listeners(app.main_mut().world_mut());
         app.insert_resource(input::Routing::default())
             .insert_resource(input::HostCursor::default())
@@ -469,21 +442,36 @@ mod tests {
     #[derive(Resource, Default)]
     struct Heard(Vec<(Entity, u32)>);
 
-    fn hear(on: On<Hosted<Echo>>, mut heard: ResMut<Heard>) {
-        heard.0.push((on.signal().document, on.signal().event.0));
+    fn record(mut events: HostedAppEvents<Echo>, mut heard: ResMut<Heard>) {
+        heard.0.extend(
+            events
+                .read()
+                .into_iter()
+                .map(|(document, echo)| (document, echo.0)),
+        );
     }
 
-    fn hear_and_answer(on: On<Hosted<Echo>>, world: &mut World) {
-        let document = on.signal().document;
-        let said = on.signal().event.0;
-        world
-            .get_resource_mut::<Heard>()
+    #[derive(Resource)]
+    struct Hearing(Option<concerto_ecs::system::BoxedSystem>);
+
+    fn listen(world: &mut World) {
+        let mut system: concerto_ecs::system::BoxedSystem =
+            Box::new(concerto_ecs::IntoSystem::into_system(record));
+        concerto_ecs::System::initialize(&mut system, world);
+        world.insert_resource(Heard::default());
+        world.insert_resource(Hearing(Some(system)));
+    }
+
+    fn hear(world: &mut World) -> Vec<(Entity, u32)> {
+        let mut system = world
+            .get_resource_mut::<Hearing>()
             .unwrap()
             .0
-            .push((document, said));
-        if said < 3 {
-            trigger_on(world, document, Say(said + 1));
-        }
+            .take()
+            .unwrap();
+        concerto_ecs::System::run_and_apply(&mut system, (), world);
+        world.get_resource_mut::<Hearing>().unwrap().0 = Some(system);
+        world.get_resource::<Heard>().unwrap().0.clone()
     }
 
     #[derive(Resource)]
@@ -505,12 +493,7 @@ mod tests {
 
     fn listening_world() -> (World, Entity) {
         let (mut world, document) = host_world(plain_recipe);
-        world
-            .get_resource_mut::<outbound::OutboundEvents>()
-            .unwrap()
-            .register::<Echo>();
-        world.insert_resource(Heard::default());
-        world.add_listener(hear);
+        listen(&mut world);
         (world, document)
     }
 
@@ -1038,7 +1021,7 @@ mod tests {
     }
 
     #[test]
-    fn an_event_written_during_a_step_arrives_as_a_hosted_signal() {
+    fn an_event_written_during_a_step_arrives_as_a_hosted_event() {
         let (mut world, document) = listening_world();
         add_stepping(&mut world);
         world.insert(
@@ -1051,20 +1034,14 @@ mod tests {
         let mut step = stepper(&mut world);
 
         step(&mut world);
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 1)]
-        );
+        assert_eq!(hear(&mut world), vec![(document, 1)]);
 
         world
             .get_resource_mut::<crate::asset_editor::ActiveEditor>()
             .unwrap()
             .0 = None;
         step(&mut world);
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 1), (document, 2)]
-        );
+        assert_eq!(hear(&mut world), vec![(document, 1), (document, 2)]);
     }
 
     #[test]
@@ -1157,64 +1134,23 @@ mod tests {
     }
 
     #[test]
-    fn a_host_triggered_signal_comes_back_as_a_hosted_signal_with_its_document() {
+    fn what_a_host_triggered_signal_writes_comes_back_as_a_hosted_event_with_its_document() {
         let (mut world, document) = listening_world();
 
         trigger_on(&mut world, document, Say(7));
 
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 7)]
-        );
+        assert_eq!(hear(&mut world), vec![(document, 7)]);
     }
 
     #[test]
-    fn outbound_events_arrive_once_and_in_the_order_they_were_written() {
+    fn hosted_events_arrive_once_and_in_the_order_they_were_written() {
         let (mut world, document) = listening_world();
 
         trigger_on(&mut world, document, Say(1));
         trigger_on(&mut world, document, Say(2));
-        outbound::forward(&mut world, document);
+        hear(&mut world);
 
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 1), (document, 2)]
-        );
-    }
-
-    #[test]
-    fn events_written_before_one_forward_arrive_in_the_order_they_were_written() {
-        let (mut world, document) = listening_world();
-        let hosted = world
-            .get_component_for_entity_mut::<HostedApp>(document)
-            .unwrap();
-        hosted.trigger(Say(1));
-        hosted.trigger(Say(2));
-
-        outbound::forward(&mut world, document);
-
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 1), (document, 2)]
-        );
-    }
-
-    #[test]
-    fn a_signal_triggered_from_a_hosted_listener_is_answered_after_that_listener_returns() {
-        let (mut world, document) = host_world(plain_recipe);
-        world
-            .get_resource_mut::<outbound::OutboundEvents>()
-            .unwrap()
-            .register::<Echo>();
-        world.insert_resource(Heard::default());
-        world.add_listener(hear_and_answer);
-
-        trigger_on(&mut world, document, Say(1));
-
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 1), (document, 2), (document, 3)]
-        );
+        assert_eq!(hear(&mut world), vec![(document, 1), (document, 2)]);
     }
 
     #[test]
@@ -1225,10 +1161,7 @@ mod tests {
         trigger_on(&mut world, document, Say(3));
 
         assert_eq!(frames(&world, document), before);
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 3)]
-        );
+        assert_eq!(hear(&mut world), vec![(document, 3)]);
     }
 
     #[test]
@@ -1246,14 +1179,8 @@ mod tests {
     #[test]
     fn a_pending_app_becomes_hosted_and_runs_its_ready_step_once() {
         let mut world = World::new();
-        world.insert_resource(outbound::OutboundEvents::default());
         install_listeners(&mut world);
-        world
-            .get_resource_mut::<outbound::OutboundEvents>()
-            .unwrap()
-            .register::<Echo>();
-        world.insert_resource(Heard::default());
-        world.add_listener(hear);
+        listen(&mut world);
         let document = world.spawn(begin(
             request(plain_recipe),
             |_| {},
@@ -1267,10 +1194,7 @@ mod tests {
         concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
         concerto_ecs::System::run_and_apply(&mut system, (), &mut world);
 
-        assert_eq!(
-            world.get_resource::<Heard>().unwrap().0,
-            vec![(document, 9)]
-        );
+        assert_eq!(hear(&mut world), vec![(document, 9)]);
         assert!(
             world
                 .get_component_for_entity::<PendingApp>(document)
@@ -1318,7 +1242,6 @@ mod tests {
     fn the_replaced_app_is_dropped_when_its_replacement_is_swapped_in() {
         let (dropped, insert_canary) = canary();
         let mut world = World::new();
-        world.insert_resource(outbound::OutboundEvents::default());
         install_listeners(&mut world);
         let document = world.spawn(hosted_now(plain_recipe, insert_canary));
         world.insert(begin(request(plain_recipe), |_| {}, |_| {}), document);
@@ -1488,7 +1411,6 @@ mod tests {
     #[test]
     fn a_failed_pending_app_is_left_in_place_and_never_hosted() {
         let mut world = World::new();
-        world.insert_resource(outbound::OutboundEvents::default());
         install_listeners(&mut world);
         let document = world.spawn(begin(request(recipe_breaking_on_finish), |_| {}, |_| {}));
         let mut system = concerto_ecs::IntoSystem::into_system(finish_pending);

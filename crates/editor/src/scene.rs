@@ -31,17 +31,15 @@ use crate::{
     },
     hierarchy::HierarchyState,
     hosted::{
-        self, HostRequest, HostRole, Hosted, HostedApp, OutboundEvents, ParkedEditApp, PendingApp,
-        PendingPlayApp, PlayFailure, PlayState, StopPlay, input::ViewportShown, toggle_play,
+        self, HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, ParkedEditApp,
+        PendingApp, PendingPlayApp, PlayFailure, PlayState, StopPlay, input::ViewportShown,
+        toggle_play,
     },
     inspector::{ComponentEdits, PropertyCommits},
     project::{AssetEntry, ProjectState},
     tools::{
         EditToolsCorePlugin, EditToolsPlugin,
-        scene::{
-            CaptureScene, OpenScene, PublishContent, RevealEntity, SceneCaptured, SceneEdited,
-            SceneStatus,
-        },
+        scene::{OpenScene, PublishContent, RevealEntity, SceneEdited, SceneStatus},
     },
 };
 
@@ -126,10 +124,14 @@ impl Plugin for ScenePlugin {
         app.register_asset_editor::<Scene>(SceneEditor)
             .expect("ScenePlugin requires the asset-editor registry");
         install_listeners(app.main_mut().world_mut());
+        app.forward_hosted_event::<SceneEdited>()
+            .forward_hosted_event::<SceneStatus>()
+            .forward_hosted_event::<RevealEntity>();
         app.add_system(
             First,
             refuse_edited_replacements.before(hosted::finish_pending),
         )
+        .add_system(Update, (follow_unsaved_edits, show_status, reveal))
         .add_system(Update, update_scenes)
         .add_system(Update, request_scene_saves)
         .add_system(Update, scene_actions)
@@ -138,46 +140,57 @@ impl Plugin for ScenePlugin {
 }
 
 pub(crate) fn install_listeners(world: &mut World) {
-    let outbound = world
-        .get_resource_mut::<OutboundEvents>()
-        .expect("HostedPlugin must be registered first");
-    outbound.register::<SceneEdited>();
-    outbound.register::<SceneStatus>();
-    outbound.register::<RevealEntity>();
-    outbound.register::<SceneCaptured>();
-    world.add_listener(mark_unsaved);
-    world.add_listener(show_status);
-    world.add_listener(reveal);
     world.add_listener(save_scene);
-    world.add_listener(write_captured_scene);
     world.add_listener(publish_to_hosted);
     world.add_listener(play);
 }
 
-fn mark_unsaved(on: On<Hosted<SceneEdited>>, states: Query<&PlayState>, mut cmd: CommandQueue) {
-    let document = on.signal().document;
-    if states
-        .get_entity(document)
-        .is_some_and(|state| *state == PlayState::Playing)
-    {
-        return;
+/// Keeps a Scene document's `Unsaved` in step with its edit `App`'s `SceneDirty`.
+pub(crate) fn follow_unsaved_edits(
+    documents: Query<(Entity, &HostedApp, Option<&PlayState>, Option<&Unsaved>)>,
+    mut cmd: CommandQueue,
+) {
+    for (document, hosted, state, unsaved) in documents.iter() {
+        if state.is_some_and(|state| *state != PlayState::Editing) {
+            continue;
+        }
+        match (hosted.scene_dirty(), unsaved.is_some()) {
+            (true, false) => cmd.insert(Unsaved, document),
+            (false, true) => cmd.remove::<Unsaved>(document),
+            _ => {}
+        }
     }
-    cmd.insert(Unsaved, document);
 }
 
-fn show_status(on: On<Hosted<SceneStatus>>, documents: Query<&mut EditorDocument>) {
-    if let Some(mut document) = documents.get_entity(on.signal().document) {
-        document.status = on.signal().event.0.clone();
+fn has_unsaved_edits(world: &World, document: Entity) -> bool {
+    world
+        .get_component_for_entity::<Unsaved>(document)
+        .is_some()
+        || world
+            .get_component_for_entity::<HostedApp>(document)
+            .is_some_and(HostedApp::scene_dirty)
+}
+
+pub(crate) fn show_status(
+    mut statuses: EventReader<Hosted<SceneStatus>>,
+    documents: Query<&mut EditorDocument>,
+) {
+    for Hosted { document, event } in statuses.read() {
+        if let Some(mut document) = documents.get_entity(*document) {
+            document.status = event.0.clone();
+        }
     }
 }
 
-fn reveal(
-    on: On<Hosted<RevealEntity>>,
+pub(crate) fn reveal(
+    mut reveals: EventReader<Hosted<RevealEntity>>,
     active: Res<ActiveEditor>,
     mut hierarchy: ResMut<HierarchyState>,
 ) {
-    if active.0 == Some(on.signal().document) {
-        hierarchy.reveal_entity(on.signal().event.0);
+    for Hosted { document, event } in reveals.read() {
+        if active.0 == Some(*document) {
+            hierarchy.reveal_entity(event.0);
+        }
     }
 }
 
@@ -202,29 +215,19 @@ fn save_scene(on: On<SaveScene>, world: &mut World) {
         set_status(world, document, STOP_TO_SAVE);
         return;
     }
-    if world
-        .get_component_for_entity::<HostedApp>(document)
-        .is_none()
-    {
-        if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
-            document.status = "Save failed: No scene is open".into();
-        }
+    let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) else {
+        set_status(world, document, "Save failed: No scene is open");
         return;
-    }
-    hosted::trigger_on(world, document, CaptureScene);
-}
-
-fn write_captured_scene(on: On<Hosted<SceneCaptured>>, world: &mut World) {
-    let document = on.signal().document;
-    let written = on
-        .signal()
-        .event
-        .0
-        .clone()
+    };
+    let written = hosted
+        .capture_scene()
         .map_err(anyhow::Error::msg)
         .and_then(|scene| write_scene(world, document, &scene));
     let status = match written {
         Ok(address) => {
+            if let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) {
+                hosted.mark_saved();
+            }
             world.remove_component::<Unsaved>(document);
             format!("Saved {address}")
         }
@@ -356,15 +359,9 @@ fn play(on: On<Play>, world: &mut World) {
         set_status(world, document, "No scene is open");
         return;
     }
-    if world
-        .get_component_for_entity::<Unsaved>(document)
-        .is_some()
-    {
+    if has_unsaved_edits(world, document) {
         world.trigger(SaveScene { document });
-        if world
-            .get_component_for_entity::<Unsaved>(document)
-            .is_some()
-        {
+        if has_unsaved_edits(world, document) {
             return;
         }
     }
@@ -662,7 +659,7 @@ mod tests {
     use crate::{
         asset_editor::{AssetEditorCommand, AssetEditorCommands},
         hosted::{
-            EditorSignals, PlayState, outbound,
+            EditorSignals, PlayState,
             testing::{SceneFixture, scene_entry, write_scene_file},
         },
         inspector::InspectorData,
@@ -704,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn an_edit_marks_the_document_unsaved_at_the_editing_systems_sync_point() {
+    fn an_edit_marks_the_document_unsaved_once_the_editor_follows_its_scene() {
         let mut f = SceneFixture::new();
         let document = f.open();
         let first = f.scene_entity(document, "first");
@@ -719,8 +716,19 @@ mod tests {
         system.initialize(&mut f.world);
 
         system.run_and_apply((), &mut f.world);
+        assert!(
+            f.world
+                .get_component_for_entity::<Unsaved>(document)
+                .is_none()
+        );
 
-        assert!(f.unsaved(document));
+        f.deliver();
+
+        assert!(
+            f.world
+                .get_component_for_entity::<Unsaved>(document)
+                .is_some()
+        );
     }
 
     #[test]
@@ -1291,9 +1299,9 @@ mod tests {
 
         save(&mut f, document);
 
+        assert!(!f.unsaved(document));
         let doc = f.document(document);
         let saved = doc.current.clone().unwrap();
-        assert!(!f.unsaved(document));
         assert_eq!(doc.status, "Saved first.gasset");
         assert_eq!(doc.title, "first");
         assert_eq!(saved.address, f.scene.address);
@@ -1381,14 +1389,14 @@ mod tests {
     fn an_edit_is_reported_once_and_an_edit_after_a_save_marks_the_document_again() {
         let mut f = SceneFixture::new();
         let document = f.open();
-        outbound::forward(&mut f.world, document);
+        f.deliver();
         assert!(!f.unsaved(document), "nothing was reported");
 
         f.rename(document, "first", "renamed");
         assert!(f.unsaved(document));
 
         save(&mut f, document);
-        outbound::forward(&mut f.world, document);
+        f.deliver();
         assert!(
             !f.unsaved(document),
             "an edit that was already forwarded is not forwarded again"
@@ -1449,7 +1457,7 @@ mod tests {
     }
 
     #[test]
-    fn a_forward_with_nothing_reported_leaves_the_document_and_the_tree_unchanged() {
+    fn a_delivery_with_nothing_reported_leaves_the_document_and_the_tree_unchanged() {
         let mut f = SceneFixture::new();
         let document = f.open();
         f.world.tick();
@@ -1457,7 +1465,7 @@ mod tests {
         let tree = f.world.resource_changed_tick::<HierarchyState>();
         f.world.tick();
 
-        outbound::forward(&mut f.world, document);
+        f.deliver();
 
         assert!(!f.world.has_component_changed_since(
             document,
@@ -1698,6 +1706,27 @@ mod tests {
         f.frames_until("the game never spawned the saved scene", |f| {
             holds(f, document, &["renamed", "second"])
         });
+    }
+
+    #[test]
+    fn play_right_after_an_edit_the_editor_has_not_followed_yet_saves_it_first() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        let first = f.scene_entity(document, "first");
+        f.scene_world_mut(document).trigger(EntityEdit::Rename {
+            entity: first,
+            name: "renamed".into(),
+        });
+        assert!(
+            f.world
+                .get_component_for_entity::<Unsaved>(document)
+                .is_none()
+        );
+
+        play(&mut f, document);
+
+        assert!(f.saved_scene_names().contains(&"renamed".to_string()));
+        assert_eq!(f.play_state(document), Some(PlayState::Starting));
     }
 
     #[test]

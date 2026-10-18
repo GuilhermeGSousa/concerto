@@ -16,7 +16,7 @@ use glam::{Mat4, Quat, Vec2, Vec3};
 use crate::tools::{
     camera::{EditorCamera, FlyCamera, ViewportPointer, fill_pointer_from_window},
     picking::{ray_through, world_to_viewport},
-    scene::{SceneEdited, SceneRoot},
+    scene::{SceneDirty, SceneEdited, SceneRoot},
     selection::Selection,
 };
 
@@ -241,6 +241,7 @@ fn update_gizmo(
     mut state: ResMut<GizmoState>,
     mut gizmos: DebugGizmos,
     mut edited: EventWriter<SceneEdited>,
+    mut dirty: ResMut<SceneDirty>,
 ) {
     if pointer.pressed && state.captured {
         state.captured = false;
@@ -255,6 +256,7 @@ fn update_gizmo(
         .is_some_and(|drag| !pointer.held || Some(drag.entity) != target)
     {
         if state.drag.take().is_some_and(|drag| drag.moved) {
+            dirty.0 = true;
             edited.write(SceneEdited);
         }
     }
@@ -466,6 +468,7 @@ mod tests {
         world.insert_resource(FlyCamera::default());
         world.insert_resource(GizmoStorage::default());
         world.insert_resource(EventChannel::<SceneEdited>::default());
+        world.insert_resource(SceneDirty::default());
         world.add_listener(set_gizmo_mode);
         world.insert_resource(ViewportPointer {
             size: VIEW,
@@ -565,6 +568,9 @@ mod tests {
                 .get_resource::<EventChannel<SceneEdited>>()
                 .unwrap()
                 .len()
+        }
+        fn dirty(&self) -> bool {
+            self.world.get_resource::<SceneDirty>().unwrap().0
         }
         fn segments(&self) -> usize {
             self.world
@@ -668,6 +674,7 @@ mod tests {
         assert!(f.state().captured());
         f.frame(to, false, true);
         assert_eq!(f.edits(), 0, "the edit is reported when the drag ends");
+        assert!(!f.dirty());
         f.frame(to, false, false);
 
         let moved = f.local(entity).translation;
@@ -676,6 +683,7 @@ mod tests {
             "{moved:?}"
         );
         assert_eq!(f.edits(), 1);
+        assert!(f.dirty());
         assert!(!f.state().dragging());
     }
 
@@ -688,6 +696,7 @@ mod tests {
         f.drag(grab, grab);
         assert_eq!(f.local(entity).translation, Vec3::ZERO);
         assert_eq!(f.edits(), 0);
+        assert!(!f.dirty());
         assert!(f.state().captured(), "the click that follows is not a pick");
         f.frame(f.screen(Vec3::new(3.0, 3.0, 0.0)), true, true);
         assert!(!f.state().captured());

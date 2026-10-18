@@ -207,11 +207,17 @@ for example `scene.trigger(EntityEdit::Delete(entity))` or
 `scene.trigger(Select(Some(entity)))`. The scene tools in `src/tools/` own the
 listeners: one applies each kind of edit and moves the selection. The tools
 know nothing about documents or panels. They report back through events that
-the host re-raises in the editor's world as `Hosted<E>` signals carrying the
-document: `SceneEdited`, which marks the scene's document dirty;
-`SceneStatus`, which carries why an edit was refused to Chatter;
-`RevealEntity`, which the hierarchy scrolls to; and `SceneCaptured`, the scene
-as data, which a save writes to disk. The inspector uses typed property adapters. Its "add component" row
+the editor re-writes in its own world as `Hosted<E>` events carrying the
+document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
+scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
+and `RevealEntity`, which the hierarchy scrolls to. `HostedAppEvents<E>` is the
+system input that reads `E` from every hosted `App`, keeping one cursor per
+hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
+Whether the scene has unsaved edits is state kept in the edit `App`
+(`SceneDirty`); the document's dot follows it. A save asks the edit `App` for the
+scene directly and writes it in the same step.
+
+The inspector uses typed property adapters. Its "add component" row
 adds any `register_reflect` component the entity lacks, at its `Default` value;
 a card's ⋯ menu removes one. `register_reflect_readonly` components, such as
 `Camera`, are edited and removed but never offered.

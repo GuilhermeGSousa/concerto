@@ -19,7 +19,7 @@ use concerto_window::{
 };
 use glam::Vec2;
 
-use super::{HostedApp, ParkedEditApp, StopPlay, outbound::Forward};
+use super::{HostedApp, ParkedEditApp, StopPlay};
 use crate::asset_editor::ActiveEditor;
 
 /// Where a hosted `App` is told the pointer is once it has left the viewport.
@@ -321,7 +321,6 @@ pub(crate) fn step_edit_target(
             left.push(WindowEvent::Focused(false));
             left.step();
             let closing = left.drop_window_commands();
-            cmd.trigger(Forward(document));
             if closing && parked.get_entity(document).is_some() {
                 cmd.trigger(StopPlay(document));
             }
@@ -366,7 +365,6 @@ pub(crate) fn step_edit_target(
     }
     app.step();
     let closing = app.drop_window_commands();
-    cmd.trigger(Forward(document));
     if closing && parked.get_entity(document).is_some() {
         cmd.trigger(StopPlay(document));
     }

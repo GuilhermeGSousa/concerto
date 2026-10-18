@@ -35,9 +35,9 @@ use concerto_window::{
 };
 
 use super::{
-    HostRequest, HostRole, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp, PlayState,
+    HostRequest, HostRole, Hosted, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp, PlayState,
+    events::forward_events,
     input::{HostCursor, Routing, ViewportShown, ViewportView},
-    outbound::OutboundEvents,
     seam::{EditorSignals, LastEditTarget},
 };
 use crate::{
@@ -52,7 +52,7 @@ use crate::{
     scene::{SceneEditor, SceneEditorState, SceneRecipe, SceneState},
     tools::{
         entity_ops::EntityEdit,
-        scene::{PublishContent, SceneRoot, SceneStatus},
+        scene::{PublishContent, RevealEntity, SceneEdited, SceneRoot, SceneStatus},
         selection::Selection,
     },
 };
@@ -143,7 +143,6 @@ pub(crate) fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> 
 pub(crate) fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
-    world.insert_resource(OutboundEvents::default());
     super::install_listeners(&mut world);
     let hosted = hosted_now(recipe, |_| {});
     let scene = hosted.world().id();
@@ -249,6 +248,7 @@ pub(crate) struct SceneFixture {
     pub scene: AssetEntry,
     pub other: AssetEntry,
     systems: Vec<BoxedSystem>,
+    delivery: Vec<BoxedSystem>,
     _directory: tempfile::TempDir,
 }
 
@@ -289,7 +289,6 @@ impl SceneFixture {
         });
         world.insert_resource(project);
 
-        world.insert_resource(OutboundEvents::default());
         world.insert_resource(Routing::default());
         world.insert_resource(HostCursor::default());
         world.insert_resource(LastEditTarget::default());
@@ -323,6 +322,20 @@ impl SceneFixture {
         for system in &mut systems {
             system.initialize(&mut world);
         }
+        world.insert_resource(EventChannel::<Hosted<SceneEdited>>::new());
+        world.insert_resource(EventChannel::<Hosted<SceneStatus>>::new());
+        world.insert_resource(EventChannel::<Hosted<RevealEntity>>::new());
+        let mut delivery = vec![
+            forward_events::<SceneEdited>.into_boxed_system(),
+            forward_events::<SceneStatus>.into_boxed_system(),
+            forward_events::<RevealEntity>.into_boxed_system(),
+            crate::scene::follow_unsaved_edits.into_boxed_system(),
+            crate::scene::show_status.into_boxed_system(),
+            crate::scene::reveal.into_boxed_system(),
+        ];
+        for system in &mut delivery {
+            system.initialize(&mut world);
+        }
 
         Self {
             world,
@@ -330,6 +343,7 @@ impl SceneFixture {
             scene,
             other,
             systems,
+            delivery,
             _directory: directory,
         }
     }
@@ -358,7 +372,14 @@ impl SceneFixture {
         for system in &mut self.systems {
             system.run_and_apply((), &mut self.world);
         }
+        self.deliver();
         self.world.tick();
+    }
+
+    pub(crate) fn deliver(&mut self) {
+        for system in &mut self.delivery {
+            system.run_and_apply((), &mut self.world);
+        }
     }
 
     pub(crate) fn frames_until_idle(&mut self) {
@@ -466,6 +487,7 @@ impl SceneFixture {
         .into_system();
         system.initialize(&mut self.world);
         system.run_and_apply((), &mut self.world);
+        self.deliver();
     }
 
     pub(crate) fn rename(&mut self, document: Entity, name: &str, renamed: &str) {
@@ -528,7 +550,8 @@ impl SceneFixture {
             .entity()
     }
 
-    pub(crate) fn unsaved(&self, document: Entity) -> bool {
+    pub(crate) fn unsaved(&mut self, document: Entity) -> bool {
+        self.deliver();
         self.world
             .get_component_for_entity::<Unsaved>(document)
             .is_some()

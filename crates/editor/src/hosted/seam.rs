@@ -13,7 +13,7 @@ use concerto_ecs::{
     world_id::WorldId,
 };
 
-use super::{HostedApp, PlayState, outbound};
+use super::{HostedApp, PlayState};
 use crate::asset_editor::ActiveEditor;
 
 /// # Safety
@@ -182,7 +182,6 @@ impl SystemInput for EditorSignals<'_> {
         for signal in signals {
             signal(hosted);
         }
-        outbound::forward(world, document);
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -503,12 +502,35 @@ mod tests {
     #[derive(Resource, Default)]
     struct Answered(Vec<concerto_ecs::Entity>);
 
-    fn hear(on: On<crate::hosted::Hosted<Echo>>, mut heard: ResMut<Heard>) {
-        heard.0.push(on.signal().event.0);
+    fn record(
+        mut events: crate::hosted::HostedAppEvents<Echo>,
+        mut heard: ResMut<Heard>,
+        mut answered: ResMut<Answered>,
+    ) {
+        for (document, echo) in events.read() {
+            heard.0.push(echo.0);
+            answered.0.push(document);
+        }
     }
 
-    fn note_document(on: On<crate::hosted::Hosted<Echo>>, mut answered: ResMut<Answered>) {
-        answered.0.push(on.signal().document);
+    #[derive(Resource)]
+    struct Hearing(Option<concerto_ecs::system::BoxedSystem>);
+
+    fn listen(world: &mut World) {
+        let mut system: concerto_ecs::system::BoxedSystem = Box::new(record.into_system());
+        system.initialize(world);
+        world.insert_resource(Hearing(Some(system)));
+    }
+
+    fn read_hosted(world: &mut World) {
+        let mut system = world
+            .get_resource_mut::<Hearing>()
+            .unwrap()
+            .0
+            .take()
+            .unwrap();
+        system.run_and_apply((), world);
+        world.get_resource_mut::<Hearing>().unwrap().0 = Some(system);
     }
 
     fn say_five(mut scene: EditorSignals) {
@@ -528,32 +550,29 @@ mod tests {
 
     fn hearing_world() -> (World, concerto_ecs::Entity) {
         let (mut world, document) = seam_world(1);
-        world
-            .get_resource_mut::<crate::hosted::OutboundEvents>()
-            .unwrap()
-            .register::<Echo>();
         world.insert_resource(Heard::default());
         world.insert_resource(Answered::default());
-        world.add_listener(hear);
-        world.add_listener(note_document);
+        listen(&mut world);
         (world, document)
     }
 
-    fn heard(world: &World) -> &[u32] {
-        &world.get_resource::<Heard>().unwrap().0
+    fn heard(world: &mut World) -> Vec<u32> {
+        read_hosted(world);
+        world.get_resource::<Heard>().unwrap().0.clone()
     }
 
-    fn answered(world: &World) -> &[concerto_ecs::Entity] {
-        &world.get_resource::<Answered>().unwrap().0
+    fn answered(world: &mut World) -> Vec<concerto_ecs::Entity> {
+        read_hosted(world);
+        world.get_resource::<Answered>().unwrap().0.clone()
     }
 
     #[test]
-    fn a_triggered_signal_runs_in_the_edit_target_and_its_answer_comes_back_at_once() {
+    fn a_triggered_signal_runs_in_the_edit_target_and_its_answer_comes_back() {
         let (mut world, _) = hearing_world();
 
         run(&mut world, say_five);
 
-        assert_eq!(world.get_resource::<Heard>().unwrap().0, vec![5]);
+        assert_eq!(heard(&mut world), vec![5]);
     }
 
     #[test]
@@ -562,7 +581,7 @@ mod tests {
 
         run(&mut world, say_one_two_three);
 
-        assert_eq!(heard(&world), [1, 2, 3]);
+        assert_eq!(heard(&mut world), [1, 2, 3]);
     }
 
     #[test]
@@ -575,7 +594,7 @@ mod tests {
         world.insert(hosted_now(recipe_with(2), |_| {}), document);
         system.apply(&mut world);
 
-        assert!(world.get_resource::<Heard>().unwrap().0.is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     #[test]
@@ -589,7 +608,7 @@ mod tests {
         announce(&mut world);
         system.apply(&mut world);
 
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     #[test]
@@ -602,7 +621,7 @@ mod tests {
         world.remove_component::<HostedApp>(document);
         system.apply(&mut world);
 
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     #[test]
@@ -617,8 +636,8 @@ mod tests {
         announce(&mut world);
         system.run_and_apply((), &mut world);
 
-        assert_eq!(heard(&world), [5]);
-        assert_eq!(answered(&world), [other]);
+        assert_eq!(heard(&mut world), [5]);
+        assert_eq!(answered(&mut world), [other]);
     }
 
     struct Poke(u32);
@@ -635,7 +654,7 @@ mod tests {
 
         world.trigger(Poke(8));
 
-        assert_eq!(world.get_resource::<Heard>().unwrap().0, vec![8]);
+        assert_eq!(heard(&mut world), vec![8]);
     }
 
     #[test]
@@ -647,7 +666,7 @@ mod tests {
         run(&mut world, count_and_say);
 
         assert_eq!(runs(&world), 0);
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     #[test]
@@ -661,7 +680,7 @@ mod tests {
         run(&mut world, count_and_say);
 
         assert_eq!(runs(&world), 0);
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     #[test]
@@ -673,7 +692,7 @@ mod tests {
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
         assert_eq!(runs(&world), 0);
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
 
         announce(&mut world);
         run(&mut world, read_markers);
@@ -681,7 +700,7 @@ mod tests {
 
         assert_eq!(runs(&world), 2);
         assert_eq!(seen(&world), [2]);
-        assert_eq!(answered(&world), [other]);
+        assert_eq!(answered(&mut world), [other]);
     }
 
     #[test]
@@ -692,7 +711,7 @@ mod tests {
         run(&mut world, read_markers);
         run(&mut world, count_and_say);
         assert_eq!(runs(&world), 0);
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
 
         announce(&mut world);
         run(&mut world, read_markers);
@@ -700,7 +719,7 @@ mod tests {
 
         assert_eq!(runs(&world), 2);
         assert_eq!(seen(&world), [2]);
-        assert_eq!(answered(&world), [document]);
+        assert_eq!(answered(&mut world), [document]);
     }
 
     #[test]
@@ -712,7 +731,7 @@ mod tests {
         run(&mut world, count_and_say);
 
         assert_eq!(runs(&world), 0);
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     fn access_of<P: SystemInput>() -> SystemAccess {
@@ -828,7 +847,7 @@ mod tests {
         run(&mut world, count_and_say);
 
         assert_eq!(runs(&world), 0);
-        assert!(heard(&world).is_empty());
+        assert!(heard(&mut world).is_empty());
     }
 
     #[test]

@@ -16,10 +16,7 @@ use concerto_ecs::{
 };
 use concerto_reflect::{PropertyPath, with_property_mut};
 
-use crate::{
-    inspector::ErasedEditor,
-    tools::scene::{SceneEdited, write},
-};
+use crate::{inspector::ErasedEditor, tools::scene::report_edit};
 
 /// A rejected edit leaves the target unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,14 +156,14 @@ pub fn apply_component_edit(world: &mut World, edit: ComponentEdit) -> Result<()
 
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
     match on.signal().apply(world) {
-        Ok(()) => write(world, SceneEdited),
+        Ok(()) => report_edit(world),
         Err(error) => log::warn!("Property commit dropped: {error}"),
     }
 }
 
 pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
     match apply_component_edit(world, on.signal().0) {
-        Ok(()) => write(world, SceneEdited),
+        Ok(()) => report_edit(world),
         Err(error) => log::warn!("Component edit {:?} dropped: {error}", on.signal().0),
     }
 }
@@ -183,7 +180,10 @@ pub(crate) fn build(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::scene::testing::{tools_app, written};
+    use crate::tools::scene::{
+        SceneEdited,
+        testing::{tools_app, written},
+    };
     use concerto_foundation::transform::Transform;
 
     #[derive(Component, concerto_reflect::Reflect, Default)]

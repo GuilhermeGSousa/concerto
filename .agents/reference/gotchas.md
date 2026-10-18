@@ -102,15 +102,22 @@ fix the entry in the same commit as the change that made it false.
   `EntityEdit`, `Select`, or `SetGizmoMode`; they do not mutate the scene, the
   selection, or the gizmo themselves. The listeners live in
   `crates/editor/src/tools/`, which names no document, tab, or panel type.
-- **A scene edit reaches its document through an event.** The tools write
-  `SceneEdited` in the edit `App`; the host re-raises it as `Hosted<SceneEdited>`
-  and a listener inserts `Unsaved`. Forwarding happens whenever the editor has
-  handed control to the edit `App` and has it back: after a step, after an
-  `EditorSignals` queue is applied, and after `hosted::trigger_on`.
+- **Hosted events arrive in the editor a frame after a signal wrote them.**
+  `forward_events::<E>` runs in `First`, after the hosted step. An event written
+  during the step reaches `EventReader<Hosted<E>>` systems in the same frame;
+  one written by a signal (`EditorSignals`, `hosted::trigger_on`) arrives on the
+  next frame. Decisions that must not lag, such as Play's "save first", read
+  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event.
+- **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
+  `follow_unsaved_edits` inserts or removes it each frame while the document is
+  `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
+  through `HostedApp::mark_saved` after a successful write.
+- **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
+  `App` finishes building.
 - **Change detection does not cross the seam.** `has_changed()` and
   `Changed<T>` compare against the tick of the world they are read in. Through
   `Editor<T>` they give no usable answer; a panel learns of a change from a
-  `Hosted<E>` signal.
+  `Hosted<E>` event.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
   looked up through `Editor<…>`.

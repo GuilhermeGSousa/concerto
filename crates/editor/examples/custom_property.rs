@@ -175,7 +175,10 @@ fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
 }
 
 /// An editor `App` with the inspector and one scene `App`, `arrange`d before it starts, with no window.
-pub fn headless_editor(arrange: impl FnOnce(&mut App)) -> (App, Entity) {
+pub fn headless_editor(
+    arrange: impl FnOnce(&mut App),
+    arrange_editor: impl FnOnce(&mut App),
+) -> (App, Entity) {
     let mut editor = App::new();
     editor
         .register_plugin(MainSchedulePlugin)
@@ -212,6 +215,7 @@ pub fn headless_editor(arrange: impl FnOnce(&mut App)) -> (App, Entity) {
     ));
     let document = world.spawn(scene);
     world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+    arrange_editor(&mut editor);
     editor.finish_plugin_build();
     (editor, document)
 }
@@ -219,12 +223,15 @@ pub fn headless_editor(arrange: impl FnOnce(&mut App)) -> (App, Entity) {
 #[allow(dead_code)]
 fn main() {
     let mut shadows = None;
-    let (mut editor, document) = headless_editor(|scene| {
-        shadows = Some(scene.main_mut().world_mut().spawn(Setting {
-            title: "Shadows".into(),
-            enabled: false,
-        }));
-    });
+    let (mut editor, document) = headless_editor(
+        |scene| {
+            shadows = Some(scene.main_mut().world_mut().spawn(Setting {
+                title: "Shadows".into(),
+                enabled: false,
+            }));
+        },
+        |_| {},
+    );
     trigger_on(editor.main_mut().world_mut(), document, Select(shadows));
     editor.update();
 

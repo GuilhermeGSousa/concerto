@@ -1,5 +1,5 @@
 //! What the scene tools tell whoever hosts them, and the root they edit under.
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 use concerto_app::{App, edit_time::AtEditTime};
 use concerto_ecs::{
@@ -24,6 +24,10 @@ pub struct SceneRoot;
 #[derive(Event, Clone)]
 pub struct SceneEdited;
 
+/// Whether the open scene has edits its last capture does not hold.
+#[derive(Resource, Default)]
+pub struct SceneDirty(pub bool);
+
 /// An edit was refused; the text says why.
 #[derive(Event, Clone)]
 pub struct SceneStatus(pub String);
@@ -42,14 +46,6 @@ impl Signal for PublishContent {}
 /// Replaces whatever scene is open with this one.
 pub struct OpenScene(pub Scene);
 impl Signal for OpenScene {}
-
-/// Asks for the open scene as data; the answer is a `SceneCaptured` event.
-pub struct CaptureScene;
-impl Signal for CaptureScene {}
-
-/// The open scene as data, or why it could not be captured.
-#[derive(Event, Clone)]
-pub struct SceneCaptured(pub Result<Arc<Scene>, String>);
 
 #[derive(Resource, Default)]
 struct ReferencedAssets(Vec<AssetId>);
@@ -80,27 +76,27 @@ fn open_scene(on: On<OpenScene>, world: &mut World) {
     let root = world.spawn((Transform::IDENTITY, SceneRoot));
     spawn_scene_in_world(world, &on.signal().0, root);
     world.insert_resource(ReferencedAssets(on.signal().0.referenced_assets.clone()));
+    world.insert_resource(SceneDirty(false));
     world.trigger(Select(Some(root)));
 }
 
-fn capture(_: On<CaptureScene>, world: &mut World) {
+/// The scene open in `world` as data, with the assets its file listed, or why it could not be captured.
+pub(crate) fn capture_open_scene(world: &mut World) -> Result<Scene, String> {
     let root = world
         .query::<(Entity, &SceneRoot), ()>()
         .iter(world)
         .map(|(root, _)| root)
         .next();
-    let captured = root
-        .ok_or_else(|| anyhow::anyhow!("No scene is open"))
+    root.ok_or_else(|| anyhow::anyhow!("No scene is open"))
         .and_then(|root| capture_scene(world, root))
         .map(|mut scene| {
             scene.referenced_assets = world
                 .get_resource::<ReferencedAssets>()
                 .map(|referenced| referenced.0.clone())
                 .unwrap_or_default();
-            Arc::new(scene)
+            scene
         })
-        .map_err(|error| format!("{error:#}"));
-    write(world, SceneCaptured(captured));
+        .map_err(|error| format!("{error:#}"))
 }
 
 pub(crate) fn build(app: &mut App) {
@@ -110,10 +106,20 @@ pub(crate) fn build(app: &mut App) {
     app.register_event::<SceneEdited>()
         .register_event::<SceneStatus>()
         .register_event::<RevealEntity>()
-        .register_event::<SceneCaptured>()
+        .insert_resource(SceneDirty::default())
         .add_listener(publish_content.at_edit_time())
-        .add_listener(open_scene.at_edit_time())
-        .add_listener(capture.at_edit_time());
+        .add_listener(open_scene.at_edit_time());
+}
+
+/// Records that the open scene's last capture was written.
+pub(crate) fn mark_saved(world: &mut World) {
+    world.insert_resource(SceneDirty(false));
+}
+
+/// Marks the scene dirty and tells whoever hosts it that it changed.
+pub(crate) fn report_edit(world: &mut World) {
+    world.insert_resource(SceneDirty(true));
+    write(world, SceneEdited);
 }
 
 pub(crate) fn write<E: Event + 'static>(world: &mut World, event: E) {
@@ -185,10 +191,6 @@ mod tests {
             .collect()
     }
 
-    fn captured(app: &App) -> Result<Arc<Scene>, String> {
-        written::<SceneCaptured>(app).pop().unwrap().0
-    }
-
     #[test]
     fn an_opened_scene_hangs_under_one_selected_root() {
         let mut app = tools_app();
@@ -222,28 +224,64 @@ mod tests {
     }
 
     #[test]
-    fn a_capture_answers_with_the_open_scene_and_the_assets_its_file_listed() {
+    fn a_capture_returns_the_open_scene_and_the_assets_its_file_listed() {
         let mut app = tools_app();
         let opened = family();
         let world = app.main_mut().world_mut();
         world.trigger(OpenScene(opened.clone()));
 
-        world.trigger(CaptureScene);
-
-        let scene = captured(&app).unwrap();
+        let scene = capture_open_scene(world).unwrap();
         let names: Vec<_> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["parent", "child"]);
         assert_eq!(scene.nodes[0].children, [1]);
         assert_eq!(scene.referenced_assets, opened.referenced_assets);
     }
 
+    fn dirty(world: &World) -> bool {
+        world.get_resource::<SceneDirty>().unwrap().0
+    }
+
     #[test]
-    fn a_capture_with_no_scene_open_answers_with_the_reason() {
+    fn a_reported_edit_makes_the_scene_dirty_until_it_is_marked_saved() {
+        let mut app = tools_app();
+        let world = app.main_mut().world_mut();
+        world.trigger(OpenScene(family()));
+        assert!(!dirty(world));
+
+        report_edit(world);
+        assert!(dirty(world));
+        assert_eq!(written::<SceneEdited>(&app).len(), 1);
+
+        let world = app.main_mut().world_mut();
+        capture_open_scene(world).unwrap();
+        assert!(
+            dirty(world),
+            "a capture alone does not mean the scene was written"
+        );
+
+        mark_saved(world);
+        assert!(!dirty(world));
+    }
+
+    #[test]
+    fn opening_a_scene_makes_it_clean() {
+        let mut app = tools_app();
+        let world = app.main_mut().world_mut();
+        world.trigger(OpenScene(family()));
+        report_edit(world);
+
+        world.trigger(OpenScene(family()));
+
+        assert!(!dirty(world));
+    }
+
+    #[test]
+    fn a_capture_with_no_scene_open_returns_the_reason() {
         let mut app = tools_app();
 
-        app.main_mut().world_mut().trigger(CaptureScene);
+        let captured = capture_open_scene(app.main_mut().world_mut());
 
-        assert_eq!(captured(&app).unwrap_err(), "No scene is open");
+        assert_eq!(captured.unwrap_err(), "No scene is open");
     }
 
     #[test]

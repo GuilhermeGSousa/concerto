@@ -155,10 +155,13 @@ Panels reach the edit `App`, or the play `App` while playing, through two
 system parameters: `Editor<T>` reads its world, and `EditorSignals` triggers
 signals such as `EntityEdit` and `Select` in it. The scene tools in
 `crates/editor/src/tools/` apply each change and report back through the
-`SceneEdited`, `SceneStatus`, `RevealEntity`, and `SceneCaptured` events. The
-host re-raises each in the editor's world as a `Hosted<E>` signal, which the
-editor turns into the dirty mark, the status, the tree's scroll position, and
-the saved file.
+`SceneEdited`, `SceneStatus`, and `RevealEntity` events. A `forward_events::<E>`
+system per type, registered with `forward_hosted_event::<E>()`, reads them
+through `HostedAppEvents<E>` in `First` and writes `Hosted<E>` events in the
+editor's world, which systems read with `EventReader<Hosted<E>>`. Whether the
+scene has unsaved edits is state, `SceneDirty`, kept in the edit `App`: edits set
+it and a successful save clears it, and the editor's `Unsaved` follows it. A save
+asks the edit `App` for the scene directly with `HostedApp::capture_scene`.
 The inspector edits components through `PropertyEditor<T>` adapters over
 `reflect`. Each asset type has one editor, registered with
 `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)

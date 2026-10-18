@@ -2,10 +2,13 @@
 #[path = "../examples/custom_property.rs"]
 mod example;
 
-use concerto_app::{App, edit_time::AtEditTime, reflect::ReflectComponents};
+use concerto_app::{
+    App, edit_time::AtEditTime, reflect::ReflectComponents, schedule_groups::Update,
+};
 use concerto_ecs::{
     Component, Entity, IntoSystem, Query, Res, ResMut, Resource, System, World,
     command::CommandQueue,
+    events::event_reader::EventReader,
     signal::{On, Signal},
 };
 use concerto_editor::hosted::{Editor, Hosted, HostedEventsAppExt, trigger_on};
@@ -47,8 +50,8 @@ fn despawn(on: On<Despawn>, mut cmd: CommandQueue) {
 #[derive(Resource, Default)]
 struct Edits(usize);
 
-fn count_edit(_: On<Hosted<SceneEdited>>, mut edits: ResMut<Edits>) {
-    edits.0 += 1;
+fn count_edit(mut edited: EventReader<Hosted<SceneEdited>>, mut edits: ResMut<Edits>) {
+    edits.0 += edited.read().count();
 }
 
 #[derive(Resource, Default)]
@@ -91,25 +94,29 @@ struct Inspecting {
 
 fn inspecting() -> Inspecting {
     let mut spawned = None;
-    let (mut editor, document) = example::headless_editor(|scene| {
-        scene
-            .register_reflect::<Container>()
-            .add_listener(despawn.at_edit_time());
-        let world = scene.main_mut().world_mut();
-        let mut container = |gain| {
-            world.spawn(Container {
-                setting: setting(),
-                gain,
-            })
-        };
-        let (a, b) = (container(1.0), container(2.0));
-        spawned = Some((a, b, world.spawn(setting())));
-    });
-    editor
-        .insert_resource(Edits::default())
-        .insert_resource(Seen::default())
-        .forward_hosted_event::<SceneEdited>()
-        .add_listener(count_edit);
+    let (editor, document) = example::headless_editor(
+        |scene| {
+            scene
+                .register_reflect::<Container>()
+                .add_listener(despawn.at_edit_time());
+            let world = scene.main_mut().world_mut();
+            let mut container = |gain| {
+                world.spawn(Container {
+                    setting: setting(),
+                    gain,
+                })
+            };
+            let (a, b) = (container(1.0), container(2.0));
+            spawned = Some((a, b, world.spawn(setting())));
+        },
+        |editor| {
+            editor
+                .insert_resource(Edits::default())
+                .insert_resource(Seen::default())
+                .forward_hosted_event::<SceneEdited>()
+                .add_system(Update, count_edit);
+        },
+    );
     let (a, b, root) = spawned.unwrap();
     Inspecting {
         editor,
@@ -149,6 +156,7 @@ impl Inspecting {
         self.container(entity).unwrap().1
     }
     fn edits(&mut self) -> usize {
+        self.editor.update();
         self.world().get_resource::<Edits>().unwrap().0
     }
     fn rows(&mut self) -> Vec<(Entity, PropertyRow, PropertyRowValue)> {

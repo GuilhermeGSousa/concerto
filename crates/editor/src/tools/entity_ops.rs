@@ -12,7 +12,7 @@ use concerto_render::components::render_entity::SyncWithRenderWorld;
 use concerto_scene::{capture::capture_subtree, scene::Scene, spawner::spawn_scene_in_world};
 
 use crate::tools::{
-    scene::{RevealEntity, SceneEdited, SceneRoot, SceneStatus, write},
+    scene::{RevealEntity, SceneRoot, SceneStatus, report_edit, write},
     selection::Select,
 };
 
@@ -57,14 +57,14 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
                 world.trigger(Select(Some(selected)));
                 write(world, RevealEntity(selected));
             }
-            write(world, SceneEdited);
+            report_edit(world);
         }
         Ok(Applied::Removed(parent)) => {
             world.trigger(Select(parent));
             if let Some(parent) = parent {
                 write(world, RevealEntity(parent));
             }
-            write(world, SceneEdited);
+            report_edit(world);
         }
         Ok(Applied::Unchanged) => {}
         Err(error) => write(world, SceneStatus(format!("{operation} failed: {error:#}"))),
@@ -191,7 +191,10 @@ fn scene_node(world: &World, entity: Entity) -> anyhow::Result<Entity> {
 mod tests {
     use super::*;
     use crate::tools::{
-        scene::testing::{tools_app, written},
+        scene::{
+            SceneEdited,
+            testing::{tools_app, written},
+        },
         selection::Selection,
     };
     use concerto_ecs::entity::hierarchy::Children;
