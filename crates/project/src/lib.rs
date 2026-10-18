@@ -325,7 +325,7 @@ fn validate_name(name: &str) -> Result<()> {
 }
 
 fn render(template: &str, vars: &[(&str, &str)]) -> String {
-    let mut text = template.to_string();
+    let mut text = template.replace("\r\n", "\n");
     for (key, value) in vars {
         text = text.replace(&format!("{{{{{key}}}}}"), value);
     }
@@ -668,6 +668,17 @@ mod tests {
 
     fn canonical(path: &Path) -> PathBuf {
         simplified(path.canonicalize().unwrap())
+    }
+
+    #[test]
+    fn a_template_checked_out_with_crlf_renders_with_lf() {
+        assert_eq!(
+            render(
+                "fn main() {\r\n    {{crate}}::run();\r\n}\r\n",
+                &[("crate", "g")]
+            ),
+            "fn main() {\n    g::run();\n}\n"
+        );
     }
 
     #[test]
