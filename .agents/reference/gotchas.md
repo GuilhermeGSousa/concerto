@@ -169,9 +169,12 @@ fix the entry in the same commit as the change that made it false.
   schedule is safe only because `TaskPool::scope` re-raises a task's panic
   after every task it spawned has finished; the panicked system's dependants
   never run.
-- **Asynchronous editor work must check its generation** before it mutates
-  anything, with `asset_request_is_current`. A result for a closed tab or a
-  switched project is discarded.
+- **Asynchronous editor work must check its request** before it mutates
+  anything: capture the `AssetEntry` it was started for and pass it to
+  `asset_request_is_current`. A result for a replaced or cancelled request is
+  discarded; a closed tab, and every tab after a project switch, is gone. A
+  late result of a request repeated for the same asset is accepted, since it
+  read the same file.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
   keys, buttons, wheel, or raw motion, and closing the gate releases whatever
   was held; the cursor position is still folded. The editor closes its own

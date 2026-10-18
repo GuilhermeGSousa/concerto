@@ -277,7 +277,6 @@ impl SceneFixture {
         editors.register::<Scene>(SceneEditor).unwrap();
         world.insert_resource(editors);
         let mut project = ProjectState::default();
-        project.generation = 1;
         let mut registry = AssetRegistry::default();
         registry.insert(scene.id, scene.address.clone());
         registry.insert(other.id, other.address.clone());
@@ -448,14 +447,23 @@ impl SceneFixture {
     pub(crate) fn add_scene(&mut self, name: &str) -> AssetEntry {
         let asset = scene_entry(name);
         write_scene_file(&self.project_root, &asset, &[name]);
+        self.add_to_project(&asset);
         asset
     }
 
+    pub(crate) fn add_to_project(&mut self, asset: &AssetEntry) {
+        self.world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .project
+            .as_mut()
+            .unwrap()
+            .registry
+            .insert(asset.id, asset.address.clone());
+    }
+
     pub(crate) fn request(&mut self, asset: &AssetEntry) {
-        self.command(AssetEditorCommand::Open {
-            asset: asset.clone(),
-            project_generation: 1,
-        });
+        self.command(AssetEditorCommand::Open(asset.clone()));
     }
 
     pub(crate) fn request_other_scene(&mut self, document: Entity) {

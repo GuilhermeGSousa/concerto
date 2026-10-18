@@ -42,7 +42,6 @@ fn refreshing_adds_assets_without_bumping_generation_or_closing_documents() {
     app.insert_resource(AssetServer::new());
     let mut state = ProjectState::default();
     state.project = Some(discover_project(project.path()).expect("discover"));
-    state.generation = 7;
     app.insert_resource(state);
     app.register_plugin(ProjectPlugin);
     app.finish_plugin_build();
@@ -59,10 +58,6 @@ fn refreshing_adds_assets_without_bumping_generation_or_closing_documents() {
         state.project.as_ref().expect("project").assets.len(),
         2,
         "the refresh picks up the newly written asset"
-    );
-    assert_eq!(
-        state.generation, 7,
-        "a refresh is the same project, so generation is untouched"
     );
     let documents = app
         .get_resource::<AssetEditorCommands>()

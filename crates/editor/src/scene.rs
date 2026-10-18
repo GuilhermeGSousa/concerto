@@ -66,7 +66,7 @@ pub struct SceneRecipe {
 #[derive(Component, Default)]
 pub(crate) struct SceneEditorState {
     job: Option<SceneJob>,
-    building: Option<u64>,
+    building: Option<AssetEntry>,
 }
 
 #[cfg(test)]
@@ -77,8 +77,8 @@ impl SceneEditorState {
 }
 
 struct SceneJob {
-    request: u64,
-    project: u64,
+    asset: AssetEntry,
+    root: PathBuf,
     worker: JoinHandle<Result<Scene, String>>,
 }
 
@@ -471,16 +471,15 @@ pub(crate) fn refuse_edited_replacements(
     active: Res<ActiveEditor>,
     commits: Res<PropertyCommits>,
     edits: Res<ComponentEdits>,
-    project: Res<ProjectState>,
     mut commands: CommandQueue,
 ) {
     let queued = !commits.0.is_empty() || !edits.0.is_empty();
     for (editor, mut doc, mut state, mut pending) in building.iter() {
-        let Some(request) = state.building else {
+        let Some(request) = state.building.clone() else {
             continue;
         };
         let edited = unsaved.get_entity(editor).is_some() || (queued && active.0 == Some(editor));
-        if !edited || !asset_request_is_current(&doc, request, project.generation) {
+        if !edited || !asset_request_is_current(&doc, &request) {
             continue;
         }
         pending.cancel();
@@ -488,8 +487,7 @@ pub(crate) fn refuse_edited_replacements(
         commands.remove::<PendingApp>(editor);
         finish_asset_request(
             &mut doc,
-            request,
-            project.generation,
+            &request,
             Err(anyhow::anyhow!(
                 "Could not open scene: unsaved changes were made while it loaded"
             )),
@@ -523,15 +521,15 @@ pub(crate) fn update_scenes(
             commands.trigger(StopPlay(editor));
         }
 
+        let root = project.project.as_ref().map(|project| &project.root);
         if state.job.as_ref().is_some_and(|job| {
-            job.project != project.generation
-                || !asset_request_is_current(&doc, job.request, project.generation)
+            root != Some(&job.root) || !asset_request_is_current(&doc, &job.asset)
         }) {
             state.job = None;
         }
 
-        if let Some(request) = state.building {
-            let current = asset_request_is_current(&doc, request, project.generation);
+        if let Some(request) = state.building.clone() {
+            let current = asset_request_is_current(&doc, &request);
             let building = pending.get_entity(editor);
             let still_building = building.is_some();
             let failure = building.and_then(|pending| pending.failure().map(str::to_owned));
@@ -543,38 +541,34 @@ pub(crate) fn update_scenes(
                 commands.remove::<PendingApp>(editor);
                 finish_asset_request(
                     &mut doc,
-                    request,
-                    project.generation,
+                    &request,
                     Err(anyhow::anyhow!("Could not open scene: {failure}")),
                 );
             } else if !still_building && hosted_apps.get_entity(editor).is_some() {
                 state.building = None;
-                finish_asset_request(&mut doc, request, project.generation, Ok(()));
+                finish_asset_request(&mut doc, &request, Ok(()));
             }
         }
 
         if state.job.is_none()
             && state.building.is_none()
-            && doc.pending.is_some()
-            && doc.project_generation == project.generation
+            && let Some(asset) = doc.pending.clone()
         {
-            let request = doc.request_generation;
             if let Some(root) = project.project.as_ref().map(|p| p.root.clone()) {
-                let asset = doc.pending.as_ref().unwrap();
                 let id = asset.id;
                 let address = asset.address.clone();
+                let read_root = root.clone();
                 state.job = Some(SceneJob {
-                    request,
-                    project: project.generation,
+                    asset,
+                    root,
                     worker: std::thread::spawn(move || {
-                        load_scene(root, address, id).map_err(|e| format!("{e:#}"))
+                        load_scene(read_root, address, id).map_err(|e| format!("{e:#}"))
                     }),
                 });
             } else {
                 finish_asset_request(
                     &mut doc,
-                    request,
-                    project.generation,
+                    &asset,
                     Err(anyhow::anyhow!("Open a project before opening a scene")),
                 );
             }
@@ -590,7 +584,7 @@ pub(crate) fn update_scenes(
                 .worker
                 .join()
                 .unwrap_or_else(|_| Err("Scene worker failed".into()));
-            if asset_request_is_current(&doc, job.request, project.generation) {
+            if asset_request_is_current(&doc, &job.asset) {
                 let loaded = if unsaved.get_entity(editor).is_some() {
                     Err("unsaved changes were made while it loaded".into())
                 } else {
@@ -624,13 +618,12 @@ pub(crate) fn update_scenes(
                             ),
                             editor,
                         );
-                        state.building = Some(job.request);
+                        state.building = Some(job.asset);
                     }
                     Err(error) => {
                         finish_asset_request(
                             &mut doc,
-                            job.request,
-                            project.generation,
+                            &job.asset,
                             Err(anyhow::anyhow!("Could not open scene: {error}")),
                         );
                     }
@@ -856,8 +849,7 @@ mod tests {
             hosted::testing::{hosted_now, plain_recipe, request},
         };
         let mut app = App::new();
-        let mut project = ProjectState::default();
-        project.generation = 1;
+        let project = ProjectState::default();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(TimePlugin)
             .register_plugin(concerto_window::plugin::WindowPlugin)
@@ -873,21 +865,20 @@ mod tests {
             });
         let old = hosted_now(plain_recipe, |_| {});
         let before = old.world_for_test().id();
+        let next = scene_entry("next");
         let world = app.main_mut().world_mut();
         let document = world.spawn((
             EditorDocument {
                 asset_type: Scene::name(),
                 title: "first".into(),
                 current: Some(scene_entry("first")),
-                pending: Some(scene_entry("next")),
-                project_generation: 1,
-                request_generation: 2,
+                pending: Some(next.clone()),
                 order: 0,
                 status: String::new(),
             },
             SceneEditorState {
                 job: None,
-                building: Some(2),
+                building: Some(next),
             },
             old,
             hosted::begin(request(plain_recipe), |_| {}, |_| {}),
@@ -1057,7 +1048,9 @@ mod tests {
     #[test]
     fn saving_a_document_that_holds_no_scene_says_so() {
         let mut f = SceneFixture::new();
-        f.request(&scene_entry("missing"));
+        let missing = scene_entry("missing");
+        f.add_to_project(&missing);
+        f.request(&missing);
         f.frames_until_idle();
         let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         assert!(
@@ -1120,7 +1113,9 @@ mod tests {
             .y = 17.0;
         scene.trigger(Select(Some(first)));
 
-        f.request(&scene_entry("missing"));
+        let missing = scene_entry("missing");
+        f.add_to_project(&missing);
+        f.request(&missing);
         f.frames_until_idle();
 
         assert_eq!(scene_id(&f, document), before);
@@ -1136,7 +1131,11 @@ mod tests {
         let doc = f.document(document);
         assert_eq!(doc.current.as_ref().unwrap().id, f.scene.id);
         assert!(doc.pending.is_none());
-        assert!(doc.status.contains("Could not open scene"));
+        assert!(
+            doc.status.contains("Could not open scene"),
+            "{}",
+            doc.status
+        );
     }
 
     #[test]
@@ -1210,7 +1209,6 @@ mod tests {
         let document = f.open();
         let before = scene_id(&f, document);
         f.request_other_scene(document);
-        let request = f.document(document).request_generation;
         let scene =
             load_scene(f.project_root.clone(), f.other.address.clone(), f.other.id).unwrap();
         let worker = std::thread::spawn(move || Ok(scene));
@@ -1221,24 +1219,30 @@ mod tests {
             .get_component_for_entity_mut::<SceneEditorState>(document)
             .unwrap()
             .job = Some(SceneJob {
-            request,
-            project: 1,
+            asset: f.other.clone(),
+            root: f.project_root.clone(),
             worker,
         });
         f.world
             .get_resource_mut::<ProjectState>()
             .unwrap()
-            .generation = 2;
+            .project
+            .as_mut()
+            .unwrap()
+            .root = f.project_root.join("another-project");
 
-        f.frame();
-        f.frame();
+        f.frames_until(
+            "the old project's worker is dropped and the request settles",
+            |f| {
+                let state = f
+                    .world
+                    .get_component_for_entity::<SceneEditorState>(document)
+                    .unwrap();
+                state.job.is_none() && state.building.is_none()
+            },
+        );
 
         assert_eq!(scene_id(&f, document), before);
-        let state = f
-            .world
-            .get_component_for_entity::<SceneEditorState>(document)
-            .unwrap();
-        assert!(state.job.is_none() && state.building.is_none());
         assert!(
             f.world
                 .get_component_for_entity::<PendingApp>(document)
@@ -1268,7 +1272,9 @@ mod tests {
             .unwrap()
             .0
             .push_back(AssetEditorCommand::CloseAll);
-        f.request(&scene_entry("missing"));
+        let missing = scene_entry("missing");
+        f.add_to_project(&missing);
+        f.request(&missing);
         f.frames_until_idle();
         f.frame();
 
@@ -1598,12 +1604,12 @@ mod tests {
     }
 
     #[test]
-    fn a_scene_cannot_be_opened_without_a_project() {
+    fn a_scene_whose_project_closed_while_it_was_asked_for_says_to_open_a_project() {
         let mut f = SceneFixture::new();
-        f.world.get_resource_mut::<ProjectState>().unwrap().project = None;
         let scene = f.scene.clone();
-
         f.request(&scene);
+        f.world.get_resource_mut::<ProjectState>().unwrap().project = None;
+
         f.frames_until_idle();
 
         let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();

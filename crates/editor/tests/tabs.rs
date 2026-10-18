@@ -104,8 +104,6 @@ fn document_of(world: &mut World, asset_type: &'static str, order: u64) -> Entit
         title: format!("Document {order}"),
         current: None,
         pending: None,
-        project_generation: 1,
-        request_generation: 1,
         order,
         status: String::new(),
     })

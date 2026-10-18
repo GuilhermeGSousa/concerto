@@ -407,14 +407,21 @@ mod tests {
                 sub_asset: "notes".into(),
             }),
         };
+        let mut content = concerto_foundation::assets::content::AssetRegistry::default();
+        content.insert(asset.id, asset.address.clone());
+        world
+            .get_resource_mut::<crate::project::ProjectState>()
+            .unwrap()
+            .project = Some(crate::project::Project {
+            root: std::path::PathBuf::from("project"),
+            assets: vec![],
+            registry: content,
+        });
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset,
-                project_generation: 0,
-            });
+            .push_back(AssetEditorCommand::Open(asset));
         process_editor_commands(&mut world);
         let editor = world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         let canvas = world.spawn((UINode::default(), EditorOwned(editor)));

@@ -174,7 +174,6 @@ pub struct EditorCommands(pub VecDeque<EditorCommand>);
 pub struct ProjectState {
     pub project: Option<Project>,
     pub status: String,
-    pub generation: u64,
     job: Option<JoinHandle<Result<Option<Project>, String>>>,
 }
 
@@ -183,7 +182,6 @@ impl Default for ProjectState {
         Self {
             project: None,
             status: "Choose a project folder to get started.".into(),
-            generation: 0,
             job: None,
         }
     }
@@ -248,7 +246,6 @@ fn process_commands(
                     project.root.display()
                 );
                 state.project = Some(project);
-                state.generation += 1;
                 cmd.trigger(crate::scene::PublishToHosted);
                 documents
                     .0
@@ -271,10 +268,7 @@ fn process_commands(
                 {
                     documents
                         .0
-                        .push_back(crate::asset_editor::AssetEditorCommand::Open {
-                            asset: asset.clone(),
-                            project_generation: state.generation,
-                        });
+                        .push_back(crate::asset_editor::AssetEditorCommand::Open(asset.clone()));
                 }
             }
             EditorCommand::RefreshCatalogue => {
@@ -422,8 +416,6 @@ mod tests {
             title: "level".into(),
             current: None,
             pending: None,
-            project_generation: 0,
-            request_generation: 0,
             order: 0,
             status: String::new(),
         });

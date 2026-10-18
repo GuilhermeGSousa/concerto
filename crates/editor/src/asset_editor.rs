@@ -72,8 +72,6 @@ pub struct EditorDocument {
     pub title: String,
     pub current: Option<AssetEntry>,
     pub pending: Option<AssetEntry>,
-    pub project_generation: u64,
-    pub request_generation: u64,
     pub order: u64,
     pub status: String,
 }
@@ -122,10 +120,8 @@ pub struct EditorHosts {
 }
 
 pub enum AssetEditorCommand {
-    Open {
-        asset: AssetEntry,
-        project_generation: u64,
-    },
+    /// Opens an asset of the current project; one that is not in it is ignored.
+    Open(AssetEntry),
     Activate(Entity),
     Close(Entity),
     CloseAll,
@@ -133,14 +129,13 @@ pub enum AssetEditorCommand {
 #[derive(Resource, Default)]
 pub struct AssetEditorCommands(pub VecDeque<AssetEditorCommand>);
 
-/// Complete a request through a scoped document borrow.
+/// Applies the result of work started for `asset`, if the document still asks for it.
 pub fn finish_asset_request(
     doc: &mut EditorDocument,
-    generation: u64,
-    project_generation: u64,
+    asset: &AssetEntry,
     result: Result<()>,
 ) -> bool {
-    if !asset_request_is_current(doc, generation, project_generation) {
+    if !asset_request_is_current(doc, asset) {
         return false;
     }
     match result {
@@ -159,15 +154,9 @@ pub fn finish_asset_request(
     true
 }
 
-/// Check before applying asynchronous results to the live presentation.
-pub fn asset_request_is_current(
-    doc: &EditorDocument,
-    generation: u64,
-    project_generation: u64,
-) -> bool {
-    doc.request_generation == generation
-        && doc.pending.is_some()
-        && doc.project_generation == project_generation
+/// Whether work started for `asset` still matches the document's request.
+pub fn asset_request_is_current(doc: &EditorDocument, asset: &AssetEntry) -> bool {
+    doc.pending.as_ref() == Some(asset)
 }
 
 /// Process tab commands using declared ECS access.
@@ -198,11 +187,12 @@ pub fn process_editor_commands(
     let mut closed = HashSet::new();
     for request in requests.0.drain(..) {
         match request {
-            AssetEditorCommand::Open {
-                asset,
-                project_generation,
-            } => {
-                if project.generation != project_generation {
+            AssetEditorCommand::Open(asset) => {
+                if !project
+                    .project
+                    .as_ref()
+                    .is_some_and(|project| project.registry.get(asset.id).is_some())
+                {
                     continue;
                 }
                 let Some(asset_type) = registry.editor_kind(&asset.kind) else {
@@ -216,17 +206,12 @@ pub fn process_editor_commands(
                     if is_unsaved && !doc.current.as_ref().is_some_and(|a| a.id == asset.id) {
                         stop_game(*entity, &mut commands);
                         guard.hold(
-                            crate::guard::GuardedIntent::Editor(AssetEditorCommand::Open {
-                                asset,
-                                project_generation,
-                            }),
+                            crate::guard::GuardedIntent::Editor(AssetEditorCommand::Open(asset)),
                             vec![*entity],
                         );
                         continue;
                     }
                     if !doc.pending.as_ref().is_some_and(|a| a.id == asset.id) {
-                        doc.request_generation += 1;
-                        doc.project_generation = project_generation;
                         if doc.current.as_ref().is_some_and(|a| a.id == asset.id) {
                             doc.pending = None;
                             doc.status.clear();
@@ -248,8 +233,6 @@ pub fn process_editor_commands(
                             status: format!("Opening {}…", asset.address),
                             current: None,
                             pending: Some(asset),
-                            project_generation,
-                            request_generation: 1,
                             order,
                         },
                     ));
@@ -327,18 +310,12 @@ mod tests {
     fn finish_asset_request(
         world: &mut World,
         editor: Entity,
-        generation: u64,
+        asset: &AssetEntry,
         result: Result<()>,
     ) -> bool {
-        let project = world
-            .get_resource::<crate::project::ProjectState>()
-            .unwrap()
-            .generation;
         world
             .get_component_for_entity_mut::<EditorDocument>(editor)
-            .is_some_and(|mut doc| {
-                super::finish_asset_request(&mut doc, generation, project, result)
-            })
+            .is_some_and(|mut doc| super::finish_asset_request(&mut doc, asset, result))
     }
     use concerto_foundation::assets::AssetId;
 
@@ -378,8 +355,16 @@ mod tests {
         w.insert_resource(AssetEditorCommands::default());
         w.insert_resource(ActiveEditor::default());
         w.insert_resource(crate::guard::UnsavedGuard::default());
+        let mut registry = concerto_foundation::assets::content::AssetRegistry::default();
+        for path in ["a", "b", "c", "d", "other", "scene", "third"] {
+            registry.insert(asset(path).id, path);
+        }
         let mut project = crate::project::ProjectState::default();
-        project.generation = 1;
+        project.project = Some(crate::project::Project {
+            root: std::path::PathBuf::from("project"),
+            assets: vec![],
+            registry,
+        });
         w.insert_resource(project);
         let mut r = AssetEditorRegistry::default();
         r.register::<TestAsset>(Fake).unwrap();
@@ -390,10 +375,7 @@ mod tests {
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset: asset(path),
-                project_generation: 1,
-            });
+            .push_back(AssetEditorCommand::Open(asset(path)));
         process_editor_commands(w);
         w.get_resource::<ActiveEditor>().unwrap().0.unwrap()
     }
@@ -430,14 +412,8 @@ mod tests {
             .unwrap()
             .0
             .extend([
-                AssetEditorCommand::Open {
-                    asset: asset("a"),
-                    project_generation: 1,
-                },
-                AssetEditorCommand::Open {
-                    asset: asset("b"),
-                    project_generation: 1,
-                },
+                AssetEditorCommand::Open(asset("a")),
+                AssetEditorCommand::Open(asset("b")),
             ]);
         process_editor_commands(&mut w);
         let entity = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
@@ -446,22 +422,15 @@ mod tests {
             .get_component_for_entity::<EditorDocument>(entity)
             .unwrap();
         assert_eq!(doc.pending.as_ref().unwrap().id, asset("b").id);
-        assert_eq!(doc.request_generation, 2);
 
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
             .extend([
                 AssetEditorCommand::CloseAll,
-                AssetEditorCommand::Open {
-                    asset: asset("c"),
-                    project_generation: 1,
-                },
+                AssetEditorCommand::Open(asset("c")),
                 AssetEditorCommand::CloseAll,
-                AssetEditorCommand::Open {
-                    asset: asset("d"),
-                    project_generation: 1,
-                },
+                AssetEditorCommand::Open(asset("d")),
             ]);
         process_editor_commands(&mut w);
         assert!(!w.entity_is_valid(entity));
@@ -474,95 +443,59 @@ mod tests {
     }
 
     #[test]
-    fn completion_rejects_changed_project_without_mutating_document() {
+    fn an_open_for_an_asset_outside_the_current_project_is_dropped() {
         let mut w = world();
-        let e = open(&mut w, "a");
-        w.get_resource_mut::<crate::project::ProjectState>()
-            .unwrap()
-            .generation = 2;
-        assert!(!finish_asset_request(&mut w, e, 1, Ok(())));
-        let doc = w.get_component_for_entity::<EditorDocument>(e).unwrap();
-        assert!(doc.current.is_none());
-        assert!(doc.pending.is_some());
+
+        push(&mut w, AssetEditorCommand::Open(asset("elsewhere")));
+
+        assert_eq!(w.query::<&EditorDocument, ()>().iter(&mut w).count(), 0);
+        assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, None);
     }
 
     #[test]
-    fn one_document_and_stale_generation() {
+    fn a_result_for_a_replaced_request_is_not_applied() {
         let mut w = world();
         let e = open(&mut w, "a");
-        let g = w
-            .get_component_for_entity::<EditorDocument>(e)
-            .unwrap()
-            .request_generation;
-        assert!(finish_asset_request(&mut w, e, g, Ok(())));
-        w.get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Open {
-                asset: asset("b"),
-                project_generation: 1,
-            });
-        process_editor_commands(&mut w);
-        let g = w
-            .get_component_for_entity::<EditorDocument>(e)
-            .unwrap()
-            .request_generation;
-        w.get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Open {
-                asset: asset("b"),
-                project_generation: 1,
-            });
-        process_editor_commands(&mut w);
+
+        push(&mut w, AssetEditorCommand::Open(asset("b")));
+
+        assert!(!finish_asset_request(&mut w, e, &asset("a"), Ok(())));
+        let doc = w.get_component_for_entity::<EditorDocument>(e).unwrap();
+        assert!(doc.current.is_none());
+        assert_eq!(doc.pending, Some(asset("b")));
+    }
+
+    #[test]
+    fn reopening_the_pending_asset_keeps_the_request_and_reopening_the_current_one_cancels_it() {
+        let mut w = world();
+        let e = open(&mut w, "a");
+        assert!(finish_asset_request(&mut w, e, &asset("a"), Ok(())));
+        push(&mut w, AssetEditorCommand::Open(asset("b")));
+
+        push(&mut w, AssetEditorCommand::Open(asset("b")));
         assert_eq!(
             w.get_component_for_entity::<EditorDocument>(e)
                 .unwrap()
-                .request_generation,
-            g
+                .pending,
+            Some(asset("b"))
         );
-        assert!(
-            w.get_component_for_entity::<EditorDocument>(e)
-                .unwrap()
-                .pending
-                .is_some()
-        );
-        w.get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Open {
-                asset: asset("a"),
-                project_generation: 1,
-            });
-        process_editor_commands(&mut w);
-        assert!(!finish_asset_request(&mut w, e, g, Ok(())));
+
+        push(&mut w, AssetEditorCommand::Open(asset("a")));
+        assert!(!finish_asset_request(&mut w, e, &asset("b"), Ok(())));
         assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, Some(e));
     }
+
     #[test]
-    fn failed_replacement_keeps_current_and_stale_project_is_ignored() {
+    fn a_failed_replacement_keeps_the_current_asset_and_no_project_takes_no_open() {
         let mut w = world();
         let e = open(&mut w, "a");
-        let g = w
-            .get_component_for_entity::<EditorDocument>(e)
-            .unwrap()
-            .request_generation;
-        assert!(finish_asset_request(&mut w, e, g, Ok(())));
-        w.get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Open {
-                asset: asset("b"),
-                project_generation: 1,
-            });
-        process_editor_commands(&mut w);
-        let g = w
-            .get_component_for_entity::<EditorDocument>(e)
-            .unwrap()
-            .request_generation;
+        assert!(finish_asset_request(&mut w, e, &asset("a"), Ok(())));
+        push(&mut w, AssetEditorCommand::Open(asset("b")));
+
         assert!(finish_asset_request(
             &mut w,
             e,
-            g,
+            &asset("b"),
             Err(anyhow::anyhow!("bad"))
         ));
         assert_eq!(
@@ -574,20 +507,18 @@ mod tests {
                 .id,
             AssetId::from_path("a")
         );
+
         w.insert_resource(crate::project::ProjectState::default());
-        w.get_resource_mut::<crate::project::ProjectState>()
-            .unwrap()
-            .generation = 2;
-        w.get_resource_mut::<AssetEditorCommands>()
-            .unwrap()
-            .0
-            .push_back(AssetEditorCommand::Open {
-                asset: asset("c"),
-                project_generation: 1,
-            });
-        process_editor_commands(&mut w);
+        push(&mut w, AssetEditorCommand::Open(asset("c")));
         assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, Some(e));
+        assert!(
+            w.get_component_for_entity::<EditorDocument>(e)
+                .unwrap()
+                .pending
+                .is_none()
+        );
     }
+
     #[test]
     fn owned_tree_removed_on_close() {
         let mut w = world();
@@ -646,11 +577,13 @@ mod tests {
     }
 
     fn finish(w: &mut World, e: Entity) {
-        let g = w
+        let pending = w
             .get_component_for_entity::<EditorDocument>(e)
             .unwrap()
-            .request_generation;
-        assert!(finish_asset_request(w, e, g, Ok(())));
+            .pending
+            .clone()
+            .unwrap();
+        assert!(finish_asset_request(w, e, &pending, Ok(())));
     }
     fn push(w: &mut World, command: AssetEditorCommand) {
         w.get_resource_mut::<AssetEditorCommands>()
@@ -712,10 +645,7 @@ mod tests {
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset: scene,
-                project_generation: 1,
-            });
+            .push_back(AssetEditorCommand::Open(scene));
         process_editor_commands(&mut w);
         let e = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         finish(&mut w, e);
@@ -746,19 +676,13 @@ mod tests {
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset: other,
-                project_generation: 1,
-            });
+            .push_back(AssetEditorCommand::Open(other));
         process_editor_commands(&mut w);
         let b = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset: third,
-                project_generation: 1,
-            });
+            .push_back(AssetEditorCommand::Open(third));
         process_editor_commands(&mut w);
         let c = w.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         w.get_resource_mut::<AssetEditorCommands>()
@@ -770,7 +694,7 @@ mod tests {
             ]);
         process_editor_commands(&mut w);
         assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, Some(a));
-        assert!(!finish_asset_request(&mut w, b, 1, Ok(())));
+        assert!(!finish_asset_request(&mut w, b, &asset("b"), Ok(())));
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
@@ -793,13 +717,17 @@ mod tests {
         let mut unsupported = asset("other");
         unsupported.kind = OtherAsset::name().into();
         for asset in [unknown, unsupported] {
+            w.get_resource_mut::<crate::project::ProjectState>()
+                .unwrap()
+                .project
+                .as_mut()
+                .unwrap()
+                .registry
+                .insert(asset.id, asset.address.clone());
             w.get_resource_mut::<AssetEditorCommands>()
                 .unwrap()
                 .0
-                .push_back(AssetEditorCommand::Open {
-                    asset,
-                    project_generation: 1,
-                });
+                .push_back(AssetEditorCommand::Open(asset));
         }
         process_editor_commands(&mut w);
         assert!(w.get_resource::<ActiveEditor>().unwrap().0.is_none());

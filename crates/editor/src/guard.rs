@@ -396,8 +396,6 @@ mod tests {
             title: "level".into(),
             current: None,
             pending: None,
-            project_generation: 0,
-            request_generation: 0,
             order: 0,
             status: String::new(),
         });
@@ -505,7 +503,11 @@ mod tests {
         let mut world = world();
         world.insert_resource(ActiveEditor::default());
         let mut project = crate::project::ProjectState::default();
-        project.generation = 1;
+        project.project = Some(crate::project::Project {
+            root: std::path::PathBuf::from("project"),
+            assets: vec![],
+            registry: concerto_foundation::assets::content::AssetRegistry::default(),
+        });
         world.insert_resource(project);
         let mut registry = AssetEditorRegistry::default();
         registry
@@ -519,15 +521,20 @@ mod tests {
             Scene::name().into(),
             None,
         );
+        world
+            .get_resource_mut::<crate::project::ProjectState>()
+            .unwrap()
+            .project
+            .as_mut()
+            .unwrap()
+            .registry
+            .insert(next.id, next.address.clone());
         let open = |world: &mut World| {
             world
                 .get_resource_mut::<AssetEditorCommands>()
                 .unwrap()
                 .0
-                .push_back(AssetEditorCommand::Open {
-                    asset: next.clone(),
-                    project_generation: 1,
-                });
+                .push_back(AssetEditorCommand::Open(next.clone()));
         };
 
         open(&mut world);
@@ -551,8 +558,7 @@ mod tests {
         let opened = world
             .get_component_for_entity_mut::<EditorDocument>(doc)
             .unwrap();
-        let request = opened.request_generation;
-        assert!(finish_asset_request(opened, request, 1, Ok(())));
+        assert!(finish_asset_request(opened, &next, Ok(())));
         assert_eq!(opened.current, Some(next));
         assert!(!is_dirty(&world, doc));
     }

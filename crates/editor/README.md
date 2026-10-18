@@ -317,12 +317,14 @@ cargo run -p concerto-editor --example custom_asset
 ```
 
 The example uses a synchronous ECS loading system for clarity. Asynchronous
-systems capture `EditorDocument.request_generation` and
-`project_generation`; before mutating domain state, use
-`asset_request_is_current` to reject canceled, closed, or superseded results.
-Call `finish_asset_request` with a mutable document borrow, the captured request
-generation, the live `ProjectState::generation`, and success or an error to update the tab's current asset and status. Failed loads must leave
-the previous presentation intact. Finishing a replacement does not clear
+systems capture the `AssetEntry` in `EditorDocument.pending` when they start;
+before mutating domain state, use `asset_request_is_current` with it to reject
+cancelled or superseded results. Call `finish_asset_request` with a mutable
+document borrow, the captured `AssetEntry`, and success or an error to update
+the tab's current asset and status. A result for a closed tab has no document to
+land on, and switching project closes every tab. An `AssetEditorCommand::Open`
+for an asset that is not in the current project's registry is ignored. Failed
+loads must leave the previous presentation intact. Finishing a replacement does not clear
 `Unsaved`: refuse a replacement that finishes loading while the document is
 `Unsaved`, as the Scene editor does, or remove the marker yourself.
 
