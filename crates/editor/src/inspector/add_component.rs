@@ -52,10 +52,13 @@ pub(super) struct AddComponentMenuContents {
 }
 
 pub(super) fn forget_scene(
-    _: On<EditTargetChanged>,
+    target: Res<LastEditTarget>,
     menus: Query<(Entity, &AddComponentMenu, &mut UIAnchoredPanel)>,
     mut cmd: CommandQueue,
 ) {
+    if !target.has_changed() {
+        return;
+    }
     for (entity, menu, mut panel) in menus.iter() {
         if panel.open {
             panel.open = false;

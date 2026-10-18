@@ -1,13 +1,15 @@
 use concerto_app::{
     App, Plugin,
-    schedule_groups::{LateUpdate, Startup, Update},
+    schedule_groups::{First, LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystem, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
     component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
+    query::change_detection::DetectChanges,
     signal::On,
+    system::BoxedSystem,
 };
 use std::any::TypeId;
 
@@ -23,7 +25,7 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::hosted::{EditTargetChanged, Editor, EditorSignals};
+use crate::hosted::{Editor, EditorSignals, LastEditTarget};
 use crate::tools::{scene::SceneRoot, selection::Selection};
 
 mod add_component;
@@ -104,7 +106,12 @@ impl Plugin for InspectorPlugin {
             title: "Looking Glass",
             region: Region::Side,
         });
-        install_listeners(app.main_mut().world_mut());
+        for system in forget_scene_systems() {
+            app.add_system(
+                First,
+                system.after(crate::hosted::seam::announce_edit_target),
+            );
+        }
         app.add_system(Startup, build_panel);
         app.add_system(Update, send_property_commits)
             .add_system(Update, send_component_edits);
@@ -124,20 +131,26 @@ impl Plugin for InspectorPlugin {
     }
 }
 
-pub(crate) fn install_listeners(world: &mut World) {
-    world.add_listener(forget_scene);
-    world.add_listener(sync::forget_scene);
-    world.add_listener(name_field::forget_scene);
-    world.add_listener(add_component::forget_scene);
-    world.add_listener(component_menu::forget_scene);
+/// The systems that empty the inspector when the edit target changes; they run in `First` after it is announced.
+pub(crate) fn forget_scene_systems() -> Vec<BoxedSystem> {
+    vec![
+        forget_scene.into_boxed_system(),
+        sync::forget_scene.into_boxed_system(),
+        name_field::forget_scene.into_boxed_system(),
+        add_component::forget_scene.into_boxed_system(),
+        component_menu::forget_scene.into_boxed_system(),
+    ]
 }
 
 fn forget_scene(
-    _: On<EditTargetChanged>,
+    target: Res<LastEditTarget>,
     mut data: ResMut<InspectorData>,
     mut commits: ResMut<PropertyCommits>,
     mut edits: ResMut<ComponentEdits>,
 ) {
+    if !target.has_changed() {
+        return;
+    }
     if *data != InspectorData::default() {
         *data = InspectorData::default();
     }

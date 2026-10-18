@@ -77,7 +77,13 @@ impl Plugin for EditorPlugin {
             concerto_app::schedule_groups::Update,
             workspace::reset_workspace_input,
         );
-        app.add_listener(workspace::reset_input_for_edit_target);
+        app.add_system(
+            concerto_app::schedule_groups::First,
+            concerto_ecs::IntoSystemConfig::after(
+                workspace::reset_input_for_edit_target,
+                hosted::seam::announce_edit_target,
+            ),
+        );
         app.register_plugin(viewport::ViewportPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);

@@ -132,8 +132,8 @@ fix the entry in the same commit as the change that made it false.
 - **`Editor<T>` and `EditorSignals` skip their system** while the active tab
   has no scene, while its game is starting, and from the moment its scene
   changes until the host announces it in the next `First`. Whatever such a
-  system drew stays on screen unless a listener on `EditTargetChanged` empties
-  it.
+  system drew stays on screen unless a system in `First`, ordered after
+  `announce_edit_target`, empties it when `Res<LastEditTarget>` has changed.
   A skipped system does not advance its event readers either, so on its next
   run it reads the events of the frame it missed.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert

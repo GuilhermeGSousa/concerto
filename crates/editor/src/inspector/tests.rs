@@ -5,7 +5,7 @@ use crate::{
 };
 use concerto_app::reflect::ReflectComponents;
 use concerto_ecs::{
-    IntoSystem, System,
+    IntoSystem, System, World,
     component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
 };

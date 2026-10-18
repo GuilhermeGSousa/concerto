@@ -240,14 +240,13 @@ pub(crate) fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes
     .unwrap();
 }
 
-const PROCESS_COMMANDS: usize = 5;
-
 pub(crate) struct SceneFixture {
     pub world: World,
     pub project_root: PathBuf,
     pub scene: AssetEntry,
     pub other: AssetEntry,
     systems: Vec<BoxedSystem>,
+    process_commands: usize,
     delivery: Vec<BoxedSystem>,
     _directory: tempfile::TempDir,
 }
@@ -303,8 +302,6 @@ impl SceneFixture {
         world.insert_resource(concerto_window::input::Input::new());
         super::install_listeners(&mut world);
         crate::scene::install_listeners(&mut world);
-        crate::hierarchy::install_listeners(&mut world);
-        crate::inspector::install_listeners(&mut world);
 
         let mut systems = vec![
             crate::scene::refuse_edited_replacements.into_boxed_system(),
@@ -312,13 +309,18 @@ impl SceneFixture {
             super::finish_pending_play.into_boxed_system(),
             super::input::step_edit_target.into_boxed_system(),
             super::seam::announce_edit_target.into_boxed_system(),
+        ];
+        systems.extend(crate::hierarchy::forget_scene_systems());
+        systems.extend(crate::inspector::forget_scene_systems());
+        let process_commands = systems.len();
+        systems.extend([
             crate::asset_editor::process_editor_commands.into_boxed_system(),
             crate::scene::update_scenes.into_boxed_system(),
             crate::scene::request_scene_saves.into_boxed_system(),
             crate::hierarchy::rebuild_rows.into_boxed_system(),
             crate::inspector::collect_inspector_data.into_boxed_system(),
             crate::scene::show_play_failures.into_boxed_system(),
-        ];
+        ]);
         for system in &mut systems {
             system.initialize(&mut world);
         }
@@ -343,6 +345,7 @@ impl SceneFixture {
             scene,
             other,
             systems,
+            process_commands,
             delivery,
             _directory: directory,
         }
@@ -474,7 +477,7 @@ impl SceneFixture {
             .unwrap()
             .0
             .push_back(command);
-        self.systems[PROCESS_COMMANDS].run_and_apply((), &mut self.world);
+        self.systems[self.process_commands].run_and_apply((), &mut self.world);
     }
 
     pub(crate) fn signal<S: Signal>(&mut self, signal: S) {

@@ -21,10 +21,13 @@ pub struct InspectedComponent {
 pub(super) struct BuildPropertyWidget;
 
 pub(super) fn forget_scene(
-    _: On<EditTargetChanged>,
+    target: Res<LastEditTarget>,
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
     mut cmd: CommandQueue,
 ) {
+    if !target.has_changed() {
+        return;
+    }
     for (stack, _, children) in stacks.iter() {
         if children.is_some() {
             cmd.entity(stack).despawn_children();

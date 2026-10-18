@@ -77,9 +77,10 @@ that tab has no scene, while its game is starting, and for the rest of the
 frame in which its scene changes. While the game plays, both reach the
 running game's world instead of the scene's. A panel therefore keeps what it
 shows in a resource of its own, fills it in a system that takes `Editor<T>`,
-and empties it in a listener on `EditTargetChanged`. `has_changed()` and
-`Changed<T>` mean nothing through `Editor<T>`; the two worlds keep separate
-clocks.
+and empties it in a system in `First`, ordered after `announce_edit_target`,
+that acts when `Res<LastEditTarget>` has changed; `LastEditTarget::document()`
+names the new target. `has_changed()` and `Changed<T>` mean nothing through
+`Editor<T>`; the two worlds keep separate clocks.
 
 An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,

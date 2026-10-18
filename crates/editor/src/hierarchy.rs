@@ -6,7 +6,7 @@ use crate::actions::{
 use crate::asset_editor::{ActiveEditor, EditorDocument};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{glyph, icon};
-use crate::hosted::{EditTargetChanged, Editor, EditorSignals, PlayState};
+use crate::hosted::{Editor, EditorSignals, LastEditTarget, PlayState};
 use crate::inspector::FocusNameField;
 use crate::marks::{self, Mark};
 use crate::scene::SceneState;
@@ -17,20 +17,22 @@ use crate::tools::{
 };
 use concerto_app::{
     App, Plugin,
-    schedule_groups::{LateUpdate, Startup},
+    schedule_groups::{First, LateUpdate, Startup},
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystem, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
     component::name::Name,
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
+    query::change_detection::DetectChanges,
     query::filter::Without,
     signal::{
         On,
         listener::{GlobalListener, IntoListener, Listener},
     },
+    system::BoxedSystem,
 };
 use concerto_ui::{
     anchor::{UIAnchorTarget, UIAnchoredPanel},
@@ -178,7 +180,12 @@ impl Plugin for HierarchyPlugin {
             title: "Warren",
             region: Region::Rail,
         });
-        install_listeners(app.main_mut().world_mut());
+        for system in forget_scene_systems() {
+            app.add_system(
+                First,
+                system.after(crate::hosted::seam::announce_edit_target),
+            );
+        }
         app.add_system(Startup, build_panel);
         app.add_system(LateUpdate, rebuild_rows)
             .add_system(LateUpdate, filter_tree)
@@ -194,16 +201,22 @@ impl Plugin for HierarchyPlugin {
     }
 }
 
-pub(crate) fn install_listeners(world: &mut World) {
-    world.add_listener(forget_scene);
-    world.add_listener(sync_add_button);
+/// The systems that empty the tree when the edit target changes; they run in `First` after it is announced.
+pub(crate) fn forget_scene_systems() -> Vec<BoxedSystem> {
+    vec![
+        forget_scene.into_boxed_system(),
+        sync_add_button.into_boxed_system(),
+    ]
 }
 
 fn forget_scene(
-    _: On<EditTargetChanged>,
+    target: Res<LastEditTarget>,
     mut state: ResMut<HierarchyState>,
     menus: Query<&mut RowMenu>,
 ) {
+    if !target.has_changed() {
+        return;
+    }
     let filter = std::mem::take(&mut state.filter);
     *state = HierarchyState {
         filter,
@@ -216,11 +229,14 @@ fn forget_scene(
 }
 
 fn sync_add_button(
-    on: On<EditTargetChanged>,
+    target: Res<LastEditTarget>,
     buttons: Query<(Entity, &AddEntityButton, Option<&UIDisabled>)>,
     mut cmd: CommandQueue,
 ) {
-    let no_scene = on.signal().document.is_none();
+    if !target.has_changed() {
+        return;
+    }
+    let no_scene = target.document().is_none();
     for (entity, _, disabled) in buttons.iter() {
         if no_scene && disabled.is_none() {
             cmd.insert(UIDisabled, entity);

@@ -4,7 +4,6 @@ use concerto_ecs::{
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     query::change_detection::DetectChanges,
-    signal::On,
 };
 use concerto_foundation::assets::Asset;
 use concerto_ui::{
@@ -19,7 +18,7 @@ use concerto_window::input::actions::ActionMap;
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, EditorHosts, EditorOwned},
     dock::PanelRegistry,
-    hosted::EditTargetChanged,
+    hosted::LastEditTarget,
 };
 
 /// Build contextual containers for new documents.
@@ -138,12 +137,15 @@ pub(crate) fn reset_workspace_input(
 }
 
 pub(crate) fn reset_input_for_edit_target(
-    _: On<EditTargetChanged>,
+    target: Res<LastEditTarget>,
     mut focus: ResMut<FocusedWidget>,
     mut hovered: ResMut<HoveredNode>,
     mut input: ResMut<UIInputState>,
     mut actions: ResMut<ActionMap>,
 ) {
+    if !target.has_changed() {
+        return;
+    }
     clear_transient_input(&mut focus, &mut hovered, &mut input, &mut actions);
 }
 
@@ -356,8 +358,11 @@ mod tests {
         sync_workspace(&mut world);
         assert_eq!(**world.get_resource::<FocusedWidget>().unwrap(), Some(host));
 
-        world.add_listener(reset_input_for_edit_target);
-        world.trigger(EditTargetChanged { document: None });
+        world.tick();
+        world.insert_resource(LastEditTarget::default());
+        let mut reset = reset_input_for_edit_target.into_system();
+        reset.initialize(&mut world);
+        reset.run_and_apply((), &mut world);
 
         assert!(world.get_resource::<FocusedWidget>().unwrap().is_none());
         assert!(world.get_resource::<HoveredNode>().unwrap().is_none());
