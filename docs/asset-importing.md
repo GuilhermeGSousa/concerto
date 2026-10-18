@@ -369,6 +369,9 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
 
 ## Current limitations
 
+- **glTF `extras` are not read.** The Blender add-on that wrote game components
+  into `extras` is deprecated. Add game components to the imported scene in the
+  editor and save it; a saved scene is left alone by later re-imports.
 - **No incremental import.** Re-import regenerates the source's outputs
   while preserving their identities. `track_dependency` records inputs but
   nothing consumes them yet.

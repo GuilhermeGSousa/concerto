@@ -2,7 +2,6 @@ use concerto_app::extractor::Extracted;
 use concerto_color::{Color, LinearRgba};
 use concerto_ecs::{
     command::CommandQueue,
-    component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     entity::Entity,
     query::Query,
@@ -10,9 +9,8 @@ use concerto_ecs::{
     resource::{Res, Resource},
     Changed,
 };
-use concerto_reflect::{PropertyVisitor, PropertyVisitorMut, Reflect, ReflectDefault};
+use concerto_reflect::{Reflect, ReflectDefault};
 use derive_more::Deref;
-use serde::{Deserialize, Serialize};
 
 use concerto_foundation::transform::GlobalTransform;
 use encase::{ShaderSize, ShaderType, UniformBuffer};
@@ -39,21 +37,14 @@ const MAX_LIGHTS: usize = 128;
 /// outside that same tick — resolved to either a real layer index or `-1`.
 const SHADOW_LAYER_REQUESTED: i32 = -2;
 
-#[derive(Component, Reflect, Serialize, Deserialize)]
+#[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct Light {
     pub color: Color,
     pub intensity: f32,
     pub shadowmaps_enabled: bool,
     pub light_type: LightType,
-    #[serde(default)]
     pub range: f32,
-}
-
-impl SceneComponent for Light {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
 }
 
 impl Default for Light {
@@ -149,25 +140,14 @@ fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Reflect, Default)]
 pub enum LightType {
+    #[default]
     Point,
-    Spot { cone_angle: f32 },
+    Spot {
+        cone_angle: f32,
+    },
     Directional,
-}
-
-impl Reflect for LightType {
-    fn visit(&self, visitor: &mut dyn PropertyVisitor) {
-        if let LightType::Spot { cone_angle } = self {
-            visitor.field("cone_angle", cone_angle);
-        }
-    }
-
-    fn visit_mut(&mut self, visitor: &mut dyn PropertyVisitorMut) {
-        if let LightType::Spot { cone_angle } = self {
-            visitor.field("cone_angle", cone_angle);
-        }
-    }
 }
 
 impl LightType {

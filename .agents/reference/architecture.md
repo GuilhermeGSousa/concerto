@@ -87,9 +87,13 @@ time. The running game never reads them.
   `<source>.import.toml` beside the source to pin each sub-asset's UUID.
 - Code names an asset with `asset_id!("content/hero/mesh_0.gasset")`, resolved
   at compile time. The runtime finds files by UUID through the registry.
-- A scene is a tree of nodes whose components are serialized by type name.
-  A component takes part by implementing `SceneComponent` and being registered
-  with `App::register_component`.
+- A scene is a tree of nodes whose components are stored by type name as
+  reflected values (`concerto_reflect::ReflectedValue`), with field and variant
+  names. A component takes part by deriving `Reflect` and `Default` with
+  `#[reflect(SceneComponent)]` and being registered with `App::register_type`.
+  Asset handles are stored as their `AssetId` and entity references as node
+  indices, through `ReflectSceneLeaf` type data; capture lists every asset a
+  handle names in `referenced_assets`.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 

@@ -464,7 +464,7 @@ mod tests {
         asset_store::AssetStore,
         content::{read_content_asset_header, save_content_asset, AssetRegistry},
     };
-    use concerto_ecs::world::World;
+    use concerto_ecs::{component::Component, reflect::ReflectSceneComponent, world::World};
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("asset-server-{tag}-{}", std::process::id()));
@@ -600,6 +600,54 @@ mod tests {
             .expect("asset store");
         assert_eq!(store.get(&handle).map(|asset| asset.value), Some(7));
         assert!(store.get(&handle).unwrap().initialized);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(SceneComponent)]
+    struct Holder {
+        handle: AssetHandle<FixtureAsset>,
+        empty: AssetHandle<FixtureAsset>,
+    }
+
+    #[test]
+    fn a_scene_handle_spawns_strong_through_the_server_and_capture_records_its_id() {
+        use concerto_ecs::reflect::SceneCapture;
+
+        let dir = temp_root("scene-handle");
+        let store = AssetStore::<FixtureAsset>::new();
+        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        server.register_asset::<FixtureAsset>(&store);
+        let mut world = World::new();
+        world.insert_resource(server);
+        world.register_type::<AssetHandle<FixtureAsset>>();
+        world.register_type::<Holder>();
+        let id = AssetId::new();
+        let stored = concerto_reflect::to_value(&Holder {
+            handle: AssetHandle::weak(id),
+            empty: AssetHandle::default(),
+        })
+        .unwrap();
+        let entity = world.spawn(());
+
+        assert!(world.apply_scene_component("Holder", &stored, entity, &[entity]));
+
+        let holder = world.get_component_for_entity::<Holder>(entity).unwrap();
+        assert!(matches!(holder.handle, AssetHandle::Strong(..)));
+        assert_eq!(holder.handle.id(), id);
+        assert!(matches!(holder.empty, AssetHandle::Weak(..)));
+        assert!(holder.empty.id().is_nil());
+
+        let mut capture = SceneCapture::new(HashMap::from([(entity, 0)]));
+        let captured = world
+            .component_types(entity)
+            .next()
+            .unwrap()
+            .capture(&world, entity, &mut capture)
+            .unwrap();
+        assert_eq!(captured, stored);
+        assert_eq!(capture.referenced_assets(), [id]);
 
         std::fs::remove_dir_all(&dir).ok();
     }

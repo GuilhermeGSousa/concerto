@@ -1,5 +1,6 @@
 use concerto_app::App;
-use concerto_director::CameraDirectorPlugin;
+use concerto_director::{CameraDirectorPlugin, VirtualCamera};
+use concerto_reflect::to_value;
 use concerto_scene::capture::capture_subtree;
 
 #[test]
@@ -9,7 +10,8 @@ fn an_edit_app_opens_and_saves_a_virtual_camera() {
     let world = app.main_mut().world_mut();
     let entity = world.spawn(());
 
-    assert!(world.apply_scene_component("VirtualCamera", r#"{"priority":5}"#, entity, &[entity]));
+    let stored = to_value(&VirtualCamera::new(5)).unwrap();
+    assert!(world.apply_scene_component("VirtualCamera", &stored, entity, &[entity]));
 
     let scene = capture_subtree(world, entity).unwrap();
     let names: Vec<&str> = scene.nodes[0]

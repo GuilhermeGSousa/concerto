@@ -3,34 +3,20 @@
 //!
 //! This is what lets a tool inspect the live world instead of a parallel copy
 //! of the scene file it was spawned from.
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto_ecs::{Component, Entity, World, reflect::ReflectSceneComponent};
 use concerto_reflect::Reflect;
-use serde::{Deserialize, Serialize};
 
-#[derive(Component, Reflect, Serialize, Deserialize, PartialEq, Debug)]
-#[reflect(opaque, SceneComponent)]
+#[derive(Component, Reflect, Default, PartialEq, Debug)]
+#[reflect(SceneComponent)]
 struct Health {
     current: u32,
     max: u32,
 }
 
-impl SceneComponent for Health {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
-}
-
-#[derive(Component, Reflect, Serialize, Deserialize, PartialEq, Debug)]
-#[reflect(opaque, SceneComponent)]
+#[derive(Component, Reflect, Default, PartialEq, Debug)]
+#[reflect(SceneComponent)]
 struct Armour {
     plates: u8,
-}
-
-impl SceneComponent for Armour {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
 }
 
 /// A plain component that is never registered as a scene component — engine

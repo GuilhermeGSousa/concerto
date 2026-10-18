@@ -9,7 +9,7 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 use concerto_foundation::{
-    assets::{AssetId, asset_server::AssetServer, content::AssetRegistry},
+    assets::{asset_server::AssetServer, content::AssetRegistry},
     transform::Transform,
 };
 use concerto_scene::{capture::capture_scene, scene::Scene, spawner::spawn_scene_in_world};
@@ -47,9 +47,6 @@ impl Signal for PublishContent {}
 pub struct OpenScene(pub Scene);
 impl Signal for OpenScene {}
 
-#[derive(Resource, Default)]
-struct ReferencedAssets(Vec<AssetId>);
-
 fn publish_content(on: On<PublishContent>, world: &mut World) {
     let Some(server) = world.get_resource::<AssetServer>() else {
         return;
@@ -75,12 +72,11 @@ fn open_scene(on: On<OpenScene>, world: &mut World) {
     world.register_component::<Transform>();
     let root = world.spawn((Transform::IDENTITY, SceneRoot));
     spawn_scene_in_world(world, &on.signal().0, root);
-    world.insert_resource(ReferencedAssets(on.signal().0.referenced_assets.clone()));
     world.insert_resource(SceneDirty(false));
     world.trigger(Select(Some(root)));
 }
 
-/// The scene open in `world` as data, with the assets its file listed, or why it could not be captured.
+/// The scene open in `world` as data, listing the assets it names, or why it could not be captured.
 pub(crate) fn capture_open_scene(world: &mut World) -> Result<Scene, String> {
     let root = world
         .query::<(Entity, &SceneRoot), ()>()
@@ -89,13 +85,6 @@ pub(crate) fn capture_open_scene(world: &mut World) -> Result<Scene, String> {
         .next();
     root.ok_or_else(|| anyhow::anyhow!("No scene is open"))
         .and_then(|root| capture_scene(world, root))
-        .map(|mut scene| {
-            scene.referenced_assets = world
-                .get_resource::<ReferencedAssets>()
-                .map(|referenced| referenced.0.clone())
-                .unwrap_or_default();
-            scene
-        })
         .map_err(|error| format!("{error:#}"))
 }
 
@@ -158,6 +147,7 @@ mod tests {
     use super::*;
     use crate::tools::selection::Selection;
     use concerto_ecs::component::name::Name;
+    use concerto_foundation::assets::AssetId;
     use concerto_scene::scene::SceneNode;
 
     fn node(name: &str, children: Vec<usize>) -> SceneNode {
@@ -224,17 +214,34 @@ mod tests {
     }
 
     #[test]
-    fn a_capture_returns_the_open_scene_and_the_assets_its_file_listed() {
+    fn a_capture_lists_the_assets_the_open_scene_names_not_the_ones_its_file_listed() {
+        use concerto_foundation::assets::handle::AssetHandle;
+        use concerto_mesh::mesh::{Mesh, MeshComponent};
+
         let mut app = tools_app();
-        let opened = family();
         let world = app.main_mut().world_mut();
-        world.trigger(OpenScene(opened.clone()));
+        world.register_type::<MeshComponent>();
+        world.register_type::<AssetHandle<Mesh>>();
+        world.trigger(OpenScene(family()));
+        let child = world
+            .query::<(Entity, &Name), ()>()
+            .iter(world)
+            .find(|(_, name)| name.as_str() == "child")
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let mesh = AssetId::new();
+        world.insert(
+            MeshComponent {
+                handle: AssetHandle::weak(mesh),
+            },
+            child,
+        );
 
         let scene = capture_open_scene(world).unwrap();
         let names: Vec<_> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
         assert_eq!(names, ["parent", "child"]);
         assert_eq!(scene.nodes[0].children, [1]);
-        assert_eq!(scene.referenced_assets, opened.referenced_assets);
+        assert_eq!(scene.referenced_assets, [mesh]);
     }
 
     fn dirty(world: &World) -> bool {

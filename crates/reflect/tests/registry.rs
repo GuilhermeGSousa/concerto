@@ -1,7 +1,7 @@
 use std::{any::TypeId, sync::Mutex};
 
 use concerto_reflect::{
-    FromType, PropertyVisitor, Reflect, ReflectDefault, TypeData, TypeRegistry,
+    FromType, PropertyVisitor, Reflect, ReflectDefault, ReflectRef, TypeData, TypeRegistry,
 };
 
 static WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -49,9 +49,9 @@ struct Plain {
     on: bool,
 }
 
-#[derive(Reflect)]
+#[derive(Reflect, serde::Serialize, serde::Deserialize, Default)]
 #[reflect(opaque, Thing)]
-struct Handle(#[allow(dead_code)] u32);
+struct Handle(u32);
 
 mod elsewhere {
     use concerto_reflect::Reflect;
@@ -118,7 +118,7 @@ fn reflect_default_builds_the_default_value() {
 }
 
 #[test]
-fn an_opaque_type_visits_no_fields_and_still_carries_its_type_data() {
+fn an_opaque_type_is_a_leaf_that_visits_no_fields_and_still_carries_its_type_data() {
     struct Count(usize);
     impl PropertyVisitor for Count {
         fn field(&mut self, _: &'static str, _: &dyn Reflect) {
@@ -128,6 +128,7 @@ fn an_opaque_type_visits_no_fields_and_still_carries_its_type_data() {
     let mut count = Count(0);
     Handle(3).visit(&mut count);
     assert_eq!(count.0, 0);
+    assert!(matches!(Handle(3).reflect_ref(), ReflectRef::Leaf(_)));
 
     let mut registry = TypeRegistry::default();
     registry.register::<Handle>();
@@ -182,6 +183,7 @@ fn two_types_sharing_a_short_name_resolve_to_the_last_registered_with_a_warning(
 
 trait Special {}
 
+#[derive(Reflect)]
 struct Yes;
 
 impl Special for Yes {}
@@ -197,8 +199,11 @@ impl<T: Reflect + Special> FromType<T> for ReflectSpecial {
 }
 
 #[derive(Reflect)]
-#[reflect(opaque, Special)]
-struct Wrapper<T: Send + Sync + 'static>(std::marker::PhantomData<T>);
+#[reflect(Special)]
+struct Wrapper<T: Reflect> {
+    #[allow(dead_code)]
+    inner: T,
+}
 
 impl Special for Wrapper<Yes> {}
 

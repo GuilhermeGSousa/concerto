@@ -4,14 +4,15 @@
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
+use concerto_reflect::{apply_value, to_value, Reflect};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 
-fn component<T: serde::Serialize + Component>(value: &T) -> SerializedComponent {
+fn component<T: Reflect + Component>(value: &T) -> SerializedComponent {
     SerializedComponent {
         type_name: T::name().to_string(),
-        data: serde_json::to_string(value).unwrap(),
+        value: to_value(value).unwrap(),
     }
 }
 
@@ -63,7 +64,8 @@ fn round_trips_and_reports_references() {
         .iter()
         .find(|c| c.type_name == MeshComponent::name())
         .expect("the child node must carry a MeshComponent payload");
-    let decoded_mesh: MeshComponent = serde_json::from_str(&mesh_payload.data).unwrap();
+    let mut decoded_mesh = MeshComponent::default();
+    assert!(apply_value(&mut decoded_mesh, &mesh_payload.value).is_empty());
     assert_eq!(
         decoded_mesh.handle.id(),
         mesh_id,

@@ -1,11 +1,7 @@
 use concerto_ecs::{
-    component::scene::{SceneComponent, SceneEntityRef, SceneSpawnContext},
-    reflect::ReflectSceneComponent,
-    Component, Entity,
+    component::scene::SceneEntityRef, reflect::ReflectSceneComponent, Component, Entity,
 };
-use concerto_foundation::assets::{
-    asset_server::AssetServer, handle::AssetHandle, Asset, LoadableAsset,
-};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
 use concerto_reflect::Reflect;
 use glam::Mat4;
 use serde::{Deserialize, Serialize};
@@ -26,8 +22,8 @@ impl From<Vec<Mat4>> for Skeleton {
 
 impl LoadableAsset for Skeleton {}
 
-#[derive(Component, Clone, Reflect, Serialize, Deserialize)]
-#[reflect(opaque, SceneComponent)]
+#[derive(Component, Clone, Reflect, Default)]
+#[reflect(SceneComponent)]
 pub struct SkeletonComponent {
     pub skeleton: AssetHandle<Skeleton>,
     pub bones: Vec<SceneEntityRef>,
@@ -64,20 +60,5 @@ impl SkeletonComponent {
 
     pub fn root(&self) -> Option<Entity> {
         self.root.and_then(SceneEntityRef::entity)
-    }
-}
-
-impl SceneComponent for SkeletonComponent {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let Some(server) = ctx.get_resource::<AssetServer>() {
-            self.skeleton = server.load(self.skeleton.id());
-        }
-        for bone in &mut self.bones {
-            ctx.resolve_entity(bone);
-        }
-        if let Some(root) = &mut self.root {
-            ctx.resolve_entity(root);
-        }
-        ctx.insert(self, entity);
     }
 }

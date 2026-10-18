@@ -7,12 +7,12 @@ use concerto_ecs::{Entity, IntoSystem, Res, Resource, System, World};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
 use concerto_render::components::camera::Camera;
 use concerto_scene::capture::{capture_scene, capture_subtree};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world};
 use glam::Vec3;
-use serde_json::Value;
 use uuid::Uuid;
 
 fn world() -> World {
@@ -20,6 +20,7 @@ fn world() -> World {
     world.register_type::<Transform>();
     world.register_type::<Camera>();
     world.register_type::<SkeletonComponent>();
+    world.register_type::<AssetHandle<Skeleton>>();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
     world.register_component::<Name>();
@@ -40,14 +41,20 @@ fn node(name: &str, children: Vec<usize>, components: Vec<SerializedComponent>) 
     }
 }
 
-fn serialized<T: concerto_ecs::component::scene::SceneComponent>(value: &T) -> SerializedComponent {
+fn serialized<T: Reflect>(value: &T) -> SerializedComponent {
     SerializedComponent {
-        type_name: T::name().into(),
-        data: serde_json::to_string(value).unwrap(),
+        type_name: std::any::type_name::<T>().into(),
+        value: to_value(value).unwrap(),
     }
 }
 
-fn comparable(scene: &Scene) -> Vec<(String, Vec<usize>, Vec<(String, Value)>)> {
+fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
+    let mut value = T::default();
+    assert!(apply_value(&mut value, &component.value).is_empty());
+    value
+}
+
+fn comparable(scene: &Scene) -> Vec<(String, Vec<usize>, Vec<(String, ReflectedValue)>)> {
     scene
         .nodes
         .iter()
@@ -57,12 +64,7 @@ fn comparable(scene: &Scene) -> Vec<(String, Vec<usize>, Vec<(String, Value)>)> 
                 node.children.clone(),
                 node.components
                     .iter()
-                    .map(|component| {
-                        (
-                            component.type_name.clone(),
-                            serde_json::from_str(&component.data).unwrap(),
-                        )
-                    })
+                    .map(|component| (component.type_name.clone(), component.value.clone()))
                     .collect(),
             )
         })
@@ -152,13 +154,17 @@ fn resolved_skeleton_references_capture_as_node_indices() {
         .map(|node| node.name.as_str())
         .collect();
     assert_eq!(names, ["a", "b", "mesh"]);
-    let skeleton: SkeletonComponent =
-        serde_json::from_str(&captured.nodes[2].components[0].data).unwrap();
+    let skeleton: SkeletonComponent = decode(&captured.nodes[2].components[0]);
     assert_eq!(
         skeleton.bones,
         [SceneEntityRef::Index(1), SceneEntityRef::Index(0)]
     );
     assert_eq!(skeleton.root, Some(SceneEntityRef::Index(0)));
+    assert_eq!(
+        captured.referenced_assets,
+        [AssetId::from_path("rig#skeleton")],
+        "capture lists every asset a handle in the scene names"
+    );
 }
 
 #[test]
@@ -237,8 +243,7 @@ fn a_subtree_capture_starts_at_the_entity_and_remaps_inner_references() {
         .collect();
     assert_eq!(names, ["group", "mesh", "bone"]);
     assert_eq!(captured.nodes[0].children, [1, 2]);
-    let skeleton: SkeletonComponent =
-        serde_json::from_str(&captured.nodes[1].components[0].data).unwrap();
+    let skeleton: SkeletonComponent = decode(&captured.nodes[1].components[0]);
     assert_eq!(skeleton.bones, [SceneEntityRef::Index(2)]);
 }
 

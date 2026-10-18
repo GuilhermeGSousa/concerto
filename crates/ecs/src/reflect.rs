@@ -1,16 +1,16 @@
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+};
 
+use concerto_asset_format::AssetId;
 use concerto_reflect::{
-    FromType, Reflect, ReflectDefault, TypeData, TypeRegistration, TypeRegistry,
+    EncodeError, FromType, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue, TypeData,
+    TypeRegistration, TypeRegistry, ValueWarning, apply_value_with, to_value_with,
 };
 use derive_more::{Deref, DerefMut};
-use serde_json::Value;
 
-use crate::{
-    Component, Entity, Resource, World,
-    component::scene::{SceneComponent, SceneSpawnContext},
-    system::input::ComponentMetadata,
-};
+use crate::{Component, Entity, Resource, World, system::input::ComponentMetadata};
 
 /// The world's type registry.
 #[derive(Resource, Default, Deref, DerefMut)]
@@ -86,38 +86,146 @@ fn insert_boxed<T: Component + Reflect>(
     true
 }
 
-/// How a scene file spawns and captures a component; serde-backed until scenes use reflection.
+/// How a scene spawns a component from stored data and captures it back.
 #[derive(Clone, Copy)]
 pub struct ReflectSceneComponent {
-    pub apply: fn(&str, Entity, &mut SceneSpawnContext<'_>) -> Result<(), serde_json::Error>,
-    pub to_json: fn(&World, Entity) -> Option<String>,
-    pub read: fn(&World, Entity) -> Option<Value>,
+    pub spawn: fn(&mut World, Entity, &ReflectedValue, &[Entity]) -> Vec<ValueWarning>,
+    pub capture:
+        fn(&World, Entity, &mut SceneCapture) -> Option<Result<ReflectedValue, EncodeError>>,
 }
 
 impl TypeData for ReflectSceneComponent {}
 
-impl<T: SceneComponent + Reflect> FromType<T> for ReflectSceneComponent {
+impl<T: Component + Reflect + Default> FromType<T> for ReflectSceneComponent {
     fn from_type() -> Self {
         Self {
-            apply: apply::<T>,
-            to_json: |world, entity| {
-                serde_json::to_string(world.get_component_for_entity::<T>(entity)?).ok()
-            },
-            read: |world, entity| {
-                serde_json::to_value(world.get_component_for_entity::<T>(entity)?).ok()
-            },
+            spawn: spawn::<T>,
+            capture: capture::<T>,
         }
     }
 }
 
-fn apply<T: SceneComponent>(
-    json: &str,
+fn spawn<T: Component + Reflect + Default>(
+    world: &mut World,
     entity: Entity,
-    ctx: &mut SceneSpawnContext<'_>,
-) -> Result<(), serde_json::Error> {
-    let value: T = serde_json::from_str(json)?;
-    value.apply(entity, ctx);
-    Ok(())
+    stored: &ReflectedValue,
+    node_entities: &[Entity],
+) -> Vec<ValueWarning> {
+    let mut value = T::default();
+    let warnings = apply_value_with(
+        &mut value,
+        stored,
+        &mut SpawnHook(SceneSpawn {
+            world,
+            node_entities,
+        }),
+    );
+    world.insert(value, entity);
+    warnings
+}
+
+fn capture<T: Component + Reflect>(
+    world: &World,
+    entity: Entity,
+    capture: &mut SceneCapture,
+) -> Option<Result<ReflectedValue, EncodeError>> {
+    let value = world.get_component_for_entity::<T>(entity)?;
+    Some(to_value_with(
+        value,
+        &mut CaptureHook {
+            registry: world.get_resource::<AppTypeRegistry>(),
+            capture,
+        },
+    ))
+}
+
+/// How a leaf that needs the world is spawned from a scene and captured into one.
+#[derive(Clone, Copy)]
+pub struct ReflectSceneLeaf {
+    pub spawn: fn(&mut dyn Reflect, &[u8], &SceneSpawn<'_>) -> Result<(), LeafError>,
+    pub capture: fn(&dyn Reflect, &mut SceneCapture) -> Result<Vec<u8>, LeafError>,
+}
+
+impl TypeData for ReflectSceneLeaf {}
+
+/// What a leaf sees while its scene is spawned.
+pub struct SceneSpawn<'w> {
+    pub world: &'w World,
+    /// One entity per scene node, by node index.
+    pub node_entities: &'w [Entity],
+}
+
+/// What a scene capture collects beside the values: node indices in, referenced assets out.
+#[derive(Default)]
+pub struct SceneCapture {
+    node_indices: HashMap<Entity, usize>,
+    referenced_assets: Vec<AssetId>,
+}
+
+impl SceneCapture {
+    pub fn new(node_indices: HashMap<Entity, usize>) -> Self {
+        Self {
+            node_indices,
+            referenced_assets: Vec::new(),
+        }
+    }
+
+    /// The node index `entity` is captured as, if it is in the scene.
+    pub fn index_of(&self, entity: Entity) -> Option<usize> {
+        self.node_indices.get(&entity).copied()
+    }
+
+    /// Records an asset the captured values refer to; the nil id is not an asset.
+    pub fn reference(&mut self, id: AssetId) {
+        if !id.is_nil() && !self.referenced_assets.contains(&id) {
+            self.referenced_assets.push(id);
+        }
+    }
+
+    pub fn referenced_assets(&self) -> &[AssetId] {
+        &self.referenced_assets
+    }
+
+    pub fn into_referenced_assets(self) -> Vec<AssetId> {
+        self.referenced_assets
+    }
+}
+
+struct SpawnHook<'w>(SceneSpawn<'w>);
+
+impl LeafHook for SpawnHook<'_> {
+    fn encode(&mut self, _: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
+        None
+    }
+
+    fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>> {
+        let spawn = self
+            .0
+            .world
+            .get_resource::<AppTypeRegistry>()?
+            .get_type_data::<ReflectSceneLeaf>((&*leaf as &dyn Any).type_id())?
+            .spawn;
+        Some(spawn(leaf, bytes, &self.0))
+    }
+}
+
+struct CaptureHook<'a> {
+    registry: Option<&'a AppTypeRegistry>,
+    capture: &'a mut SceneCapture,
+}
+
+impl LeafHook for CaptureHook<'_> {
+    fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
+        let capture = self
+            .registry?
+            .get_type_data::<ReflectSceneLeaf>((leaf as &dyn Any).type_id())?
+            .capture;
+        Some(capture(leaf, self.capture))
+    }
+
+    fn decode(&mut self, _: &mut dyn Reflect, _: &[u8]) -> Option<Result<(), LeafError>> {
+        None
+    }
 }
 
 /// A scene component an entity carries, as `World::component_types` lists it.
@@ -148,13 +256,18 @@ impl<'w> SceneComponentType<'w> {
         self.registration
     }
 
-    /// The component's value as the JSON text a scene file stores.
-    pub fn to_json(&self, world: &World, entity: Entity) -> Option<String> {
-        (self.scene.to_json)(world, entity)
-    }
-
-    /// The component's current value off `entity`.
-    pub fn read(&self, world: &World, entity: Entity) -> Option<Value> {
-        (self.scene.read)(world, entity)
+    /// The component's value off `entity` as scene data, mapping entities and recording assets in `capture`.
+    pub fn capture(
+        &self,
+        world: &World,
+        entity: Entity,
+        capture: &mut SceneCapture,
+    ) -> Result<ReflectedValue, EncodeError> {
+        (self.scene.capture)(world, entity, capture).unwrap_or_else(|| {
+            Err(EncodeError {
+                path: String::new(),
+                error: LeafError(format!("{} is not on {entity:?}", self.name())),
+            })
+        })
     }
 }

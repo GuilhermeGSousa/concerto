@@ -38,7 +38,7 @@ pub fn spawn_scene(cmd: &mut CommandQueue<'_, '_>, scene: &Scene, parent: Entity
         for component in &node.components {
             cmd.apply_scene_component(
                 component.type_name.clone(),
-                component.data.clone(),
+                component.value.clone(),
                 node_entities[index],
                 shared_nodes.clone(),
             );
@@ -83,7 +83,7 @@ pub fn spawn_scene_in_world(world: &mut World, scene: &Scene, parent: Entity) ->
         for component in &node.components {
             world.apply_scene_component(
                 &component.type_name,
-                &component.data,
+                &component.value,
                 node_entities[index],
                 &node_entities,
             );

@@ -1,14 +1,13 @@
 use concerto_app::extractor::Extracted;
 use concerto_color::{Color, LinearRgba};
 use concerto_foundation::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+    assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::GlobalTransform,
 };
 use encase::{ShaderType, UniformBuffer};
 
 use concerto_ecs::{
     command::CommandQueue,
-    component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     query::Query,
     reflect::{ReflectComponent, ReflectSceneComponent},
@@ -17,7 +16,6 @@ use concerto_ecs::{
 };
 use concerto_window::plugin::Window;
 use glam::{Mat4, Vec3, Vec4};
-use serde::{Deserialize, Serialize};
 use wgpu::util::DeviceExt;
 
 use crate::{
@@ -41,13 +39,12 @@ pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(
 );
 
 #[allow(dead_code)]
-#[derive(Serialize, Deserialize)]
+#[derive(concerto_reflect::Reflect, Default)]
 pub enum RenderTarget {
+    #[default]
     MainWindow,
     Texture(AssetHandle<Texture>),
 }
-
-impl concerto_reflect::Reflect for RenderTarget {}
 
 #[allow(dead_code)]
 impl RenderTarget {
@@ -60,7 +57,7 @@ impl RenderTarget {
     }
 }
 
-#[derive(Component, concerto_reflect::Reflect, Serialize, Deserialize)]
+#[derive(Component, concerto_reflect::Reflect)]
 #[reflect(Component, SceneComponent)]
 pub struct Camera {
     pub aspect: f32,
@@ -69,17 +66,6 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
-}
-
-impl SceneComponent for Camera {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let RenderTarget::Texture(handle) = &self.render_target {
-            if let Some(server) = ctx.get_resource::<AssetServer>() {
-                self.render_target = RenderTarget::Texture(server.load(handle.id()));
-            }
-        }
-        ctx.insert(self, entity);
-    }
 }
 
 impl Camera {

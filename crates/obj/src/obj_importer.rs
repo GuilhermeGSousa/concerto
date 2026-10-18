@@ -8,17 +8,16 @@ use std::path::Path;
 
 use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
 use concerto_color::Color;
-use concerto_ecs::component::scene::SceneComponent;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::vertex::Vertex;
+use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
 use concerto_scene::scene::{Scene, SceneNode};
-use serde::Serialize;
 
 pub struct ObjImporter;
 
@@ -94,12 +93,9 @@ impl Importer for ObjImporter {
     }
 }
 
-/// Serializes `component` onto `node`, mapping the serde failure into an
-/// `ImportError` tagged against the `scene` sub-asset.
-fn push_node_component<T: Serialize + SceneComponent>(
-    node: &mut SceneNode,
-    component: &T,
-) -> Result<(), ImportError> {
+/// Stores `component` onto `node`, mapping a failure into an `ImportError`
+/// tagged against the `scene` sub-asset.
+fn push_node_component<T: Reflect>(node: &mut SceneNode, component: &T) -> Result<(), ImportError> {
     node.push_component(component)
         .map_err(|err| ImportError::SerializationFailed {
             sub_asset_name: "scene".to_string(),

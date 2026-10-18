@@ -1,13 +1,7 @@
 use concerto_color::{Color, LinearRgba};
-use concerto_ecs::{
-    component::scene::{SceneComponent, SceneSpawnContext},
-    component::Component,
-    reflect::ReflectSceneComponent,
-    Entity,
-};
+use concerto_ecs::{component::Component, reflect::ReflectSceneComponent};
 use concerto_reflect::Reflect;
 use glam::Vec4;
-use serde::{Deserialize, Serialize};
 
 use super::camera::CameraUniform;
 
@@ -18,21 +12,13 @@ pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 /// Fog and ambient light for everything a camera draws with the standard
 /// material. Goes on the same entity as the [`Camera`](super::camera::Camera);
 /// a camera without one gets no fog and the default ambient light.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect, Serialize, Deserialize)]
-#[reflect(opaque, SceneComponent)]
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect)]
+#[reflect(SceneComponent)]
 pub struct CameraEnvironment {
-    #[serde(default)]
     pub fog: Option<Fog>,
     /// Ambient light, as a colour multiplied by each surface's albedo;
     /// `None` uses [`DEFAULT_AMBIENT_INTENSITY`].
-    #[serde(default)]
     pub ambient: Option<Color>,
-}
-
-impl SceneComponent for CameraEnvironment {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
 }
 
 impl CameraEnvironment {
@@ -86,7 +72,7 @@ impl CameraEnvironment {
 }
 
 /// Exponential-squared distance fog toward `color`, starting at `start`.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
 pub struct Fog {
     pub color: Color,
     pub density: f32,

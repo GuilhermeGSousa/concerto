@@ -67,10 +67,9 @@ fn writes_content_assets_with_content_path_cross_references() {
         .iter()
         .find(|c| c.type_name == MeshComponent::name())
         .expect("the node carries a MeshComponent");
-    let referenced = serde_json::from_str::<MeshComponent>(&component.data)
-        .expect("a MeshComponent payload must deserialize")
-        .handle
-        .id();
+    let mut mesh = MeshComponent::default();
+    assert!(concerto_reflect::apply_value(&mut mesh, &component.value).is_empty());
+    let referenced = mesh.handle.id();
     assert_eq!(
         referenced, mesh_id,
         "the MeshComponent must address the mesh's minted id, not triangle.gltf#mesh/0"

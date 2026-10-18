@@ -8,7 +8,6 @@ use concerto::animation::node::state_machine::{AnimationFSMTrigger, AnimationSta
 use concerto::animation::node::{AnimationClipNode, AnimationNodeKind};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
 use concerto::director::VirtualCamera;
-use concerto::ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, ResMut, With, Without};
 use concerto::foundation::transform::Transform;
@@ -28,7 +27,6 @@ use concerto::{
     reflect::{Reflect, ReflectDefault},
 };
 use glam::{Quat, Vec2, Vec3};
-use serde::{Deserialize, Serialize};
 
 const CHAR_SCENE: AssetId = asset_id!("content/UAL1/scene.gasset");
 
@@ -52,16 +50,10 @@ pub(crate) struct Player;
 #[derive(Component)]
 pub(crate) struct AnimationsReady;
 
-#[derive(Component, Reflect, Default, Serialize, Deserialize)]
+#[derive(Component, Reflect, Default)]
 #[reflect(Component, Default, SceneComponent)]
 pub(crate) struct PlayerSpawner {
     should_spawn: bool,
-}
-
-impl SceneComponent for PlayerSpawner {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
 }
 
 pub(crate) fn spawn_character(

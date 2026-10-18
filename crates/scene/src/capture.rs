@@ -2,15 +2,13 @@ use std::collections::HashMap;
 
 use anyhow::bail;
 use concerto_ecs::{
-    component::{name::Name, scene::with_entity_indices},
-    entity::hierarchy::Children,
-    Entity, World,
+    component::name::Name, entity::hierarchy::Children, reflect::SceneCapture, Entity, World,
 };
 
 use crate::scene::{Scene, SceneNode, SerializedComponent};
 
 /// Reads every descendant of `root` back into a [`Scene`]; the inverse of
-/// [`spawn_scene`](crate::spawner::spawn_scene). `referenced_assets` is left empty.
+/// [`spawn_scene`](crate::spawner::spawn_scene), listing every asset its handles name.
 pub fn capture_scene(world: &World, root: Entity) -> anyhow::Result<Scene> {
     capture(world, child_entities(world, root))
 }
@@ -31,18 +29,17 @@ fn capture(world: &World, roots: Vec<Entity>) -> anyhow::Result<Scene> {
         .enumerate()
         .map(|(index, entity)| (*entity, index))
         .collect();
+    let mut capture = SceneCapture::new(indices);
 
-    let nodes = with_entity_indices(&indices, || {
-        entities
-            .iter()
-            .zip(children)
-            .map(|(entity, children)| capture_node(world, *entity, children))
-            .collect::<anyhow::Result<Vec<_>>>()
-    })?;
+    let nodes = entities
+        .iter()
+        .zip(children)
+        .map(|(entity, children)| capture_node(world, *entity, children, &mut capture))
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     Ok(Scene {
         nodes,
-        referenced_assets: Vec::new(),
+        referenced_assets: capture.into_referenced_assets(),
     })
 }
 
@@ -69,7 +66,12 @@ fn collect(
     index
 }
 
-fn capture_node(world: &World, entity: Entity, children: Vec<usize>) -> anyhow::Result<SceneNode> {
+fn capture_node(
+    world: &World,
+    entity: Entity,
+    children: Vec<usize>,
+    capture: &mut SceneCapture,
+) -> anyhow::Result<SceneNode> {
     let name = world
         .get_component_for_entity::<Name>(entity)
         .map(|name| name.as_str().to_owned())
@@ -77,15 +79,16 @@ fn capture_node(world: &World, entity: Entity, children: Vec<usize>) -> anyhow::
 
     let mut components = Vec::new();
     for info in world.component_types(entity) {
-        let Some(data) = info.to_json(world, entity) else {
-            bail!(
-                "component '{}' on '{name}' cannot be written to a scene",
+        let value = match info.capture(world, entity, capture) {
+            Ok(value) => value,
+            Err(error) => bail!(
+                "component '{}' on '{name}' cannot be written to a scene: {error}",
                 info.name()
-            );
+            ),
         };
         components.push(SerializedComponent {
             type_name: info.name().to_owned(),
-            data,
+            value,
         });
     }
     components.sort_by(|a, b| a.type_name.cmp(&b.type_name));

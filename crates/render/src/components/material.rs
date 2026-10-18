@@ -1,14 +1,9 @@
 use std::marker::PhantomData;
 
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto_ecs::component::Component;
 use concerto_ecs::reflect::ReflectSceneComponent;
-use concerto_ecs::Entity;
-use concerto_foundation::assets::{
-    asset_server::AssetServer, handle::AssetHandle, AssetId, LoadableAsset,
-};
+use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_reflect::Reflect;
-use serde::{Deserialize, Serialize};
 
 use crate::{assets::material::StandardMaterial, Material};
 
@@ -18,19 +13,17 @@ use crate::{assets::material::StandardMaterial, Material};
 /// The type parameter `M` defaults to [`StandardMaterial`] so existing code that writes
 /// `MaterialComponent { handle: … }` with a `StandardMaterial` handle continues to work
 /// without any change.  Custom materials use `MaterialComponent::<MyMaterial> { handle: … }`.
-#[derive(Component, Reflect, Serialize, Deserialize)]
-#[reflect(opaque, SceneComponent)]
-#[serde(bound = "")]
+#[derive(Component, Reflect)]
+#[reflect(SceneComponent)]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {
     pub handle: AssetHandle<M>,
 }
 
-impl<M: Material + LoadableAsset> SceneComponent for MaterialComponent<M> {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let Some(server) = ctx.get_resource::<AssetServer>() {
-            self.handle = server.load(self.handle.id());
+impl<M: Material + Send + Sync + 'static> Default for MaterialComponent<M> {
+    fn default() -> Self {
+        Self {
+            handle: AssetHandle::default(),
         }
-        ctx.insert(self, entity);
     }
 }
 

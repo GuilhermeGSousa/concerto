@@ -1,8 +1,6 @@
 use std::ops::Mul;
 
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto_ecs::component::{Component, ComponentLifecycleCallback};
-use concerto_ecs::entity::Entity;
 use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Affine3A, Mat4, Quat, Vec3};
@@ -37,12 +35,6 @@ impl Component for Transform {
         Some(|mut world, context| {
             world.remove_component::<GlobalTransform>(context.entity);
         })
-    }
-}
-
-impl SceneComponent for Transform {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
     }
 }
 

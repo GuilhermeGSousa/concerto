@@ -216,7 +216,8 @@ system input that reads `E` from every hosted `App`, keeping one cursor per
 hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
 Whether the scene has unsaved edits is state kept in the edit `App`
 (`SceneDirty`); the document's dot follows it. A save asks the edit `App` for the
-scene directly and writes it in the same step.
+scene directly and writes it in the same step. The saved file lists every asset
+the scene's components name, including ones added in the editor.
 
 The inspector uses typed property adapters. Its "add component" row
 adds any registered type declaring `#[reflect(Component, Default)]` that the

@@ -5,7 +5,7 @@ use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomDa
 
 use crate::command::{Command, CommandQueue, CommandQueueState};
 use crate::component::bundle::{ComponentBundle, IntoBundle, MergeRow, PushRow, ReplaceRow};
-use crate::component::scene::SceneSpawnContext;
+use crate::component::scene::SceneEntityRef;
 use crate::entity::EntityWorldMut;
 use crate::entity::entity_store::EntityStore;
 use crate::query::QueryData;
@@ -29,6 +29,7 @@ use crate::{
     utilities::TypeIdMap,
 };
 use crate::{component::Tick, system::meta::SystemMetadata};
+use concerto_reflect::ReflectedValue;
 use concerto_reflect::{GetTypeRegistration, TypeRegistration};
 
 /// The central container of the ECS.
@@ -68,7 +69,7 @@ impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
         let mut world = Self::default();
-        world.insert_resource(AppTypeRegistry::default());
+        world.type_registry_mut();
         world
     }
 
@@ -512,12 +513,16 @@ impl World {
 
     /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
     pub fn register_type<T: GetTypeRegistration>(&mut self) {
+        self.type_registry_mut().register::<T>();
+    }
+
+    fn type_registry_mut(&mut self) -> &mut AppTypeRegistry {
         if self.get_resource::<AppTypeRegistry>().is_none() {
-            self.insert_resource(AppTypeRegistry::default());
+            let mut registry = AppTypeRegistry::default();
+            registry.register::<SceneEntityRef>();
+            self.insert_resource(registry);
         }
-        self.get_resource_mut::<AppTypeRegistry>()
-            .unwrap()
-            .register::<T>();
+        self.get_resource_mut::<AppTypeRegistry>().unwrap()
     }
 
     /// Every component `entity` carries, including ones that are not scene
@@ -551,50 +556,34 @@ impl World {
             })
     }
 
-    /// Deserializes `json` into the component registered under `type_name` and
-    /// applies it to `entity`. Returns `false` (having logged why) when the name
-    /// is unregistered or the payload does not parse — a scene may carry
-    /// components this application does not know about.
+    /// Spawns the component registered under `type_name` from `value` onto `entity`,
+    /// resolving node references through `node_entities`. Returns `false`, having
+    /// logged why, when no scene component is registered under that name; parts of
+    /// `value` that do not fit are skipped with a warning.
     pub fn apply_scene_component(
         &mut self,
         type_name: &str,
-        json: &str,
+        value: &ReflectedValue,
         entity: Entity,
         node_entities: &[Entity],
     ) -> bool {
-        let applied = self.apply_scene_component_internal(type_name, json, entity, node_entities);
-        self.flush_commands();
-        applied
-    }
-
-    fn apply_scene_component_internal(
-        &mut self,
-        type_name: &str,
-        json: &str,
-        entity: Entity,
-        node_entities: &[Entity],
-    ) -> bool {
-        let apply = self
+        let spawn = self
             .get_resource::<AppTypeRegistry>()
             .and_then(|registry| registry.get_by_name(type_name))
             .and_then(|registration| registration.data::<ReflectSceneComponent>())
-            .map(|scene| scene.apply);
-        let Some(apply) = apply else {
+            .map(|scene| scene.spawn);
+        let Some(spawn) = spawn else {
             warn!(
                 "Skipping component '{type_name}': no scene component registered under that name \
                  (derive Reflect with #[reflect(SceneComponent)] and register it with App::register_type)"
             );
             return false;
         };
-
-        let mut ctx = SceneSpawnContext::new(self, node_entities);
-        match apply(json, entity, &mut ctx) {
-            Ok(()) => true,
-            Err(err) => {
-                warn!("Failed to deserialize component '{type_name}' from `{json}`: {err}");
-                false
-            }
+        for warning in spawn(self, entity, value, node_entities) {
+            warn!("Component '{type_name}': {warning}");
         }
+        self.flush_commands();
+        true
     }
 
     pub(crate) fn make_command_queue<'world>(&'world mut self) -> CommandQueue<'world, 'world> {

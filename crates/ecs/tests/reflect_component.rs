@@ -28,17 +28,16 @@ fn component<T: 'static>(world: &World) -> ReflectComponent {
 }
 
 #[test]
-fn a_new_world_has_an_empty_type_registry() {
+fn a_new_world_registers_only_scene_entity_references() {
     let world = World::new();
 
-    assert_eq!(
-        world
-            .get_resource::<AppTypeRegistry>()
-            .unwrap()
-            .iter()
-            .count(),
-        0
+    let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+    assert!(
+        registry
+            .get(TypeId::of::<concerto_ecs::component::scene::SceneEntityRef>())
+            .is_some()
     );
+    assert_eq!(registry.iter().count(), 1);
 }
 
 #[test]

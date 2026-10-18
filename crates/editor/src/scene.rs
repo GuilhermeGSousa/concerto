@@ -1352,11 +1352,13 @@ mod tests {
     }
 
     #[test]
-    fn a_save_writes_back_the_asset_ids_the_scene_file_listed() {
+    fn a_save_lists_the_assets_the_scene_names_instead_of_the_ones_its_file_listed() {
+        use concerto_foundation::assets::handle::AssetHandle;
+        use concerto_mesh::mesh::{Mesh, MeshComponent};
+
         let mut f = SceneFixture::new();
-        let referenced = AssetId::new();
         let mut scene = f.saved_scene();
-        scene.referenced_assets = vec![referenced];
+        scene.referenced_assets = vec![AssetId::new()];
         let path = f.project_root.join(&f.scene.address);
         let bytes = std::fs::read(&path).unwrap();
         let (header, _) = read_content_asset(&bytes).unwrap();
@@ -1366,11 +1368,22 @@ mod tests {
         )
         .unwrap();
         let document = f.open();
+        let entity = f.scene_entity(document, "first");
+        let mesh = AssetId::new();
+        let world = f.scene_world_mut(document);
+        world.register_type::<MeshComponent>();
+        world.register_type::<AssetHandle<Mesh>>();
+        world.insert(
+            MeshComponent {
+                handle: AssetHandle::weak(mesh),
+            },
+            entity,
+        );
         f.rename(document, "first", "renamed");
 
         save(&mut f, document);
 
-        assert_eq!(f.saved_scene().referenced_assets, [referenced]);
+        assert_eq!(f.saved_scene().referenced_assets, [mesh]);
     }
 
     #[test]

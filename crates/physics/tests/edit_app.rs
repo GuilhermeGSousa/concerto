@@ -27,7 +27,8 @@ fn an_edit_app_opens_and_saves_a_mesh_collider() {
     let world = app.main_mut().world_mut();
     let entity = world.spawn(());
 
-    assert!(world.apply_scene_component("MeshCollider", "{}", entity, &[entity]));
+    let stored = concerto_reflect::to_value(&concerto_physics::shape::MeshCollider).unwrap();
+    assert!(world.apply_scene_component("MeshCollider", &stored, entity, &[entity]));
 
     let scene = capture_subtree(world, entity).unwrap();
     let names: Vec<&str> = scene.nodes[0]

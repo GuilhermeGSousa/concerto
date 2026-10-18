@@ -5,7 +5,6 @@ use crate::{
 };
 use concerto_ecs::{
     IntoSystem, System, World,
-    component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
 };
@@ -13,7 +12,6 @@ use concerto_foundation::transform::Transform;
 use concerto_reflect::{GetTypeRegistration, ReflectDefault};
 use concerto_ui::text::UIText;
 use glam::Vec3;
-use serde::{Deserialize, Serialize};
 
 struct Inspecting {
     f: SceneFixture,
@@ -168,14 +166,9 @@ fn rows(world: &mut World) -> Vec<(Entity, PropertyRow)> {
         .collect()
 }
 
-#[derive(Component, concerto_reflect::Reflect, Serialize, Deserialize)]
-#[reflect(opaque, SceneComponent)]
+#[derive(Component, concerto_reflect::Reflect, Default)]
+#[reflect(SceneComponent)]
 struct Tag;
-impl SceneComponent for Tag {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
-}
 #[derive(Component)]
 struct Plumbing;
 
@@ -434,7 +427,8 @@ fn labels_capitalise_the_field_name() {
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
     use concerto_reflect::{
-        FromType, PropertyVisitor, PropertyVisitorMut, Reflect, TypeRegistration,
+        Fields, FromType, PropertyVisitor, PropertyVisitorMut, Reflect, ReflectMut, ReflectRef,
+        TypeRegistration,
     };
     #[derive(Component, Default)]
     struct Dynamic {
@@ -443,7 +437,35 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
         a: f32,
         b: f32,
     }
+    impl Fields for Dynamic {
+        fn field_len(&self) -> usize {
+            2
+        }
+        fn name_at(&self, index: usize) -> Option<&'static str> {
+            ["a", "b"].get(index).copied()
+        }
+        fn field_at(&self, index: usize) -> Option<&dyn Reflect> {
+            match index {
+                0 => Some(&self.a),
+                1 => Some(&self.b),
+                _ => None,
+            }
+        }
+        fn field_at_mut(&mut self, index: usize) -> Option<&mut dyn Reflect> {
+            match index {
+                0 => Some(&mut self.a),
+                1 => Some(&mut self.b),
+                _ => None,
+            }
+        }
+    }
     impl Reflect for Dynamic {
+        fn reflect_ref(&self) -> ReflectRef<'_> {
+            ReflectRef::Struct(self)
+        }
+        fn reflect_mut(&mut self) -> ReflectMut<'_> {
+            ReflectMut::Struct(self)
+        }
         fn visit(&self, visitor: &mut dyn PropertyVisitor) {
             if self.reverse && self.show_b {
                 visitor.field("b", &self.b);
