@@ -183,7 +183,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
-        .add_child_with(theme.column().grow().clipped(), |details| {
+        .add_child_with(theme.column().grow().clipped(), |mut details| {
             details.add_child(name_field(theme)).add_child_with(
                 (
                     UINode::default()

@@ -134,7 +134,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                 .gap(theme.spacing_md),
             Interactable,
         ),
-        |card| {
+        |mut card| {
             card.add_child(
                 theme
                     .label("Import assets")
@@ -160,7 +160,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                     );
                     let pool_entity = pool.entity();
                     for slot in 0..SLOTS {
-                        pool = pool.add_child_with(
+                        pool.add_child_with(
                             (
                                 theme
                                     .row()
@@ -172,7 +172,7 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                                     .fixed(),
                                 DialogRow(slot),
                             ),
-                            |row| {
+                            |mut row| {
                                 row.add_child((
                                     theme
                                         .label("")
@@ -209,22 +209,25 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                     });
                 },
             )
-            .add_child_with(theme.row().justify(taffy::AlignContent::End), |footer| {
-                footer
-                    .add_child(
-                        theme
-                            .button("Cancel")
-                            .width(UIValue::Px(96.0))
-                            .on_click(press_cancel),
-                    )
-                    .add_child((
-                        theme
-                            .button("Import")
-                            .width(UIValue::Px(96.0))
-                            .on_click(press_confirm),
-                        ImportButton,
-                    ));
-            });
+            .add_child_with(
+                theme.row().justify(taffy::AlignContent::End),
+                |mut footer| {
+                    footer
+                        .add_child(
+                            theme
+                                .button("Cancel")
+                                .width(UIValue::Px(96.0))
+                                .on_click(press_cancel),
+                        )
+                        .add_child((
+                            theme
+                                .button("Import")
+                                .width(UIValue::Px(96.0))
+                                .on_click(press_confirm),
+                            ImportButton,
+                        ));
+                },
+            );
         },
     );
 }
