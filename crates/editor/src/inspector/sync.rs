@@ -214,11 +214,12 @@ fn spawn_card(
     );
     let entity = card_queue.entity();
 
-    card_queue =
-        card_queue.add_child_with(theme.row().fixed().gap(theme.spacing_xs + 2.0), |header| {
-            let mut header = header.add_child(theme.label(name).single_line().grow());
+    card_queue.add_child_with(
+        theme.row().fixed().gap(theme.spacing_xs + 2.0),
+        |mut header| {
+            header.add_child(theme.label(name).single_line().grow());
             if removable {
-                header = header.add_child(menu_button(theme, target, type_id));
+                header.add_child(menu_button(theme, target, type_id));
             }
             header.add_child((
                 theme
@@ -229,7 +230,8 @@ fn spawn_card(
                     .fixed(),
                 UIDisabled,
             ));
-        });
+        },
+    );
 
     let body = card_queue.spawn_child_queue(body_node(theme)).entity();
 
@@ -257,7 +259,7 @@ fn spawn_row(
         label_for(&property.path)
     };
     let mut body_queue = cmd.entity(card.body);
-    let row_queue = body_queue.spawn_child_queue((
+    let mut row_queue = body_queue.spawn_child_queue((
         theme.row().fixed().gap(theme.spacing_xs),
         target,
         property.value,

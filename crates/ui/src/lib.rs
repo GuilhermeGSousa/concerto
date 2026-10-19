@@ -32,6 +32,7 @@ pub mod text;
 pub mod text_input;
 pub mod theme;
 pub mod transform;
+pub mod tree;
 pub mod widgets;
 
 mod resources;

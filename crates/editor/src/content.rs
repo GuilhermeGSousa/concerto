@@ -120,7 +120,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
             .with_padding(UIRect::all(10.0))
             .clipped(),
         |mut panel| {
-            panel = panel.add_child_with(theme.row().gap(6.0).fixed(), |bar| {
+            panel.add_child_with(theme.row().gap(6.0).fixed(), |mut bar| {
                 bar.add_child_with(
                     theme
                         .card()
@@ -132,7 +132,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                         .row()
                         .padding(UIRect::axes(0.0, 8.0))
                         .gap(6.0),
-                    |search| {
+                    |mut search| {
                         search
                             .add_child(theme.label("⌕").muted().no_wrap())
                             .add_child((
@@ -158,7 +158,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                 );
             });
 
-            panel = panel.add_child_with(
+            panel.add_child_with(
                 UINode::default()
                     .with_flex_shrink(0.0)
                     .with_flex_direction(FlexDirection::Row)
@@ -166,13 +166,12 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                     .with_margin(UIRect::axes(7.0, 0.0)),
                 |mut tags| {
                     for (index, (name, _)) in KINDS.iter().enumerate() {
-                        tags =
-                            tags.add_child((theme.chip(*name).on_click(select_kind), Tag(index)));
+                        tags.add_child((theme.chip(*name).on_click(select_kind), Tag(index)));
                     }
                 },
             );
 
-            panel = panel.add_child_with(
+            panel.add_child_with(
                 (
                     UINode::default()
                         .with_flex_grow(1.0)
@@ -192,7 +191,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                     let pool_entity = pool.entity();
 
                     for slot in 0..ROWS {
-                        pool = pool.add_child_with(
+                        pool.add_child_with(
                             (
                                 theme
                                     .pressable()
@@ -204,7 +203,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                                     .on_double_click(open_asset),
                                 AssetRow(slot),
                             ),
-                            |row| {
+                            |mut row| {
                                 let (mark_node, mark_material) = marks::node();
                                 row.add_child((mark_node, mark_material, MarkSlot(slot)))
                                     .add_child((

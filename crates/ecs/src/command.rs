@@ -26,15 +26,15 @@ impl<'a> EntityCommandQueue<'a> {
         self.entity
     }
 
-    pub fn add_child<T: IntoBundle<Bundle: 'static>>(self, components: T) -> Self {
+    pub fn add_child<T: IntoBundle<Bundle: 'static>>(&mut self, components: T) -> &mut Self {
         self.add_child_with(components, |_| {})
     }
 
     pub fn add_child_with<T: IntoBundle<Bundle: 'static>>(
-        mut self,
+        &mut self,
         components: T,
         f: impl Fn(EntityCommandQueue),
-    ) -> Self {
+    ) -> &mut Self {
         let child_ctx = self.command_queue.spawn(components);
         let child_entity = child_ctx.entity();
         f(child_ctx);

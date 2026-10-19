@@ -276,8 +276,9 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
             TreeRegion,
         ),
         |mut tree| {
-            tree = tree
-                .add_child_with(theme.row().height(UIValue::Px(42.0)).fixed(), |header| {
+            tree.add_child_with(
+                theme.row().height(UIValue::Px(42.0)).fixed(),
+                |mut header| {
                     header
                         .add_child((
                             line(42.0).with_flex_grow(1.0).with_flex_shrink(1.0),
@@ -294,16 +295,17 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                             AddEntityButton,
                             UIDisabled,
                         ));
-                })
-                .add_child((
-                    theme
-                        .text_field("Search entities…")
-                        .height(UIValue::Px(38.0))
-                        .padding(UIRect::axes(6.0, 8.0)),
-                    Filter,
-                ));
+                },
+            )
+            .add_child((
+                theme
+                    .text_field("Search entities…")
+                    .height(UIValue::Px(38.0))
+                    .padding(UIRect::axes(6.0, 8.0)),
+                Filter,
+            ));
 
-            tree = tree.add_child_with(
+            tree.add_child_with(
                 (
                     UINode::default()
                         .with_flex_grow(1.0)
@@ -323,7 +325,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     let pool_entity = pool.entity();
 
                     for slot in 0..ROWS {
-                        pool = pool.add_child_with(
+                        pool.add_child_with(
                             (
                                 theme
                                     .canvas()
@@ -334,7 +336,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                     .row(),
                                 RowSlot(slot),
                             ),
-                            |row| {
+                            |mut row| {
                                 let (mark_node, mark_material) = marks::node();
                                 row.add_child((
                                     icon_column(20.0),
@@ -404,7 +406,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
         } else {
             theme.text
         };
-        menu = menu.add_child_with(
+        menu.add_child_with(
             (
                 theme
                     .pressable()
@@ -413,7 +415,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     .on_click(press_row_menu_item),
                 item,
             ),
-            |entry| {
+            |mut entry| {
                 entry.add_child(theme.label(label).font_size(12.5).color(color).no_wrap());
             },
         );

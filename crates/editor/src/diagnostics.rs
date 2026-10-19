@@ -53,7 +53,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             .with_flex_grow(1.0)
             .with_flex_direction(FlexDirection::Column)
             .clipped(),
-        |panel| {
+        |mut panel| {
             panel.add_child((theme.label("").small().muted().mono().grow(), Readout));
         },
     );

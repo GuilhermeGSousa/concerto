@@ -7,10 +7,12 @@ use concerto::{
         App,
         schedule_groups::{Startup, Update},
     },
+    color::Color,
     ecs::{
         CommandQueue, Component, Entity, Query, Res, ResMut,
         signal::{On, listener::IntoListener},
     },
+    render::queue,
     ui::{
         UIRenderDiagnostics,
         anchor::{
@@ -29,9 +31,12 @@ use concerto::{
         text::UIText,
         theme::UITheme,
         transform::UIValue,
+        tree::UITreeElement,
     },
-    window::input::MouseButton,
-    window::plugin::{Window, WindowCommand},
+    window::{
+        input::MouseButton,
+        plugin::{Window, WindowCommand},
+    },
 };
 use glam::Vec2;
 
@@ -482,6 +487,30 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         ))
         .entity();
     cmd.add_child(root, diagnostics);
+
+    cmd.entity(body)
+        .spawn_child_queue(theme.panel().grow())
+        .add_child_with(
+            (
+                theme.canvas().grow(),
+                theme.text("Tree"),
+                UIScrollArea {
+                    offset: 0.0,
+                    content_extent: 280_000.0,
+                    content: None,
+                },
+                UIVirtualList::new(10_000, 28.0),
+                UITreeElement,
+            ),
+            |mut ctx| {
+                for i in 0..5 {
+                    ctx.add_child((
+                        theme.label(format!("{}", i)),
+                        VirtualRow { slot: i as usize },
+                    ));
+                }
+            },
+        );
 }
 
 fn open_context_menu(
