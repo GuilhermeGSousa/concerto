@@ -115,7 +115,7 @@ mod tests {
     use super::*;
     use crate::{
         anchor::UIPanelStack,
-        focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+        focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
         interaction::{
             HoveredNode, Interactable, UIClick, UIDoubleClick, UIInputState, update_ui_interaction,
         },
@@ -304,6 +304,18 @@ mod tests {
 
         fn focused(&self) -> Option<Entity> {
             **self.world.get_resource::<FocusedWidget>().unwrap()
+        }
+
+        fn focusable(&self, rows: &[Entity]) -> Vec<usize> {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| {
+                    self.world
+                        .get_component_for_entity::<UIFocusable>(**row)
+                        .is_some()
+                })
+                .map(|(index, _)| index)
+                .collect()
         }
 
         fn selected(&self, rows: &[Entity]) -> Vec<usize> {
@@ -812,12 +824,94 @@ mod tests {
         assert_eq!(harness.focused(), Some(rows[1]));
         assert!(harness.heard().is_empty());
         assert_eq!(harness.colour(rows[1]), LinearRgba::TRANSPARENT);
+        assert!(harness.focusable(&rows).is_empty());
 
         harness.click(rows[1], MouseButton::Right, Vec2::new(5.0, 6.0));
         assert_eq!(
             harness.heard(),
             [(rows[1], Heard::Menu(Vec2::new(5.0, 6.0)))]
         );
+    }
+
+    #[test]
+    fn rows_stop_being_focusable_when_the_list_stops_being_selectable() {
+        let mut harness = Harness::new();
+        let (list, rows) = short_list(&mut harness, UIList::default());
+        assert_eq!(harness.focusable(&rows), [0, 1, 2, 3, 4]);
+
+        harness
+            .world
+            .get_component_for_entity_mut::<UIList>(list)
+            .unwrap()
+            .selectable = false;
+        harness.settle();
+
+        assert!(harness.focusable(&rows).is_empty());
+    }
+
+    #[test]
+    fn a_row_spawned_selected_takes_the_selection() {
+        let mut harness = Harness::new();
+        let (list, mut rows) = short_list(&mut harness, UIList::default());
+        harness.world.insert(UISelected, rows[1]);
+
+        rows.push(
+            harness
+                .world
+                .spawn((UINode::default(), UISelected, ChildOf::new(list))),
+        );
+        harness.settle();
+
+        assert_eq!(harness.selected(&rows), [5]);
+    }
+
+    #[test]
+    fn a_row_spawned_selected_ahead_of_the_others_takes_the_selection() {
+        let mut harness = Harness::new();
+        let (list, mut rows) = short_list(&mut harness, UIList::default());
+        harness.world.insert(UISelected, rows[3]);
+
+        let first = harness
+            .world
+            .spawn((UINode::default(), UISelected, ChildOf::new(list)));
+        harness
+            .world
+            .get_component_for_entity_mut::<Children>(list)
+            .unwrap()
+            .sort_by_key(|child| child != first);
+        rows.push(first);
+        harness.settle();
+
+        assert_eq!(harness.selected(&rows), [5]);
+    }
+
+    #[test]
+    fn reveal_without_a_layout_puts_the_row_at_the_top() {
+        let mut harness = Harness::new();
+        let (list, rows) = long_list(&mut harness, 0.0);
+        harness.world.remove_component::<UILayout>(list);
+
+        harness.world.trigger_on(rows[500], UIReveal);
+        harness.frame();
+
+        let content = harness.layout(list).content_rect;
+        let row = harness.layout(rows[500]);
+        assert!(row.is_shown());
+        assert_eq!(row.rect.min.y, content.min.y);
+    }
+
+    #[test]
+    fn reveal_uses_the_owners_row_height() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let list = harness.list(rows_of(40.0), tall(100.0), root);
+        let rows = harness.rows(list, 100);
+        harness.settle();
+
+        harness.world.trigger_on(rows[50], UIReveal);
+        harness.frame();
+
+        assert_eq!(harness.area(list).offset, 51.0 * 40.0 - 100.0);
     }
 
     #[test]

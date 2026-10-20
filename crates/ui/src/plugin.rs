@@ -20,7 +20,7 @@ use crate::{
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     items::{
         UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
-        UITreeExpand, keep_selection_unique, navigate_items, paint_items, release_despawned_focus,
+        UITreeExpand, install_listeners, navigate_items, paint_items,
     },
     list::{set_up_list, update_lists},
     material::UIMaterial,
@@ -103,8 +103,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(UIPanelStack::default());
         app.add_listener(blank_culled_layouts);
         app.add_listener(set_up_list);
-        app.add_listener(keep_selection_unique);
-        app.add_listener(release_despawned_focus);
+        install_listeners(app.main_mut().world_mut());
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);

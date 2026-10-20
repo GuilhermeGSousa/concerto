@@ -7,7 +7,7 @@ use concerto_ecs::{
     component::Component,
     entity::{Entity, hierarchy::Children},
     events::{event_reader::EventReader, event_writer::EventWriter},
-    query::{Query, change_detection::Mut},
+    query::{Query, change_detection::Mut, filter::With},
     resource::{Res, ResMut},
     signal::{
         EntitySignal, On, Signal,
@@ -24,7 +24,6 @@ use glam::Vec2;
 use crate::{
     focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
     interaction::{HoveredNode, Interactable, UIClick, UIDoubleClick},
-    list::UIList,
     material::UIMaterial,
     node::{
         FlexDirection, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight, UILayout, UINode,
@@ -96,30 +95,51 @@ impl EntitySignal for UIItemContextMenu {}
 impl Signal for UIReveal {}
 impl EntitySignal for UIReveal {}
 
-/// Registers the listeners that keep selection unique and focus off despawned items.
+/// Registers the listeners that keep selection unique and focus off despawned items; the world needs a `FocusedWidget`.
 pub fn install_listeners(world: &mut World) {
     world.add_listener(keep_selection_unique);
+    world.add_listener(keep_new_item_selection_unique);
     world.add_listener(release_despawned_focus);
 }
 
-pub(crate) fn keep_selection_unique(
+fn keep_selection_unique(
     on: On<Add<UISelected>>,
     items: Query<&UIItem>,
-    selected: Query<(Entity, &UIItem, &UISelected)>,
+    selected: Query<(Entity, &UIItem), With<UISelected>>,
+    mut cmd: CommandQueue,
+) {
+    take_selection(on.signal().entity, &items, &selected, &mut cmd);
+}
+
+fn keep_new_item_selection_unique(
+    on: On<Add<UIItem>>,
+    items: Query<&UIItem>,
+    selected: Query<(Entity, &UIItem), With<UISelected>>,
     mut cmd: CommandQueue,
 ) {
     let entity = on.signal().entity;
+    if selected.contains_entity(entity) {
+        take_selection(entity, &items, &selected, &mut cmd);
+    }
+}
+
+fn take_selection(
+    entity: Entity,
+    items: &Query<&UIItem>,
+    selected: &Query<(Entity, &UIItem), With<UISelected>>,
+    cmd: &mut CommandQueue,
+) {
     let Some(item) = items.get_entity(entity) else {
         return;
     };
-    for (other, other_item, _) in selected.iter() {
+    for (other, other_item) in selected.iter() {
         if other != entity && other_item.owner == item.owner {
             cmd.remove::<UISelected>(other);
         }
     }
 }
 
-pub(crate) fn release_despawned_focus(on: On<Despawn<UIItem>>, mut focused: ResMut<FocusedWidget>) {
+fn release_despawned_focus(on: On<Despawn<UIItem>>, mut focused: ResMut<FocusedWidget>) {
     if **focused == Some(on.signal().entity) {
         **focused = None;
     }
@@ -158,8 +178,6 @@ fn reveal_item(
     on: On<UIReveal>,
     items: Query<&UIItem>,
     owners: Query<(&mut UIScrollArea, Option<&UILayout>)>,
-    lists: Query<&UIList>,
-    theme: Res<UITheme>,
 ) {
     let Some(item) = items.get_entity(on.entity()) else {
         return;
@@ -167,18 +185,19 @@ fn reveal_item(
     let Some((mut area, layout)) = owners.get_entity(item.owner) else {
         return;
     };
-    let row_height = lists
-        .get_entity(item.owner)
-        .and_then(|list| list.row_height)
-        .unwrap_or(theme.row_height);
-    let viewport = layout.map_or(0.0, |layout| layout.content_rect.size.y);
-    let top = item.index as f32 * row_height;
-    let offset = if top < area.offset {
-        top
-    } else if top + row_height > area.offset + viewport {
-        top + row_height - viewport
-    } else {
-        area.offset
+    let top = item.index as f32 * item.row_height;
+    let bottom = top + item.row_height;
+    let offset = match layout.map(|layout| layout.content_rect.size.y) {
+        Some(viewport) if viewport > 0.0 => {
+            if top < area.offset {
+                top
+            } else if bottom > area.offset + viewport {
+                bottom - viewport
+            } else {
+                area.offset
+            }
+        }
+        _ => top,
     };
     if area.offset != offset {
         area.offset = offset;
@@ -300,12 +319,13 @@ pub(crate) fn equip_items(
 }
 
 /// Where the widget placed a row: written by a `UIList` or `UITree` on each item it manages.
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct UIItem {
     owner: Entity,
     index: usize,
     depth: usize,
     selectable: bool,
+    row_height: f32,
 }
 
 impl UIItem {
@@ -402,6 +422,7 @@ pub(crate) fn place_rows(
             index,
             depth: 0,
             selectable,
+            row_height,
         };
         if items.get_entity(row).copied() != Some(item) {
             cmd.insert(item, row);
