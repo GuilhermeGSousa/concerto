@@ -169,7 +169,7 @@ pub(crate) fn extract_text_nodes(
 ) {
     for (text_component, layout, render_entity) in text_nodes.iter() {
         let clip = layout.clip_rect.intersection(layout.content_rect);
-        if !clip.size.cmpgt(glam::Vec2::ZERO).all() {
+        if !layout.is_shown() || !clip.has_area() {
             if render_text_nodes.contains_entity(**render_entity) {
                 cmd.remove::<RenderTextComponent>(**render_entity);
             }

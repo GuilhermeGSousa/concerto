@@ -152,6 +152,11 @@ impl UIBox {
         point.x >= self.min.x && point.y >= self.min.y && point.x <= max.x && point.y <= max.y
     }
 
+    /// Whether the box covers any area, on both axes.
+    pub fn has_area(self) -> bool {
+        self.size.x > 0.0 && self.size.y > 0.0
+    }
+
     pub fn intersection(self, other: Self) -> Self {
         let min = self.min.max(other.min);
         let max = self.max().min(other.max()).max(min);
@@ -590,6 +595,11 @@ impl UILayout {
 
     pub fn size(&self) -> Vec2 {
         self.rect.size
+    }
+
+    /// Whether any of the node may be seen; false for a culled node, whose clip is empty.
+    pub fn is_shown(&self) -> bool {
+        self.clip_rect.has_area()
     }
 }
 
@@ -1097,6 +1107,12 @@ pub(crate) fn extract_ui_nodes(
 
     for (computed_node, render_entity) in computed_nodes.iter() {
         let draw_rect = computed_node.rect.intersection(computed_node.clip_rect);
+        if !computed_node.is_shown() || !draw_rect.has_area() {
+            if render_ui_nodes.contains_entity(**render_entity) {
+                cmd.remove::<RenderUINode>(**render_entity);
+            }
+            continue;
+        }
         let location = draw_rect.min * scale;
         let size = draw_rect.size * scale;
         if render_ui_nodes
@@ -1936,6 +1952,8 @@ mod tests {
         let child = row(&mut world, root);
         lay_out(&mut world);
         let laid_out = layout_passes(&world);
+        let shown_clip = clip_of(&world, child);
+        assert!(shown_clip.has_area());
 
         world.insert(UICulled, child);
         lay_out(&mut world);
@@ -1946,7 +1964,7 @@ mod tests {
         lay_out(&mut world);
         assert!(layout_passes(&world) > culled, "unculling must relay out");
         assert_eq!(rect_of(&world, child).size, Vec2::new(100.0, 50.0));
-        assert_ne!(clip_of(&world, child).size, Vec2::ZERO);
+        assert_eq!(clip_of(&world, child), shown_clip);
     }
 
     fn hovered_at(world: &mut concerto_ecs::World, cursor: Vec2) -> Option<Entity> {
@@ -2034,6 +2052,64 @@ mod tests {
         assert_eq!(engine.style_snapshot.len(), 2);
         assert_eq!(engine.hierarchy_signature.len(), 2);
         assert!(world.get_component_for_entity::<UILayout>(shown).is_some());
+    }
+
+    fn drawing_app(gpu: &concerto_render::gpu::Gpu) -> concerto_app::App {
+        let mut app = concerto_app::App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(concerto_render::draw_target::DrawTarget::Texture(
+                SharedTexture::new(wgpu::TextureFormat::Rgba8Unorm),
+            ))
+            .insert_resource(Window::new((64, 64), 1.0));
+        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
+            .register_plugin(concerto_app::plugins::AssetManagerPlugin)
+            .register_plugin(concerto_app::plugins::TimePlugin)
+            .register_plugin(concerto_window::plugin::WindowPlugin)
+            .register_plugin(concerto_app::plugins::TransformPlugin)
+            .register_plugin(concerto_render::plugin::RenderPlugin)
+            .register_plugin(crate::plugin::UIPlugin);
+        app
+    }
+
+    fn drawn_quad(app: &concerto_app::App, node: Entity) -> bool {
+        let render_entity = **app
+            .main()
+            .world()
+            .get_component_for_entity::<RenderEntity>(node)
+            .unwrap();
+        app.render()
+            .world()
+            .get_component_for_entity::<RenderUINode>(render_entity)
+            .is_some()
+    }
+
+    #[test]
+    fn a_quad_whose_clip_is_empty_is_not_drawn() {
+        let Some(gpu) = pollster::block_on(concerto_render::gpu::Gpu::request(
+            &concerto_render::gpu::Gpu::instance(),
+            None,
+        )) else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let node = app.main_mut().world_mut().spawn((
+            UINode::default().with_size(UIValue::Px(32.0), UIValue::Px(32.0)),
+            UIMaterial::flat(concerto_color::Color::WHITE),
+        ));
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        assert!(drawn_quad(&app, node), "a shown quad is drawn");
+
+        app.main_mut().world_mut().insert(UICulled, node);
+        app.update();
+        assert!(!drawn_quad(&app, node), "a culled quad leaves no draw");
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<UICulled>(node);
+        app.update();
+        assert!(drawn_quad(&app, node), "an unculled quad is drawn again");
     }
 
     #[test]
