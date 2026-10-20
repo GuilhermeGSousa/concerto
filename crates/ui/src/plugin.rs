@@ -17,6 +17,7 @@ use crate::{
         update_focus,
     },
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
+    list::{set_up_list, update_lists},
     material::UIMaterial,
     node::{
         UILayoutDiagnostics, UILayoutEngine, UITextMeasure, blank_culled_layouts, compute_ui_nodes,
@@ -89,6 +90,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
         app.add_listener(blank_culled_layouts);
+        app.add_listener(set_up_list);
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
@@ -140,7 +142,13 @@ impl Plugin for UIPlugin {
         );
         app.add_system(
             LateUpdate,
-            (sync_slider_fill, sync_scroll_content, sync_split_panes).in_set(UiSet::Project),
+            (
+                sync_slider_fill,
+                sync_scroll_content,
+                sync_split_panes,
+                update_lists,
+            )
+                .in_set(UiSet::Project),
         );
         app.add_system(
             LateUpdate,

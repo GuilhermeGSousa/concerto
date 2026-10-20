@@ -13,6 +13,7 @@ use concerto_window::input::MouseButton;
 
 use crate::{
     interaction::{HoveredNode, Interactable, UIDrag},
+    items::UIWidgetPart,
     material::UIMaterial,
     node::{Overflow, Position, UIInset, UILayout, UINode},
     theme::UITheme,
@@ -459,6 +460,7 @@ pub(crate) fn setup_scrollbars(
                     .with_visible(false),
                 UIMaterial::flat(theme.canvas),
                 UIScrollBar { area: entity },
+                UIWidgetPart,
             ))
             .entity();
         cmd.add_child(entity, track);
@@ -471,6 +473,7 @@ pub(crate) fn setup_scrollbars(
                 UIMaterial::flat(theme.border),
                 Interactable,
                 UIScrollThumb { area: entity },
+                UIWidgetPart,
                 drag_scrollbar_thumb.into_listener(),
             ))
             .entity();

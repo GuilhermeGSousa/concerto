@@ -21,6 +21,8 @@ pub mod elements;
 pub mod focus;
 pub mod frame_stats_overlay;
 pub mod interaction;
+pub mod items;
+pub mod list;
 pub mod material;
 pub mod node;
 pub mod plugin;
