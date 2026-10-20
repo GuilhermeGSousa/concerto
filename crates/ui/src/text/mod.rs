@@ -71,6 +71,13 @@ impl Default for UIText {
     }
 }
 
+pub(crate) fn physical_metrics(font_size: f32, line_height: f32, scale: f32) -> Metrics {
+    Metrics {
+        font_size: font_size * scale,
+        line_height: line_height * scale,
+    }
+}
+
 fn truncate_to_width(
     font_system: &mut FontSystem,
     metrics: Metrics,
@@ -173,10 +180,7 @@ pub(crate) fn extract_text_nodes(
         diagnostics.record_text_reshape();
         let mut text_buffer = Buffer::new(
             &mut font_system,
-            Metrics {
-                font_size: text_component.font_size,
-                line_height: text_component.line_height,
-            },
+            physical_metrics(text_component.font_size, text_component.line_height, scale),
         );
 
         text_buffer.set_size(
@@ -213,10 +217,7 @@ pub(crate) fn extract_text_nodes(
         let display = if text_component.ellipsis && !text_component.wrap {
             truncate_to_width(
                 &mut font_system,
-                Metrics {
-                    font_size: text_component.font_size,
-                    line_height: text_component.line_height,
-                },
+                physical_metrics(text_component.font_size, text_component.line_height, scale),
                 attrs,
                 &text_component.text,
                 content_size.x.max(0.0),
@@ -295,4 +296,61 @@ fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn widest(font_system: &mut FontSystem, metrics: Metrics, text: &str) -> f32 {
+        measure_line(font_system, metrics, Attrs::new(), text)
+    }
+
+    #[test]
+    fn physical_metrics_scale_both_size_and_line_height() {
+        let metrics = physical_metrics(14.0, 20.0, 2.0);
+        assert_eq!(metrics.font_size, 28.0);
+        assert_eq!(metrics.line_height, 40.0);
+    }
+
+    #[test]
+    fn text_shaped_at_scale_two_is_twice_as_wide() {
+        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let one = widest(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 1.0),
+            "Forest",
+        );
+        let two = widest(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 2.0),
+            "Forest",
+        );
+        assert!((two - one * 2.0).abs() < 1.0, "{one} vs {two}");
+    }
+
+    #[test]
+    fn truncation_at_scale_two_matches_its_logical_width() {
+        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let text = "bunny_porcelain_subsurface.mat";
+        let at_one = truncate_to_width(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 1.0),
+            Attrs::new(),
+            text,
+            60.0,
+        )
+        .expect("must truncate");
+        let at_two = truncate_to_width(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 2.0),
+            Attrs::new(),
+            text,
+            120.0,
+        )
+        .expect("must truncate");
+        assert_eq!(at_one, at_two);
+        let width = widest(&mut font_system, physical_metrics(14.0, 20.0, 2.0), &at_two);
+        assert!(width <= 120.0, "{width}");
+    }
 }
