@@ -269,6 +269,7 @@ fn route_pointer(
     let mut best: Option<(Entity, i64)> = None;
     for (entity, node, _) in computed_nodes.iter() {
         if node.rect.contains(cursor)
+            && node.clip_rect.size.cmpgt(Vec2::ZERO).all()
             && node.clip_rect.contains(cursor)
             && best.is_none_or(|(_, z)| node.paint_order > z)
         {

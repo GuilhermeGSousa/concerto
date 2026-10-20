@@ -12,6 +12,7 @@ use concerto_ecs::{
     },
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
+    signal::{On, lifecycle::Add},
 };
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_render::{
@@ -410,6 +411,29 @@ pub struct UILayout {
     pub paint_order: i64,
 }
 
+/// Set by lists and trees on rows they leave out of layout; a culled node and its subtree are not laid out, drawn or hit.
+#[derive(Component)]
+pub struct UICulled;
+
+pub(crate) fn blank_culled_layouts(
+    on: On<Add<UICulled>>,
+    children: Query<&Children>,
+    layouts: Query<&mut UILayout>,
+) {
+    let mut stack = vec![on.signal().entity];
+    while let Some(entity) = stack.pop() {
+        if let Some(mut layout) = layouts.get_entity(entity) {
+            layout.clip_rect = UIBox {
+                min: layout.rect.min,
+                size: Vec2::ZERO,
+            };
+        }
+        if let Some(children) = children.get_entity(entity) {
+            stack.extend(children.iter().copied());
+        }
+    }
+}
+
 /// Layout instrumentation consumed by the showcase and profilers.
 #[derive(Resource, Default)]
 pub struct UILayoutDiagnostics {
@@ -588,7 +612,8 @@ pub(crate) struct RenderUIMaterial {
 
 pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
-    ui_roots: Query<(Entity, &UINode, Option<&Children>), Without<ChildOf>>,
+    ui_roots: Query<(Entity, &UINode, Option<&Children>), (Without<ChildOf>, Without<UICulled>)>,
+    culled: Query<&UICulled>,
     texts: Query<&crate::text::UIText>,
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
@@ -604,33 +629,19 @@ pub(crate) fn compute_ui_nodes(
         height: AvailableSpace::Definite(logical_size.y),
     };
 
-    let mut signature = ui_nodes
-        .iter()
-        .map(|(entity, _, children)| {
-            (
-                entity,
-                children
-                    .map(|children| children.iter().copied().collect())
-                    .unwrap_or_default(),
-            )
-        })
-        .collect::<Vec<_>>();
-    signature.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
-    let mut styles = ui_nodes
-        .iter()
-        .map(|(entity, node, _)| (entity, node.clone()))
-        .collect::<Vec<_>>();
-    styles.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
-    let mut text_snapshot = ui_nodes
-        .iter()
-        .filter(|(_, node, _)| !node.is_rigid())
-        .filter_map(|(entity, _, _)| {
-            texts
-                .get_entity(entity)
-                .map(|text| (entity, text_measure_signature(text)))
-        })
-        .collect::<Vec<_>>();
-    text_snapshot.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
+    let laid_out = laid_out_nodes(ui_roots.iter(), &ui_nodes, &culled);
+    let mut styles = Vec::with_capacity(laid_out.len());
+    let mut text_snapshot = Vec::new();
+    let mut signature = Vec::with_capacity(laid_out.len());
+    for (entity, node, children) in laid_out {
+        styles.push((entity, node.clone()));
+        if !node.is_rigid()
+            && let Some(text) = texts.get_entity(entity)
+        {
+            text_snapshot.push((entity, text_measure_signature(text)));
+        }
+        signature.push((entity, children));
+    }
     let mut panel_snapshot = panels
         .iter()
         .map(|(entity, panel)| PanelPlacementSnapshot {
@@ -680,6 +691,7 @@ pub(crate) fn compute_ui_nodes(
                 node_id,
                 children,
                 &ui_nodes,
+                &culled,
                 &texts,
                 &mut entity_to_taffy,
             );
@@ -820,6 +832,31 @@ pub(crate) fn compute_ui_nodes(
     }
 }
 
+fn laid_out_nodes<'w>(
+    roots: impl Iterator<Item = (Entity, &'w UINode, Option<&'w Children>)>,
+    ui_nodes: &Query<'w, '_, (Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
+) -> Vec<(Entity, &'w UINode, Vec<Entity>)> {
+    let mut nodes = Vec::new();
+    let mut stack = roots.collect::<Vec<_>>();
+    while let Some((entity, node, children)) = stack.pop() {
+        let mut shown = Vec::new();
+        for &child in children.into_iter().flatten() {
+            if culled.contains_entity(child) {
+                continue;
+            }
+            let Some(item) = ui_nodes.get_entity(child) else {
+                continue;
+            };
+            shown.push(child);
+            stack.push(item);
+        }
+        nodes.push((entity, node, shown));
+    }
+    nodes.sort_by_key(|(entity, _, _)| (entity.index(), entity.generation()));
+    nodes
+}
+
 fn measure_node(
     measurer: &mut UITextMeasure,
     known: Size<Option<f32>>,
@@ -906,6 +943,7 @@ fn build_taffy_tree(
     parent_id: NodeId,
     children: &Children,
     ui_nodes: &Query<(Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
     texts: &Query<&crate::text::UIText>,
     entity_to_taffy: &mut HashMap<Entity, NodeId>,
 ) {
@@ -913,6 +951,9 @@ fn build_taffy_tree(
     while let Some((parent, child_entities)) = stack.pop() {
         let mut descendants = Vec::new();
         for child in child_entities {
+            if culled.contains_entity(child) {
+                continue;
+            }
             let Some((_, child_node, grand_children)) = ui_nodes.get_entity(child) else {
                 continue;
             };
@@ -1812,6 +1853,187 @@ mod tests {
             before, after,
             "the layout pass keys on this to know it must re-measure"
         );
+    }
+
+    fn layout_world() -> concerto_ecs::World {
+        let mut world = concerto_ecs::World::new();
+        world.insert_resource(Window::new((800, 600), 1.0));
+        world.insert_resource(UILayoutEngine::default());
+        world.insert_resource(UILayoutDiagnostics::default());
+        world.insert_resource(UIPanelStack::default());
+        world.insert_resource(measurer());
+        world.add_listener(blank_culled_layouts);
+        lay_out(&mut world);
+        world
+    }
+
+    fn lay_out(world: &mut concerto_ecs::World) {
+        let mut system = concerto_ecs::IntoSystem::into_system(compute_ui_nodes);
+        concerto_ecs::System::initialize(&mut system, world);
+        concerto_ecs::System::run_and_apply(&mut system, (), world);
+    }
+
+    fn layout_passes(world: &concerto_ecs::World) -> u64 {
+        world
+            .get_resource::<UILayoutDiagnostics>()
+            .unwrap()
+            .layout_passes
+    }
+
+    fn rect_of(world: &concerto_ecs::World, entity: Entity) -> UIBox {
+        world
+            .get_component_for_entity::<UILayout>(entity)
+            .unwrap()
+            .rect
+    }
+
+    fn clip_of(world: &concerto_ecs::World, entity: Entity) -> UIBox {
+        world
+            .get_component_for_entity::<UILayout>(entity)
+            .unwrap()
+            .clip_rect
+    }
+
+    fn column(world: &mut concerto_ecs::World) -> Entity {
+        world.spawn(
+            UINode::default()
+                .with_size(UIValue::Px(800.0), UIValue::Px(600.0))
+                .with_flex_direction(FlexDirection::Column),
+        )
+    }
+
+    fn row(world: &mut concerto_ecs::World, parent: Entity) -> Entity {
+        world.spawn((
+            UINode::default()
+                .with_size(UIValue::Px(100.0), UIValue::Px(50.0))
+                .with_flex_shrink(0.0),
+            ChildOf::new(parent),
+        ))
+    }
+
+    #[test]
+    fn a_culled_node_and_its_subtree_get_no_layout() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let first = row(&mut world, root);
+        let middle = row(&mut world, root);
+        let inner = row(&mut world, middle);
+        let third = row(&mut world, root);
+        world.insert(UICulled, middle);
+
+        lay_out(&mut world);
+
+        assert!(world.get_component_for_entity::<UILayout>(middle).is_none());
+        assert!(world.get_component_for_entity::<UILayout>(inner).is_none());
+        assert_eq!(rect_of(&world, third).min.y, rect_of(&world, first).max().y);
+    }
+
+    #[test]
+    fn culling_or_unculling_a_node_relays_out() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        row(&mut world, root);
+        let child = row(&mut world, root);
+        lay_out(&mut world);
+        let laid_out = layout_passes(&world);
+
+        world.insert(UICulled, child);
+        lay_out(&mut world);
+        let culled = layout_passes(&world);
+        assert!(culled > laid_out, "culling must relay out");
+
+        world.remove_component::<UICulled>(child);
+        lay_out(&mut world);
+        assert!(layout_passes(&world) > culled, "unculling must relay out");
+        assert_eq!(rect_of(&world, child).size, Vec2::new(100.0, 50.0));
+        assert_ne!(clip_of(&world, child).size, Vec2::ZERO);
+    }
+
+    fn hovered_at(world: &mut concerto_ecs::World, cursor: Vec2) -> Option<Entity> {
+        world
+            .get_resource_mut::<concerto_window::input::Input>()
+            .unwrap()
+            .update_mouse_position(cursor.x as f64, cursor.y as f64);
+        let mut system =
+            concerto_ecs::IntoSystem::into_system(crate::interaction::update_ui_interaction);
+        concerto_ecs::System::initialize(&mut system, world);
+        concerto_ecs::System::run_and_apply(&mut system, (), world);
+        **world
+            .get_resource::<crate::interaction::HoveredNode>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_newly_culled_subtree_is_neither_drawn_nor_hit() {
+        let mut world = layout_world();
+        world.insert_resource(concerto_window::input::Input::new());
+        world.insert_resource(crate::interaction::HoveredNode::default());
+        world.insert_resource(crate::interaction::UIInputState::default());
+        let root = column(&mut world);
+        row(&mut world, root);
+        let child = row(&mut world, root);
+        world.insert(crate::interaction::Interactable, child);
+        let inner = world.spawn((
+            UINode::default().with_size(UIValue::Px(10.0), UIValue::Px(10.0)),
+            crate::interaction::Interactable,
+            ChildOf::new(child),
+        ));
+        lay_out(&mut world);
+        let old = rect_of(&world, child);
+        let centre = old.min + old.size / 2.0;
+        assert_eq!(hovered_at(&mut world, centre), Some(child));
+
+        world.insert(UICulled, child);
+
+        for entity in [child, inner] {
+            assert_eq!(clip_of(&world, entity).size, Vec2::ZERO);
+        }
+        lay_out(&mut world);
+        for entity in [child, inner] {
+            assert_eq!(clip_of(&world, entity).size, Vec2::ZERO);
+        }
+        for cursor in [centre, old.min, rect_of(&world, inner).min] {
+            let hovered = hovered_at(&mut world, cursor);
+            assert!(
+                hovered != Some(child) && hovered != Some(inner),
+                "{cursor:?} hit a culled node"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_moving_means_no_layout_pass() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        row(&mut world, root);
+        let culled = row(&mut world, root);
+        row(&mut world, culled);
+        world.insert(UICulled, culled);
+        lay_out(&mut world);
+        let passes = layout_passes(&world);
+
+        lay_out(&mut world);
+        lay_out(&mut world);
+
+        assert_eq!(layout_passes(&world), passes);
+    }
+
+    #[test]
+    fn culled_subtrees_stay_out_of_the_snapshot() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let shown = row(&mut world, root);
+        for _ in 0..1_000 {
+            let hidden = row(&mut world, root);
+            world.insert(UICulled, hidden);
+        }
+
+        lay_out(&mut world);
+
+        let engine = world.get_resource::<UILayoutEngine>().unwrap();
+        assert_eq!(engine.style_snapshot.len(), 2);
+        assert_eq!(engine.hierarchy_signature.len(), 2);
+        assert!(world.get_component_for_entity::<UILayout>(shown).is_some());
     }
 
     #[test]

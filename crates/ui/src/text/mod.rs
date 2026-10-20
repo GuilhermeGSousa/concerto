@@ -168,6 +168,13 @@ pub(crate) fn extract_text_nodes(
     mut cmd: CommandQueue,
 ) {
     for (text_component, layout, render_entity) in text_nodes.iter() {
+        let clip = layout.clip_rect.intersection(layout.content_rect);
+        if !clip.size.cmpgt(glam::Vec2::ZERO).all() {
+            if render_text_nodes.contains_entity(**render_entity) {
+                cmd.remove::<RenderTextComponent>(**render_entity);
+            }
+            continue;
+        }
         let scale = window.scale_factor() as f32;
         let content_size = layout.content_rect.size * scale;
         let signature = text_signature(text_component, layout, scale);
@@ -233,7 +240,6 @@ pub(crate) fn extract_text_nodes(
         );
         text_buffer.shape_until_scroll(&mut font_system, false);
 
-        let clip = layout.clip_rect.intersection(layout.content_rect);
         let rgba = text_component.color.to_srgba();
         cmd.insert(
             RenderTextComponent {
@@ -352,5 +358,71 @@ mod tests {
         assert_eq!(at_one, at_two);
         let width = widest(&mut font_system, physical_metrics(14.0, 20.0, 2.0), &at_two);
         assert!(width <= 120.0, "{width}");
+    }
+
+    fn extract_text(main: &mut concerto_ecs::World, render: &mut concerto_ecs::World) {
+        if render
+            .get_resource::<concerto_ecs::system::schedule::CompiledSchedules>()
+            .is_none()
+        {
+            let mut schedules = concerto_ecs::system::schedule::Schedules::default();
+            schedules.add_system(concerto_app::schedule_groups::Extract, extract_text_nodes);
+            let compiled = schedules
+                .compile::<concerto_ecs::system::executor::single_thread::SingleThreadedExecutor>(
+                render,
+            );
+            render.insert_resource(compiled);
+        }
+        concerto_app::extractor::extract(main, render);
+    }
+
+    #[test]
+    fn text_whose_clip_is_empty_is_not_drawn() {
+        let mut main = concerto_ecs::World::new();
+        main.insert_resource(Window::new((800, 600), 1.5));
+        let mut render = concerto_ecs::World::new();
+        render.insert_resource(TextFontSystem(fonts::build_font_system(
+            &fonts::UIFonts::default(),
+        )));
+        render.insert_resource(UIRenderDiagnostics::default());
+        let target = render.spawn(());
+        let rect = crate::node::UIBox {
+            min: glam::Vec2::new(10.5, 20.5),
+            size: glam::Vec2::new(100.0, 20.0),
+        };
+        let node = main.spawn((
+            UIText {
+                text: "Culled".into(),
+                ..Default::default()
+            },
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            RenderEntity::new(target),
+        ));
+
+        extract_text(&mut main, &mut render);
+        assert!(
+            render
+                .get_component_for_entity::<RenderTextComponent>(target)
+                .is_some()
+        );
+
+        main.get_component_for_entity_mut::<UILayout>(node)
+            .unwrap()
+            .clip_rect = crate::node::UIBox {
+            min: rect.min,
+            size: glam::Vec2::ZERO,
+        };
+        extract_text(&mut main, &mut render);
+        assert!(
+            render
+                .get_component_for_entity::<RenderTextComponent>(target)
+                .is_none(),
+            "an empty clip must leave nothing to draw"
+        );
     }
 }

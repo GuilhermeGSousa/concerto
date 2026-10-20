@@ -19,7 +19,7 @@ use crate::{
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     material::UIMaterial,
     node::{
-        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
+        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, blank_culled_layouts, compute_ui_nodes,
         extract_shared_viewports, extract_ui_materials, extract_ui_nodes, sync_material_params,
         sync_shared_viewport_textures, sync_viewport_textures,
     },
@@ -88,6 +88,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
+        app.add_listener(blank_culled_layouts);
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
