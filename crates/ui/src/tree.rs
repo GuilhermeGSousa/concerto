@@ -7,13 +7,15 @@ use concerto_ecs::{
         Entity,
         hierarchy::{ChildOf, Children},
     },
+    events::event_writer::EventWriter,
     query::{Query, filter::With},
-    resource::Res,
+    resource::{Res, ResMut},
     signal::{On, lifecycle::Add, listener::IntoListener},
 };
 use concerto_window::input::MouseButton;
 
 use crate::{
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
     interaction::{Interactable, UIClick},
     items::{
         UIHidden, UIItem, UIRowSpacer, UIWidgetPart, equip_items, fit_owner, keep_parts_first,
@@ -21,7 +23,8 @@ use crate::{
     },
     material::UIMaterial,
     node::{
-        AlignContent, AlignItems, Position, UICulled, UIInset, UIIntrinsicHeight, UILayout, UINode,
+        AlignContent, AlignItems, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight,
+        UILayout, UINode,
     },
     scroll::UIScrollArea,
     text::UIText,
@@ -185,7 +188,14 @@ pub(crate) fn set_up_tree(
     set_up_owner(on.signal().entity, &areas, &children, &spacers, &mut cmd);
 }
 
-fn click_caret(on: On<UIClick>, parents: Query<&ChildOf>, elements: Query<&mut UITreeElement>) {
+fn click_caret(
+    on: On<UIClick>,
+    parents: Query<&ChildOf>,
+    elements: Query<&mut UITreeElement>,
+    mut focused: ResMut<FocusedWidget>,
+    mut lost: EventWriter<UIFocusLost>,
+    mut gained: EventWriter<UIFocusGained>,
+) {
     if on.signal().button != MouseButton::Left {
         return;
     }
@@ -194,6 +204,14 @@ fn click_caret(on: On<UIClick>, parents: Query<&ChildOf>, elements: Query<&mut U
     };
     if let Some(mut element) = elements.get_entity(item) {
         element.expanded = !element.expanded;
+    }
+    let previous = **focused;
+    if previous != Some(item) {
+        **focused = Some(item);
+        if let Some(previous) = previous {
+            lost.write(UIFocusLost(previous));
+        }
+        gained.write(UIFocusGained(item));
     }
 }
 
@@ -276,7 +294,7 @@ pub(crate) fn update_trees(
             &mut cmd,
         );
         for row in &rows {
-            indent(row, &theme, &nodes);
+            shape_item(row, &theme, &nodes);
             let caret = children.get_entity(row.entity).and_then(|mut children| {
                 keep_parts_first(&mut children, &parts);
                 children
@@ -295,12 +313,19 @@ pub(crate) fn update_trees(
     }
 }
 
-fn indent(row: &TreeRow, theme: &UITheme, nodes: &Query<&mut UINode>) {
+fn shape_item(row: &TreeRow, theme: &UITheme, nodes: &Query<&mut UINode>) {
+    let Some(mut node) = nodes.get_entity(row.entity) else {
+        return;
+    };
     let left = caret_left(row, theme) + theme.tree_caret_column;
-    if let Some(mut node) = nodes.get_entity(row.entity)
-        && node.padding.left != left
-    {
+    if node.padding.left != left {
         node.padding.left = left;
+    }
+    if node.overflow_x != Overflow::Visible {
+        node.overflow_x = Overflow::Visible;
+    }
+    if node.overflow_y != Overflow::Visible {
+        node.overflow_y = Overflow::Visible;
     }
 }
 
@@ -398,12 +423,16 @@ mod tests {
 
     use super::*;
     use crate::{
+        focus::update_focus,
+        interaction::{HoveredNode, update_ui_interaction},
         items::{UIItem, UIListNext, UIReveal, UITreeCollapse, UITreeExpand},
         list::tests::Harness,
         node::{FlexDirection, UINode},
         text::UIText,
         transform::UIValue,
     };
+    use concerto_ecs::{IntoSystem, System};
+    use concerto_window::input::Input;
 
     const ROW: f32 = 20.0;
 
@@ -434,8 +463,27 @@ mod tests {
         harness
             .world
             .get_component_for_entity::<UIItem>(entity)
-            .filter(|item| item.shown)
+            .filter(|item| item.is_shown())
             .map(|item| (item.index(), item.depth()))
+    }
+
+    fn press_and_release(harness: &mut Harness, entity: Entity) {
+        let rect = harness.layout(entity).rect;
+        let centre = rect.min + rect.size / 2.0;
+        let mut interaction = update_ui_interaction.into_system();
+        interaction.initialize(&mut harness.world);
+        let mut focus = update_focus.into_system();
+        focus.initialize(&mut harness.world);
+        for pressed in [true, false] {
+            {
+                let input = harness.world.get_resource_mut::<Input>().unwrap();
+                input.update();
+                input.update_mouse_position(centre.x as f64, centre.y as f64);
+                input.update_mouse_button(MouseButton::Left, pressed);
+            }
+            interaction.run_and_apply((), &mut harness.world);
+            focus.run_and_apply((), &mut harness.world);
+        }
     }
 
     fn caret(harness: &Harness, entity: Entity) -> Option<Entity> {
@@ -700,6 +748,9 @@ mod tests {
         assert_eq!(harness.selected(&[parent, leaf, folder]), [1]);
         harness.settle();
 
+        harness.fire(UITreeExpand);
+        assert_eq!(harness.focused(), Some(leaf));
+
         harness.fire(UITreeCollapse);
         assert_eq!(harness.focused(), Some(parent));
         harness.settle();
@@ -718,10 +769,6 @@ mod tests {
         harness.fire(UITreeCollapse);
         assert!(!expanded(&harness, parent));
         assert_eq!(harness.focused(), Some(parent));
-
-        harness.focus(leaf);
-        harness.fire(UITreeExpand);
-        assert_eq!(harness.focused(), Some(leaf));
     }
 
     #[test]
@@ -751,6 +798,100 @@ mod tests {
         assert!(
             rect.min.y + rect.size.y <= content.min.y + content.size.y,
             "{rect:?} in {content:?}"
+        );
+    }
+
+    #[test]
+    fn clicking_a_caret_leaves_keyboard_focus_on_its_item() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, false);
+        let child = item(&mut harness, parent, false);
+        harness.settle();
+        let shown = caret(&harness, parent).expect("a parent has a caret");
+
+        press_and_release(&mut harness, shown);
+        assert!(expanded(&harness, parent));
+        assert_eq!(harness.focused(), Some(parent));
+        harness.settle();
+
+        harness.fire(UIListNext);
+        assert_eq!(harness.focused(), Some(child));
+    }
+
+    #[test]
+    fn focus_leaves_an_item_whose_ancestor_collapses() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let items = chain(&mut harness, tree, 2);
+        harness.settle();
+        harness.focus(items[2]);
+
+        harness
+            .world
+            .get_component_for_entity_mut::<UITreeElement>(items[0])
+            .unwrap()
+            .expanded = false;
+        harness.settle();
+
+        assert_eq!(harness.focused(), Some(items[0]));
+    }
+
+    #[test]
+    fn a_parked_item_is_not_shown() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, false);
+        let child = item(&mut harness, parent, false);
+        harness.settle();
+
+        let item_of = |entity| {
+            *harness
+                .world
+                .get_component_for_entity::<UIItem>(entity)
+                .unwrap()
+        };
+        assert!(item_of(parent).is_shown());
+        assert!(!item_of(child).is_shown());
+    }
+
+    #[test]
+    fn hovering_the_caret_highlights_its_row() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, false);
+        item(&mut harness, parent, false);
+        harness.settle();
+        let shown = caret(&harness, parent).expect("a parent has a caret");
+
+        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(shown);
+        harness.frame();
+
+        assert_eq!(
+            harness.colour(parent),
+            UITheme::default().surface_hovered.to_linear()
+        );
+    }
+
+    #[test]
+    fn a_clipping_item_does_not_clip_its_child_rows() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = harness.world.spawn((
+            UINode::default().clipped(),
+            UITreeElement { expanded: true },
+            ChildOf::new(tree),
+        ));
+        let child = item(&mut harness, parent, false);
+        harness.settle();
+
+        let layout = harness.layout(child);
+        let centre = layout.rect.min + layout.rect.size / 2.0;
+        assert!(
+            layout.clip_rect.contains(centre),
+            "{:?} clipped to {:?}",
+            layout.rect,
+            layout.clip_rect
         );
     }
 }

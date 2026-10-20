@@ -20,7 +20,7 @@ use crate::{
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     items::{
         UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
-        UITreeExpand, install_listeners, navigate_items, paint_items,
+        UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
     },
     list::{set_up_list, update_lists},
     material::UIMaterial,
@@ -148,7 +148,8 @@ impl Plugin for UIPlugin {
                 update_tooltips,
                 update_scroll_areas,
                 update_virtual_lists.after(update_scroll_areas),
-                navigate_items,
+                keep_focus_on_shown_items,
+                navigate_items.after(keep_focus_on_shown_items),
             )
                 .in_set(UiSet::Widgets),
         );

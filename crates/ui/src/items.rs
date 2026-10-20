@@ -34,7 +34,7 @@ use crate::{
     scroll::UIScrollArea,
     theme::UITheme,
     transform::UIValue,
-    tree::{UITree, UITreeElement, open_to},
+    tree::{UITree, UITreeCaret, UITreeElement, open_to},
 };
 
 const OVERSCAN: usize = 2;
@@ -229,6 +229,40 @@ fn select(entity: Entity, selected: &Query<&UISelected>, cmd: &mut CommandQueue)
     cmd.entity(entity).trigger(UIItemSelected);
 }
 
+pub(crate) fn keep_focus_on_shown_items(
+    mut focused: ResMut<FocusedWidget>,
+    items: Query<&UIItem>,
+    parents: Query<&ChildOf>,
+    mut lost: EventWriter<UIFocusLost>,
+    mut gained: EventWriter<UIFocusGained>,
+) {
+    let Some(current) = **focused else {
+        return;
+    };
+    let Some(item) = items.get_entity(current) else {
+        return;
+    };
+    if item.shown {
+        return;
+    }
+    let mut ancestor = parents.get_entity(current).map(ChildOf::parent);
+    while let Some(entity) = ancestor {
+        let Some(other) = items
+            .get_entity(entity)
+            .filter(|other| other.owner == item.owner)
+        else {
+            return;
+        };
+        if other.shown {
+            **focused = Some(entity);
+            lost.write(UIFocusLost(current));
+            gained.write(UIFocusGained(entity));
+            return;
+        }
+        ancestor = parents.get_entity(entity).map(ChildOf::parent);
+    }
+}
+
 pub(crate) fn navigate_items(
     mut actions: EventReader<ActionFired>,
     mut focused: ResMut<FocusedWidget>,
@@ -343,15 +377,18 @@ fn collapse_or_ascend(
 
 pub(crate) fn paint_items(
     items: Query<(Entity, &UIItem, &mut UIMaterial, Option<&UISelected>)>,
+    carets: Query<&ChildOf, With<UITreeCaret>>,
     hovered: Res<HoveredNode>,
     theme: Res<UITheme>,
 ) {
+    let hovered =
+        (**hovered).map(|entity| carets.get_entity(entity).map_or(entity, ChildOf::parent));
     for (entity, item, mut material, selected) in items.iter() {
         let colour = if !item.selectable {
             Color::TRANSPARENT
         } else if selected.is_some() {
             theme.selection()
-        } else if **hovered == Some(entity) {
+        } else if hovered == Some(entity) {
             theme.surface_hovered
         } else {
             Color::TRANSPARENT
@@ -402,7 +439,7 @@ pub struct UIItem {
     depth: usize,
     selectable: bool,
     row_height: f32,
-    pub(crate) shown: bool,
+    shown: bool,
 }
 
 impl UIItem {
@@ -419,6 +456,11 @@ impl UIItem {
     /// How many items this one is nested under; always 0 in a list.
     pub fn depth(&self) -> usize {
         self.depth
+    }
+
+    /// Whether the item has a row now, rather than being left out under a collapsed or hidden item.
+    pub fn is_shown(&self) -> bool {
+        self.shown
     }
 }
 

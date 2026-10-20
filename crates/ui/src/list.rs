@@ -128,7 +128,7 @@ pub(crate) mod tests {
         items::{
             UIItem, UIItemActivated, UIItemContextMenu, UIItemSelected, UIListActivate,
             UIListFirst, UIListLast, UIListNext, UIListPrevious, UIReveal, UISelected,
-            install_listeners, navigate_items, paint_items,
+            install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
         },
         material::UIMaterial,
         node::{
@@ -195,7 +195,13 @@ pub(crate) mod tests {
                 )
                     .chain(),
             );
-            schedule.add_system(navigate_items.in_set(UiSet::Widgets));
+            schedule.add_system(
+                (
+                    keep_focus_on_shown_items,
+                    navigate_items.after(keep_focus_on_shown_items),
+                )
+                    .in_set(UiSet::Widgets),
+            );
             schedule.add_system(setup_scrollbars.in_set(UiSet::Setup));
             schedule.add_system((update_lists, update_trees).in_set(UiSet::Project));
             schedule.add_system(paint_items.in_set(UiSet::Materials));
@@ -338,7 +344,7 @@ pub(crate) mod tests {
                 .collect()
         }
 
-        fn colour(&self, item: Entity) -> LinearRgba {
+        pub(crate) fn colour(&self, item: Entity) -> LinearRgba {
             self.world
                 .get_component_for_entity::<UIMaterial>(item)
                 .expect("an item has a material")
