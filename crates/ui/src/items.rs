@@ -3,12 +3,12 @@ use std::ops::Range;
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
-    entity::Entity,
+    entity::{Entity, hierarchy::Children},
     query::{Query, change_detection::Mut},
 };
 
 use crate::{
-    node::{FlexDirection, Overflow, Position, UICulled, UIInset, UINode},
+    node::{FlexDirection, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight, UINode},
     scroll::UIScrollArea,
     transform::UIValue,
 };
@@ -46,20 +46,46 @@ pub(crate) struct UIWidgetPart;
 #[derive(Component)]
 pub(crate) struct UIRowSpacer;
 
-pub(crate) fn set_up_owner(owner: Entity, areas: &Query<&UIScrollArea>, cmd: &mut CommandQueue) {
+pub(crate) fn set_up_owner(
+    owner: Entity,
+    areas: &Query<&UIScrollArea>,
+    children: &Query<&Children>,
+    spacers: &Query<&UIRowSpacer>,
+    cmd: &mut CommandQueue,
+) {
     if !areas.contains_entity(owner) {
         cmd.insert(UIScrollArea::default(), owner);
+    }
+    let has_spacer = children
+        .get_entity(owner)
+        .is_some_and(|children| children.iter().any(|child| spacers.contains_entity(*child)));
+    if has_spacer {
+        return;
     }
     let spacer = cmd
         .spawn((
             UINode::default()
-                .with_size(UIValue::Px(0.0), UIValue::Px(0.0))
+                .with_width(UIValue::Px(0.0))
                 .with_flex_shrink(0.0),
+            UIIntrinsicHeight(0.0),
             UIWidgetPart,
             UIRowSpacer,
         ))
         .entity();
     cmd.add_child(owner, spacer);
+}
+
+pub(crate) fn keep_parts_last(children: &mut Mut<Children>, parts: &Query<&UIWidgetPart>) {
+    let mut seen_part = false;
+    let out_of_order = children.iter().any(|child| {
+        let part = parts.contains_entity(*child);
+        let misplaced = seen_part && !part;
+        seen_part |= part;
+        misplaced
+    });
+    if out_of_order {
+        children.sort_by_key(|child| parts.contains_entity(child));
+    }
 }
 
 pub(crate) fn place_rows(
@@ -111,34 +137,22 @@ pub(crate) fn place_rows(
 
 pub(crate) fn fit_owner(
     owner: Entity,
-    parent: Option<Entity>,
-    spacer: Option<Entity>,
+    spacer: Option<Mut<UIIntrinsicHeight>>,
     extent: f32,
     nodes: &Query<&mut UINode>,
 ) {
-    let grows = nodes.get_entity(owner).is_some_and(|mut node| {
+    if let Some(mut node) = nodes.get_entity(owner) {
         if node.overflow_x != Overflow::Hidden {
             node.overflow_x = Overflow::Hidden;
         }
         if node.overflow_y != Overflow::Hidden {
             node.overflow_y = Overflow::Hidden;
         }
-        node.flex_grow > 0.0
-    });
-    let in_column = parent
-        .and_then(|parent| nodes.get_entity(parent))
-        .is_some_and(|node| {
-            matches!(
-                node.flex_direction,
-                FlexDirection::Column | FlexDirection::ColumnReverse
-            )
-        });
-    let natural = if grows && in_column { 0.0 } else { extent };
-    if let Some(mut node) = spacer.and_then(|spacer| nodes.get_entity(spacer)) {
-        let height = UIValue::Px(natural);
-        if node.height != height {
-            node.height = height;
-        }
+    }
+    if let Some(mut spacer) = spacer
+        && spacer.0 != extent
+    {
+        spacer.0 = extent;
     }
 }
 

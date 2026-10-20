@@ -1,23 +1,22 @@
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
-    entity::{
-        Entity,
-        hierarchy::{ChildOf, Children},
-    },
-    query::Query,
+    entity::{Entity, hierarchy::Children},
+    query::{Query, filter::With},
     resource::Res,
     signal::{On, lifecycle::Add},
 };
 
 use crate::{
-    items::{UIItem, UIRowSpacer, UIWidgetPart, fit_owner, place_rows, set_up_owner},
-    node::{UICulled, UILayout, UINode},
+    items::{
+        UIItem, UIRowSpacer, UIWidgetPart, fit_owner, keep_parts_last, place_rows, set_up_owner,
+    },
+    node::{UICulled, UIIntrinsicHeight, UILayout, UINode},
     scroll::UIScrollArea,
     theme::UITheme,
 };
 
-/// A vertical list whose items are the node's own children, one row each, in child order.
+/// A vertical list whose items are the node's own children, one row each, in child order; it clips them and owns its overflow.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UIList {
     pub row_height: Option<f32>,
@@ -33,8 +32,14 @@ impl Default for UIList {
     }
 }
 
-pub(crate) fn set_up_list(on: On<Add<UIList>>, areas: Query<&UIScrollArea>, mut cmd: CommandQueue) {
-    set_up_owner(on.signal().entity, &areas, &mut cmd);
+pub(crate) fn set_up_list(
+    on: On<Add<UIList>>,
+    areas: Query<&UIScrollArea>,
+    children: Query<&Children>,
+    spacers: Query<&UIRowSpacer>,
+    mut cmd: CommandQueue,
+) {
+    set_up_owner(on.signal().entity, &areas, &children, &spacers, &mut cmd);
 }
 
 pub(crate) fn update_lists(
@@ -43,23 +48,29 @@ pub(crate) fn update_lists(
         &UIList,
         &mut UIScrollArea,
         Option<&UILayout>,
-        Option<&Children>,
-        Option<&ChildOf>,
+        Option<&mut Children>,
     )>,
     nodes: Query<&mut UINode>,
     parts: Query<&UIWidgetPart>,
-    spacers: Query<&UIRowSpacer>,
+    spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
     items: Query<&UIItem>,
     culled: Query<&UICulled>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    for (entity, list, mut area, layout, children, parent) in lists.iter() {
-        let children = children.into_iter().flatten().copied();
-        let rows = children
-            .clone()
-            .filter(|child| !parts.contains_entity(*child) && nodes.contains_entity(*child))
-            .collect::<Vec<_>>();
+    for (entity, list, mut area, layout, children) in lists.iter() {
+        let mut rows = Vec::new();
+        let mut spacer = None;
+        if let Some(mut children) = children {
+            keep_parts_last(&mut children, &parts);
+            for &child in children.iter() {
+                if !parts.contains_entity(child) && nodes.contains_entity(child) {
+                    rows.push(child);
+                } else if spacer.is_none() {
+                    spacer = spacers.get_entity(child);
+                }
+            }
+        }
         place_rows(
             &rows,
             entity,
@@ -71,15 +82,7 @@ pub(crate) fn update_lists(
             &culled,
             &mut cmd,
         );
-        fit_owner(
-            entity,
-            parent.map(|parent| **parent),
-            children
-                .clone()
-                .find(|child| spacers.contains_entity(*child)),
-            area.content_extent,
-            &nodes,
-        );
+        fit_owner(entity, spacer, area.content_extent, &nodes);
     }
 }
 
@@ -98,12 +101,16 @@ mod tests {
     use super::*;
     use crate::{
         anchor::UIPanelStack,
+        interaction::{HoveredNode, Interactable, UIInputState, update_ui_interaction},
         items::UIItem,
         node::{
             FlexDirection, UICulled, UILayout, UILayoutDiagnostics, UILayoutEngine, UINode,
             UITextMeasure, blank_culled_layouts, compute_ui_nodes,
         },
-        scroll::{UIScrollArea, UIScrollBar, setup_scrollbars},
+        scroll::{
+            UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scrollbar_thumbs,
+            sync_scrollbar_tracks,
+        },
         sets::UiSet,
         text::fonts::{UIFonts, build_font_system},
         theme::UITheme,
@@ -127,10 +134,21 @@ mod tests {
             world.add_listener(blank_culled_layouts);
             world.add_listener(set_up_list);
             let mut schedule = Schedule::new();
-            schedule.configure_sets((UiSet::Setup, UiSet::Project, UiSet::Layout).chain());
+            schedule.configure_sets(
+                (
+                    UiSet::Setup,
+                    UiSet::Project,
+                    UiSet::Layout,
+                    UiSet::PostLayout,
+                )
+                    .chain(),
+            );
             schedule.add_system(setup_scrollbars.in_set(UiSet::Setup));
             schedule.add_system(update_lists.in_set(UiSet::Project));
             schedule.add_system(compute_ui_nodes.in_set(UiSet::Layout));
+            schedule.add_system(
+                (sync_scrollbar_tracks, sync_scrollbar_thumbs).in_set(UiSet::PostLayout),
+            );
             let schedule = schedule.compile::<MultiThreadedExecutor>(&mut world);
             Self { world, schedule }
         }
@@ -401,5 +419,128 @@ mod tests {
         harness.rows(list, 17);
         harness.settle();
         assert_eq!(harness.layout(list).rect.size.y, 300.0);
+    }
+
+    #[test]
+    fn a_growing_list_in_an_auto_height_column_is_as_tall_as_its_rows() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let column = harness.node(
+            UINode::default().with_flex_direction(FlexDirection::Column),
+            root,
+        );
+        let list = harness.list(rows_of(20.0), UINode::default().with_flex_grow(1.0), column);
+        harness.rows(list, 5);
+
+        harness.settle();
+
+        assert_eq!(harness.layout(list).rect.size.y, 100.0);
+        assert_eq!(harness.layout(column).rect.size.y, 100.0);
+    }
+
+    #[test]
+    fn a_growing_list_in_a_row_does_not_push_its_card_to_the_rows_height() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let card = harness.node(
+            UINode::default()
+                .with_height(UIValue::Px(200.0))
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Column),
+            root,
+        );
+        let row = harness.node(
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_flex_direction(FlexDirection::Row),
+            card,
+        );
+        let list = harness.list(rows_of(32.0), UINode::default().with_flex_grow(1.0), row);
+        harness.rows(list, 60);
+
+        harness.settle();
+
+        assert_eq!(harness.layout(row).rect.size.y, 200.0);
+        assert_eq!(harness.layout(list).rect.size.y, 200.0);
+    }
+
+    #[test]
+    fn re_adding_the_list_keeps_one_spacer() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let list = harness.list(UIList::default(), tall(100.0), root);
+        harness.world.insert(UIList::default(), list);
+
+        let spacers = harness
+            .world
+            .get_component_for_entity::<Children>(list)
+            .unwrap()
+            .iter()
+            .filter(|child| {
+                harness
+                    .world
+                    .get_component_for_entity::<crate::items::UIRowSpacer>(**child)
+                    .is_some()
+            })
+            .count();
+        assert_eq!(spacers, 1);
+    }
+
+    #[test]
+    fn rows_added_later_stay_under_the_scrollbar() {
+        let mut harness = Harness::new();
+        harness
+            .world
+            .insert_resource(concerto_window::input::Input::new());
+        harness.world.insert_resource(HoveredNode::default());
+        harness.world.insert_resource(UIInputState::default());
+        let root = harness.root();
+        let list = harness.list(rows_of(20.0), tall(100.0), root);
+        for _ in 0..10 {
+            harness.node(UINode::default(), list);
+        }
+        harness.settle();
+        for _ in 0..10 {
+            harness
+                .world
+                .spawn((UINode::default(), Interactable, ChildOf::new(list)));
+        }
+        harness.set_offset(list, 300.0);
+        harness.settle();
+
+        let thumb = harness
+            .world
+            .get_component_for_entity::<Children>(list)
+            .unwrap()
+            .iter()
+            .find_map(|child| {
+                harness
+                    .world
+                    .get_component_for_entity::<Children>(*child)?
+                    .iter()
+                    .copied()
+                    .find(|grandchild| {
+                        harness
+                            .world
+                            .get_component_for_entity::<UIScrollThumb>(*grandchild)
+                            .is_some()
+                    })
+            })
+            .expect("the list has a scrollbar thumb");
+        let rect = harness.layout(thumb).rect;
+        let centre = rect.min + rect.size / 2.0;
+        harness
+            .world
+            .get_resource_mut::<concerto_window::input::Input>()
+            .unwrap()
+            .update_mouse_position(centre.x as f64, centre.y as f64);
+        let mut system = concerto_ecs::IntoSystem::into_system(update_ui_interaction);
+        concerto_ecs::System::initialize(&mut system, &mut harness.world);
+        concerto_ecs::System::run_and_apply(&mut system, (), &mut harness.world);
+
+        assert_eq!(
+            **harness.world.get_resource::<HoveredNode>().unwrap(),
+            Some(thumb)
+        );
     }
 }
