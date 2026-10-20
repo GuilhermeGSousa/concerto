@@ -20,10 +20,11 @@ use concerto::{
         },
         elements::prelude::*,
         focus::FocusedWidget,
-        interaction::{Interactable, UIClick, UIInputState},
+        interaction::{Interactable, UIInputState},
+        items::{UIItem, UIItemContextMenu},
+        list::UIList,
         node::{
-            AlignContent, AlignItems, FlexDirection, Overflow, UILayout, UILayoutDiagnostics,
-            UINode, UIRect,
+            AlignContent, AlignItems, FlexDirection, UILayout, UILayoutDiagnostics, UINode, UIRect,
         },
         scroll::{
             UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList, drag_split_handle,
@@ -42,11 +43,6 @@ use glam::Vec2;
 
 #[derive(Component)]
 struct Diagnostics;
-
-#[derive(Component)]
-struct VirtualRow {
-    slot: usize,
-}
 
 #[derive(Component)]
 struct ContextMenu;
@@ -365,7 +361,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         .entity();
     cmd.add_child(controls, input);
 
-    let virtual_list = cmd
+    let list = cmd
         .spawn((
             theme
                 .card()
@@ -374,32 +370,25 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
                 .min_height(UIValue::Px(56.0))
                 .column()
                 .gap(0.0)
-                .padding(theme.spacing_sm)
-                .node(|node| node.with_overflow_y(Overflow::Hidden)),
-            UIScrollArea {
-                offset: 0.0,
-                content_extent: 280_000.0,
-                content: None,
+                .padding(theme.spacing_sm),
+            UIList {
+                row_height: Some(28.0),
+                ..Default::default()
             },
-            UIVirtualList::new(10_000, 28.0),
             Interactable,
         ))
         .entity();
-    cmd.add_child(layout, virtual_list);
-    for slot in 0..8 {
+    cmd.add_child(layout, list);
+    for index in 0..3_000 {
         let row = cmd
             .spawn((
                 theme
-                    .label("")
-                    .font_size(12.0)
-                    .height(UIValue::Px(28.0))
-                    .fixed(),
-                Interactable,
-                VirtualRow { slot },
+                    .label(format!("◇  Asset row {index:04}"))
+                    .font_size(12.0),
                 open_context_menu.into_listener(),
             ))
             .entity();
-        cmd.add_child(virtual_list, row);
+        cmd.add_child(list, row);
     }
 
     let split_first = cmd
@@ -504,35 +493,21 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
             ),
             |mut ctx| {
                 for i in 0..5 {
-                    ctx.add_child((
-                        theme.label(format!("{}", i)),
-                        VirtualRow { slot: i as usize },
-                    ));
+                    ctx.add_child(theme.label(format!("{}", i)));
                 }
             },
         );
 }
 
 fn open_context_menu(
-    on: On<UIClick>,
+    on: On<UIItemContextMenu>,
     context_menus: Query<(&ContextMenu, &mut UIAnchoredPanel, &mut UIText)>,
-    rows: Query<&VirtualRow>,
-    lists: Query<&UIVirtualList>,
+    items: Query<&UIItem>,
 ) {
-    let click = on.signal();
-    if click.button != MouseButton::Right {
-        return;
-    }
-    let Some(row) = rows.get_entity(on.entity()) else {
-        return;
-    };
-    let index = lists
-        .iter()
-        .next()
-        .and_then(|list| list.visible_range().nth(row.slot));
+    let index = items.get_entity(on.entity()).map(|item| item.index());
     for (_, mut panel, mut text) in context_menus.iter() {
         panel.target = UIAnchorTarget::Point {
-            position: click.position,
+            position: on.signal().position,
         };
         panel.owner = Some(on.entity());
         panel.open = true;
@@ -549,7 +524,6 @@ fn update_diagnostics(
     text: Query<&mut UIText, concerto::ecs::With<Diagnostics>>,
     input: Res<UIInputState>,
     focus: Res<FocusedWidget>,
-    lists: Query<&UIVirtualList>,
     render_diagnostics: Res<UIRenderDiagnostics>,
     stack: Res<UIPanelStack>,
     panels: Query<(&UIAnchoredPanel, &UILayout)>,
@@ -558,7 +532,7 @@ fn update_diagnostics(
     let logical = window.logical_size();
     for mut text in text.iter() {
         text.text = format!(
-            "logical {:.0}×{:.0}  physical {}×{}  DPI {:.2}  layout {}  tree {}  quads {}  text {}  bindings {}  hovered {:?}  focused {:?}  captured {:?}  virtual {:?}  panels {}  top {:?}  side {:?}",
+            "logical {:.0}×{:.0}  physical {}×{}  DPI {:.2}  layout {}  tree {}  quads {}  text {}  bindings {}  hovered {:?}  focused {:?}  captured {:?}  panels {}  top {:?}  side {:?}",
             logical.x,
             logical.y,
             physical.0,
@@ -572,7 +546,6 @@ fn update_diagnostics(
             input.hovered(),
             **focus,
             input.captured(MouseButton::Left),
-            lists.iter().next().map(|list| list.visible_range()),
             stack.open().len(),
             stack
                 .open()
@@ -588,24 +561,10 @@ fn update_diagnostics(
     }
 }
 
-fn update_virtual_rows(lists: Query<&UIVirtualList>, rows: Query<(&VirtualRow, &mut UIText)>) {
-    let Some(list) = lists.iter().next() else {
-        return;
-    };
-    for (slot, mut text) in rows.iter() {
-        text.text = list
-            .visible_range()
-            .nth(slot.slot)
-            .map(|index| format!("◇  Virtual asset row {index:04}"))
-            .unwrap_or_default();
-    }
-}
-
 fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins::default())
         .add_system(Startup, spawn_showcase)
-        .add_system(Update, update_diagnostics)
-        .add_system(Update, update_virtual_rows);
+        .add_system(Update, update_diagnostics);
 }
 
 fn main() {

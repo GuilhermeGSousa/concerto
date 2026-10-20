@@ -1,19 +1,303 @@
 use std::ops::Range;
 
+use concerto_color::Color;
 use concerto_ecs::{
+    World,
     command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::Children},
+    events::{event_reader::EventReader, event_writer::EventWriter},
     query::{Query, change_detection::Mut},
+    resource::{Res, ResMut},
+    signal::{
+        EntitySignal, On, Signal,
+        lifecycle::{Add, Despawn},
+        listener::IntoListener,
+    },
 };
+use concerto_window::{
+    define_action,
+    input::{MouseButton, actions::ActionFired},
+};
+use glam::Vec2;
 
 use crate::{
-    node::{FlexDirection, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight, UINode},
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
+    interaction::{HoveredNode, Interactable, UIClick, UIDoubleClick},
+    list::UIList,
+    material::UIMaterial,
+    node::{
+        FlexDirection, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight, UILayout, UINode,
+    },
     scroll::UIScrollArea,
+    theme::UITheme,
     transform::UIValue,
 };
 
 const OVERSCAN: usize = 2;
+
+define_action!(
+    /// Select the next item of the focused list or tree.
+    UIListNext
+);
+define_action!(
+    /// Select the previous item of the focused list or tree.
+    UIListPrevious
+);
+define_action!(
+    /// Select the first item of the focused list or tree.
+    UIListFirst
+);
+define_action!(
+    /// Select the last item of the focused list or tree.
+    UIListLast
+);
+define_action!(
+    /// Activate the focused item of a list or tree.
+    UIListActivate
+);
+define_action!(
+    /// Expand the focused tree item, or move to its first child when it is already expanded.
+    UITreeExpand
+);
+define_action!(
+    /// Collapse the focused tree item, or move to its parent when it is already collapsed.
+    UITreeCollapse
+);
+
+/// Marks the one selected item of a list or tree; inserting it on an item takes it from the others.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UISelected;
+
+/// Marks an item that its list or tree leaves out.
+#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct UIHidden;
+
+/// Sent to an item when the user selects it, by a left click or a navigation action.
+pub struct UIItemSelected;
+
+/// Sent to an item when the user activates it, by a double click or [`UIListActivate`].
+pub struct UIItemActivated;
+
+/// Sent to an item when the user right-clicks it, at the pointer's position.
+pub struct UIItemContextMenu {
+    pub position: Vec2,
+}
+
+/// Trigger on an item to scroll its list or tree until the item's row is in view.
+pub struct UIReveal;
+
+impl Signal for UIItemSelected {}
+impl EntitySignal for UIItemSelected {}
+impl Signal for UIItemActivated {}
+impl EntitySignal for UIItemActivated {}
+impl Signal for UIItemContextMenu {}
+impl EntitySignal for UIItemContextMenu {}
+impl Signal for UIReveal {}
+impl EntitySignal for UIReveal {}
+
+/// Registers the listeners that keep selection unique and focus off despawned items.
+pub fn install_listeners(world: &mut World) {
+    world.add_listener(keep_selection_unique);
+    world.add_listener(release_despawned_focus);
+}
+
+pub(crate) fn keep_selection_unique(
+    on: On<Add<UISelected>>,
+    items: Query<&UIItem>,
+    selected: Query<(Entity, &UIItem, &UISelected)>,
+    mut cmd: CommandQueue,
+) {
+    let entity = on.signal().entity;
+    let Some(item) = items.get_entity(entity) else {
+        return;
+    };
+    for (other, other_item, _) in selected.iter() {
+        if other != entity && other_item.owner == item.owner {
+            cmd.remove::<UISelected>(other);
+        }
+    }
+}
+
+pub(crate) fn release_despawned_focus(on: On<Despawn<UIItem>>, mut focused: ResMut<FocusedWidget>) {
+    if **focused == Some(on.signal().entity) {
+        **focused = None;
+    }
+}
+
+fn click_item(
+    on: On<UIClick>,
+    items: Query<&UIItem>,
+    selected: Query<&UISelected>,
+    mut cmd: CommandQueue,
+) {
+    let entity = on.entity();
+    let Some(item) = items.get_entity(entity) else {
+        return;
+    };
+    let click = on.signal();
+    match click.button {
+        MouseButton::Right => cmd.entity(entity).trigger(UIItemContextMenu {
+            position: click.position,
+        }),
+        MouseButton::Left if item.selectable => select(entity, &selected, &mut cmd),
+        _ => {}
+    }
+}
+
+fn double_click_item(on: On<UIDoubleClick>, items: Query<&UIItem>, mut cmd: CommandQueue) {
+    let entity = on.entity();
+    if on.signal().button == MouseButton::Left
+        && items.get_entity(entity).is_some_and(|item| item.selectable)
+    {
+        cmd.entity(entity).trigger(UIItemActivated);
+    }
+}
+
+fn reveal_item(
+    on: On<UIReveal>,
+    items: Query<&UIItem>,
+    owners: Query<(&mut UIScrollArea, Option<&UILayout>)>,
+    lists: Query<&UIList>,
+    theme: Res<UITheme>,
+) {
+    let Some(item) = items.get_entity(on.entity()) else {
+        return;
+    };
+    let Some((mut area, layout)) = owners.get_entity(item.owner) else {
+        return;
+    };
+    let row_height = lists
+        .get_entity(item.owner)
+        .and_then(|list| list.row_height)
+        .unwrap_or(theme.row_height);
+    let viewport = layout.map_or(0.0, |layout| layout.content_rect.size.y);
+    let top = item.index as f32 * row_height;
+    let offset = if top < area.offset {
+        top
+    } else if top + row_height > area.offset + viewport {
+        top + row_height - viewport
+    } else {
+        area.offset
+    };
+    if area.offset != offset {
+        area.offset = offset;
+    }
+}
+
+fn select(entity: Entity, selected: &Query<&UISelected>, cmd: &mut CommandQueue) {
+    if !selected.contains_entity(entity) {
+        cmd.insert(UISelected, entity);
+    }
+    cmd.entity(entity).trigger(UIItemSelected);
+}
+
+pub(crate) fn navigate_items(
+    mut actions: EventReader<ActionFired>,
+    mut focused: ResMut<FocusedWidget>,
+    items: Query<(Entity, &UIItem)>,
+    selected: Query<&UISelected>,
+    mut lost: EventWriter<UIFocusLost>,
+    mut gained: EventWriter<UIFocusGained>,
+    mut cmd: CommandQueue,
+) {
+    for fired in actions.read() {
+        let Some(current) = **focused else {
+            continue;
+        };
+        let Some((_, &item)) = items.get_entity(current) else {
+            continue;
+        };
+        if !item.selectable {
+            continue;
+        }
+        if fired.is(UIListActivate) {
+            cmd.entity(current).trigger(UIItemActivated);
+            continue;
+        }
+        let mut siblings = items
+            .iter()
+            .filter(|(_, other)| other.owner == item.owner)
+            .map(|(entity, other)| (other.index, entity));
+        let target = if fired.is(UIListNext) {
+            siblings.find(|(index, _)| *index == item.index + 1)
+        } else if fired.is(UIListPrevious) {
+            item.index
+                .checked_sub(1)
+                .and_then(|previous| siblings.find(|(index, _)| *index == previous))
+        } else if fired.is(UIListFirst) {
+            siblings.min_by_key(|(index, _)| *index)
+        } else if fired.is(UIListLast) {
+            siblings.max_by_key(|(index, _)| *index)
+        } else {
+            None
+        };
+        let Some((_, target)) = target else {
+            continue;
+        };
+        if target == current {
+            continue;
+        }
+        **focused = Some(target);
+        lost.write(UIFocusLost(current));
+        gained.write(UIFocusGained(target));
+        select(target, &selected, &mut cmd);
+        cmd.entity(target).trigger(UIReveal);
+    }
+}
+
+pub(crate) fn paint_items(
+    items: Query<(Entity, &UIItem, &mut UIMaterial, Option<&UISelected>)>,
+    hovered: Res<HoveredNode>,
+    theme: Res<UITheme>,
+) {
+    for (entity, item, mut material, selected) in items.iter() {
+        let colour = if !item.selectable {
+            Color::TRANSPARENT
+        } else if selected.is_some() {
+            theme.selection()
+        } else if **hovered == Some(entity) {
+            theme.surface_hovered
+        } else {
+            Color::TRANSPARENT
+        }
+        .to_linear();
+        if material.color != colour {
+            material.color = colour;
+        }
+    }
+}
+
+pub(crate) fn equip_items(
+    rows: &[Entity],
+    selectable: bool,
+    items: &Query<&UIItem>,
+    materials: &Query<&UIMaterial>,
+    cmd: &mut CommandQueue,
+) {
+    for &row in rows {
+        let previous = items.get_entity(row).map(|item| item.selectable);
+        if previous.is_none() {
+            cmd.insert(
+                (
+                    Interactable,
+                    click_item.into_listener(),
+                    double_click_item.into_listener(),
+                    reveal_item.into_listener(),
+                ),
+                row,
+            );
+            if !materials.contains_entity(row) {
+                cmd.insert(UIMaterial::flat(Color::TRANSPARENT), row);
+            }
+        }
+        match (previous, selectable) {
+            (None | Some(false), true) => cmd.insert(UIFocusable, row),
+            (Some(true), false) => cmd.remove::<UIFocusable>(row),
+            _ => {}
+        }
+    }
+}
 
 /// Where the widget placed a row: written by a `UIList` or `UITree` on each item it manages.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -21,6 +305,7 @@ pub struct UIItem {
     owner: Entity,
     index: usize,
     depth: usize,
+    selectable: bool,
 }
 
 impl UIItem {
@@ -92,6 +377,7 @@ pub(crate) fn place_rows(
     rows: &[Entity],
     owner: Entity,
     row_height: f32,
+    selectable: bool,
     viewport: Option<f32>,
     area: &mut Mut<UIScrollArea>,
     nodes: &Query<&mut UINode>,
@@ -115,6 +401,7 @@ pub(crate) fn place_rows(
             owner,
             index,
             depth: 0,
+            selectable,
         };
         if items.get_entity(row).copied() != Some(item) {
             cmd.insert(item, row);

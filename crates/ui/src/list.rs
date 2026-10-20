@@ -9,14 +9,16 @@ use concerto_ecs::{
 
 use crate::{
     items::{
-        UIItem, UIRowSpacer, UIWidgetPart, fit_owner, keep_parts_last, place_rows, set_up_owner,
+        UIItem, UIRowSpacer, UIWidgetPart, equip_items, fit_owner, keep_parts_last, place_rows,
+        set_up_owner,
     },
+    material::UIMaterial,
     node::{UICulled, UIIntrinsicHeight, UILayout, UINode},
     scroll::UIScrollArea,
     theme::UITheme,
 };
 
-/// A vertical list whose items are the node's own children, one row each, in child order; it clips them and owns its overflow.
+/// A vertical list whose items are the node's own children, one row each, in child order; it clips them, owns its overflow and owns their clicks, so put no click listener or `UIInteractionStyle` on an item.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UIList {
     pub row_height: Option<f32>,
@@ -55,6 +57,7 @@ pub(crate) fn update_lists(
     spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
     items: Query<&UIItem>,
     culled: Query<&UICulled>,
+    materials: Query<&UIMaterial>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
@@ -71,10 +74,12 @@ pub(crate) fn update_lists(
                 }
             }
         }
+        equip_items(&rows, list.selectable, &items, &materials, &mut cmd);
         place_rows(
             &rows,
             entity,
             list.row_height.unwrap_or(theme.row_height),
+            list.selectable,
             layout.map(|layout| layout.content_rect.size.y),
             &mut area,
             &nodes,
@@ -88,21 +93,38 @@ pub(crate) fn update_lists(
 
 #[cfg(test)]
 mod tests {
+    use concerto_color::LinearRgba;
     use concerto_ecs::{
         IntoSetConfig, IntoSystemConfig, Schedule, World,
         entity::{
             Entity,
             hierarchy::{ChildOf, Children},
         },
+        events::event_channel::EventChannel,
+        resource::{ResMut, Resource},
+        signal::{On, listener::IntoListener},
         system::{executor::multi_thread::MultiThreadedExecutor, schedule::CompiledSchedule},
     };
+    use concerto_window::input::{
+        Input, MouseButton,
+        actions::{ActionFired, ActionLabel},
+    };
     use concerto_window::plugin::Window;
+    use glam::Vec2;
 
     use super::*;
     use crate::{
         anchor::UIPanelStack,
-        interaction::{HoveredNode, Interactable, UIInputState, update_ui_interaction},
-        items::UIItem,
+        focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+        interaction::{
+            HoveredNode, Interactable, UIClick, UIDoubleClick, UIInputState, update_ui_interaction,
+        },
+        items::{
+            UIItem, UIItemActivated, UIItemContextMenu, UIItemSelected, UIListActivate,
+            UIListFirst, UIListLast, UIListNext, UIListPrevious, UIReveal, UISelected,
+            install_listeners, navigate_items, paint_items,
+        },
+        material::UIMaterial,
         node::{
             FlexDirection, UICulled, UILayout, UILayoutDiagnostics, UILayoutEngine, UINode,
             UITextMeasure, blank_culled_layouts, compute_ui_nodes,
@@ -113,9 +135,20 @@ mod tests {
         },
         sets::UiSet,
         text::fonts::{UIFonts, build_font_system},
+        text_input::UITextInput,
         theme::UITheme,
         transform::UIValue,
     };
+
+    #[derive(Clone, Copy, Debug, PartialEq)]
+    enum Heard {
+        Selected,
+        Activated,
+        Menu(Vec2),
+    }
+
+    #[derive(Resource, Default)]
+    struct Log(Vec<(Entity, Heard)>);
 
     struct Harness {
         world: World,
@@ -131,20 +164,33 @@ mod tests {
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
             world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(Input::new());
+            world.insert_resource(HoveredNode::default());
+            world.insert_resource(UIInputState::default());
+            world.insert_resource(FocusedWidget::default());
+            world.insert_resource(EventChannel::<ActionFired>::default());
+            world.insert_resource(EventChannel::<UIFocusGained>::default());
+            world.insert_resource(EventChannel::<UIFocusLost>::default());
+            world.insert_resource(Log::default());
             world.add_listener(blank_culled_layouts);
             world.add_listener(set_up_list);
+            install_listeners(&mut world);
             let mut schedule = Schedule::new();
             schedule.configure_sets(
                 (
+                    UiSet::Widgets,
                     UiSet::Setup,
                     UiSet::Project,
+                    UiSet::Materials,
                     UiSet::Layout,
                     UiSet::PostLayout,
                 )
                     .chain(),
             );
+            schedule.add_system(navigate_items.in_set(UiSet::Widgets));
             schedule.add_system(setup_scrollbars.in_set(UiSet::Setup));
             schedule.add_system(update_lists.in_set(UiSet::Project));
+            schedule.add_system(paint_items.in_set(UiSet::Materials));
             schedule.add_system(compute_ui_nodes.in_set(UiSet::Layout));
             schedule.add_system(
                 (sync_scrollbar_tracks, sync_scrollbar_thumbs).in_set(UiSet::PostLayout),
@@ -205,6 +251,80 @@ mod tests {
                 .offset = offset;
         }
 
+        fn listen(&mut self, item: Entity) {
+            fn hear<S: concerto_ecs::signal::Signal>(
+                heard: fn(&S) -> Heard,
+            ) -> concerto_ecs::signal::listener::Listener<S> {
+                (move |on: On<S>, mut log: ResMut<Log>| {
+                    log.0.push((on.entity(), heard(on.signal())))
+                })
+                .into_listener()
+            }
+            self.world.insert(
+                (
+                    hear::<UIItemSelected>(|_| Heard::Selected),
+                    hear::<UIItemActivated>(|_| Heard::Activated),
+                    hear::<UIItemContextMenu>(|menu| Heard::Menu(menu.position)),
+                ),
+                item,
+            );
+        }
+
+        fn heard(&mut self) -> Vec<(Entity, Heard)> {
+            std::mem::take(&mut self.world.get_resource_mut::<Log>().unwrap().0)
+        }
+
+        fn click(&mut self, item: Entity, button: MouseButton, position: Vec2) {
+            self.world.trigger_on(item, UIClick { position, button });
+        }
+
+        fn double_click(&mut self, item: Entity) {
+            self.world.trigger_on(
+                item,
+                UIDoubleClick {
+                    position: Vec2::ZERO,
+                    button: MouseButton::Left,
+                },
+            );
+        }
+
+        fn fire(&mut self, action: impl ActionLabel) {
+            self.world
+                .get_resource_mut::<EventChannel<ActionFired>>()
+                .unwrap()
+                .push_event(ActionFired {
+                    action: action.intern(),
+                });
+            self.frame();
+        }
+
+        fn focus(&mut self, entity: Entity) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(entity);
+        }
+
+        fn focused(&self) -> Option<Entity> {
+            **self.world.get_resource::<FocusedWidget>().unwrap()
+        }
+
+        fn selected(&self, rows: &[Entity]) -> Vec<usize> {
+            rows.iter()
+                .enumerate()
+                .filter(|(_, row)| {
+                    self.world
+                        .get_component_for_entity::<UISelected>(**row)
+                        .is_some()
+                })
+                .map(|(index, _)| index)
+                .collect()
+        }
+
+        fn colour(&self, item: Entity) -> LinearRgba {
+            self.world
+                .get_component_for_entity::<UIMaterial>(item)
+                .expect("an item has a material")
+                .color
+        }
+
         fn unculled(&self, rows: &[Entity]) -> Vec<usize> {
             rows.iter()
                 .enumerate()
@@ -229,6 +349,17 @@ mod tests {
         UINode::default()
             .with_height(UIValue::Px(height))
             .with_flex_shrink(0.0)
+    }
+
+    fn short_list(harness: &mut Harness, list: UIList) -> (Entity, Vec<Entity>) {
+        let root = harness.root();
+        let list = harness.list(list, tall(200.0), root);
+        let rows = harness.rows(list, 5);
+        harness.settle();
+        for row in &rows {
+            harness.listen(*row);
+        }
+        (list, rows)
     }
 
     fn long_list(harness: &mut Harness, offset: f32) -> (Entity, Vec<Entity>) {
@@ -489,11 +620,6 @@ mod tests {
     #[test]
     fn rows_added_later_stay_under_the_scrollbar() {
         let mut harness = Harness::new();
-        harness
-            .world
-            .insert_resource(concerto_window::input::Input::new());
-        harness.world.insert_resource(HoveredNode::default());
-        harness.world.insert_resource(UIInputState::default());
         let root = harness.root();
         let list = harness.list(rows_of(20.0), tall(100.0), root);
         for _ in 0..10 {
@@ -541,6 +667,237 @@ mod tests {
         assert_eq!(
             **harness.world.get_resource::<HoveredNode>().unwrap(),
             Some(thumb)
+        );
+    }
+
+    #[test]
+    fn a_left_click_selects_and_tells_the_item() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+
+        harness.click(rows[2], MouseButton::Left, Vec2::ZERO);
+
+        assert_eq!(harness.selected(&rows), [2]);
+        assert_eq!(harness.heard(), [(rows[2], Heard::Selected)]);
+    }
+
+    #[test]
+    fn selection_stays_unique() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+
+        harness.world.insert(UISelected, rows[1]);
+        harness.world.insert(UISelected, rows[3]);
+
+        assert_eq!(harness.selected(&rows), [3]);
+    }
+
+    #[test]
+    fn a_double_click_activates() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+
+        harness.double_click(rows[1]);
+
+        assert_eq!(harness.heard(), [(rows[1], Heard::Activated)]);
+    }
+
+    #[test]
+    fn a_right_click_asks_for_a_context_menu_at_the_pointer() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+        harness.world.insert(UISelected, rows[0]);
+
+        harness.click(rows[1], MouseButton::Right, Vec2::new(12.0, 34.0));
+
+        assert_eq!(
+            harness.heard(),
+            [(rows[1], Heard::Menu(Vec2::new(12.0, 34.0)))]
+        );
+        assert_eq!(harness.selected(&rows), [0]);
+    }
+
+    #[test]
+    fn next_and_previous_stop_at_the_ends() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+
+        harness.focus(rows[2]);
+        harness.fire(UIListNext);
+        assert_eq!(harness.focused(), Some(rows[3]));
+        assert_eq!(harness.selected(&rows), [3]);
+        assert_eq!(harness.heard(), [(rows[3], Heard::Selected)]);
+
+        harness.focus(rows[4]);
+        harness.fire(UIListNext);
+        assert_eq!(harness.focused(), Some(rows[4]));
+
+        harness.focus(rows[0]);
+        harness.fire(UIListPrevious);
+        assert_eq!(harness.focused(), Some(rows[0]));
+        assert_eq!(harness.selected(&rows), [3]);
+        assert!(harness.heard().is_empty());
+    }
+
+    #[test]
+    fn home_and_end_jump() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+
+        harness.focus(rows[2]);
+        harness.fire(UIListFirst);
+        assert_eq!(harness.focused(), Some(rows[0]));
+        assert_eq!(harness.selected(&rows), [0]);
+
+        harness.fire(UIListLast);
+        assert_eq!(harness.focused(), Some(rows[4]));
+        assert_eq!(harness.selected(&rows), [4]);
+        assert_eq!(
+            harness.heard(),
+            [(rows[0], Heard::Selected), (rows[4], Heard::Selected)]
+        );
+    }
+
+    #[test]
+    fn enter_activates_the_focused_item() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+
+        harness.focus(rows[1]);
+        harness.fire(UIListActivate);
+
+        assert_eq!(harness.heard(), [(rows[1], Heard::Activated)]);
+    }
+
+    #[test]
+    fn navigation_ignores_a_focused_text_field_in_a_row() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+        let field = harness.world.spawn((
+            UINode::default(),
+            UITextInput::new(""),
+            ChildOf::new(rows[1]),
+        ));
+        harness.settle();
+
+        harness.focus(field);
+        harness.fire(UIListNext);
+        harness.fire(UIListActivate);
+
+        assert_eq!(harness.focused(), Some(field));
+        assert!(harness.selected(&rows).is_empty());
+        assert!(harness.heard().is_empty());
+    }
+
+    #[test]
+    fn an_unselectable_list_ignores_clicks_and_keys() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(
+            &mut harness,
+            UIList {
+                selectable: false,
+                ..Default::default()
+            },
+        );
+
+        harness.click(rows[1], MouseButton::Left, Vec2::ZERO);
+        harness.double_click(rows[1]);
+        harness.focus(rows[1]);
+        harness.fire(UIListNext);
+        harness.fire(UIListActivate);
+        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(rows[1]);
+        harness.frame();
+
+        assert!(harness.selected(&rows).is_empty());
+        assert_eq!(harness.focused(), Some(rows[1]));
+        assert!(harness.heard().is_empty());
+        assert_eq!(harness.colour(rows[1]), LinearRgba::TRANSPARENT);
+
+        harness.click(rows[1], MouseButton::Right, Vec2::new(5.0, 6.0));
+        assert_eq!(
+            harness.heard(),
+            [(rows[1], Heard::Menu(Vec2::new(5.0, 6.0)))]
+        );
+    }
+
+    #[test]
+    fn the_widget_paints_selection_and_hover() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+        let theme = UITheme::default();
+
+        harness.world.insert(UISelected, rows[0]);
+        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(rows[1]);
+        harness.frame();
+
+        assert_eq!(harness.colour(rows[0]), theme.selection().to_linear());
+        assert_eq!(harness.colour(rows[1]), theme.surface_hovered.to_linear());
+        assert_eq!(harness.colour(rows[2]), LinearRgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn reveal_scrolls_the_row_into_view() {
+        let mut harness = Harness::new();
+        let (list, rows) = long_list(&mut harness, 0.0);
+
+        harness.world.trigger_on(rows[500], UIReveal);
+        harness.frame();
+
+        let content = harness.layout(list).content_rect;
+        let row = harness.layout(rows[500]);
+        assert!(row.is_shown());
+        assert!(
+            row.rect.min.y >= content.min.y,
+            "{:?} in {content:?}",
+            row.rect
+        );
+        assert!(
+            row.rect.min.y + row.rect.size.y <= content.min.y + content.size.y,
+            "{:?} in {content:?}",
+            row.rect
+        );
+    }
+
+    #[test]
+    fn despawning_the_focused_item_clears_focus() {
+        let mut harness = Harness::new();
+        let (_, rows) = short_list(&mut harness, UIList::default());
+        harness.focus(rows[2]);
+        harness.world.insert(UISelected, rows[2]);
+
+        harness.world.despawn(rows[2]);
+        harness.frame();
+
+        assert_eq!(harness.focused(), None);
+        assert!(harness.selected(&rows).is_empty());
+    }
+
+    #[test]
+    fn a_click_on_a_plain_label_reaches_its_item() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let list = harness.list(rows_of(20.0), tall(100.0), root);
+        let rows = harness.rows(list, 3);
+        let label = harness.node(
+            UINode::default().with_size(UIValue::Px(40.0), UIValue::Px(10.0)),
+            rows[1],
+        );
+        harness.settle();
+
+        let rect = harness.layout(label).rect;
+        let centre = rect.min + rect.size / 2.0;
+        harness
+            .world
+            .get_resource_mut::<Input>()
+            .unwrap()
+            .update_mouse_position(centre.x as f64, centre.y as f64);
+        let mut system = concerto_ecs::IntoSystem::into_system(update_ui_interaction);
+        concerto_ecs::System::initialize(&mut system, &mut harness.world);
+        concerto_ecs::System::run_and_apply(&mut system, (), &mut harness.world);
+
+        assert_eq!(
+            **harness.world.get_resource::<HoveredNode>().unwrap(),
+            Some(rows[1])
         );
     }
 }
