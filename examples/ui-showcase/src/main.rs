@@ -489,7 +489,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
                     content: None,
                 },
                 UIVirtualList::new(10_000, 28.0),
-                UITreeElement,
+                UITreeElement::default(),
             ),
             |mut ctx| {
                 for i in 0..5 {

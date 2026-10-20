@@ -68,13 +68,19 @@ pub(crate) fn update_lists(
             keep_parts_last(&mut children, &parts);
             for &child in children.iter() {
                 if !parts.contains_entity(child) && nodes.contains_entity(child) {
-                    rows.push(child);
+                    rows.push((child, 0));
                 } else if spacer.is_none() {
                     spacer = spacers.get_entity(child);
                 }
             }
         }
-        equip_items(&rows, list.selectable, &items, &materials, &mut cmd);
+        equip_items(
+            rows.iter().map(|(row, _)| *row),
+            list.selectable,
+            &items,
+            &materials,
+            &mut cmd,
+        );
         place_rows(
             &rows,
             entity,
@@ -92,7 +98,7 @@ pub(crate) fn update_lists(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use concerto_color::LinearRgba;
     use concerto_ecs::{
         IntoSetConfig, IntoSystemConfig, Schedule, World,
@@ -138,6 +144,7 @@ mod tests {
         text_input::UITextInput,
         theme::UITheme,
         transform::UIValue,
+        tree::{set_up_tree, update_trees},
     };
 
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -150,13 +157,13 @@ mod tests {
     #[derive(Resource, Default)]
     struct Log(Vec<(Entity, Heard)>);
 
-    struct Harness {
-        world: World,
+    pub(crate) struct Harness {
+        pub(crate) world: World,
         schedule: CompiledSchedule,
     }
 
     impl Harness {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let mut world = World::new();
             world.insert_resource(Window::new((800, 600), 1.0));
             world.insert_resource(UITheme::default());
@@ -174,6 +181,7 @@ mod tests {
             world.insert_resource(Log::default());
             world.add_listener(blank_culled_layouts);
             world.add_listener(set_up_list);
+            world.add_listener(set_up_tree);
             install_listeners(&mut world);
             let mut schedule = Schedule::new();
             schedule.configure_sets(
@@ -189,7 +197,7 @@ mod tests {
             );
             schedule.add_system(navigate_items.in_set(UiSet::Widgets));
             schedule.add_system(setup_scrollbars.in_set(UiSet::Setup));
-            schedule.add_system(update_lists.in_set(UiSet::Project));
+            schedule.add_system((update_lists, update_trees).in_set(UiSet::Project));
             schedule.add_system(paint_items.in_set(UiSet::Materials));
             schedule.add_system(compute_ui_nodes.in_set(UiSet::Layout));
             schedule.add_system(
@@ -199,18 +207,18 @@ mod tests {
             Self { world, schedule }
         }
 
-        fn frame(&mut self) {
+        pub(crate) fn frame(&mut self) {
             self.schedule.run(&mut self.world);
             self.world.tick();
         }
 
-        fn settle(&mut self) {
+        pub(crate) fn settle(&mut self) {
             for _ in 0..3 {
                 self.frame();
             }
         }
 
-        fn root(&mut self) -> Entity {
+        pub(crate) fn root(&mut self) -> Entity {
             self.world.spawn(
                 UINode::default()
                     .with_size(UIValue::Px(800.0), UIValue::Px(600.0))
@@ -218,7 +226,7 @@ mod tests {
             )
         }
 
-        fn node(&mut self, node: UINode, parent: Entity) -> Entity {
+        pub(crate) fn node(&mut self, node: UINode, parent: Entity) -> Entity {
             self.world.spawn((node, ChildOf::new(parent)))
         }
 
@@ -232,19 +240,19 @@ mod tests {
                 .collect()
         }
 
-        fn layout(&self, entity: Entity) -> &UILayout {
+        pub(crate) fn layout(&self, entity: Entity) -> &UILayout {
             self.world
                 .get_component_for_entity::<UILayout>(entity)
                 .unwrap_or_else(|| panic!("{entity:?} has no layout"))
         }
 
-        fn area(&self, list: Entity) -> &UIScrollArea {
+        pub(crate) fn area(&self, list: Entity) -> &UIScrollArea {
             self.world
                 .get_component_for_entity::<UIScrollArea>(list)
                 .expect("a list is its own scroll area")
         }
 
-        fn set_offset(&mut self, list: Entity, offset: f32) {
+        pub(crate) fn set_offset(&mut self, list: Entity, offset: f32) {
             self.world
                 .get_component_for_entity_mut::<UIScrollArea>(list)
                 .unwrap()
@@ -274,7 +282,7 @@ mod tests {
             std::mem::take(&mut self.world.get_resource_mut::<Log>().unwrap().0)
         }
 
-        fn click(&mut self, item: Entity, button: MouseButton, position: Vec2) {
+        pub(crate) fn click(&mut self, item: Entity, button: MouseButton, position: Vec2) {
             self.world.trigger_on(item, UIClick { position, button });
         }
 
@@ -288,7 +296,7 @@ mod tests {
             );
         }
 
-        fn fire(&mut self, action: impl ActionLabel) {
+        pub(crate) fn fire(&mut self, action: impl ActionLabel) {
             self.world
                 .get_resource_mut::<EventChannel<ActionFired>>()
                 .unwrap()
@@ -298,11 +306,11 @@ mod tests {
             self.frame();
         }
 
-        fn focus(&mut self, entity: Entity) {
+        pub(crate) fn focus(&mut self, entity: Entity) {
             **self.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(entity);
         }
 
-        fn focused(&self) -> Option<Entity> {
+        pub(crate) fn focused(&self) -> Option<Entity> {
             **self.world.get_resource::<FocusedWidget>().unwrap()
         }
 
@@ -318,7 +326,7 @@ mod tests {
                 .collect()
         }
 
-        fn selected(&self, rows: &[Entity]) -> Vec<usize> {
+        pub(crate) fn selected(&self, rows: &[Entity]) -> Vec<usize> {
             rows.iter()
                 .enumerate()
                 .filter(|(_, row)| {
@@ -337,7 +345,7 @@ mod tests {
                 .color
         }
 
-        fn unculled(&self, rows: &[Entity]) -> Vec<usize> {
+        pub(crate) fn unculled(&self, rows: &[Entity]) -> Vec<usize> {
             rows.iter()
                 .enumerate()
                 .filter(|(_, row)| {

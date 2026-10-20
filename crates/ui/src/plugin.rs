@@ -48,6 +48,7 @@ use crate::{
         UITextInputCancelled, UITextInputChanged, UITextInputSubmitted, update_text_inputs,
     },
     theme::UITheme,
+    tree::{set_up_tree, update_trees},
     widgets::{sync_tab_bodies, update_tooltips},
 };
 
@@ -103,6 +104,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(UIPanelStack::default());
         app.add_listener(blank_culled_layouts);
         app.add_listener(set_up_list);
+        app.add_listener(set_up_tree);
         install_listeners(app.main_mut().world_mut());
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
@@ -161,6 +163,7 @@ impl Plugin for UIPlugin {
                 sync_scroll_content,
                 sync_split_panes,
                 update_lists,
+                update_trees,
             )
                 .in_set(UiSet::Project),
         );

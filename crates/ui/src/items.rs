@@ -5,7 +5,10 @@ use concerto_ecs::{
     World,
     command::CommandQueue,
     component::Component,
-    entity::{Entity, hierarchy::Children},
+    entity::{
+        Entity,
+        hierarchy::{ChildOf, Children},
+    },
     events::{event_reader::EventReader, event_writer::EventWriter},
     query::{Query, change_detection::Mut, filter::With},
     resource::{Res, ResMut},
@@ -31,6 +34,7 @@ use crate::{
     scroll::UIScrollArea,
     theme::UITheme,
     transform::UIValue,
+    tree::{UITree, UITreeElement, open_to},
 };
 
 const OVERSCAN: usize = 2;
@@ -178,14 +182,28 @@ fn reveal_item(
     on: On<UIReveal>,
     items: Query<&UIItem>,
     owners: Query<(&mut UIScrollArea, Option<&UILayout>)>,
+    trees: Query<&UITree>,
+    elements: Query<&mut UITreeElement>,
+    hidden: Query<&UIHidden>,
+    children: Query<&Children>,
+    parents: Query<&ChildOf>,
 ) {
-    let Some(item) = items.get_entity(on.entity()) else {
+    let entity = on.entity();
+    let Some(item) = items.get_entity(entity) else {
+        return;
+    };
+    let index = if trees.contains_entity(item.owner) {
+        open_to(item.owner, entity, &elements, &hidden, &children, &parents)
+    } else {
+        Some(item.index)
+    };
+    let Some(index) = index else {
         return;
     };
     let Some((mut area, layout)) = owners.get_entity(item.owner) else {
         return;
     };
-    let top = item.index as f32 * item.row_height;
+    let top = index as f32 * item.row_height;
     let bottom = top + item.row_height;
     let offset = match layout.map(|layout| layout.content_rect.size.y) {
         Some(viewport) if viewport > 0.0 => {
@@ -216,6 +234,9 @@ pub(crate) fn navigate_items(
     mut focused: ResMut<FocusedWidget>,
     items: Query<(Entity, &UIItem)>,
     selected: Query<&UISelected>,
+    elements: Query<&mut UITreeElement>,
+    children: Query<&Children>,
+    parents: Query<&ChildOf>,
     mut lost: EventWriter<UIFocusLost>,
     mut gained: EventWriter<UIFocusGained>,
     mut cmd: CommandQueue,
@@ -227,31 +248,41 @@ pub(crate) fn navigate_items(
         let Some((_, &item)) = items.get_entity(current) else {
             continue;
         };
-        if !item.selectable {
+        if !item.selectable || !item.shown {
             continue;
         }
         if fired.is(UIListActivate) {
             cmd.entity(current).trigger(UIItemActivated);
             continue;
         }
-        let mut siblings = items
+        let mut rows = items
             .iter()
-            .filter(|(_, other)| other.owner == item.owner)
-            .map(|(entity, other)| (other.index, entity));
+            .filter(|(_, other)| other.owner == item.owner && other.shown);
         let target = if fired.is(UIListNext) {
-            siblings.find(|(index, _)| *index == item.index + 1)
+            rows.find(|(_, other)| other.index == item.index + 1)
         } else if fired.is(UIListPrevious) {
             item.index
                 .checked_sub(1)
-                .and_then(|previous| siblings.find(|(index, _)| *index == previous))
+                .and_then(|previous| rows.find(|(_, other)| other.index == previous))
         } else if fired.is(UIListFirst) {
-            siblings.min_by_key(|(index, _)| *index)
+            rows.min_by_key(|(_, other)| other.index)
         } else if fired.is(UIListLast) {
-            siblings.max_by_key(|(index, _)| *index)
+            rows.max_by_key(|(_, other)| other.index)
+        } else if fired.is(UITreeExpand) {
+            if expand_or_descend(current, &elements, &children) {
+                rows.find(|(_, other)| {
+                    other.index == item.index + 1 && other.depth == item.depth + 1
+                })
+            } else {
+                None
+            }
+        } else if fired.is(UITreeCollapse) {
+            collapse_or_ascend(current, &elements, &children, &parents)
+                .and_then(|parent| rows.find(|(entity, _)| *entity == parent))
         } else {
             None
         };
-        let Some((_, target)) = target else {
+        let Some((target, _)) = target else {
             continue;
         };
         if target == current {
@@ -263,6 +294,51 @@ pub(crate) fn navigate_items(
         select(target, &selected, &mut cmd);
         cmd.entity(target).trigger(UIReveal);
     }
+}
+
+fn has_child_items(
+    entity: Entity,
+    elements: &Query<&mut UITreeElement>,
+    children: &Query<&Children>,
+) -> bool {
+    children.get_entity(entity).is_some_and(|children| {
+        children
+            .iter()
+            .any(|child| elements.contains_entity(*child))
+    })
+}
+
+fn expand_or_descend(
+    entity: Entity,
+    elements: &Query<&mut UITreeElement>,
+    children: &Query<&Children>,
+) -> bool {
+    if !has_child_items(entity, elements, children) {
+        return false;
+    }
+    let Some(mut element) = elements.get_entity(entity) else {
+        return false;
+    };
+    if element.expanded {
+        return true;
+    }
+    element.expanded = true;
+    false
+}
+
+fn collapse_or_ascend(
+    entity: Entity,
+    elements: &Query<&mut UITreeElement>,
+    children: &Query<&Children>,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    let has_children = has_child_items(entity, elements, children);
+    let mut element = elements.get_entity(entity)?;
+    if element.expanded && has_children {
+        element.expanded = false;
+        return None;
+    }
+    parents.get_entity(entity).map(ChildOf::parent)
 }
 
 pub(crate) fn paint_items(
@@ -288,13 +364,13 @@ pub(crate) fn paint_items(
 }
 
 pub(crate) fn equip_items(
-    rows: &[Entity],
+    rows: impl IntoIterator<Item = Entity>,
     selectable: bool,
     items: &Query<&UIItem>,
     materials: &Query<&UIMaterial>,
     cmd: &mut CommandQueue,
 ) {
-    for &row in rows {
+    for row in rows {
         let previous = items.get_entity(row).map(|item| item.selectable);
         if previous.is_none() {
             cmd.insert(
@@ -326,6 +402,7 @@ pub struct UIItem {
     depth: usize,
     selectable: bool,
     row_height: f32,
+    pub(crate) shown: bool,
 }
 
 impl UIItem {
@@ -334,7 +411,7 @@ impl UIItem {
         self.owner
     }
 
-    /// The item's row among the visible rows, counted from the top.
+    /// The item's row among the visible rows, counted from the top; 0 while a collapsed or hidden item hides it.
     pub fn index(&self) -> usize {
         self.index
     }
@@ -393,8 +470,48 @@ pub(crate) fn keep_parts_last(children: &mut Mut<Children>, parts: &Query<&UIWid
     }
 }
 
+pub(crate) fn keep_parts_first(children: &mut Mut<Children>, parts: &Query<&UIWidgetPart>) {
+    let mut seen_other = false;
+    let out_of_order = children.iter().any(|child| {
+        let part = parts.contains_entity(*child);
+        let misplaced = seen_other && part;
+        seen_other |= !part;
+        misplaced
+    });
+    if out_of_order {
+        children.sort_by_key(|child| !parts.contains_entity(child));
+    }
+}
+
+pub(crate) fn park_items(
+    parked: &[(Entity, usize)],
+    owner: Entity,
+    row_height: f32,
+    selectable: bool,
+    items: &Query<&UIItem>,
+    culled: &Query<&UICulled>,
+    cmd: &mut CommandQueue,
+) {
+    for &(entity, depth) in parked {
+        let item = UIItem {
+            owner,
+            index: 0,
+            depth,
+            selectable,
+            row_height,
+            shown: false,
+        };
+        if items.get_entity(entity).copied() != Some(item) {
+            cmd.insert(item, entity);
+        }
+        if !culled.contains_entity(entity) {
+            cmd.insert(UICulled, entity);
+        }
+    }
+}
+
 pub(crate) fn place_rows(
-    rows: &[Entity],
+    rows: &[(Entity, usize)],
     owner: Entity,
     row_height: f32,
     selectable: bool,
@@ -416,19 +533,21 @@ pub(crate) fn place_rows(
     }
 
     let window = unculled_rows(rows.len(), row_height, offset, viewport);
-    for (index, &row) in rows.iter().enumerate() {
+    let nesting = nesting(rows);
+    for (index, (&(row, depth), &(parent, end))) in rows.iter().zip(&nesting).enumerate() {
         let item = UIItem {
             owner,
             index,
-            depth: 0,
+            depth,
             selectable,
             row_height,
+            shown: true,
         };
         if items.get_entity(row).copied() != Some(item) {
             cmd.insert(item, row);
         }
         let is_culled = culled.contains_entity(row);
-        if !window.contains(&index) {
+        if index >= window.end || end <= window.start {
             if !is_culled {
                 cmd.insert(UICulled, row);
             }
@@ -437,10 +556,30 @@ pub(crate) fn place_rows(
         if is_culled {
             cmd.remove::<UICulled>(row);
         }
+        let top = match parent {
+            Some(parent) => (index - parent) as f32 * row_height,
+            None => index as f32 * row_height - offset,
+        };
         if let Some(mut node) = nodes.get_entity(row) {
-            place_row(&mut node, index as f32 * row_height - offset, row_height);
+            place_row(&mut node, top, row_height);
         }
     }
+}
+
+fn nesting(rows: &[(Entity, usize)]) -> Vec<(Option<usize>, usize)> {
+    let mut nesting = vec![(None, rows.len()); rows.len()];
+    let mut open: Vec<usize> = Vec::new();
+    for (index, &(_, depth)) in rows.iter().enumerate() {
+        while let Some(&ancestor) = open.last()
+            && rows[ancestor].1 >= depth
+        {
+            nesting[ancestor].1 = index;
+            open.pop();
+        }
+        nesting[index].0 = open.last().copied();
+        open.push(index);
+    }
+    nesting
 }
 
 pub(crate) fn fit_owner(
