@@ -121,7 +121,7 @@ fn build_controls(
             (Control::Maximise, glyph::CORNERS_OUT),
             (Control::Close, glyph::X),
         ] {
-            bar = bar.add_child_with(
+            bar.add_child_with(
                 (
                     theme
                         .pressable()
@@ -149,7 +149,7 @@ fn build_controls(
     if let Some(root) = registry.root() {
         let mut root_queue = cmd.entity(root);
         for grip in grips() {
-            root_queue = root_queue.add_child(grip);
+            root_queue.add_child(grip);
         }
     }
 }

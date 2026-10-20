@@ -254,7 +254,7 @@ fn sync_tabs(
                     EditorTab { document: entity },
                     WindowChromeControl,
                 ),
-                |button| {
+                |mut button| {
                     let button = button
                         .add_child((
                             UINode::default()

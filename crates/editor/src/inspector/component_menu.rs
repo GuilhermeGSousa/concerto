@@ -89,7 +89,7 @@ pub(super) fn ensure_component_menu(
                 .on_click(remove_component),
             RemoveComponentItem,
         ),
-        |item| {
+        |mut item| {
             item.add_child(
                 theme
                     .label("Remove component")

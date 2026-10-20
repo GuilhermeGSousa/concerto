@@ -118,15 +118,14 @@ fn spawn_row(cmd: &mut CommandQueue, stack: Entity, theme: &UITheme) -> Entity {
 fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
     let mut menu = cmd.spawn(theme.popup().fill(MENU_FILL).width(UIValue::Px(MENU_WIDTH)));
 
-    let mut header = menu
-        .spawn_child_queue(
-            theme
-                .row()
-                .fixed()
-                .gap(7.0)
-                .padding(UIRect::axes(9.0, 10.0)),
-        )
-        .add_child(theme.label("⌕").muted().font_size(12.5).no_wrap());
+    let mut header = menu.spawn_child_queue(
+        theme
+            .row()
+            .fixed()
+            .gap(7.0)
+            .padding(UIRect::axes(9.0, 10.0)),
+    );
+    header.add_child(theme.label("⌕").muted().font_size(12.5).no_wrap());
     let search = header
         .spawn_child_queue((
             theme
@@ -154,7 +153,7 @@ fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
         )
         .entity();
 
-    menu = menu.add_child(theme.divider());
+    menu.add_child(theme.divider());
     let list = menu
         .spawn_child_queue(
             theme
@@ -165,14 +164,14 @@ fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
                 .clipped(),
         )
         .entity();
-    menu = menu.add_child(theme.divider());
-    menu = menu.add_child_with(
+    menu.add_child(theme.divider());
+    menu.add_child_with(
         theme
             .row()
             .fixed()
             .gap(10.0)
             .padding(UIRect::axes(7.0, 10.0)),
-        |footer| {
+        |mut footer| {
             footer
                 .add_child(
                     theme
@@ -315,38 +314,37 @@ fn spawn_entry(
     theme: &UITheme,
 ) {
     let mut list = cmd.entity(list);
-    let mut row = list
-        .spawn_child_queue((
-            theme
-                .pressable()
-                .selected(highlighted)
-                .row()
-                .gap(8.0)
-                .padding(UIRect::axes(6.0, 8.0))
-                .on_click(add_clicked_component),
-            entry,
-        ))
-        .add_child(
-            theme
-                .canvas()
-                .fill(theme.accent)
-                .rotation(std::f32::consts::FRAC_PI_4)
-                .size(UIValue::Px(MARK_SIZE), UIValue::Px(MARK_SIZE))
-                .fixed(),
-        )
-        .add_child(
-            theme
-                .label(name)
-                .font_size(12.5)
-                .single_line()
-                .color(if highlighted {
-                    theme.accent_hovered
-                } else {
-                    theme.text
-                })
-                .grow()
-                .min_width(UIValue::Px(0.0)),
-        );
+    let mut row = list.spawn_child_queue((
+        theme
+            .pressable()
+            .selected(highlighted)
+            .row()
+            .gap(8.0)
+            .padding(UIRect::axes(6.0, 8.0))
+            .on_click(add_clicked_component),
+        entry,
+    ));
+    row.add_child(
+        theme
+            .canvas()
+            .fill(theme.accent)
+            .rotation(std::f32::consts::FRAC_PI_4)
+            .size(UIValue::Px(MARK_SIZE), UIValue::Px(MARK_SIZE))
+            .fixed(),
+    )
+    .add_child(
+        theme
+            .label(name)
+            .font_size(12.5)
+            .single_line()
+            .color(if highlighted {
+                theme.accent_hovered
+            } else {
+                theme.text
+            })
+            .grow()
+            .min_width(UIValue::Px(0.0)),
+    );
     if highlighted {
         row.insert(HighlightedEntry);
         row.add_child(theme.label("↵").muted().mono().font_size(9.5).no_wrap());
