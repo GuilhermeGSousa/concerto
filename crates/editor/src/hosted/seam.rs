@@ -7,7 +7,7 @@ use concerto_ecs::{
     signal::Signal,
     system::{
         access::SystemAccess,
-        input::{ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError},
+        input::{ForeignTicks, ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError},
         meta::SystemMetadata,
     },
     world::UnsafeWorldCell,
@@ -65,6 +65,7 @@ impl<T: ReadOnlySystemInput + 'static> DerefMut for EditWorld<'_, '_, T> {
 pub struct EditWorldState<S> {
     targets: Targets,
     built_for: Option<WorldId>,
+    ticks: ForeignTicks,
     first: S,
     current: S,
 }
@@ -87,6 +88,7 @@ where
         EditWorldState {
             targets: world.query(),
             built_for: None,
+            ticks: ForeignTicks::default(),
             current: first.clone(),
             first,
         }
@@ -103,17 +105,18 @@ where
         if state.for_world(scene).is_none() {
             state.current = state.first.clone();
             state.built_for = Some(scene.id());
+            state.ticks = ForeignTicks::default();
         }
+        let ticks = state.ticks.begin(scene);
         // SAFETY: the scene's world belongs to its hosted `App`, which no system runs while the
         // editor's systems do, and `T` only reads it.
-        unsafe {
-            T::get_data(
-                &mut state.current,
-                scene.as_unsafe_world_cell(),
-                scene.out_of_system_ticks(),
-            )
-        }
-        .map(EditWorld)
+        unsafe { T::get_data(&mut state.current, scene.as_unsafe_world_cell(), ticks) }
+            .map(EditWorld)
+    }
+
+    fn ran(state: &mut Self::State) {
+        T::ran(&mut state.current);
+        state.ticks.commit();
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -213,7 +216,8 @@ mod tests {
     };
     use concerto_app::App;
     use concerto_ecs::{
-        Component, IntoSystem, Query, Res, ResMut, Resource, System, World, signal::On,
+        Component, IntoSystem, Query, Res, ResMut, Resource, System, World,
+        query::change_detection::DetectChanges, signal::On,
     };
 
     #[derive(Component)]
@@ -859,5 +863,226 @@ mod tests {
                 format!("add {d}")
             ]
         );
+    }
+
+    #[derive(Resource, Default)]
+    struct Changes(Vec<Vec<u32>>);
+
+    fn changed_markers(
+        markers: EditWorld<Query<&Marker, concerto_ecs::Changed<Marker>>>,
+        mut changes: ResMut<Changes>,
+        mut runs: ResMut<Runs>,
+    ) {
+        runs.0 += 1;
+        let mut seen: Vec<u32> = markers.iter().map(|marker| marker.0).collect();
+        seen.sort_unstable();
+        changes.0.push(seen);
+    }
+
+    fn added_markers(
+        markers: EditWorld<Query<&Marker, concerto_ecs::Added<Marker>>>,
+        mut changes: ResMut<Changes>,
+    ) {
+        let mut seen: Vec<u32> = markers.iter().map(|marker| marker.0).collect();
+        seen.sort_unstable();
+        changes.0.push(seen);
+    }
+
+    fn changes(world: &mut World) -> Vec<Vec<u32>> {
+        std::mem::take(&mut world.get_resource_mut::<Changes>().unwrap().0)
+    }
+
+    fn scene_of(world: &mut World, document: concerto_ecs::Entity) -> &mut World {
+        world
+            .get_component_for_entity_mut::<HostedApp>(document)
+            .unwrap()
+            .app
+            .main_mut()
+            .world_mut()
+    }
+
+    fn touch_marker(world: &mut World, document: concerto_ecs::Entity, value: u32) {
+        run(
+            scene_of(world, document),
+            move |markers: Query<&mut Marker>| {
+                for mut marker in markers.iter() {
+                    if marker.0 == value {
+                        marker.0 = value;
+                    }
+                }
+            },
+        );
+    }
+
+    fn two_marker_world() -> (World, concerto_ecs::Entity) {
+        let (mut world, document) = seam_world(1);
+        world.insert_resource(Changes::default());
+        world.insert(
+            hosting(|world| {
+                world.spawn(Marker(1));
+                world.spawn(Marker(2));
+            }),
+            document,
+        );
+        retarget(&mut world);
+        (world, document)
+    }
+
+    #[test]
+    fn edit_world_sees_a_scene_change_since_its_last_run() {
+        let (mut world, document) = two_marker_world();
+        let mut system = changed_markers.into_system();
+        system.initialize(&mut world);
+
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+        touch_marker(&mut world, document, 2);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(changes(&mut world), [vec![1, 2], vec![], vec![2], vec![]]);
+    }
+
+    #[derive(Resource, Default)]
+    struct Flags(Vec<bool>);
+
+    fn selection_changed(
+        selection: EditWorld<Res<crate::tools::selection::Selection>>,
+        mut flags: ResMut<Flags>,
+    ) {
+        flags.0.push(selection.is_changed());
+    }
+
+    fn dirty_changed(
+        dirty: EditWorld<Res<crate::tools::scene::SceneDirty>>,
+        mut flags: ResMut<Flags>,
+    ) {
+        flags.0.push(dirty.is_changed());
+    }
+
+    fn flags(world: &World) -> &[bool] {
+        &world.get_resource::<Flags>().unwrap().0
+    }
+
+    fn tools_world() -> (World, concerto_ecs::Entity) {
+        let (mut world, document) = seam_world(1);
+        world.insert_resource(Flags::default());
+        world.insert(
+            hosted_now(plain_recipe, |app| {
+                app.register_plugin(crate::tools::EditToolsCorePlugin);
+            }),
+            document,
+        );
+        retarget(&mut world);
+        (world, document)
+    }
+
+    #[test]
+    fn edit_world_sees_a_signal_sent_through_edit_world_signals() {
+        let (mut world, document) = tools_world();
+        let entity = scene_of(&mut world, document).spawn(());
+        let mut system = selection_changed.into_system();
+        system.initialize(&mut world);
+
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+        run(&mut world, move |mut scene: EditWorldSignals| {
+            scene.trigger(crate::tools::selection::Select(Some(entity)));
+        });
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(flags(&world), [true, false, true, false]);
+    }
+
+    #[test]
+    fn a_direct_write_between_runs_is_seen_through_edit_world() {
+        let (mut world, document) = tools_world();
+        let mut system = dirty_changed.into_system();
+        system.initialize(&mut world);
+
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+        world
+            .get_component_for_entity_mut::<HostedApp>(document)
+            .unwrap()
+            .mark_saved();
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(flags(&world), [true, false, true, false]);
+    }
+
+    #[test]
+    fn switching_the_target_sees_everything_as_added() {
+        let (mut world, _) = two_marker_world();
+        let other = world.spawn(hosting(|world| {
+            world.spawn(Marker(3));
+        }));
+        for _ in 0..100_000 {
+            scene_of(&mut world, other).increment_change_tick();
+        }
+        let mut system = added_markers.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
+        retarget(&mut world);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(changes(&mut world), [vec![1, 2], vec![], vec![3], vec![]]);
+    }
+
+    #[test]
+    fn a_skipped_edit_world_run_keeps_the_change() {
+        let (mut world, document) = two_marker_world();
+        let mut system = changed_markers.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        touch_marker(&mut world, document, 2);
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = None;
+        retarget(&mut world);
+        system.run_and_apply((), &mut world);
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+        retarget(&mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(runs(&world), 3);
+        assert_eq!(changes(&mut world), [vec![1, 2], vec![], vec![2]]);
+    }
+
+    #[derive(Resource)]
+    struct Late;
+
+    fn changed_markers_with_late(
+        markers: EditWorld<Query<&Marker, concerto_ecs::Changed<Marker>>>,
+        _: Res<Late>,
+        mut changes: ResMut<Changes>,
+    ) {
+        changes
+            .0
+            .push(markers.iter().map(|marker| marker.0).collect());
+    }
+
+    #[test]
+    fn a_run_declined_by_another_input_keeps_the_edit_world_change() {
+        let (mut world, document) = two_marker_world();
+        world.insert_resource(Late);
+        let mut system = changed_markers_with_late.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        touch_marker(&mut world, document, 2);
+        world.remove_resource::<Late>();
+        system.run_and_apply((), &mut world);
+        world.insert_resource(Late);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(changes(&mut world), [vec![1, 2], vec![], vec![2]]);
     }
 }

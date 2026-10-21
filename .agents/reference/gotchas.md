@@ -141,10 +141,12 @@ fix the entry in the same commit as the change that made it false.
   through `HostedApp::mark_saved` after a successful write.
 - **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
   `App` finishes building.
-- **Change detection does not cross the seam.** `is_changed()` and
-  `Changed<T>` compare against the tick of the world they are read in. Through
-  `EditWorld<T>` they give no usable answer; a panel learns of a change from a
-  `Hosted<E>` event.
+- **Change detection crosses the seam in the target's ticks.** `EditWorld<T>`
+  keeps its own last run in the edit target's tick space, so `is_changed()` and
+  `Changed<T>` through it mean "since this system last read this world",
+  including signals sent through `EditWorldSignals` and direct writes by the
+  host. Its first look at a newly targeted world, another scene or a play
+  `App`, sees as added and changed everything stamped within `MAX_CHANGE_AGE`.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
   looked up through `EditWorld<…>`.
