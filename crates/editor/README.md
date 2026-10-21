@@ -23,6 +23,15 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+`--mcp` opens no window: the whole editor runs headless and is served over MCP
+on stdin and stdout, drawing into a 1600×900 picture unless
+`--mcp-size <width>x<height>` names another size. `--decorated` is ignored
+there, and `--mcp-size` without `--mcp` is a bad argument. Frames run only
+while a call needs one or the editor is busy: a project or scene opening, a
+game starting or playing, a save under way. When the client disconnects the
+editor quits and discards unsaved edits. Without a GPU adapter it exits with
+status 1 and a message naming lavapipe.
+
 ## How the crate is laid out
 
 The editor is one `App`, the one the window host drives. It holds the window,

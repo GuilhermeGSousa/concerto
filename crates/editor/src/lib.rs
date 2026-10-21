@@ -11,6 +11,7 @@ pub mod hosted;
 pub mod import;
 pub mod inspector;
 pub mod marks;
+pub mod mcp;
 pub mod project;
 mod run;
 pub mod scene;
