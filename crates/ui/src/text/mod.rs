@@ -425,4 +425,58 @@ mod tests {
             "an empty clip must leave nothing to draw"
         );
     }
+
+    #[test]
+    fn a_nodes_shaped_text_fits_its_layout_box_at_scale_two() {
+        let mut main = concerto_ecs::World::new();
+        main.insert_resource(Window::new((800, 600), 2.0));
+        let mut render = concerto_ecs::World::new();
+        render.insert_resource(TextFontSystem(fonts::build_font_system(
+            &fonts::UIFonts::default(),
+        )));
+        render.insert_resource(UIRenderDiagnostics::default());
+        let target = render.spawn(());
+        let rect = crate::node::UIBox {
+            min: glam::Vec2::new(10.0, 20.0),
+            size: glam::Vec2::new(100.0, 20.0),
+        };
+        main.spawn((
+            UIText {
+                text: "bunny_porcelain_subsurface.mat".into(),
+                font_size: 14.0,
+                line_height: 18.0,
+                wrap: false,
+                ellipsis: true,
+                ..Default::default()
+            },
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            RenderEntity::new(target),
+        ));
+
+        extract_text(&mut main, &mut render);
+        let text = render
+            .get_component_for_entity::<RenderTextComponent>(target)
+            .expect("the text must be drawn");
+        let metrics = text.buffer.metrics();
+        assert_eq!(metrics.font_size, 28.0);
+        assert_eq!(metrics.line_height, 36.0);
+        let physical = rect.size * 2.0;
+        let width = text
+            .buffer
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0_f32, f32::max);
+        assert!(width > 0.0);
+        assert!(
+            width <= physical.x,
+            "shaped width {width} overflows the physical box {}",
+            physical.x
+        );
+        assert!(metrics.line_height <= physical.y);
+    }
 }
