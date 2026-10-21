@@ -8,9 +8,9 @@ use concerto_app::{
     schedule_groups::{First, Update},
 };
 use concerto_ecs::{
-    Changed, Component, Entity, IntoSystemConfig, Query, Resource, World,
+    Changed, Component, Entity, Event, IntoSystemConfig, Query, Resource, World,
     command::{CommandQueue, EntityCommandQueue},
-    events::event_reader::EventReader,
+    events::{event_reader::EventReader, event_writer::EventWriter},
     resource::{Res, ResMut},
     signal::{On, Signal},
     system::NonSendMarker,
@@ -54,6 +54,21 @@ impl SceneState {
     pub fn loading(&self) -> bool {
         self.loading
     }
+}
+
+/// A Scene document finished opening `asset`, which it now shows.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SceneOpened {
+    pub document: Entity,
+    pub asset: AssetEntry,
+}
+
+/// A Scene document could not open `asset`; `message` is the status it shows.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SceneOpenFailed {
+    pub document: Entity,
+    pub asset: AssetEntry,
+    pub message: String,
 }
 
 /// What every edit `App` is built from.
@@ -122,7 +137,9 @@ impl Plugin for ScenePlugin {
             gpu,
         });
         app.register_asset_editor::<Scene>(SceneEditor)
-            .expect("ScenePlugin requires the asset-editor registry");
+            .expect("ScenePlugin requires the asset-editor registry")
+            .register_event::<SceneOpened>()
+            .register_event::<SceneOpenFailed>();
         install_listeners(app.main_mut().world_mut());
         app.forward_hosted_event::<SceneEdited>()
             .forward_hosted_event::<SceneStatus>()
@@ -468,6 +485,33 @@ pub(crate) fn show_play_failures(
     }
 }
 
+type OpenOutcomes<'w> = (
+    EventWriter<'w, SceneOpened>,
+    EventWriter<'w, SceneOpenFailed>,
+);
+
+fn finish_scene_request(
+    outcomes: &mut OpenOutcomes,
+    document: Entity,
+    doc: &mut EditorDocument,
+    request: &AssetEntry,
+    result: Result<(), String>,
+) {
+    let outcome = result.clone();
+    if !finish_asset_request(doc, request, result.map_err(anyhow::Error::msg)) {
+        return;
+    }
+    let asset = request.clone();
+    match outcome {
+        Ok(()) => outcomes.0.write(SceneOpened { document, asset }),
+        Err(message) => outcomes.1.write(SceneOpenFailed {
+            document,
+            asset,
+            message,
+        }),
+    }
+}
+
 pub(crate) fn refuse_edited_replacements(
     building: Query<(
         Entity,
@@ -480,6 +524,7 @@ pub(crate) fn refuse_edited_replacements(
     commits: Res<PropertyCommits>,
     edits: Res<ComponentEdits>,
     mut commands: CommandQueue,
+    mut outcomes: OpenOutcomes,
 ) {
     let queued = !commits.0.is_empty() || !edits.0.is_empty();
     for (editor, mut doc, mut state, mut pending) in building.iter() {
@@ -493,12 +538,12 @@ pub(crate) fn refuse_edited_replacements(
         pending.cancel();
         state.building = None;
         commands.remove::<PendingApp>(editor);
-        finish_asset_request(
+        finish_scene_request(
+            &mut outcomes,
+            editor,
             &mut doc,
             &request,
-            Err(anyhow::anyhow!(
-                "Could not open scene: unsaved changes were made while it loaded"
-            )),
+            Err("Could not open scene: unsaved changes were made while it loaded".into()),
         );
     }
 }
@@ -513,10 +558,10 @@ pub(crate) fn update_scenes(
     states: Query<&PlayState>,
     project: Res<ProjectState>,
     recipe: Res<SceneRecipe>,
-    shown: Res<ViewportShown>,
-    window: Res<Window>,
+    (shown, window): (Res<ViewportShown>, Res<Window>),
     mut summary: ResMut<SceneState>,
     mut commands: CommandQueue,
+    mut outcomes: OpenOutcomes,
 ) {
     let mut present = false;
     for (editor, mut doc, mut state) in editors.iter() {
@@ -547,14 +592,16 @@ pub(crate) fn update_scenes(
             } else if let Some(failure) = failure {
                 state.building = None;
                 commands.remove::<PendingApp>(editor);
-                finish_asset_request(
+                finish_scene_request(
+                    &mut outcomes,
+                    editor,
                     &mut doc,
                     &request,
-                    Err(anyhow::anyhow!("Could not open scene: {failure}")),
+                    Err(format!("Could not open scene: {failure}")),
                 );
             } else if !still_building && hosted_apps.get_entity(editor).is_some() {
                 state.building = None;
-                finish_asset_request(&mut doc, &request, Ok(()));
+                finish_scene_request(&mut outcomes, editor, &mut doc, &request, Ok(()));
             }
         }
 
@@ -574,10 +621,12 @@ pub(crate) fn update_scenes(
                     }),
                 });
             } else {
-                finish_asset_request(
+                finish_scene_request(
+                    &mut outcomes,
+                    editor,
                     &mut doc,
                     &asset,
-                    Err(anyhow::anyhow!("Open a project before opening a scene")),
+                    Err("Open a project before opening a scene".into()),
                 );
             }
         }
@@ -629,10 +678,12 @@ pub(crate) fn update_scenes(
                         state.building = Some(job.asset);
                     }
                     Err(error) => {
-                        finish_asset_request(
+                        finish_scene_request(
+                            &mut outcomes,
+                            editor,
                             &mut doc,
                             &job.asset,
-                            Err(anyhow::anyhow!("Could not open scene: {error}")),
+                            Err(format!("Could not open scene: {error}")),
                         );
                     }
                 }
@@ -699,6 +750,39 @@ mod tests {
         let names = f.scene_names(document);
         assert!(names.contains(&"first".to_string()) && names.contains(&"second".to_string()));
         assert!(!f.unsaved(document));
+    }
+
+    fn opened(document: Entity, asset: &AssetEntry) -> SceneOpened {
+        SceneOpened {
+            document,
+            asset: asset.clone(),
+        }
+    }
+
+    fn failed(f: &SceneFixture, document: Entity, asset: &AssetEntry) -> SceneOpenFailed {
+        SceneOpenFailed {
+            document,
+            asset: asset.clone(),
+            message: f.status(document),
+        }
+    }
+
+    #[test]
+    fn an_opened_scene_and_its_replacement_are_each_reported_once() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        f.frame();
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
+
+        f.request_other_scene(document);
+        f.frames_until_idle();
+        f.frame();
+
+        assert_eq!(
+            f.opened(),
+            [opened(document, &f.scene), opened(document, &f.other)]
+        );
+        assert!(f.open_failures().is_empty());
     }
 
     #[test]
@@ -821,8 +905,11 @@ mod tests {
             );
             assert!(std::time::Instant::now() < deadline, "the load never ended");
         }
+        f.frame();
 
         assert!(f.status(document).contains("unsaved changes"));
+        assert_eq!(f.open_failures(), [failed(&f, document, &f.other)]);
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
     }
 
     #[test]
@@ -945,6 +1032,7 @@ mod tests {
         f.world.insert(Unsaved, document);
 
         f.frames_until_idle();
+        f.frame();
 
         assert_eq!(scene_id(&f, document), before);
         assert!(
@@ -953,6 +1041,8 @@ mod tests {
                 .is_none()
         );
         assert!(f.status(document).contains("unsaved changes"));
+        assert_eq!(f.open_failures(), [failed(&f, document, &f.other)]);
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
     }
 
     #[test]
@@ -1125,6 +1215,9 @@ mod tests {
         f.add_to_project(&missing);
         f.request(&missing);
         f.frames_until_idle();
+        f.frame();
+        assert_eq!(f.open_failures(), [failed(&f, document, &missing)]);
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
 
         assert_eq!(scene_id(&f, document), before);
         assert_eq!(
@@ -1577,10 +1670,14 @@ mod tests {
                 .is_none()
         );
         f.frame();
+        assert_eq!(f.open_failures(), [failed(&f, document, &scene)]);
+        assert!(f.opened().is_empty());
 
         f.world.get_resource_mut::<SceneRecipe>().unwrap().recipe = working;
         let reopened = f.open();
         assert!(f.scene_names(reopened).contains(&"first".to_string()));
+        assert_eq!(f.opened(), [opened(reopened, &scene)]);
+        assert_eq!(f.open_failures().len(), 1);
     }
 
     #[test]
@@ -1633,6 +1730,8 @@ mod tests {
 
         f.frames_until_idle();
 
+        f.frame();
+
         let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         assert_eq!(f.status(document), "Open a project before opening a scene");
         assert!(
@@ -1640,6 +1739,8 @@ mod tests {
                 .get_component_for_entity::<HostedApp>(document)
                 .is_none()
         );
+        assert_eq!(f.open_failures(), [failed(&f, document, &scene)]);
+        assert!(f.opened().is_empty());
     }
 
     #[test]

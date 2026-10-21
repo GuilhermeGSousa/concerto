@@ -92,6 +92,16 @@ selection, and edits remain until its replacement loads successfully.
 A failed replacement preserves them. Selecting the displayed asset cancels a
 pending replacement. Unsupported assets remain selectable without opening a tab.
 
+Code learns how an open ended from events in the editor's world, written in the
+frame the status text changes. Opening a project ends in `ProjectOpened { root }`
+or `ProjectOpenFailed { root, message }`; a cancelled folder pick and a project
+whose content cannot be activated are failures. A Scene document's request ends
+in `SceneOpened { document, asset }` or `SceneOpenFailed { document, asset,
+message }`: a scene that cannot be read, a build that panics, a replacement
+refused over unsaved changes, and a scene asked for with no project open each
+fail, and `message` is the status the tab shows. A request that is cancelled or
+superseded writes neither, and neither does selecting the scene already shown.
+
 With no tabs open, the editor shows an empty viewport. Switching projects
 closes all editors. There is only one Scene tab, from the first scene opened
 until the project changes or the editor quits; it has a Play button where other
