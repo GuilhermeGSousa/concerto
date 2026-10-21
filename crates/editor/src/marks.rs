@@ -15,6 +15,8 @@ pub const COLUMN: f32 = 18.0;
 pub enum Mark {
     /// A group: something with children and nothing of its own to draw.
     Group,
+    /// A folder of assets: an outlined square in the secondary accent.
+    Folder,
     Mesh,
     Camera,
     Light,
@@ -63,6 +65,16 @@ impl Mark {
             Mark::Group => Shape {
                 size: 8.0,
                 border: outline,
+                border_width: 1.5,
+                ..plain
+            },
+            Mark::Folder => Shape {
+                size: 8.0,
+                border: if selected {
+                    theme.accent
+                } else {
+                    theme.accent_secondary
+                },
                 border_width: 1.5,
                 ..plain
             },

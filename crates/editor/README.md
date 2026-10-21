@@ -86,10 +86,25 @@ An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,
 `scene_target`, `scene_parent`.
 
-Selecting a supported asset in Curiosities opens its editor tab. Each asset type
+Curiosities, the content browser, is a `UITree` that mirrors the project's
+`content/` folder: the folders and assets directly inside `content/` are the
+top-level rows, a folder shows a folder mark and holds its subfolders and
+assets, and an asset shows its kind mark and name. A folder appears once it
+holds an asset at any depth; empty directories are not shown. In each folder,
+subfolders come first, then assets, each alphabetically, and folders start
+collapsed. After an import or a catalogue refresh the tree keeps the rows of
+folders and assets that still exist, so expansion and scroll survive. Clicking
+an asset selects it; a click while a project is opening is ignored. The search
+field and the kind chips hide every asset that does not match and show the
+folders leading to each match, open; clearing them restores the expansion as it
+was. The footer counts the matching assets. The navigation keys are the UI
+crate's list and tree actions, as in the hierarchy.
+
+Activating a supported asset in Curiosities, by double-clicking it or pressing
+Enter on its row, opens its editor tab. Each asset type
 has one editor: another Scene reuses the Scene tab. The old preview, camera,
 selection, and edits remain until its replacement loads successfully.
-A failed replacement preserves them. Selecting the displayed asset cancels a
+A failed replacement preserves them. Opening the displayed asset cancels a
 pending replacement. Unsupported assets remain selectable without opening a tab.
 
 With no tabs open, the editor shows an empty viewport. Switching projects

@@ -590,7 +590,11 @@ pub(crate) fn reconcile_structure(
     }
 }
 
-fn despawn_outermost(items: &HashSet<Entity>, parents: &Query<&ChildOf>, cmd: &mut CommandQueue) {
+pub(crate) fn despawn_outermost(
+    items: &HashSet<Entity>,
+    parents: &Query<&ChildOf>,
+    cmd: &mut CommandQueue,
+) {
     for &item in items {
         let parent = parents.get_entity(item).map(ChildOf::parent);
         if !parent.is_some_and(|parent| items.contains(&parent)) {
@@ -599,7 +603,7 @@ fn despawn_outermost(items: &HashSet<Entity>, parents: &Query<&ChildOf>, cmd: &m
     }
 }
 
-fn follow_order(children: &mut Mut<Children>, order: &[Entity]) {
+pub(crate) fn follow_order(children: &mut Mut<Children>, order: &[Entity]) {
     let rank: HashMap<Entity, usize> = order
         .iter()
         .enumerate()
