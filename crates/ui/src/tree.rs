@@ -400,6 +400,9 @@ fn shape_item(row: &TreeRow, theme: &UITheme, nodes: &Query<&mut UINode>) {
     if node.padding.left != left {
         node.padding.left = left;
     }
+    if node.align_items != Some(AlignItems::Center) {
+        node.align_items = Some(AlignItems::Center);
+    }
     if node.overflow_x != Overflow::Visible {
         node.overflow_x = Overflow::Visible;
     }
@@ -435,8 +438,8 @@ fn spawn_caret(row: &TreeRow, theme: &UITheme, cmd: &mut CommandQueue) {
             UINode::default(),
             UIText {
                 text: caret_glyph(row, theme),
-                font_size: theme.font_size_md,
-                line_height: theme.line_height(theme.font_size_md),
+                font_size: theme.tree_caret_font_size,
+                line_height: theme.line_height(theme.tree_caret_font_size),
                 font_family: theme.tree_caret_family.clone(),
                 color: theme.text_muted,
                 wrap: false,
@@ -871,6 +874,65 @@ mod tests {
     fn no_indent_cap() {
         let mut harness = Harness::new();
         assert_eq!(content_inset(&mut harness, 20), 4.0 + 320.0 + 16.0);
+    }
+
+    #[test]
+    fn row_content_is_centred_on_the_row() {
+        for row_height in [20.0, 32.0] {
+            let mut harness = Harness::new();
+            let root = harness.root();
+            let tree = harness.world.spawn((
+                UINode::default()
+                    .with_height(UIValue::Px(200.0))
+                    .with_flex_shrink(0.0)
+                    .with_flex_direction(FlexDirection::Column),
+                UITree {
+                    row_height: Some(row_height),
+                    ..Default::default()
+                },
+                ChildOf::new(root),
+            ));
+            let items = chain(&mut harness, tree, 1);
+            let content = harness.node(
+                UINode::default().with_size(UIValue::Px(40.0), UIValue::Px(10.0)),
+                items[1],
+            );
+            harness.settle();
+            let row = harness.layout(items[1]).rect;
+            let rect = harness.layout(content).rect;
+            let centre = |min: f32, size: f32| min + size / 2.0;
+            assert!(
+                (centre(rect.min.y, rect.size.y) - centre(row.min.y, row.size.y)).abs() <= 1.0,
+                "row height {row_height}: content {rect:?} row {row:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_caret_glyph_is_centred_on_the_row_at_the_theme_size() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let items = chain(&mut harness, tree, 2);
+        harness.settle();
+
+        let caret = caret(&harness, items[1]).expect("a parent has a caret");
+        let glyph = harness
+            .world
+            .get_component_for_entity::<UITreeCaret>(caret)
+            .unwrap()
+            .glyph;
+        let row = harness.layout(items[1]).rect;
+        let rect = harness.layout(glyph).rect;
+        assert!(
+            ((rect.min.y + rect.size.y / 2.0) - (row.min.y + row.size.y / 2.0)).abs() <= 1.0,
+            "glyph {rect:?} row {row:?}"
+        );
+        let font_size = harness
+            .world
+            .get_component_for_entity::<UIText>(glyph)
+            .unwrap()
+            .font_size;
+        assert_eq!(font_size, UITheme::default().tree_caret_font_size);
     }
 
     #[test]

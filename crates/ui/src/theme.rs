@@ -42,6 +42,7 @@ pub struct UITheme {
     pub tree_caret_collapsed: char,
     pub tree_caret_expanded: char,
     pub tree_caret_family: FontFamily,
+    pub tree_caret_font_size: f32,
 }
 
 /// The colour scheme an interactive element follows.
@@ -165,6 +166,7 @@ impl UITheme {
             tree_caret_collapsed: '▸',
             tree_caret_expanded: '▾',
             tree_caret_family: FontFamily::SansSerif,
+            tree_caret_font_size: 16.0,
         }
     }
 }
