@@ -34,7 +34,7 @@ use crate::{
     scroll::UIScrollArea,
     theme::UITheme,
     transform::UIValue,
-    tree::{UITree, UITreeCaret, UITreeElement, open_to},
+    tree::{UITree, UITreeCaret, UITreeElement, has_shown_children, open_to},
 };
 
 const OVERSCAN: usize = 2;
@@ -72,7 +72,7 @@ define_action!(
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UISelected;
 
-/// Marks an item that its list or tree leaves out.
+/// Marks an item that its list or tree leaves out; a tree still shows it while a descendant is not hidden.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UIHidden;
 
@@ -276,7 +276,7 @@ pub(crate) fn navigate_items(
     mut focused: ResMut<FocusedWidget>,
     items: Query<(Entity, &UIItem)>,
     selected: Query<&UISelected>,
-    (elements, trees): (Query<&mut UITreeElement>, Query<&UITree>),
+    (elements, trees, hidden): (Query<&mut UITreeElement>, Query<&UITree>, Query<&UIHidden>),
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     mut lost: EventWriter<UIFocusLost>,
@@ -314,7 +314,7 @@ pub(crate) fn navigate_items(
         } else if fired.is(UIListLast) {
             rows.max_by_key(|(_, other)| other.index)
         } else if fired.is(UITreeExpand) {
-            if expand_or_descend(current, filtering, &elements, &children) {
+            if expand_or_descend(current, filtering, &elements, &hidden, &children) {
                 rows.find(|(_, other)| {
                     other.index == item.index + 1 && other.depth == item.depth + 1
                 })
@@ -322,7 +322,7 @@ pub(crate) fn navigate_items(
                 None
             }
         } else if fired.is(UITreeCollapse) {
-            collapse_or_ascend(current, filtering, &elements, &children, &parents)
+            collapse_or_ascend(current, filtering, &elements, &hidden, &children, &parents)
                 .and_then(|parent| rows.find(|(entity, _)| *entity == parent))
         } else {
             None
@@ -341,25 +341,14 @@ pub(crate) fn navigate_items(
     }
 }
 
-fn has_child_items(
-    entity: Entity,
-    elements: &Query<&mut UITreeElement>,
-    children: &Query<&Children>,
-) -> bool {
-    children.get_entity(entity).is_some_and(|children| {
-        children
-            .iter()
-            .any(|child| elements.contains_entity(*child))
-    })
-}
-
 fn expand_or_descend(
     entity: Entity,
     filtering: bool,
     elements: &Query<&mut UITreeElement>,
+    hidden: &Query<&UIHidden>,
     children: &Query<&Children>,
 ) -> bool {
-    if !has_child_items(entity, elements, children) {
+    if !has_shown_children(entity, elements, hidden, children) {
         return false;
     }
     let Some(mut element) = elements.get_entity(entity) else {
@@ -376,10 +365,11 @@ fn collapse_or_ascend(
     entity: Entity,
     filtering: bool,
     elements: &Query<&mut UITreeElement>,
+    hidden: &Query<&UIHidden>,
     children: &Query<&Children>,
     parents: &Query<&ChildOf>,
 ) -> Option<Entity> {
-    let has_children = has_child_items(entity, elements, children);
+    let has_children = has_shown_children(entity, elements, hidden, children);
     let mut element = elements.get_entity(entity)?;
     if !filtering && element.expanded && has_children {
         element.expanded = false;

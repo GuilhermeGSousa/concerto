@@ -163,6 +163,26 @@ fn every_item(roots: &[Entity], marked: &impl Fn(Entity) -> Vec<Entity>) -> Vec<
     every
 }
 
+pub(crate) fn has_shown_children(
+    entity: Entity,
+    elements: &Query<&mut UITreeElement>,
+    hidden: &Query<&UIHidden>,
+    children: &Query<&Children>,
+) -> bool {
+    let marked = |entity: Entity| {
+        children
+            .get_entity(entity)
+            .map(|children| marked_items(children, |child| elements.contains_entity(child)))
+            .unwrap_or_default()
+    };
+    !shown_level(&marked(entity), &|entity| TreeNode {
+        children: marked(entity),
+        expanded: false,
+        hidden: hidden.contains_entity(entity),
+    })
+    .is_empty()
+}
+
 pub(crate) fn open_to(
     tree: Entity,
     filtering: bool,
@@ -1158,7 +1178,10 @@ mod tests {
                 .visible
         );
         let focused = harness.focused();
-        assert_eq!(focused, None);
+        assert_eq!(
+            focused, None,
+            "hiding the focused item clears focus, so the actions below run with nothing focused"
+        );
         for fire in [
             |harness: &mut Harness| harness.fire(UIListNext),
             |harness: &mut Harness| harness.fire(UIListPrevious),
@@ -1237,5 +1260,36 @@ mod tests {
             assert!(!expanded(&harness, entity));
         }
         assert_eq!(row(&harness, leaf), Some((2, 2)));
+    }
+
+    #[test]
+    fn navigation_treats_an_item_whose_children_are_all_hidden_as_a_leaf() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let grand = item(&mut harness, tree, true);
+        let parent = item(&mut harness, grand, true);
+        let children = [
+            item(&mut harness, parent, false),
+            item(&mut harness, parent, false),
+        ];
+        hide(&mut harness, &children);
+        harness.settle();
+        assert_eq!(caret(&harness, parent), None);
+
+        harness.focus(parent);
+        harness.fire(UITreeCollapse);
+        assert_eq!(harness.focused(), Some(grand));
+        assert!(expanded(&harness, parent));
+
+        harness
+            .world
+            .get_component_for_entity_mut::<UITreeElement>(parent)
+            .unwrap()
+            .expanded = false;
+        harness.settle();
+        harness.focus(parent);
+        harness.fire(UITreeExpand);
+        assert_eq!(harness.focused(), Some(parent));
+        assert!(!expanded(&harness, parent));
     }
 }
