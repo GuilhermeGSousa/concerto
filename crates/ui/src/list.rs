@@ -21,10 +21,12 @@ use crate::{
     theme::UITheme,
 };
 
-/// A vertical list whose items are the node's own children, one row each, in child order; it clips them, owns its overflow and owns their clicks, so put no click listener or `UIInteractionStyle` on an item.
+/// A vertical list whose items are the node's own children, one row each, in child order; it clips them, owns its overflow and owns their clicks, so put no click listener or `UIInteractionStyle` on an item; its natural height is its content extent, so a list that must fill its slot needs zero height and a flex grow.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UIList {
+    /// Height of every row in logical pixels; `None` takes the theme's `row_height`.
     pub row_height: Option<f32>,
+    /// Whether items can be highlighted, navigated by key, selected and activated.
     pub selectable: bool,
 }
 

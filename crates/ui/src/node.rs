@@ -416,7 +416,7 @@ pub struct UILayout {
     pub paint_order: i64,
 }
 
-/// Set by lists and trees on rows they leave out of layout; a culled node and its subtree are not laid out, drawn or hit.
+/// Set by lists and trees, never by callers, on rows they leave out of layout; a culled node and its subtree are not laid out, drawn or hit.
 #[derive(Component)]
 pub struct UICulled;
 

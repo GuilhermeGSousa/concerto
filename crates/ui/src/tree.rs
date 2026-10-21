@@ -35,11 +35,14 @@ use crate::{
     transform::UIValue,
 };
 
-/// A vertical tree whose items are its children that carry `UITreeElement`, nested through theirs, one row each in depth-first order; it clips them, owns its overflow, draws each parent's caret and the connector lines between items, owns the carets' clicks, so put no click listener or `UIInteractionStyle` on an item.
+/// A vertical tree whose items are its children that carry `UITreeElement`, nested through theirs, one row each in depth-first order; it clips them, owns its overflow, draws each parent's caret and the connector lines between items, owns the carets' clicks, so put no click listener or `UIInteractionStyle` on an item; its natural height is its content extent, so a tree that must fill its slot needs zero height and a flex grow.
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct UITree {
+    /// Height of every row in logical pixels; `None` takes the theme's `row_height`.
     pub row_height: Option<f32>,
+    /// Whether items can be highlighted, navigated by key, selected and activated; carets work either way.
     pub selectable: bool,
+    /// While true every item shows as if expanded, caret clicks are ignored and `expanded` is left untouched.
     pub filtering: bool,
 }
 
@@ -56,6 +59,7 @@ impl Default for UITree {
 /// Makes a child of a `UITree`, or of another tree item, an item whose other children are its row content; put no click listener or `UIInteractionStyle` on it.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct UITreeElement {
+    /// Whether the item's child items are shown; the caret toggles it, and the caller may set it.
     pub expanded: bool,
 }
 

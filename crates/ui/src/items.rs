@@ -84,10 +84,11 @@ pub struct UIItemActivated;
 
 /// Sent to an item when the user right-clicks it, at the pointer's position.
 pub struct UIItemContextMenu {
+    /// The pointer's position when the item was right-clicked, in logical pixels.
     pub position: Vec2,
 }
 
-/// Trigger on an item to scroll its list or tree until the item's row is in view.
+/// Trigger on an item to scroll its list or tree until the item's row is in view; it reaches the item only once its widget has set it up and given it a `UIItem`.
 pub struct UIReveal;
 
 impl Signal for UIItemSelected {}
