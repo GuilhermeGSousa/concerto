@@ -1,15 +1,22 @@
 use std::{
     future::Future,
-    sync::{Mutex, PoisonError},
+    sync::{
+        Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
 use concerto_app::{
     App, main_schedule::MainSchedulePlugin, plugins::TimePlugin, schedule_groups::Update,
 };
-use concerto_ecs::{Res, ResMut, Resource};
+use concerto_ecs::{
+    CommandQueue, Component, Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource,
+    events::{event_reader::EventReader, event_writer::EventWriter},
+};
 use concerto_mcp::{
-    AppMcpExt, McpPlugin, McpRead, McpTool, Needs, ToolCalls, ToolError, spawn_server,
+    AppMcpExt, FrameDemand, McpPlugin, McpRead, McpTool, Needs, PendingCall, ToolCalls, ToolError,
+    spawn_server,
 };
 use rmcp::{
     RoleClient, ServiceExt,
@@ -78,13 +85,83 @@ fn frames(mut calls: ToolCalls<Frames>, frames: Res<FrameCount>) {
     }
 }
 
+/// Opens the named door and answers once it has swung open.
+#[derive(Deserialize, JsonSchema)]
+struct Open {
+    name: String,
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct Progress {}
+
+#[derive(Deserialize, JsonSchema)]
+struct Wait {}
+
+#[derive(Component)]
+struct Opening(String);
+
+#[derive(Event)]
+struct Opened;
+
+#[derive(Resource, Default)]
+struct OpenLog(Vec<String>);
+
+static DOOR: AtomicBool = AtomicBool::new(false);
+
+fn open(mut calls: ToolCalls<Open>, mut log: ResMut<OpenLog>, mut cmd: CommandQueue) {
+    for (arguments, reply) in calls.read() {
+        log.0.push(format!("start {}", arguments.name));
+        cmd.spawn((
+            PendingCall::new(reply, "the door to open"),
+            Opening(arguments.name),
+        ));
+    }
+}
+
+fn swing_door(mut opened: EventWriter<Opened>) {
+    if DOOR.swap(false, Ordering::SeqCst) {
+        opened.write(Opened);
+    }
+}
+
+fn answer_opened(
+    mut opened: EventReader<Opened>,
+    waiting: Query<(Entity, &PendingCall, &Opening)>,
+    mut log: ResMut<OpenLog>,
+    mut cmd: CommandQueue,
+) {
+    for _ in opened.read() {
+        for (entity, pending, opening) in waiting.iter() {
+            pending.reply.ok(format!("{} is open", opening.0));
+            log.0.push(format!("done {}", opening.0));
+            cmd.despawn(entity);
+        }
+    }
+}
+
+fn progress(mut calls: ToolCalls<Progress>, log: Res<OpenLog>) {
+    for (_, reply) in calls.read() {
+        reply.ok(log.0.join(", "));
+    }
+}
+
+fn wait(mut calls: ToolCalls<Wait>, mut cmd: CommandQueue) {
+    for (_, reply) in calls.read() {
+        cmd.spawn(PendingCall::new(reply, "nothing").timeout(Duration::from_millis(50)));
+    }
+}
+
 fn app() -> App {
+    DOOR.store(false, Ordering::SeqCst);
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(McpPlugin)
         .insert_resource(FrameCount::default())
+        .insert_resource(OpenLog::default())
+        .register_event::<Opened>()
         .add_system(Update, count_frames)
+        .add_system(Update, (swing_door, answer_opened.after(swing_door)))
         .describe_need(
             Needs::Scene,
             ToolError::new("no_scene", "open a scene first with open_asset"),
@@ -96,7 +173,10 @@ fn app() -> App {
             needs_scene,
         )
         .add_tool::<Silent, _>(McpTool::new("silent"), silent)
-        .add_tool::<Frames, _>(McpTool::read_only("frames"), frames);
+        .add_tool::<Frames, _>(McpTool::read_only("frames"), frames)
+        .add_tool::<Open, _>(McpTool::new("open"), open)
+        .add_tool::<Progress, _>(McpTool::read_only("progress"), progress)
+        .add_tool::<Wait, _>(McpTool::new("wait"), wait);
     app.finish_plugin_build();
     app
 }
@@ -175,7 +255,19 @@ fn the_tool_list_has_each_tools_description_schema_and_read_only_hint() {
     });
 
     let names: Vec<_> = tools.iter().map(|tool| tool.name.to_string()).collect();
-    assert_eq!(names, ["echo", "twice", "needs_scene", "silent", "frames"]);
+    assert_eq!(
+        names,
+        [
+            "echo",
+            "twice",
+            "needs_scene",
+            "silent",
+            "frames",
+            "open",
+            "progress",
+            "wait"
+        ]
+    );
     let echo = &tools[0];
     assert_eq!(echo.description.as_deref(), Some("Says the text back."));
     assert_eq!(
@@ -285,4 +377,111 @@ fn a_read_only_tool_whose_system_writes_is_refused() {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(McpPlugin)
         .add_tool::<Frames, _>(McpTool::read_only("frames"), writes);
+}
+
+async fn wait_for_progress(client: &Client, entry: &str) -> String {
+    loop {
+        let seen = text(&call(client, "progress", json!({})).await);
+        if seen.contains(entry) {
+            return seen;
+        }
+    }
+}
+
+#[test]
+fn a_pending_call_is_answered_by_a_later_event() {
+    let (app, (opened, seen)) = serve(App::update, |client| async move {
+        let watch = async {
+            let seen = wait_for_progress(&client, "start a").await;
+            DOOR.store(true, Ordering::SeqCst);
+            seen
+        };
+        tokio::join!(call(&client, "open", json!({ "name": "a" })), watch)
+    });
+
+    assert_eq!(seen, "start a");
+    assert_eq!(text(&opened), "a is open");
+    assert_eq!(
+        app.get_resource::<OpenLog>().unwrap().0,
+        ["start a", "done a"]
+    );
+}
+
+#[test]
+fn a_pending_call_past_its_deadline_is_answered_timeout() {
+    let (_, (waited, after)) = serve(App::update, |client| async move {
+        (
+            call(&client, "wait", json!({})).await,
+            call(&client, "twice", json!({})).await,
+        )
+    });
+
+    assert_eq!(
+        error(&waited),
+        json!({ "code": "timeout", "message": "Timed out waiting for nothing." })
+    );
+    assert_eq!(text(&after), "first");
+}
+
+#[test]
+fn a_change_waits_for_the_one_before_while_reads_go_through() {
+    let (app, (first, second, seen)) = serve(App::update, |client| async move {
+        let watch = async {
+            let seen = wait_for_progress(&client, "start a").await;
+            DOOR.store(true, Ordering::SeqCst);
+            wait_for_progress(&client, "start b").await;
+            DOOR.store(true, Ordering::SeqCst);
+            seen
+        };
+        tokio::join!(
+            call(&client, "open", json!({ "name": "a" })),
+            call(&client, "open", json!({ "name": "b" })),
+            watch
+        )
+    });
+
+    assert_eq!(seen, "start a");
+    assert_eq!(text(&first), "a is open");
+    assert_eq!(text(&second), "b is open");
+    assert_eq!(
+        app.get_resource::<OpenLog>().unwrap().0,
+        ["start a", "done a", "start b", "done b"]
+    );
+}
+
+#[test]
+fn frames_are_demanded_while_a_call_is_pending() {
+    let mut frames = Vec::new();
+    let (_, opened) = serve(
+        |app| {
+            app.update();
+            let logged = app.get_resource::<OpenLog>().unwrap().0.len();
+            frames.push((
+                logged,
+                app.get_resource::<FrameDemand>().unwrap().is_requested(),
+            ));
+            if logged == 1 {
+                DOOR.store(true, Ordering::SeqCst);
+            }
+        },
+        |client| async move { call(&client, "open", json!({ "name": "a" })).await },
+    );
+
+    assert_eq!(text(&opened), "a is open");
+    let demanded = |entries: usize| -> Vec<bool> {
+        frames
+            .iter()
+            .filter(|(logged, _)| *logged == entries)
+            .map(|(_, demanded)| *demanded)
+            .collect()
+    };
+    assert!(demanded(0).iter().all(|demanded| !demanded), "{frames:?}");
+    assert!(
+        !demanded(1).is_empty() && demanded(1).iter().all(|demanded| *demanded),
+        "{frames:?}"
+    );
+    assert!(
+        !demanded(2).is_empty() && demanded(2).iter().all(|demanded| !demanded),
+        "{frames:?}"
+    );
 }

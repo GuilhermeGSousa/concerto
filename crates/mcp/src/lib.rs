@@ -1,9 +1,13 @@
 mod calls;
+mod pending;
 mod reply;
 mod server;
 mod tools;
 
-use concerto_app::{App, Plugin, schedule_groups::First};
+use concerto_app::{
+    App, Plugin,
+    schedule_groups::{First, LateUpdate},
+};
 use concerto_ecs::{
     IntoSystemConfig, World,
     signal::{On, Signal},
@@ -12,6 +16,9 @@ use concerto_ecs::{
 
 pub use calls::{
     McpCall, McpInbox, ToolCalls, answer_unanswered, receive_calls, receive_read_only_calls,
+};
+pub use pending::{
+    FrameDemand, PendingCall, demand_frames, expire_pending_calls, reset_frame_demand,
 };
 pub use reply::{Reply, ToolError};
 pub use server::{ServerHandle, spawn_server};
@@ -41,7 +48,18 @@ impl Plugin for McpPlugin {
         app.register_event::<McpCall>()
             .insert_resource(ToolRegistry::default())
             .insert_resource(McpInbox::new())
-            .add_system(First, receive_calls)
+            .insert_resource(FrameDemand::default())
+            .add_system(
+                First,
+                (
+                    reset_frame_demand,
+                    expire_pending_calls,
+                    receive_calls
+                        .after(reset_frame_demand)
+                        .after(expire_pending_calls),
+                ),
+            )
+            .add_system(LateUpdate, demand_frames)
             .add_system(McpServe, answer_unanswered)
             .add_system(
                 McpRead,

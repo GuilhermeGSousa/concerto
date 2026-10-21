@@ -31,7 +31,10 @@ pub(crate) enum Answer {
     Error(ToolError),
 }
 
-type Slot = Option<oneshot::Sender<Answer>>;
+struct Slot {
+    sender: Option<oneshot::Sender<Answer>>,
+    deferred: bool,
+}
 
 /// Where a tool call's answer goes; only the first answer is sent.
 #[derive(Clone)]
@@ -44,7 +47,10 @@ impl Reply {
         let (sender, receiver) = oneshot::channel();
         (
             Self {
-                slot: Arc::new(Mutex::new(Some(sender))),
+                slot: Arc::new(Mutex::new(Slot {
+                    sender: Some(sender),
+                    deferred: false,
+                })),
             },
             receiver,
         )
@@ -73,8 +79,17 @@ impl Reply {
     /// Whether the call is still waiting for an answer.
     pub fn is_open(&self) -> bool {
         self.slot()
+            .sender
             .as_ref()
             .is_some_and(|sender| !sender.is_closed())
+    }
+
+    pub(crate) fn awaits_tool(&self) -> bool {
+        self.is_open() && !self.slot().deferred
+    }
+
+    pub(crate) fn defer(&self) {
+        self.slot().deferred = true;
     }
 
     fn slot(&self) -> MutexGuard<'_, Slot> {
@@ -82,7 +97,7 @@ impl Reply {
     }
 
     fn send(&self, answer: Answer) {
-        if let Some(sender) = self.slot().take() {
+        if let Some(sender) = self.slot().sender.take() {
             let _ = sender.send(answer);
         }
     }

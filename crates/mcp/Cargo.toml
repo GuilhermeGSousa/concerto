@@ -21,4 +21,4 @@ tokio = { version = "1", features = ["rt", "sync", "io-util"] }
 [dev-dependencies]
 rmcp = { version = "3.5", features = ["client", "transport-io"] }
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["rt", "io-util"] }
+tokio = { version = "1", features = ["rt", "io-util", "macros"] }

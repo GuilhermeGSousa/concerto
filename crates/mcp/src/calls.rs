@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, marker::PhantomData};
 
 use concerto_ecs::{
-    CommandQueue, Event, Res, ResMut, Resource, World,
+    CommandQueue, Event, Query, Res, ResMut, Resource, World,
     events::{event_reader::EventReader, event_writer::EventWriter},
     system::{
         access::SystemAccess,
@@ -14,7 +14,7 @@ use crossbeam_channel::{Receiver, Sender};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::{Reply, ServeCalls, ToolError, ToolRegistry};
+use crate::{PendingCall, Reply, ServeCalls, ToolError, ToolRegistry};
 
 /// One `tools/call` from the client, written in `First` and read by tools through [`ToolCalls`].
 #[derive(Event, Clone)]
@@ -46,7 +46,11 @@ impl McpInbox {
         self.sender.clone()
     }
 
-    fn take(&mut self, admit: impl Fn(&str) -> bool) -> VecDeque<McpCall> {
+    pub(crate) fn holds_calls(&self) -> bool {
+        !self.queued.is_empty()
+    }
+
+    fn take(&mut self, mut admit: impl FnMut(&str) -> bool) -> VecDeque<McpCall> {
         self.queued.extend(self.receiver.try_iter());
         let (taken, kept) = std::mem::take(&mut self.queued)
             .into_iter()
@@ -56,13 +60,22 @@ impl McpInbox {
     }
 }
 
-/// Writes every call the server sent as an [`McpCall`], then runs [`McpServe`](crate::McpServe).
+/// Writes the calls the server sent as [`McpCall`]s, then runs [`McpServe`](crate::McpServe); a changing call waits while another is pending.
 pub fn receive_calls(
     mut inbox: ResMut<McpInbox>,
+    registry: Res<ToolRegistry>,
+    pending: Query<&PendingCall>,
     mut calls: EventWriter<McpCall>,
     mut cmd: CommandQueue,
 ) {
-    for call in inbox.take(|_| true) {
+    let mut changing = pending.iter().next().is_some();
+    let admitted = inbox.take(|tool| {
+        if registry.is_read_only(tool) {
+            return true;
+        }
+        !std::mem::replace(&mut changing, true)
+    });
+    for call in admitted {
         calls.write(call);
     }
     cmd.trigger(ServeCalls);
@@ -82,7 +95,7 @@ pub fn receive_read_only_calls(
 /// Answers every call still open with the error of its tool's unmet need, or `internal`.
 pub fn answer_unanswered(mut calls: EventReader<McpCall>, registry: Res<ToolRegistry>) {
     for call in calls.read() {
-        if call.reply.is_open() {
+        if call.reply.awaits_tool() {
             call.reply.err(registry.unanswered(&call.tool));
         }
     }
@@ -106,7 +119,7 @@ impl<A: DeserializeOwned> ToolCalls<'_, '_, A> {
         let tool = self.tool;
         self.calls
             .read()
-            .filter(move |call| call.tool == tool && call.reply.is_open())
+            .filter(move |call| call.tool == tool && call.reply.awaits_tool())
             .filter_map(
                 |call| match serde_json::from_value(call.arguments.clone()) {
                     Ok(arguments) => Some((arguments, &call.reply)),
