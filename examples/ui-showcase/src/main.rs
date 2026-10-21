@@ -7,12 +7,11 @@ use concerto::{
         App,
         schedule_groups::{Startup, Update},
     },
-    color::Color,
     ecs::{
         CommandQueue, Component, Entity, Query, Res, ResMut,
+        command::EntityCommandQueue,
         signal::{On, listener::IntoListener},
     },
-    render::queue,
     ui::{
         UIRenderDiagnostics,
         anchor::{
@@ -26,13 +25,11 @@ use concerto::{
         node::{
             AlignContent, AlignItems, FlexDirection, UILayout, UILayoutDiagnostics, UINode, UIRect,
         },
-        scroll::{
-            UIScrollArea, UISplitAxis, UISplitHandle, UISplitPane, UIVirtualList, drag_split_handle,
-        },
+        scroll::{UISplitAxis, UISplitHandle, UISplitPane, drag_split_handle},
         text::UIText,
         theme::UITheme,
         transform::UIValue,
-        tree::UITreeElement,
+        tree::{UITree, UITreeElement},
     },
     window::{
         input::MouseButton,
@@ -108,7 +105,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
                 .panel()
                 .radius(0.0)
                 .bordered()
-                .size(UIValue::Percent(46.0), UIValue::Percent(100.0))
+                .size(UIValue::Percent(24.0), UIValue::Percent(100.0))
                 .column()
                 .gap(8.0)
                 .padding(12.0),
@@ -478,25 +475,135 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
     cmd.add_child(root, diagnostics);
 
     cmd.entity(body)
-        .spawn_child_queue(theme.panel().grow())
+        .spawn_child_queue(
+            theme
+                .panel()
+                .radius(0.0)
+                .bordered()
+                .size(UIValue::Px(230.0), UIValue::Percent(100.0))
+                .fixed()
+                .column()
+                .gap(8.0)
+                .padding(12.0),
+        )
         .add_child_with(
             (
-                theme.canvas().grow(),
-                theme.text("Tree"),
-                UIScrollArea {
-                    offset: 0.0,
-                    content_extent: 280_000.0,
-                    content: None,
+                theme.canvas().grow().column().gap(0.0),
+                UITree {
+                    row_height: Some(24.0),
+                    ..Default::default()
                 },
-                UIVirtualList::new(10_000, 28.0),
-                UITreeElement::default(),
+                Interactable,
             ),
-            |mut ctx| {
-                for i in 0..5 {
-                    ctx.add_child(theme.label(format!("{}", i)));
-                }
+            |mut tree| tree_items(&mut tree, &theme, SHOWCASE_TREE),
+        );
+}
+
+struct TreeSpec {
+    name: &'static str,
+    expanded: bool,
+    children: &'static [TreeSpec],
+}
+
+const fn leaf(name: &'static str) -> TreeSpec {
+    TreeSpec {
+        name,
+        expanded: false,
+        children: &[],
+    }
+}
+
+const fn branch(name: &'static str, expanded: bool, children: &'static [TreeSpec]) -> TreeSpec {
+    TreeSpec {
+        name,
+        expanded,
+        children,
+    }
+}
+
+const SHOWCASE_TREE: &[TreeSpec] = &[
+    branch(
+        "World",
+        true,
+        &[
+            branch(
+                "Terrain",
+                true,
+                &[
+                    leaf("Heightmap"),
+                    branch(
+                        "Foliage",
+                        true,
+                        &[leaf("Oak"), leaf("Birch"), leaf("Fern"), leaf("Moss")],
+                    ),
+                    branch("Rocks", false, &[leaf("Boulder"), leaf("Pebble")]),
+                ],
+            ),
+            branch(
+                "Lighting",
+                true,
+                &[
+                    leaf("Sun"),
+                    branch(
+                        "Lamps",
+                        false,
+                        &[leaf("Lamp A"), leaf("Lamp B"), leaf("Lamp C")],
+                    ),
+                    leaf("Ambient"),
+                ],
+            ),
+            branch("Water", false, &[leaf("Lake"), leaf("River")]),
+        ],
+    ),
+    branch(
+        "Characters",
+        true,
+        &[
+            branch(
+                "Hero",
+                true,
+                &[
+                    leaf("Skeleton"),
+                    branch(
+                        "Outfit",
+                        true,
+                        &[leaf("Boots"), leaf("Cloak"), leaf("Belt")],
+                    ),
+                    leaf("Voice"),
+                ],
+            ),
+            branch(
+                "Villagers",
+                false,
+                &[leaf("Baker"), leaf("Smith"), leaf("Elder")],
+            ),
+            leaf("Companion"),
+        ],
+    ),
+    branch(
+        "UI",
+        false,
+        &[leaf("Health bar"), leaf("Minimap"), leaf("Dialogue box")],
+    ),
+    leaf("Audio"),
+    branch("Scripts", true, &[leaf("Quest log"), leaf("Day cycle")]),
+];
+
+fn tree_items(parent: &mut EntityCommandQueue, theme: &UITheme, specs: &[TreeSpec]) {
+    for spec in specs {
+        parent.add_child_with(
+            (
+                UINode::default(),
+                UITreeElement {
+                    expanded: spec.expanded,
+                },
+            ),
+            |mut item| {
+                item.add_child(theme.label(spec.name).font_size(12.0));
+                tree_items(&mut item, theme, spec.children);
             },
         );
+    }
 }
 
 fn open_context_menu(
