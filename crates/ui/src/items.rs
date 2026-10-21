@@ -192,8 +192,16 @@ fn reveal_item(
     let Some(item) = items.get_entity(entity) else {
         return;
     };
-    let index = if trees.contains_entity(item.owner) {
-        open_to(item.owner, entity, &elements, &hidden, &children, &parents)
+    let index = if let Some(tree) = trees.get_entity(item.owner) {
+        open_to(
+            item.owner,
+            tree.filtering,
+            entity,
+            &elements,
+            &hidden,
+            &children,
+            &parents,
+        )
     } else {
         Some(item.index)
     };
@@ -246,13 +254,11 @@ pub(crate) fn keep_focus_on_shown_items(
         return;
     }
     let mut ancestor = parents.get_entity(current).map(ChildOf::parent);
-    while let Some(entity) = ancestor {
-        let Some(other) = items
+    while let Some(entity) = ancestor
+        && let Some(other) = items
             .get_entity(entity)
             .filter(|other| other.owner == item.owner)
-        else {
-            return;
-        };
+    {
         if other.shown {
             **focused = Some(entity);
             lost.write(UIFocusLost(current));
@@ -261,6 +267,8 @@ pub(crate) fn keep_focus_on_shown_items(
         }
         ancestor = parents.get_entity(entity).map(ChildOf::parent);
     }
+    **focused = None;
+    lost.write(UIFocusLost(current));
 }
 
 pub(crate) fn navigate_items(
@@ -268,7 +276,7 @@ pub(crate) fn navigate_items(
     mut focused: ResMut<FocusedWidget>,
     items: Query<(Entity, &UIItem)>,
     selected: Query<&UISelected>,
-    elements: Query<&mut UITreeElement>,
+    (elements, trees): (Query<&mut UITreeElement>, Query<&UITree>),
     children: Query<&Children>,
     parents: Query<&ChildOf>,
     mut lost: EventWriter<UIFocusLost>,
@@ -289,6 +297,9 @@ pub(crate) fn navigate_items(
             cmd.entity(current).trigger(UIItemActivated);
             continue;
         }
+        let filtering = trees
+            .get_entity(item.owner)
+            .is_some_and(|tree| tree.filtering);
         let mut rows = items
             .iter()
             .filter(|(_, other)| other.owner == item.owner && other.shown);
@@ -303,7 +314,7 @@ pub(crate) fn navigate_items(
         } else if fired.is(UIListLast) {
             rows.max_by_key(|(_, other)| other.index)
         } else if fired.is(UITreeExpand) {
-            if expand_or_descend(current, &elements, &children) {
+            if expand_or_descend(current, filtering, &elements, &children) {
                 rows.find(|(_, other)| {
                     other.index == item.index + 1 && other.depth == item.depth + 1
                 })
@@ -311,7 +322,7 @@ pub(crate) fn navigate_items(
                 None
             }
         } else if fired.is(UITreeCollapse) {
-            collapse_or_ascend(current, &elements, &children, &parents)
+            collapse_or_ascend(current, filtering, &elements, &children, &parents)
                 .and_then(|parent| rows.find(|(entity, _)| *entity == parent))
         } else {
             None
@@ -344,6 +355,7 @@ fn has_child_items(
 
 fn expand_or_descend(
     entity: Entity,
+    filtering: bool,
     elements: &Query<&mut UITreeElement>,
     children: &Query<&Children>,
 ) -> bool {
@@ -353,7 +365,7 @@ fn expand_or_descend(
     let Some(mut element) = elements.get_entity(entity) else {
         return false;
     };
-    if element.expanded {
+    if filtering || element.expanded {
         return true;
     }
     element.expanded = true;
@@ -362,13 +374,14 @@ fn expand_or_descend(
 
 fn collapse_or_ascend(
     entity: Entity,
+    filtering: bool,
     elements: &Query<&mut UITreeElement>,
     children: &Query<&Children>,
     parents: &Query<&ChildOf>,
 ) -> Option<Entity> {
     let has_children = has_child_items(entity, elements, children);
     let mut element = elements.get_entity(entity)?;
-    if element.expanded && has_children {
+    if !filtering && element.expanded && has_children {
         element.expanded = false;
         return None;
     }

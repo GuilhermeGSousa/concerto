@@ -9,8 +9,8 @@ use concerto_ecs::{
 
 use crate::{
     items::{
-        UIItem, UIRowSpacer, UIWidgetPart, equip_items, fit_owner, keep_parts_last, place_rows,
-        set_up_owner,
+        UIHidden, UIItem, UIRowSpacer, UIWidgetPart, equip_items, fit_owner, keep_parts_last,
+        park_items, place_rows, set_up_owner,
     },
     material::UIMaterial,
     node::{UICulled, UIIntrinsicHeight, UILayout, UINode},
@@ -54,6 +54,7 @@ pub(crate) fn update_lists(
     )>,
     nodes: Query<&mut UINode>,
     parts: Query<&UIWidgetPart>,
+    hidden: Query<&UIHidden>,
     spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
     items: Query<&UIItem>,
     culled: Query<&UICulled>,
@@ -62,29 +63,44 @@ pub(crate) fn update_lists(
     mut cmd: CommandQueue,
 ) {
     for (entity, list, mut area, layout, children) in lists.iter() {
+        let row_height = list.row_height.unwrap_or(theme.row_height);
         let mut rows = Vec::new();
+        let mut parked = Vec::new();
         let mut spacer = None;
         if let Some(mut children) = children {
             keep_parts_last(&mut children, &parts);
             for &child in children.iter() {
-                if !parts.contains_entity(child) && nodes.contains_entity(child) {
+                if parts.contains_entity(child) || !nodes.contains_entity(child) {
+                    if spacer.is_none() {
+                        spacer = spacers.get_entity(child);
+                    }
+                } else if hidden.contains_entity(child) {
+                    parked.push((child, 0));
+                } else {
                     rows.push((child, 0));
-                } else if spacer.is_none() {
-                    spacer = spacers.get_entity(child);
                 }
             }
         }
         equip_items(
-            rows.iter().map(|(row, _)| *row),
+            rows.iter().chain(&parked).map(|(row, _)| *row),
             list.selectable,
             &items,
             &materials,
             &mut cmd,
         );
+        park_items(
+            &parked,
+            entity,
+            row_height,
+            list.selectable,
+            &items,
+            &culled,
+            &mut cmd,
+        );
         place_rows(
             &rows,
             entity,
-            list.row_height.unwrap_or(theme.row_height),
+            row_height,
             list.selectable,
             layout.map(|layout| layout.content_rect.size.y),
             &mut area,
@@ -126,7 +142,7 @@ pub(crate) mod tests {
             HoveredNode, Interactable, UIClick, UIDoubleClick, UIInputState, update_ui_interaction,
         },
         items::{
-            UIItem, UIItemActivated, UIItemContextMenu, UIItemSelected, UIListActivate,
+            UIHidden, UIItem, UIItemActivated, UIItemContextMenu, UIItemSelected, UIListActivate,
             UIListFirst, UIListLast, UIListNext, UIListPrevious, UIReveal, UISelected,
             install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
         },
@@ -1007,5 +1023,37 @@ pub(crate) mod tests {
             **harness.world.get_resource::<HoveredNode>().unwrap(),
             Some(rows[1])
         );
+    }
+
+    #[test]
+    fn hidden_children_are_not_rows() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let list = harness.list(rows_of(20.0), tall(200.0), root);
+        let rows = harness.rows(list, 4);
+        harness.settle();
+        harness.focus(rows[1]);
+
+        harness.world.insert(UIHidden, rows[1]);
+        harness.settle();
+
+        let placed = rows
+            .iter()
+            .map(|row| {
+                let item = harness
+                    .world
+                    .get_component_for_entity::<UIItem>(*row)
+                    .expect("every child is an item");
+                item.is_shown().then_some(item.index())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(placed, [Some(0), None, Some(1), Some(2)]);
+        assert!(!harness.layout(rows[1]).is_shown());
+        assert_eq!(harness.area(list).content_extent, 3.0 * 20.0);
+        assert_eq!(
+            harness.layout(rows[2]).rect.min.y,
+            harness.layout(list).rect.min.y + 20.0
+        );
+        assert_eq!(harness.focused(), None);
     }
 }

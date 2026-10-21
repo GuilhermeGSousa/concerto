@@ -77,30 +77,51 @@ pub(crate) struct TreeRow {
     pub(crate) continues: Vec<bool>,
 }
 
-pub(crate) fn flatten_tree(roots: &[Entity], node: impl Fn(Entity) -> TreeNode) -> Vec<TreeRow> {
+pub(crate) fn flatten_tree(
+    roots: &[Entity],
+    filtering: bool,
+    node: impl Fn(Entity) -> TreeNode,
+) -> Vec<TreeRow> {
+    let shown = shown_level(roots, &node);
     let mut rows = Vec::new();
-    flatten_level(roots, &node, &mut Vec::new(), &mut rows);
+    flatten_level(shown, filtering, &mut Vec::new(), &mut rows);
     rows
 }
 
+struct ShownItem {
+    entity: Entity,
+    expanded: bool,
+    children: Vec<ShownItem>,
+}
+
+fn shown_level(siblings: &[Entity], node: &impl Fn(Entity) -> TreeNode) -> Vec<ShownItem> {
+    siblings
+        .iter()
+        .filter_map(|&entity| {
+            let node_of = node(entity);
+            let children = shown_level(&node_of.children, node);
+            (!node_of.hidden || !children.is_empty()).then_some(ShownItem {
+                entity,
+                expanded: node_of.expanded,
+                children,
+            })
+        })
+        .collect()
+}
+
 fn flatten_level(
-    siblings: &[Entity],
-    node: &impl Fn(Entity) -> TreeNode,
+    shown: Vec<ShownItem>,
+    filtering: bool,
     continues: &mut Vec<bool>,
     rows: &mut Vec<TreeRow>,
 ) {
-    let shown = siblings
-        .iter()
-        .map(|&entity| (entity, node(entity)))
-        .filter(|(_, node)| !node.hidden)
-        .collect::<Vec<_>>();
     let count = shown.len();
-    for (position, (entity, node_of)) in shown.into_iter().enumerate() {
+    for (position, item) in shown.into_iter().enumerate() {
         let last = position + 1 == count;
-        let has_children = !node_of.children.is_empty();
-        let drawn_expanded = has_children && node_of.expanded;
+        let has_children = !item.children.is_empty();
+        let drawn_expanded = has_children && (filtering || item.expanded);
         rows.push(TreeRow {
-            entity,
+            entity: item.entity,
             depth: continues.len(),
             has_children,
             drawn_expanded,
@@ -109,7 +130,7 @@ fn flatten_level(
         });
         if drawn_expanded {
             continues.push(!last);
-            flatten_level(&node_of.children, node, continues, rows);
+            flatten_level(item.children, filtering, continues, rows);
             continues.pop();
         }
     }
@@ -144,6 +165,7 @@ fn every_item(roots: &[Entity], marked: &impl Fn(Entity) -> Vec<Entity>) -> Vec<
 
 pub(crate) fn open_to(
     tree: Entity,
+    filtering: bool,
     item: Entity,
     elements: &Query<&mut UITreeElement>,
     hidden: &Query<&UIHidden>,
@@ -151,7 +173,8 @@ pub(crate) fn open_to(
     parents: &Query<&ChildOf>,
 ) -> Option<usize> {
     let mut ancestor = parents.get_entity(item).map(ChildOf::parent);
-    while let Some(entity) = ancestor
+    while !filtering
+        && let Some(entity) = ancestor
         && entity != tree
     {
         if let Some(mut element) = elements.get_entity(entity)
@@ -167,7 +190,7 @@ pub(crate) fn open_to(
             .map(|children| marked_items(children, |child| elements.contains_entity(child)))
             .unwrap_or_default()
     };
-    flatten_tree(&marked(tree), |entity| TreeNode {
+    flatten_tree(&marked(tree), filtering, |entity| TreeNode {
         children: marked(entity),
         expanded: elements
             .get_entity(entity)
@@ -192,6 +215,7 @@ fn click_caret(
     on: On<UIClick>,
     parents: Query<&ChildOf>,
     elements: Query<&mut UITreeElement>,
+    (items, trees): (Query<&UIItem>, Query<&UITree>),
     mut focused: ResMut<FocusedWidget>,
     mut lost: EventWriter<UIFocusLost>,
     mut gained: EventWriter<UIFocusGained>,
@@ -202,6 +226,13 @@ fn click_caret(
     let Some(item) = parents.get_entity(on.entity()).map(ChildOf::parent) else {
         return;
     };
+    let filtering = items
+        .get_entity(item)
+        .and_then(|item| trees.get_entity(item.owner()))
+        .is_some_and(|tree| tree.filtering);
+    if filtering {
+        return;
+    }
     if let Some(mut element) = elements.get_entity(item) {
         element.expanded = !element.expanded;
     }
@@ -248,7 +279,7 @@ pub(crate) fn update_trees(
                 .map(|children| marked_items(&children, |child| elements.contains_entity(child)))
                 .unwrap_or_default()
         };
-        let rows = flatten_tree(&roots, |entity| TreeNode {
+        let rows = flatten_tree(&roots, tree.filtering, |entity| TreeNode {
             children: marked(entity),
             expanded: elements
                 .get_entity(entity)
@@ -425,9 +456,13 @@ mod tests {
     use crate::{
         focus::update_focus,
         interaction::{HoveredNode, update_ui_interaction},
-        items::{UIItem, UIListNext, UIReveal, UITreeCollapse, UITreeExpand},
+        items::{
+            UIItem, UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UIReveal,
+            UISelected, UITreeCollapse, UITreeExpand,
+        },
         list::tests::Harness,
         node::{FlexDirection, UINode},
+        scroll::UIScrollBar,
         text::UIText,
         transform::UIValue,
     };
@@ -560,6 +595,27 @@ mod tests {
         harness.layout(content).rect.min.x - harness.layout(tree).rect.min.x
     }
 
+    fn hide(harness: &mut Harness, entities: &[Entity]) {
+        for entity in entities {
+            harness.world.insert(UIHidden, *entity);
+        }
+    }
+
+    fn set_filtering(harness: &mut Harness, tree: Entity, filtering: bool) {
+        harness
+            .world
+            .get_component_for_entity_mut::<UITree>(tree)
+            .unwrap()
+            .filtering = filtering;
+    }
+
+    fn rows_of(harness: &Harness, entities: &[Entity]) -> Vec<Option<(usize, usize)>> {
+        entities
+            .iter()
+            .map(|entity| row(harness, *entity))
+            .collect()
+    }
+
     #[test]
     fn flatten_skips_collapsed_children() {
         let mut world = World::new();
@@ -571,7 +627,7 @@ mod tests {
             (d, (vec![], false)),
         ]);
 
-        let rows = flatten_tree(&[a], |entity| {
+        let rows = flatten_tree(&[a], false, |entity| {
             let (children, expanded) = nodes[&entity].clone();
             TreeNode {
                 children,
@@ -893,5 +949,293 @@ mod tests {
             layout.rect,
             layout.clip_rect
         );
+    }
+
+    #[test]
+    fn a_hidden_sibling_does_not_make_its_predecessor_not_last() {
+        let mut world = World::new();
+        let [a, b, c, d, e] = [(); 5].map(|_| world.spawn(UINode::default()));
+        let nodes = HashMap::from([
+            (a, (vec![b, d], true, false)),
+            (b, (vec![c], true, false)),
+            (c, (vec![], false, false)),
+            (d, (vec![], false, true)),
+            (e, (vec![], false, true)),
+        ]);
+
+        let rows = flatten_tree(&[a, e], false, |entity| {
+            let (children, expanded, hidden) = nodes[&entity].clone();
+            TreeNode {
+                children,
+                expanded,
+                hidden,
+            }
+        });
+
+        let row = |entity, depth, has_children, drawn_expanded, last, continues: &[bool]| TreeRow {
+            entity,
+            depth,
+            has_children,
+            drawn_expanded,
+            last,
+            continues: continues.to_vec(),
+        };
+        assert_eq!(
+            rows,
+            [
+                row(a, 0, true, true, true, &[]),
+                row(b, 1, true, true, true, &[false]),
+                row(c, 2, false, false, true, &[false, false]),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_hidden_item_with_a_visible_descendant_still_shows() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, true);
+        let middle = item(&mut harness, parent, true);
+        let leaf = item(&mut harness, middle, false);
+        let sibling = item(&mut harness, parent, false);
+        let other = item(&mut harness, tree, true);
+        let hidden_child = item(&mut harness, other, false);
+        hide(
+            &mut harness,
+            &[parent, middle, sibling, other, hidden_child],
+        );
+
+        harness.settle();
+
+        assert_eq!(
+            rows_of(
+                &harness,
+                &[parent, middle, leaf, sibling, other, hidden_child]
+            ),
+            [Some((0, 0)), Some((1, 1)), Some((2, 2)), None, None, None]
+        );
+        assert_eq!(harness.area(tree).content_extent, 3.0 * ROW);
+    }
+
+    #[test]
+    fn filtering_opens_the_path_to_matches_without_writing_expanded() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let a = item(&mut harness, tree, false);
+        let c = item(&mut harness, a, false);
+        let d = item(&mut harness, c, false);
+        let b = item(&mut harness, tree, false);
+        let e = item(&mut harness, b, false);
+        let every = [a, c, d, b, e];
+        harness.settle();
+        assert_eq!(
+            rows_of(&harness, &every),
+            [Some((0, 0)), None, None, Some((1, 0)), None]
+        );
+
+        hide(&mut harness, &[a, c, b, e]);
+        set_filtering(&mut harness, tree, true);
+        harness.settle();
+
+        assert_eq!(
+            rows_of(&harness, &every),
+            [Some((0, 0)), Some((1, 1)), Some((2, 2)), None, None]
+        );
+        for entity in every {
+            assert!(!expanded(&harness, entity));
+        }
+        let shown = caret(&harness, a).expect("a parent has a caret");
+        assert_eq!(glyph(&harness, shown), "▾");
+
+        for entity in every {
+            harness.world.remove_component::<UIHidden>(entity);
+        }
+        set_filtering(&mut harness, tree, false);
+        harness.settle();
+
+        assert_eq!(
+            rows_of(&harness, &every),
+            [Some((0, 0)), None, None, Some((1, 0)), None]
+        );
+        assert_eq!(glyph(&harness, shown), "▸");
+    }
+
+    #[test]
+    fn a_filter_matching_everything_still_opens_the_tree() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let a = item(&mut harness, tree, false);
+        let c = item(&mut harness, a, false);
+        let d = item(&mut harness, c, false);
+        let b = item(&mut harness, tree, false);
+        let e = item(&mut harness, b, false);
+        set_filtering(&mut harness, tree, true);
+
+        harness.settle();
+
+        assert_eq!(
+            rows_of(&harness, &[a, c, d, b, e]),
+            [
+                Some((0, 0)),
+                Some((1, 1)),
+                Some((2, 2)),
+                Some((3, 0)),
+                Some((4, 1))
+            ]
+        );
+    }
+
+    #[test]
+    fn carets_ignore_clicks_while_filtering() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, false);
+        let child = item(&mut harness, parent, false);
+        set_filtering(&mut harness, tree, true);
+        harness.settle();
+        let shown = caret(&harness, parent).expect("a parent has a caret");
+
+        harness.click(shown, MouseButton::Left, Vec2::ZERO);
+        harness.settle();
+
+        assert!(!expanded(&harness, parent));
+        assert_eq!(harness.focused(), None);
+        assert_eq!(row(&harness, child), Some((1, 1)));
+    }
+
+    #[test]
+    fn a_filter_that_hides_the_focused_item_clears_focus() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let a = item(&mut harness, tree, false);
+        item(&mut harness, tree, false);
+        harness.settle();
+        harness.focus(a);
+
+        hide(&mut harness, &[a]);
+        set_filtering(&mut harness, tree, true);
+        harness.settle();
+
+        assert_eq!(harness.focused(), None);
+    }
+
+    #[test]
+    fn a_filter_that_matches_nothing_shows_nothing_and_navigation_is_inert() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let a = item(&mut harness, tree, true);
+        let c = item(&mut harness, a, false);
+        let b = item(&mut harness, tree, false);
+        let every = [a, c, b];
+        harness.settle();
+        harness.focus(c);
+        harness.world.insert(UISelected, c);
+
+        hide(&mut harness, &every);
+        set_filtering(&mut harness, tree, true);
+        harness.settle();
+
+        assert_eq!(rows_of(&harness, &every), [None, None, None]);
+        assert_eq!(harness.area(tree).content_extent, 0.0);
+        let track = harness
+            .world
+            .get_component_for_entity::<Children>(tree)
+            .unwrap()
+            .iter()
+            .copied()
+            .find(|child| {
+                harness
+                    .world
+                    .get_component_for_entity::<UIScrollBar>(*child)
+                    .is_some()
+            })
+            .expect("the tree has a scrollbar track");
+        assert!(
+            !harness
+                .world
+                .get_component_for_entity::<UINode>(track)
+                .unwrap()
+                .visible
+        );
+        let focused = harness.focused();
+        assert_eq!(focused, None);
+        for fire in [
+            |harness: &mut Harness| harness.fire(UIListNext),
+            |harness: &mut Harness| harness.fire(UIListPrevious),
+            |harness: &mut Harness| harness.fire(UIListFirst),
+            |harness: &mut Harness| harness.fire(UIListLast),
+            |harness: &mut Harness| harness.fire(UIListActivate),
+            |harness: &mut Harness| harness.fire(UITreeExpand),
+            |harness: &mut Harness| harness.fire(UITreeCollapse),
+        ] {
+            fire(&mut harness);
+            assert_eq!(harness.focused(), focused);
+            assert_eq!(harness.selected(&every), [1]);
+        }
+    }
+
+    #[test]
+    fn collapsing_while_scrolled_to_the_end_clamps_the_offset() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 100.0);
+        let parent = item(&mut harness, tree, true);
+        for _ in 0..150 {
+            item(&mut harness, parent, false);
+        }
+        let mut top = vec![parent];
+        for _ in 0..49 {
+            top.push(item(&mut harness, tree, false));
+        }
+        harness.settle();
+        assert_eq!(harness.area(tree).content_extent, 200.0 * ROW);
+        harness.set_offset(tree, 200.0 * ROW - 100.0);
+        harness.settle();
+
+        harness
+            .world
+            .get_component_for_entity_mut::<UITreeElement>(parent)
+            .unwrap()
+            .expanded = false;
+        harness.settle();
+
+        assert_eq!(harness.area(tree).offset, 50.0 * ROW - 100.0);
+        let unculled = harness.unculled(&top);
+        assert_eq!(unculled, (43..50).collect::<Vec<_>>());
+        let content = harness.layout(tree).content_rect;
+        for index in 45..50 {
+            let rect = harness.layout(top[index]).rect;
+            assert!(harness.layout(top[index]).is_shown());
+            assert!(rect.min.y >= content.min.y, "{rect:?} in {content:?}");
+            assert!(
+                rect.min.y + rect.size.y <= content.min.y + content.size.y,
+                "{rect:?} in {content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn navigation_and_reveal_while_filtering_leave_expanded_alone() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, false);
+        let child = item(&mut harness, parent, false);
+        let leaf = item(&mut harness, child, false);
+        set_filtering(&mut harness, tree, true);
+        harness.settle();
+
+        harness.focus(parent);
+        harness.fire(UITreeExpand);
+        assert_eq!(harness.focused(), Some(child));
+        harness.fire(UITreeCollapse);
+        assert_eq!(harness.focused(), Some(parent));
+        harness.fire(UITreeCollapse);
+        assert_eq!(harness.focused(), Some(parent));
+        harness.world.trigger_on(leaf, UIReveal);
+        harness.settle();
+
+        for entity in [parent, child, leaf] {
+            assert!(!expanded(&harness, entity));
+        }
+        assert_eq!(row(&harness, leaf), Some((2, 2)));
     }
 }
