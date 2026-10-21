@@ -10,6 +10,7 @@ use concerto_ecs::{
 };
 
 use crate::{
+    interaction::Interactable,
     items::{
         UIHidden, UIItem, UIRowSpacer, UIWidgetPart, equip_items, fit_owner, keep_parts_last,
         park_items, place_rows, set_up_owner,
@@ -49,11 +50,19 @@ pub fn update_lists_system() -> BoxedSystem {
 pub(crate) fn set_up_list(
     on: On<Add<UIList>>,
     areas: Query<&UIScrollArea>,
+    interactables: Query<&Interactable>,
     children: Query<&Children>,
     spacers: Query<&UIRowSpacer>,
     mut cmd: CommandQueue,
 ) {
-    set_up_owner(on.signal().entity, &areas, &children, &spacers, &mut cmd);
+    set_up_owner(
+        on.signal().entity,
+        &areas,
+        &interactables,
+        &children,
+        &spacers,
+        &mut cmd,
+    );
 }
 
 pub(crate) fn update_lists(
@@ -139,6 +148,7 @@ pub(crate) mod tests {
         signal::{On, listener::IntoListener},
         system::{executor::multi_thread::MultiThreadedExecutor, schedule::CompiledSchedule},
     };
+    use concerto_window::events::{ScrollDelta, WindowEvent};
     use concerto_window::input::{
         Input, MouseButton,
         actions::{ActionFired, ActionLabel},
@@ -165,7 +175,7 @@ pub(crate) mod tests {
         },
         scroll::{
             UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scrollbar_thumbs,
-            sync_scrollbar_tracks,
+            sync_scrollbar_tracks, update_scroll_areas,
         },
         sets::UiSet,
         text::fonts::{UIFonts, build_font_system},
@@ -1035,6 +1045,43 @@ pub(crate) mod tests {
             **harness.world.get_resource::<HoveredNode>().unwrap(),
             Some(rows[1])
         );
+    }
+
+    #[test]
+    fn the_wheel_over_empty_list_space_scrolls_the_list() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let list = harness.list(rows_of(20.0), tall(100.0), root);
+        for _ in 0..20 {
+            harness.node(UINode::default().with_width(UIValue::Px(50.0)), list);
+        }
+        harness.settle();
+
+        let rect = harness.layout(list).rect;
+        let point = rect.min + Vec2::new(rect.size.x / 2.0, rect.size.y / 2.0);
+        harness
+            .world
+            .get_resource_mut::<Input>()
+            .unwrap()
+            .update_mouse_position(point.x as f64, point.y as f64);
+        let mut hover = concerto_ecs::IntoSystem::into_system(update_ui_interaction);
+        concerto_ecs::System::initialize(&mut hover, &mut harness.world);
+        concerto_ecs::System::run_and_apply(&mut hover, (), &mut harness.world);
+        harness
+            .world
+            .insert_resource(EventChannel::<WindowEvent>::default());
+        harness
+            .world
+            .get_resource_mut::<EventChannel<WindowEvent>>()
+            .unwrap()
+            .push_event(WindowEvent::MouseWheel {
+                delta: ScrollDelta::Pixels(Vec2::new(0.0, -30.0)),
+            });
+        let mut wheel = concerto_ecs::IntoSystem::into_system(update_scroll_areas);
+        concerto_ecs::System::initialize(&mut wheel, &mut harness.world);
+        concerto_ecs::System::run_and_apply(&mut wheel, (), &mut harness.world);
+
+        assert_eq!(harness.area(list).offset, 30.0);
     }
 
     #[test]

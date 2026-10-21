@@ -151,7 +151,6 @@ fn build_dialog(mut cmd: CommandQueue, theme: Res<UITheme>) {
                     row_height: Some(ROW_HEIGHT),
                     selectable: false,
                 },
-                Interactable,
                 DialogView,
             ))
             .add_child_with(

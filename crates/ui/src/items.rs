@@ -476,12 +476,16 @@ pub(crate) struct UIRowSpacer;
 pub(crate) fn set_up_owner(
     owner: Entity,
     areas: &Query<&UIScrollArea>,
+    interactables: &Query<&Interactable>,
     children: &Query<&Children>,
     spacers: &Query<&UIRowSpacer>,
     cmd: &mut CommandQueue,
 ) {
     if !areas.contains_entity(owner) {
         cmd.insert(UIScrollArea::default(), owner);
+    }
+    if !interactables.contains_entity(owner) {
+        cmd.insert(Interactable, owner);
     }
     let has_spacer = children
         .get_entity(owner)

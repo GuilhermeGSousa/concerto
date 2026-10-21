@@ -249,11 +249,19 @@ pub fn update_trees_system() -> BoxedSystem {
 pub(crate) fn set_up_tree(
     on: On<Add<UITree>>,
     areas: Query<&UIScrollArea>,
+    interactables: Query<&Interactable>,
     children: Query<&Children>,
     spacers: Query<&UIRowSpacer>,
     mut cmd: CommandQueue,
 ) {
-    set_up_owner(on.signal().entity, &areas, &children, &spacers, &mut cmd);
+    set_up_owner(
+        on.signal().entity,
+        &areas,
+        &interactables,
+        &children,
+        &spacers,
+        &mut cmd,
+    );
 }
 
 fn click_caret(

@@ -268,7 +268,6 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     row_height: Some(ROW_HEIGHT),
                     ..Default::default()
                 },
-                Interactable,
                 TreeView,
             ));
 

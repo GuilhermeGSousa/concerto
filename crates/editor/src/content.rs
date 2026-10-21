@@ -14,7 +14,7 @@ use concerto_ecs::{
 };
 use concerto_ui::{
     elements::prelude::*,
-    interaction::{Interactable, UIClick},
+    interaction::UIClick,
     items::{UIHidden, UIItem, UIItemActivated, UIItemSelected, UISelected},
     material::UIMaterial,
     node::{UINode, UIRect},
@@ -207,7 +207,6 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                     row_height: Some(ROW_HEIGHT),
                     ..Default::default()
                 },
-                Interactable,
                 ContentView,
             ));
 

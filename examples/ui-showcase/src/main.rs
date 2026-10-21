@@ -372,7 +372,6 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
                 row_height: Some(28.0),
                 ..Default::default()
             },
-            Interactable,
         ))
         .entity();
     cmd.add_child(layout, list);
@@ -493,7 +492,6 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
                     row_height: Some(24.0),
                     ..Default::default()
                 },
-                Interactable,
             ),
             |mut tree| tree_items(&mut tree, &theme, SHOWCASE_TREE),
         );
