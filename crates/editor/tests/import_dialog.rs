@@ -137,6 +137,7 @@ fn editor(sources: &[&str]) -> (App, tempfile::TempDir) {
         root: project.path().to_path_buf(),
         assets: Vec::new(),
         registry: AssetRegistry::default(),
+        content_root: "content".into(),
     });
     app.insert_resource(state);
     app.register_plugin(ImportPlugin);

@@ -507,6 +507,7 @@ mod tests {
             root: std::path::PathBuf::from("project"),
             assets: vec![],
             registry: concerto_foundation::assets::content::AssetRegistry::default(),
+            content_root: "content".into(),
         });
         world.insert_resource(project);
         let mut registry = AssetEditorRegistry::default();

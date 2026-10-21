@@ -293,6 +293,7 @@ impl SceneFixture {
             root: project_root.clone(),
             assets: vec![],
             registry,
+            content_root: "content".into(),
         });
         world.insert_resource(project);
 

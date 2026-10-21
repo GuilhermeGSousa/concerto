@@ -12,6 +12,7 @@ use crate::tools::{
     scene::SceneRoot,
     selection::{Select, Selection},
 };
+use crate::tree_items::{despawn_outermost, follow_order};
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
@@ -23,10 +24,7 @@ use concerto_ecs::{
     component::name::Name,
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
-    query::{
-        change_detection::Mut,
-        filter::{With, Without},
-    },
+    query::filter::{With, Without},
     signal::{
         On,
         lifecycle::{Add, Remove},
@@ -590,51 +588,6 @@ pub(crate) fn reconcile_structure(
     }
 }
 
-pub(crate) fn despawn_outermost(
-    items: &HashSet<Entity>,
-    parents: &Query<&ChildOf>,
-    cmd: &mut CommandQueue,
-) {
-    for &item in items {
-        let parent = parents.get_entity(item).map(ChildOf::parent);
-        if !parent.is_some_and(|parent| items.contains(&parent)) {
-            cmd.despawn(item);
-        }
-    }
-}
-
-pub(crate) fn follow_order(children: &mut Mut<Children>, order: &[Entity]) {
-    let rank: HashMap<Entity, usize> = order
-        .iter()
-        .enumerate()
-        .map(|(rank, item)| (*item, rank))
-        .collect();
-    let present: Vec<Entity> = children
-        .iter()
-        .copied()
-        .filter(|child| rank.contains_key(child))
-        .collect();
-    let mut sorted = present.clone();
-    sorted.sort_by_key(|item| rank[item]);
-    if present == sorted {
-        return;
-    }
-    let slots = children
-        .iter()
-        .enumerate()
-        .filter(|(_, child)| rank.contains_key(child))
-        .map(|(slot, _)| slot);
-    let mut key: HashMap<Entity, usize> = children
-        .iter()
-        .enumerate()
-        .map(|(slot, child)| (*child, slot))
-        .collect();
-    for (slot, item) in slots.zip(sorted) {
-        key.insert(item, slot);
-    }
-    children.sort_by_key(|child| key[&child]);
-}
-
 pub(crate) fn reconcile_content(
     selection: EditWorld<Res<Selection>>,
     names: EditWorld<Query<&Name>>,
@@ -787,7 +740,9 @@ mod tests {
         inspector::InspectorData,
     };
     use concerto_ecs::{
-        IntoSystem, System, World, events::event_channel::EventChannel, query::filter::With,
+        IntoSystem, System, World,
+        events::event_channel::EventChannel,
+        query::filter::{Changed, Or, With},
     };
     use concerto_foundation::transform::Transform;
     use concerto_ui::{
@@ -1533,6 +1488,34 @@ mod tests {
         assert!(!f.hidden(other) && !f.hidden(f.node) && !f.hidden(deep));
         assert_eq!(f.shown_depth(deep), None);
         assert!(!f.expanded(f.root));
+    }
+
+    #[test]
+    fn an_idle_frame_leaves_marks_unchanged() {
+        let mut f = fixture();
+        f.expand(f.root);
+        f.select(f.node);
+        f.refresh();
+        f.scene.world.tick();
+
+        run(&mut f.scene.world, reconcile_content);
+
+        let marks: HashSet<Entity> = f
+            .scene
+            .world
+            .query::<&HierarchyItem, ()>()
+            .iter(&mut f.scene.world)
+            .map(|item| item.mark)
+            .collect();
+        assert_eq!(marks.len(), 2);
+        let changed: Vec<Entity> = f
+            .scene
+            .world
+            .query::<Entity, Or<(Changed<UINode>, Changed<UIMaterial>)>>()
+            .iter(&mut f.scene.world)
+            .filter(|entity| marks.contains(entity))
+            .collect();
+        assert!(changed.is_empty(), "{changed:?}");
     }
 
     #[test]

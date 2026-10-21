@@ -412,6 +412,7 @@ mod tests {
             root: std::path::PathBuf::from("project"),
             assets: vec![],
             registry: content,
+            content_root: "content".into(),
         });
         world
             .get_resource_mut::<AssetEditorCommands>()

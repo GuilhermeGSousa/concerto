@@ -17,6 +17,7 @@ pub mod scene;
 pub mod shell;
 pub mod tabs;
 pub mod tools;
+mod tree_items;
 pub mod viewport;
 pub mod window_chrome;
 mod workspace;

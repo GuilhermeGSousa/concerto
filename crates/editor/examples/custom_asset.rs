@@ -135,6 +135,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         root: root.into(),
         assets: vec![],
         registry: AssetRegistry::default(),
+        content_root: "content".into(),
     });
     app.insert_resource(project);
     let world = app.main_mut().world_mut();

@@ -469,6 +469,7 @@ mod tests {
             root: project.path().to_path_buf(),
             assets: Vec::new(),
             registry: AssetRegistry::default(),
+            content_root: "content".into(),
         });
         world.insert_resource(state);
         world.insert_resource(ImportStaging {

@@ -15,7 +15,7 @@ use concerto_ecs::{
 use concerto_ui::{
     elements::prelude::*,
     interaction::{Interactable, UIClick},
-    items::{UIHidden, UIItemActivated, UIItemSelected, UISelected},
+    items::{UIHidden, UIItem, UIItemActivated, UIItemSelected, UISelected},
     material::UIMaterial,
     node::{UINode, UIRect},
     scroll::UIScrollArea,
@@ -31,9 +31,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::hierarchy::{despawn_outermost, follow_order};
 use crate::marks::{self, Mark};
 use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
+use crate::tree_items::{despawn_outermost, follow_order};
 use concerto_foundation::assets::AssetId;
 
 pub const PANEL_ID: &str = "concerto.curiosities";
@@ -278,28 +278,55 @@ fn request_import(
 fn select_item(
     on: On<UIItemSelected>,
     items: Query<&ContentItem>,
+    selected: Query<&UISelected>,
     project: Res<ProjectState>,
     mut state: ResMut<ContentState>,
+    mut cmd: CommandQueue,
 ) {
+    let entity = on.entity();
     if project.busy() {
+        cmd.remove::<UISelected>(entity);
+        if let Some(&item) = state
+            .selected
+            .and_then(|id| state.items.get(&ContentKey::Asset(id)))
+        {
+            cmd.insert(UISelected, item);
+        }
         return;
     }
-    if let Some(ContentKey::Asset(id)) = items.get_entity(on.entity()).map(|item| &item.key) {
+    if let Some(ContentKey::Asset(id)) = items.get_entity(entity).map(|item| &item.key) {
         state.selected = Some(*id);
+        if !selected.contains_entity(entity) {
+            cmd.insert(UISelected, entity);
+        }
     }
 }
 
 fn open_item(
     on: On<UIItemActivated>,
-    items: Query<&ContentItem>,
+    items: Query<(&ContentItem, Option<&UIItem>)>,
+    elements: Query<&mut UITreeElement>,
+    trees: Query<&UITree>,
     project: Res<ProjectState>,
     mut commands: ResMut<EditorCommands>,
 ) {
     if project.busy() {
         return;
     }
-    if let Some(ContentKey::Asset(id)) = items.get_entity(on.entity()).map(|item| &item.key) {
-        commands.0.push_back(EditorCommand::OpenAsset(*id));
+    let entity = on.entity();
+    let Some((item, placed)) = items.get_entity(entity) else {
+        return;
+    };
+    match item.key {
+        ContentKey::Asset(id) => commands.0.push_back(EditorCommand::OpenAsset(id)),
+        ContentKey::Folder(_) => {
+            let filtering = placed
+                .and_then(|placed| trees.get_entity(placed.owner()))
+                .is_some_and(|tree| tree.filtering);
+            if !filtering && let Some(mut element) = elements.get_entity(entity) {
+                element.expanded = !element.expanded;
+            }
+        }
     }
 }
 
@@ -315,7 +342,7 @@ fn asset_mark(kind: &str) -> Mark {
 
 #[derive(Default)]
 struct Folder<'a> {
-    folders: BTreeMap<&'a str, Folder<'a>>,
+    folders: BTreeMap<(String, &'a str), Folder<'a>>,
     assets: Vec<&'a AssetEntry>,
 }
 
@@ -326,17 +353,25 @@ struct Listed<'a> {
     mark: Mark,
 }
 
-fn folder_tree(assets: &[AssetEntry]) -> Folder<'_> {
+fn inside_root<'a>(folder: &'a str, content_root: &str) -> &'a str {
+    match folder.strip_prefix(content_root) {
+        Some(rest) if rest.is_empty() || rest.starts_with('/') => rest,
+        _ => folder,
+    }
+}
+
+fn folder_tree<'a>(assets: &'a [AssetEntry], content_root: &str) -> Folder<'a> {
     let mut root = Folder::default();
     for asset in assets {
         let mut folder = &mut root;
-        for part in asset
-            .folder
+        for part in inside_root(&asset.folder, content_root)
             .split('/')
-            .skip(1)
             .filter(|part| !part.is_empty())
         {
-            folder = folder.folders.entry(part).or_default();
+            folder = folder
+                .folders
+                .entry((part.to_lowercase(), part))
+                .or_default();
         }
         folder.assets.push(asset);
     }
@@ -345,7 +380,7 @@ fn folder_tree(assets: &[AssetEntry]) -> Folder<'_> {
 
 fn list_folder<'a>(folder: &Folder<'a>, path: Option<&str>, listed: &mut Vec<Listed<'a>>) {
     let parent = path.map(|path| ContentKey::Folder(path.to_string()));
-    for (&name, child) in &folder.folders {
+    for (&(_, name), child) in &folder.folders {
         let child_path = match path {
             Some(path) => format!("{path}/{name}"),
             None => name.to_string(),
@@ -360,7 +395,18 @@ fn list_folder<'a>(folder: &Folder<'a>, path: Option<&str>, listed: &mut Vec<Lis
     }
     let mut assets = folder.assets.clone();
     assets.sort_by(|a, b| {
-        (&a.display_name, &a.kind, &a.address).cmp(&(&b.display_name, &b.kind, &b.address))
+        (
+            a.display_name.to_lowercase(),
+            &a.display_name,
+            &a.kind,
+            &a.address,
+        )
+            .cmp(&(
+                b.display_name.to_lowercase(),
+                &b.display_name,
+                &b.kind,
+                &b.address,
+            ))
     });
     for asset in assets {
         listed.push(Listed {
@@ -373,9 +419,7 @@ fn list_folder<'a>(folder: &Folder<'a>, path: Option<&str>, listed: &mut Vec<Lis
 }
 
 fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: Entity) -> Entity {
-    let (mut node, mut material) = marks::node();
-    marks::apply(entry.mark, theme, false, &mut node, &mut material);
-    let mark_node = cmd.spawn((node, material)).entity();
+    let mark_node = cmd.spawn(marks::shaped(entry.mark, theme)).entity();
     let label = cmd
         .spawn((
             UINode::default()
@@ -431,13 +475,14 @@ fn reconcile_content_tree(
         .iter()
         .map(|asset| asset.id)
         .collect();
-    let assets = project
-        .project
-        .as_ref()
-        .map(|project| project.assets.as_slice())
-        .unwrap_or_default();
     let mut listed = Vec::new();
-    list_folder(&folder_tree(assets), None, &mut listed);
+    if let Some(project) = project.project.as_ref() {
+        list_folder(
+            &folder_tree(&project.assets, &project.content_root),
+            None,
+            &mut listed,
+        );
+    }
 
     let mut previous = std::mem::take(&mut state.items);
     let mut kept: HashMap<ContentKey, Entity> = HashMap::new();
@@ -480,6 +525,9 @@ fn reconcile_content_tree(
                 if hide {
                     cmd.insert(UIHidden, item);
                 }
+                if matches!(entry.key, ContentKey::Asset(id) if state.selected == Some(id)) {
+                    cmd.insert(UISelected, item);
+                }
                 item
             }
         };
@@ -517,21 +565,19 @@ fn order_items(on: On<OrderItems>, children: Query<&mut Children>) {
 }
 
 fn sync_content_items(
-    state: Res<ContentState>,
-    items: Query<(Entity, &ContentItem, Option<&UISelected>)>,
+    items: Query<(&ContentItem, Option<&UISelected>)>,
     marks: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
-    mut cmd: CommandQueue,
 ) {
-    for (entity, item, selected) in items.iter() {
-        let wanted = matches!(item.key, ContentKey::Asset(id) if state.selected == Some(id));
+    for (item, selected) in items.iter() {
         if let Some((mut node, mut material)) = marks.get_entity(item.mark_node) {
-            marks::apply(item.mark, &theme, wanted, &mut node, &mut material);
-        }
-        if wanted && selected.is_none() {
-            cmd.insert(UISelected, entity);
-        } else if !wanted && selected.is_some() {
-            cmd.remove::<UISelected>(entity);
+            marks::apply(
+                item.mark,
+                &theme,
+                selected.is_some(),
+                &mut node,
+                &mut material,
+            );
         }
     }
 }
@@ -565,7 +611,7 @@ mod tests {
         IntoSystem, System, World,
         entity::hierarchy::{ChildOf, Children},
         events::event_channel::EventChannel,
-        query::filter::With,
+        query::filter::{Changed, Or, With},
     };
     use concerto_foundation::assets::content::AssetRegistry;
     use concerto_ui::{
@@ -600,6 +646,10 @@ mod tests {
     }
 
     fn fixture(assets: &[(&str, &str)]) -> Fixture {
+        fixture_in("content", assets)
+    }
+
+    fn fixture_in(content_root: &str, assets: &[(&str, &str)]) -> Fixture {
         let mut world = World::new();
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
@@ -616,6 +666,7 @@ mod tests {
                 .map(|(address, kind)| entry(address, kind))
                 .collect(),
             registry: AssetRegistry::default(),
+            content_root: content_root.into(),
         });
         world.insert_resource(project);
         install_listeners(&mut world);
@@ -796,6 +847,27 @@ mod tests {
                 .find(|(_, tag)| tag.0 == index)
                 .unwrap()
                 .0
+        }
+
+        fn mark_border(&self, item: Entity) -> concerto_color::LinearRgba {
+            let mark = self
+                .world
+                .get_component_for_entity::<ContentItem>(item)
+                .unwrap()
+                .mark_node;
+            self.world
+                .get_component_for_entity::<UIMaterial>(mark)
+                .unwrap()
+                .border_color
+        }
+
+        fn busy(&mut self) -> std::sync::mpsc::Sender<()> {
+            let (release, wait) = std::sync::mpsc::channel();
+            self.world
+                .get_resource_mut::<ProjectState>()
+                .unwrap()
+                .begin_job_for_test(wait);
+            release
         }
 
         fn opened(&self) -> Vec<AssetId> {
@@ -1004,17 +1076,139 @@ mod tests {
     fn a_click_while_busy_is_ignored_and_the_highlight_snaps_back() {
         let mut f = fixture(&[("content/level.gasset", "Scene")]);
         let item = f.asset_item("content/level.gasset");
-        let (release, wait) = std::sync::mpsc::channel();
-        f.world
-            .get_resource_mut::<ProjectState>()
-            .unwrap()
-            .begin_job_for_test(wait);
+        let release = f.busy();
 
         f.click(item);
 
         assert_eq!(f.state().selected, None);
         assert!(!f.ui_selected(item));
         drop(release);
+    }
+
+    fn level_and_forest() -> Fixture {
+        fixture(&[
+            ("content/level.gasset", "Scene"),
+            ("content/forest/a.gasset", "Scene"),
+        ])
+    }
+
+    #[test]
+    fn a_folder_click_keeps_the_folder_selected() {
+        let mut f = level_and_forest();
+        let level = f.asset("content/level.gasset");
+        let level_item = f.asset_item("content/level.gasset");
+        let forest = f.item(&folder("forest"));
+        f.click(level_item);
+
+        f.click(forest);
+        f.refresh();
+
+        assert!(f.ui_selected(forest));
+        assert!(!f.ui_selected(level_item));
+        assert_eq!(f.state().selected, Some(level));
+        let theme = UITheme::default();
+        assert_eq!(
+            f.mark_border(forest),
+            Mark::Folder.shape(&theme, true).border.to_linear()
+        );
+        assert_eq!(
+            f.mark_border(level_item),
+            Mark::Group.shape(&theme, false).border.to_linear()
+        );
+    }
+
+    #[test]
+    fn activating_a_folder_toggles_it() {
+        let mut f = level_and_forest();
+        let forest = f.item(&folder("forest"));
+
+        f.world.trigger_on(forest, UIItemActivated);
+        f.refresh();
+        assert!(f.expanded(forest));
+        assert!(f.shown(f.asset_item("content/forest/a.gasset")));
+
+        f.world.trigger_on(forest, UIItemActivated);
+        f.refresh();
+        assert!(!f.expanded(forest));
+        assert!(f.opened().is_empty());
+    }
+
+    #[test]
+    fn a_busy_click_on_a_folder_snaps_back() {
+        let mut f = level_and_forest();
+        let level = f.asset("content/level.gasset");
+        let level_item = f.asset_item("content/level.gasset");
+        let forest = f.item(&folder("forest"));
+        f.click(level_item);
+        let release = f.busy();
+
+        f.click(forest);
+        f.refresh();
+
+        assert!(!f.ui_selected(forest));
+        assert!(f.ui_selected(level_item));
+        assert_eq!(f.state().selected, Some(level));
+        drop(release);
+    }
+
+    #[test]
+    fn names_sort_ignoring_case() {
+        let mut f = fixture(&[
+            ("content/Zeta.gasset", "Scene"),
+            ("content/alpha.gasset", "Scene"),
+            ("content/Birch/x.gasset", "Mesh"),
+            ("content/apple/y.gasset", "Mesh"),
+        ]);
+        let view = f.view();
+
+        assert_eq!(f.labels_under(view), ["apple", "Birch", "alpha", "Zeta"]);
+    }
+
+    #[test]
+    fn folders_are_relative_to_the_configured_content_root() {
+        let mut f = fixture_in(
+            "game/content",
+            &[
+                ("game/content/forest/a.gasset", "Scene"),
+                ("game/content/level.gasset", "Scene"),
+            ],
+        );
+        let view = f.view();
+
+        assert_eq!(
+            f.keys_under(view),
+            [
+                folder("forest"),
+                ContentKey::Asset(f.asset("game/content/level.gasset"))
+            ]
+        );
+        assert_eq!(f.labels_under(view), ["forest", "level"]);
+    }
+
+    #[test]
+    fn an_idle_frame_leaves_marks_unchanged() {
+        let mut f = level_and_forest();
+        let level_item = f.asset_item("content/level.gasset");
+        f.click(level_item);
+        f.refresh();
+
+        run(&mut f.world, reconcile_content_tree);
+        place(&mut f.world);
+        run(&mut f.world, sync_content_items);
+
+        let marks: HashSet<Entity> = f
+            .world
+            .query::<&ContentItem, ()>()
+            .iter(&mut f.world)
+            .map(|item| item.mark_node)
+            .collect();
+        let changed: Vec<Entity> = f
+            .world
+            .query::<Entity, Or<(Changed<UINode>, Changed<UIMaterial>)>>()
+            .iter(&mut f.world)
+            .filter(|entity| marks.contains(entity))
+            .collect();
+        assert!(changed.is_empty(), "{changed:?}");
     }
 
     #[test]

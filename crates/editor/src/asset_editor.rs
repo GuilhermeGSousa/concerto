@@ -365,6 +365,7 @@ mod tests {
             root: std::path::PathBuf::from("project"),
             assets: vec![],
             registry,
+            content_root: "content".into(),
         });
         w.insert_resource(project);
         let mut r = AssetEditorRegistry::default();

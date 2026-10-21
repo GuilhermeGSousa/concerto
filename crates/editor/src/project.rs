@@ -59,6 +59,8 @@ pub struct Project {
     pub root: PathBuf,
     pub assets: Vec<AssetEntry>,
     pub registry: AssetRegistry,
+    /// The project-relative folder the catalogue is read from, `content` unless `content.toml` names another.
+    pub content_root: String,
 }
 
 impl Project {
@@ -158,6 +160,7 @@ pub fn discover_project(root: &Path) -> anyhow::Result<Project> {
         root,
         assets,
         registry,
+        content_root: config.root,
     })
 }
 
@@ -364,6 +367,7 @@ mod tests {
             root: PathBuf::new(),
             assets: vec![],
             registry: AssetRegistry::default(),
+            content_root: "content".into(),
         };
         let id = AssetId::new();
         for (id, address) in [
