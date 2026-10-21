@@ -5,12 +5,12 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
-    entity::hierarchy::{ChildOf, Children},
+    entity::hierarchy::ChildOf,
     events::event_reader::EventReader,
     query::{change_detection::DetectChanges, filter::With},
-    signal::{On, Signal, listener::IntoListener},
+    signal::{On, listener::IntoListener},
 };
 use concerto_ui::{
     elements::prelude::*,
@@ -33,7 +33,7 @@ use taffy::FlexDirection;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark};
 use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
-use crate::tree_items::{despawn_outermost, follow_order};
+use crate::tree_items::{OrderItems, despawn_outermost, order_items};
 use concerto_foundation::assets::AssetId;
 
 pub const PANEL_ID: &str = "concerto.curiosities";
@@ -84,10 +84,6 @@ struct Filter;
 #[derive(Component)]
 struct ContentView;
 
-struct OrderItems(Vec<(Entity, Vec<Entity>)>);
-
-impl Signal for OrderItems {}
-
 pub struct ContentPlugin;
 
 impl Plugin for ContentPlugin {
@@ -98,7 +94,6 @@ impl Plugin for ContentPlugin {
             title: "Curiosities",
             region: Region::Rail,
         });
-        install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel)
             .add_system(
                 LateUpdate,
@@ -118,10 +113,6 @@ impl Plugin for ContentPlugin {
             )
             .add_system(LateUpdate, render_tags.before(UiSet::Materials));
     }
-}
-
-fn install_listeners(world: &mut World) {
-    world.add_listener(order_items);
 }
 
 fn visible_assets<'a>(project: &'a ProjectState, state: &ContentState) -> Vec<&'a AssetEntry> {
@@ -208,6 +199,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme) {
                     ..Default::default()
                 },
                 ContentView,
+                order_items.into_listener(),
             ));
 
             panel.add_child((
@@ -539,7 +531,7 @@ fn reconcile_content_tree(
     let gone: HashSet<Entity> = previous.into_values().collect();
     despawn_outermost(&gone, &parents, &mut cmd);
     state.items = kept;
-    cmd.trigger(OrderItems(order));
+    cmd.entity(view).trigger(OrderItems(order));
 
     let count = if matching.is_empty() {
         String::new()
@@ -551,14 +543,6 @@ fn reconcile_content_tree(
             && text.text != count
         {
             text.text = count.clone();
-        }
-    }
-}
-
-fn order_items(on: On<OrderItems>, children: Query<&mut Children>) {
-    for (parent, items) in &on.signal().0 {
-        if let Some(mut children) = children.get_entity(*parent) {
-            follow_order(&mut children, items);
         }
     }
 }
@@ -668,7 +652,6 @@ mod tests {
             content_root: content_root.into(),
         });
         world.insert_resource(project);
-        install_listeners(&mut world);
         concerto_ui::items::install_listeners(&mut world);
         concerto_ui::tree::install_listeners(&mut world);
         run(&mut world, build);

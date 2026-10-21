@@ -1,11 +1,24 @@
-//! Bookkeeping shared by the panels that keep one tree item per thing they list.
 use concerto_ecs::{
     Entity, Query,
     command::CommandQueue,
     entity::hierarchy::{ChildOf, Children},
     query::change_detection::Mut,
+    signal::{EntitySignal, On, Signal},
 };
 use std::collections::{HashMap, HashSet};
+
+pub(crate) struct OrderItems(pub(crate) Vec<(Entity, Vec<Entity>)>);
+
+impl Signal for OrderItems {}
+impl EntitySignal for OrderItems {}
+
+pub(crate) fn order_items(on: On<OrderItems>, children: Query<&mut Children>) {
+    for (parent, items) in &on.signal().0 {
+        if let Some(mut children) = children.get_entity(*parent) {
+            follow_order(&mut children, items);
+        }
+    }
+}
 
 pub(crate) fn despawn_outermost(
     items: &HashSet<Entity>,
@@ -20,7 +33,7 @@ pub(crate) fn despawn_outermost(
     }
 }
 
-pub(crate) fn follow_order(children: &mut Mut<Children>, order: &[Entity]) {
+fn follow_order(children: &mut Mut<Children>, order: &[Entity]) {
     let rank: HashMap<Entity, usize> = order
         .iter()
         .enumerate()

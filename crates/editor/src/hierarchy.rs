@@ -12,7 +12,7 @@ use crate::tools::{
     scene::SceneRoot,
     selection::{Select, Selection},
 };
-use crate::tree_items::{despawn_outermost, follow_order};
+use crate::tree_items::{OrderItems, despawn_outermost, order_items};
 use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
@@ -269,6 +269,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                     ..Default::default()
                 },
                 TreeView,
+                order_items.into_listener(),
             ));
 
             tree.add_child((line(46.0), theme.text(""), Label::Footer));
@@ -520,7 +521,6 @@ pub(crate) fn reconcile_structure(
     mut state: ResMut<HierarchyState>,
     views: Query<Entity, With<TreeView>>,
     parents: Query<&ChildOf>,
-    children: Query<&mut Children>,
     placed: Query<&UIItem>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
@@ -557,11 +557,6 @@ pub(crate) fn reconcile_structure(
         };
         order.entry(parent).or_default().push(item);
     }
-    for (parent, items) in &order {
-        if let Some(mut children) = children.get_entity(*parent) {
-            follow_order(&mut children, items);
-        }
-    }
 
     let gone: Vec<Entity> = state
         .items
@@ -574,6 +569,8 @@ pub(crate) fn reconcile_structure(
         .filter_map(|scene_entity| state.items.remove(&scene_entity))
         .collect();
     despawn_outermost(&gone, &parents, &mut cmd);
+    cmd.entity(view)
+        .trigger(OrderItems(order.into_iter().collect()));
 
     if let Some(scene_entity) = state.pending_scene_reveal {
         if !wanted.contains(&scene_entity) {
@@ -1367,6 +1364,45 @@ mod tests {
         assert!(!f.scene.world.entity_is_valid(gone));
         assert!(!f.state().items.contains_key(&a));
         assert_eq!(f.count_of(f.root), "2");
+    }
+
+    #[test]
+    fn a_new_or_moved_item_takes_its_place_in_the_frame_it_appears() {
+        let mut f = fixture();
+        let node = f.node;
+        let leaf = f.spawn_under(node, "leaf");
+        let moved = f.spawn_under(f.root, "moved");
+        f.refresh();
+        f.expand(f.root);
+        f.expand(node);
+
+        let created = f.spawn_under(f.root, "created");
+        let scene = f.scene.scene_world_mut(f.document);
+        scene.entity_mut(node).add_child(moved);
+        let root = f.root;
+        let scene = f.scene.scene_world_mut(f.document);
+        scene
+            .get_component_for_entity_mut::<Children>(root)
+            .unwrap()
+            .sort_by_key(|child| child != created);
+        scene
+            .get_component_for_entity_mut::<Children>(node)
+            .unwrap()
+            .sort_by_key(|child| child != moved);
+        f.refresh();
+
+        assert_eq!(f.item_children(f.item_of(f.root)), [created, node]);
+        assert_eq!(f.item_children(f.item_of(node)), [moved, leaf]);
+        let rows: Vec<Option<usize>> = [f.root, created, node, moved, leaf]
+            .iter()
+            .map(|entity| {
+                f.scene
+                    .world
+                    .get_component_for_entity::<UIItem>(f.item_of(*entity))
+                    .map(UIItem::index)
+            })
+            .collect();
+        assert_eq!(rows, [Some(0), Some(1), Some(2), Some(3), Some(4)]);
     }
 
     #[test]
