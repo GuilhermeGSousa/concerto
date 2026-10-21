@@ -55,13 +55,20 @@ enum ContentKey {
     Asset(AssetId),
 }
 
+/// The content browser's selection, filters and the item it keeps for each folder and asset.
 #[derive(Resource, Default)]
 pub struct ContentState {
-    /// Catalogue selection is independent of the open editor's entity selection.
-    pub selected: Option<AssetId>,
+    selected: Option<AssetId>,
     filter: String,
     kind: usize,
     items: HashMap<ContentKey, Entity>,
+}
+
+impl ContentState {
+    /// The asset selected in the catalogue, independent of the open editor's entity selection.
+    pub fn selected(&self) -> Option<AssetId> {
+        self.selected
+    }
 }
 
 #[derive(Component)]
@@ -1028,7 +1035,7 @@ mod tests {
         f.world.trigger_on(item, UIItemSelected);
         f.refresh();
 
-        assert_eq!(f.state().selected, Some(level));
+        assert_eq!(f.state().selected(), Some(level));
         assert!(f.ui_selected(item));
         assert!(!f.ui_selected(f.asset_item("content/rock.gasset")));
         let theme = UITheme::default();
@@ -1062,7 +1069,7 @@ mod tests {
 
         f.click(item);
 
-        assert_eq!(f.state().selected, None);
+        assert_eq!(f.state().selected(), None);
         assert!(!f.ui_selected(item));
         drop(release);
     }
@@ -1087,7 +1094,7 @@ mod tests {
 
         assert!(f.ui_selected(forest));
         assert!(!f.ui_selected(level_item));
-        assert_eq!(f.state().selected, Some(level));
+        assert_eq!(f.state().selected(), Some(level));
         let theme = UITheme::default();
         assert_eq!(
             f.mark_border(forest),
@@ -1129,7 +1136,7 @@ mod tests {
 
         assert!(!f.ui_selected(forest));
         assert!(f.ui_selected(level_item));
-        assert_eq!(f.state().selected, Some(level));
+        assert_eq!(f.state().selected(), Some(level));
         drop(release);
     }
 
