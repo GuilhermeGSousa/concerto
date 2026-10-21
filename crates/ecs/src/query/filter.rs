@@ -3,7 +3,7 @@ use std::{any::TypeId, marker::PhantomData};
 use crate::{
     Component, World,
     archetype::Archetype,
-    component::{ComponentId, bundle::ComponentBundle},
+    component::{ComponentId, SystemTicks, bundle::ComponentBundle},
     entity::Entity,
     query::world_query::WorldQuery,
     system::access::SystemAccess,
@@ -20,7 +20,11 @@ pub trait QueryFilter: WorldQuery {
     ///
     /// # Safety
     /// The caller must hold read access to the components the filter inspects.
-    unsafe fn filter<'w>(_world: UnsafeWorldCell<'w>, _entity: Entity) -> bool {
+    unsafe fn filter<'w>(
+        _world: UnsafeWorldCell<'w>,
+        _entity: Entity,
+        _ticks: SystemTicks,
+    ) -> bool {
         true
     }
 
@@ -36,10 +40,10 @@ where
     T: Tuple,
     T<_>: QueryFilter,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> bool {
+    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         for typle_index!(i) in 0..T::LEN {
             // SAFETY: the caller's access covers every filter in the tuple.
-            if !unsafe { T::<{ i }>::filter(world, entity) } {
+            if !unsafe { T::<{ i }>::filter(world, entity, ticks) } {
                 return false;
             }
         }
@@ -78,10 +82,10 @@ impl<T> QueryFilter for Added<T>
 where
     T: Component,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> bool {
+    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         for component_id in T::get_component_ids() {
             // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
-            if !unsafe { world.world() }.was_component_added(entity, component_id) {
+            if !unsafe { world.world() }.was_component_added_in(entity, component_id, ticks) {
                 return false;
             }
         }
@@ -117,10 +121,10 @@ impl<T> QueryFilter for Changed<T>
 where
     T: Component,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> bool {
+    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         for component_id in T::get_component_ids() {
             // SAFETY: `fill_access` declares read access to `T`, whose change ticks this reads.
-            if !unsafe { world.world() }.was_component_changed(entity, component_id) {
+            if !unsafe { world.world() }.was_component_changed_in(entity, component_id, ticks) {
                 return false;
             }
         }
@@ -156,7 +160,7 @@ impl<T> QueryFilter for With<T>
 where
     T: Component,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> bool {
+    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, _ticks: SystemTicks) -> bool {
         // SAFETY: only the entity's archetype is read, under the caller's access.
         let world = unsafe { world.world() };
 
@@ -198,9 +202,9 @@ impl<T> QueryFilter for Not<T>
 where
     T: QueryFilter,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> bool {
+    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         // SAFETY: `Not` inspects what `T` inspects, which the caller covers.
-        !unsafe { T::filter(world, entity) }
+        !unsafe { T::filter(world, entity, ticks) }
     }
 
     fn fill_access(access: &mut SystemAccess) {
@@ -255,12 +259,12 @@ where
     T: Tuple,
     T<_>: QueryFilter,
 {
-    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity) -> bool {
+    unsafe fn filter<'w>(world: UnsafeWorldCell<'w>, entity: Entity, ticks: SystemTicks) -> bool {
         let mut result = false;
 
         for typle_index!(i) in 0..T::LEN {
             // SAFETY: the caller's access covers every filter in `Or`.
-            result |= unsafe { <T<{ i }>>::filter(world, entity) };
+            result |= unsafe { <T<{ i }>>::filter(world, entity, ticks) };
         }
 
         result

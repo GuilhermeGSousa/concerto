@@ -2,6 +2,7 @@ use std::ops::{Deref, DerefMut};
 
 use concerto_ecs::{
     Entity, Query, With, World,
+    component::SystemTicks,
     query::state::QueryState,
     signal::Signal,
     system::{
@@ -22,9 +23,10 @@ type Targets = QueryState<(Entity, &'static HostedApp), With<EditTarget>>;
 unsafe fn edit_target<'w>(
     world: UnsafeWorldCell<'w>,
     targets: &mut Targets,
+    ticks: SystemTicks,
 ) -> Option<(Entity, &'w World)> {
     // SAFETY: the query reads only what `read_edit_target` declares, which the caller holds.
-    let targets = unsafe { Query::new(world, targets) };
+    let targets = unsafe { Query::new(world, targets, ticks) };
     targets
         .iter()
         .next()
@@ -93,17 +95,25 @@ where
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares what `edit_target` reads.
-        let (_, scene) =
-            unsafe { edit_target(world, &mut state.targets) }.ok_or_else(no_edit_target::<Self>)?;
+        let (_, scene) = unsafe { edit_target(world, &mut state.targets, ticks) }
+            .ok_or_else(no_edit_target::<Self>)?;
         if state.for_world(scene).is_none() {
             state.current = state.first.clone();
             state.built_for = Some(scene.id());
         }
         // SAFETY: the scene's world belongs to its hosted `App`, which no system runs while the
         // editor's systems do, and `T` only reads it.
-        unsafe { T::get_data(&mut state.current, scene.as_unsafe_world_cell()) }.map(EditWorld)
+        unsafe {
+            T::get_data(
+                &mut state.current,
+                scene.as_unsafe_world_cell(),
+                scene.out_of_system_ticks(),
+            )
+        }
+        .map(EditWorld)
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -154,9 +164,10 @@ impl SystemInput for EditWorldSignals<'_> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares what `edit_target` reads.
-        let target = unsafe { edit_target(world, &mut state.targets) }
+        let target = unsafe { edit_target(world, &mut state.targets, ticks) }
             .map(|(document, scene)| (document, scene.id()));
         if state.made_for != target {
             state.signals.clear();

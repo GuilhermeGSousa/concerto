@@ -6,7 +6,11 @@ use std::{
 };
 
 use concerto_app::App;
-use concerto_ecs::{Entity, ResMut, Resource, World, command::CommandQueue, component::Tick};
+use concerto_ecs::{
+    Entity, ResMut, Resource, World,
+    command::CommandQueue,
+    component::{SystemTicks, Tick},
+};
 use concerto_ecs::{
     Res,
     entity::EntityStructuralVersion,
@@ -209,8 +213,8 @@ impl InspectionSource<'_> {
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
         self.components.entity_is_valid(entity)
     }
-    pub fn current_tick(&self) -> Tick {
-        self.components.current_tick()
+    pub fn change_tick(&self) -> Tick {
+        self.components.change_tick()
     }
     pub fn has_component_changed_since(&self, entity: Entity, id: TypeId, tick: Tick) -> bool {
         self.components
@@ -266,11 +270,12 @@ impl SystemInput for InspectionSource<'_> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut (),
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: this input declares exactly the access of its two parts.
         Ok(InspectionSource {
-            components: unsafe { ComponentMetadata::get_data(state, world) }?,
-            table: unsafe { Res::new(world) }?,
+            components: unsafe { ComponentMetadata::get_data(state, world, ticks) }?,
+            table: unsafe { Res::new(world, ticks) }?,
         })
     }
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -299,8 +304,9 @@ impl EditableApp for App {
 
 fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
     let world = app.main_mut().world_mut();
+    let ticks = world.out_of_system_ticks();
     // SAFETY: the exclusive borrow of the world covers any access.
-    unsafe { ResMut::new(world.as_unsafe_world_cell_mut()) }
+    unsafe { ResMut::new(world.as_unsafe_world_cell_mut(), ticks) }
         .expect("InspectorPlugin must be registered first")
 }
 
@@ -509,8 +515,9 @@ mod tests {
         let mut s = sending();
         let row = s.row();
         s.f.world.tick();
+        let ticks = s.f.world.out_of_system_ticks();
         // SAFETY: the exclusive borrow of the world covers any access.
-        unsafe { ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut()) }
+        unsafe { ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut(), ticks) }
             .unwrap()
             .register_property_editor::<Vec3, _>(NumericFields);
         s.commits()

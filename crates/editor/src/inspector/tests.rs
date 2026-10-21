@@ -262,8 +262,9 @@ impl PropertyEditor<Transform> for WholeTransform {
 }
 
 fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
+    let ticks = world.out_of_system_ticks();
     // SAFETY: the exclusive borrow of the world covers any access.
-    unsafe { ResMut::new(world.as_unsafe_world_cell_mut()) }.unwrap()
+    unsafe { ResMut::new(world.as_unsafe_world_cell_mut(), ticks) }.unwrap()
 }
 
 #[test]
@@ -619,7 +620,7 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
     w.update();
     let settled = count.load(Ordering::Relaxed);
     let row = rows(&mut w.f.world)[0].0;
-    let row_tick = w.f.world.current_tick();
+    let row_tick = w.f.world.change_tick();
     for _ in 0..3 {
         w.update();
     }
@@ -743,7 +744,7 @@ fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
     assert!(cards(&mut w.f.world).is_empty());
     assert!(rows(&mut w.f.world).is_empty());
     assert_eq!(shown(&w), None);
-    let since = w.f.world.current_tick();
+    let since = w.f.world.change_tick();
     w.update();
     assert!(
         !w.f.world

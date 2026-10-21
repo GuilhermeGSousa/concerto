@@ -1,6 +1,6 @@
 use super::{ReadOnlySystemInput, SystemInput, ValidationError};
 use crate::{
-    component::{Component, ComponentId, Tick},
+    component::{Component, ComponentId, SystemTicks, Tick},
     entity::{Entity, EntityStructuralVersion},
     system::{access::SystemAccess, meta::SystemMetadata},
     world::{UnsafeWorldCell, World},
@@ -46,8 +46,9 @@ impl<'w> ComponentMetadata<'w> {
         self.read().get_component_for_entity::<T>(entity)
     }
 
-    pub fn current_tick(&self) -> Tick {
-        self.read().current_tick()
+    /// See [`World::change_tick`].
+    pub fn change_tick(&self) -> Tick {
+        self.read().change_tick()
     }
 
     pub fn has_component_changed_since(
@@ -67,6 +68,7 @@ impl SystemInput for ComponentMetadata<'_> {
     unsafe fn get_data<'world, 'state>(
         _: &'state mut (),
         world: UnsafeWorldCell<'world>,
+        _: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         Ok(ComponentMetadata { world })
     }
@@ -90,7 +92,7 @@ mod tests {
     fn component_reader_tracks_values_membership_and_stale_entities() {
         let mut world = World::default();
         let entity = world.spawn(Value(1));
-        let since = world.current_tick();
+        let since = world.change_tick();
         let mut read = (move |components: ComponentMetadata| {
             assert!(components.entity_is_valid(entity));
             assert!(

@@ -1,6 +1,7 @@
 use std::mem;
 
 use concerto_ecs::{
+    component::SystemTicks,
     system::input::{ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError},
     Resource, World,
 };
@@ -59,6 +60,7 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: concerto_ecs::world::UnsafeWorldCell<'world>,
+        _ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares read access to `MainWorld`.
         let main_world = unsafe { world.world() }
@@ -70,7 +72,14 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
             })?;
         // SAFETY: the main world is lent whole to the render world for `Extract`, and `T`
         // only reads it.
-        unsafe { T::get_data(state, main_world.as_unsafe_world_cell()) }.map(Extracted)
+        unsafe {
+            T::get_data(
+                state,
+                main_world.as_unsafe_world_cell(),
+                main_world.out_of_system_ticks(),
+            )
+        }
+        .map(Extracted)
     }
 
     fn fill_access(

@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{
-    Resource, System, define_label,
+    Resource, System,
+    component::Tick,
+    define_label,
     intern::Interned,
     system::{
         BoxedSystem,
@@ -425,6 +427,13 @@ impl CompiledSchedule {
     pub fn run(&mut self, world: &mut World) {
         self.executor.run(&mut self.compiled_data, world);
     }
+
+    /// Clamps every system's stored ticks that are too old relative to `change_tick`.
+    pub fn check_change_ticks(&mut self, change_tick: Tick) {
+        for system in &mut self.compiled_data.systems {
+            system.check_change_tick(change_tick);
+        }
+    }
 }
 
 impl fmt::Debug for CompiledSchedule {
@@ -537,6 +546,12 @@ impl CompiledSchedules {
 
     pub(crate) fn insert(&mut self, label: impl ScheduleLabel, schedule: CompiledSchedule) {
         self.compiled_schedules.insert(label.intern(), schedule);
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, change_tick: Tick) {
+        for schedule in self.compiled_schedules.values_mut() {
+            schedule.check_change_ticks(change_tick);
+        }
     }
 }
 

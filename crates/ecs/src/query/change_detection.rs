@@ -1,6 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
-use crate::component::{Component, Tick};
+use crate::component::{Component, SystemTicks, Tick};
 
 /// A mutable reference to a component that automatically marks the component as changed.
 ///
@@ -9,7 +9,7 @@ use crate::component::{Component, Tick};
 pub struct Mut<'w, T: Component> {
     data: &'w mut T,
     changed_tick: &'w mut Tick,
-    current_tick: Tick,
+    ticks: SystemTicks,
     was_changed: bool,
 }
 
@@ -17,11 +17,12 @@ impl<'w, T> Mut<'w, T>
 where
     T: Component,
 {
-    pub fn new(data: &'w mut T, changed_tick: &'w mut Tick, current_tick: Tick) -> Self {
+    /// Wraps `data` for a run with `ticks`; a write stamps `changed_tick` with `ticks.this_run`.
+    pub fn new(data: &'w mut T, changed_tick: &'w mut Tick, ticks: SystemTicks) -> Self {
         Self {
             data,
             changed_tick,
-            current_tick,
+            ticks,
             was_changed: false,
         }
     }
@@ -45,7 +46,7 @@ where
     fn deref_mut(&mut self) -> &mut Self::Target {
         if !self.was_changed {
             self.was_changed = true;
-            *self.changed_tick = self.current_tick;
+            *self.changed_tick = self.ticks.this_run;
         }
         &mut self.data
     }

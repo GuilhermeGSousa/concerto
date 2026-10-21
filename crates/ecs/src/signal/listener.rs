@@ -1,8 +1,9 @@
 use std::{any::TypeId, marker::PhantomData};
 
 use crate::{
-    Component, Entity, IntoSystem, System,
+    Component, Entity, IntoSystem, System, World,
     command::Command,
+    component::Tick,
     signal::{On, Signal},
     system::{access::SystemAccess, meta::SystemMetadata},
     utilities::TypeIdMap,
@@ -268,9 +269,25 @@ where
     }
 }
 
+type ListenerTickCheck = fn(&mut World, Tick);
+
+fn check_listener_ticks<S: Signal>(world: &mut World, change_tick: Tick) {
+    for entity in world.listeners().get::<S>().to_vec() {
+        let Some(location) = world.entity_store().find_location(entity) else {
+            continue;
+        };
+        if let Some(cell) = world.get_component_for_entity_location_mut::<Listener<S>>(location)
+            && let Some(state) = cell.data.state.as_mut()
+        {
+            state.system.check_change_tick(change_tick);
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Listeners {
     entities: TypeIdMap<Vec<Entity>>,
+    tick_checks: TypeIdMap<ListenerTickCheck>,
 }
 
 impl Listeners {
@@ -281,6 +298,8 @@ impl Listeners {
             .unwrap_or_default()
     }
     pub(crate) fn register_listener<S: Signal>(&mut self, entity: Entity) {
+        self.tick_checks
+            .insert(TypeId::of::<S>(), check_listener_ticks::<S>);
         let entities = self.entities.entry(TypeId::of::<S>()).or_default();
         // Replacement fires on_add again; keep the original registration order.
         if !entities.contains(&entity) {
@@ -294,8 +313,13 @@ impl Listeners {
             entities.retain(|registered| *registered != entity);
             if entities.is_empty() {
                 self.entities.remove(&id);
+                self.tick_checks.remove(&id);
             }
         }
+    }
+
+    pub(crate) fn tick_checks(&self) -> Vec<ListenerTickCheck> {
+        self.tick_checks.values().copied().collect()
     }
 }
 

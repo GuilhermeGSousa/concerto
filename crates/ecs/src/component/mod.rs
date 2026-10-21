@@ -121,24 +121,68 @@ impl ComponentLifecycleCallbacks {
     }
 }
 
-/// A monotonically-increasing frame counter used for change detection.
+/// How many counter advances may pass before stored ticks are clamped again.
+pub const CHECK_TICK_THRESHOLD: u32 = 518_400_000;
+
+/// The oldest age a stored tick keeps; older ones are clamped to it.
+pub const MAX_CHANGE_AGE: u32 = u32::MAX - (2 * CHECK_TICK_THRESHOLD - 1);
+
+/// A value of a world's change counter, stamped on writes and handed to each system run.
 ///
 /// Each component and resource stores the tick at which it was last added or
-/// mutated.  Filters like [`Added`](crate::query::query_filter::Added) and
-/// [`Changed`](crate::query::query_filter::Changed) compare the stored tick
-/// against the world's current tick to decide whether to include an entity.
+/// mutated.  Filters like [`Added`](crate::query::filter::Added) and
+/// [`Changed`](crate::query::filter::Changed) compare the stored tick against
+/// the [`SystemTicks`] of the run reading it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Tick(u32);
 
 impl Tick {
+    /// The tick [`MAX_CHANGE_AGE`] ticks old, relative to zero.
+    pub const MAX: Self = Self(MAX_CHANGE_AGE);
+
     /// Creates a new `Tick` with the given counter value.
-    pub fn new(tick: u32) -> Self {
+    pub const fn new(tick: u32) -> Self {
         Self(tick)
     }
 
     /// Sets the tick value.
     pub fn set(&mut self, tick: u32) {
         self.0 = tick;
+    }
+
+    /// How many ticks `other` lies before `self`, with wrapping arithmetic.
+    pub fn relative_to(self, other: Self) -> Self {
+        Self(self.0.wrapping_sub(other.0))
+    }
+
+    /// Whether this stamp lies after `last_run` and no later than `this_run`.
+    pub fn is_newer_than(self, last_run: Tick, this_run: Tick) -> bool {
+        let since_stamp = this_run.relative_to(self).0.min(MAX_CHANGE_AGE);
+        let since_last_run = this_run.relative_to(last_run).0.min(MAX_CHANGE_AGE);
+        since_last_run > since_stamp
+    }
+
+    /// Clamps this tick to [`MAX_CHANGE_AGE`] before `change_tick` if it is older.
+    pub fn check_tick(&mut self, change_tick: Tick) {
+        if change_tick.relative_to(*self).0 > MAX_CHANGE_AGE {
+            *self = change_tick.relative_to(Self::MAX);
+        }
+    }
+}
+
+/// The ticks of one system run: the previous run whose body executed, and this one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SystemTicks {
+    /// The `this_run` of the previous run whose body executed.
+    pub last_run: Tick,
+    /// The tick taken from the world's counter when this run started.
+    pub this_run: Tick,
+}
+
+impl SystemTicks {
+    /// Whether `stamp` was written after `last_run` and no later than `this_run`.
+    pub fn is_changed(self, stamp: Tick) -> bool {
+        stamp.is_newer_than(self.last_run, self.this_run)
     }
 }
 

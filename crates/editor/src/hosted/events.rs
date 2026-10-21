@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use concerto_app::{App, schedule_groups::First};
 use concerto_ecs::{
     Entity, Event, IntoSystemConfig, Query, World,
+    component::SystemTicks,
     events::{event_channel::EventChannel, event_cursor::EventCursor, event_writer::EventWriter},
     system::{
         access::SystemAccess,
@@ -96,9 +97,10 @@ impl<E: Event + 'static> SystemInput for HostedAppEvents<'_, '_, E> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: this input declares exactly the access of its parts.
-        let (shown, parked, cursors) = unsafe { <Inputs<E>>::get_data(state, world) }?;
+        let (shown, parked, cursors) = unsafe { <Inputs<E>>::get_data(state, world, ticks) }?;
         Ok(HostedAppEvents {
             shown,
             parked,

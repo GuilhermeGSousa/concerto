@@ -408,6 +408,7 @@ impl concerto_ecs::system::input::SystemInput for Gate {
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: concerto_ecs::world::UnsafeWorldCell<'world>,
+        _ticks: concerto_ecs::component::SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, concerto_ecs::system::input::ValidationError> {
         // SAFETY: reads only `GateOpen`, which `fill_access` declares.
         let open = unsafe { world.world() }

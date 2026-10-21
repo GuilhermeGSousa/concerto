@@ -331,6 +331,7 @@ impl SystemInput for CommandQueue<'_, '_> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
+        _ticks: crate::component::SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, crate::system::input::ValidationError> {
         // SAFETY: only the entity store is touched, whose reservations are atomic and which
         // otherwise changes only under exclusive access.

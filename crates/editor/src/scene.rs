@@ -1532,7 +1532,7 @@ mod tests {
             .expanded = true;
         let before = (items(&f), expansions(&f));
         f.world.tick();
-        let since = f.world.current_tick();
+        let since = f.world.change_tick();
         f.world.tick();
 
         f.deliver();

@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{
+    component::SystemTicks,
     system::{access::SystemAccess, meta::SystemMetadata},
     utilities::SyncCell,
     world::{FromWorld, UnsafeWorldCell, World},
@@ -73,7 +74,7 @@ pub trait SystemInput {
 
     fn init_state(world: &mut World) -> Self::State;
 
-    /// Builds the input's data for one run, or declines with why.
+    /// Builds the input's data for one run with `ticks`, or declines with why.
     ///
     /// # Safety
     /// `world` may be used only for what [`SystemInput::fill_access`] declared, and no
@@ -81,6 +82,7 @@ pub trait SystemInput {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError>;
 
     fn apply(_state: &mut Self::State, _world: &mut World) {}
@@ -107,9 +109,10 @@ where
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: the tuple's access is the union of its parts', which the caller upholds.
-        Ok(typle_for!(i in .. => unsafe { <T<{i}>>::get_data(&mut state[[i]], world) }?))
+        Ok(typle_for!(i in .. => unsafe { <T<{i}>>::get_data(&mut state[[i]], world, ticks) }?))
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -158,9 +161,10 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: this input declares exactly `P`'s access.
-        unsafe { P::get_data(state, world) }.map(StaticSystemInput)
+        unsafe { P::get_data(state, world, ticks) }.map(StaticSystemInput)
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
@@ -183,6 +187,7 @@ impl<'s, T: FromWorld + Send + 'static> SystemInput for SystemLocal<'s, T> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
+        _ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         Ok(SystemLocal(state.get()))
     }
@@ -209,6 +214,7 @@ pub(crate) mod test_support {
         unsafe fn get_data<'world, 'state>(
             _state: &'state mut Self::State,
             world: UnsafeWorldCell<'world>,
+            _ticks: SystemTicks,
         ) -> Result<Self::Data<'world, 'state>, ValidationError> {
             // SAFETY: reads only `GateOpen`, which `fill_access` declares.
             let open = unsafe { world.world() }

@@ -1,7 +1,7 @@
 use derive_more::{Deref, From};
 
 use crate::{
-    component::{Component, ComponentId, Tick},
+    component::{Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
     table::{MutableCellAccessor, Table, TableRowIndex},
 };
@@ -79,9 +79,9 @@ impl Archetype {
         &self,
         component_id: ComponentId,
         row: TableRowIndex,
-        current_tick: u32,
+        ticks: SystemTicks,
     ) -> bool {
-        self.data_table.was_added(row, component_id, current_tick)
+        self.data_table.was_added(row, component_id, ticks)
     }
 
     pub(crate) fn has_component_changed_since(
@@ -99,9 +99,13 @@ impl Archetype {
         &self,
         component_id: ComponentId,
         row: TableRowIndex,
-        current_tick: u32,
+        ticks: SystemTicks,
     ) -> bool {
-        self.data_table.was_changed(row, component_id, current_tick)
+        self.data_table.was_changed(row, component_id, ticks)
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, change_tick: Tick) {
+        self.data_table.check_change_ticks(change_tick);
     }
 
     pub(crate) unsafe fn get_component_unsafe_mut<T: 'static>(

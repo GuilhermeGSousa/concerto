@@ -154,7 +154,7 @@ fn refresh_card(
             }
         }
     }
-    card.last_read_tick = Some(source.current_tick());
+    card.last_read_tick = Some(source.change_tick());
     cmd.insert(card, entity);
 }
 

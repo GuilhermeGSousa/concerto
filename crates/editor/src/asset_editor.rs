@@ -385,19 +385,13 @@ mod tests {
     fn selecting_active_document_does_not_mark_active_resource_changed() {
         let mut w = world();
         let e = open(&mut w, "a");
-        w.tick();
+        let opened = w.resource_changed_tick::<ActiveEditor>();
         w.get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
             .push_back(AssetEditorCommand::Activate(e));
         process_editor_commands(&mut w);
-        let mut check = (|active: Res<ActiveEditor>| {
-            use concerto_ecs::query::change_detection::DetectChanges;
-            assert!(!active.has_changed());
-        })
-        .into_system();
-        check.initialize(&mut w);
-        check.run_and_apply((), &mut w);
+        assert_eq!(w.resource_changed_tick::<ActiveEditor>(), opened);
     }
 
     #[test]

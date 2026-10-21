@@ -21,4 +21,6 @@ impl System for SyncPoint {
     unsafe fn run_unsafe(&mut self, _args: Self::In, _world: crate::world::UnsafeWorldCell) {}
 
     fn apply(&mut self, _world: &mut crate::World) {}
+
+    fn check_change_tick(&mut self, _change_tick: crate::component::Tick) {}
 }

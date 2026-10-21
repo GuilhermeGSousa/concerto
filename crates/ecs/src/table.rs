@@ -6,7 +6,7 @@ use std::{
 use any_vec::{AnyVec, any_value::AnyValueWrapper};
 
 use crate::{
-    component::{Component, ComponentId, Tick},
+    component::{Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
 };
 
@@ -37,7 +37,7 @@ impl Column {
     pub fn push<T: Component>(&mut self, value: T, tick: u32) {
         self.data.push(AnyValueWrapper::new(value));
         self.added_ticks.push(Tick::new(tick));
-        self.changed_ticks.push(Tick::new(0));
+        self.changed_ticks.push(Tick::new(tick));
     }
 
     pub fn insert<T: Component>(&mut self, value: T, tick: u32, row: TableRowIndex) {
@@ -94,6 +94,12 @@ impl Column {
 
     pub fn set_changed(&mut self, row: TableRowIndex, current_tick: u32) {
         self.changed_ticks[*row].set(current_tick);
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, change_tick: Tick) {
+        for tick in self.added_ticks.iter_mut().chain(&mut self.changed_ticks) {
+            tick.check_tick(change_tick);
+        }
     }
 }
 
@@ -191,13 +197,11 @@ impl Table {
         &self,
         row: TableRowIndex,
         component_id: ComponentId,
-        current_tick: u32,
+        ticks: SystemTicks,
     ) -> bool {
-        if let Some(column) = self.columns.get(&component_id) {
-            *column.added_ticks[*row] == current_tick
-        } else {
-            false
-        }
+        self.columns
+            .get(&component_id)
+            .is_some_and(|column| ticks.is_changed(column.added_ticks[*row]))
     }
 
     pub(crate) fn has_changed_since(
@@ -220,12 +224,17 @@ impl Table {
         &self,
         row: TableRowIndex,
         component_id: ComponentId,
-        current_tick: u32,
+        ticks: SystemTicks,
     ) -> bool {
-        if let Some(column) = self.columns.get(&component_id) {
-            *column.changed_ticks[*row] == current_tick || *column.added_ticks[*row] == current_tick
-        } else {
-            false
+        self.columns.get(&component_id).is_some_and(|column| {
+            ticks.is_changed(column.changed_ticks[*row])
+                || ticks.is_changed(column.added_ticks[*row])
+        })
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, change_tick: Tick) {
+        for column in self.columns.values_mut() {
+            column.check_change_ticks(change_tick);
         }
     }
 }
