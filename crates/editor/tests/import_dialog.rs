@@ -140,6 +140,7 @@ fn editor(sources: &[&str]) -> (App, tempfile::TempDir) {
         content_root: "content".into(),
     });
     app.insert_resource(state);
+    concerto_ui::list::install_listeners(app.main_mut().world_mut());
     app.register_plugin(ImportPlugin);
     app.finish_plugin_build();
     *app.get_resource_mut::<ImportStaging>().expect("staging") = staged(sources);

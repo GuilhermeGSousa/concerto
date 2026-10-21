@@ -17,7 +17,7 @@ use concerto_ui::{
     focus::FocusedWidget,
     interaction::{Interactable, UIClick, UIDisabled},
     list::UIList,
-    node::{UICulled, UINode, UIRect},
+    node::{UILayout, UINode, UIRect},
     scroll::UIScrollArea,
     sets::UiSet,
     text::UIText,
@@ -245,10 +245,9 @@ fn sync_dialog(
     staging: Res<ImportStaging>,
     theme: Res<UITheme>,
     roots: Query<(&DialogRoot, &mut UINode)>,
-    views: Query<(Entity, Option<&mut UIScrollArea>, Option<&Children>), With<DialogView>>,
+    views: Query<(Entity, &mut UIScrollArea, Option<&Children>), With<DialogView>>,
     rows: Query<&DialogRow>,
-    fields: Query<(Entity, &DialogField, &ChildOf)>,
-    culled: Query<(), With<UICulled>>,
+    fields: Query<(Entity, &DialogField, Option<&UILayout>)>,
     mut actions: ResMut<ActionMap>,
     mut focus: ResMut<FocusedWidget>,
     mut cmd: CommandQueue,
@@ -269,15 +268,13 @@ fn sync_dialog(
         }
     }
     let focused_field = (**focus).and_then(|entity| fields.get_entity(entity));
-    let scrolled_off =
-        focused_field.is_some_and(|(_, _, row)| culled.contains_entity(row.parent()));
+    let scrolled_off = focused_field
+        .and_then(|(_, _, layout)| layout)
+        .is_some_and(|layout| !layout.is_shown());
     let mut respawned = false;
     let mut first_field = None;
-    for (list, area, children) in views.iter() {
-        if let Some(mut area) = area
-            && !open
-            && area.offset != 0.0
-        {
+    for (list, mut area, children) in views.iter() {
+        if !open && area.offset != 0.0 {
             area.offset = 0.0;
         }
         let shown: Vec<Entity> = children
@@ -439,7 +436,11 @@ mod tests {
         events::event_channel::EventChannel,
     };
     use concerto_foundation::assets::content::AssetRegistry;
-    use concerto_ui::{items::UIItem, list::update_lists_system};
+    use concerto_ui::{
+        items::UIItem,
+        list::update_lists_system,
+        node::{UIBox, UICulled},
+    };
     use concerto_window::input::actions::ActionLabel;
     use glam::Vec2;
     use std::path::PathBuf;
@@ -548,6 +549,23 @@ mod tests {
         fn scroll_to(&mut self, first: usize) {
             self.area().offset = first as f32 * ROW_HEIGHT;
             self.frame();
+        }
+
+        fn lay_out(&mut self, entity: Entity, shown: bool) {
+            let rect = UIBox {
+                min: Vec2::ZERO,
+                size: Vec2::new(400.0, ROW_HEIGHT),
+            };
+            let clip_rect = if shown { rect } else { UIBox::default() };
+            self.world.insert(
+                UILayout {
+                    rect,
+                    content_rect: rect,
+                    clip_rect,
+                    paint_order: 0,
+                },
+                entity,
+            );
         }
 
         fn open(&mut self) -> bool {
@@ -931,7 +949,16 @@ mod tests {
         let field = dialog.field(0);
         **dialog.focus() = Some(field);
 
-        dialog.scroll_to(12);
+        dialog.scroll_to(1);
+        let row = dialog.rows()[0];
+        assert!(
+            dialog
+                .world
+                .get_component_for_entity::<UICulled>(row)
+                .is_none(),
+            "the row above the view is overscan, laid out but clipped"
+        );
+        dialog.lay_out(field, false);
         dialog.frame();
 
         assert_eq!(dialog.input(0).value, "assets/file0.obj");
@@ -940,6 +967,19 @@ mod tests {
             None,
             "typing must not carry on into a row the user cannot see"
         );
+    }
+
+    #[test]
+    fn a_focused_field_still_on_screen_keeps_its_focus() {
+        let mut dialog = fixture(FILES);
+        let field = dialog.field(1);
+        **dialog.focus() = Some(field);
+
+        dialog.scroll_to(1);
+        dialog.lay_out(field, true);
+        dialog.frame();
+
+        assert_eq!(**dialog.focus(), Some(field));
     }
 
     #[test]
@@ -1013,7 +1053,7 @@ mod tests {
 
     #[test]
     fn the_list_grows_with_its_rows_up_to_ten() {
-        for (files, height) in [(2, 2.0 * ROW_HEIGHT), (FILES, 10.0 * ROW_HEIGHT)] {
+        for files in [2, FILES] {
             let mut dialog = fixture(files);
             let list = dialog.list();
             let node = dialog
@@ -1025,7 +1065,6 @@ mod tests {
             assert_eq!(node.max_height, UIValue::Px(10.0 * ROW_HEIGHT));
             let extent = dialog.area().content_extent;
             assert_eq!(extent, files as f32 * ROW_HEIGHT);
-            assert_eq!(extent.min(10.0 * ROW_HEIGHT), height);
         }
     }
 
