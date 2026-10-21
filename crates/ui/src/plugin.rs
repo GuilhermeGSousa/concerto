@@ -25,7 +25,7 @@ use crate::{
     list::update_lists,
     material::UIMaterial,
     node::{
-        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, blank_culled_layouts, compute_ui_nodes,
+        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
         extract_shared_viewports, extract_ui_materials, extract_ui_nodes, sync_material_params,
         sync_shared_viewport_textures, sync_viewport_textures,
     },
@@ -102,7 +102,6 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
-        app.add_listener(blank_culled_layouts);
         crate::list::install_listeners(app.main_mut().world_mut());
         crate::tree::install_listeners(app.main_mut().world_mut());
         install_listeners(app.main_mut().world_mut());

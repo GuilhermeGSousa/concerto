@@ -1989,6 +1989,31 @@ mod tests {
     }
 
     #[test]
+    fn the_item_listeners_blank_a_culled_subtree_at_once() {
+        let mut world = concerto_ecs::World::new();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        crate::items::install_listeners(&mut world);
+        let rect = UIBox {
+            min: Vec2::new(5.0, 5.0),
+            size: Vec2::new(40.0, 20.0),
+        };
+        let layout = || UILayout {
+            rect,
+            content_rect: rect,
+            clip_rect: rect,
+            paint_order: 0,
+        };
+        let parent = world.spawn(layout());
+        let child = world.spawn((layout(), ChildOf::new(parent)));
+
+        world.insert(UICulled, parent);
+
+        assert!(!clip_of(&world, parent).has_area());
+        assert!(!clip_of(&world, child).has_area());
+    }
+
+    #[test]
     fn culling_or_unculling_a_node_relays_out() {
         let mut world = layout_world();
         let root = column(&mut world);

@@ -30,6 +30,7 @@ use crate::{
     material::UIMaterial,
     node::{
         FlexDirection, Overflow, Position, UICulled, UIInset, UIIntrinsicHeight, UILayout, UINode,
+        blank_culled_layouts,
     },
     scroll::UIScrollArea,
     theme::UITheme,
@@ -100,8 +101,9 @@ impl EntitySignal for UIItemContextMenu {}
 impl Signal for UIReveal {}
 impl EntitySignal for UIReveal {}
 
-/// Registers the listeners that keep selection unique and focus off despawned items; the world needs a `FocusedWidget`.
+/// Registers the listeners that keep selection unique, focus off despawned items and culled rows undrawn; the world needs a `FocusedWidget`.
 pub fn install_listeners(world: &mut World) {
+    world.add_listener(blank_culled_layouts);
     world.add_listener(keep_selection_unique);
     world.add_listener(keep_new_item_selection_unique);
     world.add_listener(release_despawned_focus);

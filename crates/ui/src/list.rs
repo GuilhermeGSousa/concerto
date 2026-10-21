@@ -173,7 +173,7 @@ pub(crate) mod tests {
         material::UIMaterial,
         node::{
             FlexDirection, UICulled, UILayout, UILayoutDiagnostics, UILayoutEngine, UINode,
-            UITextMeasure, blank_culled_layouts, compute_ui_nodes,
+            UITextMeasure, compute_ui_nodes,
         },
         scroll::{
             UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scrollbar_thumbs,
@@ -219,7 +219,6 @@ pub(crate) mod tests {
             world.insert_resource(EventChannel::<UIFocusGained>::default());
             world.insert_resource(EventChannel::<UIFocusLost>::default());
             world.insert_resource(Log::default());
-            world.add_listener(blank_culled_layouts);
             world.add_listener(set_up_list);
             world.add_listener(set_up_tree);
             install_listeners(&mut world);
