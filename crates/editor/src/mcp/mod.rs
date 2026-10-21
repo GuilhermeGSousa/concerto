@@ -1,3 +1,5 @@
+mod observe;
+
 use std::path::PathBuf;
 
 use concerto_app::{
@@ -5,7 +7,11 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Query, Res, ResMut, Resource, command::CommandQueue, query::filter::With, signal::On,
+    Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    query::filter::With,
+    signal::On,
+    system::input::{StaticSystemInput, SystemInputData},
 };
 use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::HostClosing};
 
@@ -45,28 +51,35 @@ impl Plugin for EditorMcpPlugin {
         .add_system(LateUpdate, demand_frames_while_busy)
         .add_system(Update, discard_while_closing)
         .add_listener(quit_when_host_closes);
+        observe::build(app);
     }
 }
 
 #[derive(Resource)]
 struct HostIsClosing;
 
-fn demand_frames_while_busy(
-    project: Res<ProjectState>,
-    documents: Query<&EditorDocument>,
-    building: Query<&PendingApp>,
-    starting: Query<&PendingPlayApp>,
-    saving: Query<&EditorDocument, With<SaveRequested>>,
-    states: Query<&PlayState>,
-    mut demand: ResMut<FrameDemand>,
-) {
-    if project.busy()
+type BusyInputs = (
+    Res<'static, ProjectState>,
+    Query<'static, 'static, &'static EditorDocument>,
+    Query<'static, 'static, &'static PendingApp>,
+    Query<'static, 'static, &'static PendingPlayApp>,
+    Query<'static, 'static, &'static EditorDocument, With<SaveRequested>>,
+    Query<'static, 'static, &'static PlayState>,
+);
+
+fn is_busy(
+    (project, documents, building, starting, saving, states): &SystemInputData<BusyInputs>,
+) -> bool {
+    project.busy()
         || documents.iter().any(|document| document.pending.is_some())
         || building.iter().next().is_some()
         || starting.iter().next().is_some()
         || saving.iter().next().is_some()
         || states.iter().any(|state| state.is_on())
-    {
+}
+
+fn demand_frames_while_busy(busy: StaticSystemInput<BusyInputs>, mut demand: ResMut<FrameDemand>) {
+    if is_busy(&busy) {
         demand.request();
     }
 }

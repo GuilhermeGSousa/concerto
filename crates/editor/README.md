@@ -32,6 +32,13 @@ game starting or playing, a save under way. When the client disconnects the
 editor quits and discards unsaved edits. Without a GPU adapter it exits with
 status 1 and a message naming lavapipe.
 
+The tools so far: `status` reports the project and its status line, the open
+documents, the active one, the selection in the edited scene, the viewport's
+size, and whether the editor is busy. `list_assets` lists the project's assets
+as `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at
+a time unless `limit` says otherwise, from `offset`; a longer list ends with the
+call that shows the rest. Both answer between frames, without running one.
+
 ## How the crate is laid out
 
 The editor is one `App`, the one the window host drives. It holds the window,

@@ -16,7 +16,7 @@ use concerto_editor::{
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     project::{EditorCommand, EditorCommands, ProjectState},
-    tools::entity_ops::EntityEdit,
+    tools::{entity_ops::EntityEdit, selection::Select},
 };
 use concerto_foundation::{
     assets::{
@@ -102,6 +102,9 @@ struct WantsProject {}
 #[derive(Deserialize, JsonSchema)]
 struct WantsPlaying {}
 
+#[derive(Deserialize, JsonSchema)]
+struct SelectHero {}
+
 fn state(
     mut calls: ToolCalls<State>,
     project: Res<ProjectState>,
@@ -162,6 +165,22 @@ fn rename(
     }
 }
 
+fn select_hero(
+    mut calls: ToolCalls<SelectHero>,
+    names: EditWorld<Query<(Entity, &Name)>>,
+    mut scene: EditWorldSignals,
+) {
+    for (_, reply) in calls.read() {
+        let hero = names
+            .iter()
+            .find(|(_, name)| name.as_str() == "Hero")
+            .map(|(entity, _)| entity)
+            .unwrap();
+        scene.trigger(Select(Some(hero)));
+        reply.ok(hero.to_id_string());
+    }
+}
+
 fn seen_frames(
     mut calls: ToolCalls<SeenFrames>,
     frames: EditWorld<Res<EditFrames>>,
@@ -200,22 +219,20 @@ fn note_prompt(closing: Option<Res<Closing>>, guard: Res<UnsavedGuard>, log: Res
     }
 }
 
-fn write_asset(root: &Path, address: &str, id: AssetId, payload: &[u8]) {
+fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u8]) {
     let header = ContentAssetHeader {
         format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: vec![],
-        kind: Scene::name().into(),
+        kind: kind.into(),
         provenance: Some(ImportProvenance {
             source: "fixture.glb".into(),
             sub_asset: address.into(),
         }),
     };
-    std::fs::write(
-        root.join(address),
-        write_content_asset(&header, payload).unwrap(),
-    )
-    .unwrap();
+    let path = root.join(address);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, write_content_asset(&header, payload).unwrap()).unwrap();
 }
 
 struct Fixture {
@@ -245,12 +262,23 @@ impl Fixture {
             directory.path(),
             "content/level.gasset",
             id,
+            Scene::name(),
             &bincode::serialize(&scene).unwrap(),
         );
         Self {
             directory,
             scene: id,
         }
+    }
+
+    fn add(&self, address: &str, kind: &str) -> AssetId {
+        let id = AssetId::new();
+        write_asset(self.directory.path(), address, id, kind, &[]);
+        id
+    }
+
+    fn break_catalogue(&self) {
+        std::fs::write(self.directory.path().join("content.toml"), "root = \"\"\n").unwrap();
     }
 
     fn root(&self) -> PathBuf {
@@ -314,6 +342,10 @@ where
                     McpTool::new("seen_frames").needs(Needs::Scene),
                     seen_frames,
                 )
+                .add_tool::<SelectHero, _>(
+                    McpTool::new("select_hero").needs(Needs::Scene),
+                    select_hero,
+                )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -348,10 +380,14 @@ where
 }
 
 async fn call(client: &Client, tool: &'static str) -> CallToolResult {
+    call_with(client, tool, json!({})).await
+}
+
+async fn call_with(client: &Client, tool: &'static str, arguments: Value) -> CallToolResult {
     client
         .call_tool(
             CallToolRequestParams::new(tool)
-                .with_arguments(json!({}).as_object().cloned().unwrap()),
+                .with_arguments(arguments.as_object().cloned().unwrap()),
         )
         .await
         .unwrap()
@@ -367,6 +403,12 @@ fn text(result: &CallToolResult) -> String {
 
 async fn ok(client: &Client, tool: &'static str) -> String {
     let result = call(client, tool).await;
+    assert_eq!(result.is_error, Some(false), "{tool}: {result:?}");
+    text(&result)
+}
+
+async fn ok_with(client: &Client, tool: &'static str, arguments: Value) -> String {
+    let result = call_with(client, tool, arguments).await;
     assert_eq!(result.is_error, Some(false), "{tool}: {result:?}");
     text(&result)
 }
@@ -497,4 +539,159 @@ fn closing_the_client_discards_unsaved_edits_and_ends_with_no_prompt_open() {
     assert!(after.contains(&"asking true"), "{entries:?}");
     assert_eq!(after.last(), Some(&"asking false"), "{entries:?}");
     assert_eq!(fixture.scene_file(), saved);
+}
+
+fn line<'a>(text: &'a str, prefix: &str) -> &'a str {
+    text.lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .unwrap_or_else(|| panic!("no `{prefix}` line in:\n{text}"))
+}
+
+#[test]
+fn status_reports_the_project_documents_and_the_edit_target_selection() {
+    let fixture = Fixture::new();
+    let root = fixture.root().canonicalize().unwrap();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        let before = until(&client, "status", |status| {
+            !status.starts_with("project: none") && status.ends_with("busy: no")
+        })
+        .await;
+        open(&client).await;
+        let hero = ok(&client, "select_hero").await;
+        let selected = format!("selection: {hero} Hero");
+        let after = until(&client, "status", |status| {
+            status.contains(&selected) && status.ends_with("busy: no")
+        })
+        .await;
+        client.cancel().await.unwrap();
+        (before, after, hero)
+    }) else {
+        return;
+    };
+
+    let (before, after, hero) = served.result;
+    assert_eq!(line(&before, "project: "), root.display().to_string());
+    line(&before, "project status: ");
+    assert_eq!(line(&before, "documents: "), "none");
+    assert_eq!(line(&before, "active: "), "none");
+    assert_eq!(line(&before, "selection: "), "none");
+
+    assert_eq!(line(&after, "project: "), root.display().to_string());
+    let documents: Vec<&str> = after
+        .lines()
+        .skip_while(|line| *line != "documents:")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .collect();
+    assert_eq!(documents.len(), 1, "{after}");
+    let (document, rest) = documents[0].trim_start().split_once(' ').unwrap();
+    assert!(
+        concerto_ecs::Entity::parse_id(document).is_some(),
+        "{after}"
+    );
+    assert!(
+        rest.starts_with("Scene content/level.gasset · editing"),
+        "{after}"
+    );
+    assert_eq!(line(&after, "active: "), document);
+    assert_eq!(line(&after, "selection: "), format!("{hero} Hero"));
+    let (width, height) = line(&after, "viewport: ").split_once('x').unwrap();
+    assert!(width.parse::<u32>().unwrap() > 0, "{after}");
+    assert!(height.parse::<u32>().unwrap() > 0, "{after}");
+}
+
+#[test]
+fn status_and_list_assets_without_a_project() {
+    let fixture = Fixture::new();
+    fixture.break_catalogue();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        let status = until(&client, "status", |status| {
+            status.contains("Could not open project") && status.ends_with("busy: no")
+        })
+        .await;
+        let error = error(&client, "list_assets").await;
+        client.cancel().await.unwrap();
+        (status, error)
+    }) else {
+        return;
+    };
+
+    let (status, error) = served.result;
+    assert_eq!(line(&status, "project: "), "none");
+    assert_eq!(line(&status, "selection: "), "none");
+    assert_eq!(error["code"], "no_project");
+}
+
+#[test]
+fn list_assets_filters_and_pages_the_catalogue() {
+    let fixture = Fixture::new();
+    let rock = fixture.add("content/meshes/rock.gasset", "Mesh");
+    let tree = fixture.add("content/meshes/tree.gasset", "Mesh");
+    let bark = fixture.add("content/textures/bark.gasset", "Texture");
+    let level = fixture.scene;
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let pages = vec![
+            ok(&client, "list_assets").await,
+            ok_with(&client, "list_assets", json!({ "limit": 2 })).await,
+            ok_with(&client, "list_assets", json!({ "limit": 2, "offset": 2 })).await,
+            ok_with(
+                &client,
+                "list_assets",
+                json!({ "kind": "Mesh", "limit": 1 }),
+            )
+            .await,
+            ok_with(
+                &client,
+                "list_assets",
+                json!({ "folder": "content/textures" }),
+            )
+            .await,
+            ok_with(&client, "list_assets", json!({ "query": "TRE" })).await,
+            ok_with(&client, "list_assets", json!({ "query": "nothing" })).await,
+        ];
+        let malformed = call_with(&client, "list_assets", json!({ "limit": "many" })).await;
+        client.cancel().await.unwrap();
+        (pages, malformed)
+    }) else {
+        return;
+    };
+
+    let entry = |address: &str, kind: &str, id: AssetId| {
+        format!("{address} · {kind} · {}", id.simple_hex())
+    };
+    let level = entry("content/level.gasset", "Scene", level);
+    let rock = entry("content/meshes/rock.gasset", "Mesh", rock);
+    let tree = entry("content/meshes/tree.gasset", "Mesh", tree);
+    let bark = entry("content/textures/bark.gasset", "Texture", bark);
+    let (pages, malformed) = served.result;
+    assert_eq!(
+        pages[0],
+        format!("4 assets match; showing 1–4:\n{level}\n{rock}\n{tree}\n{bark}")
+    );
+    assert_eq!(
+        pages[1],
+        format!(
+            "4 assets match; showing 1–2:\n{level}\n{rock}\n… 2 more: list_assets {{\"limit\":2,\"offset\":2}}"
+        )
+    );
+    assert_eq!(
+        pages[2],
+        format!("4 assets match; showing 3–4:\n{tree}\n{bark}")
+    );
+    assert_eq!(
+        pages[3],
+        format!(
+            "2 assets match; showing 1–1:\n{rock}\n… 1 more: list_assets {{\"kind\":\"Mesh\",\"limit\":1,\"offset\":1}}"
+        )
+    );
+    assert_eq!(pages[4], format!("1 asset matches; showing 1–1:\n{bark}"));
+    assert_eq!(pages[5], format!("1 asset matches; showing 1–1:\n{tree}"));
+    assert_eq!(pages[6], "No assets match. The project has 4 assets.");
+    assert_eq!(malformed.is_error, Some(true), "{malformed:?}");
+    let malformed: Value = serde_json::from_str(&text(&malformed)).unwrap();
+    assert_eq!(malformed["code"], "invalid_arguments");
 }
