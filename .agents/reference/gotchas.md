@@ -6,11 +6,13 @@ fix the entry in the same commit as the change that made it false.
 
 ## ECS
 
-- **`Changed<T>` is frame-exact.** It is true only when the component's changed
-  or added tick equals the world's current tick, and the tick advances once per
-  frame, at the end of `Main`. A `Changed<T>` filter therefore fires only in a
-  system that runs later in the same frame than the write. A system that runs
-  earlier in the frame never sees it, on this frame or the next.
+- **`Changed<T>` means "since this system last ran".** Each system and listener
+  run takes a tick from the world's counter, and sees writes stamped after its
+  previous executed run, whatever the order within a frame. It never sees its own
+  `Mut`/`ResMut` writes on its next run, and its first run sees everything. A query
+  made directly on a `World` sees what changed since the last `world.tick()`. A
+  test that checks change detection through a system must keep one system instance
+  across runs; a new instance is a first run and passes vacuously.
 - **Transform propagation writes every frame.** `propagate_global_transforms`
   calls `set_matrix` on every hierarchy member each frame, so
   `Changed<GlobalTransform>` does not mean "this entity moved".

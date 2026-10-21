@@ -3,7 +3,7 @@ use crate::{
     ResMut, Resource, Schedule, System, World,
     component::Tick,
     query::change_detection::DetectChanges,
-    signal::{On, Signal},
+    signal::{EntitySignal, On, Signal, listener::IntoListener},
     system::{
         executor::{SystemExecutor, single_thread::SingleThreadedExecutor},
         input::test_support::{Gate, GateOpen},
@@ -334,6 +334,10 @@ struct Idle(Vec<usize>);
 struct Peek;
 impl Signal for Peek {}
 
+struct Prod;
+impl Signal for Prod {}
+impl EntitySignal for Prod {}
+
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Frame;
 impl ScheduleLabel for Frame {
@@ -370,16 +374,33 @@ fn idle_listener(_: On<Peek>, values: Query<Entity, Changed<Value>>, mut idle: R
     idle.0.push(values.iter().count());
 }
 
+fn idle_entity_listener(
+    _: On<Prod>,
+    values: Query<Entity, Changed<Value>>,
+    mut idle: ResMut<Idle>,
+) {
+    idle.0.push(values.iter().count());
+}
+
+fn level_reader(level: Res<Level>, mut flags: ResMut<Flags>) {
+    flags.0.push(level.has_changed());
+}
+
 fn frame(world: &mut World) {
     world.run_schedule(Frame);
     world.trigger(Look);
     world.tick();
 }
 
-fn rare_look(world: &mut World) -> Vec<usize> {
+fn rare_look(world: &mut World, holder: Entity) -> Vec<usize> {
     world.run_schedule(Rarely);
     world.trigger(Peek);
+    world.trigger_on(holder, Prod);
     std::mem::take(&mut world.get_resource_mut::<Idle>().unwrap().0)
+}
+
+fn take_flags(world: &mut World) -> Vec<bool> {
+    std::mem::take(&mut world.get_resource_mut::<Flags>().unwrap().0)
 }
 
 fn take_counts(world: &mut World) -> (Vec<usize>, Vec<usize>) {
@@ -396,8 +417,12 @@ fn ticks_survive_wrap_around() {
     world.insert_resource(Seen::default());
     world.insert_resource(Looked::default());
     world.insert_resource(Idle::default());
+    world.insert_resource(Level::default());
+    world.insert_resource(Flags::default());
+    let holder = world.spawn(idle_entity_listener.into_listener());
     let mut schedules = Schedules::default();
     schedules.add_system(Frame, count_changed_values);
+    schedules.add_system(Frame, level_reader);
     schedules.add_system(Rarely, idle_reader);
     let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
     world.insert_resource(compiled);
@@ -407,7 +432,8 @@ fn ticks_survive_wrap_around() {
     frame(&mut world);
     frame(&mut world);
     assert_eq!(take_counts(&mut world), (vec![1, 0], vec![1, 0]));
-    assert_eq!(rare_look(&mut world), [1, 1]);
+    assert_eq!(take_flags(&mut world), [true, false]);
+    assert_eq!(rare_look(&mut world, holder), [1, 1, 1]);
 
     world.set_change_tick(Tick::new(u32::MAX - 5));
     frame(&mut world);
@@ -422,16 +448,19 @@ fn ticks_survive_wrap_around() {
     let mut once = vec![0; 9];
     once[1] = 1;
     assert_eq!(take_counts(&mut world), (once.clone(), once));
-    assert_eq!(rare_look(&mut world), [1, 1]);
-    assert_eq!(rare_look(&mut world), [0, 0]);
+    assert_eq!(take_flags(&mut world), [false; 9]);
+    assert_eq!(rare_look(&mut world, holder), [1, 1, 1]);
+    assert_eq!(rare_look(&mut world, holder), [0, 0, 0]);
 
     world
         .get_component_for_entity_mut::<Value>(first)
         .unwrap()
         .0 = 2;
+    world.get_resource_mut::<Level>().unwrap().0 = 1;
     frame(&mut world);
     frame(&mut world);
     assert_eq!(take_counts(&mut world), (vec![1, 0], vec![1, 0]));
+    assert_eq!(take_flags(&mut world), [true, false]);
 
     world.spawn(Value(1));
     let mut fresh = count_changed_values.into_system();

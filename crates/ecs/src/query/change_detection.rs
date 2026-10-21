@@ -52,8 +52,8 @@ where
     }
 }
 
-/// Trait for types that can report whether their underlying data changed this tick.
+/// Trait for types that can report whether their underlying data changed since the reading system last ran.
 pub trait DetectChanges {
-    /// Returns `true` if the value was modified during the current tick.
+    /// Returns `true` if the value was added or modified since the reading system last ran.
     fn has_changed(&self) -> bool;
 }

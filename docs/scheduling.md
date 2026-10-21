@@ -185,6 +185,24 @@ app.add_listener(on_select.at_edit_time());
 - An edit `App` has no `PhysicsPipeline`, so a marked system must not require it;
   `PhysicsState` is present and empty.
 
+## Change detection
+
+`Changed<T>`, `Added<T>` and `has_changed()` mean "since this system last ran",
+whatever the order of writer and reader within a frame:
+
+- A write made after a reader ran, including a command applied at a later sync
+  point or a direct `World` write between frames, is seen on the reader's next run.
+- A system does not see its own `Mut` or `ResMut` writes on its next run.
+- A system's first run sees every existing entity and resource as added and changed.
+- A run skipped because an input declined keeps what changed for the next run that
+  executes.
+- A listener sees what changed since its own previous run.
+- A query made directly on a `World` sees what changed since the last
+  `world.tick()`, which `Main` and `RenderMain` call once per frame.
+
+A test that checks change detection through a system must keep one system instance
+across runs. A new instance is a first run and sees everything.
+
 ## Rules
 
 - Conflicting systems (overlapping data access) with no explicit constraint

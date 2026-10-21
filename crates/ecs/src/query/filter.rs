@@ -57,7 +57,7 @@ where
     }
 }
 
-/// Matches entities where the given components were **added** this tick.
+/// Matches entities where the given components were **added** since the system last ran.
 pub struct Added<T: Component> {
     _marker: PhantomData<T>,
 }
@@ -96,7 +96,7 @@ where
     }
 }
 
-/// Matches entities where the given components were **mutated** this tick.
+/// Matches entities where the given components were **added or mutated** since the system last ran.
 pub struct Changed<T: Component> {
     _marker: PhantomData<T>,
 }

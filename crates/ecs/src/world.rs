@@ -373,7 +373,7 @@ impl World {
 
     /// Returns an exclusive reference to the component of type `T` on `entity`, or `None`.
     ///
-    /// Marks the component as changed for this tick so change-detection filters fire correctly.
+    /// Marks the component as changed with the counter's current value so change-detection filters fire correctly.
     pub fn get_component_for_entity_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
         let change_tick = self.change_tick();
         self.entity_store
@@ -434,9 +434,7 @@ impl World {
             .map(|resource_storage| &resource_storage.data)
     }
 
-    /// Returns an exclusive reference to the resource of type `T`, or `None` if not present.
-    ///
-    /// Marks the resource as changed, as [`get_component_for_entity_mut`](Self::get_component_for_entity_mut) does.
+    /// Returns an exclusive reference to the resource of type `T` and marks it changed, or `None` if not present.
     pub fn get_resource_mut<T: Resource + 'static>(&mut self) -> Option<&mut T> {
         let change_tick = self.change_tick();
         self.resources
@@ -473,12 +471,7 @@ impl World {
         UnsafeWorldCell::new_ref(self)
     }
 
-    /// Marks a frame boundary for change detection read outside any system.
-    ///
-    /// Queries made directly on the world, and [`was_component_changed`](Self::was_component_changed)
-    /// and [`was_component_added`](Self::was_component_added), see what changed since the last
-    /// call. Systems and listeners are unaffected; each sees what changed since its own last
-    /// run. Stored ticks are also clamped here when due, so that they never wrap around.
+    /// Marks the frame boundary for change detection read outside any system, and clamps old ticks when due.
     pub fn tick(&mut self) {
         self.last_change_tick = self.increment_change_tick();
         self.check_change_ticks();
@@ -914,8 +907,7 @@ impl<'w> UnsafeWorldCell<'w> {
 
     /// Advances the world's counter by one and returns its previous value.
     pub fn increment_change_tick(&self) -> Tick {
-        // SAFETY: the counter is atomic, so any holder of the cell may advance it; only that
-        // field is borrowed.
+        // SAFETY: only the atomic counter is borrowed, which any holder of the cell may advance.
         let counter = unsafe { &(*self.ptr).change_tick };
         Tick::new(counter.fetch_add(1, Ordering::Relaxed))
     }

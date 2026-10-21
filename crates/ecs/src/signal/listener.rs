@@ -3,9 +3,10 @@ use std::{any::TypeId, marker::PhantomData};
 use crate::{
     Component, Entity, IntoSystem, System, World,
     command::Command,
-    component::Tick,
+    component::{ComponentId, Tick},
     signal::{On, Signal},
     system::{access::SystemAccess, meta::SystemMetadata},
+    table::TableRowIndex,
     utilities::TypeIdMap,
     world::UnsafeWorldCell,
 };
@@ -44,6 +45,7 @@ impl<S: Signal> Listener<S> {
         if !state.initialized {
             state.system.initialize(guard.world);
             state.initialized = true;
+            guard.world.listeners_mut().register_tick_check::<S>();
         }
         state
             .system
@@ -58,6 +60,7 @@ impl<S: Signal> Listener<S> {
         {
             state.system.initialize(world);
             state.initialized = true;
+            world.listeners_mut().register_tick_check::<S>();
         }
     }
 
@@ -272,14 +275,19 @@ where
 type ListenerTickCheck = fn(&mut World, Tick);
 
 fn check_listener_ticks<S: Signal>(world: &mut World, change_tick: Tick) {
-    for entity in world.listeners().get::<S>().to_vec() {
-        let Some(location) = world.entity_store().find_location(entity) else {
+    let id = ComponentId::of::<Listener<S>>();
+    for archetype in world.get_archetypes_mut() {
+        if !archetype.contains(id) {
             continue;
-        };
-        if let Some(cell) = world.get_component_for_entity_location_mut::<Listener<S>>(location)
-            && let Some(state) = cell.data.state.as_mut()
-        {
-            state.system.check_change_tick(change_tick);
+        }
+        for row in 0..archetype.len() {
+            // SAFETY: `row` is below the archetype's length, and the world is borrowed exclusively.
+            let cell = unsafe {
+                archetype.get_component_unsafe_mut::<Listener<S>>(TableRowIndex::new(row))
+            };
+            if let Some(state) = cell.and_then(|cell| cell.data.state.as_mut()) {
+                state.system.check_change_tick(change_tick);
+            }
         }
     }
 }
@@ -298,8 +306,6 @@ impl Listeners {
             .unwrap_or_default()
     }
     pub(crate) fn register_listener<S: Signal>(&mut self, entity: Entity) {
-        self.tick_checks
-            .insert(TypeId::of::<S>(), check_listener_ticks::<S>);
         let entities = self.entities.entry(TypeId::of::<S>()).or_default();
         // Replacement fires on_add again; keep the original registration order.
         if !entities.contains(&entity) {
@@ -313,9 +319,13 @@ impl Listeners {
             entities.retain(|registered| *registered != entity);
             if entities.is_empty() {
                 self.entities.remove(&id);
-                self.tick_checks.remove(&id);
             }
         }
+    }
+
+    fn register_tick_check<S: Signal>(&mut self) {
+        self.tick_checks
+            .insert(TypeId::of::<S>(), check_listener_ticks::<S>);
     }
 
     pub(crate) fn tick_checks(&self) -> Vec<ListenerTickCheck> {
