@@ -1,4 +1,5 @@
 mod calls;
+pub mod host;
 mod pending;
 mod reply;
 mod server;

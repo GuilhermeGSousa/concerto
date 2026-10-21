@@ -1,4 +1,4 @@
-use std::{collections::VecDeque, marker::PhantomData};
+use std::{collections::VecDeque, marker::PhantomData, time::Duration};
 
 use concerto_ecs::{
     CommandQueue, Event, Query, Res, ResMut, Resource, World,
@@ -48,6 +48,25 @@ impl McpInbox {
 
     pub(crate) fn holds_calls(&self) -> bool {
         !self.queued.is_empty()
+    }
+
+    /// Waits up to `timeout` for a call when none is queued, and says whether any is queued now.
+    pub fn wait(&mut self, timeout: Duration) -> bool {
+        self.queued.extend(self.receiver.try_iter());
+        if self.queued.is_empty()
+            && let Ok(call) = self.receiver.recv_timeout(timeout)
+        {
+            self.queued.push_back(call);
+            self.queued.extend(self.receiver.try_iter());
+        }
+        !self.queued.is_empty()
+    }
+
+    /// Whether a queued call is to a tool that may change something, which only a frame serves.
+    pub fn queues_change(&self, registry: &ToolRegistry) -> bool {
+        self.queued
+            .iter()
+            .any(|call| !registry.is_read_only(&call.tool))
     }
 
     fn take(&mut self, mut admit: impl FnMut(&str) -> bool) -> VecDeque<McpCall> {
