@@ -136,7 +136,12 @@ impl Plugin for HierarchyPlugin {
         app.add_system(Startup, build_panel);
         app.add_system(LateUpdate, filter_tree)
             .add_system(LateUpdate, reconcile_structure.before(UiSet::Widgets))
-            .add_system(LateUpdate, filter_items.before(UiSet::Project))
+            .add_system(
+                LateUpdate,
+                filter_items
+                    .after(reconcile_structure)
+                    .before(UiSet::Project),
+            )
             .add_system(
                 LateUpdate,
                 reconcile_content
@@ -161,11 +166,11 @@ fn forget_scene(
     mut state: ResMut<HierarchyState>,
     menus: Query<&mut RowMenu>,
     views: Query<&mut UIScrollArea, With<TreeView>>,
+    parents: Query<&ChildOf>,
     mut cmd: CommandQueue,
 ) {
-    for (_, item) in state.items.drain() {
-        cmd.despawn(item);
-    }
+    let items: HashSet<Entity> = state.items.drain().map(|(_, item)| item).collect();
+    despawn_outermost(&items, &parents, &mut cmd);
     state.pending_scene_reveal = None;
     for mut menu in menus.iter() {
         menu.scene_target = None;
@@ -567,11 +572,11 @@ pub(crate) fn reconcile_structure(
         .copied()
         .filter(|scene_entity| !wanted.contains(scene_entity))
         .collect();
-    for scene_entity in gone {
-        if let Some(item) = state.items.remove(&scene_entity) {
-            cmd.despawn(item);
-        }
-    }
+    let gone: HashSet<Entity> = gone
+        .into_iter()
+        .filter_map(|scene_entity| state.items.remove(&scene_entity))
+        .collect();
+    despawn_outermost(&gone, &parents, &mut cmd);
 
     if let Some(scene_entity) = state.pending_scene_reveal {
         if !wanted.contains(&scene_entity) {
@@ -581,6 +586,15 @@ pub(crate) fn reconcile_structure(
         {
             cmd.entity(item).trigger(UIReveal);
             state.pending_scene_reveal = None;
+        }
+    }
+}
+
+fn despawn_outermost(items: &HashSet<Entity>, parents: &Query<&ChildOf>, cmd: &mut CommandQueue) {
+    for &item in items {
+        let parent = parents.get_entity(item).map(ChildOf::parent);
+        if !parent.is_some_and(|parent| items.contains(&parent)) {
+            cmd.despawn(item);
         }
     }
 }
@@ -673,10 +687,10 @@ pub(crate) fn reconcile_content(
                 text.text = value;
             }
         }
-        if let Some((mut node, mut material)) = marks.get_entity(item.mark) {
-            marks::apply(mark, &theme, selected.is_some(), &mut node, &mut material);
-        }
         let wanted = selection.entity() == Some(scene_entity);
+        if let Some((mut node, mut material)) = marks.get_entity(item.mark) {
+            marks::apply(mark, &theme, wanted, &mut node, &mut material);
+        }
         if wanted && selected.is_none() {
             cmd.insert(UISelected, entity);
         } else if !wanted && selected.is_some() {
@@ -784,6 +798,45 @@ mod tests {
         document: Entity,
         root: Entity,
         node: Entity,
+    }
+
+    static RECORDS: std::sync::Mutex<Vec<(std::thread::ThreadId, String)>> =
+        std::sync::Mutex::new(Vec::new());
+
+    struct Capture;
+
+    impl log::Log for Capture {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record) {
+            if record.level() <= log::Level::Warn {
+                RECORDS
+                    .lock()
+                    .unwrap()
+                    .push((std::thread::current().id(), record.args().to_string()));
+            }
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn invalid_despawns() -> usize {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            log::set_logger(&Capture).unwrap();
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        let me = std::thread::current().id();
+        RECORDS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(thread, message)| {
+                *thread == me && message.starts_with("Attempted to despawn invalid entity")
+            })
+            .count()
     }
 
     fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
@@ -913,6 +966,13 @@ mod tests {
                 .get_component_for_entity::<UIMaterial>(self.hierarchy_item(scene_entity).mark)
                 .unwrap()
                 .border_color
+        }
+        fn mark_fill(&self, scene_entity: Entity) -> concerto_color::LinearRgba {
+            self.scene
+                .world
+                .get_component_for_entity::<UIMaterial>(self.hierarchy_item(scene_entity).mark)
+                .unwrap()
+                .color
         }
         fn parent_item(&self, item: Entity) -> Option<Entity> {
             self.scene
@@ -1354,11 +1414,21 @@ mod tests {
     #[test]
     fn losing_the_edit_target_clears_every_item() {
         let mut f = fixture();
+        let child = f.spawn_under(f.node, "child");
+        f.spawn_under(child, "grandchild");
+        f.refresh();
         f.expand(f.root);
         let items: Vec<Entity> = f.state().items.values().copied().collect();
-        assert_eq!(items.len(), 2);
+        assert_eq!(items.len(), 4);
+        let before = invalid_despawns();
 
         f.scene.activate(None);
+
+        assert_eq!(
+            invalid_despawns(),
+            before,
+            "each item is despawned once, through its outermost item"
+        );
 
         assert!(f.state().items.is_empty());
         assert!(
@@ -1367,6 +1437,46 @@ mod tests {
                 .all(|item| !f.scene.world.entity_is_valid(*item))
         );
         assert_eq!(f.item_entities(), 0);
+    }
+
+    #[test]
+    fn deleting_an_entity_with_children_despawns_each_item_once() {
+        let mut f = fixture();
+        let child = f.spawn_under(f.node, "child");
+        let grandchild = f.spawn_under(child, "grandchild");
+        f.refresh();
+        let items = [f.item_of(f.node), f.item_of(child), f.item_of(grandchild)];
+        let before = invalid_despawns();
+
+        f.scene.scene_world_mut(f.document).despawn(f.node);
+        f.refresh();
+
+        assert!(
+            items
+                .iter()
+                .all(|item| !f.scene.world.entity_is_valid(*item))
+        );
+        for scene_entity in [f.node, child, grandchild] {
+            assert!(!f.state().items.contains_key(&scene_entity));
+        }
+        assert_eq!(f.item_children(f.item_of(f.root)), []);
+        assert_eq!(invalid_despawns(), before);
+    }
+
+    #[test]
+    fn an_external_selection_draws_the_mark_selected_in_the_same_frame() {
+        let mut f = fixture();
+        let theme = UITheme::default();
+        assert!(!f.ui_selected(f.node));
+        f.select(f.node);
+
+        run(&mut f.scene.world, reconcile_content);
+
+        assert!(f.ui_selected(f.node));
+        assert_eq!(
+            f.mark_fill(f.node),
+            Mark::Plain.shape(&theme, true).fill.to_linear()
+        );
     }
 
     #[test]
