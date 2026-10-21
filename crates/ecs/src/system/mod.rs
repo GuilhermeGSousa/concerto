@@ -214,15 +214,20 @@ where
         };
         // SAFETY: the caller guarantees no conflicting system runs, and the inputs touch
         // only the access they declared for this system.
-        match unsafe { F::Inputs::get_data(state, world, ticks) } {
+        let ran = match unsafe { F::Inputs::get_data(state, world, ticks) } {
             Ok(data) => {
                 self.func.call(args, data);
-                self.last_run = ticks.this_run;
+                true
             }
             Err(error) if error.kind == ValidationKind::Missing => {
                 log::warn!("{} skipped: {error}", std::any::type_name::<F>());
+                false
             }
-            Err(_) => {}
+            Err(_) => false,
+        };
+        if ran {
+            F::Inputs::ran(state);
+            self.last_run = ticks.this_run;
         }
     }
 

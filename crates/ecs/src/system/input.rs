@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    component::SystemTicks,
+    component::{SystemTicks, Tick},
     system::{access::SystemAccess, meta::SystemMetadata},
     utilities::SyncCell,
     world::{FromWorld, UnsafeWorldCell, World},
@@ -85,6 +85,9 @@ pub trait SystemInput {
         ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError>;
 
+    /// Runs after the system's body ran with this input's data; a skipped run never calls it.
+    fn ran(_state: &mut Self::State) {}
+
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess);
@@ -113,6 +116,10 @@ where
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: the tuple's access is the union of its parts', which the caller upholds.
         Ok(typle_for!(i in .. => unsafe { <T<{i}>>::get_data(&mut state[[i]], world, ticks) }?))
+    }
+
+    fn ran(state: &mut Self::State) {
+        typle_for!(i in .. => <T<{i}>>::ran(&mut state[[i]]));
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -167,8 +174,42 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
         unsafe { P::get_data(state, world, ticks) }.map(StaticSystemInput)
     }
 
+    fn ran(state: &mut Self::State) {
+        P::ran(state);
+    }
+
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         P::fill_access(meta, access);
+    }
+}
+
+/// An input's `last_run` in another world's tick space, advanced only once its system's body ran.
+#[derive(Debug, Default)]
+pub struct ForeignTicks {
+    last_run: Option<Tick>,
+    pending: Option<Tick>,
+}
+
+impl ForeignTicks {
+    /// Takes this run's ticks from `world`'s counter and holds `this_run` until [`commit`](Self::commit).
+    pub fn begin(&mut self, world: &World) -> SystemTicks {
+        let this_run = world.increment_change_tick();
+        let last_run = match &mut self.last_run {
+            Some(last_run) => {
+                last_run.check_tick(this_run);
+                *last_run
+            }
+            None => this_run.relative_to(Tick::MAX),
+        };
+        self.pending = Some(this_run);
+        SystemTicks { last_run, this_run }
+    }
+
+    /// Makes the last [`begin`](Self::begin)'s `this_run` the next `last_run`, from [`SystemInput::ran`].
+    pub fn commit(&mut self) {
+        if let Some(this_run) = self.pending.take() {
+            self.last_run = Some(this_run);
+        }
     }
 }
 

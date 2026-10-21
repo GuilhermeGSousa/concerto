@@ -9,10 +9,13 @@ fix the entry in the same commit as the change that made it false.
 - **`Changed<T>` means "since this system last ran".** Each system and listener
   run takes a tick from the world's counter, and sees writes stamped after its
   previous executed run, whatever the order within a frame. It never sees its own
-  `Mut`/`ResMut` writes on its next run, and its first run sees everything. A query
-  made directly on a `World` sees what changed since the last `world.tick()`. A
-  test that checks change detection through a system must keep one system instance
-  across runs; a new instance is a first run and passes vacuously.
+  `Mut`/`ResMut` writes on its next run, and its first run sees everything. An
+  `Extracted<T>` reads the main world with its own ticks there, so an extract
+  system sees main-world changes, direct writes included, since its last executed
+  run. A query made directly on a `World` sees what changed since the last
+  `world.tick()`. A test that checks change detection through a system must keep
+  one system instance across runs; a new instance is a first run and passes
+  vacuously.
 - **Transform propagation writes every frame.** `propagate_global_transforms`
   calls `set_matrix` on every hierarchy member each frame, so
   `Changed<GlobalTransform>` does not mean "this entity moved".

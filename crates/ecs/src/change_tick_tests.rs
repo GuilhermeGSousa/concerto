@@ -1,12 +1,15 @@
 use crate::{
     Added, Changed, CommandQueue, Component, Entity, IntoSystem, IntoSystemConfig, Query, Ref, Res,
     ResMut, Resource, Schedule, System, World,
-    component::Tick,
+    component::{MAX_CHANGE_AGE, Tick},
     query::change_detection::DetectChanges,
     signal::{EntitySignal, On, Signal, listener::IntoListener},
     system::{
         executor::{SystemExecutor, single_thread::SingleThreadedExecutor},
-        input::test_support::{Gate, GateOpen},
+        input::{
+            ForeignTicks,
+            test_support::{Gate, GateOpen},
+        },
         schedule::{ScheduleLabel, Schedules},
     },
 };
@@ -588,4 +591,26 @@ fn res_is_added_once() {
         world.get_resource::<Flags>().unwrap().0,
         [true, false, false]
     );
+}
+
+#[test]
+fn foreign_ticks_commit_only_when_asked_and_clamp_an_old_last_run() {
+    let world = World::new();
+    let mut ticks = ForeignTicks::default();
+    let first = ticks.begin(&world);
+    assert_eq!(*first.this_run.relative_to(first.last_run), MAX_CHANGE_AGE);
+
+    let uncommitted = ticks.begin(&world);
+    assert_eq!(
+        *uncommitted.this_run.relative_to(uncommitted.last_run),
+        MAX_CHANGE_AGE
+    );
+    ticks.commit();
+    assert_eq!(ticks.begin(&world).last_run, uncommitted.this_run);
+    ticks.commit();
+
+    let mut world = world;
+    world.set_change_tick(Tick::new(*world.change_tick() + MAX_CHANGE_AGE + 10));
+    let late = ticks.begin(&world);
+    assert_eq!(*late.this_run.relative_to(late.last_run), MAX_CHANGE_AGE);
 }
