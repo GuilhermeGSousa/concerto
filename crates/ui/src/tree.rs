@@ -12,7 +12,7 @@ use concerto_ecs::{
     resource::{Res, ResMut},
     signal::{On, lifecycle::Add, listener::IntoListener},
 };
-use concerto_window::{input::MouseButton, plugin::Window};
+use concerto_window::input::MouseButton;
 use glam::Vec2;
 
 use crate::{
@@ -67,6 +67,7 @@ pub(crate) struct UITreeConnector;
 
 const TICK_TO_CARET: f32 = 6.0;
 const TICK_TO_CONTENT: f32 = 22.0;
+const CONNECTOR_THICKNESS: f32 = 1.0;
 
 pub(crate) struct TreeNode {
     pub(crate) children: Vec<Entity>,
@@ -292,10 +293,9 @@ pub(crate) fn update_trees(
     ),
     spacers: Query<&mut UIIntrinsicHeight, With<UIRowSpacer>>,
     (items, culled, materials): (Query<&UIItem>, Query<&UICulled>, Query<&UIMaterial>),
-    (theme, window): (Res<UITheme>, Res<Window>),
+    theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let scale = window.scale_factor() as f32;
     for (entity, tree, mut area, layout) in trees.iter() {
         let row_height = tree.row_height.unwrap_or(theme.row_height);
         let mut roots = Vec::new();
@@ -379,7 +379,7 @@ pub(crate) fn update_trees(
                     (caret, drawn)
                 })
                 .unwrap_or_default();
-            let segments = connector_segments(row, &theme, row_height, scale);
+            let segments = connector_segments(row, &theme, row_height);
             sync_connectors(row.entity, &segments, &drawn, &theme, &nodes, &mut cmd);
             match (caret, row.has_children) {
                 (None, true) => spawn_caret(row, &theme, &mut cmd),
@@ -489,23 +489,17 @@ fn sync_caret(
     }
 }
 
-pub(crate) fn connector_segments(
-    row: &TreeRow,
-    theme: &UITheme,
-    row_height: f32,
-    scale: f32,
-) -> Vec<UIBox> {
+pub(crate) fn connector_segments(row: &TreeRow, theme: &UITheme, row_height: f32) -> Vec<UIBox> {
     let Some(own) = row.depth.checked_sub(1) else {
         return Vec::new();
     };
-    let thickness = 1.0 / scale;
     let centre = row_height / 2.0;
     let line_x = |level: usize| {
         theme.tree_inset + level as f32 * theme.tree_indent + theme.tree_caret_column / 2.0
     };
     let vertical = |level: usize, height: f32| UIBox {
         min: Vec2::new(line_x(level), 0.0),
-        size: Vec2::new(thickness, height),
+        size: Vec2::new(CONNECTOR_THICKNESS, height),
     };
     let mut segments = (0..own)
         .filter(|level| row.continues.get(*level).copied().unwrap_or(false))
@@ -519,7 +513,7 @@ pub(crate) fn connector_segments(
     };
     segments.push(UIBox {
         min: Vec2::new(line_x(own), centre),
-        size: Vec2::new(tick, thickness),
+        size: Vec2::new(tick, CONNECTOR_THICKNESS),
     });
     segments
 }
@@ -1446,14 +1440,14 @@ mod tests {
         }
     }
 
-    fn segments_of(row: &TreeRow, scale: f32) -> Vec<UIBox> {
-        connector_segments(row, &UITheme::default(), 24.0, scale)
+    fn segments_of(row: &TreeRow) -> Vec<UIBox> {
+        connector_segments(row, &UITheme::default(), 24.0)
     }
 
     #[test]
     fn a_middle_child_gets_a_full_vertical_and_a_tick() {
         assert_eq!(
-            segments_of(&tree_row(1, false, false, &[]), 1.0),
+            segments_of(&tree_row(1, false, false, &[])),
             [
                 segment(12.0, 0.0, 1.0, 24.0),
                 segment(12.0, 12.0, 22.0, 1.0)
@@ -1464,7 +1458,7 @@ mod tests {
     #[test]
     fn a_last_child_gets_an_elbow() {
         assert_eq!(
-            segments_of(&tree_row(1, false, true, &[]), 1.0),
+            segments_of(&tree_row(1, false, true, &[])),
             [
                 segment(12.0, 0.0, 1.0, 12.0),
                 segment(12.0, 12.0, 22.0, 1.0)
@@ -1475,7 +1469,7 @@ mod tests {
     #[test]
     fn a_parent_child_tick_is_six_pixels() {
         assert_eq!(
-            segments_of(&tree_row(1, true, false, &[]), 1.0),
+            segments_of(&tree_row(1, true, false, &[])),
             [segment(12.0, 0.0, 1.0, 24.0), segment(12.0, 12.0, 6.0, 1.0)]
         );
     }
@@ -1483,7 +1477,7 @@ mod tests {
     #[test]
     fn ancestor_lines_continue_only_while_the_ancestor_has_siblings_below() {
         assert_eq!(
-            segments_of(&tree_row(3, false, false, &[true, false]), 1.0),
+            segments_of(&tree_row(3, false, false, &[true, false])),
             [
                 segment(12.0, 0.0, 1.0, 24.0),
                 segment(44.0, 0.0, 1.0, 24.0),
@@ -1493,20 +1487,20 @@ mod tests {
     }
 
     #[test]
-    fn lines_are_one_physical_pixel() {
+    fn lines_are_one_logical_pixel_whatever_the_scale() {
         assert_eq!(
-            segments_of(&tree_row(1, false, false, &[]), 2.0),
+            segments_of(&tree_row(1, false, false, &[])),
             [
-                segment(12.0, 0.0, 0.5, 24.0),
-                segment(12.0, 12.0, 22.0, 0.5)
+                segment(12.0, 0.0, 1.0, 24.0),
+                segment(12.0, 12.0, 22.0, 1.0)
             ]
         );
     }
 
     #[test]
     fn roots_have_no_connectors() {
-        assert!(segments_of(&tree_row(0, false, false, &[]), 1.0).is_empty());
-        assert!(segments_of(&tree_row(0, true, true, &[]), 1.0).is_empty());
+        assert!(segments_of(&tree_row(0, false, false, &[])).is_empty());
+        assert!(segments_of(&tree_row(0, true, true, &[])).is_empty());
     }
 
     fn connectors(harness: &Harness, entity: Entity) -> Vec<UIBox> {
@@ -1608,43 +1602,39 @@ mod tests {
     }
 
     #[test]
-    fn connectors_resync_when_the_scale_factor_changes() {
-        let mut harness = Harness::new();
-        let tree = tree_of(&mut harness, 200.0);
-        let parent = item(&mut harness, tree, true);
-        let child = item(&mut harness, parent, false);
-        harness.settle();
-
-        harness
-            .world
-            .insert_resource(concerto_window::plugin::Window::new((800, 600), 2.0));
-        harness.settle();
-
-        let sizes = harness
-            .world
-            .get_component_for_entity::<Children>(child)
-            .unwrap()
-            .iter()
-            .filter(|child| {
+    fn connectors_are_one_logical_pixel_thick_after_layout_at_any_scale() {
+        for scale in [2.0, 3.0] {
+            for row_height in [20.0, 25.0] {
+                let mut harness = Harness::new();
                 harness
                     .world
-                    .get_component_for_entity::<UITreeConnector>(**child)
-                    .is_some()
-            })
-            .map(|child| {
-                let node = harness
-                    .world
-                    .get_component_for_entity::<UINode>(*child)
-                    .unwrap();
-                (node.width, node.height)
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(
-            sizes,
-            [
-                (UIValue::Px(0.5), UIValue::Px(10.0)),
-                (UIValue::Px(22.0), UIValue::Px(0.5))
-            ]
-        );
+                    .insert_resource(concerto_window::plugin::Window::new((800, 600), scale));
+                let root = harness.root();
+                let tree = harness.world.spawn((
+                    UINode::default()
+                        .with_height(UIValue::Px(200.0))
+                        .with_flex_shrink(0.0)
+                        .with_flex_direction(FlexDirection::Column),
+                    UITree {
+                        row_height: Some(row_height),
+                        ..Default::default()
+                    },
+                    ChildOf::new(root),
+                ));
+                let parent = item(&mut harness, tree, true);
+                let child = item(&mut harness, parent, false);
+                harness.settle();
+
+                let drawn = connectors(&harness, child);
+                assert_eq!(drawn.len(), 2, "scale {scale}, row {row_height}");
+                for rect in drawn {
+                    assert_eq!(
+                        rect.size.x.min(rect.size.y),
+                        1.0,
+                        "{rect:?} at scale {scale}, row {row_height}"
+                    );
+                }
+            }
+        }
     }
 }
