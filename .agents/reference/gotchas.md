@@ -138,7 +138,7 @@ fix the entry in the same commit as the change that made it false.
   through `HostedApp::mark_saved` after a successful write.
 - **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
   `App` finishes building.
-- **Change detection does not cross the seam.** `has_changed()` and
+- **Change detection does not cross the seam.** `is_changed()` and
   `Changed<T>` compare against the tick of the world they are read in. Through
   `EditWorld<T>` they give no usable answer; a panel learns of a change from a
   `Hosted<E>` event.

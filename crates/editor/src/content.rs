@@ -459,7 +459,7 @@ fn reconcile_content_tree(
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    if !project.has_changed() && !state.has_changed() {
+    if !project.is_changed() && !state.is_changed() {
         return;
     }
     let Some((view, mut tree)) = views.iter().next() else {

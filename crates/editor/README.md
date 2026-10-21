@@ -79,7 +79,7 @@ reach the running game's world instead of the scene's. Code changes the target
 only by triggering `SetEditTarget`; its listener moves the marker. A panel
 therefore keeps what it shows in a resource of its own, fills it in a system
 that takes `EditWorld<T>`, and empties it in an `On<Remove<EditTarget>>` listener.
-`has_changed()` and `Changed<T>` mean nothing through `EditWorld<T>`; the two
+`is_changed()` and `Changed<T>` mean nothing through `EditWorld<T>`; the two
 worlds keep separate clocks.
 
 An `Entity` of the edit `App`'s world is not an entity of the editor's. A field

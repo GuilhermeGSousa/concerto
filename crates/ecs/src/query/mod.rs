@@ -13,7 +13,10 @@ use crate::{
     component::{Component, ComponentId, SystemTicks},
     entity::Entity,
     query::{
-        change_detection::Mut, filter::QueryFilter, state::QueryState, world_query::WorldQuery,
+        change_detection::{Mut, Ref},
+        filter::QueryFilter,
+        state::QueryState,
+        world_query::WorldQuery,
     },
     system::{
         access::SystemAccess,
@@ -262,7 +265,14 @@ where
             .and_then(|location| {
                 world
                     .get_component_for_entity_location_mut::<T>(location)
-                    .map(|table_cell| Mut::new(table_cell.data, table_cell.changed_tick, ticks))
+                    .map(|table_cell| {
+                        Mut::new(
+                            table_cell.data,
+                            table_cell.added_tick,
+                            table_cell.changed_tick,
+                            ticks,
+                        )
+                    })
             })
     }
 
@@ -270,6 +280,37 @@ where
         access.write_component::<T>();
     }
 }
+
+impl<T> QueryData for Ref<'_, T>
+where
+    T: Component,
+{
+    type Item<'w> = Ref<'w, T>;
+
+    fn component_ids() -> Vec<ComponentId> {
+        vec![TypeId::of::<T>()]
+    }
+
+    unsafe fn fetch<'w>(
+        world: UnsafeWorldCell<'w>,
+        entity: Entity,
+        ticks: SystemTicks,
+    ) -> Option<Self::Item<'w>> {
+        // SAFETY: the caller holds read access to `T`, declared in `fill_access`.
+        let world = unsafe { world.world() };
+        world
+            .entity_store()
+            .find_location(entity)
+            .and_then(|location| world.get_component_for_entity_location_ticked::<T>(location))
+            .map(|cell| Ref::new(cell.data, cell.added_tick, cell.changed_tick, ticks))
+    }
+
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
+        access.read_component::<T>();
+    }
+}
+
+impl<T: Component> ReadOnlyQueryData for Ref<'_, T> {}
 
 impl QueryData for Entity {
     type Item<'a> = Entity;
@@ -342,7 +383,14 @@ where
         world.entity_store().find_location(entity).map(|location| {
             world
                 .get_component_for_entity_location_mut::<T>(location)
-                .map(|table_cell| Mut::new(table_cell.data, table_cell.changed_tick, ticks))
+                .map(|table_cell| {
+                    Mut::new(
+                        table_cell.data,
+                        table_cell.added_tick,
+                        table_cell.changed_tick,
+                        ticks,
+                    )
+                })
         })
     }
 

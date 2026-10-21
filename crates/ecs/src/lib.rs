@@ -55,6 +55,7 @@ pub use entity::{Entity, EntityWorldMut};
 pub use events::Event;
 pub use query::{
     Query,
+    change_detection::Ref,
     filter::{Added, Changed, Or, With, Without},
 };
 pub use resource::{Res, ResMut, Resource};

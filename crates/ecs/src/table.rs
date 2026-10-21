@@ -77,6 +77,22 @@ impl Column {
         unsafe { self.data.get_unchecked(*row).downcast_ref() }
     }
 
+    pub(crate) unsafe fn get_unsafe_ticked<T: 'static>(
+        &self,
+        row: TableRowIndex,
+    ) -> Option<CellAccessor<'_, T>> {
+        unsafe {
+            self.data
+                .get_unchecked(*row)
+                .downcast_ref()
+                .map(|data| CellAccessor {
+                    data,
+                    added_tick: self.added_ticks[*row],
+                    changed_tick: self.changed_ticks[*row],
+                })
+        }
+    }
+
     pub(crate) unsafe fn get_unsafe_mut<T: 'static>(
         &mut self,
         row: TableRowIndex,
@@ -87,6 +103,7 @@ impl Column {
                 .downcast_mut()
                 .map(|data| MutableCellAccessor {
                     data,
+                    added_tick: self.added_ticks[*row],
                     changed_tick: &mut self.changed_ticks[*row],
                 })
         }
@@ -204,7 +221,7 @@ impl Table {
             .is_some_and(|column| ticks.is_changed(column.added_ticks[*row]))
     }
 
-    pub(crate) fn has_changed_since(
+    pub(crate) fn changed_since(
         &self,
         row: TableRowIndex,
         component_id: ComponentId,
@@ -268,7 +285,14 @@ impl DerefMut for TableRowIndex {
     }
 }
 
+pub(crate) struct CellAccessor<'w, T> {
+    pub(crate) data: &'w T,
+    pub(crate) added_tick: Tick,
+    pub(crate) changed_tick: Tick,
+}
+
 pub(crate) struct MutableCellAccessor<'w, T> {
     pub(crate) data: &'w mut T,
+    pub(crate) added_tick: Tick,
     pub(crate) changed_tick: &'w mut Tick,
 }

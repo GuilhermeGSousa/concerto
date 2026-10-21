@@ -83,7 +83,7 @@ pub(crate) fn sync_workspace(
     children: Query<&mut Children>,
 ) {
     let hosts_changed = changed_hosts.iter().next().is_some();
-    if !active.has_changed() && !registry.has_changed() && !hosts_changed {
+    if !active.is_changed() && !registry.is_changed() && !hosts_changed {
         return;
     }
     let scene = active
@@ -102,7 +102,7 @@ pub(crate) fn sync_workspace(
             set_visible(&nodes, host, active.0 == Some(entity));
         }
     }
-    if hosts_changed || registry.has_changed() {
+    if hosts_changed || registry.is_changed() {
         if let Some(base) = bases[1] {
             if let Some(mut siblings) = parents
                 .get_entity(base)
@@ -132,7 +132,7 @@ pub(crate) fn reset_workspace_input(
     mut input: ResMut<UIInputState>,
     mut actions: ResMut<ActionMap>,
 ) {
-    if active.has_changed() {
+    if active.is_changed() {
         clear_transient_input(&mut focus, &mut hovered, &mut input, &mut actions);
     }
 }

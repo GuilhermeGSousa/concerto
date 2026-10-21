@@ -72,6 +72,7 @@ impl<T: Resource> ResourceStorage<T> {
 /// `Option<Res<T>>` for a resource that may be absent.
 pub struct Res<'world, T: Resource> {
     pub value: &'world T,
+    added_tick: &'world Tick,
     changed_tick: &'world Tick,
     ticks: SystemTicks,
 }
@@ -92,6 +93,7 @@ impl<'world, T: Resource> Res<'world, T> {
             .ok_or_else(|| missing::<T>())?;
         Ok(Self {
             value: &res_storage.data,
+            added_tick: &res_storage.added_tick,
             changed_tick: &res_storage.changed_tick,
             ticks,
         })
@@ -173,8 +175,12 @@ impl<T> DetectChanges for Res<'_, T>
 where
     T: Resource,
 {
-    fn has_changed(&self) -> bool {
+    fn is_changed(&self) -> bool {
         self.ticks.is_changed(*self.changed_tick)
+    }
+
+    fn is_added(&self) -> bool {
+        self.ticks.is_changed(*self.added_tick)
     }
 }
 
@@ -186,9 +192,10 @@ where
 /// A system taking it is skipped with a warning while the resource is missing.
 pub struct ResMut<'world, T: Resource> {
     pub value: &'world mut T,
+    added_tick: &'world Tick,
     changed_tick: &'world mut Tick,
     ticks: SystemTicks,
-    has_changed: bool,
+    written: bool,
 }
 
 impl<'world, T: Resource> ResMut<'world, T> {
@@ -208,9 +215,10 @@ impl<'world, T: Resource> ResMut<'world, T> {
 
         Ok(Self {
             value: &mut res_storage.data,
+            added_tick: &res_storage.added_tick,
             changed_tick: &mut res_storage.changed_tick,
             ticks,
-            has_changed: false,
+            written: false,
         })
     }
 
@@ -262,11 +270,25 @@ where
     T: Resource,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        if !self.has_changed {
-            self.has_changed = true;
+        if !self.written {
+            self.written = true;
             *self.changed_tick = self.ticks.this_run;
         }
         self.value
+    }
+}
+
+impl<T> ResMut<'_, T>
+where
+    T: Resource + PartialEq,
+{
+    /// Writes `value` and stamps the change only if it differs; returns whether it wrote.
+    pub fn set_if_neq(&mut self, value: T) -> bool {
+        if *self.value == value {
+            return false;
+        }
+        *self.deref_mut() = value;
+        true
     }
 }
 
@@ -274,8 +296,12 @@ impl<T> DetectChanges for ResMut<'_, T>
 where
     T: Resource,
 {
-    fn has_changed(&self) -> bool {
+    fn is_changed(&self) -> bool {
         self.ticks.is_changed(*self.changed_tick)
+    }
+
+    fn is_added(&self) -> bool {
+        self.ticks.is_changed(*self.added_tick)
     }
 }
 

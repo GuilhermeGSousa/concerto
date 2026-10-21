@@ -18,7 +18,7 @@ use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners}
 use crate::signal::{EntitySignal, Signal};
 use crate::system::access::SystemAccess;
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
-use crate::table::MutableCellAccessor;
+use crate::table::{CellAccessor, MutableCellAccessor};
 use crate::world_id::WorldId;
 use crate::{
     archetype::Archetype,
@@ -394,6 +394,17 @@ impl World {
         self.archetypes
             .get(entity_location.archetype_index as usize)
             .and_then(|archetype| unsafe { archetype.get_component_unsafe(entity_location.row) })
+    }
+
+    pub(crate) fn get_component_for_entity_location_ticked<T: Component>(
+        &self,
+        entity_location: EntityLocation,
+    ) -> Option<CellAccessor<'_, T>> {
+        self.archetypes
+            .get(entity_location.archetype_index as usize)
+            .and_then(|archetype| unsafe {
+                archetype.get_component_unsafe_ticked(entity_location.row)
+            })
     }
 
     pub(crate) fn get_component_for_entity_location_mut<T: Component>(

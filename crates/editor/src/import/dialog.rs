@@ -284,7 +284,7 @@ fn sync_dialog(
         let current = shown
             .iter()
             .filter_map(|row| rows.get_entity(*row).map(|row| &row.0));
-        if !staging.has_changed() || current.eq(staging.rows.iter().map(|row| &row.source)) {
+        if !staging.is_changed() || current.eq(staging.rows.iter().map(|row| &row.source)) {
             continue;
         }
         respawned = true;

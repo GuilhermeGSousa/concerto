@@ -197,3 +197,82 @@ impl Deref for ChildOf {
         &self.parent
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{Changed, IntoSystem, Query, ResMut, Resource, System};
+
+    #[derive(Resource, Default)]
+    struct Looks(Vec<usize>);
+
+    fn count_changed_children(parents: Query<Entity, Changed<Children>>, mut looks: ResMut<Looks>) {
+        looks.0.push(parents.iter().count());
+    }
+
+    fn setup() -> (World, Entity) {
+        let mut world = World::new();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        let parent = world.spawn(());
+        world.insert_resource(Looks::default());
+        (world, parent)
+    }
+
+    fn watcher(world: &mut World) -> impl System<In = ()> {
+        let mut system = count_changed_children.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+        system
+    }
+
+    fn looks(world: &World) -> Vec<usize> {
+        world.get_resource::<Looks>().unwrap().0.clone()
+    }
+
+    #[test]
+    fn attaching_a_child_changes_children() {
+        let (mut world, parent) = setup();
+        let mut system = watcher(&mut world);
+        world.spawn(ChildOf::new(parent));
+        system.run_and_apply((), &mut world);
+        world.spawn(ChildOf::new(parent));
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+        assert_eq!(looks(&world), [0, 1, 1, 0]);
+    }
+
+    #[test]
+    fn detaching_one_of_several_children_changes_children() {
+        let (mut world, parent) = setup();
+        let mut system = watcher(&mut world);
+        let first = world.spawn(ChildOf::new(parent));
+        world.spawn(ChildOf::new(parent));
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+        world.remove_component::<ChildOf>(first);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+        assert_eq!(looks(&world), [0, 1, 0, 1, 0]);
+        assert_eq!(
+            world
+                .get_component_for_entity::<Children>(parent)
+                .unwrap()
+                .iter()
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn detaching_the_last_child_removes_children() {
+        let (mut world, parent) = setup();
+        let mut system = watcher(&mut world);
+        let child = world.spawn(ChildOf::new(parent));
+        system.run_and_apply((), &mut world);
+        assert!(world.get_component_for_entity::<Children>(parent).is_some());
+        world.remove_component::<ChildOf>(child);
+        system.run_and_apply((), &mut world);
+        assert!(world.get_component_for_entity::<Children>(parent).is_none());
+    }
+}

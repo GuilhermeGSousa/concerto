@@ -187,7 +187,7 @@ app.add_listener(on_select.at_edit_time());
 
 ## Change detection
 
-`Changed<T>`, `Added<T>` and `has_changed()` mean "since this system last ran",
+`Changed<T>`, `Added<T>` and `is_changed()` mean "since this system last ran",
 whatever the order of writer and reader within a frame:
 
 - A write made after a reader ran, including a command applied at a later sync
