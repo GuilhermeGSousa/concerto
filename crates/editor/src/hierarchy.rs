@@ -971,6 +971,17 @@ mod tests {
                 .0;
             self.text_of(title)
         }
+        fn footer(&mut self) -> String {
+            let footer = self
+                .scene
+                .world
+                .query::<(Entity, &Label), ()>()
+                .iter(&mut self.scene.world)
+                .find(|(_, label)| matches!(label, Label::Footer))
+                .unwrap()
+                .0;
+            self.text_of(footer)
+        }
         fn item_entities(&mut self) -> usize {
             self.scene
                 .world
@@ -1471,6 +1482,22 @@ mod tests {
             f.mark_fill(f.node),
             Mark::Plain.shape(&theme, true).fill.to_linear()
         );
+    }
+
+    #[test]
+    fn the_footer_says_loading_only_while_a_scene_loads() {
+        let mut f = fixture();
+        assert_eq!(f.footer(), "");
+
+        let document = f.document;
+        f.scene.request_other_scene(document);
+        f.scene.frame();
+        f.refresh();
+        assert_eq!(f.footer(), "Loading…");
+
+        f.scene.frames_until_idle();
+        f.refresh();
+        assert_eq!(f.footer(), "");
     }
 
     #[test]

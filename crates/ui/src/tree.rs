@@ -889,6 +889,33 @@ mod tests {
     }
 
     #[test]
+    fn the_caret_still_toggles_in_a_tree_that_is_not_selectable() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        harness
+            .world
+            .get_component_for_entity_mut::<UITree>(tree)
+            .unwrap()
+            .selectable = false;
+        let parent = item(&mut harness, tree, false);
+        let child = item(&mut harness, parent, false);
+        harness.settle();
+
+        let shown = caret(&harness, parent).expect("a parent has a caret");
+        press_and_release(&mut harness, shown);
+        harness.settle();
+
+        assert!(expanded(&harness, parent));
+        assert_eq!(row(&harness, child), Some((1, 1)));
+        assert!(harness.selected(&[parent, child]).is_empty());
+
+        press_and_release(&mut harness, shown);
+        harness.settle();
+        assert!(!expanded(&harness, parent));
+        assert_eq!(row(&harness, child), None);
+    }
+
+    #[test]
     fn row_content_is_indented_by_depth() {
         let mut harness = Harness::new();
         assert_eq!(content_inset(&mut harness, 3), 4.0 + 48.0 + 16.0);
