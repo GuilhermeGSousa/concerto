@@ -1,10 +1,12 @@
 use concerto_ecs::{
+    IntoSystem, World,
     command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::Children},
     query::{Query, filter::With},
     resource::Res,
     signal::{On, lifecycle::Add},
+    system::BoxedSystem,
 };
 
 use crate::{
@@ -32,6 +34,16 @@ impl Default for UIList {
             selectable: true,
         }
     }
+}
+
+/// Registers the listener that gives each new `UIList` its scroll area and spacer, for a world run without `UIPlugin`.
+pub fn install_listeners(world: &mut World) {
+    world.add_listener(set_up_list);
+}
+
+/// The system that places and culls every `UIList`'s items, for a world run without `UIPlugin`.
+pub fn update_lists_system() -> BoxedSystem {
+    update_lists.into_boxed_system()
 }
 
 pub(crate) fn set_up_list(

@@ -1,4 +1,4 @@
-//! Scroll, virtual-list, and fixed split-pane behavior.
+//! Scroll and fixed split-pane behavior.
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
@@ -34,35 +34,6 @@ impl Default for UIScrollArea {
             content_extent: 0.0,
             content: None,
         }
-    }
-}
-
-#[derive(Component)]
-pub struct UIVirtualList {
-    pub item_count: usize,
-    pub row_height: f32,
-    pub overscan: usize,
-    pub(crate) visible_range: std::ops::Range<usize>,
-}
-
-impl UIVirtualList {
-    pub fn new(item_count: usize, row_height: f32) -> Self {
-        Self {
-            item_count,
-            row_height,
-            overscan: 2,
-            visible_range: 0..0,
-        }
-    }
-
-    pub fn with_overscan(mut self, overscan: usize) -> Self {
-        self.overscan = overscan;
-        self
-    }
-
-    /// The rows currently materialised, overscan included.
-    pub fn visible_range(&self) -> std::ops::Range<usize> {
-        self.visible_range.clone()
     }
 }
 
@@ -135,11 +106,8 @@ pub(crate) fn update_scroll_areas(
     }
 }
 
-pub(crate) fn sync_scroll_content(
-    areas: Query<(&UIScrollArea, Option<&UIVirtualList>)>,
-    nodes: Query<&mut UINode>,
-) {
-    for (area, list) in areas.iter() {
+pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, nodes: Query<&mut UINode>) {
+    for area in areas.iter() {
         let Some(content) = area.content else {
             continue;
         };
@@ -147,26 +115,8 @@ pub(crate) fn sync_scroll_content(
             node.position = Position::Absolute;
             node.inset.left = UIValue::Px(0.0);
             node.inset.right = UIValue::Px(0.0);
-            node.inset.top = UIValue::Px(-content_offset(area, list));
+            node.inset.top = UIValue::Px(-area.offset);
         }
-    }
-}
-
-fn content_offset(area: &UIScrollArea, list: Option<&UIVirtualList>) -> f32 {
-    match list {
-        Some(list) => area.offset - list.visible_range.start as f32 * list.row_height,
-        None => area.offset,
-    }
-}
-
-pub(crate) fn update_virtual_lists(lists: Query<(&mut UIVirtualList, &UIScrollArea, &UILayout)>) {
-    for (mut list, scroll, layout) in lists.iter() {
-        let first = (scroll.offset / list.row_height).floor().max(0.0) as usize;
-        let visible = (layout.content_rect.size.y / list.row_height)
-            .ceil()
-            .max(0.0) as usize;
-        list.visible_range = first.saturating_sub(list.overscan)
-            ..(first + visible + list.overscan).min(list.item_count);
     }
 }
 
@@ -306,27 +256,24 @@ pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, m
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_ecs::{IntoSystem, System, World};
 
     #[test]
     fn a_plain_scroll_area_moves_its_content_by_the_whole_offset() {
-        let area = UIScrollArea {
+        let mut world = World::new();
+        let content = world.spawn(UINode::default());
+        world.spawn(UIScrollArea {
             offset: 140.0,
             content_extent: 900.0,
-            content: None,
-        };
-        assert_eq!(content_offset(&area, None), 140.0);
-    }
+            content: Some(content),
+        });
 
-    #[test]
-    fn a_virtual_list_only_moves_by_the_distance_row_recycling_does_not_cover() {
-        let area = UIScrollArea {
-            offset: 140.0,
-            content_extent: 900.0,
-            content: None,
-        };
-        let mut list = UIVirtualList::new(100, 32.0);
-        list.visible_range = 4..12;
-        assert_eq!(content_offset(&area, Some(&list)), 12.0);
+        let mut system = sync_scroll_content.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let node = world.get_component_for_entity::<UINode>(content).unwrap();
+        assert_eq!(node.inset.top, UIValue::Px(-140.0));
     }
 
     fn pane(ratio: f32) -> UISplitPane {

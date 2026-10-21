@@ -22,7 +22,7 @@ use crate::{
         UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
         UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
     },
-    list::{set_up_list, update_lists},
+    list::update_lists,
     material::UIMaterial,
     node::{
         UILayoutDiagnostics, UILayoutEngine, UITextMeasure, blank_culled_layouts, compute_ui_nodes,
@@ -33,7 +33,7 @@ use crate::{
     resources::UIRenderDiagnostics,
     scroll::{
         setup_scrollbars, sync_scroll_content, sync_scrollbar_thumbs, sync_scrollbar_tracks,
-        sync_split_panes, update_scroll_areas, update_virtual_lists,
+        sync_split_panes, update_scroll_areas,
     },
     sets::UiSet,
     slider::{setup_slider_visuals, sync_slider_fill},
@@ -103,7 +103,7 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
         app.add_listener(blank_culled_layouts);
-        app.add_listener(set_up_list);
+        crate::list::install_listeners(app.main_mut().world_mut());
         crate::tree::install_listeners(app.main_mut().world_mut());
         install_listeners(app.main_mut().world_mut());
         let render_diagnostics = UIRenderDiagnostics::default();
@@ -147,7 +147,6 @@ impl Plugin for UIPlugin {
                 sync_tab_bodies,
                 update_tooltips,
                 update_scroll_areas,
-                update_virtual_lists.after(update_scroll_areas),
                 keep_focus_on_shown_items,
                 navigate_items.after(keep_focus_on_shown_items),
             )
