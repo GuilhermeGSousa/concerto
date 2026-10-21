@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use concerto_ecs::{
+    IntoSystem, World,
     command::CommandQueue,
     component::Component,
     entity::{
@@ -11,6 +12,7 @@ use concerto_ecs::{
     query::{Query, filter::With},
     resource::{Res, ResMut},
     signal::{On, lifecycle::Add, listener::IntoListener},
+    system::BoxedSystem,
 };
 use concerto_window::input::MouseButton;
 use glam::Vec2;
@@ -232,6 +234,16 @@ pub(crate) fn open_to(
     })
     .iter()
     .position(|row| row.entity == item)
+}
+
+/// Registers the listener that sets up each new `UITree`, for a world run without `UIPlugin`.
+pub fn install_listeners(world: &mut World) {
+    world.add_listener(set_up_tree);
+}
+
+/// The system that nests, places and draws every `UITree`'s items, for a world run without `UIPlugin`.
+pub fn update_trees_system() -> BoxedSystem {
+    update_trees.into_boxed_system()
 }
 
 pub(crate) fn set_up_tree(

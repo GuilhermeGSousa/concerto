@@ -383,10 +383,10 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     w.update();
     assert!(cards(&mut w.f.world).is_empty());
     assert!(rows(&mut w.f.world).is_empty());
-    let mut inputs = w.f.world.query::<
-        &concerto_ui::text_input::UITextInput,
+    let mut inputs = w.f.world.query::<&concerto_ui::text_input::UITextInput, (
         concerto_ecs::query::filter::Without<add_component::AddComponentSearch>,
-    >();
+        concerto_ecs::query::filter::Without<crate::hierarchy::Filter>,
+    )>();
     assert_eq!(inputs.iter(&mut w.f.world).count(), 0);
 }
 

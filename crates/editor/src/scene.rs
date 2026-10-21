@@ -674,6 +674,11 @@ mod tests {
         assets::content::{AssetRegistry, write_content_asset},
         transform::Transform,
     };
+    use concerto_ui::{
+        items::{UIItem, UISelected},
+        node::UICulled,
+        tree::UITreeElement,
+    };
 
     #[derive(Resource)]
     struct RenameTarget(Entity);
@@ -684,6 +689,29 @@ mod tests {
             .unwrap()
             .world_for_test()
             .id()
+    }
+
+    fn items(f: &SceneFixture) -> std::collections::HashMap<Entity, Entity> {
+        f.world
+            .get_resource::<HierarchyState>()
+            .unwrap()
+            .items()
+            .clone()
+    }
+
+    fn expansions(f: &SceneFixture) -> Vec<(Entity, bool)> {
+        let mut expansions = items(f)
+            .into_values()
+            .map(|item| {
+                let expanded = f
+                    .world
+                    .get_component_for_entity::<UITreeElement>(item)
+                    .is_some_and(|element| element.expanded);
+                (item, expanded)
+            })
+            .collect::<Vec<_>>();
+        expansions.sort_by_key(|(item, _)| (item.index(), item.generation()));
+        expansions
     }
 
     fn save(f: &mut SceneFixture, document: Entity) {
@@ -1267,13 +1295,8 @@ mod tests {
         let mut f = SceneFixture::new();
         let document = f.open();
         f.frame();
-        assert!(
-            !f.world
-                .get_resource::<HierarchyState>()
-                .unwrap()
-                .rows()
-                .is_empty()
-        );
+        let old_items = items(&f).into_values().collect::<Vec<_>>();
+        assert!(!old_items.is_empty());
 
         f.world
             .get_resource_mut::<AssetEditorCommands>()
@@ -1291,13 +1314,8 @@ mod tests {
             f.world.query::<&HostedApp, ()>().iter(&mut f.world).count(),
             0
         );
-        assert!(
-            f.world
-                .get_resource::<HierarchyState>()
-                .unwrap()
-                .rows()
-                .is_empty()
-        );
+        assert!(items(&f).is_empty());
+        assert!(old_items.iter().all(|item| !f.world.entity_is_valid(*item)));
         assert_eq!(
             *f.world.get_resource::<InspectorData>().unwrap(),
             InspectorData::default()
@@ -1448,14 +1466,25 @@ mod tests {
         assert!(!f.unsaved(document));
 
         f.signal(EntityEdit::Create { parent: Some(root) });
-        let created = f.selected(document);
-        assert_ne!(created, Some(root));
-        assert_eq!(
+        let created = f.selected(document).expect("the new entity is selected");
+        assert_ne!(created, root);
+        f.frame();
+        f.frame();
+
+        let item = items(&f)[&created];
+        assert!(
             f.world
-                .get_resource::<HierarchyState>()
-                .unwrap()
-                .pending_scene_reveal(),
-            created
+                .get_component_for_entity::<UISelected>(item)
+                .is_some()
+        );
+        assert!(
+            f.world
+                .get_component_for_entity::<UIItem>(item)
+                .is_some_and(UIItem::is_shown)
+        );
+        assert!(
+            f.world.get_component_for_entity::<UICulled>(item).is_none(),
+            "the revealed row is scrolled into the visible rows"
         );
         assert!(f.unsaved(document));
     }
@@ -1481,15 +1510,29 @@ mod tests {
                 .pending_scene_reveal(),
             None
         );
+
+        f.activate(Some(document));
+        f.frame();
+        f.frame();
+        assert!(!items(&f).is_empty());
+        assert!(
+            expansions(&f).iter().all(|(_, expanded)| !expanded),
+            "no reveal reached the tree"
+        );
     }
 
     #[test]
     fn a_delivery_with_nothing_reported_leaves_the_document_and_the_tree_unchanged() {
         let mut f = SceneFixture::new();
         let document = f.open();
+        let root = items(&f)[&f.scene_root(document)];
+        f.world
+            .get_component_for_entity_mut::<UITreeElement>(root)
+            .unwrap()
+            .expanded = true;
+        let before = (items(&f), expansions(&f));
         f.world.tick();
         let since = f.world.current_tick();
-        let tree = f.world.resource_changed_tick::<HierarchyState>();
         f.world.tick();
 
         f.deliver();
@@ -1499,7 +1542,7 @@ mod tests {
             std::any::TypeId::of::<EditorDocument>(),
             since
         ));
-        assert_eq!(f.world.resource_changed_tick::<HierarchyState>(), tree);
+        assert_eq!((items(&f), expansions(&f)), before);
     }
 
     #[test]

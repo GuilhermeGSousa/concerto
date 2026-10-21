@@ -193,8 +193,19 @@ Cancel. Escape cancels.
 The scene root shown in the hierarchy is the editor's wrapper around the scene,
 not part of it, so the inspector shows nothing for it.
 
-The scene hierarchy supports selection, filtering, expansion, and keyboard
-navigation. Right-click a row to add a child, duplicate, rename, or delete it;
+The scene hierarchy is a `UITree` with one item per listed entity, nested as the
+scene is. It supports selection, filtering, expansion, and keyboard navigation.
+The navigation keys are the UI crate's list and tree actions and work while
+focus is on a row: Up and Down move the selection, Home and End jump to the
+first and last row, Right expands a row or steps into it, Left collapses it or
+steps out to its parent. While the search field holds text, every row whose
+name does not contain it, ignoring case, is hidden, the path to each match stays
+open, and clearing the field restores the expansion as it was. When an edit or
+a click in the viewport selects an entity, the hierarchy expands its ancestors
+and scrolls its row into view, also for an entity created that frame. The title
+counts every listed entity, collapsed and hidden ones included, and the footer
+reads "Loading…" while a scene loads.
+Right-click a row to add a child, duplicate, rename, or delete it;
 the `+` in the panel header adds a child to the selection, or to the scene when
 nothing is selected. Delete removes the selected entity and its descendants,
 Ctrl+D duplicates it beside itself, and F2 edits its name in the field at the
