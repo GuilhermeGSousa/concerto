@@ -1660,6 +1660,18 @@ mod tests {
         assert!(changed.is_empty(), "{changed:?}");
 
         let node = f.node;
+        let item = f.hierarchy_item(node);
+        for text in [item.label, item.count] {
+            f.scene
+                .world
+                .get_component_for_entity_mut::<UIText>(text)
+                .unwrap()
+                .text = "probe".into();
+        }
+        f.reconcile_content();
+        assert_eq!(f.label_of(node), "probe");
+        assert_eq!(f.count_of(node), "probe");
+
         *f.scene
             .scene_world_mut(f.document)
             .get_component_for_entity_mut::<Name>(node)

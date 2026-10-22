@@ -1,6 +1,6 @@
 use super::{ReadOnlySystemInput, SystemInput, ValidationError};
 use crate::{
-    component::{Component, ComponentId, SystemTicks, Tick},
+    component::{Component, ComponentId, SystemTicks},
     entity::{Entity, EntityStructuralVersion},
     system::{access::SystemAccess, meta::SystemMetadata},
     world::{UnsafeWorldCell, World},
@@ -48,21 +48,7 @@ impl<'w> ComponentMetadata<'w> {
         self.read().get_component_for_entity::<T>(entity)
     }
 
-    /// See [`World::change_tick`].
-    pub fn change_tick(&self) -> Tick {
-        self.read().change_tick()
-    }
-
-    pub fn has_component_changed_since(
-        &self,
-        entity: Entity,
-        id: ComponentId,
-        since: Tick,
-    ) -> bool {
-        self.read().has_component_changed_since(entity, id, since)
-    }
-
-    /// Whether `entity`'s component `id` was added or written since the reading system last ran.
+    /// Whether `entity`'s component `id` was added or written since the reading system last ran, or, from [`new`](Self::new), since the last [`World::tick`].
     pub fn is_component_changed(&self, entity: Entity, id: ComponentId) -> bool {
         self.read().was_component_changed_in(entity, id, self.ticks)
     }
@@ -99,7 +85,6 @@ mod tests {
     fn component_reader_tracks_values_membership_and_stale_entities() {
         let mut world = World::default();
         let entity = world.spawn(Value(1));
-        let since = world.change_tick();
         let mut read = (move |components: ComponentMetadata| {
             assert!(components.entity_is_valid(entity));
             assert!(
@@ -108,11 +93,7 @@ mod tests {
                     .contains(&ComponentId::of::<Value>())
             );
             assert_eq!(components.get::<Value>(entity).unwrap().0, 2);
-            assert!(components.has_component_changed_since(
-                entity,
-                ComponentId::of::<Value>(),
-                since
-            ));
+            assert!(components.is_component_changed(entity, ComponentId::of::<Value>()));
         })
         .into_system();
         read.initialize(&mut world);
@@ -123,6 +104,14 @@ mod tests {
             .0 = 2;
         world.tick();
         read.run_and_apply((), &mut world);
+        world.tick();
+        let value = ComponentId::of::<Value>();
+        assert!(!ComponentMetadata::new(&world).is_component_changed(entity, value));
+        world
+            .get_component_for_entity_mut::<Value>(entity)
+            .unwrap()
+            .0 = 3;
+        assert!(ComponentMetadata::new(&world).is_component_changed(entity, value));
         world.despawn(entity);
         let components = ComponentMetadata::new(&world);
         assert!(!components.entity_is_valid(entity));
