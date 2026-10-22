@@ -739,6 +739,7 @@ mod tests {
         IntoSystem, System, World,
         events::event_channel::EventChannel,
         query::filter::{Changed, Or, With},
+        system::BoxedSystem,
     };
     use concerto_foundation::transform::Transform;
     use concerto_ui::{
@@ -753,6 +754,44 @@ mod tests {
         document: Entity,
         root: Entity,
         node: Entity,
+        systems: Systems,
+    }
+
+    struct Systems {
+        structure: BoxedSystem,
+        filter: BoxedSystem,
+        place: BoxedSystem,
+        content: BoxedSystem,
+        menu: BoxedSystem,
+        header: BoxedSystem,
+    }
+
+    impl Systems {
+        fn new(world: &mut World) -> Self {
+            let mut systems = Self {
+                structure: reconcile_structure.into_boxed_system(),
+                filter: filter_items.into_boxed_system(),
+                place: update_trees_system(),
+                content: reconcile_content.into_boxed_system(),
+                menu: sync_row_menu_items.into_boxed_system(),
+                header: show_header.into_boxed_system(),
+            };
+            for system in systems.all() {
+                system.initialize(world);
+            }
+            systems
+        }
+
+        fn all(&mut self) -> [&mut BoxedSystem; 6] {
+            [
+                &mut self.structure,
+                &mut self.filter,
+                &mut self.place,
+                &mut self.content,
+                &mut self.menu,
+                &mut self.header,
+            ]
+        }
     }
 
     static RECORDS: std::sync::Mutex<Vec<(std::thread::ThreadId, String)>> =
@@ -800,12 +839,6 @@ mod tests {
         system.run_and_apply((), world);
     }
 
-    fn place(world: &mut World) {
-        let mut system = update_trees_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
-
     fn fixture() -> Fixture {
         let mut scene = SceneFixture::new();
         scene.world.insert_resource(FocusNameField::default());
@@ -817,11 +850,13 @@ mod tests {
         let node = scene.scene_entity(document, "first");
         let second = scene.scene_entity(document, "second");
         scene.scene_world_mut(document).despawn(second);
+        let systems = Systems::new(&mut scene.world);
         let mut fixture = Fixture {
             scene,
             document,
             root,
             node,
+            systems,
         };
         fixture.refresh();
         fixture
@@ -829,12 +864,22 @@ mod tests {
 
     impl Fixture {
         fn refresh(&mut self) {
-            run(&mut self.scene.world, reconcile_structure);
-            run(&mut self.scene.world, filter_items);
-            place(&mut self.scene.world);
-            run(&mut self.scene.world, reconcile_content);
-            run(&mut self.scene.world, sync_row_menu_items);
-            run(&mut self.scene.world, show_header);
+            for system in self.systems.all() {
+                system.run_and_apply((), &mut self.scene.world);
+            }
+        }
+        fn reconcile_structure(&mut self) {
+            self.systems
+                .structure
+                .run_and_apply((), &mut self.scene.world);
+        }
+        fn place(&mut self) {
+            self.systems.place.run_and_apply((), &mut self.scene.world);
+        }
+        fn reconcile_content(&mut self) {
+            self.systems
+                .content
+                .run_and_apply((), &mut self.scene.world);
         }
         fn state(&self) -> &HierarchyState {
             self.scene.world.get_resource::<HierarchyState>().unwrap()
@@ -1301,7 +1346,7 @@ mod tests {
         let created = f.spawn_under(f.node, "late");
         f.state_mut().reveal_entity(created);
 
-        run(&mut f.scene.world, reconcile_structure);
+        f.reconcile_structure();
 
         assert!(f.state().items.contains_key(&created));
         assert_eq!(
@@ -1311,9 +1356,9 @@ mod tests {
         );
         assert!(!f.expanded(f.root));
 
-        place(&mut f.scene.world);
-        run(&mut f.scene.world, reconcile_structure);
-        place(&mut f.scene.world);
+        f.place();
+        f.reconcile_structure();
+        f.place();
 
         assert_eq!(f.state().pending_scene_reveal, None);
         assert!(f.expanded(f.root));
@@ -1475,7 +1520,7 @@ mod tests {
         assert!(!f.ui_selected(f.node));
         f.select(f.node);
 
-        run(&mut f.scene.world, reconcile_content);
+        f.reconcile_content();
 
         assert!(f.ui_selected(f.node));
         assert_eq!(
@@ -1560,7 +1605,7 @@ mod tests {
         f.refresh();
         f.scene.world.tick();
 
-        run(&mut f.scene.world, reconcile_content);
+        f.reconcile_content();
 
         let marks: HashSet<Entity> = f
             .scene

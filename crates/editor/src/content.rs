@@ -616,12 +616,6 @@ mod tests {
         system.run_and_apply((), world);
     }
 
-    fn place(world: &mut World) {
-        let mut system = update_trees_system();
-        system.initialize(world);
-        system.run_and_apply((), world);
-    }
-
     fn build(mut cmd: CommandQueue, theme: Res<UITheme>) {
         let body = cmd.spawn(UINode::default()).entity();
         spawn_panel(&mut cmd, body, &theme);
@@ -633,6 +627,7 @@ mod tests {
 
     struct Fixture {
         world: World,
+        systems: [concerto_ecs::system::BoxedSystem; 4],
     }
 
     fn fixture(assets: &[(&str, &str)]) -> Fixture {
@@ -662,7 +657,16 @@ mod tests {
         concerto_ui::items::install_listeners(&mut world);
         concerto_ui::tree::install_listeners(&mut world);
         run(&mut world, build);
-        let mut fixture = Fixture { world };
+        let mut systems = [
+            update_filter.into_boxed_system(),
+            reconcile_content_tree.into_boxed_system(),
+            update_trees_system(),
+            sync_content_items.into_boxed_system(),
+        ];
+        for system in &mut systems {
+            system.initialize(&mut world);
+        }
+        let mut fixture = Fixture { world, systems };
         fixture.refresh();
         fixture
     }
@@ -679,11 +683,14 @@ mod tests {
     }
 
     impl Fixture {
+        fn update(&mut self) {
+            for system in &mut self.systems {
+                system.run_and_apply((), &mut self.world);
+            }
+        }
+
         fn refresh(&mut self) {
-            run(&mut self.world, update_filter);
-            run(&mut self.world, reconcile_content_tree);
-            place(&mut self.world);
-            run(&mut self.world, sync_content_items);
+            self.update();
             self.world.tick();
         }
 
@@ -1024,6 +1031,30 @@ mod tests {
     }
 
     #[test]
+    fn a_chip_write_applied_after_the_reconcile_is_reconciled_next_run() {
+        let mut f = nested();
+        let mut reconcile = reconcile_content_tree.into_system();
+        reconcile.initialize(&mut f.world);
+        reconcile.run_and_apply((), &mut f.world);
+        assert!(!f.filtering());
+
+        let mesh_chip = f.chip(2);
+        f.world.trigger_on(
+            mesh_chip,
+            UIClick {
+                position: Vec2::ZERO,
+                button: MouseButton::Left,
+            },
+        );
+        f.world.tick();
+        reconcile.run_and_apply((), &mut f.world);
+
+        assert!(f.filtering());
+        let a = f.asset_item("content/forest/a.gasset");
+        assert!(f.hidden(a));
+    }
+
+    #[test]
     fn selecting_an_item_selects_the_asset() {
         let mut f = fixture(&[
             ("content/level.gasset", "Scene"),
@@ -1181,9 +1212,7 @@ mod tests {
         f.click(level_item);
         f.refresh();
 
-        run(&mut f.world, reconcile_content_tree);
-        place(&mut f.world);
-        run(&mut f.world, sync_content_items);
+        f.update();
 
         let marks: HashSet<Entity> = f
             .world

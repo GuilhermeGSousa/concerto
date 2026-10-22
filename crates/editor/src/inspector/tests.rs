@@ -10,8 +10,8 @@ use concerto_ecs::{
 };
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{GetTypeRegistration, ReflectDefault};
-use concerto_ui::text::UIText;
-use glam::Vec3;
+use concerto_ui::{node::UIBox, text::UIText};
+use glam::{Vec2, Vec3};
 
 struct Inspecting {
     f: SceneFixture,
@@ -148,6 +148,65 @@ fn alternating_selections_keep_showing_their_properties() {
             "the card body for {target:?} is hidden, so its properties cannot be edited"
         );
     }
+}
+
+fn layout(height: f32) -> UILayout {
+    let rect = UIBox {
+        min: Vec2::ZERO,
+        size: Vec2::new(200.0, height),
+    };
+    UILayout {
+        rect,
+        content_rect: rect,
+        clip_rect: rect,
+        paint_order: 0,
+    }
+}
+
+#[test]
+fn a_scrolled_inspector_keeps_its_offset_across_runs() {
+    let (mut w, _, stack) = inspecting();
+    let other = w.scene().spawn(Transform::IDENTITY);
+    w.f.world.insert(layout(1000.0), stack);
+    let view = w.f.world.spawn((
+        DetailsView,
+        UIScrollArea {
+            content: Some(stack),
+            ..Default::default()
+        },
+        layout(100.0),
+    ));
+    let mut collect = collect_inspector_data.into_system();
+    let mut scroll = sync_inspector_scroll.into_system();
+    collect.initialize(&mut w.f.world);
+    scroll.initialize(&mut w.f.world);
+    let mut frame = |w: &mut Inspecting| {
+        collect.run_and_apply((), &mut w.f.world);
+        scroll.run_and_apply((), &mut w.f.world);
+        w.tick();
+    };
+    let offset = |w: &Inspecting| {
+        w.f.world
+            .get_component_for_entity::<UIScrollArea>(view)
+            .unwrap()
+            .offset
+    };
+    let scroll_and_hold = |w: &mut Inspecting, frame: &mut dyn FnMut(&mut Inspecting)| {
+        w.f.world
+            .get_component_for_entity_mut::<UIScrollArea>(view)
+            .unwrap()
+            .offset = 300.0;
+        frame(w);
+        frame(w);
+        assert_eq!(offset(w), 300.0);
+    };
+    frame(&mut w);
+    scroll_and_hold(&mut w, &mut frame);
+
+    w.select(Some(other));
+    frame(&mut w);
+    assert_eq!(offset(&w), 0.0);
+    scroll_and_hold(&mut w, &mut frame);
 }
 
 fn cards(world: &mut World) -> Vec<(Entity, InspectedComponent)> {
