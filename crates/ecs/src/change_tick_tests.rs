@@ -684,3 +684,80 @@ fn foreign_ticks_commit_only_when_asked_and_clamp_an_old_last_run() {
     let late = ticks.begin(&world);
     assert_eq!(*late.this_run.relative_to(late.last_run), MAX_CHANGE_AGE);
 }
+
+#[derive(Resource, Default)]
+struct ResLog(Vec<(bool, bool)>);
+
+fn log_mut(values: Query<&mut Value>, mut log: ResMut<RefLog>) {
+    for value in values.iter() {
+        log.0.push((value.is_added(), value.is_changed()));
+    }
+}
+
+#[test]
+fn mut_tells_added_from_changed() {
+    let mut world = World::new();
+    let entity = world.spawn(Value(0));
+    world.insert_resource(RefLog::default());
+    let mut system = log_mut.into_system();
+    system.initialize(&mut world);
+
+    system.run_and_apply((), &mut world);
+    system.run_and_apply((), &mut world);
+    world
+        .get_component_for_entity_mut::<Value>(entity)
+        .unwrap()
+        .0 = 1;
+    system.run_and_apply((), &mut world);
+
+    assert_eq!(
+        world.get_resource::<RefLog>().unwrap().0,
+        [(true, true), (false, false), (false, true)]
+    );
+}
+
+fn log_res_mut(level: ResMut<Level>, mut log: ResMut<ResLog>) {
+    log.0.push((level.is_added(), level.is_changed()));
+}
+
+#[test]
+fn res_mut_tells_added_from_changed() {
+    let mut world = World::new();
+    world.insert_resource(Level::default());
+    world.insert_resource(ResLog::default());
+    let mut system = log_res_mut.into_system();
+    system.initialize(&mut world);
+
+    system.run_and_apply((), &mut world);
+    system.run_and_apply((), &mut world);
+    world.get_resource_mut::<Level>().unwrap().0 = 1;
+    system.run_and_apply((), &mut world);
+
+    assert_eq!(
+        world.get_resource::<ResLog>().unwrap().0,
+        [(true, true), (false, false), (false, true)]
+    );
+}
+
+#[test]
+fn a_first_run_does_not_see_a_stamp_clamped_to_max_change_age() {
+    let mut world = World::new();
+    world.spawn(Value(0));
+    world.insert_resource(Level::default());
+    world.insert_resource(Seen::default());
+    world.insert_resource(Flags::default());
+    world.set_change_tick(Tick::new(*world.change_tick() + MAX_CHANGE_AGE + 10));
+    assert!(world.check_change_ticks().is_some());
+
+    let mut first = record_first_look.into_system();
+    first.initialize(&mut world);
+    first.run_and_apply((), &mut world);
+    assert_eq!(take_seen(&mut world), [0, 0]);
+    assert_eq!(take_flags(&mut world), [false]);
+
+    world.spawn(Value(1));
+    let mut fresh = record_first_look.into_system();
+    fresh.initialize(&mut world);
+    fresh.run_and_apply((), &mut world);
+    assert_eq!(take_seen(&mut world), [1, 1]);
+}
