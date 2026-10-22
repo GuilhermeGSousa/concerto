@@ -49,7 +49,7 @@ impl AssetEditor for DialogueEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
         let document = editor.entity();
         let widget = editor
-            .spawn_child_queue(DialogueWidget {
+            .spawn_child(DialogueWidget {
                 document,
                 text: String::new(),
             })

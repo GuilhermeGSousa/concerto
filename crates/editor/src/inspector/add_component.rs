@@ -91,7 +91,7 @@ fn menu_panel(row: Entity, search: Entity) -> UIAnchoredPanel {
 
 fn spawn_row(cmd: &mut CommandQueue, stack: Entity, theme: &UITheme) -> Entity {
     cmd.entity(stack)
-        .spawn_child_queue(
+        .spawn_child(
             theme
                 .pressable()
                 .bordered()
@@ -118,7 +118,7 @@ fn spawn_row(cmd: &mut CommandQueue, stack: Entity, theme: &UITheme) -> Entity {
 fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
     let mut menu = cmd.spawn(theme.popup().fill(MENU_FILL).width(UIValue::Px(MENU_WIDTH)));
 
-    let mut header = menu.spawn_child_queue(
+    let mut header = menu.spawn_child(
         theme
             .row()
             .fixed()
@@ -127,7 +127,7 @@ fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
     );
     header.add_child(theme.label("⌕").muted().font_size(12.5).no_wrap());
     let search = header
-        .spawn_child_queue((
+        .spawn_child((
             theme
                 .text_field("Search components…")
                 .bare()
@@ -142,7 +142,7 @@ fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
         ))
         .entity();
     let count = header
-        .spawn_child_queue(
+        .spawn_child(
             theme
                 .label("")
                 .muted()
@@ -155,7 +155,7 @@ fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
 
     menu.add_child(theme.divider());
     let list = menu
-        .spawn_child_queue(
+        .spawn_child(
             theme
                 .column()
                 .gap(1.0)
@@ -314,7 +314,7 @@ fn spawn_entry(
     theme: &UITheme,
 ) {
     let mut list = cmd.entity(list);
-    let mut row = list.spawn_child_queue((
+    let mut row = list.spawn_child((
         theme
             .pressable()
             .selected(highlighted)

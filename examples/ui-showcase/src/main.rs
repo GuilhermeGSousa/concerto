@@ -474,7 +474,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
     cmd.add_child(root, diagnostics);
 
     cmd.entity(body)
-        .spawn_child_queue(
+        .spawn_child(
             theme
                 .panel()
                 .radius(0.0)

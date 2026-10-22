@@ -109,7 +109,7 @@ fn build_controls(
 
     if let Some(body) = registry.body(PANEL_ID) {
         let mut body_queue = cmd.entity(body);
-        let mut bar = body_queue.spawn_child_queue(
+        let mut bar = body_queue.spawn_child(
             theme
                 .row()
                 .gap(2.0)

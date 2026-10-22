@@ -204,7 +204,7 @@ fn spawn_card(
     theme: &UITheme,
 ) -> (Entity, InspectedComponent) {
     let mut stack_queue = cmd.entity(stack);
-    let mut card_queue = stack_queue.spawn_child_queue(
+    let mut card_queue = stack_queue.spawn_child(
         theme
             .card()
             .column()
@@ -232,7 +232,7 @@ fn spawn_card(
         },
     );
 
-    let body = card_queue.spawn_child_queue(body_node(theme)).entity();
+    let body = card_queue.spawn_child(body_node(theme)).entity();
 
     let card = InspectedComponent {
         scene_entity: target,
@@ -258,7 +258,7 @@ fn spawn_row(
         label_for(&property.path)
     };
     let mut body_queue = cmd.entity(card.body);
-    let mut row_queue = body_queue.spawn_child_queue((
+    let mut row_queue = body_queue.spawn_child((
         theme.row().fixed().gap(theme.spacing_xs),
         target,
         property.value,

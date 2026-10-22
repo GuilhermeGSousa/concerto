@@ -47,7 +47,7 @@ pub(crate) fn create_editor_hosts(
                 };
                 let host = commands
                     .entity(parent.parent())
-                    .spawn_child_queue((surface.node(|_| node), EditorOwned(editor), Interactable))
+                    .spawn_child((surface.node(|_| node), EditorOwned(editor), Interactable))
                     .entity();
                 hosts[index] = Some(host);
             }

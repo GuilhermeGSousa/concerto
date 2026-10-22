@@ -92,7 +92,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity) -> Entity {
     cmd.entity(parent)
-        .spawn_child_queue((
+        .spawn_child((
             UINode::default()
                 .with_flex_grow(1.0)
                 .with_min_size(UIValue::Px(320.0), UIValue::Px(240.0)),

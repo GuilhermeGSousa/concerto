@@ -43,7 +43,7 @@ impl<'a> EntityCommandQueue<'a> {
     }
 
     /// Spawns a child of this entity and returns the child's command queue.
-    pub fn spawn_child_queue<T: IntoBundle<Bundle: 'static>>(
+    pub fn spawn_child<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
     ) -> EntityCommandQueue<'_> {

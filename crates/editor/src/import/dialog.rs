@@ -340,7 +340,7 @@ fn spawn_row(
             .fixed(),
     );
     let field = row
-        .spawn_child_queue((
+        .spawn_child((
             theme
                 .text_field("assets/…")
                 .single_line()

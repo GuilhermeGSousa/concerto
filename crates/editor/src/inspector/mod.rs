@@ -195,7 +195,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 ),
                 |mut view| {
                     let stack = view
-                        .spawn_child_queue((
+                        .spawn_child((
                             theme.column().fixed().gap(theme.spacing_xs + 2.0),
                             ComponentStack::default(),
                         ))

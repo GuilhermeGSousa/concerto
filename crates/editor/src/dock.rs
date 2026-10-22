@@ -207,7 +207,7 @@ fn spawn_region(cmd: &mut CommandQueue, root: Entity, region: Region, theme: &UI
             .with_gap(glam::Vec2::new(0.0, 8.0)),
     };
 
-    let entity = cmd.entity(root).spawn_child_queue(node.clipped()).entity();
+    let entity = cmd.entity(root).spawn_child(node.clipped()).entity();
     let _ = theme;
     entity
 }
@@ -223,7 +223,7 @@ fn fill_region(
     for panel in panels {
         let mut container_queue = cmd.entity(container);
         let mut body_queue = if region.is_card() {
-            container_queue.spawn_child_queue(
+            container_queue.spawn_child(
                 theme
                     .panel()
                     .grow()
@@ -232,7 +232,7 @@ fn fill_region(
                     .clipped(),
             )
         } else {
-            container_queue.spawn_child_queue(
+            container_queue.spawn_child(
                 UINode::default()
                     .with_flex_grow(1.0)
                     .with_flex_direction(FlexDirection::Column)
