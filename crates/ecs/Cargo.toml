@@ -17,8 +17,9 @@ crate-type = ["cdylib", "rlib"]
 profiling = "1"
 concerto-tasks = { workspace = true, optional = true }
 concerto-ecs-macros.workspace = true
+concerto-reflect.workspace = true
+concerto-asset-format.workspace = true
 any_vec = "0.14.0"
-anymap3 = "1.0.1"
 typle = "0.10.6"
 log = "0.4.27"
 petgraph = { version = "0.8" }
@@ -29,4 +30,3 @@ crossbeam-channel = "0.5.0"
 anyhow = "1.0.97"
 foldhash = { version = "0.2.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1.0"

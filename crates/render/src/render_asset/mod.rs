@@ -55,6 +55,10 @@ impl<A: RenderAsset + 'static> RenderAssets<A> {
         self.0.insert(id, asset);
     }
 
+    pub fn remove(&mut self, id: &AssetId) -> Option<A> {
+        self.0.remove(id)
+    }
+
     pub fn get(&self, id: &AssetId) -> Option<&A> {
         self.0.get(id)
     }

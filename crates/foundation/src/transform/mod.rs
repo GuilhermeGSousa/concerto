@@ -1,16 +1,16 @@
 use std::ops::Mul;
 
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto_ecs::component::{Component, ComponentLifecycleCallback};
-use concerto_ecs::entity::Entity;
-use concerto_editable::Editable;
+use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Affine3A, Mat4, Quat, Vec3};
 
 use crate::blend::Blendable;
 
 pub mod systems;
 
-#[derive(Clone, Blendable, Editable, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Blendable, Reflect, serde::Serialize, serde::Deserialize)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct Transform {
     pub translation: Vec3,
     pub rotation: Quat,
@@ -35,12 +35,6 @@ impl Component for Transform {
         Some(|mut world, context| {
             world.remove_component::<GlobalTransform>(context.entity);
         })
-    }
-}
-
-impl SceneComponent for Transform {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
     }
 }
 
@@ -285,9 +279,9 @@ pub struct GlobalTransformRaw {
 }
 
 #[cfg(test)]
-mod editable_tests {
+mod reflect_tests {
     use super::Transform;
-    use concerto_editable::{with_property, Editable, PropertyPath, PropertyVisitor};
+    use concerto_reflect::{with_property, PropertyPath, PropertyVisitor, Reflect};
     use glam::{Quat, Vec3};
     use std::any::{Any, TypeId};
 
@@ -295,7 +289,7 @@ mod editable_tests {
     fn transform_exposes_translation_rotation_and_scale() {
         struct Fields(Vec<(&'static str, TypeId)>);
         impl PropertyVisitor for Fields {
-            fn field(&mut self, name: &'static str, value: &dyn Editable) {
+            fn field(&mut self, name: &'static str, value: &dyn Reflect) {
                 self.0.push((name, (value as &dyn Any).type_id()));
             }
         }

@@ -9,6 +9,7 @@ struct WorldGridUniform {
     fade_start: f32,
     fade_end: f32,
     surface_color: vec4<f32>,
+    lit: f32,
 };
 
 struct CameraUniform {
@@ -162,7 +163,7 @@ fn fs_main(in: VertexOutput) -> FragOutput {
         light_accum += L.color.rgb * L.intensity * attenuation * NdotL;
     }
 
-    let light = clamp(light_accum, vec3<f32>(0.0), vec3<f32>(1.0));
+    let light = mix(vec3<f32>(1.0), clamp(light_accum, vec3<f32>(0.0), vec3<f32>(1.0)), grid.lit);
     let lit_line = line_color * light;
     let lit_surface = grid.surface_color.rgb * light;
 

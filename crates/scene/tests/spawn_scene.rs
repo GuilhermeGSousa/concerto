@@ -14,6 +14,7 @@ use concerto_foundation::assets::handle::AssetHandle;
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
+use concerto_reflect::{apply_value, to_value, ReflectedValue};
 use concerto_render::components::camera::Camera;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 use concerto_scene::spawner::{
@@ -34,14 +35,14 @@ fn transform_component(x: f32) -> SerializedComponent {
     transform.translation = Vec3::new(x, 0.0, 0.0);
     SerializedComponent {
         type_name: "Transform".to_string(),
-        data: serde_json::to_string(&transform).unwrap(),
+        value: to_value(&transform).unwrap(),
     }
 }
 
 fn mesh_component(id: AssetId) -> SerializedComponent {
     SerializedComponent {
         type_name: MeshComponent::name().to_string(),
-        data: serde_json::to_string(&MeshComponent {
+        value: to_value(&MeshComponent {
             handle: AssetHandle::weak(id),
         })
         .unwrap(),
@@ -71,15 +72,15 @@ fn spawn_fixture_scene(
 #[test]
 fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
-    world.register_component_type::<Camera>();
+    world.register_type::<Transform>();
+    world.register_type::<Camera>();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
 
     let parent = world.spawn(());
     let camera = SerializedComponent {
         type_name: Camera::name().to_string(),
-        data: serde_json::to_string(&Camera::default()).unwrap(),
+        value: to_value(&Camera::default()).unwrap(),
     };
     world.insert_resource(SceneFixture(Scene {
         nodes: vec![
@@ -94,7 +95,7 @@ fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
 
     let mut system = spawn_fixture_scene.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
 
     let output = world
         .get_resource::<SpawnOutput>()
@@ -130,7 +131,7 @@ fn reusable_spawn_returns_source_mapping_and_preserves_registered_components() {
 #[test]
 fn spawned_nodes_carry_their_authored_name() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
+    world.register_type::<Transform>();
 
     let parent = world.spawn(());
     world.insert_resource(SceneFixture(Scene {
@@ -145,7 +146,7 @@ fn spawned_nodes_carry_their_authored_name() {
 
     let mut system = spawn_fixture_scene.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
 
     let entities = world
         .get_resource::<SpawnOutput>()
@@ -202,8 +203,8 @@ fn scene_round_trips_through_bincode_with_component_payloads() {
         "component type names must survive"
     );
 
-    let transform: Transform =
-        serde_json::from_str(&decoded.nodes[1].components[0].data).expect("payload must parse");
+    let mut transform = Transform::IDENTITY;
+    assert!(apply_value(&mut transform, &decoded.nodes[1].components[0].value).is_empty());
     assert_eq!(
         transform.translation,
         Vec3::new(5.0, 0.0, 0.0),
@@ -214,14 +215,18 @@ fn scene_round_trips_through_bincode_with_component_payloads() {
 #[test]
 fn unregistered_component_is_skipped_without_failing_the_node() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
+    world.register_type::<Transform>();
     let entity = world.spawn(());
 
-    let applied_unknown =
-        world.apply_scene_component("NotARegisteredType", "{}", entity, &[entity]);
+    let applied_unknown = world.apply_scene_component(
+        "NotARegisteredType",
+        &ReflectedValue::Struct(Vec::new()),
+        entity,
+        &[entity],
+    );
     let applied_known = world.apply_scene_component(
         "Transform",
-        &serde_json::to_string(&Transform::IDENTITY).unwrap(),
+        &to_value(&Transform::IDENTITY).unwrap(),
         entity,
         &[entity],
     );
@@ -242,14 +247,15 @@ fn unregistered_component_is_skipped_without_failing_the_node() {
 #[test]
 fn spawner_expands_nodes_and_upgrades_weak_handles() {
     let mut world = World::default();
-    world.register_component_type::<Transform>();
-    world.register_component_type::<MeshComponent>();
+    world.register_type::<Transform>();
+    world.register_type::<MeshComponent>();
+    world.register_type::<AssetHandle<Mesh>>();
     world.register_component::<SceneSpawnerComponent>();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
 
     // A wired AssetServer with the Mesh lifetime sender registered lets
-    // `MeshComponent::apply` upgrade a serialized Weak handle to Strong exactly
+    // the handle's scene type data upgrade a serialized Weak handle to Strong exactly
     // as it does at runtime, instead of degrading gracefully.
     let mesh_store = AssetStore::<Mesh>::new();
     let mut asset_server = AssetServer::new();
@@ -278,7 +284,7 @@ fn spawner_expands_nodes_and_upgrades_weak_handles() {
 
     let mut system = spawn_scene_components.into_system();
     system.initialize(&mut world);
-    system.run_and_apply(&mut world);
+    system.run_and_apply((), &mut world);
 
     assert!(
         world

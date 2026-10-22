@@ -18,7 +18,40 @@ pub struct AssetEntry {
     pub kind: String,
     pub display_name: String,
     pub folder: String,
-    pub provenance: ImportProvenance,
+    /// `None` for an asset authored in the editor rather than produced by `import`.
+    pub provenance: Option<ImportProvenance>,
+}
+
+impl AssetEntry {
+    /// Builds an entry whose display name and folder come from its project-relative `address`.
+    pub fn from_address(
+        id: AssetId,
+        address: &str,
+        kind: String,
+        provenance: Option<ImportProvenance>,
+    ) -> Self {
+        let path = Path::new(address);
+        let display_name = path
+            .file_stem()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_else(|| address.to_owned());
+        let folder = path
+            .parent()
+            .map(|value| value.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        Self {
+            id,
+            address: address.to_owned(),
+            kind,
+            display_name,
+            folder,
+            provenance,
+        }
+    }
+
+    fn sort_key(&self) -> (&String, &String, &String, &String) {
+        (&self.folder, &self.display_name, &self.kind, &self.address)
+    }
 }
 
 #[derive(Debug)]
@@ -26,11 +59,23 @@ pub struct Project {
     pub root: PathBuf,
     pub assets: Vec<AssetEntry>,
     pub registry: AssetRegistry,
+    /// The project-relative folder the catalogue is read from, `content` unless `content.toml` names another.
+    pub content_root: String,
 }
 
 impl Project {
     pub fn scenes(&self) -> impl Iterator<Item = &AssetEntry> {
         self.assets.iter().filter(|asset| asset.kind == "Scene")
+    }
+
+    /// Adds `entry` to the catalogue and registry, replacing any entry with the same id.
+    pub fn insert(&mut self, entry: AssetEntry) {
+        self.registry.insert(entry.id, entry.address.clone());
+        self.assets.retain(|asset| asset.id != entry.id);
+        let at = self
+            .assets
+            .partition_point(|asset| asset.sort_key() < entry.sort_key());
+        self.assets.insert(at, entry);
     }
 
     pub fn filtered_assets<'a>(
@@ -103,45 +148,26 @@ pub fn discover_project(root: &Path) -> anyhow::Result<Project> {
     let mut assets = Vec::new();
     for (id, address) in registry.iter() {
         let header = read_content_asset_header(&root.join(address))?;
-        let Some(provenance) = header.provenance else {
-            continue;
-        };
-        let path = Path::new(address);
-        let display_name = path
-            .file_stem()
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_else(|| address.to_owned());
-        let folder = path
-            .parent()
-            .map(|value| value.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_default();
-        assets.push(AssetEntry {
+        assets.push(AssetEntry::from_address(
             id,
-            address: address.to_owned(),
-            kind: header.kind,
-            display_name,
-            folder,
-            provenance,
-        });
+            address,
+            header.kind,
+            header.provenance,
+        ));
     }
-    assets.sort_by(|a, b| {
-        (&a.folder, &a.display_name, &a.kind, &a.address).cmp(&(
-            &b.folder,
-            &b.display_name,
-            &b.kind,
-            &b.address,
-        ))
-    });
+    assets.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
     Ok(Project {
         root,
         assets,
         registry,
+        content_root: config.root,
     })
 }
 
 pub enum EditorCommand {
     OpenProject(PathBuf),
     OpenAsset(AssetId),
+    RefreshCatalogue,
 }
 
 #[derive(Resource, Default)]
@@ -151,7 +177,6 @@ pub struct EditorCommands(pub VecDeque<EditorCommand>);
 pub struct ProjectState {
     pub project: Option<Project>,
     pub status: String,
-    pub generation: u64,
     job: Option<JoinHandle<Result<Option<Project>, String>>>,
 }
 
@@ -160,7 +185,6 @@ impl Default for ProjectState {
         Self {
             project: None,
             status: "Choose a project folder to get started.".into(),
-            generation: 0,
             job: None,
         }
     }
@@ -169,6 +193,14 @@ impl Default for ProjectState {
 impl ProjectState {
     pub fn busy(&self) -> bool {
         self.job.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn begin_job_for_test(&mut self, release: std::sync::mpsc::Receiver<()>) {
+        self.job = Some(std::thread::spawn(move || {
+            let _ = release.recv();
+            Ok(None)
+        }));
     }
 }
 
@@ -183,7 +215,17 @@ fn process_commands(
     mut commands: ResMut<EditorCommands>,
     mut state: ResMut<ProjectState>,
     mut documents: ResMut<crate::asset_editor::AssetEditorCommands>,
+    mut guard: ResMut<crate::guard::UnsavedGuard>,
+    open_documents: concerto_ecs::Query<
+        concerto_ecs::Entity,
+        (
+            concerto_ecs::query::filter::With<crate::asset_editor::EditorDocument>,
+            concerto_ecs::query::filter::With<crate::asset_editor::Unsaved>,
+        ),
+    >,
     asset_server: concerto_ecs::Res<AssetServer>,
+    states: concerto_ecs::Query<(concerto_ecs::Entity, &crate::hosted::PlayState)>,
+    mut cmd: concerto_ecs::command::CommandQueue,
 ) {
     if state.job.as_ref().is_some_and(|j| j.is_finished()) {
         let result = state
@@ -201,13 +243,13 @@ fn process_commands(
                     return;
                 }
                 state.status = format!(
-                    "{} imported assets · {} scenes · {}",
+                    "{} assets · {} scenes · {}",
                     project.assets.len(),
                     project.scenes().count(),
                     project.root.display()
                 );
                 state.project = Some(project);
-                state.generation += 1;
+                cmd.trigger(crate::scene::PublishToHosted);
                 documents
                     .0
                     .push_back(crate::asset_editor::AssetEditorCommand::CloseAll);
@@ -229,13 +271,37 @@ fn process_commands(
                 {
                     documents
                         .0
-                        .push_back(crate::asset_editor::AssetEditorCommand::Open {
-                            asset: asset.clone(),
-                            project_generation: state.generation,
-                        });
+                        .push_back(crate::asset_editor::AssetEditorCommand::Open(asset.clone()));
+                }
+            }
+            EditorCommand::RefreshCatalogue => {
+                let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
+                    continue;
+                };
+                match discover_project(&root) {
+                    Ok(project) => {
+                        if let Err(error) = asset_server
+                            .publish_project_content(&project.root, project.registry.clone())
+                        {
+                            state.status = format!("Could not refresh project assets: {error:#}");
+                            continue;
+                        }
+                        state.project = Some(project);
+                        cmd.trigger(crate::scene::PublishToHosted);
+                    }
+                    Err(error) => state.status = format!("Could not refresh catalogue: {error:#}"),
                 }
             }
             EditorCommand::OpenProject(path) => {
+                crate::guard::stop_every_game(&states, &mut cmd);
+                let dirty = crate::guard::dirty_documents(&open_documents);
+                if !dirty.is_empty() {
+                    guard.hold(
+                        crate::guard::GuardedIntent::Project(EditorCommand::OpenProject(path)),
+                        dirty,
+                    );
+                    continue;
+                }
                 state.status = "Opening project…".into();
                 state.job = Some(std::thread::spawn(move || {
                     discover_project(&path)
@@ -254,7 +320,7 @@ mod tests {
         CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset,
     };
     #[test]
-    fn discovers_only_scenes_without_writing_registry() {
+    fn discovers_imported_and_authored_assets_without_writing_registry() {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(discover_project(dir.path()).unwrap().scenes().count(), 0);
         std::fs::create_dir(dir.path().join("content")).unwrap();
@@ -281,14 +347,51 @@ mod tests {
             .unwrap();
         }
         let project = discover_project(dir.path()).unwrap();
-        assert_eq!(project.assets.len(), 2);
-        assert_eq!(project.scenes().next().unwrap().id, id);
+        assert_eq!(project.assets.len(), 3);
+        let scenes: Vec<_> = project.scenes().collect();
+        assert_eq!(scenes.len(), 2);
+        assert_eq!(scenes[0].display_name, "authored");
+        assert!(scenes[0].provenance.is_none());
+        assert_eq!(scenes[1].id, id);
+        assert!(scenes[1].provenance.is_some());
         assert_eq!(project.assets[0].folder, "content");
         assert_eq!(project.filtered_assets("mesh", None, None).len(), 1);
-        assert_eq!(project.filtered_assets("", None, Some("Scene")).len(), 1);
+        assert_eq!(project.filtered_assets("", None, Some("Scene")).len(), 2);
         assert_eq!(project.filtered_assets("", Some("missing"), None).len(), 0);
         assert!(!dir.path().join("content/.registry.toml").exists());
     }
+
+    #[test]
+    fn inserting_keeps_the_catalogue_sorted_and_replaces_by_id() {
+        let mut project = Project {
+            root: PathBuf::new(),
+            assets: vec![],
+            registry: AssetRegistry::default(),
+            content_root: "content".into(),
+        };
+        let id = AssetId::new();
+        for (id, address) in [
+            (AssetId::new(), "content/b.gasset"),
+            (id, "content/c.gasset"),
+            (AssetId::new(), "content/a.gasset"),
+            (id, "content/a/renamed.gasset"),
+        ] {
+            project.insert(AssetEntry::from_address(id, address, "Scene".into(), None));
+        }
+        let addresses: Vec<_> = project.assets.iter().map(|a| a.address.as_str()).collect();
+        assert_eq!(
+            addresses,
+            [
+                "content/a.gasset",
+                "content/b.gasset",
+                "content/a/renamed.gasset"
+            ]
+        );
+        assert_eq!(project.registry.get(id), Some("content/a/renamed.gasset"));
+        assert_eq!(project.assets[2].display_name, "renamed");
+        assert_eq!(project.assets[2].folder, "content/a");
+    }
+
     #[test]
     fn rejects_non_directory_and_corrupt_content() {
         let dir = tempfile::tempdir().unwrap();
@@ -297,5 +400,77 @@ mod tests {
         std::fs::write(&path, b"invalid").unwrap();
         assert!(discover_project(&path).is_err());
         assert!(discover_project(dir.path()).is_err());
+    }
+
+    #[test]
+    fn opening_a_project_is_held_only_while_a_document_is_unsaved() {
+        use crate::asset_editor::{AssetEditorCommands, EditorDocument, Unsaved};
+        use crate::guard::UnsavedGuard;
+        use concerto_ecs::{IntoSystem, System, World};
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut world = World::new();
+        world.insert_resource(EditorCommands::default());
+        world.insert_resource(ProjectState::default());
+        world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(UnsavedGuard::default());
+        world.insert_resource(AssetServer::new());
+        let document = world.spawn(EditorDocument {
+            asset_type: "Scene",
+            title: "level".into(),
+            current: None,
+            pending: None,
+            order: 0,
+            status: String::new(),
+        });
+        world.insert(Unsaved, document);
+        let mut system = process_commands.into_system();
+        system.initialize(&mut world);
+        let mut open = |world: &mut World| {
+            world
+                .get_resource_mut::<EditorCommands>()
+                .unwrap()
+                .0
+                .push_back(EditorCommand::OpenProject(dir.path().into()));
+            system.run_and_apply((), world);
+        };
+
+        open(&mut world);
+        assert_eq!(
+            world.get_resource::<UnsavedGuard>().unwrap().documents(),
+            [document]
+        );
+        assert!(!world.get_resource::<ProjectState>().unwrap().busy());
+
+        world.remove_component::<Unsaved>(document);
+        world.insert_resource(UnsavedGuard::default());
+        open(&mut world);
+        assert!(!world.get_resource::<UnsavedGuard>().unwrap().asking());
+        assert!(world.get_resource::<ProjectState>().unwrap().busy());
+    }
+
+    #[test]
+    fn opening_a_project_while_playing_stops_the_game_first() {
+        use crate::hosted::{PlayState, testing::SceneFixture};
+        use concerto_ecs::{IntoSystem, System};
+
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        f.world.trigger(crate::scene::Play(document));
+        f.frames_until_playing(document);
+        f.world.insert_resource(EditorCommands::default());
+        f.world.insert_resource(AssetServer::new());
+        f.world
+            .get_resource_mut::<EditorCommands>()
+            .unwrap()
+            .0
+            .push_back(EditorCommand::OpenProject(f.project_root.clone()));
+        let mut system = process_commands.into_system();
+        system.initialize(&mut f.world);
+
+        system.run_and_apply((), &mut f.world);
+
+        assert_eq!(f.play_state(document), Some(PlayState::Editing));
+        assert!(f.hosted_is_editing(document));
     }
 }

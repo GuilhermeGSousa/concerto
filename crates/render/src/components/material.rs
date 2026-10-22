@@ -1,23 +1,25 @@
 use std::marker::PhantomData;
 
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
 use concerto_ecs::component::Component;
-use concerto_ecs::Entity;
-use concerto_foundation::assets::{
-    asset_server::AssetServer, handle::AssetHandle, AssetId, LoadableAsset,
-};
-use serde::{Deserialize, Serialize};
+use concerto_ecs::reflect::ReflectSceneComponent;
+use concerto_foundation::assets::{handle::AssetHandle, AssetId};
+use concerto_reflect::Reflect;
 
 use crate::{assets::material::StandardMaterial, Material};
 
 /// Which material each of a mesh's primitive slots draws with.
-#[derive(Serialize, Deserialize, Clone)]
-#[serde(bound = "")]
+#[derive(Reflect, Clone)]
 pub enum SlotBinding<M: Material + Send + Sync + 'static = StandardMaterial> {
     /// One material for every slot, however many the mesh turns out to have.
     All(AssetHandle<M>),
     /// One entry per slot; `None` leaves the slot uncovered.
     PerSlot(Vec<Option<AssetHandle<M>>>),
+}
+
+impl<M: Material + Send + Sync + 'static> Default for SlotBinding<M> {
+    fn default() -> Self {
+        SlotBinding::All(AssetHandle::default())
+    }
 }
 
 impl<M: Material + Send + Sync + 'static> SlotBinding<M> {
@@ -31,10 +33,18 @@ impl<M: Material + Send + Sync + 'static> SlotBinding<M> {
 }
 
 /// Which material each primitive of the entity's mesh draws with.
-#[derive(Component, Serialize, Deserialize)]
-#[serde(bound = "")]
+#[derive(Component, Reflect)]
+#[reflect(SceneComponent)]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {
     pub binding: SlotBinding<M>,
+}
+
+impl<M: Material + Send + Sync + 'static> Default for MaterialComponent<M> {
+    fn default() -> Self {
+        Self {
+            binding: SlotBinding::default(),
+        }
+    }
 }
 
 impl<M: Material + Send + Sync + 'static> MaterialComponent<M> {
@@ -50,22 +60,6 @@ impl<M: Material + Send + Sync + 'static> MaterialComponent<M> {
         Self {
             binding: SlotBinding::PerSlot(slots),
         }
-    }
-}
-
-impl<M: Material + LoadableAsset> SceneComponent for MaterialComponent<M> {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let Some(server) = ctx.get_resource::<AssetServer>() {
-            match &mut self.binding {
-                SlotBinding::All(handle) => *handle = server.load(handle.id()),
-                SlotBinding::PerSlot(slots) => {
-                    for handle in slots.iter_mut().flatten() {
-                        *handle = server.load(handle.id());
-                    }
-                }
-            }
-        }
-        ctx.insert(self, entity);
     }
 }
 

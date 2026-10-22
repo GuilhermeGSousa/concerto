@@ -14,6 +14,7 @@ use crate::{
         render_texture::{DummyRenderTexture, RenderTexture},
         AssetPreparationError, RenderAssets,
     },
+    shader::ShaderDefs,
 };
 
 use bitflags::bitflags;
@@ -26,6 +27,7 @@ use bitflags::bitflags;
 ///
 /// Pass [`ShaderRef::Default`] to use the engine's built-in PBR shader, or
 /// [`ShaderRef::Source`] to supply your own WGSL source string.
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShaderRef {
     /// Use the engine's built-in shader.
@@ -585,5 +587,13 @@ pub trait Material: AsBindGroup + Asset + Send + Sync + 'static {
         Self: Sized,
     {
         Some(wgpu::BlendState::REPLACE)
+    }
+
+    /// Adds shader defs on top of the platform defs. Defaults to none.
+    fn shader_defs(defs: &mut ShaderDefs)
+    where
+        Self: Sized,
+    {
+        let _ = defs;
     }
 }

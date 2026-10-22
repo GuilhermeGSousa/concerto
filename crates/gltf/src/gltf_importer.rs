@@ -14,25 +14,24 @@ use anyhow::{Context, bail};
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
 use concerto_color::Color;
-use concerto_ecs::component::scene::{SceneComponent, SceneEntityRef};
+use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
+use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
 use concerto_render::components::render_entity::SyncWithRenderWorld;
-use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
+use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Vec3};
-use gltf::{Node, Primitive, buffer::Data, json};
+use gltf::{Node, Primitive, buffer::Data};
 use image::ImageBuffer;
 use log::warn;
-use serde::Serialize;
-use serde_json::Value;
 use uuid::Uuid;
 
 // glTF (KHR_lights_punctual) stores light intensity in photometric units: lux
@@ -42,10 +41,6 @@ use uuid::Uuid;
 // exposure stage and lights at the radiometric (watt) scale, so we divide the
 // imported intensity by this factor to undo that conversion.
 const LUMINOUS_EFFICACY: f32 = 683.0;
-
-/// Key under a node's Blender `extras` object whose value is the map of
-/// `type_name -> component payload` the add-on writes.
-const EXTRAS_COMPONENTS_KEY: &str = "components";
 
 pub struct GltfImporter;
 
@@ -446,19 +441,10 @@ impl Importer for GltfImporter {
                         intensity: light.intensity() / LUMINOUS_EFFICACY,
                         shadowmaps_enabled: false,
                         light_type,
+                        range: light.range().unwrap_or(0.0),
                     },
                 )?;
                 push_node_component(&mut scene_node, &SyncWithRenderWorld)?;
-            }
-
-            // Blender extras written by the add-on under `components` pass
-            // through verbatim: the payload is already JSON, so it becomes a
-            // `SerializedComponent` without re-serialization.
-            for extra in parse_extras(gltf_node.extras()) {
-                scene_node.components.push(SerializedComponent {
-                    type_name: extra.name,
-                    data: extra.data,
-                });
             }
 
             nodes.push(scene_node);
@@ -514,12 +500,9 @@ impl Importer for GltfImporter {
     }
 }
 
-/// Serializes `component` onto `node`, mapping the serde failure into an
-/// `ImportError` tagged against the `scene` sub-asset.
-fn push_node_component<T: Serialize + SceneComponent>(
-    node: &mut SceneNode,
-    component: &T,
-) -> Result<(), ImportError> {
+/// Stores `component` onto `node`, mapping a failure into an `ImportError`
+/// tagged against the `scene` sub-asset.
+fn push_node_component<T: Reflect>(node: &mut SceneNode, component: &T) -> Result<(), ImportError> {
     node.push_component(component)
         .map_err(|err| ImportError::SerializationFailed {
             sub_asset_name: "scene".to_string(),
@@ -545,35 +528,6 @@ fn mesh_sub_asset_names(document: &gltf::Document) -> Vec<String> {
             format!("mesh/{name}")
         })
         .collect()
-}
-
-/// One `type_name -> payload` pair pulled out of a node's Blender `extras`.
-/// `data` is the component's JSON encoding, carried through untouched.
-struct ExtraComponentData {
-    name: String,
-    data: String,
-}
-
-/// Extracts the Blender add-on's `extras.components` map into
-/// [`ExtraComponentData`] entries. Anything else in `extras` — a missing
-/// block, a non-object, an absent `components` key — yields nothing. Values
-/// pass through verbatim; normalizing `{}` to `null` for unit-struct
-/// components is a runtime concern, not this importer's.
-fn parse_extras(extras: &json::Extras) -> Vec<ExtraComponentData> {
-    if let Some(extras) = extras
-        && let Ok(Value::Object(mut data)) = serde_json::from_str::<Value>(extras.get())
-        && let Some(Value::Object(component_data)) = data.remove(EXTRAS_COMPONENTS_KEY)
-    {
-        component_data
-            .into_iter()
-            .map(|(name, value)| ExtraComponentData {
-                name,
-                data: value.to_string(),
-            })
-            .collect()
-    } else {
-        Vec::new()
-    }
 }
 
 /// Resolves one glTF external resource `uri` against the source file's

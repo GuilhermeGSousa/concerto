@@ -1,10 +1,7 @@
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use concerto_ecs::{Component, Entity};
-use concerto_foundation::assets::{
-    asset_server::AssetServer, handle::AssetHandle, Asset, LoadableAsset,
-};
+use concerto_ecs::{reflect::ReflectSceneComponent, Component};
+use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_reflect::Reflect;
 use glam::{Mat4, Vec3};
-use serde::{Deserialize, Serialize};
 
 use crate::primitive::Primitive;
 use crate::vertex::Vertex;
@@ -96,16 +93,8 @@ impl Mesh {
     }
 }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, Reflect, Default)]
+#[reflect(SceneComponent)]
 pub struct MeshComponent {
     pub handle: AssetHandle<Mesh>,
-}
-
-impl SceneComponent for MeshComponent {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let Some(server) = ctx.get_resource::<AssetServer>() {
-            self.handle = server.load(self.handle.id());
-        }
-        ctx.insert(self, entity);
-    }
 }

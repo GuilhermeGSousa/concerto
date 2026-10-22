@@ -1,27 +1,26 @@
 use concerto_app::extractor::Extracted;
 use concerto_color::{Color, LinearRgba};
 use concerto_foundation::{
-    assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+    assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::GlobalTransform,
 };
 use encase::{ShaderType, UniformBuffer};
 
 use concerto_ecs::{
     command::CommandQueue,
-    component::scene::{SceneComponent, SceneSpawnContext},
     component::Component,
     query::Query,
-    resource::{Res, ResMut},
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    resource::{Res, ResMut, Resource},
     Entity,
 };
 use concerto_window::plugin::Window;
-use glam::{Mat4, Vec3};
-use serde::{Deserialize, Serialize};
+use glam::{Mat4, Vec3, Vec4};
 use wgpu::util::DeviceExt;
 
 use crate::{
     assets::texture::Texture,
-    components::render_entity::RenderEntity,
+    components::{camera_environment::CameraEnvironment, render_entity::RenderEntity},
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
@@ -40,8 +39,9 @@ pub const OPENGL_TO_WGPU_MATRIX: Mat4 = Mat4::from_cols_array(
 );
 
 #[allow(dead_code)]
-#[derive(Serialize, Deserialize)]
+#[derive(concerto_reflect::Reflect, Default)]
 pub enum RenderTarget {
+    #[default]
     MainWindow,
     Texture(AssetHandle<Texture>),
 }
@@ -57,7 +57,8 @@ impl RenderTarget {
     }
 }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, concerto_reflect::Reflect)]
+#[reflect(Component, SceneComponent)]
 pub struct Camera {
     pub aspect: f32,
     pub fovy: f32,
@@ -65,17 +66,6 @@ pub struct Camera {
     pub zfar: f32,
     pub clear_color: Color,
     pub render_target: RenderTarget,
-}
-
-impl SceneComponent for Camera {
-    fn apply(mut self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        if let RenderTarget::Texture(handle) = &self.render_target {
-            if let Some(server) = ctx.get_resource::<AssetServer>() {
-                self.render_target = RenderTarget::Texture(server.load(handle.id()));
-            }
-        }
-        ctx.insert(self, entity);
-    }
 }
 
 impl Camera {
@@ -112,6 +102,9 @@ impl Default for Camera {
 pub struct CameraUniform {
     view_pos: Vec3,
     view_proj: Mat4,
+    pub(crate) fog_color: Vec4,
+    pub(crate) fog_params: Vec4,
+    pub(crate) ambient: Vec4,
 }
 
 impl CameraUniform {
@@ -119,12 +112,21 @@ impl CameraUniform {
         Self {
             view_pos: Vec3::ZERO,
             view_proj: Mat4::IDENTITY,
+            fog_color: Vec4::ZERO,
+            fog_params: Vec4::ZERO,
+            ambient: Vec4::ZERO,
         }
     }
 
-    pub fn update_view_proj(&mut self, camera: &Camera, transform: &GlobalTransform) {
+    pub fn update_view_proj(
+        &mut self,
+        camera: &Camera,
+        environment: Option<&CameraEnvironment>,
+        transform: &GlobalTransform,
+    ) {
         self.view_pos = transform.translation();
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
+        environment.copied().unwrap_or_default().fill(self);
     }
 }
 
@@ -179,9 +181,22 @@ fn publish_render_target(
     render_textures.insert(handle.id(), target.clone());
 }
 
-#[allow(clippy::too_many_arguments)]
+/// While present, only the named camera is extracted into the render world.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExclusiveCamera(pub Entity);
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 pub(crate) fn extract_cameras(
-    cameras: Extracted<Query<(&Camera, &GlobalTransform, &RenderEntity)>>,
+    exclusive: Extracted<Option<Res<ExclusiveCamera>>>,
+    cameras: Extracted<
+        Query<(
+            Entity,
+            &Camera,
+            Option<&CameraEnvironment>,
+            &GlobalTransform,
+            &RenderEntity,
+        )>,
+    >,
     render_cameras: Query<&mut RenderCamera>,
     mut cmd: CommandQueue,
     device: Res<RenderDevice>,
@@ -191,11 +206,14 @@ pub(crate) fn extract_cameras(
     mut render_textures: ResMut<RenderAssets<RenderTexture>>,
     queue: Res<RenderQueue>,
 ) {
-    for (camera, transform, render_entity) in cameras.iter() {
+    for (entity, camera, environment, transform, render_entity) in cameras.iter() {
+        if exclusive.as_ref().is_some_and(|only| only.0 != entity) {
+            continue;
+        }
         let render_entity = **render_entity;
 
         let mut camera_uniform = CameraUniform::new();
-        camera_uniform.update_view_proj(camera, transform);
+        camera_uniform.update_view_proj(camera, environment, transform);
 
         if let Some(mut render_camera) = render_cameras.get_entity(render_entity) {
             render_camera.camera_uniform = camera_uniform;

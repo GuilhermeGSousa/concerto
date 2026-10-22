@@ -10,7 +10,6 @@ use crate::{
     input::{poll_terminal_input, TerminalInput},
     readback::{readback_terminal_frame, TerminalRenderState},
     resize::{handle_terminal_resize, TerminalResizeEvent},
-    runner::terminal_runner,
     terminal::TerminalContext,
 };
 
@@ -20,12 +19,11 @@ use crate::{
 ///
 /// Currently always panics during [`finish`](Plugin::finish): it looks for `RenderDevice` in
 /// the main world, which no longer holds it. See
-/// `docs/superpowers/specs/2026-09-25-terminal-renderer-split-worlds.md`.
+/// `.agents/specs/2026-09-25-terminal-renderer-split-worlds.md`.
 pub struct TerminalRendererPlugin;
 
 impl Plugin for TerminalRendererPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.set_runner(terminal_runner);
         app.add_system(Update, poll_terminal_input);
         app.add_system(
             LateRender,

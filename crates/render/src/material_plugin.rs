@@ -17,6 +17,7 @@ use concerto_foundation::assets::AssetId;
 
 use crate::{
     assets::material::ShaderRef,
+    capabilities::RenderCapabilities,
     components::{
         camera::RenderCamera,
         fallback_material::RenderFallbackMaterial,
@@ -35,6 +36,8 @@ use crate::{
         AssetPreparationError, RenderAsset, RenderAssetPlugin, RenderAssets,
     },
     resources::RenderContext,
+    sets::RenderSet,
+    shader::create_shader_module,
     Material,
 };
 
@@ -141,6 +144,10 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
+// Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
+// mirror. Upserts like the other extract systems: a mirror that already names
+// the same materials is left alone, and one naming different ones is
+// replaced, so swapping the handle on a live entity takes effect next frame.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
     render_meshes: Query<&mut RenderMeshInstance>,
@@ -442,7 +449,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // RenderPlugin, which iterates over all entities with RenderEntity
         // regardless of material type.
         app.add_render_system(Extract, extract_materials::<M>.after(extract_meshes))
-            .add_render_system(Render, material_renderpass::<M>);
+            .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -511,14 +518,15 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             ShaderRef::Source(src) => src,
         };
 
-        let vs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Material VS"),
-            source: wgpu::ShaderSource::Wgsl(vs_src.into()),
-        });
-        let fs_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Material FS"),
-            source: wgpu::ShaderSource::Wgsl(fs_src.into()),
-        });
+        let mut shader_defs = app
+            .render()
+            .get_resource::<RenderCapabilities>()
+            .expect("RenderCapabilities not found; register RenderPlugin before MaterialPlugin")
+            .shader_defs();
+        M::shader_defs(&mut shader_defs);
+
+        let vs_module = create_shader_module(device, "Material VS", vs_src, &shader_defs);
+        let fs_module = create_shader_module(device, "Material FS", fs_src, &shader_defs);
 
         // Use the vertex layouts from the material trait.
         let vertex_layouts = M::vertex_layouts();

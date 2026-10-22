@@ -66,6 +66,12 @@ pub fn system_set(input: TokenStream) -> TokenStream {
     impl_label(&ast, quote!(SystemSet))
 }
 
+#[proc_macro_derive(SystemTag)]
+pub fn system_tag(input: TokenStream) -> TokenStream {
+    let ast = syn::parse(input).unwrap();
+    impl_label(&ast, quote!(SystemTag))
+}
+
 #[proc_macro_derive(ScheduleLabel)]
 pub fn schedule_label(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();

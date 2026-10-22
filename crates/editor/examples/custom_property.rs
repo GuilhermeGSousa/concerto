@@ -1,29 +1,47 @@
-//! A downstream composite editor. Run with `cargo run -p editor --example custom_property`
-//! for a headless commit demonstration. Call `install` after InspectorPlugin in
-//! an editor application with the UI plugin to enable its clickable widget.
-use std::any::TypeId;
-
-use concerto_app::{App, schedule_groups::LateUpdate};
+//! A downstream composite editor. Run with `cargo run -p concerto-editor --example custom_property`
+//! for a headless commit demonstration. Call `register` in the recipe the editor builds each
+//! scene's `App` from, and `install` on the editor's own `App` after InspectorPlugin.
+use concerto_app::{
+    App,
+    main_schedule::MainSchedulePlugin,
+    plugins::TimePlugin,
+    schedule_groups::{LateUpdate, Startup},
+};
 use concerto_ecs::{
-    Component, Entity, Query, ResMut, World, command::CommandQueue,
-    events::event_reader::EventReader,
+    Component, Entity, Query, Res, ResMut,
+    command::CommandQueue,
+    entity::hierarchy::{ChildOf, Children},
+    reflect::ReflectComponent,
+    signal::{On, listener::IntoListener},
 };
-use concerto_editable::Editable;
-use concerto_editor::inspector::{
-    EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyRow, PropertyRowValue, apply_property_commit,
+use concerto_editor::{
+    asset_editor::ActiveEditor,
+    dock::PanelRegistry,
+    hosted::{
+        HostRequest, HostRole, HostedPlugin, SetEditTarget, begin, finish_blocking, trigger_on,
+    },
+    inspector::{
+        EditError, EditableApp, InspectorPlugin, PropertyCommits, PropertyEditor, PropertyRow,
+        PropertyRowValue, spawn_panel,
+    },
+    tools::{EditToolsPlugin, selection::Select},
 };
+use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
     interaction::{Interactable, UIClick},
     node::UINode,
-    text::TextComponent,
+    text::UIText,
+    text_input::{UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
     transform::UIValue,
 };
-use concerto_window::input::MouseButton;
+use concerto_window::{input::MouseButton, plugin::WindowPlugin};
 
 // Deliberately not Clone or PartialEq: the editor chooses what to snapshot.
-#[derive(Component, Editable)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
 pub struct Setting {
     pub title: String,
     pub enabled: bool,
@@ -65,20 +83,13 @@ impl PropertyEditor<Setting> for SettingEditor {
     ) {
         let button = cmd
             .spawn((
-                UINode {
-                    height: UIValue::Px(theme.control_height),
-                    flex_grow: 1.0,
-                    ..Default::default()
-                },
-                TextComponent {
-                    text: label(snapshot),
-                    color: theme.text,
-                    font_size: theme.font_size_md,
-                    line_height: theme.line_height(theme.font_size_md),
-                    ..Default::default()
-                },
+                theme
+                    .label(label(snapshot))
+                    .height(UIValue::Px(theme.control_height))
+                    .grow(),
                 Interactable,
                 SettingButton(row),
+                toggle_setting.into_listener(),
             ))
             .entity();
         cmd.add_child(row, button);
@@ -106,30 +117,28 @@ fn label(snapshot: &SettingSnapshot) -> String {
     )
 }
 
-pub fn click_settings(
-    mut clicks: EventReader<UIClick>,
+pub fn toggle_setting(
+    on: On<UIClick>,
     buttons: Query<&SettingButton>,
     rows: Query<&PropertyRow>,
     mut commits: ResMut<PropertyCommits>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        let Some(button) = buttons.get_entity(click.entity) else {
-            continue;
-        };
-        let Some(row) = rows.get_entity(button.0) else {
-            continue;
-        };
-        if let Err(error) = commits.push::<Setting, SettingEditor>(row, SettingEdit::Toggle) {
-            log::warn!("Setting edit dropped: {error}");
-        }
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(button) = buttons.get_entity(on.entity()) else {
+        return;
+    };
+    let Some(row) = rows.get_entity(button.0) else {
+        return;
+    };
+    if let Err(error) = commits.push::<Setting, SettingEditor>(row, SettingEdit::Toggle) {
+        log::warn!("Setting edit dropped: {error}");
     }
 }
 
 pub fn refresh_settings(
-    buttons: Query<(&SettingButton, &mut TextComponent)>,
+    buttons: Query<(&SettingButton, &mut UIText)>,
     rows: Query<&PropertyRowValue>,
 ) {
     for (button, mut text) in buttons.iter() {
@@ -146,39 +155,113 @@ pub fn refresh_settings(
     }
 }
 
+/// Makes `Setting` editable in a scene's `App`; call it from the recipe.
+pub fn register(app: &mut App) {
+    app.register_type::<Setting>();
+}
+
+/// Gives the editor's own `App` the widget that edits a `Setting`.
 pub fn install(app: &mut App) {
-    app.register_editable::<Setting>()
-        .register_property_editor::<Setting, SettingEditor>(SettingEditor)
-        .add_system(LateUpdate, click_settings)
+    app.register_property_editor::<Setting, SettingEditor>(SettingEditor)
         .add_system(LateUpdate, refresh_settings);
+}
+
+fn headless_recipe(app: &mut App) {
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(WindowPlugin);
+    register(app);
+}
+
+fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
+    let parent = cmd.spawn(UINode::default()).entity();
+    spawn_panel(&mut cmd, parent, &theme);
+}
+
+/// An editor `App` with the inspector and one scene `App`, `arrange`d before it starts, with no window.
+pub fn headless_editor(
+    arrange: impl FnOnce(&mut App),
+    arrange_editor: impl FnOnce(&mut App),
+) -> (App, Entity) {
+    let mut editor = App::new();
+    editor
+        .register_plugin(MainSchedulePlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(WindowPlugin)
+        .insert_resource(PanelRegistry::default())
+        .insert_resource(UITheme::default())
+        .insert_resource(FocusedWidget::default())
+        .insert_resource(ActiveEditor::default())
+        .register_event::<UIFocusGained>()
+        .register_event::<UIFocusLost>()
+        .register_event::<UITextInputSubmitted>()
+        .register_event::<UITextInputCancelled>()
+        .register_plugin(HostedPlugin)
+        .register_plugin(InspectorPlugin)
+        .add_system(Startup, build_inspector);
+    install(&mut editor);
+    let world = editor.main_mut().world_mut();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
+    let scene = finish_blocking(begin(
+        HostRequest {
+            gpu: None,
+            recipe: headless_recipe,
+            size: (0, 0),
+            scale_factor: 1.0,
+            role: HostRole::Edit,
+        },
+        |app| {
+            app.register_plugin(EditToolsPlugin);
+            arrange(app);
+        },
+        |_| {},
+    ));
+    let document = world.spawn(scene);
+    world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
+    world.trigger(SetEditTarget(Some(document)));
+    arrange_editor(&mut editor);
+    editor.finish_plugin_build();
+    (editor, document)
 }
 
 #[allow(dead_code)]
 fn main() {
-    let mut registry = InspectorRegistry::default();
-    registry.register_component::<Setting>();
-    registry.register_property_editor::<Setting, SettingEditor>(SettingEditor);
-    let mut world = World::default();
-    let entity = world.spawn(Setting {
-        title: "Shadows".into(),
-        enabled: false,
-    });
-    let property = registry
-        .collect_component(&world, entity, TypeId::of::<Setting>())
-        .unwrap()
-        .remove(0);
-    let row = property.row(entity, TypeId::of::<Setting>());
-    world.insert_resource(registry);
-    apply_property_commit(
-        &mut world,
-        PropertyCommit::new::<Setting, SettingEditor>(&row, SettingEdit::Toggle).unwrap(),
-    )
-    .unwrap();
-    println!(
-        "Shadows enabled: {}",
-        world
-            .get_component_for_entity::<Setting>(entity)
-            .unwrap()
-            .enabled
+    let mut shadows = None;
+    let (mut editor, document) = headless_editor(
+        |scene| {
+            shadows = Some(scene.main_mut().world_mut().spawn(Setting {
+                title: "Shadows".into(),
+                enabled: false,
+            }));
+        },
+        |_| {},
     );
+    trigger_on(editor.main_mut().world_mut(), document, Select(shadows));
+    editor.update();
+
+    let world = editor.main_mut().world_mut();
+    let button = world
+        .query::<(Entity, &SettingButton), ()>()
+        .iter(world)
+        .map(|(button, _)| button)
+        .next()
+        .expect("the inspector built the widget");
+    world.trigger_on(
+        button,
+        UIClick {
+            position: Default::default(),
+            button: MouseButton::Left,
+        },
+    );
+    editor.update();
+
+    let world = editor.main_mut().world_mut();
+    let enabled = world
+        .query::<&PropertyRowValue, ()>()
+        .iter(world)
+        .find_map(|value| value.snapshot::<Setting, SettingEditor>())
+        .expect("the inspector shows the setting")
+        .enabled;
+    println!("Shadows enabled: {enabled}");
 }

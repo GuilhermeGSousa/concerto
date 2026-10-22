@@ -1,31 +1,40 @@
-use anymap3::AnyMap;
 use log::warn;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomData, ptr};
 
 use crate::command::{Command, CommandQueue, CommandQueueState};
-use crate::component::bundle::{ComponentBundle, MergeRow, PushRow, ReplaceRow};
-use crate::component::registry::{ComponentRegistry, TypeInfo};
-use crate::component::scene::{SceneComponent, SceneSpawnContext};
+use crate::component::bundle::{ComponentBundle, IntoBundle, MergeRow, PushRow, ReplaceRow};
+use crate::component::scene::SceneEntityRef;
 use crate::entity::EntityWorldMut;
 use crate::entity::entity_store::EntityStore;
 use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
-use crate::resource::ResourceStorage;
+use crate::reflect::{AppTypeRegistry, ReflectSceneComponent, SceneComponentType};
+use crate::resource::ResourceData;
+use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners};
+use crate::signal::{EntitySignal, Signal};
+use crate::system::access::SystemAccess;
 use crate::system::schedule::{CompiledSchedules, ScheduleLabel};
-use crate::table::MutableCellAccessor;
+use crate::table::{CellAccessor, MutableCellAccessor};
+use crate::world_id::WorldId;
 use crate::{
     archetype::Archetype,
     common::generate_type_id,
     component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
-    system::input::SystemInput,
+    system::input::{SystemInput, ValidationError},
     table::TableRowIndex,
     utilities::TypeIdMap,
 };
-use crate::{component::Tick, system::meta::SystemMetadata};
+use crate::{
+    component::{CHECK_TICK_THRESHOLD, CheckChangeTicks, SystemTicks, Tick},
+    system::meta::SystemMetadata,
+};
+use concerto_reflect::ReflectedValue;
+use concerto_reflect::{GetTypeRegistration, TypeRegistration};
 
 /// The central container of the ECS.
 ///
@@ -44,15 +53,37 @@ use crate::{component::Tick, system::meta::SystemMetadata};
 /// let entity = world.spawn(Health(100.0));
 /// ```
 pub struct World {
+    id: WorldId,
     archetypes: Vec<Archetype>,
-    resources: AnyMap,
-    component_registry: ComponentRegistry,
+    resources: TypeIdMap<ResourceData>,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
-    current_tick: u32,
+    listeners: Listeners,
+    change_tick: AtomicU32,
+    last_change_tick: Tick,
+    last_check_tick: Tick,
     command_queue_start: usize,
     command_queue: CommandQueueState,
+}
+
+impl Default for World {
+    fn default() -> Self {
+        Self {
+            id: WorldId::default(),
+            archetypes: Vec::new(),
+            resources: TypeIdMap::default(),
+            entity_store: EntityStore::default(),
+            archetype_index: HashMap::new(),
+            component_lifetimes: TypeIdMap::default(),
+            listeners: Listeners::default(),
+            change_tick: AtomicU32::new(1),
+            last_change_tick: Tick::new(0),
+            last_check_tick: Tick::new(0),
+            command_queue_start: 0,
+            command_queue: CommandQueueState::default(),
+        }
+    }
 }
 
 unsafe impl Send for World {}
@@ -61,23 +92,20 @@ unsafe impl Sync for World {}
 impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
-        Self {
-            archetypes: Vec::new(),
-            archetype_index: HashMap::new(),
-            resources: AnyMap::new(),
-            component_lifetimes: Default::default(),
-            entity_store: EntityStore::new(),
-            current_tick: 0,
-            component_registry: ComponentRegistry::default(),
-            command_queue_start: 0,
-            command_queue: CommandQueueState::new(),
-        }
+        let mut world = Self::default();
+        world.type_registry_mut();
+        world
+    }
+
+    /// This world's identity, which it keeps when moved.
+    pub fn id(&self) -> WorldId {
+        self.id
     }
 
     /// Spawns a new entity with the given component bundle and returns its [`Entity`] handle.
-    pub fn spawn<T: ComponentBundle>(&mut self, bundle: T) -> Entity {
+    pub fn spawn<T: IntoBundle>(&mut self, bundle: T) -> Entity {
         let entity = self.entity_store.alloc();
-        self.spawn_allocated_internal(entity, bundle);
+        self.spawn_allocated_internal(entity, bundle.into_bundle());
         self.flush_commands();
         entity
     }
@@ -92,6 +120,7 @@ impl World {
         let type_ids = T::get_component_ids();
         let entity_type = generate_type_id(&type_ids);
 
+        let change_tick = *self.change_tick();
         let archetype_id = self.archetypes().len().into();
         let archetype_index = self
             .archetype_index
@@ -106,7 +135,7 @@ impl World {
 
         let row = TableRowIndex::new(archetype.len());
         archetype.add_entity(entity);
-        bundle.write_into(&mut PushRow(archetype), self.current_tick);
+        bundle.write_into(&mut PushRow(archetype), change_tick);
 
         let new_location = EntityLocation {
             archetype_index: *archetype_index as u32,
@@ -166,8 +195,8 @@ impl World {
     /// Adds components to an existing entity, migrating it to the appropriate archetype.
     ///
     /// If the entity already has a component of type `T`, the existing value is replaced.
-    pub fn insert<T: ComponentBundle>(&mut self, bundle: T, entity: Entity) {
-        self.insert_internal(bundle, entity);
+    pub fn insert<T: IntoBundle>(&mut self, bundle: T, entity: Entity) {
+        self.insert_internal(bundle.into_bundle(), entity);
         self.flush_commands();
     }
 
@@ -233,9 +262,11 @@ impl World {
         };
 
         if destination_index == source_index {
+            let change_tick = *self.change_tick();
             let archetype = &mut self.archetypes[source_index];
-            components.write_into(&mut ReplaceRow(archetype, location.row), self.current_tick);
+            components.write_into(&mut ReplaceRow(archetype, location.row), change_tick);
         } else {
+            let change_tick = *self.change_tick();
             if let Some(swapped_entity) = self.archetypes[source_index].entities().last()
                 && *swapped_entity != entity
             {
@@ -249,7 +280,7 @@ impl World {
 
             source.move_row_to(location.row, destination);
             let new_row = TableRowIndex::new(destination.len() - 1);
-            components.write_into(&mut MergeRow(destination, new_row), self.current_tick);
+            components.write_into(&mut MergeRow(destination, new_row), change_tick);
             let new_location = EntityLocation {
                 archetype_index: destination_index as u32,
                 row: new_row,
@@ -337,15 +368,15 @@ impl World {
 
     /// Returns an exclusive reference to the component of type `T` on `entity`, or `None`.
     ///
-    /// Marks the component as changed for this tick so change-detection filters fire correctly.
+    /// Marks the component as changed with the counter's current value so change-detection filters fire correctly.
     pub fn get_component_for_entity_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        let current_tick = self.current_tick;
+        let change_tick = self.change_tick();
         self.entity_store
             .find_location(entity)
             .and_then(|location| {
                 self.get_component_for_entity_location_mut(location)
                     .map(|accessor| {
-                        accessor.changed_tick.set(current_tick);
+                        *accessor.changed_tick = change_tick;
                         accessor.data
                     })
             })
@@ -358,6 +389,17 @@ impl World {
         self.archetypes
             .get(entity_location.archetype_index as usize)
             .and_then(|archetype| unsafe { archetype.get_component_unsafe(entity_location.row) })
+    }
+
+    pub(crate) fn get_component_for_entity_location_ticked<T: Component>(
+        &self,
+        entity_location: EntityLocation,
+    ) -> Option<CellAccessor<'_, T>> {
+        self.archetypes
+            .get(entity_location.archetype_index as usize)
+            .and_then(|archetype| unsafe {
+                archetype.get_component_unsafe_ticked(entity_location.row)
+            })
     }
 
     pub(crate) fn get_component_for_entity_location_mut<T: Component>(
@@ -373,53 +415,52 @@ impl World {
 
     /// Inserts a resource into the world.  If one of the same type already exists it is replaced.
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
-        self.resources
-            .insert(ResourceStorage::new(resource, self.current_tick));
+        let change_tick = self.change_tick();
+        match self.resources.entry(TypeId::of::<T>()) {
+            Occupied(mut occupied) => occupied.get_mut().replace(resource, change_tick),
+            Vacant(vacant) => {
+                vacant.insert(ResourceData::new(resource, change_tick));
+            }
+        }
     }
 
     // Inserts a resource into the world with its default value.
     pub fn init_resource<T: Resource + Default>(&mut self) {
-        self.resources
-            .insert(ResourceStorage::new(T::default(), self.current_tick));
+        self.insert_resource(T::default());
     }
 
     /// Removes and returns the resource of type `T`, or `None` if it was not present.
     pub fn remove_resource<T: Resource + 'static>(&mut self) -> Option<T> {
         self.resources
-            .remove::<ResourceStorage<T>>()
-            .map(|resource_storage| resource_storage.data)
+            .remove(&TypeId::of::<T>())
+            .map(ResourceData::into_inner)
     }
 
     /// Returns a shared reference to the resource of type `T`, or `None` if not present.
     pub fn get_resource<T: Resource + 'static>(&self) -> Option<&T> {
-        self.resources
-            .get::<ResourceStorage<T>>()
-            .map(|resource_storage| &resource_storage.data)
+        self.get_resource_data::<T>().map(ResourceData::get)
     }
 
-    /// Returns an exclusive reference to the resource of type `T`, or `None` if not present.
+    /// Returns an exclusive reference to the resource of type `T` and marks it changed, or `None` if not present.
     pub fn get_resource_mut<T: Resource + 'static>(&mut self) -> Option<&mut T> {
-        self.resources
-            .get_mut::<ResourceStorage<T>>()
-            .map(|resource_storage| &mut resource_storage.data)
+        let change_tick = self.change_tick();
+        self.get_resource_data_mut::<T>().map(|data| {
+            data.changed_tick = change_tick;
+            data.get_mut()
+        })
     }
 
     /// The tick of the last write to `T`, or `None` if it is not present.
     pub fn resource_changed_tick<T: Resource + 'static>(&self) -> Option<Tick> {
-        self.get_resource_storage::<T>()
-            .map(|storage| storage.changed_tick)
+        self.get_resource_data::<T>().map(|data| data.changed_tick)
     }
 
-    pub(crate) fn get_resource_storage<T: Resource + 'static>(
-        &self,
-    ) -> Option<&ResourceStorage<T>> {
-        self.resources.get()
+    pub(crate) fn get_resource_data<T: Resource>(&self) -> Option<&ResourceData> {
+        self.resources.get(&TypeId::of::<T>())
     }
 
-    pub(crate) fn get_resource_storage_mut<T: Resource + 'static>(
-        &mut self,
-    ) -> Option<&mut ResourceStorage<T>> {
-        self.resources.get_mut()
+    pub(crate) fn get_resource_data_mut<T: Resource>(&mut self) -> Option<&mut ResourceData> {
+        self.resources.get_mut(&TypeId::of::<T>())
     }
 
     pub fn as_unsafe_world_cell_mut(&mut self) -> UnsafeWorldCell<'_> {
@@ -430,28 +471,86 @@ impl World {
         UnsafeWorldCell::new_ref(self)
     }
 
-    /// Advances the world's internal tick counter.
-    ///
-    /// Call this once per frame (after all systems have run) so that change-detection
-    /// filters (`Added`, `Changed`) produce fresh results on the next frame.
+    /// Marks the frame boundary for change detection read outside any system.
     pub fn tick(&mut self) {
-        self.current_tick += 1;
+        self.last_change_tick = self.increment_change_tick();
     }
 
-    pub fn current_tick(&self) -> Tick {
-        Tick::new(self.current_tick)
+    /// The counter's current value: the tick the next system run will take.
+    pub fn change_tick(&self) -> Tick {
+        Tick::new(self.change_tick.load(Ordering::Relaxed))
+    }
+
+    /// Advances the counter by one and returns its previous value.
+    pub fn increment_change_tick(&self) -> Tick {
+        Tick::new(self.change_tick.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// The tick of the last [`tick`](Self::tick), from which readers outside any system look.
+    pub fn last_change_tick(&self) -> Tick {
+        self.last_change_tick
+    }
+
+    /// The ticks a reader outside any system uses: since the last [`tick`](Self::tick), until now.
+    pub fn out_of_system_ticks(&self) -> SystemTicks {
+        SystemTicks {
+            last_run: self.last_change_tick,
+            this_run: self.change_tick(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_change_tick(&mut self, tick: Tick) {
+        *self.change_tick.get_mut() = *tick;
+    }
+
+    /// Once [`CHECK_TICK_THRESHOLD`] advances have passed since the last check, clamps stored ticks and triggers the check.
+    pub fn check_change_ticks(&mut self) -> Option<CheckChangeTicks> {
+        let change_tick = self.change_tick();
+        if *change_tick.relative_to(self.last_check_tick) < CHECK_TICK_THRESHOLD {
+            return None;
+        }
+
+        let check = CheckChangeTicks(change_tick);
+
+        for archetype in &mut self.archetypes {
+            archetype.check_change_ticks(check);
+        }
+        for data in self.resources.values_mut() {
+            data.check_change_ticks(check);
+        }
+
+        if let Some(data) = self.get_resource_data_mut::<CompiledSchedules>() {
+            data.get_mut::<CompiledSchedules>()
+                .check_change_ticks(check);
+        }
+
+        self.trigger(check);
+
+        self.last_check_tick = change_tick;
+
+        Some(check)
     }
 
     pub fn was_component_added(&self, entity: Entity, component_id: ComponentId) -> bool {
-        if let Some(location) = self.entity_store.find_location(entity) {
-            self.archetypes[location.archetype_index as usize].was_entity_added(
-                component_id,
-                location.row,
-                self.current_tick,
-            )
-        } else {
-            false
-        }
+        self.was_component_added_in(entity, component_id, self.out_of_system_ticks())
+    }
+
+    pub(crate) fn was_component_added_in(
+        &self,
+        entity: Entity,
+        component_id: ComponentId,
+        ticks: SystemTicks,
+    ) -> bool {
+        self.entity_store
+            .find_location(entity)
+            .is_some_and(|location| {
+                self.archetypes[location.archetype_index as usize].was_entity_added(
+                    component_id,
+                    location.row,
+                    ticks,
+                )
+            })
     }
 
     /// Whether an existing component was added, replaced, or mutably accessed
@@ -475,21 +574,30 @@ impl World {
                     component_id,
                     location.row,
                     since,
-                    self.current_tick(),
+                    self.change_tick(),
                 )
             })
     }
 
     pub fn was_component_changed(&self, entity: Entity, component_id: ComponentId) -> bool {
-        if let Some(location) = self.entity_store.find_location(entity) {
-            self.archetypes[location.archetype_index as usize].was_entity_changed(
-                component_id,
-                location.row,
-                self.current_tick,
-            )
-        } else {
-            false
-        }
+        self.was_component_changed_in(entity, component_id, self.out_of_system_ticks())
+    }
+
+    pub(crate) fn was_component_changed_in(
+        &self,
+        entity: Entity,
+        component_id: ComponentId,
+        ticks: SystemTicks,
+    ) -> bool {
+        self.entity_store
+            .find_location(entity)
+            .is_some_and(|location| {
+                self.archetypes[location.archetype_index as usize].was_entity_changed(
+                    component_id,
+                    location.row,
+                    ticks,
+                )
+            })
     }
 
     pub(crate) fn register_component_lifetimes<T: Component>(&mut self) {
@@ -504,12 +612,21 @@ impl World {
     }
 
     pub fn register_component<T: Component>(&mut self) {
-        self.component_registry.register_component::<T>();
         self.register_component_lifetimes::<T>();
     }
 
-    pub fn register_component_type<T: SceneComponent>(&mut self) {
-        self.component_registry.register_scene_component::<T>();
+    /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
+    pub fn register_type<T: GetTypeRegistration>(&mut self) {
+        self.type_registry_mut().register::<T>();
+    }
+
+    fn type_registry_mut(&mut self) -> &mut AppTypeRegistry {
+        if self.get_resource::<AppTypeRegistry>().is_none() {
+            let mut registry = AppTypeRegistry::default();
+            registry.register::<SceneEntityRef>();
+            self.insert_resource(registry);
+        }
+        self.get_resource_mut::<AppTypeRegistry>().unwrap()
     }
 
     /// Every component `entity` carries, including ones that are not scene
@@ -521,9 +638,9 @@ impl World {
             .unwrap_or(&[])
     }
 
-    /// The read side of a registered scene component, or `None` if `id` is not one.
-    pub fn type_info(&self, id: ComponentId) -> Option<&TypeInfo> {
-        self.component_registry.type_info(&id)
+    /// The registration of the type `id`, or `None` if it was never registered.
+    pub fn registration(&self, id: ComponentId) -> Option<&TypeRegistration> {
+        self.get_resource::<AppTypeRegistry>()?.get(id)
     }
 
     /// The registered scene components `entity` currently carries.
@@ -532,51 +649,45 @@ impl World {
     /// [`register_component`](Self::register_component) — engine plumbing such
     /// as render-world mirrors — are deliberately not listed: this reports what
     /// a scene can describe, which is what a tool wants to show.
-    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = &TypeInfo> {
+    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = SceneComponentType<'_>> {
+        let registry = self.get_resource::<AppTypeRegistry>();
         self.component_ids(entity)
             .iter()
-            .filter_map(|component_id| self.component_registry.type_info(component_id))
+            .filter_map(move |component_id| {
+                let registration = registry?.get(*component_id)?;
+                let scene = *registration.data::<ReflectSceneComponent>()?;
+                Some(SceneComponentType::new(registration, scene))
+            })
     }
 
-    /// Deserializes `json` into the component registered under `type_name` and
-    /// applies it to `entity`. Returns `false` (having logged why) when the name
-    /// is unregistered or the payload does not parse — a scene may carry
-    /// components this application does not know about.
+    /// Spawns the component registered under `type_name` from `value` onto `entity`,
+    /// resolving node references through `node_entities`. Returns `false`, having
+    /// logged why, when no scene component is registered under that name; parts of
+    /// `value` that do not fit are skipped with a warning.
     pub fn apply_scene_component(
         &mut self,
         type_name: &str,
-        json: &str,
+        value: &ReflectedValue,
         entity: Entity,
         node_entities: &[Entity],
     ) -> bool {
-        let applied = self.apply_scene_component_internal(type_name, json, entity, node_entities);
-        self.flush_commands();
-        applied
-    }
-
-    fn apply_scene_component_internal(
-        &mut self,
-        type_name: &str,
-        json: &str,
-        entity: Entity,
-        node_entities: &[Entity],
-    ) -> bool {
-        let Some(apply) = self.component_registry.get_scene_component(type_name) else {
+        let spawn = self
+            .get_resource::<AppTypeRegistry>()
+            .and_then(|registry| registry.get_by_name(type_name))
+            .and_then(|registration| registration.data::<ReflectSceneComponent>())
+            .map(|scene| scene.spawn);
+        let Some(spawn) = spawn else {
             warn!(
-                "Skipping component '{type_name}': no type registered under that name \
-                 (register it with App::register_component)"
+                "Skipping component '{type_name}': no scene component registered under that name \
+                 (derive Reflect with #[reflect(SceneComponent)] and register it with App::register_type)"
             );
             return false;
         };
-
-        let mut ctx = SceneSpawnContext::new(self, node_entities);
-        match apply(json, entity, &mut ctx) {
-            Ok(()) => true,
-            Err(err) => {
-                warn!("Failed to deserialize component '{type_name}' from `{json}`: {err}");
-                false
-            }
+        for warning in spawn(self, entity, value, node_entities) {
+            warn!("Component '{type_name}': {warning}");
         }
+        self.flush_commands();
+        true
     }
 
     pub(crate) fn make_command_queue<'world>(&'world mut self) -> CommandQueue<'world, 'world> {
@@ -644,11 +755,44 @@ impl World {
             schedules.insert(label, schedule);
         }
     }
-}
 
-impl Default for World {
-    fn default() -> Self {
-        Self::new()
+    pub fn add_listener<T: Signal, M>(&mut self, system: impl IntoListener<T, M>) {
+        let mut listener = system.into_listener();
+        T::listener_added(self, &mut listener);
+        self.register_component_lifetimes::<Listener<T>>();
+        self.spawn((listener, GlobalListener));
+    }
+
+    /// Runs matching listeners in registration order, applying each system's commands.
+    ///
+    /// Listeners added during dispatch start receiving signals on the next trigger.
+    /// Listeners removed before their turn are skipped. System state is initialized
+    /// on first use and retained between triggers.
+    ///
+    /// # Panics
+    /// Panics if a nested trigger tries to run a listener that is already running.
+    pub fn trigger<T: Signal>(&mut self, mut signal: T) {
+        let entities = self.listeners().get::<T>().to_vec();
+        for entity in entities {
+            Listener::<T>::run(entity, &mut signal, self);
+        }
+    }
+
+    /// Runs `target`'s own listener for this signal, if it has one.
+    pub fn trigger_on<T: EntitySignal>(&mut self, target: Entity, mut signal: T) {
+        Listener::<T>::run(target, &mut signal, self);
+    }
+
+    pub fn trigger_default<T: Signal + Default>(&mut self) {
+        self.trigger(T::default());
+    }
+
+    pub(crate) fn listeners(&self) -> &Listeners {
+        &self.listeners
+    }
+
+    pub(crate) fn listeners_mut(&mut self) -> &mut Listeners {
+        &mut self.listeners
     }
 }
 
@@ -688,14 +832,16 @@ impl SystemInput for &World {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        world.world()
+        _ticks: SystemTicks,
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares read access to the whole world.
+        Ok(unsafe { world.world() })
     }
 
-    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
         access.read_world();
     }
 }
@@ -706,14 +852,16 @@ impl SystemInput for &mut World {
 
     fn init_state(_world: &mut World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        world.world_mut()
+        _ticks: SystemTicks,
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: this input declares write access to the whole world.
+        Ok(unsafe { world.world_mut() })
     }
 
-    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess) {
         access.write_world();
     }
 }
@@ -739,13 +887,34 @@ impl<'w> UnsafeWorldCell<'w> {
         }
     }
 
-    pub fn world(&self) -> &'w World {
+    /// Borrows the whole world for reading.
+    ///
+    /// # Safety
+    /// The caller may read only what its declared access covers, and nothing may write
+    /// that data while the borrow is alive.
+    pub unsafe fn world(&self) -> &'w World {
+        // SAFETY: the pointer came from a live world borrowed for `'w`; the caller upholds
+        // the access rules.
         unsafe { &*self.ptr }
     }
 
-    pub fn world_mut(&self) -> &'w mut World {
+    /// Borrows the whole world for writing.
+    ///
+    /// # Safety
+    /// The caller must have exclusive access to everything it touches, and no other
+    /// reference into the world may be used while the borrow is alive.
+    pub unsafe fn world_mut(&self) -> &'w mut World {
         self.assert_mutable();
+        // SAFETY: the pointer came from a live, mutably borrowed world; the caller upholds
+        // exclusivity.
         unsafe { &mut *self.ptr }
+    }
+
+    /// Advances the world's counter by one and returns its previous value.
+    pub fn increment_change_tick(&self) -> Tick {
+        // SAFETY: only the atomic counter is borrowed, which any holder of the cell may advance.
+        let counter = unsafe { &(*self.ptr).change_tick };
+        Tick::new(counter.fetch_add(1, Ordering::Relaxed))
     }
 
     pub(crate) fn into_restricted(self) -> RestrictedWorld<'w> {
@@ -759,12 +928,17 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_add_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(add) = lifetimes.on_add
-        {
-            add(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_add, lifetimes.signal_add);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn trigger_on_replace(&self, entity: Entity, ids: &[ComponentId]) {
@@ -774,23 +948,31 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(replace) = lifetimes.on_replace
-        {
-            replace(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_replace, lifetimes.signal_replace);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     pub(crate) fn trigger_on_remove_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(remove) = lifetimes.on_remove
-        {
-            remove(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_remove, lifetimes.signal_remove);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
     /// Despawning removes every component, so each one's `on_remove` runs before the
@@ -803,17 +985,23 @@ impl<'w> UnsafeWorldCell<'w> {
     }
 
     pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
-        let world = self.world();
-
-        if let Some(lifetimes) = world.component_lifetimes.get(id)
-            && let Some(despawn) = lifetimes.on_despawn
-        {
-            despawn(self.into_restricted(), ComponentLifecycleContext { entity });
+        // SAFETY: lifecycle hooks run inside an exclusive world operation.
+        let world = unsafe { self.world() };
+        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+            return;
+        };
+        let (hook, signal) = (lifetimes.on_despawn, lifetimes.signal_despawn);
+        if let Some(hook) = hook {
+            hook(self.into_restricted(), ComponentLifecycleContext { entity });
         }
+        // SAFETY: the operation that runs this hook holds the world exclusively.
+        unsafe { signal(*self, entity) };
     }
 
-    pub(crate) fn archetypes(&self) -> &[Archetype] {
-        self.world().archetypes()
+    pub(crate) fn archetypes(&self) -> &'w [Archetype] {
+        // SAFETY: archetypes change only under exclusive access, so no running system can
+        // alter them while this is read.
+        unsafe { self.world() }.archetypes()
     }
 }
 
@@ -829,11 +1017,12 @@ pub struct RestrictedWorld<'w> {
 
 impl<'w> RestrictedWorld<'w> {
     fn commands(&mut self) -> CommandQueue<'_, '_> {
-        self.world_cell.world_mut().make_command_queue()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.make_command_queue()
     }
 
     /// Reserves an entity and queues its spawn after the enclosing operation.
-    pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> Entity {
+    pub fn spawn<T: IntoBundle<Bundle: 'static>>(&mut self, components: T) -> Entity {
         self.commands().spawn(components).entity()
     }
 
@@ -859,21 +1048,23 @@ impl<'w> RestrictedWorld<'w> {
     }
 
     pub fn get_component_for_entity<T: Component>(&self, entity: Entity) -> Option<&T> {
-        self.world_cell.world().get_component_for_entity(entity)
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world() }.get_component_for_entity(entity)
     }
 
     pub fn get_component_for_entity_mut<T: Component>(&mut self, entity: Entity) -> Option<&mut T> {
-        self.world_cell
-            .world_mut()
-            .get_component_for_entity_mut(entity)
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.get_component_for_entity_mut(entity)
     }
 
     pub fn get_resource<T: Resource>(&self) -> Option<&T> {
-        self.world_cell.world().get_resource()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world() }.get_resource()
     }
 
     pub fn get_resource_mut<T: Resource>(&mut self) -> Option<&mut T> {
-        self.world_cell.world_mut().get_resource_mut::<T>()
+        // SAFETY: a `RestrictedWorld` lives only inside an exclusive world operation.
+        unsafe { self.world_cell.world_mut() }.get_resource_mut::<T>()
     }
 }
 

@@ -20,6 +20,7 @@ toml = "0.8"
 tempfile = "3"
 
 [dev-dependencies]
+concerto-reflect.workspace = true
 concerto-scene.workspace = true
 concerto-mesh.workspace = true
 concerto-ecs.workspace = true

@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod camera_environment;
 pub mod fallback_material;
 pub mod light;
 pub mod material;
@@ -11,6 +12,7 @@ pub(crate) mod skeleton;
 pub(crate) mod transform;
 
 pub use camera::Camera;
+pub use camera_environment::CameraEnvironment;
 pub use light::Light;
 pub use material::MaterialComponent;
 pub use render_entity::RenderEntity;

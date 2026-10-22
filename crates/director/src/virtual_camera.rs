@@ -1,11 +1,8 @@
-use concerto_ecs::Entity;
-use concerto_ecs::component::{
-    Component, ComponentLifecycleCallback,
-    scene::{SceneComponent, SceneSpawnContext},
-};
+use concerto_ecs::component::{Component, ComponentLifecycleCallback};
+use concerto_ecs::reflect::ReflectSceneComponent;
+use concerto_reflect::Reflect;
 use concerto_render::components::camera::Camera;
 use glam::{Quat, Vec3};
-use serde::{Deserialize, Serialize};
 
 use crate::director::CameraDirector;
 
@@ -19,7 +16,8 @@ use crate::director::CameraDirector;
 /// Having the component *is* being in the [`CameraDirector`](crate::CameraDirector)'s
 /// stack, sorted by [`priority`](Self::priority); the top of that stack is live.
 /// Leave the stack by removing the component or despawning the entity.
-#[derive(Serialize, Deserialize)]
+#[derive(Reflect)]
+#[reflect(SceneComponent)]
 pub struct VirtualCamera {
     /// Read-only: the director sorts the stack when the component is added, so
     /// an in-place edit would leave the stack out of order. Re-add the component
@@ -31,18 +29,12 @@ pub struct VirtualCamera {
     /// [`CameraDirector::set_enabled`](crate::CameraDirector::set_enabled), not
     /// here, since an edit to this field is invisible to the director.
     ///
-    /// Omitted from authored JSON means "eligible": a camera an artist never
-    /// mentions `enabled` on still works.
-    #[serde(default = "default_enabled")]
+    /// Omitted from a stored scene means "eligible", the default: a camera
+    /// that never mentions `enabled` still works.
     enabled: bool,
     /// `None` keeps whatever lens the main camera currently has. Free to edit —
-    /// the director reads it every frame. Absent from authored JSON is `None`.
-    #[serde(default)]
+    /// the director reads it every frame. Absent from a stored scene is `None`.
     pub lens: Option<Lens>,
-}
-
-fn default_enabled() -> bool {
-    true
 }
 
 /// Joining and leaving the director's stack is driven by the component's own
@@ -69,12 +61,6 @@ impl Component for VirtualCamera {
                 director.stack_remove(context.entity);
             }
         })
-    }
-}
-
-impl SceneComponent for VirtualCamera {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
     }
 }
 
@@ -116,11 +102,17 @@ impl VirtualCamera {
 
 /// Projection parameters, split out of [`Camera`] so they can be overridden and
 /// blended independently of the render target and clear colour.
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Reflect)]
 pub struct Lens {
     pub fovy: f32,
     pub znear: f32,
     pub zfar: f32,
+}
+
+impl Default for Lens {
+    fn default() -> Self {
+        Self::from_camera(&Camera::default())
+    }
 }
 
 impl Lens {
@@ -228,40 +220,52 @@ impl CameraPose {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::{CommandQueue, Component, Entity, Res, Resource, world::World};
+    use concerto_reflect::{ReflectedValue, to_value};
 
     use super::VirtualCamera;
     use crate::director::CameraDirector;
 
     #[derive(Resource)]
-    struct AuthoredComponent {
+    struct StoredComponent {
         node: Entity,
-        json: &'static str,
+        stored: ReflectedValue,
     }
 
-    fn insert_authored_camera(mut cmd: CommandQueue, authored: Res<AuthoredComponent>) {
-        cmd.insert_from_json(
+    fn insert_stored_camera(mut cmd: CommandQueue, stored: Res<StoredComponent>) {
+        cmd.apply_scene_component(
             VirtualCamera::name().to_string(),
-            authored.json.to_string(),
-            authored.node,
+            stored.stored.clone(),
+            stored.node,
+            Arc::<[Entity]>::from([stored.node]),
         );
     }
 
-    /// Blender-authored components arrive as GLTF extras and are built through
-    /// serde, which still reaches the private fields.
-    fn spawn_from_json(json: &'static str) -> (World, Entity) {
+    /// A scene stores only some fields; the rest keep `VirtualCamera::default()`.
+    fn spawn_stored(fields: Vec<(&str, ReflectedValue)>) -> (World, Entity) {
         let mut world = World::new();
         world.register_component::<VirtualCamera>();
-        world.register_component_type::<VirtualCamera>();
+        world.register_type::<VirtualCamera>();
         world.insert_resource(CameraDirector::default());
 
         let node = world.spawn(());
-        world.insert_resource(AuthoredComponent { node, json });
+        let value = ReflectedValue::Struct(
+            fields
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect(),
+        );
+        world.insert_resource(StoredComponent {
+            node,
+            stored: value,
+        });
 
         let mut schedule = Schedule::new();
-        schedule.add_system(insert_authored_camera);
+        schedule.add_system(insert_stored_camera);
         schedule
             .compile::<SingleThreadedExecutor>(&mut world)
             .run(&mut world);
@@ -270,8 +274,8 @@ mod tests {
     }
 
     #[test]
-    fn a_json_authored_camera_joins_the_stack_at_its_priority() {
-        let (mut world, node) = spawn_from_json(r#"{ "priority": 7, "lens": null }"#);
+    fn a_stored_camera_joins_the_stack_at_its_priority() {
+        let (mut world, node) = spawn_stored(vec![("priority", to_value(&7_i32).unwrap())]);
 
         let vcam = world
             .get_component_for_entity::<VirtualCamera>(node)
@@ -280,14 +284,17 @@ mod tests {
 
         let director = world.get_resource_mut::<CameraDirector>().unwrap();
         assert_eq!(director.stack()[0].priority, 7);
-        // An author who never mentions `enabled` gets a camera that works.
+        // A scene that never mentions `enabled` gets a camera that works.
         assert!(director.is_enabled(node));
         assert_eq!(director.live(), Some(node));
     }
 
     #[test]
-    fn a_json_authored_camera_can_ship_disabled() {
-        let (mut world, node) = spawn_from_json(r#"{ "priority": 7, "enabled": false }"#);
+    fn a_stored_camera_can_ship_disabled() {
+        let (mut world, node) = spawn_stored(vec![
+            ("priority", to_value(&7_i32).unwrap()),
+            ("enabled", to_value(&false).unwrap()),
+        ]);
 
         assert!(
             world

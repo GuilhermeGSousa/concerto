@@ -1,4 +1,4 @@
-//! Scroll, virtual-list, and fixed split-pane behavior.
+//! Scroll and fixed split-pane behavior.
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
@@ -6,13 +6,14 @@ use concerto_ecs::{
     events::event_reader::EventReader,
     query::{Query, filter::Added},
     resource::Res,
+    signal::{On, listener::IntoListener},
 };
+use concerto_window::events::{ScrollDelta, WindowEvent};
 use concerto_window::input::MouseButton;
-use concerto_window::winit_events::WindowEvent;
-use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::{
     interaction::{HoveredNode, Interactable, UIDrag},
+    items::UIWidgetPart,
     material::UIMaterial,
     node::{Overflow, Position, UIInset, UILayout, UINode},
     theme::UITheme,
@@ -32,25 +33,6 @@ impl Default for UIScrollArea {
             offset: 0.0,
             content_extent: 0.0,
             content: None,
-        }
-    }
-}
-
-#[derive(Component)]
-pub struct UIVirtualList {
-    pub item_count: usize,
-    pub row_height: f32,
-    pub overscan: usize,
-    pub visible_range: std::ops::Range<usize>,
-}
-
-impl UIVirtualList {
-    pub fn new(item_count: usize, row_height: f32) -> Self {
-        Self {
-            item_count,
-            row_height,
-            overscan: 2,
-            visible_range: 0..0,
         }
     }
 }
@@ -100,10 +82,10 @@ pub(crate) fn update_scroll_areas(
     let Some(hovered) = **hovered else { return };
     let mut delta = 0.0;
     for event in events.read() {
-        if let WinitWindowEvent::MouseWheel { delta: wheel, .. } = &**event {
+        if let WindowEvent::MouseWheel { delta: wheel } = event {
             delta += match wheel {
-                MouseScrollDelta::LineDelta(_, y) => -*y * 28.0,
-                MouseScrollDelta::PixelDelta(value) => -value.y as f32,
+                ScrollDelta::Lines(lines) => -lines.y * 28.0,
+                ScrollDelta::Pixels(pixels) => -pixels.y,
             };
         }
     }
@@ -124,88 +106,52 @@ pub(crate) fn update_scroll_areas(
     }
 }
 
-pub(crate) fn sync_scroll_content(
-    areas: Query<(&UIScrollArea, Option<&UIVirtualList>)>,
-    nodes: Query<&mut UINode>,
-) {
-    for (area, list) in areas.iter() {
+pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, nodes: Query<&mut UINode>) {
+    for area in areas.iter() {
         let Some(content) = area.content else {
             continue;
         };
         if let Some(mut node) = nodes.get_entity(content) {
-            // The content is positioned by the scroll area, not laid out by the
-            // panel around it. Absolute, so its height cannot feed back into
-            // the viewport's own size: a taller list would otherwise grow the
-            // viewport, a scrolled one shrink it, and the panel would collapse
-            // as the two chased each other. Pinned left and right so it still
-            // spans the viewport's width.
             node.position = Position::Absolute;
             node.inset.left = UIValue::Px(0.0);
             node.inset.right = UIValue::Px(0.0);
-            node.inset.top = UIValue::Px(-content_offset(area, list));
+            node.inset.top = UIValue::Px(-area.offset);
         }
     }
 }
 
-/// How far the content node is shifted up, in logical pixels.
-///
-/// A plain scroll area moves its content by the whole offset. A virtualized one
-/// only renders rows from `visible_range` onwards, so the content node starts at
-/// that row and needs to move by the remaining distance only — otherwise the
-/// list would scroll twice, once by recycling rows and again by the margin.
-fn content_offset(area: &UIScrollArea, list: Option<&UIVirtualList>) -> f32 {
-    match list {
-        Some(list) => area.offset - list.visible_range.start as f32 * list.row_height,
-        None => area.offset,
-    }
-}
-
-pub(crate) fn update_virtual_lists(lists: Query<(&mut UIVirtualList, &UIScrollArea, &UILayout)>) {
-    for (mut list, scroll, layout) in lists.iter() {
-        let first = (scroll.offset / list.row_height).floor().max(0.0) as usize;
-        let visible = (layout.content_rect.size.y / list.row_height)
-            .ceil()
-            .max(0.0) as usize;
-        list.visible_range = first.saturating_sub(list.overscan)
-            ..(first + visible + list.overscan).min(list.item_count);
-    }
-}
-
-pub(crate) fn update_split_panes(
-    mut drags: EventReader<UIDrag>,
+/// Drag listener that moves the boundary of the pane its [`UISplitHandle`] belongs to.
+pub fn drag_split_handle(
+    on: On<UIDrag>,
     handles: Query<(&UISplitHandle, &UILayout)>,
     panes: Query<(&mut UISplitPane, &UILayout)>,
 ) {
-    for drag in drags.read() {
-        if drag.button != MouseButton::Left {
-            continue;
-        }
-        let Some(pane_entity) = handles
-            .get_entity(drag.entity)
-            .map(|(handle, _)| handle.pane)
-        else {
-            continue;
-        };
-        let Some((mut pane, layout)) = panes.get_entity(pane_entity) else {
-            continue;
-        };
-        if pane.collapsed.is_some() {
-            continue;
-        }
-        let available = available_extent(&pane, layout, pane_entity, &handles);
-        if available <= 0.0 {
-            continue;
-        }
-        let delta = match pane.axis {
-            UISplitAxis::Horizontal => drag.delta.x,
-            UISplitAxis::Vertical => drag.delta.y,
-        };
-        // The handle tracks the pointer 1:1: `first_extent` is measured in the
-        // same logical pixels the drag delta is, so adding the delta moves the
-        // boundary exactly as far as the cursor moved.
-        let first = first_extent(&pane, available) + delta;
-        pane.ratio = (first / available).clamp(0.0, 1.0);
+    let drag = on.signal();
+    if drag.button != MouseButton::Left {
+        return;
     }
+    let Some(pane_entity) = handles
+        .get_entity(on.entity())
+        .map(|(handle, _)| handle.pane)
+    else {
+        return;
+    };
+    let Some((mut pane, layout)) = panes.get_entity(pane_entity) else {
+        return;
+    };
+    if pane.collapsed.is_some() {
+        return;
+    }
+    let available = available_extent(&pane, layout, pane_entity, &handles);
+    if available <= 0.0 {
+        return;
+    }
+    let delta = match pane.axis {
+        UISplitAxis::Horizontal => drag.delta.x,
+        UISplitAxis::Vertical => drag.delta.y,
+    };
+    let first = first_extent(&pane, available) + delta;
+    pane.ratio = (first / available).clamp(0.0, 1.0);
 }
 
 pub(crate) fn sync_split_panes(
@@ -238,9 +184,6 @@ fn axis_extent(axis: UISplitAxis, size: glam::Vec2) -> f32 {
     }
 }
 
-/// Space the two panes actually share: the container's content box minus the
-/// handles that sit between them. Excluding the handle is what keeps
-/// `first + handle + second` inside the container instead of overflowing it.
 fn available_extent(
     pane: &UISplitPane,
     layout: &UILayout,
@@ -255,9 +198,6 @@ fn available_extent(
     (axis_extent(pane.axis, layout.content_rect.size) - reserved).max(0.0)
 }
 
-/// Resolves the first pane's size in logical pixels, honouring collapse state
-/// and both minimums. Minimums lose to `available` when the container is too
-/// small to satisfy them, so the panes never overflow their container.
 fn first_extent(pane: &UISplitPane, available: f32) -> f32 {
     match pane.collapsed {
         Some(0) => 0.0,
@@ -270,22 +210,16 @@ fn first_extent(pane: &UISplitPane, available: f32) -> f32 {
     }
 }
 
-/// Applies a split ratio to two caller-owned child nodes. `available` is the
-/// container's content extent along the split axis, minus the handle.
+/// Applies a split ratio to two caller-owned child nodes.
 pub fn apply_split(pane: &UISplitPane, available: f32, first: &mut UINode, second: &mut UINode) {
     apply_first_split(pane, available, first);
     apply_second_split(pane, second);
 }
 
-/// The first pane is sized explicitly; the second absorbs whatever is left.
-/// Sizing only one side means the handle, the container gap and rounding all
-/// land in the flexible pane rather than overflowing the container.
 fn apply_first_split(pane: &UISplitPane, available: f32, first: &mut UINode) {
     first.visible = pane.collapsed != Some(0);
     first.flex_grow = 0.0;
     first.flex_shrink = 0.0;
-    // A pane owns a fixed region of the container; its contents must not paint
-    // over its neighbour when they no longer fit.
     first.overflow_x = Overflow::Hidden;
     first.overflow_y = Overflow::Hidden;
     let extent = UIValue::Px(first_extent(pane, available));
@@ -322,28 +256,24 @@ pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, m
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_ecs::{IntoSystem, System, World};
 
     #[test]
     fn a_plain_scroll_area_moves_its_content_by_the_whole_offset() {
-        let area = UIScrollArea {
+        let mut world = World::new();
+        let content = world.spawn(UINode::default());
+        world.spawn(UIScrollArea {
             offset: 140.0,
             content_extent: 900.0,
-            content: None,
-        };
-        assert_eq!(content_offset(&area, None), 140.0);
-    }
+            content: Some(content),
+        });
 
-    #[test]
-    fn a_virtual_list_only_moves_by_the_distance_row_recycling_does_not_cover() {
-        let area = UIScrollArea {
-            offset: 140.0,
-            content_extent: 900.0,
-            content: None,
-        };
-        let mut list = UIVirtualList::new(100, 32.0);
-        // Row 4 is the first one rendered, so it already accounts for 128px.
-        list.visible_range = 4..12;
-        assert_eq!(content_offset(&area, Some(&list)), 12.0);
+        let mut system = sync_scroll_content.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let node = world.get_component_for_entity::<UINode>(content).unwrap();
+        assert_eq!(node.inset.top, UIValue::Px(-140.0));
     }
 
     fn pane(ratio: f32) -> UISplitPane {
@@ -360,8 +290,6 @@ mod tests {
 
     #[test]
     fn first_pane_is_sized_from_the_space_left_by_the_handle() {
-        // 1000px container, 10px handle: the ratio applies to the 990px the
-        // panes actually share, so first + handle + second == 1000.
         assert_eq!(first_extent(&pane(0.5), 990.0), 495.0);
     }
 
@@ -370,7 +298,6 @@ mod tests {
         let mut pane = pane(0.9);
         pane.minimum_first = 400.0;
         pane.minimum_second = 400.0;
-        // 500px is too small for both minimums; the first pane still fits.
         let first = first_extent(&pane, 500.0);
         assert!(
             (0.0..=500.0).contains(&first),
@@ -403,7 +330,6 @@ mod tests {
         apply_split(&pane(0.5), 600.0, &mut first, &mut second);
         assert_eq!(first.overflow_x, Overflow::Hidden);
         assert_eq!(second.overflow_y, Overflow::Hidden);
-        // Only the first pane is sized; the second absorbs handle and rounding.
         assert_eq!(first.width, UIValue::Px(300.0));
         assert_eq!(second.width, UIValue::Auto);
         assert_eq!(first.flex_grow, 0.0);
@@ -424,22 +350,19 @@ mod tests {
     }
 }
 
-/// Width of a scrollbar, in logical pixels.
 const BAR_WIDTH: f32 = 8.0;
-/// The thumb never shrinks below this, however long the content is, so it stays
-/// visible and grabbable.
 const MIN_THUMB: f32 = 24.0;
 
 /// A scrollbar track, pinned to the right edge of its scroll area.
 #[derive(Component)]
-pub struct UIScrollBar {
-    pub area: Entity,
+pub(crate) struct UIScrollBar {
+    pub(crate) area: Entity,
 }
 
 /// The draggable part of a scrollbar.
 #[derive(Component)]
-pub struct UIScrollThumb {
-    pub area: Entity,
+pub(crate) struct UIScrollThumb {
+    pub(crate) area: Entity,
 }
 
 /// Where a scrollbar thumb sits within its track, in logical pixels.
@@ -449,14 +372,7 @@ pub struct ThumbGeometry {
     pub height: f32,
 }
 
-/// Thumb position and size for a scroll state, or `None` when the content fits
-/// and no bar should be drawn.
-///
-/// The thumb's size is the visible fraction of the content, which is what makes
-/// a scrollbar readable as "how much of this am I seeing"; it is clamped to
-/// [`MIN_THUMB`] so a very long list still leaves something to grab, and the
-/// travel is rescaled to that clamped size so the thumb still lands flush at
-/// both ends.
+/// Thumb position and size for a scroll state, or `None` when the content fits and no bar should be drawn.
 pub fn thumb_geometry(
     offset: f32,
     content_extent: f32,
@@ -477,9 +393,6 @@ pub fn thumb_geometry(
 }
 
 /// Spawns a track and thumb for each new scroll area.
-///
-/// Absolutely positioned so the bar overlays the content instead of taking a
-/// column out of it, which would reflow every panel that gained one.
 pub(crate) fn setup_scrollbars(
     new_areas: Query<(Entity, &UIScrollArea), Added<UIScrollArea>>,
     theme: Res<UITheme>,
@@ -488,36 +401,34 @@ pub(crate) fn setup_scrollbars(
     for (entity, _) in new_areas.iter() {
         let track = cmd
             .spawn((
-                UINode {
-                    width: UIValue::Px(BAR_WIDTH),
-                    position: Position::Absolute,
-                    visible: false,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_width(UIValue::Px(BAR_WIDTH))
+                    .with_position(Position::Absolute)
+                    .with_visible(false),
                 UIMaterial::flat(theme.canvas),
                 UIScrollBar { area: entity },
+                UIWidgetPart,
             ))
             .entity();
         cmd.add_child(entity, track);
 
         let thumb = cmd
             .spawn((
-                UINode {
-                    width: UIValue::Percent(100.0),
-                    position: Position::Absolute,
-                    ..Default::default()
-                },
+                UINode::default()
+                    .with_width(UIValue::Percent(100.0))
+                    .with_position(Position::Absolute),
                 UIMaterial::flat(theme.border),
                 Interactable,
                 UIScrollThumb { area: entity },
+                UIWidgetPart,
+                drag_scrollbar_thumb.into_listener(),
             ))
             .entity();
         cmd.add_child(track, thumb);
     }
 }
 
-/// Pins each track to the right edge of its area and hides it when there is
-/// nothing to scroll.
+/// Pins each track to the right edge of its area and hides it when there is nothing to scroll.
 pub(crate) fn sync_scrollbar_tracks(
     areas: Query<(&UIScrollArea, &UILayout)>,
     tracks: Query<(&UIScrollBar, &mut UINode)>,
@@ -532,8 +443,6 @@ pub(crate) fn sync_scrollbar_tracks(
         if node.visible != visible {
             node.visible = visible;
         }
-        // Pinned to the right edge by an explicit left offset: the track has a
-        // fixed width, so anchoring both sides would stretch it instead.
         let inset = UIInset {
             top: UIValue::Px(0.0),
             left: UIValue::Px((layout.content_rect.size.x - BAR_WIDTH).max(0.0)),
@@ -573,34 +482,32 @@ pub(crate) fn sync_scrollbar_thumbs(
     }
 }
 
-/// Drags the view by dragging its thumb. The pointer moves `track` pixels while
-/// the content moves `scrollable` pixels, so the delta is scaled between them.
-pub(crate) fn drag_scrollbar_thumbs(
-    mut drags: EventReader<UIDrag>,
+/// Drags the view by dragging its thumb.
+fn drag_scrollbar_thumb(
+    on: On<UIDrag>,
     thumbs: Query<&UIScrollThumb>,
     areas: Query<(&mut UIScrollArea, &UILayout)>,
 ) {
-    for drag in drags.read() {
-        if drag.button != MouseButton::Left {
-            continue;
-        }
-        let Some(thumb) = thumbs.get_entity(drag.entity) else {
-            continue;
-        };
-        let Some((mut area, layout)) = areas.get_entity(thumb.area) else {
-            continue;
-        };
-        let viewport = layout.content_rect.size.y;
-        let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
-        else {
-            continue;
-        };
-        let travel = viewport - geometry.height;
-        if travel <= 0.0 {
-            continue;
-        }
-        let scrollable = area.content_extent - viewport;
-        let max = scrollable.max(0.0);
-        area.offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
+    let drag = on.signal();
+    if drag.button != MouseButton::Left {
+        return;
     }
+    let Some(thumb) = thumbs.get_entity(on.entity()) else {
+        return;
+    };
+    let Some((mut area, layout)) = areas.get_entity(thumb.area) else {
+        return;
+    };
+    let viewport = layout.content_rect.size.y;
+    let Some(geometry) = thumb_geometry(area.offset, area.content_extent, viewport, viewport)
+    else {
+        return;
+    };
+    let travel = viewport - geometry.height;
+    if travel <= 0.0 {
+        return;
+    }
+    let scrollable = area.content_extent - viewport;
+    let max = scrollable.max(0.0);
+    area.offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
 }

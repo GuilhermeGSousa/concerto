@@ -1,13 +1,17 @@
 use std::{marker::PhantomData, mem::MaybeUninit, ptr::NonNull};
 
 use crate::{
-    component::{Component, bundle::ComponentBundle},
+    component::{
+        Component,
+        bundle::{ComponentBundle, IntoBundle},
+    },
     entity::{
         Entity,
         entity_store::EntityStore,
         hierarchy::{ChildOf, DespawnChildren},
     },
     resource::Resource,
+    signal::{EntitySignal, Signal},
     system::{input::SystemInput, meta::SystemMetadata},
     world::World,
 };
@@ -22,15 +26,15 @@ impl<'a> EntityCommandQueue<'a> {
         self.entity
     }
 
-    pub fn add_child<T: ComponentBundle + 'static>(self, components: T) -> Self {
+    pub fn add_child<T: IntoBundle<Bundle: 'static>>(&mut self, components: T) -> &mut Self {
         self.add_child_with(components, |_| {})
     }
 
-    pub fn add_child_with<T: ComponentBundle + 'static>(
-        mut self,
+    pub fn add_child_with<T: IntoBundle<Bundle: 'static>>(
+        &mut self,
         components: T,
         f: impl Fn(EntityCommandQueue),
-    ) -> Self {
+    ) -> &mut Self {
         let child_ctx = self.command_queue.spawn(components);
         let child_entity = child_ctx.entity();
         f(child_ctx);
@@ -39,7 +43,7 @@ impl<'a> EntityCommandQueue<'a> {
     }
 
     /// Spawns a child of this entity and returns the child's command queue.
-    pub fn spawn_child_queue<T: ComponentBundle + 'static>(
+    pub fn spawn_child<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
     ) -> EntityCommandQueue<'_> {
@@ -55,12 +59,18 @@ impl<'a> EntityCommandQueue<'a> {
         self
     }
 
-    pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T) {
+    pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T) {
         self.command_queue.insert(component, self.entity);
     }
 
     pub fn despawn(mut self) {
         self.command_queue.despawn(self.entity());
+    }
+
+    /// Queues a signal for this entity's own listener, run when commands are applied.
+    pub fn trigger<T: EntitySignal>(&mut self, signal: T) {
+        self.command_queue
+            .push(TriggerOnCommand(self.entity, signal));
     }
 }
 
@@ -87,10 +97,13 @@ impl<'w, 's> CommandQueue<'w, 's> {
         }
     }
 
-    pub fn spawn<T: ComponentBundle + 'static>(&mut self, components: T) -> EntityCommandQueue<'_> {
+    pub fn spawn<T: IntoBundle<Bundle: 'static>>(
+        &mut self,
+        components: T,
+    ) -> EntityCommandQueue<'_> {
         let spawned_entity = self.entities.reserve();
         self.queue_state
-            .push(SpawnCommand::new(components, spawned_entity));
+            .push(SpawnCommand::new(components.into_bundle(), spawned_entity));
 
         EntityCommandQueue {
             entity: spawned_entity,
@@ -116,8 +129,11 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(DespawnCommand::new(entity));
     }
 
-    pub fn insert<T: ComponentBundle + 'static>(&mut self, component: T, entity: Entity) {
-        self.queue_state.push(InsertCommand { component, entity });
+    pub fn insert<T: IntoBundle<Bundle: 'static>>(&mut self, component: T, entity: Entity) {
+        self.queue_state.push(InsertCommand {
+            component: component.into_bundle(),
+            entity,
+        });
     }
 
     pub fn remove<T: Component>(&mut self, entity: Entity) {
@@ -136,36 +152,30 @@ impl<'w, 's> CommandQueue<'w, 's> {
         self.queue_state.push(command);
     }
 
+    /// Queues a signal to run matching listeners when commands are applied.
+    ///
+    /// Uses the dispatch and reentrancy rules of [World::trigger].
+    pub fn trigger<T: Signal>(&mut self, signal: T) {
+        self.queue_state.push(TriggerCommand(signal));
+    }
+
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
         self.queue_state.push(InsertResource::<T>::new(resource));
     }
 
-    pub fn insert_from_json(
-        &mut self,
-        component_name: String,
-        component_data: String,
-        entity: Entity,
-    ) {
-        self.queue_state.push(InsertErasedCommand::new(
-            component_name,
-            component_data,
-            entity,
-        ));
-    }
-
-    /// Queues a scene component for deserialization and application.
+    /// Queues a scene component to be spawned from `value`.
     /// `node_entities` lets the component resolve `SceneEntityRef`s to the
     /// other entities spawned for the same scene.
     pub fn apply_scene_component(
         &mut self,
         type_name: String,
-        data: String,
+        value: concerto_reflect::ReflectedValue,
         entity: Entity,
         node_entities: std::sync::Arc<[Entity]>,
     ) {
         self.queue_state.push(ApplySceneComponentCommand {
             type_name,
-            data,
+            value,
             entity,
             node_entities,
         });
@@ -318,11 +328,17 @@ impl SystemInput for CommandQueue<'_, '_> {
         CommandQueueState::new()
     }
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        CommandQueue::new(state, world.world().entity_store())
+        _ticks: crate::component::SystemTicks,
+    ) -> Result<Self::Data<'world, 'state>, crate::system::input::ValidationError> {
+        // SAFETY: only the entity store is touched, whose reservations are atomic and which
+        // otherwise changes only under exclusive access.
+        Ok(CommandQueue::new(
+            state,
+            unsafe { world.world() }.entity_store(),
+        ))
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -387,31 +403,9 @@ impl<T: ComponentBundle> Command for InsertCommand<T> {
     }
 }
 
-pub(crate) struct InsertErasedCommand {
-    entity: Entity,
-    component_name: String,
-    component_data: String,
-}
-
-impl InsertErasedCommand {
-    pub fn new(component_name: String, component_data: String, entity: Entity) -> Self {
-        Self {
-            entity,
-            component_name,
-            component_data,
-        }
-    }
-}
-
-impl Command for InsertErasedCommand {
-    fn execute(self, world: &mut World) {
-        world.apply_scene_component(&self.component_name, &self.component_data, self.entity, &[]);
-    }
-}
-
 pub(crate) struct ApplySceneComponentCommand {
     type_name: String,
-    data: String,
+    value: concerto_reflect::ReflectedValue,
     entity: Entity,
     node_entities: std::sync::Arc<[Entity]>,
 }
@@ -420,7 +414,7 @@ impl Command for ApplySceneComponentCommand {
     fn execute(self, world: &mut World) {
         world.apply_scene_component(
             &self.type_name,
-            &self.data,
+            &self.value,
             self.entity,
             &self.node_entities,
         );
@@ -455,5 +449,21 @@ impl<T: Resource> InsertResource<T> {
 impl<T: Resource> Command for InsertResource<T> {
     fn execute(self, world: &mut World) {
         world.insert_resource(self.resource);
+    }
+}
+
+struct TriggerCommand<T: Signal>(T);
+
+impl<T: Signal> Command for TriggerCommand<T> {
+    fn execute(self, world: &mut World) {
+        world.trigger(self.0);
+    }
+}
+
+struct TriggerOnCommand<T: EntitySignal>(Entity, T);
+
+impl<T: EntitySignal> Command for TriggerOnCommand<T> {
+    fn execute(self, world: &mut World) {
+        world.trigger_on(self.0, self.1);
     }
 }

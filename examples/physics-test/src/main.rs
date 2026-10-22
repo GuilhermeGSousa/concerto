@@ -44,14 +44,16 @@ const SPHERE_RADIUS: f32 = 1.0;
 #[derive(Component)]
 struct BallColor(Color);
 
-fn main() {
-    env_logger::init();
-
-    let mut app = App::new();
+fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins::default())
         .add_system(Startup, spawn_scene)
         .add_system(Update, click_ball);
-    app.run();
+}
+
+fn main() {
+    env_logger::init();
+
+    concerto::run(game);
 }
 
 fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
@@ -70,6 +72,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             color: Color::rgba(1.0, 1.0, 1.0, 1.0),
             intensity: 100.0,
             light_type: LightType::Point,
+            range: 0.0,
             shadowmaps_enabled: false,
         },
         Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::IDENTITY),

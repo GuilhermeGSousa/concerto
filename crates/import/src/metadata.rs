@@ -63,7 +63,9 @@ impl SourceMetadata {
 
 /// Normalize historic path spellings even if a moved source no longer exists.
 pub(crate) fn normalize(path: &Path) -> PathBuf {
-    let portable = path.to_string_lossy().replace('\\', "/");
+    let portable = path
+        .to_string_lossy()
+        .replace(['\\', '/'], std::path::MAIN_SEPARATOR_STR);
     let mut normalized = PathBuf::new();
     for component in Path::new(&portable).components() {
         match component {

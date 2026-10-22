@@ -14,8 +14,6 @@ use glyphon::FontSystem;
 #[derive(Resource, Default)]
 pub struct UIFonts {
     faces: Vec<Cow<'static, [u8]>>,
-    /// Family that [`FontFamily::SansSerif`](crate::text::FontFamily::SansSerif)
-    /// resolves to, overriding the platform's default.
     sans_serif: Option<String>,
 }
 
@@ -31,11 +29,9 @@ impl UIFonts {
 
 /// Registers fonts with the UI. Call from a plugin's `build`.
 pub trait UIFontsApp {
-    /// Adds one face. Faces sharing a family name are resolved by weight and
-    /// style, so an app ships regular and bold as two calls.
+    /// Adds one face.
     fn add_ui_font(&mut self, data: impl Into<Cow<'static, [u8]>>) -> &mut Self;
-    /// Points the default sans-serif family at `family`, which one of the
-    /// registered faces must provide.
+    /// Points the default sans-serif family at `family`.
     fn set_ui_sans_serif(&mut self, family: impl Into<String>) -> &mut Self;
 }
 
@@ -51,8 +47,6 @@ impl UIFontsApp for App {
     }
 }
 
-/// The registry, created on first use so plugin registration order does not
-/// decide whether fonts can be added.
 fn fonts_mut(app: &mut App) -> &mut UIFonts {
     if app.get_resource::<UIFonts>().is_none() {
         app.insert_resource(UIFonts::default());
@@ -62,13 +56,6 @@ fn fonts_mut(app: &mut App) -> &mut UIFonts {
 }
 
 /// Builds a [`FontSystem`] holding every registered face.
-///
-/// Public so tests can build the very system the editor will run with.
-///
-/// Native also resolves against the platform's installed fonts. Browsers expose
-/// no enumerable system fonts, so cosmic-text's database is empty there and
-/// shaping panics with "no default font found"; ship a font and point every
-/// generic family at it.
 #[doc(hidden)]
 pub fn build_font_system(fonts: &UIFonts) -> FontSystem {
     let mut font_system = FontSystem::new();

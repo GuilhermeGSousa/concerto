@@ -1,6 +1,9 @@
 use std::any::TypeId;
 
-use crate::{Component, Entity, World, archetype::Archetype, component::ComponentId};
+use crate::{
+    Component, Entity, World, archetype::Archetype, component::ComponentId,
+    query::change_detection::Ref,
+};
 
 use typle::typle;
 
@@ -61,6 +64,19 @@ impl<T: Component> WorldQuery for Option<&mut T> {
 
     fn matches(_state: &Self::State, _archetype: &Archetype) -> bool {
         true
+    }
+}
+
+impl<T: Component> WorldQuery for Ref<'_, T> {
+    type State = ComponentId;
+
+    fn init_state(world: &mut World) -> Self::State {
+        world.register_component::<T>();
+        TypeId::of::<T>()
+    }
+
+    fn matches(state: &Self::State, archetype: &Archetype) -> bool {
+        archetype.contains(*state)
     }
 }
 

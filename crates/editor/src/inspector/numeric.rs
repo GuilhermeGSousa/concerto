@@ -1,13 +1,11 @@
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
 };
-use concerto_editable::Editable;
+use concerto_reflect::Reflect;
+use concerto_ui::elements::prelude::*;
 use concerto_ui::{
-    focus::{FocusedWidget, UIFocusGained, UIFocusLost, UIFocusable},
-    interaction::Interactable,
-    material::UIMaterial,
-    node::{UINode, UIRect},
-    text::TextComponent,
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+    node::UIRect,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
     transform::UIValue,
@@ -40,7 +38,7 @@ pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistr
     registry.register_property_editor::<Quat, _>(NumericFields);
 }
 
-pub(crate) trait NumericValue: Editable {
+pub(crate) trait NumericValue: Reflect {
     fn numbers(&self) -> NumericSnapshot;
     fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError>;
 }
@@ -129,9 +127,6 @@ fn queue_numeric(
 pub(crate) struct NumericSlot {
     row: Entity,
     slot: usize,
-    /// The text this field last showed or committed. A commit compares its
-    /// input against this, so neither display rounding nor a repeated focus
-    /// loss becomes an edit.
     displayed: String,
 }
 
@@ -144,41 +139,28 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn apply(&self, value: &mut T, edit: &NumericEdit) -> Result<(), EditError> {
         value.edit(edit)
     }
+    fn follows_snapshot(&self) -> bool {
+        true
+    }
     fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &NumericSnapshot, theme: &UITheme) {
+        let mut row_queue = cmd.entity(row);
         for slot in 0..slot_count(value) {
-            let field = cmd
-                .spawn((
-                    UINode {
-                        flex_grow: 1.0,
-                        width: UIValue::Px(0.0),
-                        min_width: UIValue::Px(0.0),
-                        height: UIValue::Px(theme.control_height),
-                        padding: UIRect::axes(field_leading(theme), theme.spacing_xs),
-                        ..Default::default()
-                    }
+            row_queue.add_child((
+                theme
+                    .text_field("")
+                    .small()
+                    .grow()
+                    .shrink(1.0)
+                    .width(UIValue::Px(0.0))
+                    .min_width(UIValue::Px(0.0))
+                    .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
                     .clipped(),
-                    TextComponent {
-                        color: theme.text,
-                        font_size: theme.font_size_sm,
-                        line_height: theme.line_height(theme.font_size_sm),
-                        wrap: false,
-                        ..Default::default()
-                    },
-                    UITextInput::new(""),
-                    UIMaterial {
-                        corner_radius: theme.radius_md,
-                        ..UIMaterial::with_border(theme.canvas, theme.border, 1.0)
-                    },
-                    Interactable,
-                    UIFocusable,
-                    NumericSlot {
-                        row,
-                        slot,
-                        displayed: String::new(),
-                    },
-                ))
-                .entity();
-            cmd.add_child(row, field);
+                NumericSlot {
+                    row,
+                    slot,
+                    displayed: String::new(),
+                },
+            ));
         }
     }
 }
@@ -203,8 +185,6 @@ fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
     number.map(|n| format!("{n:.3}")).unwrap_or_default()
 }
 
-/// The value to commit when `slot` finishes editing with `text`, or `None` to
-/// commit nothing.
 fn numeric_commit(
     current: &NumericSnapshot,
     slot: usize,
@@ -221,17 +201,13 @@ fn numeric_commit(
     Some(NumericEdit { slot, number })
 }
 
-/// Restores a field's text to its last-known-good value, e.g. after an
-/// unparseable edit or an explicit cancel.
 fn revert(slot: &NumericSlot, input: &mut UITextInput) {
     input.value = slot.displayed.clone();
     input.cursor = input.value.len();
     input.selection_anchor = None;
 }
 
-/// Selects a field's whole text when it gains focus, so the first keystroke
-/// replaces it rather than landing after it. `UITextInput`'s typing path
-/// deletes the current selection before inserting.
+/// Selects a field's whole text when it gains focus, so the first keystroke replaces it rather than landing after it.
 pub(crate) fn select_numeric_field_on_focus(
     mut gained: EventReader<UIFocusGained>,
     fields: Query<(&NumericSlot, &mut UITextInput)>,
@@ -278,13 +254,8 @@ pub(crate) fn commit_numeric_fields(
                     revert(&slot, &mut input);
                     continue;
                 }
-                // Enter keeps focus; without this the focus loss that follows
-                // would commit the same text again.
                 slot.displayed = input.value.clone();
             }
-            // Unparseable text never commits and must not linger on screen:
-            // Enter keeps focus, and refresh skips the focused field, so
-            // nothing else would clear it.
             None => revert(&slot, &mut input),
         }
     }
@@ -306,9 +277,7 @@ pub(crate) fn cancel_numeric_fields(
     }
 }
 
-/// Writes each row's value into its fields, except the focused one: its text is
-/// the user's edit buffer, and the value re-derived from the component (e.g.
-/// euler angles from a quaternion) need not match what they typed.
+/// Writes each row's value into its fields, except the focused one.
 pub(crate) fn refresh_numeric_fields(
     focused: Res<FocusedWidget>,
     rows: Query<&PropertyRowValue>,
@@ -385,9 +354,6 @@ mod tests {
         assert_eq!(input.cursor, input.value.len());
     }
 
-    /// The bug this guards: a field with no vertical padding drew its text
-    /// against the top edge of a 28px-tall box, because the renderer starts at
-    /// the content box's top-left and nothing had moved it down.
     #[test]
     fn a_fields_text_sits_in_the_middle_of_its_box() {
         let theme = UITheme::default();
@@ -400,8 +366,6 @@ mod tests {
             "the line and the space above and below it fill the control exactly"
         );
 
-        // A theme whose text is taller than its controls cannot be centred, and
-        // must not be pushed out of its box trying.
         let cramped = UITheme {
             control_height: 8.0,
             ..theme
@@ -516,7 +480,8 @@ mod tests {
 
     #[test]
     fn transform_numeric_widget_submit_refresh_and_cancel_smoke_test() {
-        use super::super::{InspectorRegistry, Property, apply_property_commits};
+        use super::super::{InspectorRegistry, Property, send_property_commits};
+        use crate::hosted::testing::SceneFixture;
         use concerto_ecs::{
             IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel,
         };
@@ -550,31 +515,42 @@ mod tests {
                 &UITheme::default(),
             );
         }
-        let mut world = World::default();
-        let entity = world.spawn(Transform::IDENTITY);
-        let mut registry = InspectorRegistry::default();
-        registry.register_component::<Transform>();
-        let property = registry
-            .collect_component(&world, entity, TypeId::of::<Transform>())
-            .unwrap()
-            .remove(0);
-        world.insert_resource(registry);
+        fn translation(f: &SceneFixture, document: Entity, entity: Entity) -> Property {
+            f.world
+                .get_resource::<InspectorRegistry>()
+                .unwrap()
+                .collect_component(
+                    f.world
+                        .resource_changed_tick::<InspectorRegistry>()
+                        .unwrap(),
+                    f.scene_world(document),
+                    entity,
+                    TypeId::of::<Transform>(),
+                )
+                .unwrap()
+                .remove(0)
+        }
+        let mut f = SceneFixture::new();
+        f.world.insert_resource(InspectorRegistry::default());
+        let document = f.open();
+        let entity = f.scene_entity(document, "first");
+        let property = translation(&f, document, entity);
+        let world: &mut World = &mut f.world;
         world.insert_resource(Build { property, entity });
-        world.insert_resource(PropertyCommits::default());
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
         world.insert_resource(EventChannel::<UIFocusLost>::default());
         world.insert_resource(EventChannel::<UITextInputCancelled>::default());
         let mut build = build.into_system();
-        build.initialize(&mut world);
-        build.run_and_apply(&mut world);
+        build.initialize(world);
+        build.run_and_apply((), world);
         let mut refresh = refresh_numeric_fields.into_system();
-        refresh.initialize(&mut world);
-        refresh.run_and_apply(&mut world);
+        refresh.initialize(world);
+        refresh.run_and_apply((), world);
         let mut fields = world.query::<(Entity, &NumericSlot), ()>();
-        assert_eq!(fields.iter(&mut world).count(), 3);
+        assert_eq!(fields.iter(world).count(), 3);
         let (field, row) = fields
-            .iter(&mut world)
+            .iter(world)
             .find(|(_, slot)| slot.slot == 0)
             .map(|(entity, slot)| (entity, slot.row))
             .unwrap();
@@ -590,7 +566,7 @@ mod tests {
             .get_component_for_entity_mut::<UITextInput>(field)
             .unwrap()
             .value = "2.5".into();
-        refresh.run_and_apply(&mut world);
+        refresh.run_and_apply((), world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)
@@ -607,28 +583,25 @@ mod tests {
                 value: "2.5".into(),
             });
         let mut submit = commit_numeric_fields.into_system();
-        submit.initialize(&mut world);
-        submit.run_and_apply(&mut world);
-        apply_property_commits(&mut world);
+        submit.initialize(world);
+        submit.run_and_apply((), world);
+        let mut send = send_property_commits.into_system();
+        send.initialize(world);
+        send.run_and_apply((), world);
         assert_eq!(
-            world
+            f.scene_world(document)
                 .get_component_for_entity::<Transform>(entity)
                 .unwrap()
                 .translation,
             Vec3::new(2.5, 0.0, 0.0)
         );
-        let snapshot = world
-            .get_resource::<InspectorRegistry>()
-            .unwrap()
-            .collect_component(&world, entity, TypeId::of::<Transform>())
-            .unwrap()
-            .remove(0)
-            .value;
+        let snapshot = translation(&f, document, entity).value;
+        let world: &mut World = &mut f.world;
         *world
             .get_component_for_entity_mut::<PropertyRowValue>(row)
             .unwrap() = snapshot;
         **world.get_resource_mut::<FocusedWidget>().unwrap() = None;
-        refresh.run_and_apply(&mut world);
+        refresh.run_and_apply((), world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)
@@ -646,8 +619,8 @@ mod tests {
             .unwrap()
             .push_event(UITextInputCancelled { entity: field });
         let mut cancel = cancel_numeric_fields.into_system();
-        cancel.initialize(&mut world);
-        cancel.run_and_apply(&mut world);
+        cancel.initialize(world);
+        cancel.run_and_apply((), world);
         assert_eq!(
             world
                 .get_component_for_entity::<UITextInput>(field)

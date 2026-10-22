@@ -1,7 +1,11 @@
 use concerto_color::Color;
 use concerto_ecs::{
+    component::SystemTicks,
     resource::ResMut,
-    system::{access::SystemAccess, input::SystemInput},
+    system::{
+        access::SystemAccess,
+        input::{SystemInput, ValidationError},
+    },
     world::UnsafeWorldCell,
 };
 use concerto_foundation::transform::Transform;
@@ -34,20 +38,28 @@ const DEFAULT_CIRCLE_SEGMENTS: usize = 32;
 /// All shapes are rendered as line lists; there is no filled geometry.
 pub struct DebugGizmos<'w> {
     storage: ResMut<'w, GizmoStorage>,
+    width: f32,
 }
 
 impl<'w> DebugGizmos<'w> {
+    /// Sets the width, in pixels of the camera's target, of every line drawn afterwards through
+    /// this parameter. It starts at one pixel each time the system runs.
+    pub fn set_line_width(&mut self, pixels: f32) {
+        self.width = pixels.max(1.0);
+    }
+
     /// Draws a single line between two points.
     #[inline]
     pub fn line(&mut self, start: Vec3, end: Vec3, color: Color) {
-        self.storage.push_line(start, end, color, color);
+        self.storage.push_line(start, end, color, color, self.width);
     }
 
     /// Draws a line whose colour is interpolated from `start_color` to
     /// `end_color` along its length.
     #[inline]
     pub fn line_gradient(&mut self, start: Vec3, end: Vec3, start_color: Color, end_color: Color) {
-        self.storage.push_line(start, end, start_color, end_color);
+        self.storage
+            .push_line(start, end, start_color, end_color, self.width);
     }
 
     /// Draws a line from `start` extending along `vector`.
@@ -217,13 +229,16 @@ impl<'w> SystemInput for DebugGizmos<'w> {
 
     fn init_state(_world: &mut concerto_ecs::World) -> Self::State {}
 
-    fn get_data<'world, 'state>(
+    unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
-    ) -> Self::Data<'world, 'state> {
-        DebugGizmos {
-            storage: ResMut::new(world),
-        }
+        ticks: SystemTicks,
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        Ok(DebugGizmos {
+            // SAFETY: `fill_access` declares write access to the gizmo storage.
+            storage: unsafe { ResMut::new(world, ticks) }?,
+            width: 1.0,
+        })
     }
 
     fn fill_access(

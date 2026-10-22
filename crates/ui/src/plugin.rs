@@ -5,35 +5,41 @@ use concerto_app::{
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
-    resources::RenderContext,
+    resources::RenderContext, sets::RenderSet,
+};
+use concerto_window::input::{
+    KeyCode,
+    actions::{ActionMap, Shortcut},
 };
 use glyphon::{Cache, SwashCache, Viewport};
 
 use crate::{
     anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
-    checkbox::{UICheckboxChanged, sync_checkbox_material, toggle_checkboxes},
+    checkbox::sync_checkbox_material,
     focus::{
         FocusedWidget, UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, sync_text_capture,
         update_focus,
     },
-    interaction::{
-        HoveredNode, UIClick, UIDrag, UIInputState, UIPointerDown, UIPointerEnter, UIPointerLeave,
-        UIPointerUp, apply_interaction_styles, update_ui_interaction,
+    interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
+    items::{
+        UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
+        UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
     },
+    list::update_lists,
     material::UIMaterial,
     node::{
-        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes, extract_ui_materials,
-        extract_ui_nodes, sync_material_params, sync_viewport_textures,
+        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
+        extract_shared_viewports, extract_ui_materials, extract_ui_nodes, sync_material_params,
+        sync_shared_viewport_textures, sync_viewport_textures,
     },
     render::{prepare_text_renderer, ui_renderpass, update_text_viewport},
     resources::UIRenderDiagnostics,
     scroll::{
-        drag_scrollbar_thumbs, setup_scrollbars, sync_scroll_content, sync_scrollbar_thumbs,
-        sync_scrollbar_tracks, sync_split_panes, update_scroll_areas, update_split_panes,
-        update_virtual_lists,
+        setup_scrollbars, sync_scroll_content, sync_scrollbar_thumbs, sync_scrollbar_tracks,
+        sync_split_panes, update_scroll_areas,
     },
     sets::UiSet,
-    slider::{UISliderChanged, setup_slider_visuals, sync_slider_fill, update_slider_drag},
+    slider::{setup_slider_visuals, sync_slider_fill},
     text::{
         extract_text_nodes,
         fonts::{UIFonts, build_font_system},
@@ -45,10 +51,22 @@ use crate::{
         UITextInputCancelled, UITextInputChanged, UITextInputSubmitted, update_text_inputs,
     },
     theme::UITheme,
-    widgets::{
-        UICollapsibleChanged, UITabChanged, sync_tab_bodies, update_tooltips, update_widgets,
-    },
+    tree::update_trees,
+    widgets::{sync_tab_bodies, update_tooltips},
 };
+
+fn bind_default_actions(actions: &mut ActionMap) {
+    actions.bind_global(UIFocusNext, Shortcut::key(KeyCode::Tab));
+    actions.bind_global(UIFocusPrevious, Shortcut::key(KeyCode::Tab).with_shift());
+    actions.bind_global(UIDismissPanel, Shortcut::key(KeyCode::Escape));
+    actions.bind_global(UIListNext, Shortcut::key(KeyCode::ArrowDown));
+    actions.bind_global(UIListPrevious, Shortcut::key(KeyCode::ArrowUp));
+    actions.bind_global(UIListFirst, Shortcut::key(KeyCode::Home));
+    actions.bind_global(UIListLast, Shortcut::key(KeyCode::End));
+    actions.bind_global(UIListActivate, Shortcut::key(KeyCode::Enter));
+    actions.bind_global(UITreeExpand, Shortcut::key(KeyCode::ArrowRight));
+    actions.bind_global(UITreeCollapse, Shortcut::key(KeyCode::ArrowLeft));
+}
 
 /// Registers the UI's resources, events and systems, ordered by [`UiSet`] in `LateUpdate`.
 ///
@@ -61,30 +79,10 @@ impl Plugin for UIPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.register_plugin(MaterialPlugin::<UIMaterial>::pipeline_only());
 
-        {
-            let actions = app
-                .get_resource_mut::<concerto_window::input::actions::ActionMap>()
-                .expect("WindowPlugin must be registered before UIPlugin");
-            actions.bind_global(
-                UIFocusNext,
-                concerto_window::input::actions::Shortcut::key(
-                    concerto_window::input::KeyCode::Tab,
-                ),
-            );
-            actions.bind_global(
-                UIFocusPrevious,
-                concerto_window::input::actions::Shortcut::key(
-                    concerto_window::input::KeyCode::Tab,
-                )
-                .with_shift(),
-            );
-            actions.bind_global(
-                UIDismissPanel,
-                concerto_window::input::actions::Shortcut::key(
-                    concerto_window::input::KeyCode::Escape,
-                ),
-            );
-        }
+        bind_default_actions(
+            app.get_resource_mut::<ActionMap>()
+                .expect("WindowPlugin must be registered before UIPlugin"),
+        );
 
         app.insert_resource(HoveredNode::default());
         app.insert_resource(UIInputState::default());
@@ -93,25 +91,18 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
+        crate::list::install_listeners(app.main_mut().world_mut());
+        crate::tree::install_listeners(app.main_mut().world_mut());
+        install_listeners(app.main_mut().world_mut());
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
 
-        app.register_event::<UIClick>();
-        app.register_event::<UIPointerDown>();
-        app.register_event::<UIPointerUp>();
-        app.register_event::<UIPointerEnter>();
-        app.register_event::<UIPointerLeave>();
-        app.register_event::<UIDrag>();
-        app.register_event::<UICheckboxChanged>();
-        app.register_event::<UISliderChanged>();
         app.register_event::<UITextInputChanged>();
         app.register_event::<UITextInputSubmitted>();
         app.register_event::<UITextInputCancelled>();
         app.register_event::<UIFocusGained>();
         app.register_event::<UIFocusLost>();
-        app.register_event::<UICollapsibleChanged>();
-        app.register_event::<UITabChanged>();
 
         app.configure_sets(
             LateUpdate,
@@ -139,17 +130,13 @@ impl Plugin for UIPlugin {
         app.add_system(
             LateUpdate,
             (
-                toggle_checkboxes,
                 update_text_inputs,
                 dismiss_panels.after(update_text_inputs),
-                update_widgets,
                 sync_tab_bodies,
                 update_tooltips,
                 update_scroll_areas,
-                update_virtual_lists.after(update_scroll_areas),
-                update_split_panes,
-                update_slider_drag,
-                drag_scrollbar_thumbs,
+                keep_focus_on_shown_items,
+                navigate_items.after(keep_focus_on_shown_items),
             )
                 .in_set(UiSet::Widgets),
         );
@@ -159,14 +146,23 @@ impl Plugin for UIPlugin {
         );
         app.add_system(
             LateUpdate,
-            (sync_slider_fill, sync_scroll_content, sync_split_panes).in_set(UiSet::Project),
+            (
+                sync_slider_fill,
+                sync_scroll_content,
+                sync_split_panes,
+                update_lists,
+                update_trees,
+            )
+                .in_set(UiSet::Project),
         );
         app.add_system(
             LateUpdate,
             (
                 sync_checkbox_material,
                 sync_viewport_textures,
+                sync_shared_viewport_textures,
                 apply_interaction_styles,
+                paint_items,
             )
                 .in_set(UiSet::Materials),
         );
@@ -186,11 +182,15 @@ impl Plugin for UIPlugin {
 
         app.render_mut()
             .add_system(Extract, extract_ui_nodes)
+            .add_system(
+                Extract,
+                extract_shared_viewports.before(extract_ui_materials),
+            )
             .add_system(Extract, extract_ui_materials)
             .add_system(Extract, extract_text_nodes)
             .add_system(Render, update_text_viewport)
             .add_system(Render, prepare_text_renderer)
-            .add_system(Render, ui_renderpass);
+            .add_system(Render, ui_renderpass.after(RenderSet::Overlay));
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -228,5 +228,30 @@ impl Plugin for UIPlugin {
             .insert_resource(TextViewport(viewport))
             .insert_resource(TextFontSystem(font_system))
             .insert_resource(TextAtlas(atlas));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_window::input::actions::ActionLabel;
+
+    use super::*;
+
+    #[test]
+    fn the_list_and_tree_keys_resolve_to_their_actions() {
+        let mut actions = ActionMap::default();
+        bind_default_actions(&mut actions);
+
+        for (key, action) in [
+            (KeyCode::ArrowDown, UIListNext.intern()),
+            (KeyCode::ArrowUp, UIListPrevious.intern()),
+            (KeyCode::Home, UIListFirst.intern()),
+            (KeyCode::End, UIListLast.intern()),
+            (KeyCode::Enter, UIListActivate.intern()),
+            (KeyCode::ArrowRight, UITreeExpand.intern()),
+            (KeyCode::ArrowLeft, UITreeCollapse.intern()),
+        ] {
+            assert_eq!(actions.resolve(Shortcut::key(key)), Some(action), "{key:?}");
+        }
     }
 }

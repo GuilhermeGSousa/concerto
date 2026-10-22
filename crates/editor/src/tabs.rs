@@ -1,33 +1,37 @@
 //! The document tab strip.
-//!
-//! Tabs are deliberately just views over editor document entities.  The
-//! document owns the asset and its state; this module owns the small amount of
-//! chrome needed to activate or close it.
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::query::filter::With;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::CommandQueue, entity::hierarchy::ChildOf,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut,
+    command::CommandQueue,
+    entity::hierarchy::ChildOf,
     events::event_reader::EventReader,
+    signal::{On, listener::IntoListener},
 };
 use concerto_ui::{
+    elements::prelude::*,
     interaction::HoveredNode,
     interaction::{Interactable, UIClick, UIInteractionStyle},
-    material::UIMaterial,
     node::{UILayout, UINode, UIRect},
-    text::TextComponent,
-    theme::UITheme,
+    sets::UiSet,
+    text::UIText,
+    theme::{ButtonVariant, UITheme},
     transform::UIValue,
 };
+use concerto_window::events::{ScrollDelta, WindowEvent};
 use concerto_window::input::MouseButton;
-use concerto_window::winit_events::WindowEvent;
-use taffy::FlexDirection;
-use winit::event::{MouseScrollDelta, WindowEvent as WinitWindowEvent};
 
 use crate::window_chrome::WindowChromeControl;
 use crate::{
-    asset_editor::{ActiveEditor, AssetEditorCommand, AssetEditorCommands, EditorDocument},
+    asset_editor::{
+        ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
+        Unsaved,
+    },
     fonts::{glyph, icon},
+    hosted::{PlayState, toggle_play},
 };
+use concerto_foundation::assets::Asset;
+use concerto_scene::scene::Scene;
 
 /// Entity in the tab bar that activates the associated document.
 #[derive(Component)]
@@ -41,12 +45,17 @@ pub struct EditorTabClose {
     pub document: Entity,
 }
 
+/// Play/Stop button nested in the Scene tab, which cannot be closed.
+#[derive(Component)]
+pub struct EditorTabPlay {
+    pub document: Entity,
+}
+
 #[derive(Component)]
 struct TabLabel {
     document: Entity,
 }
 
-/// Marker for the scrolling viewport created by the shell.
 #[derive(Component)]
 pub struct TabStrip;
 
@@ -63,30 +72,79 @@ pub struct TabsPlugin;
 
 impl Plugin for TabsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_system(LateUpdate, handle_tab_clicks)
-            .add_system(LateUpdate, scroll_tabs)
-            .add_system(LateUpdate, sync_tabs);
+        app.add_system(LateUpdate, scroll_tabs)
+            .add_system(LateUpdate, sync_tabs.before(UiSet::Materials))
+            .add_system(
+                LateUpdate,
+                sync_play_buttons
+                    .after(UiSet::Input)
+                    .before(UiSet::Materials),
+            );
     }
 }
 
-fn handle_tab_clicks(
-    mut clicks: concerto_ecs::events::event_reader::EventReader<UIClick>,
+fn activate_tab(
+    on: On<UIClick>,
     tabs: Query<&EditorTab>,
+    mut commands: ResMut<AssetEditorCommands>,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    if let Some(tab) = tabs.get_entity(on.entity()) {
+        commands
+            .0
+            .push_back(AssetEditorCommand::Activate(tab.document));
+    }
+}
+
+fn close_tab(
+    on: On<UIClick>,
     closes: Query<&EditorTabClose>,
     mut commands: ResMut<AssetEditorCommands>,
 ) {
-    for click in clicks.read() {
-        if click.button != MouseButton::Left {
-            continue;
-        }
-        if let Some(close) = closes.get_entity(click.entity) {
-            commands
-                .0
-                .push_back(AssetEditorCommand::Close(close.document));
-        } else if let Some(tab) = tabs.get_entity(click.entity) {
-            commands
-                .0
-                .push_back(AssetEditorCommand::Activate(tab.document));
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    if let Some(close) = closes.get_entity(on.entity()) {
+        commands
+            .0
+            .push_back(AssetEditorCommand::Close(close.document));
+    }
+}
+
+fn play_label(state: Option<&PlayState>) -> &'static str {
+    match state {
+        Some(PlayState::Starting) => "Starting…",
+        Some(PlayState::Playing) => "Stop",
+        Some(PlayState::Editing) | None => "Play",
+    }
+}
+
+pub(crate) fn press_play(
+    on: On<UIClick>,
+    plays: Query<&EditorTabPlay>,
+    states: Query<&PlayState>,
+    mut cmd: CommandQueue,
+) {
+    if on.signal().button != MouseButton::Left {
+        return;
+    }
+    let Some(play) = plays.get_entity(on.entity()) else {
+        return;
+    };
+    toggle_play(
+        play.document,
+        states.get_entity(play.document).copied(),
+        &mut cmd,
+    );
+}
+
+fn sync_play_buttons(buttons: Query<(&EditorTabPlay, &mut UIText)>, states: Query<&PlayState>) {
+    for (play, mut text) in buttons.iter() {
+        let label = play_label(states.get_entity(play.document));
+        if text.text != label {
+            text.text = label.into();
         }
     }
 }
@@ -95,12 +153,15 @@ fn sync_tabs(
     mut cmd: CommandQueue,
     contents: Query<Entity, With<TabStripContent>>,
     documents: Query<(Entity, &EditorDocument)>,
-    labels: Query<(&TabLabel, &mut TextComponent)>,
+    unsaved: Query<&Unsaved>,
+    labels: Query<(&TabLabel, &mut UIText)>,
     existing_tabs: Query<&EditorTab>,
     tab_button_entities: Query<(Entity, &EditorTab)>,
-    tab_buttons: Query<(&EditorTab, &mut UIMaterial, &mut UIInteractionStyle)>,
+    tab_buttons: Query<(&EditorTab, &mut UIInteractionStyle)>,
     active: Res<ActiveEditor>,
     theme: Res<UITheme>,
+    registry: Res<AssetEditorRegistry>,
+    states: Query<&PlayState>,
 ) {
     let Some(content) = contents.iter().next() else {
         return;
@@ -131,6 +192,11 @@ fn sync_tabs(
                     format!("{} · error", document.title)
                 }
             });
+        let title = if unsaved.get_entity(entity).is_some() {
+            format!("• {title}")
+        } else {
+            title
+        };
         let kind = document
             .pending
             .as_ref()
@@ -151,117 +217,91 @@ fn sync_tabs(
                 label.color = color;
             }
         }
-        for (tab, mut material, mut interaction) in tab_buttons.iter() {
+        for (tab, mut interaction) in tab_buttons.iter() {
             if tab.document == entity {
-                let background = if is_active {
-                    theme.surface_raised
-                } else {
-                    theme.surface
-                };
-                material.color = background.to_linear();
-                interaction.normal = background;
+                let style = theme.interaction(ButtonVariant::Tab, is_active);
+                if interaction.normal != style.normal {
+                    **interaction = style;
+                }
             }
         }
         if !existing_tabs.iter().any(|tab| tab.document == entity) {
-            let button = cmd
-                .spawn((
-                    UINode {
-                        height: UIValue::Px(30.0),
-                        flex_direction: FlexDirection::Row,
-                        align_items: Some(taffy::AlignItems::Center),
-                        padding: UIRect::axes(0.0, theme.spacing_sm),
-                        flex_shrink: 0.0,
-                        z_index: 70,
-                        ..Default::default()
-                    },
-                    UIMaterial::flat(if is_active {
-                        theme.surface_raised
-                    } else {
-                        theme.surface
-                    }),
-                    UIInteractionStyle {
-                        normal: if is_active {
-                            theme.surface_raised
-                        } else {
-                            theme.surface
-                        },
-                        hovered: theme.surface_hovered,
-                        pressed: theme.accent,
-                        disabled: theme.surface,
-                    },
-                    Interactable,
-                    EditorTab { document: entity },
-                    WindowChromeControl,
-                ))
-                .entity();
-            cmd.add_child(content, button);
             let mark = match kind {
                 "Scene" => glyph::CUBE,
                 "Texture" => glyph::IMAGE,
                 _ => glyph::FILE,
             };
-            let mark_entity = cmd
-                .spawn((
-                    UINode {
-                        width: UIValue::Px(16.0),
-                        flex_shrink: 0.0,
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        color: if is_active {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        },
-                        ..icon(&theme, mark, theme.font_size_sm)
-                    },
-                ))
-                .entity();
-            cmd.add_child(button, mark_entity);
-            let label = cmd
-                .spawn((
-                    UINode {
-                        flex_shrink: 1.0,
-                        max_width: UIValue::Px(220.0),
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        text: title,
-                        wrap: false,
-                        ellipsis: true,
-                        font_size: theme.font_size_md,
-                        line_height: theme.line_height(theme.font_size_md),
-                        color: if is_active {
-                            theme.text
-                        } else {
-                            theme.text_muted
-                        },
-                        ..Default::default()
-                    },
-                    TabLabel { document: entity },
-                ))
-                .entity();
-            cmd.add_child(button, label);
-            let close = cmd
-                .spawn((
-                    UINode {
-                        width: UIValue::Px(18.0),
-                        height: UIValue::Px(24.0),
-                        padding: UIRect::axes(3.0, 3.0),
-                        flex_shrink: 0.0,
-                        z_index: 71,
-                        ..Default::default()
-                    },
-                    TextComponent {
-                        color: theme.text_muted,
-                        ..icon(&theme, glyph::X, theme.font_size_sm)
-                    },
-                    Interactable,
-                    EditorTabClose { document: entity },
+            let ink = if is_active {
+                theme.text
+            } else {
+                theme.text_muted
+            };
+            let closable = registry.closable(document.asset_type);
+            let plays = document.asset_type == Scene::name();
+            let play = play_label(states.get_entity(entity));
+            cmd.entity(content).add_child_with(
+                (
+                    theme
+                        .pressable()
+                        .tab()
+                        .selected(is_active)
+                        .radius(0.0)
+                        .height(UIValue::Px(30.0))
+                        .row()
+                        .padding(UIRect::axes(0.0, theme.spacing_sm))
+                        .z_index(70)
+                        .on_click(activate_tab),
+                    EditorTab { document: entity },
                     WindowChromeControl,
-                ))
-                .entity();
-            cmd.add_child(button, close);
+                ),
+                |mut button| {
+                    let button = button
+                        .add_child((
+                            UINode::default()
+                                .with_width(UIValue::Px(16.0))
+                                .with_flex_shrink(0.0),
+                            icon(&theme, mark, theme.font_size_sm).color(ink),
+                        ))
+                        .add_child((
+                            theme
+                                .label(title.clone())
+                                .single_line()
+                                .color(ink)
+                                .max_width(UIValue::Px(220.0)),
+                            TabLabel { document: entity },
+                        ));
+                    if closable {
+                        button.add_child((
+                            UINode::default()
+                                .with_size(UIValue::Px(18.0), UIValue::Px(24.0))
+                                .with_padding(UIRect::axes(3.0, 3.0))
+                                .with_flex_shrink(0.0)
+                                .with_z_index(71),
+                            icon(&theme, glyph::X, theme.font_size_sm).muted(),
+                            Interactable,
+                            EditorTabClose { document: entity },
+                            close_tab.into_listener(),
+                            WindowChromeControl,
+                        ));
+                    } else if plays {
+                        button.add_child((
+                            theme
+                                .button(play)
+                                .height(UIValue::Px(22.0))
+                                .padding(UIRect::axes(0.0, theme.spacing_sm))
+                                .margin(UIRect {
+                                    left: theme.spacing_sm,
+                                    ..UIRect::default()
+                                })
+                                .small()
+                                .z_index(71)
+                                .on_click(press_play),
+                            EditorTabPlay { document: entity },
+                            WindowChromeControl,
+                        ));
+                    }
+                },
+            );
         }
     }
 
@@ -305,23 +345,22 @@ fn scroll_tabs(
         if !over_strip {
             continue;
         }
-        if let WinitWindowEvent::MouseWheel { delta: wheel, .. } = &**event {
-            delta += match wheel {
-                MouseScrollDelta::LineDelta(x, y) => -if x.abs() > 0.0 { *x } else { *y } * 28.0,
-                MouseScrollDelta::PixelDelta(value) => {
-                    -if value.x.abs() > 0.0 {
-                        value.x
-                    } else {
-                        value.y
-                    } as f32
+        if let WindowEvent::MouseWheel { delta: wheel } = event {
+            let along = |value: &glam::Vec2| {
+                if value.x.abs() > 0.0 {
+                    value.x
+                } else {
+                    value.y
                 }
+            };
+            delta += match wheel {
+                ScrollDelta::Lines(lines) => -along(lines) * 28.0,
+                ScrollDelta::Pixels(pixels) => -along(pixels),
             };
         }
     }
     scroll.offset += delta;
     let width = strip_layout.rect.size.x;
-    // Child bounds remain authoritative even when the absolutely positioned
-    // content box is constrained to the viewport's available width by layout.
     let extent = tabs
         .iter()
         .map(|(_, layout)| layout.rect.max().x - content_layout.rect.min.x)

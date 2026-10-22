@@ -1,0 +1,16 @@
+[package]
+name = "concerto-reflect-macros"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "2.0.11"
+quote = "1.0.37"
+proc-macro-crate = "3"
+proc-macro2 = "1"

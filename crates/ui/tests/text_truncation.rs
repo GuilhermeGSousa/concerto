@@ -1,6 +1,5 @@
-//! Covers ellipsis truncation: a name too long for its box is cut where it
-//! actually stops fitting, not where a character count guesses.
-use concerto_ui::text::{TextComponent, truncate_for_test};
+//! Covers ellipsis truncation: a name too long for its box is cut where it actually stops fitting.
+use concerto_ui::text::{UIText, truncate_for_test};
 
 const METRICS: (f32, f32) = (14.0, 20.0);
 
@@ -38,7 +37,6 @@ fn a_box_with_no_room_does_not_panic() {
 
 #[test]
 fn multibyte_names_are_cut_on_character_boundaries() {
-    // Slicing by byte would panic here; the search walks char boundaries.
     let out =
         truncate_for_test("ünïcödé_mësh_wíth_áccents.glb", 50.0, METRICS).expect("must truncate");
     assert!(out.ends_with('…'), "{out}");
@@ -46,5 +44,5 @@ fn multibyte_names_are_cut_on_character_boundaries() {
 
 #[test]
 fn ellipsis_is_off_by_default() {
-    assert!(!TextComponent::default().ellipsis);
+    assert!(!UIText::default().ellipsis);
 }

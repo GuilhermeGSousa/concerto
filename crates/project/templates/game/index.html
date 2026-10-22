@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <base data-trunk-public-url />
+    <title>{{name}}</title>
+    <style type="text/css">
+        body {
+            margin: 0;
+        }
+
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        canvas:focus {
+            outline: none;
+        }
+    </style>
+</head>
+
+<body>
+    <link data-trunk rel="rust" href="Cargo.toml" data-wasm-opt="z" />
+    <link data-trunk rel="copy-dir" href="content" data-target-path="content" />
+</body>
+
+</html>

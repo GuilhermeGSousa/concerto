@@ -1,13 +1,30 @@
 //! Covers tab-strip body switching: selecting a tab shows exactly one body.
-//!
-//! `UITabStrip` already tracked which tab was selected, but nothing acted on
-//! it, so a strip with several panels rendered all of them on top of each
-//! other. This is what the editor's dock stands on.
-use concerto_ecs::{IntoSystem, System, World};
+use concerto_ecs::{
+    IntoSystem, ResMut, Resource, System, World,
+    signal::{On, listener::IntoListener},
+};
+use concerto_ui::interaction::UIClick;
 use concerto_ui::node::UINode;
-use concerto_ui::widgets::{UITabBody, UITabStrip, sync_tab_bodies};
+use concerto_ui::widgets::{
+    UICollapsibleChanged, UICollapsibleSection, UITab, UITabBody, UITabChanged, UITabStrip,
+    select_tab, sync_tab_bodies, toggle_collapsible,
+};
+use concerto_window::input::MouseButton;
+use glam::Vec2;
 
-/// Spawns a strip with `count` bodies and returns the strip and its bodies.
+#[derive(Resource, Default)]
+struct Heard(Vec<String>);
+
+fn click(world: &mut World, entity: concerto_ecs::Entity) {
+    world.trigger_on(
+        entity,
+        UIClick {
+            position: Vec2::ZERO,
+            button: MouseButton::Left,
+        },
+    );
+}
+
 fn strip_with_bodies(
     world: &mut World,
     count: usize,
@@ -22,7 +39,7 @@ fn strip_with_bodies(
 fn run(world: &mut World) {
     let mut system = sync_tab_bodies.into_system();
     system.initialize(world);
-    system.run_and_apply(world);
+    system.run_and_apply((), world);
 }
 
 fn visible(world: &World, entity: concerto_ecs::Entity) -> bool {
@@ -74,7 +91,6 @@ fn a_selection_past_the_end_shows_nothing_rather_than_everything() {
     let mut world = World::default();
     let (strip, bodies) = strip_with_bodies(&mut world, 2);
 
-    // A panel was removed while its tab was selected.
     world
         .get_component_for_entity_mut::<UITabStrip>(strip)
         .unwrap()
@@ -106,4 +122,57 @@ fn strips_do_not_interfere_with_each_other() {
         "the other strip keeps its own selection"
     );
     assert!(!visible(&world, right_bodies[1]));
+}
+
+#[test]
+fn clicking_a_tab_selects_it_in_its_strip_and_tells_the_strip() {
+    let mut world = World::default();
+    world.insert_resource(Heard::default());
+    let strip = world.spawn((
+        UITabStrip::default(),
+        (|on: On<UITabChanged>, mut heard: ResMut<Heard>| {
+            heard.0.push(on.signal().selected.to_string());
+        })
+        .into_listener(),
+    ));
+    let tabs: Vec<_> = (0..3)
+        .map(|index| world.spawn((UITab { strip, index }, select_tab.into_listener())))
+        .collect();
+
+    click(&mut world, tabs[2]);
+    click(&mut world, tabs[1]);
+
+    assert_eq!(
+        world
+            .get_component_for_entity::<UITabStrip>(strip)
+            .unwrap()
+            .selected,
+        1
+    );
+    assert_eq!(world.get_resource::<Heard>().unwrap().0, ["2", "1"]);
+}
+
+#[test]
+fn clicking_a_collapsible_section_hides_and_shows_its_content() {
+    let mut world = World::default();
+    world.insert_resource(Heard::default());
+    let content = world.spawn(UINode::default());
+    let section = world.spawn((
+        UICollapsibleSection {
+            expanded: true,
+            content,
+        },
+        toggle_collapsible.into_listener(),
+        (|on: On<UICollapsibleChanged>, mut heard: ResMut<Heard>| {
+            heard.0.push(on.signal().expanded.to_string());
+        })
+        .into_listener(),
+    ));
+
+    click(&mut world, section);
+    assert!(!visible(&world, content));
+    click(&mut world, section);
+    assert!(visible(&world, content));
+
+    assert_eq!(world.get_resource::<Heard>().unwrap().0, ["false", "true"]);
 }

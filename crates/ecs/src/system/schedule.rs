@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{
-    Resource, System, define_label,
+    Resource, System,
+    component::CheckChangeTicks,
+    define_label,
     intern::Interned,
     system::{
         BoxedSystem,
@@ -16,7 +18,9 @@ use crate::{
         meta::SystemMetadata,
         reachability::Reachability,
         set::{InternedSystemSet, IntoSetConfig, SetEntry},
+        stand_in::StandIn,
         sync_point::SyncPoint,
+        tag::TagFilter,
     },
     world::World,
 };
@@ -95,6 +99,14 @@ impl Schedule {
         self
     }
 
+    fn stand_in_for_inactive(&mut self, filter: &TagFilter) {
+        for (system, config) in self.systems.iter_mut().zip(&self.configs) {
+            if !filter.admits(&config.tags) {
+                *system = Box::new(StandIn::of(system.as_ref()));
+            }
+        }
+    }
+
     /// Resolves every constraint and initializes the systems for executor `T`.
     ///
     /// A system target missing from this schedule is ignored with a warning; an empty set is
@@ -103,7 +115,17 @@ impl Schedule {
     /// # Panics
     ///
     /// Panics if the explicit constraints contain a cycle.
-    pub fn compile<T: SystemExecutor + 'static>(mut self, world: &mut World) -> CompiledSchedule {
+    pub fn compile<T: SystemExecutor + 'static>(self, world: &mut World) -> CompiledSchedule {
+        self.compile_filtered::<T>(world, &TagFilter::default())
+    }
+
+    /// Like [`compile`](Schedule::compile), with every system `filter` rejects replaced by a stand-in.
+    pub fn compile_filtered<T: SystemExecutor + 'static>(
+        mut self,
+        world: &mut World,
+        filter: &TagFilter,
+    ) -> CompiledSchedule {
+        self.stand_in_for_inactive(filter);
         self.setup_systems_for_compilation();
 
         let mut graph = SystemDependencyGraph::new();
@@ -402,8 +424,19 @@ pub struct CompiledSchedule {
 }
 
 impl CompiledSchedule {
+    /// Runs the schedule once, first giving the world its tick check when one is due.
     pub fn run(&mut self, world: &mut World) {
+        if let Some(check) = world.check_change_ticks() {
+            self.check_change_ticks(check);
+        }
         self.executor.run(&mut self.compiled_data, world);
+    }
+
+    /// Clamps every system's stored ticks that are older than the check allows.
+    pub fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        for system in &mut self.compiled_data.systems {
+            system.check_change_tick(check);
+        }
     }
 }
 
@@ -477,11 +510,20 @@ impl Schedules {
     ///
     /// Panics if any schedule's explicit constraints contain a cycle.
     pub fn compile<T: SystemExecutor + 'static>(self, world: &mut World) -> CompiledSchedules {
+        self.compile_filtered::<T>(world, &TagFilter::default())
+    }
+
+    /// Like [`compile`](Schedules::compile), with `filter` applied to every schedule.
+    pub fn compile_filtered<T: SystemExecutor + 'static>(
+        self,
+        world: &mut World,
+        filter: &TagFilter,
+    ) -> CompiledSchedules {
         CompiledSchedules {
             compiled_schedules: self
                 .schedules
                 .into_iter()
-                .map(|(label, schedule)| (label, schedule.compile::<T>(world)))
+                .map(|(label, schedule)| (label, schedule.compile_filtered::<T>(world, filter)))
                 .collect(),
         }
     }
@@ -509,9 +551,15 @@ impl CompiledSchedules {
     pub(crate) fn insert(&mut self, label: impl ScheduleLabel, schedule: CompiledSchedule) {
         self.compiled_schedules.insert(label.intern(), schedule);
     }
+
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        for schedule in self.compiled_schedules.values_mut() {
+            schedule.check_change_ticks(check);
+        }
+    }
 }
 
-pub(crate) fn is_sync_point(system: &dyn System) -> bool {
+pub(crate) fn is_sync_point(system: &dyn System<In = ()>) -> bool {
     system.system_type() == TypeId::of::<SyncPoint>()
 }
 
@@ -522,6 +570,168 @@ mod tests {
         config::IntoSystemConfig, executor::single_thread::SingleThreadedExecutor,
     };
     use petgraph::graph::NodeIndex;
+
+    use crate::system::tag::{SystemTag, TagFilter};
+
+    #[derive(SystemTag, Clone, PartialEq, Eq, Hash, Debug)]
+    struct Kept;
+
+    #[derive(SystemTag, Clone, PartialEq, Eq, Hash, Debug)]
+    struct Dropped;
+
+    #[derive(crate::Resource, Default)]
+    struct Ran(Vec<&'static str>);
+
+    fn mark_a(mut ran: crate::ResMut<Ran>) {
+        ran.0.push("a");
+    }
+
+    fn mark_b(mut ran: crate::ResMut<Ran>) {
+        ran.0.push("b");
+    }
+
+    fn mark_x(mut ran: crate::ResMut<Ran>) {
+        ran.0.push("x");
+    }
+
+    fn run_once(schedule: Schedule, filter: &TagFilter) -> Vec<&'static str> {
+        let mut world = World::new();
+        world.insert_resource(Ran::default());
+        schedule
+            .compile_filtered::<SingleThreadedExecutor>(&mut world, filter)
+            .run(&mut world);
+        std::mem::take(&mut world.get_resource_mut::<Ran>().unwrap().0)
+    }
+
+    fn including(tag: impl SystemTag) -> TagFilter {
+        TagFilter {
+            include: vec![tag.intern()],
+            exclude: Vec::new(),
+        }
+    }
+
+    fn excluding(tag: impl SystemTag) -> TagFilter {
+        TagFilter {
+            include: Vec::new(),
+            exclude: vec![tag.intern()],
+        }
+    }
+
+    #[test]
+    fn without_a_filter_tags_change_nothing() {
+        let mut schedule = Schedule::new();
+        schedule.add_system((mark_a.tagged(Kept), mark_b).chain());
+        let mut world = World::new();
+        world.insert_resource(Ran::default());
+        schedule
+            .compile::<SingleThreadedExecutor>(&mut world)
+            .run(&mut world);
+        assert_eq!(world.get_resource::<Ran>().unwrap().0, vec!["a", "b"]);
+
+        let mut schedule = Schedule::new();
+        schedule.add_system((mark_a.tagged(Kept), mark_b).chain());
+        assert_eq!(run_once(schedule, &TagFilter::default()), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn an_include_filter_runs_only_tagged_systems() {
+        let mut schedule = Schedule::new();
+        schedule.add_system((mark_a.tagged(Kept), mark_b).chain());
+        assert_eq!(run_once(schedule, &including(Kept)), vec!["a"]);
+    }
+
+    #[test]
+    fn an_exclude_filter_drops_tagged_systems_and_wins_over_include() {
+        let mut schedule = Schedule::new();
+        schedule.add_system((mark_a.tagged(Dropped), mark_b).chain());
+        assert_eq!(run_once(schedule, &excluding(Dropped)), vec!["b"]);
+
+        let mut schedule = Schedule::new();
+        schedule.add_system((mark_a.tagged(Kept).tagged(Dropped), mark_b.tagged(Kept)).chain());
+        let filter = TagFilter {
+            include: vec![Kept.intern()],
+            exclude: vec![Dropped.intern()],
+        };
+        assert_eq!(run_once(schedule, &filter), vec!["b"]);
+    }
+
+    #[test]
+    fn an_explicit_order_through_a_stand_in_still_holds() {
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(mark_a.tagged(Kept).after(mark_x))
+            .add_system(mark_b.tagged(Kept))
+            .add_system(mark_x.after(mark_b));
+        assert_eq!(run_once(schedule, &including(Kept)), vec!["b", "a"]);
+    }
+
+    #[test]
+    fn tagging_a_tuple_tags_every_system_in_it() {
+        let mut schedule = Schedule::new();
+        schedule.add_system((mark_a, mark_b).tagged(Kept));
+        schedule.add_system(mark_x);
+        assert_eq!(run_once(schedule, &including(Kept)), vec!["a", "b"]);
+    }
+
+    #[derive(crate::Resource, Default)]
+    struct Hooked(u32);
+
+    struct Watched;
+
+    impl crate::Component for Watched {
+        fn on_add() -> Option<crate::component::ComponentLifecycleCallback> {
+            Some(|mut world, _| {
+                if let Some(hooked) = world.get_resource_mut::<Hooked>() {
+                    hooked.0 += 1;
+                }
+            })
+        }
+    }
+
+    fn watch(_watched: crate::Query<&Watched>) {}
+
+    fn hooks_fired(filter: &TagFilter) -> u32 {
+        let mut schedule = Schedule::new();
+        schedule.add_system(watch);
+        let mut world = World::new();
+        world.insert_resource(Hooked::default());
+        let _compiled = schedule.compile_filtered::<SingleThreadedExecutor>(&mut world, filter);
+        world.spawn(Watched);
+        world.get_resource::<Hooked>().unwrap().0
+    }
+
+    #[test]
+    fn a_stood_in_system_is_never_initialized() {
+        assert_eq!(hooks_fired(&TagFilter::default()), 1);
+        assert_eq!(hooks_fired(&including(Kept)), 0);
+    }
+
+    fn queue_nothing(_cmd: crate::CommandQueue, _ran: crate::ResMut<Ran>) {}
+
+    #[test]
+    fn a_stand_in_has_no_access_and_no_sync_point() {
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(mark_a.tagged(Kept))
+            .add_system(mark_x)
+            .add_system(queue_nothing)
+            .add_system(mark_b.tagged(Kept));
+        let mut world = World::new();
+        world.insert_resource(Ran::default());
+        let compiled =
+            schedule.compile_filtered::<SingleThreadedExecutor>(&mut world, &including(Kept));
+        let data = &compiled.compiled_data;
+
+        assert_eq!(data.systems.len(), 4);
+        assert!(
+            data.systems
+                .iter()
+                .all(|system| !is_sync_point(system.as_ref()))
+        );
+        assert_eq!(data.dependency_count[1], 0);
+        assert!(data.dependants[1].is_empty());
+        assert_eq!(data.dependency_count[2], 0);
+    }
 
     #[test]
     fn schedule_new() {

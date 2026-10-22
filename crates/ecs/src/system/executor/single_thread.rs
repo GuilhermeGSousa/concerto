@@ -17,7 +17,7 @@ impl SystemExecutor for SingleThreadedExecutor {
     fn run(&mut self, compiled_data: &mut CompiledScheduleData, world: &mut World) {
         for &idx in &compiled_data.sorted_systems {
             profiling::scope!(compiled_data.systems[idx].name());
-            compiled_data.systems[idx].run_and_apply(world);
+            compiled_data.systems[idx].run_and_apply((), world);
         }
     }
 }

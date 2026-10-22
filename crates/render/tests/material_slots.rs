@@ -1,5 +1,6 @@
 //! Covers per-primitive material slot binding.
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
+use concerto_reflect::{apply_value, to_value};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::{MaterialComponent, SlotBinding};
 
@@ -34,15 +35,16 @@ fn per_slot_covers_only_its_populated_entries() {
 }
 
 #[test]
-fn a_slot_binding_round_trips_through_json() {
+fn a_slot_binding_round_trips_through_reflection() {
     let component = MaterialComponent::<StandardMaterial>::per_slot(vec![
         Some(AssetHandle::weak(AssetId::new())),
         None,
     ]);
 
-    let text = serde_json::to_string(&component).expect("serializes");
-    let restored: MaterialComponent<StandardMaterial> =
-        serde_json::from_str(&text).expect("deserializes");
+    let value = to_value(&component).expect("encodes");
+    let mut restored = MaterialComponent::<StandardMaterial>::default();
+    let warnings = apply_value(&mut restored, &value);
+    assert!(warnings.is_empty(), "{warnings:?}");
 
     match restored.binding {
         SlotBinding::PerSlot(slots) => {

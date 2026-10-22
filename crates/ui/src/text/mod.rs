@@ -11,9 +11,7 @@ use concerto_window::plugin::Window;
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, Weight, Wrap};
 use std::hash::{Hash, Hasher};
 
-use crate::{
-    node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem, theme::UITheme,
-};
+use crate::{node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem};
 
 pub mod fonts;
 pub(crate) mod resources;
@@ -38,41 +36,26 @@ pub enum FontStyle {
 }
 
 /// Text node component.
-///
-/// Changing any field re-builds the glyphon buffer on the next frame.
 #[derive(Component)]
-pub struct TextComponent {
+pub struct UIText {
     pub text: String,
     pub font_size: f32,
     pub line_height: f32,
-    /// Font family.  Defaults to [`FontFamily::SansSerif`].
+    /// Font family. Defaults to [`FontFamily::SansSerif`].
     pub font_family: FontFamily,
-    /// Font weight (100–900).  400 = regular, 700 = bold.  Defaults to 400.
+    /// Font weight (100–900). 400 = regular, 700 = bold. Defaults to 400.
     pub font_weight: u16,
-    /// Font style.  Defaults to [`FontStyle::Normal`].
+    /// Font style. Defaults to [`FontStyle::Normal`].
     pub font_style: FontStyle,
-    /// Semantic foreground color. The default is warm off-white rather than
-    /// renderer-owned pure white so widgets can be themed consistently.
+    /// Semantic foreground color.
     pub color: Color,
     /// Whether text may wrap at word boundaries inside the content rectangle.
     pub wrap: bool,
-    /// Whether text too long for its box is cut short with an ellipsis rather
-    /// than simply clipped. Only meaningful for unwrapped single-line text.
+    /// Whether text too long for its box is cut short with an ellipsis.
     pub ellipsis: bool,
 }
 
-impl TextComponent {
-    pub fn from_theme(text: impl Into<String>, theme: &UITheme) -> Self {
-        Self {
-            text: text.into(),
-            font_size: theme.font_size_md,
-            line_height: theme.line_height(theme.font_size_md),
-            ..Default::default()
-        }
-    }
-}
-
-impl Default for TextComponent {
+impl Default for UIText {
     fn default() -> Self {
         Self {
             text: String::new(),
@@ -88,12 +71,13 @@ impl Default for TextComponent {
     }
 }
 
-/// The longest prefix of `text` that fits `width`, with an ellipsis appended.
-///
-/// Shaping is the only honest way to know where a string stops fitting, so this
-/// binary-searches character boundaries rather than guessing from a character
-/// count — proportional fonts make any such guess wrong for exactly the names
-/// that need truncating.
+pub(crate) fn physical_metrics(font_size: f32, line_height: f32, scale: f32) -> Metrics {
+    Metrics {
+        font_size: font_size * scale,
+        line_height: line_height * scale,
+    }
+}
+
 fn truncate_to_width(
     font_system: &mut FontSystem,
     metrics: Metrics,
@@ -112,7 +96,6 @@ fn truncate_to_width(
         .chain(std::iter::once(text.len()))
         .collect();
 
-    // Largest prefix that still fits once the ellipsis is accounted for.
     let mut low = 0;
     let mut high = boundaries.len() - 1;
     while low < high {
@@ -147,7 +130,6 @@ pub fn truncate_for_test(text: &str, width: f32, metrics: (f32, f32)) -> Option<
     )
 }
 
-/// Width of `text` shaped on one unwrapped line.
 fn measure_line(
     font_system: &mut FontSystem,
     metrics: Metrics,
@@ -166,20 +148,19 @@ fn measure_line(
 }
 
 #[derive(Component)]
-pub struct RenderTextComponent {
+pub(crate) struct RenderTextComponent {
     pub(crate) buffer: glyphon::Buffer,
     pub(crate) location: glam::Vec2,
     pub(crate) clip_min: glam::Vec2,
     pub(crate) clip_max: glam::Vec2,
     pub(crate) color: glyphon::Color,
-    /// Explicit z-layer, recovered from the node's paint order. Text is batched
-    /// by this so it can be interleaved with the quads of the same layer.
+    /// Explicit z-layer, recovered from the node's paint order.
     pub(crate) layer: i32,
     signature: u64,
 }
 
 pub(crate) fn extract_text_nodes(
-    text_nodes: Extracted<Query<(&TextComponent, &UILayout, &RenderEntity)>>,
+    text_nodes: Extracted<Query<(&UIText, &UILayout, &RenderEntity)>>,
     window: Extracted<Res<Window>>,
     mut font_system: ResMut<TextFontSystem>,
     render_text_nodes: Query<&RenderTextComponent>,
@@ -187,6 +168,13 @@ pub(crate) fn extract_text_nodes(
     mut cmd: CommandQueue,
 ) {
     for (text_component, layout, render_entity) in text_nodes.iter() {
+        let clip = layout.clip_rect.intersection(layout.content_rect);
+        if !layout.is_shown() || !clip.has_area() {
+            if render_text_nodes.contains_entity(**render_entity) {
+                cmd.remove::<RenderTextComponent>(**render_entity);
+            }
+            continue;
+        }
         let scale = window.scale_factor() as f32;
         let content_size = layout.content_rect.size * scale;
         let signature = text_signature(text_component, layout, scale);
@@ -199,10 +187,7 @@ pub(crate) fn extract_text_nodes(
         diagnostics.record_text_reshape();
         let mut text_buffer = Buffer::new(
             &mut font_system,
-            Metrics {
-                font_size: text_component.font_size,
-                line_height: text_component.line_height,
-            },
+            physical_metrics(text_component.font_size, text_component.line_height, scale),
         );
 
         text_buffer.set_size(
@@ -236,15 +221,10 @@ pub(crate) fn extract_text_nodes(
             .weight(Weight(text_component.font_weight))
             .style(style);
 
-        // Truncation happens here, where the font system is: the source text
-        // stays intact so the panel that owns it never has to know.
         let display = if text_component.ellipsis && !text_component.wrap {
             truncate_to_width(
                 &mut font_system,
-                Metrics {
-                    font_size: text_component.font_size,
-                    line_height: text_component.line_height,
-                },
+                physical_metrics(text_component.font_size, text_component.line_height, scale),
                 attrs,
                 &text_component.text,
                 content_size.x.max(0.0),
@@ -256,14 +236,10 @@ pub(crate) fn extract_text_nodes(
             &mut font_system,
             display.as_deref().unwrap_or(&text_component.text),
             attrs,
-            // Advanced, not Basic: basic shaping has no font fallback, so any
-            // character the UI font lacks is drawn as a .notdef box rather than
-            // borrowed from another face.
             Shaping::Advanced,
         );
         text_buffer.shape_until_scroll(&mut font_system, false);
 
-        let clip = layout.clip_rect.intersection(layout.content_rect);
         let rgba = text_component.color.to_srgba();
         cmd.insert(
             RenderTextComponent {
@@ -286,13 +262,11 @@ pub(crate) fn extract_text_nodes(
 }
 
 /// The explicit `z_index` a node was given, recovered from its paint order.
-/// `paint_order` is `(z_index << 32) + tree sequence`, and the sequence is
-/// always non-negative, so an arithmetic shift returns the z_index unchanged.
 pub(crate) fn text_layer(layout: &UILayout) -> i32 {
     (layout.paint_order >> 32) as i32
 }
 
-fn text_signature(text: &TextComponent, layout: &UILayout, scale: f32) -> u64 {
+fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.text.hash(&mut hasher);
     text.font_size.to_bits().hash(&mut hasher);
@@ -328,4 +302,181 @@ fn text_signature(text: &TextComponent, layout: &UILayout, scale: f32) -> u64 {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn widest(font_system: &mut FontSystem, metrics: Metrics, text: &str) -> f32 {
+        measure_line(font_system, metrics, Attrs::new(), text)
+    }
+
+    #[test]
+    fn physical_metrics_scale_both_size_and_line_height() {
+        let metrics = physical_metrics(14.0, 20.0, 2.0);
+        assert_eq!(metrics.font_size, 28.0);
+        assert_eq!(metrics.line_height, 40.0);
+    }
+
+    #[test]
+    fn text_shaped_at_scale_two_is_twice_as_wide() {
+        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let one = widest(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 1.0),
+            "Forest",
+        );
+        let two = widest(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 2.0),
+            "Forest",
+        );
+        assert!((two - one * 2.0).abs() < 1.0, "{one} vs {two}");
+    }
+
+    #[test]
+    fn truncation_at_scale_two_matches_its_logical_width() {
+        let mut font_system = fonts::build_font_system(&fonts::UIFonts::default());
+        let text = "bunny_porcelain_subsurface.mat";
+        let at_one = truncate_to_width(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 1.0),
+            Attrs::new(),
+            text,
+            60.0,
+        )
+        .expect("must truncate");
+        let at_two = truncate_to_width(
+            &mut font_system,
+            physical_metrics(14.0, 20.0, 2.0),
+            Attrs::new(),
+            text,
+            120.0,
+        )
+        .expect("must truncate");
+        assert_eq!(at_one, at_two);
+        let width = widest(&mut font_system, physical_metrics(14.0, 20.0, 2.0), &at_two);
+        assert!(width <= 120.0, "{width}");
+    }
+
+    fn extract_text(main: &mut concerto_ecs::World, render: &mut concerto_ecs::World) {
+        if render
+            .get_resource::<concerto_ecs::system::schedule::CompiledSchedules>()
+            .is_none()
+        {
+            let mut schedules = concerto_ecs::system::schedule::Schedules::default();
+            schedules.add_system(concerto_app::schedule_groups::Extract, extract_text_nodes);
+            let compiled = schedules
+                .compile::<concerto_ecs::system::executor::single_thread::SingleThreadedExecutor>(
+                render,
+            );
+            render.insert_resource(compiled);
+        }
+        concerto_app::extractor::extract(main, render);
+    }
+
+    #[test]
+    fn text_whose_clip_is_empty_is_not_drawn() {
+        let mut main = concerto_ecs::World::new();
+        main.insert_resource(Window::new((800, 600), 1.5));
+        let mut render = concerto_ecs::World::new();
+        render.insert_resource(TextFontSystem(fonts::build_font_system(
+            &fonts::UIFonts::default(),
+        )));
+        render.insert_resource(UIRenderDiagnostics::default());
+        let target = render.spawn(());
+        let rect = crate::node::UIBox {
+            min: glam::Vec2::new(10.5, 20.5),
+            size: glam::Vec2::new(100.0, 20.0),
+        };
+        let node = main.spawn((
+            UIText {
+                text: "Culled".into(),
+                ..Default::default()
+            },
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            RenderEntity::new(target),
+        ));
+
+        extract_text(&mut main, &mut render);
+        assert!(
+            render
+                .get_component_for_entity::<RenderTextComponent>(target)
+                .is_some()
+        );
+
+        main.get_component_for_entity_mut::<UILayout>(node)
+            .unwrap()
+            .clip_rect = crate::node::UIBox {
+            min: rect.min,
+            size: glam::Vec2::ZERO,
+        };
+        extract_text(&mut main, &mut render);
+        assert!(
+            render
+                .get_component_for_entity::<RenderTextComponent>(target)
+                .is_none(),
+            "an empty clip must leave nothing to draw"
+        );
+    }
+
+    #[test]
+    fn a_nodes_shaped_text_fits_its_layout_box_at_scale_two() {
+        let mut main = concerto_ecs::World::new();
+        main.insert_resource(Window::new((800, 600), 2.0));
+        let mut render = concerto_ecs::World::new();
+        render.insert_resource(TextFontSystem(fonts::build_font_system(
+            &fonts::UIFonts::default(),
+        )));
+        render.insert_resource(UIRenderDiagnostics::default());
+        let target = render.spawn(());
+        let rect = crate::node::UIBox {
+            min: glam::Vec2::new(10.0, 20.0),
+            size: glam::Vec2::new(100.0, 20.0),
+        };
+        main.spawn((
+            UIText {
+                text: "bunny_porcelain_subsurface.mat".into(),
+                font_size: 14.0,
+                line_height: 18.0,
+                wrap: false,
+                ellipsis: true,
+                ..Default::default()
+            },
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            RenderEntity::new(target),
+        ));
+
+        extract_text(&mut main, &mut render);
+        let text = render
+            .get_component_for_entity::<RenderTextComponent>(target)
+            .expect("the text must be drawn");
+        let metrics = text.buffer.metrics();
+        assert_eq!(metrics.font_size, 28.0);
+        assert_eq!(metrics.line_height, 36.0);
+        let physical = rect.size * 2.0;
+        let width = text
+            .buffer
+            .layout_runs()
+            .map(|run| run.line_w)
+            .fold(0.0_f32, f32::max);
+        assert!(width > 0.0);
+        assert!(
+            width <= physical.x,
+            "shaped width {width} overflows the physical box {}",
+            physical.x
+        );
+        assert!(metrics.line_height <= physical.y);
+    }
 }

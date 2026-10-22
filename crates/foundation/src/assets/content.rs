@@ -36,6 +36,19 @@ pub fn save_content_asset<A: Asset>(
     project_root: &Path,
     address: &str,
 ) -> anyhow::Result<()> {
+    let mut registry = AssetRegistry::load(project_root)?;
+    save_content_asset_into(value, project_root, address, &mut registry)?;
+    registry.save(project_root)
+}
+
+/// Writes `value` at `project_root/address` as [`save_content_asset`] does, but records it in
+/// `registry` instead of the registry file, and returns its id.
+pub fn save_content_asset_into<A: Asset>(
+    value: &A,
+    project_root: &Path,
+    address: &str,
+    registry: &mut AssetRegistry,
+) -> anyhow::Result<AssetId> {
     let path = project_root.join(address);
     let asset_id = mint_or_reuse_id(&path)?;
     let header = ContentAssetHeader {
@@ -55,9 +68,8 @@ pub fn save_content_asset<A: Asset>(
     std::fs::write(&path, bytes)
         .with_context(|| format!("failed to write content asset '{}'", path.display()))?;
 
-    let mut registry = AssetRegistry::load(project_root)?;
     registry.insert(asset_id, address);
-    registry.save(project_root)
+    Ok(asset_id)
 }
 
 /// The id to write at `path`: the one already in the file's header if a

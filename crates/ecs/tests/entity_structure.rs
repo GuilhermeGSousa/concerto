@@ -56,7 +56,7 @@ fn deferred_changes_are_visible_only_after_apply() {
     })
     .into_system();
     add.initialize(&mut world);
-    add.run(&mut world);
+    add.run((), &mut world);
     assert_eq!(world.structural_version(target), version);
     add.apply(&mut world);
     let added = world.structural_version(target);
@@ -66,6 +66,6 @@ fn deferred_changes_are_visible_only_after_apply() {
     })
     .into_system();
     remove.initialize(&mut world);
-    remove.run_and_apply(&mut world);
+    remove.run_and_apply((), &mut world);
     assert_ne!(world.structural_version(target), added);
 }

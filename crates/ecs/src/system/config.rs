@@ -2,9 +2,13 @@ use std::any::TypeId;
 
 use typle::typle;
 
-use crate::system::{
-    BoxedSystem, IntoSystem,
-    set::{InternedSystemSet, SystemSet},
+use crate::{
+    System,
+    system::{
+        BoxedSystem, IntoSystem,
+        set::{InternedSystemSet, SystemSet},
+        tag::{InternedSystemTag, SystemTag},
+    },
 };
 
 /// A system or [`SystemSet`] that another system can be ordered against.
@@ -27,7 +31,7 @@ pub trait IntoDependencyTarget<Marker> {
     fn into_target(self) -> DependencyTarget;
 }
 
-impl<M, S: IntoSystem<M> + 'static> IntoDependencyTarget<SystemTarget<M>> for S {
+impl<M, S: IntoSystem<(), M> + 'static> IntoDependencyTarget<SystemTarget<M>> for S {
     fn into_target(self) -> DependencyTarget {
         let system = self.into_system();
         DependencyTarget::System {
@@ -48,6 +52,7 @@ pub(crate) struct NodeConfig {
     pub(crate) sets: Vec<InternedSystemSet>,
     pub(crate) after: Vec<DependencyTarget>,
     pub(crate) before: Vec<DependencyTarget>,
+    pub(crate) tags: Vec<InternedSystemTag>,
 }
 
 pub(crate) struct SystemEntry {
@@ -98,6 +103,13 @@ impl SystemConfig {
     pub fn in_set(mut self, set: impl SystemSet) -> Self {
         let set = set.intern();
         self.for_each_entry(&mut |entry| entry.config.sets.push(set));
+        self
+    }
+
+    /// Gives every system in this config `tag`; only a [`TagFilter`](crate::TagFilter) reads it.
+    pub fn tagged(mut self, tag: impl SystemTag) -> Self {
+        let tag = tag.intern();
+        self.for_each_entry(&mut |entry| entry.config.tags.push(tag));
         self
     }
 
@@ -169,6 +181,10 @@ pub trait IntoSystemConfig<Marker>: Sized {
         self.into_config().before(target)
     }
 
+    fn tagged(self, tag: impl SystemTag) -> SystemConfig {
+        self.into_config().tagged(tag)
+    }
+
     fn in_set(self, set: impl SystemSet) -> SystemConfig {
         self.into_config().in_set(set)
     }
@@ -178,10 +194,10 @@ pub trait IntoSystemConfig<Marker>: Sized {
     }
 }
 
-impl<M, F: IntoSystem<M> + 'static> IntoSystemConfig<M> for F {
+impl<M, F: IntoSystem<(), M> + 'static> IntoSystemConfig<M> for F {
     fn into_config(self) -> SystemConfig {
         SystemConfig(SystemNode::Single(SystemEntry {
-            system: self.into_system(),
+            system: self.into_boxed_system(),
             config: NodeConfig::default(),
         }))
     }

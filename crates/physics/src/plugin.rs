@@ -20,9 +20,11 @@ pub struct PhysicsPlugin;
 
 impl Plugin for PhysicsPlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.register_scene_component::<MeshCollider>();
-        app.insert_resource(PhysicsPipeline::new())
-            .insert_resource(PhysicsState::new())
+        app.register_type::<MeshCollider>();
+        if !app.is_editing() {
+            app.insert_resource(PhysicsPipeline::new());
+        }
+        app.insert_resource(PhysicsState::new())
             .insert_resource(PhysicsMeshShapes::default())
             .add_system(FixedUpdate, apply_character_movement)
             .add_system(LateFixedUpdate, step_simulation)

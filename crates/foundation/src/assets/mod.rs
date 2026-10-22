@@ -38,7 +38,7 @@ pub mod utils;
 pub enum ContentAssetRoot {
     /// Native: the directory containing the executable.
     Directory(PathBuf),
-    /// wasm: the page origin, e.g. `"http://host"`.
+    /// wasm: the URL of the page's directory, without a trailing slash.
     UrlBase(String),
 }
 
@@ -47,15 +47,12 @@ impl ContentAssetRoot {
     /// otherwise the directory containing the executable. Cargo workspace
     /// binaries can therefore coexist in one target directory by placing
     /// content under `<exe-dir>/<exe-name>-content/`; packaged applications
-    /// can place `content/` directly beside the executable. wasm uses the page
-    /// origin, matching Trunk's `copy-dir` target.
+    /// can place `content/` directly beside the executable. wasm uses the
+    /// page's base URL, so games hosted under a sub-path find their content.
     pub fn default_for_platform() -> Self {
         cfg_if::cfg_if! {
             if #[cfg(target_arch = "wasm32")] {
-                let origin = web_sys::window()
-                    .and_then(|window| window.location().origin().ok())
-                    .unwrap_or_default();
-                ContentAssetRoot::UrlBase(origin)
+                ContentAssetRoot::UrlBase(web_content_base())
             } else {
                 let root = std::env::current_exe()
                     .ok()
@@ -71,6 +68,30 @@ impl ContentAssetRoot {
                 ContentAssetRoot::Directory(root)
             }
         }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn web_content_base() -> String {
+    let document_base = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.base_uri().ok().flatten());
+    match document_base {
+        Some(uri) => directory_of(&uri),
+        None => web_sys::window()
+            .and_then(|window| window.location().origin().ok())
+            .unwrap_or_default(),
+    }
+}
+
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+fn directory_of(uri: &str) -> String {
+    let without_query = uri.split(['?', '#']).next().unwrap_or(uri);
+    match without_query.rfind('/') {
+        Some(slash) if slash > without_query.find("//").map_or(0, |i| i + 1) => {
+            without_query[..slash].to_string()
+        }
+        _ => without_query.trim_end_matches('/').to_string(),
     }
 }
 
@@ -103,5 +124,30 @@ pub trait LoadableAsset: Asset {
     /// deserialized. Most assets need no additional work.
     fn on_load(&mut self, _context: &asset_server::AssetLoadContext) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod content_root_tests {
+    use super::directory_of;
+
+    #[test]
+    fn directory_of_strips_the_page_and_query() {
+        assert_eq!(
+            directory_of("https://html-classic.itch.zone/html/123/index.html?v=1"),
+            "https://html-classic.itch.zone/html/123"
+        );
+        assert_eq!(
+            directory_of("https://host/games/mine/"),
+            "https://host/games/mine"
+        );
+        assert_eq!(
+            directory_of("http://localhost:8080/"),
+            "http://localhost:8080"
+        );
+        assert_eq!(
+            directory_of("http://localhost:8080"),
+            "http://localhost:8080"
+        );
     }
 }

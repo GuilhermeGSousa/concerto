@@ -3,10 +3,10 @@
 use std::path::Path;
 
 use concerto_asset_import::{ImportContext, Importer};
-use concerto_ecs::component::Component;
 use concerto_foundation::assets::Asset;
 use concerto_mesh::mesh::Mesh;
 use concerto_obj::obj_importer::ObjImporter;
+use concerto_reflect::apply_value;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::{MaterialComponent, SlotBinding};
 use concerto_scene::scene::Scene;
@@ -118,10 +118,12 @@ fn an_obj_emits_one_mesh_holding_every_model_as_a_primitive() {
     let material = scene.nodes[0]
         .components
         .iter()
-        .find(|c| c.type_name == MaterialComponent::<StandardMaterial>::name())
+        .find(|c| c.type_name.ends_with("MaterialComponent"))
         .expect("the node carries the .mtl material");
-    let material: MaterialComponent<StandardMaterial> =
-        serde_json::from_str(&material.data).unwrap();
+    let mut decoded = MaterialComponent::<StandardMaterial>::default();
+    let warnings = apply_value(&mut decoded, &material.value);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let material = decoded;
     assert!(
         matches!(material.binding, SlotBinding::All(_)),
         "an OBJ's one material covers every model's slot"

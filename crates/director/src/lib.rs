@@ -44,16 +44,13 @@ pub use virtual_camera::{BlendIn, CameraPose, Ease, Lens, VirtualCamera};
 /// Registers the main camera and the virtual-camera director.
 ///
 /// The director runs in `Update`, so nothing about the pose pipeline depends on
-/// where this plugin sits in the registration order. Demotion is the exception:
-/// it must beat `camera_added`, so leave this registered before `RenderPlugin`
-/// or a stray window camera gets a frame of double rendering (and keeps its
-/// `RenderCamera` afterwards).
+/// where this plugin sits in the registration order.
 pub struct CameraDirectorPlugin;
 
 impl Plugin for CameraDirectorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CameraDirector::default());
-        app.register_scene_component::<VirtualCamera>();
+        app.register_type::<VirtualCamera>();
 
         app.add_system(Startup, main_camera::spawn_main_camera);
 

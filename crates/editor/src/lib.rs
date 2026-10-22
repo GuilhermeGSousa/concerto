@@ -1,24 +1,28 @@
 //! Engine-native editor. Panels submit commands; project systems own I/O.
-//!
-//! Asset editors allow temporary inspection and edits, but never save files.
-//! Importing is the `import` CLI's job.
 pub mod actions;
 pub mod asset_editor;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
 pub mod fonts;
+pub mod guard;
 pub mod hierarchy;
+pub mod hosted;
+pub mod import;
 pub mod inspector;
 pub mod marks;
 pub mod project;
+mod run;
 pub mod scene;
-pub mod selection;
 pub mod shell;
 pub mod tabs;
+pub mod tools;
+mod tree_items;
 pub mod viewport;
 pub mod window_chrome;
 mod workspace;
+
+pub use run::run;
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
@@ -27,11 +31,12 @@ pub struct EditorPlugin {
     pub project: Option<PathBuf>,
     /// Let the window manager draw the window frame instead of the editor.
     pub decorated: bool,
+    /// What the `App` of each scene being edited is built from.
+    pub recipe: fn(&mut App),
 }
 
 impl Plugin for EditorPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(selection::Selection::default());
         app.insert_resource(dock::PanelRegistry::default());
         app.register_plugin(fonts::FontsPlugin);
         app.register_plugin(dock::DockPlugin);
@@ -41,16 +46,26 @@ impl Plugin for EditorPlugin {
         app.register_plugin(project::ProjectPlugin);
         app.register_plugin(hierarchy::HierarchyPlugin);
         app.register_plugin(content::ContentPlugin);
+        app.register_plugin(import::ImportPlugin);
         app.register_plugin(diagnostics::DiagnosticsPlugin);
         app.register_plugin(inspector::InspectorPlugin);
         app.insert_resource(asset_editor::AssetEditorRegistry::default());
         app.insert_resource(asset_editor::AssetEditorCommands::default());
         app.insert_resource(asset_editor::ActiveEditor::default());
+        app.insert_resource(guard::UnsavedGuard::default());
+        app.register_plugin(guard::GuardPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             asset_editor::process_editor_commands,
         );
-        app.register_plugin(scene::ScenePlugin);
+        app.add_system(
+            concerto_app::schedule_groups::LateUpdate,
+            asset_editor::request_save,
+        );
+        app.register_plugin(hosted::HostedPlugin);
+        app.register_plugin(scene::ScenePlugin {
+            recipe: self.recipe,
+        });
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,
@@ -63,6 +78,7 @@ impl Plugin for EditorPlugin {
             concerto_app::schedule_groups::Update,
             workspace::reset_workspace_input,
         );
+        app.add_listener(workspace::reset_input_for_edit_target);
         app.register_plugin(viewport::ViewportPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);

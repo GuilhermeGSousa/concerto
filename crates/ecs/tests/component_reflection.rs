@@ -3,31 +3,20 @@
 //!
 //! This is what lets a tool inspect the live world instead of a parallel copy
 //! of the scene file it was spawned from.
-use concerto_ecs::component::scene::{SceneComponent, SceneSpawnContext};
-use concerto_ecs::{Component, Entity, World};
-use serde::{Deserialize, Serialize};
+use concerto_ecs::{Component, Entity, World, reflect::ReflectSceneComponent};
+use concerto_reflect::Reflect;
 
-#[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Component, Reflect, Default, PartialEq, Debug)]
+#[reflect(SceneComponent)]
 struct Health {
     current: u32,
     max: u32,
 }
 
-impl SceneComponent for Health {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
-}
-
-#[derive(Component, Serialize, Deserialize, PartialEq, Debug)]
+#[derive(Component, Reflect, Default, PartialEq, Debug)]
+#[reflect(SceneComponent)]
 struct Armour {
     plates: u8,
-}
-
-impl SceneComponent for Armour {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
 }
 
 /// A plain component that is never registered as a scene component — engine
@@ -47,8 +36,8 @@ fn names(world: &World, entity: Entity) -> Vec<&'static str> {
 #[test]
 fn lists_the_registered_components_an_entity_carries() {
     let mut world = World::default();
-    world.register_component_type::<Health>();
-    world.register_component_type::<Armour>();
+    world.register_type::<Health>();
+    world.register_type::<Armour>();
 
     let entity = world.spawn((
         Health {
@@ -68,7 +57,7 @@ fn lists_the_registered_components_an_entity_carries() {
 #[test]
 fn unregistered_components_are_invisible() {
     let mut world = World::default();
-    world.register_component_type::<Health>();
+    world.register_type::<Health>();
 
     let entity = world.spawn((Health { current: 1, max: 1 }, Plumbing));
 
@@ -82,7 +71,7 @@ fn unregistered_components_are_invisible() {
 #[test]
 fn an_entity_with_no_registered_components_lists_nothing() {
     let mut world = World::default();
-    world.register_component_type::<Health>();
+    world.register_type::<Health>();
 
     let entity = world.spawn(Plumbing);
 
@@ -95,7 +84,7 @@ fn an_entity_with_no_registered_components_lists_nothing() {
 #[test]
 fn component_ids_include_components_that_are_not_scene_components() {
     let mut world = World::default();
-    world.register_component_type::<Health>();
+    world.register_type::<Health>();
 
     let entity = world.spawn((
         Health {
@@ -125,20 +114,20 @@ fn a_stale_entity_has_no_component_ids() {
 }
 
 #[test]
-fn type_info_is_only_known_for_scene_components() {
+fn a_registration_is_only_known_for_registered_types() {
     let mut world = World::default();
-    world.register_component_type::<Health>();
+    world.register_type::<Health>();
     world.spawn((Health { current: 1, max: 1 }, Plumbing));
 
     assert_eq!(
         world
-            .type_info(std::any::TypeId::of::<Health>())
-            .map(|info| info.short()),
+            .registration(std::any::TypeId::of::<Health>())
+            .map(|registration| registration.short_name()),
         Some("Health")
     );
     assert!(
         world
-            .type_info(std::any::TypeId::of::<Plumbing>())
+            .registration(std::any::TypeId::of::<Plumbing>())
             .is_none()
     );
 }

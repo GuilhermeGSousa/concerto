@@ -18,6 +18,12 @@ pub enum Color {
     Hsla(Hsla),
 }
 
+impl Default for Color {
+    fn default() -> Self {
+        Self::WHITE
+    }
+}
+
 impl Color {
     pub const WHITE: Self = Self::LinearRgba(LinearRgba::WHITE);
     pub const BLACK: Self = Self::LinearRgba(LinearRgba::BLACK);

@@ -14,6 +14,21 @@ pub struct QueryState<T: QueryData, F: QueryFilter = ()> {
     matched_archetypes: FixedBitSet,
 }
 
+impl<T: QueryData, F: QueryFilter> Clone for QueryState<T, F>
+where
+    T::State: Clone,
+    F::State: Clone,
+{
+    fn clone(&self) -> Self {
+        Self {
+            data_state: self.data_state.clone(),
+            filter_state: self.filter_state.clone(),
+            current_archetype_count: self.current_archetype_count,
+            matched_archetypes: self.matched_archetypes.clone(),
+        }
+    }
+}
+
 impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
     pub(crate) fn new(world: &mut World) -> Self {
         Self {
@@ -46,7 +61,9 @@ impl<T: QueryData, F: QueryFilter> QueryState<T, F> {
         &'state mut self,
         world: &'world mut World,
     ) -> QueryIter<'world, 'state, T, F> {
-        Query::new(world.as_unsafe_world_cell_mut(), self).iter()
+        let ticks = world.out_of_system_ticks();
+        // SAFETY: the exclusive borrow of `world` covers any access.
+        unsafe { Query::new(world.as_unsafe_world_cell_mut(), self, ticks) }.iter()
     }
 
     fn add_archetype(&mut self, archetype: &Archetype) {

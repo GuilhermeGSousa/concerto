@@ -4,7 +4,7 @@ use std::{
 };
 
 use crate::{
-    component::bundle::ComponentBundle,
+    component::bundle::IntoBundle,
     entity::hierarchy::{ChildOf, Children},
     table::TableRowIndex,
     world::World,
@@ -127,7 +127,7 @@ impl<'w> EntityWorldMut<'w> {
     }
 
     /// Spawns an entity as a child of this one and borrows it in turn.
-    pub fn spawn_child<T: ComponentBundle>(&mut self, bundle: T) -> EntityWorldMut<'_> {
+    pub fn spawn_child<T: IntoBundle>(&mut self, bundle: T) -> EntityWorldMut<'_> {
         let child = self.world.spawn(bundle);
         self.add_child(child);
         EntityWorldMut::new(self.world, child)

@@ -55,6 +55,21 @@ pub trait ComponentBundle: Send + Sync + Sized {
     fn write_into<S: ComponentSink>(self, sink: &mut S, current_tick: u32);
 }
 
+/// Anything that can be spawned: a bundle, or a builder that produces one.
+pub trait IntoBundle: Send + Sync + Sized {
+    type Bundle: ComponentBundle;
+
+    fn into_bundle(self) -> Self::Bundle;
+}
+
+impl<T: ComponentBundle> IntoBundle for T {
+    type Bundle = T;
+
+    fn into_bundle(self) -> T {
+        self
+    }
+}
+
 impl<T> ComponentBundle for T
 where
     T: Component,
@@ -80,12 +95,12 @@ where
 impl<T> ComponentBundle for T
 where
     T: Tuple,
-    T<_>: ComponentBundle,
+    T<_>: IntoBundle,
 {
     fn get_component_ids() -> Vec<ComponentId> {
         let mut type_ids = Vec::new();
         for typle_index!(i) in 0..T::LEN {
-            type_ids.extend(<T<{ i }>>::get_component_ids());
+            type_ids.extend(<<T<{ i }> as IntoBundle>::Bundle>::get_component_ids());
         }
 
         type_ids.sort();
@@ -95,7 +110,7 @@ where
 
     fn write_into<S: ComponentSink>(self, sink: &mut S, current_tick: u32) {
         for typle_index!(i) in 0..T::LEN {
-            self[[i]].write_into(sink, current_tick);
+            self[[i]].into_bundle().write_into(sink, current_tick);
         }
     }
 
@@ -103,7 +118,7 @@ where
     fn generate_empty_table() -> Table {
         let mut table = Table::new();
         for typle_index!(i) in 0..T::LEN {
-            table.merge(<T<{ i }>>::generate_empty_table());
+            table.merge(<<T<{ i }> as IntoBundle>::Bundle>::generate_empty_table());
         }
         table
     }

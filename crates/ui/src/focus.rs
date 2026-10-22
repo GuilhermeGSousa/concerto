@@ -28,19 +28,10 @@ define_action!(
 );
 
 /// Opts a widget into the keyboard focus ring.
-///
-/// Deliberately separate from [`Interactable`]: a tree row or a split handle is
-/// clickable but has no business being a Tab stop, and a ring that visits every
-/// interactable node is one nobody can use.
 #[derive(Component)]
 pub struct UIFocusable;
 
 /// The UI entity that currently holds keyboard focus, if any.
-///
-/// Focus is set when the user clicks an [`Interactable`](crate::interaction::Interactable) node
-/// and cleared when the user clicks on empty space.  Widgets that need keyboard
-/// input (e.g. [`UITextInput`](crate::text_input::UITextInput)) read this resource to decide
-/// whether to consume typed characters.
 #[derive(Resource, Deref, DerefMut, Default)]
 pub struct FocusedWidget(Option<concerto_ecs::entity::Entity>);
 
@@ -51,9 +42,6 @@ pub struct UIFocusGained(pub Entity);
 pub struct UIFocusLost(pub Entity);
 
 /// Sets [`FocusedWidget`] based on left-button clicks.
-///
-/// - Click on an interactable node → focus that node.
-/// - Click on empty space (no node hovered) → clear focus.
 pub(crate) fn update_focus(
     mut focused: ResMut<FocusedWidget>,
     hovered: Res<HoveredNode>,
@@ -82,7 +70,7 @@ pub(crate) fn update_focus(
     if let Some(step) = step {
         let mut order = focusable
             .iter()
-            .filter(|(_, _, node, _, _)| node.visible)
+            .filter(|(_, layout, node, _, _)| node.visible && layout.is_shown())
             .map(|(entity, layout, _, _, _)| (layout.paint_order, entity))
             .collect::<Vec<_>>();
         order.sort_by_key(|(paint_order, _)| *paint_order);
@@ -92,8 +80,6 @@ pub(crate) fn update_focus(
                 .position(|(_, entity)| Some(*entity) == **focused);
             let len = order.len() as isize;
             let next = match current {
-                // Wraps in both directions, so Tab from the last widget and
-                // Shift+Tab from the first both stay inside the ring.
                 Some(index) => (index as isize + step).rem_euclid(len),
                 None if step > 0 => 0,
                 None => len - 1,
@@ -111,8 +97,7 @@ pub(crate) fn update_focus(
     }
 }
 
-/// Tells the action map that keystrokes belong to a text field right now, so a
-/// bare letter types instead of firing a shortcut.
+/// Tells the action map that keystrokes belong to a text field right now.
 pub(crate) fn sync_text_capture(
     focused: Res<FocusedWidget>,
     inputs: Query<&UITextInput>,
@@ -121,5 +106,66 @@ pub(crate) fn sync_text_capture(
     let capturing = (**focused).is_some_and(|entity| inputs.get_entity(entity).is_some());
     if actions.capturing_text() != capturing {
         actions.set_capturing_text(capturing);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::node::{UIBox, UICulled, blank_culled_layouts};
+    use concerto_ecs::{IntoSystem, System, World, events::event_channel::EventChannel};
+    use concerto_window::input::actions::ActionLabel;
+    use glam::Vec2;
+
+    fn focus_world() -> World {
+        let mut world = World::new();
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(HoveredNode::default());
+        world.insert_resource(Input::new());
+        world.insert_resource(EventChannel::<ActionFired>::default());
+        world.insert_resource(EventChannel::<UIFocusGained>::default());
+        world.insert_resource(EventChannel::<UIFocusLost>::default());
+        world.add_listener(blank_culled_layouts);
+        world
+    }
+
+    fn row(world: &mut World, index: i64) -> Entity {
+        let rect = UIBox {
+            min: Vec2::new(0.0, index as f32 * 20.0),
+            size: Vec2::new(100.0, 20.0),
+        };
+        world.spawn((
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: index,
+            },
+            UINode::default(),
+            Interactable,
+            UIFocusable,
+        ))
+    }
+
+    #[test]
+    fn tab_skips_a_culled_row() {
+        let mut world = focus_world();
+        let first = row(&mut world, 0);
+        let culled = row(&mut world, 1);
+        let last = row(&mut world, 2);
+        world.insert(UICulled, culled);
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(first);
+        world
+            .get_resource_mut::<EventChannel<ActionFired>>()
+            .unwrap()
+            .push_event(ActionFired {
+                action: UIFocusNext.intern(),
+            });
+
+        let mut system = update_focus.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(**world.get_resource::<FocusedWidget>().unwrap(), Some(last));
     }
 }

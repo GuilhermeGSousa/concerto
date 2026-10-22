@@ -13,21 +13,24 @@ use concerto_mesh::{
     SkeletonComponent,
     mesh::{Mesh, MeshComponent},
 };
+use concerto_reflect::{Reflect, apply_value};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::{MaterialComponent, SlotBinding};
-use concerto_scene::scene::{Scene, SceneNode};
+use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
+
+fn decode<T: Reflect + Default>(component: &SerializedComponent) -> T {
+    let mut value = T::default();
+    let warnings = apply_value(&mut value, &component.value);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    value
+}
 
 /// The `AssetId` the node's `MeshComponent` payload points at, if it has one.
 fn mesh_handle_id(node: &SceneNode) -> Option<AssetId> {
     node.components
         .iter()
         .find(|c| c.type_name == MeshComponent::name())
-        .map(|c| {
-            serde_json::from_str::<MeshComponent>(&c.data)
-                .expect("a MeshComponent payload must deserialize")
-                .handle
-                .id()
-        })
+        .map(|c| decode::<MeshComponent>(c).handle.id())
 }
 
 fn has_component_ending_in(node: &SceneNode, suffix: &str) -> bool {
@@ -87,7 +90,7 @@ fn import_emits_mesh_material_and_scene_sub_assets() {
 }
 
 #[test]
-fn import_emits_light_and_extras_components() {
+fn import_emits_light_and_ignores_extras() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/triangle.gltf");
     let mut ctx = ImportContext::new(std::path::PathBuf::from("triangle.gltf"));
 
@@ -115,8 +118,8 @@ fn import_emits_light_and_extras_components() {
         "the punctual light must become a Light component, got: {names:?}"
     );
     assert!(
-        names.contains(&"MeshCollider"),
-        "a Blender extras entry must become a component payload verbatim, got: {names:?}"
+        !names.iter().any(|n| n.ends_with("MeshCollider")),
+        "Blender extras are no longer read, got: {names:?}"
     );
 }
 
@@ -162,7 +165,7 @@ fn import_emits_skeleton_and_animation_sub_assets() {
         .iter()
         .find(|c| c.type_name == SkeletonComponent::name())
         .unwrap();
-    let scene_skeleton: SkeletonComponent = serde_json::from_str(&payload.data).unwrap();
+    let scene_skeleton: SkeletonComponent = decode(payload);
 
     assert_eq!(
         scene_skeleton.skeleton.id(),
@@ -239,7 +242,7 @@ fn material_of(node: &SceneNode) -> MaterialComponent<StandardMaterial> {
         .iter()
         .find(|c| c.type_name == MaterialComponent::<StandardMaterial>::name())
         .expect("the node carries a MaterialComponent");
-    serde_json::from_str(&payload.data).expect("a MaterialComponent payload must deserialize")
+    decode(payload)
 }
 
 #[test]
@@ -352,7 +355,7 @@ fn a_skinned_multi_primitive_node_carries_one_skeleton_component() {
         .iter()
         .flat_map(|n| n.components.iter())
         .filter(|c| c.type_name == SkeletonComponent::name())
-        .map(|c| serde_json::from_str(&c.data).unwrap())
+        .map(decode::<SkeletonComponent>)
         .collect();
     assert_eq!(
         skeletons.len(),

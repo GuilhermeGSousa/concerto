@@ -1,30 +1,94 @@
 use super::*;
+use crate::{
+    hosted::{HostedApp, testing::SceneFixture},
+    tools::selection::Select,
+};
 use concerto_ecs::{
     IntoSystem, System, World,
-    component::scene::{SceneComponent, SceneSpawnContext},
     entity::hierarchy::{ChildOf, Children},
+    reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+    system::BoxedSystem,
 };
-use glam::Vec3;
-use serde::{Deserialize, Serialize};
+use concerto_foundation::transform::Transform;
+use concerto_reflect::{GetTypeRegistration, ReflectDefault};
+use concerto_ui::{node::UIBox, text::UIText};
+use glam::{Vec2, Vec3};
 
-pub(super) fn update(world: &mut World) {
-    for mut system in [
-        collect_inspector_data.into_system(),
-        sync_inspected_components.into_system(),
-        build_property_widgets.into_system(),
-    ] {
-        system.initialize(world);
-        system.run_and_apply(world);
+struct Inspecting {
+    f: SceneFixture,
+    document: Entity,
+    systems: [BoxedSystem; 3],
+}
+
+impl Inspecting {
+    fn scene(&mut self) -> &mut World {
+        self.f.scene_world_mut(self.document)
     }
-    world.tick();
+    fn register<T: GetTypeRegistration>(&mut self) {
+        self.scene().register_type::<T>();
+    }
+    fn select(&mut self, entity: Option<Entity>) {
+        self.scene().trigger(Select(entity));
+    }
+    fn tick(&mut self) {
+        self.f.world.tick();
+        self.scene().tick();
+    }
+    fn update(&mut self) {
+        for system in &mut self.systems {
+            system.run_and_apply((), &mut self.f.world);
+        }
+        self.tick();
+    }
+    fn data(&self) -> &InspectorData {
+        self.f.world.get_resource::<InspectorData>().unwrap()
+    }
+    fn get<T: Component>(&self, entity: Entity) -> Option<&T> {
+        self.f
+            .scene_world(self.document)
+            .get_component_for_entity::<T>(entity)
+    }
+    fn close(&mut self) {
+        self.f.close(self.document);
+        self.f.frame();
+        self.f.frame();
+    }
+}
+
+fn inspecting() -> (Inspecting, Entity, Entity) {
+    let mut f = SceneFixture::new();
+    f.world.register_component::<ChildOf>();
+    f.world.register_component::<Children>();
+    f.world.insert_resource(InspectorRegistry::default());
+    f.world.insert_resource(UITheme::default());
+    let document = f.open();
+    let mut systems = [
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
+    ];
+    for system in &mut systems {
+        system.initialize(&mut f.world);
+    }
+    let mut w = Inspecting {
+        f,
+        document,
+        systems,
+    };
+    let entity = w.scene().spawn(Transform::IDENTITY);
+    w.select(Some(entity));
+    let stack =
+        w.f.world
+            .spawn((UINode::default(), ComponentStack::default()));
+    (w, entity, stack)
 }
 
 #[test]
 fn inspector_presentation_systems_do_not_request_exclusive_access() {
     for system in [
-        collect_inspector_data.into_system(),
-        sync_inspected_components.into_system(),
-        build_property_widgets.into_system(),
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
     ] {
         let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
         let mut access = concerto_ecs::system::access::SystemAccess::default();
@@ -35,73 +99,58 @@ fn inspector_presentation_systems_do_not_request_exclusive_access() {
 
 #[test]
 fn metadata_tracks_selection_and_despawn_without_spurious_changes() {
-    let (mut world, target, _) = world();
+    let (mut w, target, _) = inspecting();
     let mut collect = collect_inspector_data.into_system();
-    collect.initialize(&mut world);
-    collect.run_and_apply(&mut world);
-    let tick = world.resource_changed_tick::<InspectorData>();
-    assert_eq!(
-        world.get_resource::<InspectorData>().unwrap().entity,
-        Some(target)
-    );
-    world.tick();
-    collect.run_and_apply(&mut world);
-    assert_eq!(world.resource_changed_tick::<InspectorData>(), tick);
-    world.despawn(target);
-    collect.run_and_apply(&mut world);
-    assert!(
-        world
-            .get_resource::<InspectorData>()
-            .unwrap()
-            .entity
-            .is_none()
-    );
+    collect.initialize(&mut w.f.world);
+    collect.run_and_apply((), &mut w.f.world);
+    let tick = w.f.world.resource_changed_tick::<InspectorData>();
+    assert_eq!(w.data().scene_entity, Some(target));
+    w.tick();
+    collect.run_and_apply((), &mut w.f.world);
+    assert_eq!(w.f.world.resource_changed_tick::<InspectorData>(), tick);
+    w.scene().despawn(target);
+    collect.run_and_apply((), &mut w.f.world);
+    assert!(w.data().scene_entity.is_none());
 }
 
 #[test]
 fn deferred_row_creation_makes_new_bodies_visible() {
-    let (mut world, _, _) = world();
-    update(&mut world);
-    let row = rows(&mut world)[0].0;
-    let body = world
-        .get_component_for_entity::<concerto_ecs::entity::hierarchy::ChildOf>(row)
-        .unwrap()
-        .parent();
+    let (mut w, _, _) = inspecting();
+    w.update();
+    let row = rows(&mut w.f.world)[0].0;
+    let body =
+        w.f.world
+            .get_component_for_entity::<ChildOf>(row)
+            .unwrap()
+            .parent();
     assert!(
-        world
+        w.f.world
             .get_component_for_entity::<UINode>(body)
             .unwrap()
             .visible
     );
 }
 
-/// Switching selection despawns a card and builds the next one in the same
-/// pass, so the new card's entities come from recycled indexes. A recycled
-/// index that still resolves to its previous owner's row made the card's
-/// not-yet-spawned body read a live `UINode`, look already visible, and keep
-/// the hidden node it was spawned with — properties gone, uneditable.
 #[test]
 fn alternating_selections_keep_showing_their_properties() {
-    let (mut world, a, _) = world();
-    let b = world.spawn(Transform::IDENTITY);
+    let (mut w, a, _) = inspecting();
+    let b = w.scene().spawn(Transform::IDENTITY);
     for target in [a, b, a, b, a, b] {
-        world
-            .get_resource_mut::<Selection>()
-            .unwrap()
-            .select_entity(target);
-        update(&mut world);
-        world.tick();
-        let rows = rows(&mut world);
+        w.select(Some(target));
+        w.update();
+        w.tick();
+        let rows = rows(&mut w.f.world);
         assert!(
             !rows.is_empty(),
             "selecting {target:?} built no property rows"
         );
-        let body = world
-            .get_component_for_entity::<concerto_ecs::entity::hierarchy::ChildOf>(rows[0].0)
-            .unwrap()
-            .parent();
+        let body =
+            w.f.world
+                .get_component_for_entity::<ChildOf>(rows[0].0)
+                .unwrap()
+                .parent();
         assert!(
-            world
+            w.f.world
                 .get_component_for_entity::<UINode>(body)
                 .unwrap()
                 .visible,
@@ -110,21 +159,63 @@ fn alternating_selections_keep_showing_their_properties() {
     }
 }
 
-fn world() -> (World, Entity, Entity) {
-    let mut world = World::default();
-    world.register_component::<ChildOf>();
-    world.register_component::<Children>();
-    let entity = world.spawn(Transform::IDENTITY);
-    let mut registry = InspectorRegistry::default();
-    registry.register_component::<Transform>();
-    world.insert_resource(registry);
-    world.insert_resource(UITheme::default());
-    let mut selection = Selection::default();
-    selection.select_entity(entity);
-    world.insert_resource(selection);
-    world.insert_resource(InspectorData::default());
-    let stack = world.spawn((UINode::default(), ComponentStack::default()));
-    (world, entity, stack)
+fn layout(height: f32) -> UILayout {
+    let rect = UIBox {
+        min: Vec2::ZERO,
+        size: Vec2::new(200.0, height),
+    };
+    UILayout {
+        rect,
+        content_rect: rect,
+        clip_rect: rect,
+        paint_order: 0,
+    }
+}
+
+#[test]
+fn a_scrolled_inspector_keeps_its_offset_across_runs() {
+    let (mut w, _, stack) = inspecting();
+    let other = w.scene().spawn(Transform::IDENTITY);
+    w.f.world.insert(layout(1000.0), stack);
+    let view = w.f.world.spawn((
+        DetailsView,
+        UIScrollArea {
+            content: Some(stack),
+            ..Default::default()
+        },
+        layout(100.0),
+    ));
+    let mut collect = collect_inspector_data.into_system();
+    let mut scroll = sync_inspector_scroll.into_system();
+    collect.initialize(&mut w.f.world);
+    scroll.initialize(&mut w.f.world);
+    let mut frame = |w: &mut Inspecting| {
+        collect.run_and_apply((), &mut w.f.world);
+        scroll.run_and_apply((), &mut w.f.world);
+        w.tick();
+    };
+    let offset = |w: &Inspecting| {
+        w.f.world
+            .get_component_for_entity::<UIScrollArea>(view)
+            .unwrap()
+            .offset
+    };
+    let scroll_and_hold = |w: &mut Inspecting, frame: &mut dyn FnMut(&mut Inspecting)| {
+        w.f.world
+            .get_component_for_entity_mut::<UIScrollArea>(view)
+            .unwrap()
+            .offset = 300.0;
+        frame(w);
+        frame(w);
+        assert_eq!(offset(w), 300.0);
+    };
+    frame(&mut w);
+    scroll_and_hold(&mut w, &mut frame);
+
+    w.select(Some(other));
+    frame(&mut w);
+    assert_eq!(offset(&w), 0.0);
+    scroll_and_hold(&mut w, &mut frame);
 }
 
 fn cards(world: &mut World) -> Vec<(Entity, InspectedComponent)> {
@@ -143,42 +234,36 @@ fn rows(world: &mut World) -> Vec<(Entity, PropertyRow)> {
         .collect()
 }
 
-#[derive(Component, Serialize, Deserialize)]
+#[derive(Component, concerto_reflect::Reflect, Default)]
+#[reflect(SceneComponent)]
 struct Tag;
-impl SceneComponent for Tag {
-    fn apply(self, entity: Entity, ctx: &mut SceneSpawnContext<'_>) {
-        ctx.insert(self, entity);
-    }
-}
 #[derive(Component)]
 struct Plumbing;
 
-#[test]
-fn lists_editable_and_scene_components_as_queryable_cards_and_hides_plumbing() {
-    let (mut world, entity, stack) = world();
-    world.register_component_type::<Tag>();
-    world.insert((Tag, Plumbing), entity);
-    update(&mut world);
-    let children: Vec<_> = world
+fn stacked_names(world: &World, stack: Entity) -> Vec<&'static str> {
+    world
         .get_component_for_entity::<Children>(stack)
         .unwrap()
         .iter()
-        .copied()
-        .collect();
-    let names: Vec<_> = children
-        .iter()
-        .map(|&entity| {
+        .filter_map(|&child| {
             world
-                .get_component_for_entity::<InspectedComponent>(entity)
-                .unwrap()
-                .name
+                .get_component_for_entity::<InspectedComponent>(child)
+                .map(|card| card.name)
         })
-        .collect();
-    assert_eq!(names, ["Tag", "Transform"]);
-    assert_eq!(cards(&mut world).len(), 2);
-    assert_eq!(rows(&mut world).len(), 3);
+        .collect()
+}
+
+#[test]
+fn lists_reflected_and_scene_components_as_queryable_cards_and_hides_plumbing() {
+    let (mut w, entity, stack) = inspecting();
+    w.register::<Tag>();
+    w.scene().insert((Tag, Plumbing), entity);
+    w.update();
+    assert_eq!(stacked_names(&w.f.world, stack), ["Tag", "Transform"]);
+    assert_eq!(cards(&mut w.f.world).len(), 2);
+    assert_eq!(rows(&mut w.f.world).len(), 3);
     assert!(
-        rows(&mut world)
+        rows(&mut w.f.world)
             .iter()
             .all(|(_, row)| row.component == TypeId::of::<Transform>())
     );
@@ -186,40 +271,42 @@ fn lists_editable_and_scene_components_as_queryable_cards_and_hides_plumbing() {
 
 #[test]
 fn structural_changes_rebuild_the_entire_stack_once() {
-    let (mut world, entity, stack) = world();
-    update(&mut world);
-    let old_card = cards(&mut world)[0].0;
-    let old_rows = rows(&mut world);
-    world.register_component_type::<Tag>();
-    world.insert(Tag, entity);
-    update(&mut world);
-    assert!(!world.entity_is_valid(old_card));
-    assert!(old_rows.iter().all(|(row, _)| !world.entity_is_valid(*row)));
-    let children = world.get_component_for_entity::<Children>(stack).unwrap();
-    let names: Vec<_> = children
-        .iter()
-        .map(|&child| {
-            world
-                .get_component_for_entity::<InspectedComponent>(child)
-                .unwrap()
-                .name
-        })
-        .collect();
-    assert_eq!(names, ["Tag", "Transform"]);
-    let before = cards(&mut world);
-    update(&mut world);
-    assert!(before.iter().all(|(card, _)| world.entity_is_valid(*card)));
-    world.remove_component::<Tag>(entity);
-    update(&mut world);
-    assert!(before.iter().all(|(card, _)| !world.entity_is_valid(*card)));
-    assert_eq!(cards(&mut world).len(), 1);
+    let (mut w, entity, stack) = inspecting();
+    w.update();
+    let old_card = cards(&mut w.f.world)[0].0;
+    let old_rows = rows(&mut w.f.world);
+    w.register::<Tag>();
+    w.scene().insert(Tag, entity);
+    w.update();
+    assert!(!w.f.world.entity_is_valid(old_card));
+    assert!(
+        old_rows
+            .iter()
+            .all(|(row, _)| !w.f.world.entity_is_valid(*row))
+    );
+    assert_eq!(stacked_names(&w.f.world, stack), ["Tag", "Transform"]);
+    let before = cards(&mut w.f.world);
+    w.update();
+    assert!(
+        before
+            .iter()
+            .all(|(card, _)| w.f.world.entity_is_valid(*card))
+    );
+    w.scene().remove_component::<Tag>(entity);
+    w.update();
+    assert!(
+        before
+            .iter()
+            .all(|(card, _)| !w.f.world.entity_is_valid(*card))
+    );
+    assert_eq!(cards(&mut w.f.world).len(), 1);
 
-    let old = cards(&mut world)[0].0;
-    world.insert(Plumbing, entity);
-    world.remove_component::<Plumbing>(entity);
-    update(&mut world);
-    assert!(!world.entity_is_valid(old));
-    assert_eq!(cards(&mut world).len(), 1);
+    let old = cards(&mut w.f.world)[0].0;
+    w.scene().insert(Plumbing, entity);
+    w.scene().remove_component::<Plumbing>(entity);
+    w.update();
+    assert!(!w.f.world.entity_is_valid(old));
+    assert_eq!(cards(&mut w.f.world).len(), 1);
 }
 
 struct WholeTransform;
@@ -230,9 +317,7 @@ impl PropertyEditor<Transform> for WholeTransform {
         value.translation
     }
     fn build(&self, cmd: &mut CommandQueue, row: Entity, _: &Vec3, theme: &UITheme) {
-        let child = cmd
-            .spawn((UINode::default(), text(theme, "Whole transform")))
-            .entity();
+        let child = cmd.spawn(theme.label("Whole transform")).entity();
         cmd.add_child(row, child);
     }
     fn apply(&self, value: &mut Transform, edit: &Vec3) -> Result<(), EditError> {
@@ -244,25 +329,32 @@ impl PropertyEditor<Transform> for WholeTransform {
     }
 }
 
-/// Mutating through `ResMut` marks the registry changed, which is how an app's
-/// registration reaches the inspector.
 fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
-    ResMut::new(world.as_unsafe_world_cell_mut())
+    let ticks = world.out_of_system_ticks();
+    // SAFETY: the exclusive borrow of the world covers any access.
+    unsafe { ResMut::new(world.as_unsafe_world_cell_mut(), ticks) }.unwrap()
 }
 
 #[test]
-fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
-    let (mut world, entity, _) = world();
-    update(&mut world);
-    let original_card = cards(&mut world)[0].0;
-    let original_rows = rows(&mut world);
-    world
+fn value_changes_keep_numeric_rows_and_registering_an_adapter_rebuilds_the_stack() {
+    let (mut w, entity, _) = inspecting();
+    w.update();
+    let original_card = cards(&mut w.f.world)[0].0;
+    let original_rows = rows(&mut w.f.world);
+    let mut slots = w.f.world.query::<(Entity, &numeric::NumericSlot), ()>();
+    let fields: Vec<Entity> = slots
+        .iter(&mut w.f.world)
+        .map(|(entity, _)| entity)
+        .collect();
+    assert_eq!(fields.len(), 9);
+    w.scene()
         .get_component_for_entity_mut::<Transform>(entity)
         .unwrap()
         .translation
         .x = 8.0;
-    update(&mut world);
-    let translation = rows(&mut world)
+    w.update();
+    w.update();
+    let translation = rows(&mut w.f.world)
         .iter()
         .find(|(_, row)| row.path.name() == "translation")
         .unwrap()
@@ -270,51 +362,56 @@ fn value_changes_rebuild_rows_and_registering_an_adapter_rebuilds_the_stack() {
     assert!(
         original_rows
             .iter()
-            .all(|(entity, _)| !world.entity_is_valid(*entity))
+            .all(|(entity, _)| w.f.world.entity_is_valid(*entity)),
+        "a row whose editor follows its snapshot must survive a value change"
     );
-    assert!(world.entity_is_valid(original_card));
+    assert!(
+        fields.iter().all(|field| w.f.world.entity_is_valid(*field)),
+        "a field that may hold focus must not be respawned under the pointer"
+    );
+    assert!(w.f.world.entity_is_valid(original_card));
     assert!(matches!(
-        world
+        w.f.world
             .get_component_for_entity::<PropertyRowValue>(translation)
             .unwrap()
             .snapshot::<Vec3, numeric::NumericFields>(),
         Some(numeric::NumericSnapshot::Vec3([8.0, 0.0, 0.0]))
     ));
-    registry_mut(&mut world).register_property_editor::<Vec3, _>(numeric::NumericFields);
-    update(&mut world);
-    assert!(!world.entity_is_valid(original_card));
+    registry_mut(&mut w.f.world).register_property_editor::<Vec3, _>(numeric::NumericFields);
+    w.update();
+    assert!(!w.f.world.entity_is_valid(original_card));
     assert!(
         original_rows
             .iter()
-            .all(|(entity, _)| !world.entity_is_valid(*entity))
+            .all(|(entity, _)| !w.f.world.entity_is_valid(*entity))
     );
-    let original_rows = rows(&mut world);
-    let original_card = cards(&mut world)[0].0;
-    registry_mut(&mut world).register_property_editor::<Transform, _>(WholeTransform);
-    update(&mut world);
-    assert!(!world.entity_is_valid(original_card));
+    let original_rows = rows(&mut w.f.world);
+    let original_card = cards(&mut w.f.world)[0].0;
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, _>(WholeTransform);
+    w.update();
+    assert!(!w.f.world.entity_is_valid(original_card));
     assert!(
         original_rows
             .iter()
-            .all(|(entity, _)| !world.entity_is_valid(*entity))
+            .all(|(entity, _)| !w.f.world.entity_is_valid(*entity))
     );
-    let root_rows = rows(&mut world);
+    let root_rows = rows(&mut w.f.world);
     assert_eq!(root_rows.len(), 1);
     assert_eq!(root_rows[0].1.path, PropertyPath::default());
-    let mut texts = world.query::<&TextComponent, ()>();
+    let mut texts = w.f.world.query::<&UIText, ()>();
     assert!(
         texts
-            .iter(&mut world)
+            .iter(&mut w.f.world)
             .any(|text| text.text == "Whole transform")
     );
 }
 
 #[test]
 fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target() {
-    let (mut world, a, _) = world();
-    update(&mut world);
-    let original_cards = cards(&mut world);
-    let original_rows = rows(&mut world);
+    let (mut w, a, _) = inspecting();
+    w.update();
+    let original_cards = cards(&mut w.f.world);
+    let original_rows = rows(&mut w.f.world);
     let row = &original_rows
         .iter()
         .find(|(_, row)| row.path.name() == "translation")
@@ -328,74 +425,61 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
         },
     )
     .unwrap();
-    let b = world.spawn(Transform::IDENTITY);
-    world
-        .get_resource_mut::<Selection>()
-        .unwrap()
-        .select_entity(b);
-    update(&mut world);
+    let b = w.scene().spawn(Transform::IDENTITY);
+    w.select(Some(b));
+    w.update();
     assert!(
         original_cards
             .iter()
-            .all(|(entity, _)| !world.entity_is_valid(*entity))
+            .all(|(entity, _)| !w.f.world.entity_is_valid(*entity))
     );
     assert!(
         original_rows
             .iter()
-            .all(|(entity, _)| !world.entity_is_valid(*entity))
+            .all(|(entity, _)| !w.f.world.entity_is_valid(*entity))
     );
-    apply_property_commit(&mut world, commit).unwrap();
-    assert_eq!(
-        world
-            .get_component_for_entity::<Transform>(a)
-            .unwrap()
-            .translation
-            .x,
-        5.0
-    );
-    assert_eq!(
-        world
-            .get_component_for_entity::<Transform>(b)
-            .unwrap()
-            .translation
-            .x,
-        0.0
-    );
-    assert!(rows(&mut world).iter().all(|(_, row)| row.entity == b));
-    world.get_resource_mut::<Selection>().unwrap().clear();
-    update(&mut world);
-    assert!(cards(&mut world).is_empty());
-    assert!(rows(&mut world).is_empty());
-    let mut inputs = world.query::<&concerto_ui::text_input::UITextInput, ()>();
-    assert_eq!(inputs.iter(&mut world).count(), 0);
+    w.f.world
+        .get_resource_mut::<PropertyCommits>()
+        .unwrap()
+        .0
+        .push(commit);
+    run(&mut w.f.world, send_property_commits);
+    assert_eq!(w.get::<Transform>(a).unwrap().translation.x, 5.0);
+    assert_eq!(w.get::<Transform>(b).unwrap().translation.x, 0.0);
+    assert!(w.f.unsaved(w.document));
+    assert!(rows(&mut w.f.world).iter().all(|(_, row)| row.entity == b));
+    w.select(None);
+    w.update();
+    assert!(cards(&mut w.f.world).is_empty());
+    assert!(rows(&mut w.f.world).is_empty());
+    let mut inputs = w.f.world.query::<&concerto_ui::text_input::UITextInput, (
+        concerto_ecs::query::filter::Without<add_component::AddComponentSearch>,
+        concerto_ecs::query::filter::Without<crate::hierarchy::Filter>,
+    )>();
+    assert_eq!(inputs.iter(&mut w.f.world).count(), 0);
 }
 
 #[test]
 fn unsupported_values_build_an_explicit_read_only_row() {
-    #[derive(Component, concerto_editable::Editable)]
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
     struct Unsupported {
         title: String,
     }
-    let (mut world, _, _) = world();
-    world
-        .get_resource_mut::<InspectorRegistry>()
-        .unwrap()
-        .register_component::<Unsupported>();
-    let entity = world.spawn(Unsupported {
+    let (mut w, _, _) = inspecting();
+    w.register::<Unsupported>();
+    let entity = w.scene().spawn(Unsupported {
         title: "Example".into(),
     });
-    world
-        .get_resource_mut::<Selection>()
-        .unwrap()
-        .select_entity(entity);
-    update(&mut world);
-    let all_rows = rows(&mut world);
+    w.select(Some(entity));
+    w.update();
+    let all_rows = rows(&mut w.f.world);
     assert_eq!(all_rows.len(), 1);
     assert!(!all_rows[0].1.has_editor());
-    let mut texts = world.query::<&TextComponent, ()>();
+    let mut texts = w.f.world.query::<&UIText, ()>();
     assert!(
         texts
-            .iter(&mut world)
+            .iter(&mut w.f.world)
             .any(|text| text.text == "Unsupported type")
     );
 }
@@ -411,15 +495,46 @@ fn labels_capitalise_the_field_name() {
 
 #[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
-    use concerto_editable::{Editable, PropertyVisitor, PropertyVisitorMut};
-    #[derive(Component)]
+    use concerto_reflect::{
+        Fields, FromType, PropertyVisitor, PropertyVisitorMut, Reflect, ReflectMut, ReflectRef,
+        TypeRegistration,
+    };
+    #[derive(Component, Default)]
     struct Dynamic {
         reverse: bool,
         show_b: bool,
         a: f32,
         b: f32,
     }
-    impl Editable for Dynamic {
+    impl Fields for Dynamic {
+        fn field_len(&self) -> usize {
+            2
+        }
+        fn name_at(&self, index: usize) -> Option<&'static str> {
+            ["a", "b"].get(index).copied()
+        }
+        fn field_at(&self, index: usize) -> Option<&dyn Reflect> {
+            match index {
+                0 => Some(&self.a),
+                1 => Some(&self.b),
+                _ => None,
+            }
+        }
+        fn field_at_mut(&mut self, index: usize) -> Option<&mut dyn Reflect> {
+            match index {
+                0 => Some(&mut self.a),
+                1 => Some(&mut self.b),
+                _ => None,
+            }
+        }
+    }
+    impl Reflect for Dynamic {
+        fn reflect_ref(&self) -> ReflectRef<'_> {
+            ReflectRef::Struct(self)
+        }
+        fn reflect_mut(&mut self) -> ReflectMut<'_> {
+            ReflectMut::Struct(self)
+        }
         fn visit(&self, visitor: &mut dyn PropertyVisitor) {
             if self.reverse && self.show_b {
                 visitor.field("b", &self.b);
@@ -436,23 +551,25 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
             }
         }
     }
-    let (mut world, _, _) = world();
-    world
-        .get_resource_mut::<InspectorRegistry>()
-        .unwrap()
-        .register_component::<Dynamic>();
-    let target = world.spawn(Dynamic {
+    impl GetTypeRegistration for Dynamic {
+        fn get_type_registration() -> TypeRegistration {
+            let mut registration = TypeRegistration::of::<Self>();
+            registration.insert(<ReflectComponent as FromType<Self>>::from_type());
+            registration.insert(<ReflectDefault as FromType<Self>>::from_type());
+            registration
+        }
+    }
+    let (mut w, _, _) = inspecting();
+    w.register::<Dynamic>();
+    let target = w.scene().spawn(Dynamic {
         reverse: false,
         show_b: true,
         a: 1.0,
         b: 2.0,
     });
-    world
-        .get_resource_mut::<Selection>()
-        .unwrap()
-        .select_entity(target);
-    update(&mut world);
-    let original = rows(&mut world);
+    w.select(Some(target));
+    w.update();
+    let original = rows(&mut w.f.world);
     let a = original
         .iter()
         .find(|(_, row)| row.path.name() == "a")
@@ -463,35 +580,31 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
         .find(|(_, row)| row.path.name() == "b")
         .unwrap()
         .0;
-    let body = world
-        .get_component_for_entity::<concerto_ecs::entity::hierarchy::ChildOf>(a)
-        .unwrap()
-        .parent();
-    assert_eq!(
+    let body =
+        w.f.world
+            .get_component_for_entity::<ChildOf>(a)
+            .unwrap()
+            .parent();
+    let body_rows = |world: &World| -> Vec<Entity> {
         world
             .get_component_for_entity::<Children>(body)
             .unwrap()
             .iter()
             .copied()
-            .collect::<Vec<_>>(),
-        [a, b]
-    );
-    world
+            .collect()
+    };
+    assert_eq!(body_rows(&w.f.world), [a, b]);
+    w.scene()
         .get_component_for_entity_mut::<Dynamic>(target)
         .unwrap()
         .reverse = true;
-    update(&mut world);
-    assert!(!world.entity_is_valid(a) && !world.entity_is_valid(b));
-    let reordered: Vec<_> = world
-        .get_component_for_entity::<Children>(body)
-        .unwrap()
-        .iter()
-        .copied()
-        .collect();
+    w.update();
+    assert!(!w.f.world.entity_is_valid(a) && !w.f.world.entity_is_valid(b));
+    let reordered = body_rows(&w.f.world);
     let names: Vec<_> = reordered
         .iter()
         .map(|&row| {
-            world
+            w.f.world
                 .get_component_for_entity::<PropertyRow>(row)
                 .unwrap()
                 .path
@@ -499,24 +612,16 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
         })
         .collect();
     assert_eq!(names, ["b", "a"]);
-    world
+    w.scene()
         .get_component_for_entity_mut::<Dynamic>(target)
         .unwrap()
         .show_b = false;
-    update(&mut world);
-    assert!(reordered.iter().all(|&row| !world.entity_is_valid(row)));
-    let remaining = rows(&mut world);
+    w.update();
+    assert!(reordered.iter().all(|&row| !w.f.world.entity_is_valid(row)));
+    let remaining = rows(&mut w.f.world);
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].1.path.name(), "a");
-    assert_eq!(
-        world
-            .get_component_for_entity::<Children>(body)
-            .unwrap()
-            .iter()
-            .copied()
-            .collect::<Vec<_>>(),
-        [remaining[0].0]
-    );
+    assert_eq!(body_rows(&w.f.world), [remaining[0].0]);
 }
 
 #[test]
@@ -534,22 +639,22 @@ fn snapshots_are_released_when_their_card_is_despawned() {
             Ok(())
         }
     }
-    let (mut world, target, _) = world();
+    let (mut w, target, _) = inspecting();
     let owner = Arc::new(());
-    world
+    w.f.world
         .get_resource_mut::<InspectorRegistry>()
         .unwrap()
         .register_property_editor::<Transform, _>(Tracked(owner.clone()));
-    update(&mut world);
+    w.update();
     assert_eq!(
         Arc::strong_count(&owner),
         3,
         "test, adapter, and one row-owned snapshot"
     );
-    world.remove_component::<Transform>(target);
-    update(&mut world);
-    assert!(cards(&mut world).is_empty());
-    assert!(rows(&mut world).is_empty());
+    w.scene().remove_component::<Transform>(target);
+    w.update();
+    assert!(cards(&mut w.f.world).is_empty());
+    assert!(rows(&mut w.f.world).is_empty());
     assert_eq!(
         Arc::strong_count(&owner),
         2,
@@ -576,110 +681,165 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
             Ok(())
         }
     }
-    let (mut world, target, _) = world();
+    let (mut w, target, _) = inspecting();
     let count = Arc::new(AtomicUsize::new(0));
-    registry_mut(&mut world).register_property_editor::<Transform, _>(Counting(count.clone()));
-    update(&mut world);
-    update(&mut world);
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, _>(Counting(count.clone()));
+    w.update();
+    w.update();
     let settled = count.load(Ordering::Relaxed);
-    let row = rows(&mut world)[0].0;
-    let row_tick = world.current_tick();
+    let row = rows(&mut w.f.world)[0].0;
+    let row_tick = w.f.world.change_tick();
     for _ in 0..3 {
-        update(&mut world);
+        w.update();
     }
     assert_eq!(count.load(Ordering::Relaxed), settled);
-    assert!(!world.has_component_changed_since(row, TypeId::of::<PropertyRowValue>(), row_tick));
+    assert!(!w.f.world.has_component_changed_since(
+        row,
+        TypeId::of::<PropertyRowValue>(),
+        row_tick
+    ));
 
     let mut sync = sync_inspected_components.into_system();
-    sync.initialize(&mut world);
-    world
-        .get_component_for_entity_mut::<Transform>(target)
-        .unwrap()
-        .translation
-        .x = 1.0;
-    sync.run_and_apply(&mut world);
-    world
-        .get_component_for_entity_mut::<Transform>(target)
-        .unwrap()
-        .translation
-        .x = 2.0;
-    world.tick();
-    update(&mut world);
-    assert!(!world.entity_is_valid(row));
-    let row = rows(&mut world)[0].0;
+    sync.initialize(&mut w.f.world);
+    let set_x = |w: &mut Inspecting, x: f32| {
+        w.scene()
+            .get_component_for_entity_mut::<Transform>(target)
+            .unwrap()
+            .translation
+            .x = x;
+    };
+    set_x(&mut w, 1.0);
+    sync.run_and_apply((), &mut w.f.world);
+    set_x(&mut w, 2.0);
+    w.tick();
+    w.update();
+    assert!(!w.f.world.entity_is_valid(row));
+    let row = rows(&mut w.f.world)[0].0;
     assert_eq!(
-        world
+        w.f.world
             .get_component_for_entity::<PropertyRowValue>(row)
             .unwrap()
             .snapshot::<Transform, Counting>(),
         Some(&Vec3::new(2.0, 0.0, 0.0))
     );
 
-    world
-        .get_component_for_entity_mut::<Transform>(target)
-        .unwrap()
-        .translation
-        .x = 3.0;
+    set_x(&mut w, 3.0);
     for _ in 0..3 {
-        world.tick();
+        w.tick();
     }
     let before = count.load(Ordering::Relaxed);
-    update(&mut world);
+    w.update();
     assert_eq!(count.load(Ordering::Relaxed), before + 1);
-    assert!(!world.entity_is_valid(row));
-    let row = rows(&mut world)[0].0;
+    assert!(!w.f.world.entity_is_valid(row));
+    let row = rows(&mut w.f.world)[0].0;
     assert_eq!(
-        world
+        w.f.world
             .get_component_for_entity::<PropertyRowValue>(row)
             .unwrap()
             .snapshot::<Transform, Counting>(),
         Some(&Vec3::new(3.0, 0.0, 0.0))
     );
 
-    update(&mut world);
+    w.update();
     let before = count.load(Ordering::Relaxed);
-    world.spawn(Transform::IDENTITY);
-    update(&mut world);
+    w.scene().spawn(Transform::IDENTITY);
+    w.update();
     assert_eq!(count.load(Ordering::Relaxed), before);
 }
 
 #[test]
-fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
-    let (mut world, target, stack) = world();
-    update(&mut world);
-    let old_card = cards(&mut world)[0].0;
-    world.despawn(stack);
-    update(&mut world);
-    assert!(!world.entity_is_valid(old_card));
-    let stack = world.spawn((UINode::default(), ComponentStack::default()));
-    update(&mut world);
-    assert_eq!(cards(&mut world).len(), 1);
-    assert_eq!(rows(&mut world).len(), 3);
+fn a_component_is_read_again_only_when_the_scenes_own_clock_says_it_changed() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct Counting(Arc<AtomicUsize>);
+    impl PropertyEditor<Transform> for Counting {
+        type Snapshot = Vec3;
+        type Edit = ();
+        fn snapshot(&self, value: &Transform) -> Vec3 {
+            self.0.fetch_add(1, Ordering::Relaxed);
+            value.translation
+        }
+        fn build(&self, _: &mut CommandQueue, _: Entity, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &()) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+    let (mut w, _, _) = inspecting();
+    let count = Arc::new(AtomicUsize::new(0));
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, _>(Counting(count.clone()));
+    w.update();
+    w.update();
+    let settled = count.load(Ordering::Relaxed);
+
+    for _ in 0..40 {
+        w.f.world.tick();
+    }
+    w.update();
+    w.update();
+
     assert_eq!(
-        world
-            .get_component_for_entity::<ComponentStack>(stack)
-            .unwrap()
-            .target,
-        Some(target)
+        count.load(Ordering::Relaxed),
+        settled,
+        "the editor's clock running ahead of the scene's is not a change in the scene"
     );
-    world.despawn(target);
-    update(&mut world);
-    assert!(cards(&mut world).is_empty());
-    assert!(rows(&mut world).is_empty());
-    assert_eq!(
-        world
-            .get_component_for_entity::<ComponentStack>(stack)
-            .unwrap()
-            .target,
-        None
-    );
-    let since = world.current_tick();
-    update(&mut world);
-    assert!(!world.has_component_changed_since(stack, TypeId::of::<ComponentStack>(), since));
 }
 
 #[test]
-fn inspector_access_only_blocks_component_and_declared_resource_writes() {
+fn a_card_built_for_a_component_unchanged_since_the_last_run_reads_it_in_full() {
+    let (mut w, _, _) = inspecting();
+    let other = w.scene().spawn(Transform::IDENTITY);
+    w.update();
+    w.update();
+    w.update();
+
+    w.select(Some(other));
+    w.update();
+
+    let shown: Vec<Entity> = rows(&mut w.f.world)
+        .into_iter()
+        .map(|(_, row)| row.entity)
+        .collect();
+    assert_eq!(shown, [other; 3]);
+}
+
+#[test]
+fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
+    let (mut w, target, stack) = inspecting();
+    w.update();
+    let old_card = cards(&mut w.f.world)[0].0;
+    w.f.world.despawn(stack);
+    w.update();
+    assert!(!w.f.world.entity_is_valid(old_card));
+    let stack =
+        w.f.world
+            .spawn((UINode::default(), ComponentStack::default()));
+    w.update();
+    assert_eq!(cards(&mut w.f.world).len(), 1);
+    assert_eq!(rows(&mut w.f.world).len(), 3);
+    let shown = |w: &Inspecting| {
+        w.f.world
+            .get_component_for_entity::<ComponentStack>(stack)
+            .unwrap()
+            .scene_target
+    };
+    assert_eq!(shown(&w), Some(target));
+    w.scene().despawn(target);
+    w.update();
+    assert!(cards(&mut w.f.world).is_empty());
+    assert!(rows(&mut w.f.world).is_empty());
+    assert_eq!(shown(&w), None);
+    let since = w.f.world.change_tick();
+    w.update();
+    assert!(
+        !w.f.world
+            .has_component_changed_since(stack, TypeId::of::<ComponentStack>(), since)
+    );
+}
+
+#[test]
+fn inspector_access_blocks_writes_to_the_hosted_app_and_the_widget_registry_only() {
     use concerto_ecs::system::{access::SystemAccess, meta::SystemMetadata};
     let system = sync_inspected_components.into_system();
     let mut access = SystemAccess::default();
@@ -691,8 +851,711 @@ fn inspector_access_only_blocks_component_and_declared_resource_writes() {
     let mut registry = SystemAccess::default();
     registry.write_resource::<InspectorRegistry>();
     assert!(!SystemAccess::are_disjoint(&access, &registry));
-    let mut component = SystemAccess::default();
-    component.write_component::<Transform>();
-    assert!(!SystemAccess::are_disjoint(&access, &component));
-    assert!(!SystemAccess::are_disjoint(&component, &access));
+    let mut hosted = SystemAccess::default();
+    hosted.write_component::<HostedApp>();
+    assert!(!SystemAccess::are_disjoint(&access, &hosted));
+    assert!(!SystemAccess::are_disjoint(&hosted, &access));
+    let mut table = SystemAccess::default();
+    table.write_resource::<AppTypeRegistry>();
+    assert!(
+        SystemAccess::are_disjoint(&access, &table),
+        "the table it reads is the scene's, not one in the editor's world"
+    );
+}
+
+#[derive(Component, concerto_reflect::Reflect, Default)]
+#[reflect(Component, Default)]
+struct Gain {
+    amount: f32,
+}
+
+fn structural() -> (Inspecting, Entity, Entity) {
+    use concerto_ecs::events::event_channel::EventChannel;
+    let (mut w, entity, stack) = inspecting();
+    w.register::<Gain>();
+    w.f.world
+        .insert_resource(EventChannel::<concerto_ui::text_input::UITextInputSubmitted>::default());
+    w.update();
+    (w, entity, stack)
+}
+
+fn run<M>(world: &mut World, system: impl IntoSystem<(), M>) {
+    let mut system = system.into_system();
+    system.initialize(world);
+    system.run_and_apply((), world);
+}
+
+fn click(world: &mut World, entity: Entity) {
+    world.trigger_on(
+        entity,
+        concerto_ui::interaction::UIClick {
+            position: glam::Vec2::ZERO,
+            button: concerto_window::input::MouseButton::Left,
+        },
+    );
+}
+
+fn only<T: Component>(world: &mut World) -> Entity {
+    let mut query = world.query::<(Entity, &T), ()>();
+    let found: Vec<Entity> = query.iter(world).map(|(entity, _)| entity).collect();
+    assert_eq!(found.len(), 1, "expected exactly one match");
+    found[0]
+}
+
+fn is_open(world: &World, panel: Entity) -> bool {
+    world
+        .get_component_for_entity::<concerto_ui::anchor::UIAnchoredPanel>(panel)
+        .unwrap()
+        .open
+}
+
+fn open_add_menu(world: &mut World) -> Entity {
+    let menu = only::<add_component::AddComponentMenu>(world);
+    world
+        .get_component_for_entity_mut::<concerto_ui::anchor::UIAnchoredPanel>(menu)
+        .unwrap()
+        .open = true;
+    run(world, populate_add_component_menu);
+    menu
+}
+
+fn card_names(world: &mut World) -> Vec<&'static str> {
+    let mut names: Vec<_> = cards(world).iter().map(|(_, card)| card.name).collect();
+    names.sort();
+    names
+}
+
+fn queued(world: &World) -> Vec<ComponentEdit> {
+    world.get_resource::<ComponentEdits>().unwrap().0.clone()
+}
+
+#[test]
+fn clicking_a_menu_entry_adds_the_component_and_closes_the_menu() {
+    let (mut w, entity, _) = structural();
+    let menu = open_add_menu(&mut w.f.world);
+    let entry = only::<add_component::AddComponentEntry>(&mut w.f.world);
+
+    click(&mut w.f.world, entry);
+    assert_eq!(
+        queued(&w.f.world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&w.f.world, menu));
+
+    run(&mut w.f.world, send_component_edits);
+    assert!(queued(&w.f.world).is_empty());
+    assert!(w.get::<Gain>(entity).is_some());
+    assert!(w.f.unsaved(w.document));
+    w.update();
+    assert_eq!(card_names(&mut w.f.world), ["Gain", "Transform"]);
+}
+
+#[test]
+fn submitting_the_search_adds_the_highlighted_entry() {
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_ui::text_input::UITextInputSubmitted;
+    let (mut w, entity, _) = structural();
+    let menu = open_add_menu(&mut w.f.world);
+    let search = only::<add_component::AddComponentSearch>(&mut w.f.world);
+    let stray = w.f.world.spawn(());
+    for field in [stray, search] {
+        w.f.world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: String::new(),
+            });
+    }
+
+    run(&mut w.f.world, add_component::add_highlighted_component);
+    assert_eq!(
+        queued(&w.f.world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&w.f.world, menu));
+}
+
+#[test]
+fn a_cards_menu_removes_its_component() {
+    let (mut w, entity, _) = structural();
+    w.scene().insert(Gain::default(), entity);
+    w.update();
+    let menu = only::<component_menu::ComponentMenu>(&mut w.f.world);
+    let buttons: Vec<Entity> = {
+        let mut query =
+            w.f.world
+                .query::<(Entity, &component_menu::ComponentMenuButton), ()>();
+        query
+            .iter(&mut w.f.world)
+            .filter(|(_, button)| button.component == TypeId::of::<Gain>())
+            .map(|(entity, _)| entity)
+            .collect()
+    };
+    assert_eq!(buttons.len(), 1);
+    let button = buttons[0];
+
+    click(&mut w.f.world, button);
+    assert!(is_open(&w.f.world, menu));
+    click(&mut w.f.world, button);
+    assert!(!is_open(&w.f.world, menu));
+    click(&mut w.f.world, button);
+    let panel =
+        w.f.world
+            .get_component_for_entity::<concerto_ui::anchor::UIAnchoredPanel>(menu)
+            .unwrap();
+    assert!(panel.open);
+    assert_eq!(panel.owner, Some(button));
+
+    let remove = only::<component_menu::RemoveComponentItem>(&mut w.f.world);
+    click(&mut w.f.world, remove);
+    assert_eq!(
+        queued(&w.f.world),
+        [ComponentEdit::Remove {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    assert!(!is_open(&w.f.world, menu));
+
+    run(&mut w.f.world, send_component_edits);
+    assert!(w.get::<Gain>(entity).is_none());
+    w.update();
+    assert_eq!(card_names(&mut w.f.world), ["Transform"]);
+    assert_eq!(
+        w.f.world
+            .query::<&component_menu::ComponentMenu, ()>()
+            .iter(&mut w.f.world)
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn only_registered_components_offer_a_menu() {
+    let (mut w, entity, _) = structural();
+    w.register::<Tag>();
+    w.scene().insert(Tag, entity);
+    w.update();
+    assert_eq!(card_names(&mut w.f.world), ["Tag", "Transform"]);
+    let mut query =
+        w.f.world
+            .query::<&component_menu::ComponentMenuButton, ()>();
+    let components: Vec<TypeId> = query.iter(&mut w.f.world).map(|b| b.component).collect();
+    assert_eq!(components, [TypeId::of::<Transform>()]);
+}
+
+#[test]
+fn the_scene_root_wrapper_shows_no_cards() {
+    let (mut w, _, _) = inspecting();
+    let root = w.f.scene_root(w.document);
+    w.select(Some(root));
+    w.update();
+    assert!(w.data().scene_entity.is_none());
+    assert_eq!(w.data().closable_scene_root, Some(root));
+    assert!(cards(&mut w.f.world).is_empty());
+}
+
+#[test]
+fn readonly_components_are_edited_and_removed_but_never_added() {
+    #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
+    struct Lens {
+        focal: f32,
+    }
+    let lens = TypeId::of::<Lens>();
+    let (mut w, entity, _) = structural();
+    w.register::<Lens>();
+    w.update();
+
+    open_add_menu(&mut w.f.world);
+    let entry = only::<add_component::AddComponentEntry>(&mut w.f.world);
+    click(&mut w.f.world, entry);
+    assert_eq!(
+        queued(&w.f.world),
+        [ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        }]
+    );
+    w.f.world.get_resource_mut::<ComponentEdits>().unwrap().0 = vec![ComponentEdit::Add {
+        entity,
+        component: lens,
+    }];
+    run(&mut w.f.world, send_component_edits);
+    assert!(w.get::<Lens>(entity).is_none());
+
+    w.scene().insert(Lens { focal: 35.0 }, entity);
+    w.update();
+    assert_eq!(card_names(&mut w.f.world), ["Lens", "Transform"]);
+    assert!(
+        rows(&mut w.f.world)
+            .iter()
+            .any(|(_, row)| row.component == lens)
+    );
+    let mut buttons =
+        w.f.world
+            .query::<&component_menu::ComponentMenuButton, ()>();
+    assert!(buttons.iter(&mut w.f.world).any(|b| b.component == lens));
+    w.f.world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .push(ComponentEdit::Remove {
+            entity,
+            component: lens,
+        });
+    run(&mut w.f.world, send_component_edits);
+    assert!(w.get::<Lens>(entity).is_none());
+}
+
+#[test]
+fn closing_the_tab_empties_the_cards_and_closes_the_menus() {
+    let (mut w, entity, stack) = structural();
+    w.scene().insert(Gain::default(), entity);
+    w.update();
+    let add_menu = open_add_menu(&mut w.f.world);
+    let button = {
+        let mut query =
+            w.f.world
+                .query::<(Entity, &component_menu::ComponentMenuButton), ()>();
+        query.iter(&mut w.f.world).next().unwrap().0
+    };
+    click(&mut w.f.world, button);
+    let component_menu = only::<component_menu::ComponentMenu>(&mut w.f.world);
+    assert!(!cards(&mut w.f.world).is_empty());
+    assert!(is_open(&w.f.world, component_menu));
+
+    w.close();
+
+    assert!(cards(&mut w.f.world).is_empty());
+    assert!(rows(&mut w.f.world).is_empty());
+    assert_eq!(
+        w.f.world
+            .get_component_for_entity::<ComponentStack>(stack)
+            .unwrap()
+            .scene_target,
+        None
+    );
+    assert!(!is_open(&w.f.world, add_menu));
+    assert!(!is_open(&w.f.world, component_menu));
+    assert_eq!(
+        w.f.world
+            .query::<&add_component::AddComponentEntry, ()>()
+            .iter(&mut w.f.world)
+            .count(),
+        0
+    );
+    let remove = only::<component_menu::RemoveComponentItem>(&mut w.f.world);
+    click(&mut w.f.world, remove);
+    assert!(queued(&w.f.world).is_empty());
+}
+
+#[test]
+fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
+    let (mut w, entity, _) = structural();
+    w.update();
+    let row = rows(&mut w.f.world)
+        .into_iter()
+        .find(|(_, row)| row.path.name() == "translation")
+        .unwrap()
+        .1;
+    w.f.world
+        .get_resource_mut::<PropertyCommits>()
+        .unwrap()
+        .push::<Vec3, numeric::NumericFields>(
+            &row,
+            numeric::NumericEdit {
+                slot: 0,
+                number: 5.0,
+            },
+        )
+        .unwrap();
+    w.f.world
+        .get_resource_mut::<ComponentEdits>()
+        .unwrap()
+        .0
+        .push(ComponentEdit::Add {
+            entity,
+            component: TypeId::of::<Gain>(),
+        });
+
+    w.f.activate(None);
+    w.f.frame();
+    w.f.activate(Some(w.document));
+    w.f.frame();
+
+    assert!(queued(&w.f.world).is_empty());
+    assert!(
+        w.f.world
+            .get_resource::<PropertyCommits>()
+            .unwrap()
+            .0
+            .is_empty()
+    );
+    run(&mut w.f.world, send_property_commits);
+    run(&mut w.f.world, send_component_edits);
+    assert!(!w.f.unsaved(w.document));
+    assert!(w.get::<Gain>(entity).is_none());
+}
+
+#[test]
+fn a_commit_still_queued_when_a_replacement_is_ready_refuses_it_and_is_sent() {
+    let (mut w, entity, _) = inspecting();
+    w.update();
+    let row = rows(&mut w.f.world)
+        .into_iter()
+        .find(|(_, row)| row.path.name() == "translation")
+        .unwrap()
+        .1;
+    let before = w.f.scene_world(w.document).id();
+    w.f.request_other_scene(w.document);
+    w.f.frames_until_building(w.document);
+    w.f.frame();
+    w.f.wait_until_the_build_is_ready(w.document);
+    w.f.world
+        .get_resource_mut::<PropertyCommits>()
+        .unwrap()
+        .push::<Vec3, numeric::NumericFields>(
+            &row,
+            numeric::NumericEdit {
+                slot: 0,
+                number: 5.0,
+            },
+        )
+        .unwrap();
+
+    w.f.frame();
+
+    assert_eq!(w.f.scene_world(w.document).id(), before);
+    assert!(w.f.status(w.document).contains("unsaved changes"));
+    run(&mut w.f.world, send_property_commits);
+    assert_eq!(w.get::<Transform>(entity).unwrap().translation.x, 5.0);
+    assert!(w.f.unsaved(w.document));
+}
+
+mod name_field {
+    use super::*;
+    use crate::tools::entity_ops::EntityEdit;
+    use concerto_ecs::{component::name::Name, events::event_channel::EventChannel, signal::On};
+    use concerto_ui::{
+        focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+    };
+
+    #[derive(Resource, Default)]
+    struct Renames(u32);
+
+    struct Fixture {
+        w: Inspecting,
+        field: Entity,
+        root: Entity,
+        first: Entity,
+        second: Entity,
+    }
+
+    fn fixture() -> Fixture {
+        let (mut w, _, _) = inspecting();
+        let world = &mut w.f.world;
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(FocusNameField::default());
+        world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
+        world.insert_resource(EventChannel::<UITextInputCancelled>::default());
+        world.insert_resource(EventChannel::<UIFocusLost>::default());
+        world.insert_resource(EventChannel::<UIFocusGained>::default());
+        let field = world.spawn((
+            UINode::default().with_visible(false),
+            UITextInput::new("Name"),
+            NameField::default(),
+        ));
+        w.scene().insert_resource(Renames::default());
+        w.scene()
+            .add_listener(|_: On<EntityEdit>, mut renames: ResMut<Renames>| renames.0 += 1);
+        let root = w.f.scene_root(w.document);
+        let first = w.f.scene_entity(w.document, "first");
+        let second = w.f.scene_entity(w.document, "second");
+        let mut fixture = Fixture {
+            w,
+            field,
+            root,
+            first,
+            second,
+        };
+        fixture.select(first);
+        fixture
+    }
+
+    impl Fixture {
+        fn world(&mut self) -> &mut World {
+            &mut self.w.f.world
+        }
+        fn step(&mut self) {
+            for mut system in [
+                collect_inspector_data.into_boxed_system(),
+                update_name_field.into_boxed_system(),
+            ] {
+                system.initialize(self.world());
+                system.run_and_apply((), self.world());
+            }
+            self.world()
+                .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+                .unwrap()
+                .update();
+            self.world()
+                .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+                .unwrap()
+                .update();
+            self.world()
+                .get_resource_mut::<EventChannel<UIFocusLost>>()
+                .unwrap()
+                .update();
+            self.world()
+                .get_resource_mut::<EventChannel<UIFocusGained>>()
+                .unwrap()
+                .update();
+        }
+        fn select(&mut self, entity: Entity) {
+            self.w.select(Some(entity));
+            self.step();
+        }
+        fn focus(&mut self) {
+            let field = self.field;
+            **self.world().get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+        }
+        fn blur(&mut self) {
+            **self.world().get_resource_mut::<FocusedWidget>().unwrap() = None;
+            let field = self.field;
+            self.world()
+                .get_resource_mut::<EventChannel<UIFocusLost>>()
+                .unwrap()
+                .push_event(UIFocusLost(field));
+        }
+        fn type_text(&mut self, text: &str) {
+            self.focus();
+            let field = self.field;
+            self.world()
+                .get_component_for_entity_mut::<UITextInput>(field)
+                .unwrap()
+                .value = text.into();
+        }
+        fn submit(&mut self, text: &str) {
+            let field = self.field;
+            self.world()
+                .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+                .unwrap()
+                .push_event(UITextInputSubmitted {
+                    entity: field,
+                    value: text.into(),
+                });
+        }
+        fn text(&self) -> &str {
+            &self
+                .w
+                .f
+                .world
+                .get_component_for_entity::<UITextInput>(self.field)
+                .unwrap()
+                .value
+        }
+        fn visible(&self) -> bool {
+            self.w
+                .f
+                .world
+                .get_component_for_entity::<UINode>(self.field)
+                .unwrap()
+                .visible
+        }
+        fn name(&self, entity: Entity) -> &str {
+            self.w.get::<Name>(entity).unwrap().as_str()
+        }
+        fn renames(&self) -> u32 {
+            self.w
+                .f
+                .scene_world(self.w.document)
+                .get_resource::<Renames>()
+                .unwrap()
+                .0
+        }
+        fn focused(&self) -> Option<Entity> {
+            **self.w.f.world.get_resource::<FocusedWidget>().unwrap()
+        }
+    }
+
+    #[test]
+    fn the_field_shows_the_selected_name_and_hides_for_the_root() {
+        let mut f = fixture();
+        assert_eq!(f.text(), "first");
+        assert!(f.visible());
+        f.select(f.second);
+        assert_eq!(f.text(), "second");
+        f.select(f.root);
+        assert!(!f.visible());
+        assert_eq!(f.text(), "");
+    }
+
+    #[test]
+    fn submitting_a_changed_name_renames_and_an_unchanged_one_does_nothing() {
+        let mut f = fixture();
+        f.type_text("first");
+        f.submit("first");
+        f.step();
+        assert_eq!(f.renames(), 0);
+
+        f.type_text("lamp");
+        f.submit("lamp");
+        f.step();
+        assert_eq!(f.name(f.first), "lamp");
+        assert_eq!(f.renames(), 1);
+        assert!(f.w.f.unsaved(f.w.document));
+    }
+
+    #[test]
+    fn losing_focus_to_another_selection_renames_the_entity_being_edited() {
+        let mut f = fixture();
+        f.type_text("lamp");
+        f.blur();
+        f.select(f.second);
+        assert_eq!(f.name(f.first), "lamp");
+        assert_eq!(f.name(f.second), "second");
+        f.step();
+        assert_eq!(f.text(), "second");
+    }
+
+    #[test]
+    fn escape_restores_the_name_and_releases_focus() {
+        let mut f = fixture();
+        f.type_text("lamp");
+        let field = f.field;
+        f.world()
+            .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+            .unwrap()
+            .push_event(UITextInputCancelled { entity: field });
+        f.step();
+        assert_eq!(f.text(), "first");
+        assert_eq!(f.name(f.first), "first");
+        assert!(f.focused().is_none());
+        assert_eq!(f.renames(), 0);
+    }
+
+    #[test]
+    fn a_focus_request_focuses_the_visible_field_with_its_text_selected() {
+        let mut f = fixture();
+        f.world().get_resource_mut::<FocusNameField>().unwrap().0 = true;
+        f.step();
+        assert_eq!(f.focused(), Some(f.field));
+        let input =
+            f.w.f
+                .world
+                .get_component_for_entity::<UITextInput>(f.field)
+                .unwrap();
+        assert_eq!((input.selection_anchor, input.cursor), (Some(0), 5));
+
+        **f.world().get_resource_mut::<FocusedWidget>().unwrap() = None;
+        f.select(f.root);
+        f.world().get_resource_mut::<FocusNameField>().unwrap().0 = true;
+        f.step();
+        assert!(f.focused().is_none());
+    }
+
+    #[test]
+    fn the_field_is_hidden_and_forgets_its_entity_when_the_tab_closes() {
+        let mut f = fixture();
+        f.type_text("lamp");
+        assert!(f.visible());
+
+        f.w.close();
+        f.blur();
+        f.step();
+
+        assert!(!f.visible());
+        assert_eq!(f.text(), "");
+    }
+
+    #[test]
+    fn a_name_being_typed_when_the_scene_is_replaced_renames_nothing_in_the_new_one() {
+        let mut f = fixture();
+        f.type_text("lamp");
+
+        f.w.f.request_other_scene(f.w.document);
+        f.w.f.frames_until_idle();
+        f.blur();
+        f.step();
+
+        assert_eq!(f.w.f.scene_names(f.w.document), ["third"]);
+        assert!(!f.w.f.unsaved(f.w.document));
+    }
+}
+
+mod bool_field {
+    use super::*;
+    use concerto_ui::checkbox::UICheckbox;
+
+    #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
+    struct Switch {
+        on: bool,
+    }
+
+    fn fixture() -> (Inspecting, Entity) {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Switch>();
+        w.scene().insert(Switch { on: false }, entity);
+        w.update();
+        w.update();
+        (w, entity)
+    }
+
+    fn checked(world: &World, checkbox: Entity) -> bool {
+        world
+            .get_component_for_entity::<UICheckbox>(checkbox)
+            .unwrap()
+            .checked
+    }
+
+    #[test]
+    fn a_bool_property_is_shown_as_a_checkbox_holding_its_value() {
+        let (mut w, _) = fixture();
+        let checkbox = only::<UICheckbox>(&mut w.f.world);
+        assert!(!checked(&w.f.world, checkbox));
+        let mut texts = w.f.world.query::<&UIText, ()>();
+        assert!(
+            texts
+                .iter(&mut w.f.world)
+                .all(|text| text.text != "Unsupported type")
+        );
+    }
+
+    #[test]
+    fn toggling_the_checkbox_commits_the_new_value() {
+        let (mut w, entity) = fixture();
+        let checkbox = only::<UICheckbox>(&mut w.f.world);
+
+        click(&mut w.f.world, checkbox);
+        run(&mut w.f.world, send_property_commits);
+
+        assert!(w.get::<Switch>(entity).unwrap().on);
+    }
+
+    #[test]
+    fn a_value_changed_elsewhere_reaches_the_same_checkbox() {
+        let (mut w, entity) = fixture();
+        let checkbox = only::<UICheckbox>(&mut w.f.world);
+
+        w.scene()
+            .get_component_for_entity_mut::<Switch>(entity)
+            .unwrap()
+            .on = true;
+        w.update();
+        w.update();
+        run(&mut w.f.world, boolean::refresh_bool_fields);
+
+        assert_eq!(only::<UICheckbox>(&mut w.f.world), checkbox);
+        assert!(checked(&w.f.world, checkbox));
+    }
 }

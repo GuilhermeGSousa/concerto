@@ -2,7 +2,7 @@
 use anyhow::Result;
 use concerto_app::schedule_groups::Update;
 use concerto_ecs::{
-    Component, Entity, IntoSystem, Query, Res,
+    Component, Entity, IntoSystem, Query, Res, System,
     command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::{ChildOf, Children},
 };
@@ -49,7 +49,7 @@ impl AssetEditor for DialogueEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
         let document = editor.entity();
         let widget = editor
-            .spawn_child_queue(DialogueWidget {
+            .spawn_child(DialogueWidget {
                 document,
                 text: String::new(),
             })
@@ -72,8 +72,6 @@ pub fn load_dialogue(
         let Some(asset) = document.pending.clone() else {
             continue;
         };
-        let request = document.request_generation;
-        let generation = project.generation;
         let result = (|| -> Result<String> {
             let bytes = std::fs::read(root.join(&asset.address))?;
             let (header, payload) = read_content_asset(&bytes)?;
@@ -85,7 +83,7 @@ pub fn load_dialogue(
             anyhow::ensure!(!dialogue.text.trim().is_empty(), "Dialogue cannot be empty");
             Ok(dialogue.text)
         })();
-        if !asset_request_is_current(&document, request, generation) {
+        if !asset_request_is_current(&document, &asset) {
             continue;
         }
         match result {
@@ -97,20 +95,10 @@ pub fn load_dialogue(
                     },
                     state.widget,
                 );
-                assert!(finish_asset_request(
-                    &mut document,
-                    request,
-                    generation,
-                    Ok(())
-                ));
+                assert!(finish_asset_request(&mut document, &asset, Ok(())));
             }
             Err(error) => {
-                assert!(finish_asset_request(
-                    &mut document,
-                    request,
-                    generation,
-                    Err(error)
-                ));
+                assert!(finish_asset_request(&mut document, &asset, Err(error)));
             }
         }
     }
@@ -140,14 +128,15 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     app.insert_resource(AssetEditorRegistry::default());
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(ActiveEditor::default());
+    app.insert_resource(concerto_editor::guard::UnsavedGuard::default());
     register(&mut app)?;
     let mut project = ProjectState::default();
     project.project = Some(Project {
         root: root.into(),
         assets: vec![],
         registry: AssetRegistry::default(),
+        content_root: "content".into(),
     });
-    project.generation = 1;
     app.insert_resource(project);
     let world = app.main_mut().world_mut();
     world.register_component::<ChildOf>();
@@ -176,29 +165,34 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
                 &bincode::serialize(&Dialogue { text: text.into() })?,
             )?,
         )?;
+        world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .project
+            .as_mut()
+            .unwrap()
+            .registry
+            .insert(id, address.clone());
         let asset = AssetEntry {
             id,
             address,
             kind: header.kind,
             display_name: name.into(),
             folder: String::new(),
-            provenance,
+            provenance: Some(provenance),
         };
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
             .0
-            .push_back(AssetEditorCommand::Open {
-                asset,
-                project_generation: 1,
-            });
-        process.run_and_apply(world);
+            .push_back(AssetEditorCommand::Open(asset));
+        process.run_and_apply((), world);
         let mut load = load_dialogue.into_system();
         load.initialize(world);
-        load.run_and_apply(world);
+        load.run_and_apply((), world);
         // The first pass observes the document/widget archetype created by
         // the lifecycle system; the second pass processes that pending load.
-        load.run_and_apply(world);
+        load.run_and_apply((), world);
         let active = world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         assert_eq!(*document.get_or_insert(active), active);
         let widget = world
@@ -225,7 +219,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         .unwrap()
         .0
         .push_back(AssetEditorCommand::CloseAll);
-    process.run_and_apply(world);
+    process.run_and_apply((), world);
     assert_eq!(world.query::<&DialogueWidget, ()>().iter(world).count(), 0);
     Ok(())
 }
