@@ -11,8 +11,12 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Entity, Query, Res, ResMut, Resource, With, Without, command::CommandQueue,
-    component::name::Name, signal::On, signal::listener::GlobalListener,
+    Component, Entity, Query, Res, ResMut, Resource, With, Without,
+    command::CommandQueue,
+    component::name::Name,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    signal::On,
+    signal::listener::GlobalListener,
 };
 use concerto_editor::{
     asset_editor::{EditorDocument, Unsaved},
@@ -33,6 +37,7 @@ use concerto_foundation::{
 };
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::HostClosing, host::run_with};
 use concerto_mesh::Aabb;
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::light::Light;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::Vec3;
@@ -74,11 +79,34 @@ fn bound_by_name(named: Query<(Entity, &Name), Without<Aabb>>, mut cmd: CommandQ
     }
 }
 
+#[derive(Component, Reflect, Default)]
+#[reflect(SceneComponent)]
+struct Unreadable;
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Samples {
+    values: Vec<f32>,
+    gain: f32,
+}
+
+fn sample_the_sword(named: Query<(Entity, &Name), Without<Samples>>, mut cmd: CommandQueue) {
+    for (entity, name) in named.iter() {
+        if name.as_str() == "Sword" {
+            let values = (0..100).map(|value| value as f32).collect();
+            cmd.insert((Samples { values, gain: 0.5 }, Unreadable), entity);
+        }
+    }
+}
+
 fn game(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins)
+        .register_type::<Unreadable>()
+        .register_type::<Samples>()
         .insert_resource(EditFrames::default())
         .add_system(Update, count_edit_frames.at_edit_time())
-        .add_system(Update, bound_by_name.at_edit_time());
+        .add_system(Update, bound_by_name.at_edit_time())
+        .add_system(Update, sample_the_sword.at_edit_time());
 }
 
 #[derive(Resource, Clone, Default)]
@@ -1006,6 +1034,145 @@ fn find_entities_matches_names_and_components_with_their_paths() {
         )
     );
     assert_eq!(found[5], "No entities match.");
+}
+
+fn inspected<'a>(inspection: &'a Value, name: &str) -> &'a Value {
+    inspection["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|component| component["name"] == name)
+        .unwrap_or_else(|| panic!("no {name} in {inspection}"))
+}
+
+fn component_names(inspection: &Value) -> Vec<&str> {
+    inspection["components"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|component| component["name"].as_str().unwrap())
+        .collect()
+}
+
+#[test]
+fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error_with(&client, "inspect", json!({ "entity": "1v1" })).await;
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let tree = ok(&client, "scene_tree").await;
+        let (hero, bulb, sword) = (
+            scene_id(&ids, "Hero"),
+            scene_id(&ids, "Bulb"),
+            scene_id(&ids, "Sword"),
+        );
+        until(&client, "scene_tree", |tree| {
+            components(tree, &sword).contains(&"Samples")
+        })
+        .await;
+        let read = |arguments: Value| {
+            let client = &client;
+            async move {
+                serde_json::from_str::<Value>(&ok_with(client, "inspect", arguments).await).unwrap()
+            }
+        };
+        let inspections = vec![
+            read(json!({ "entity": hero })).await,
+            read(json!({ "entity": bulb, "components": ["light"] })).await,
+            read(json!({
+                "entity": bulb,
+                "components": ["concerto_foundation::transform::Transform", "LIGHT"]
+            }))
+            .await,
+            read(json!({ "entity": sword, "components": ["Samples", "Unreadable"] })).await,
+        ];
+        let errors = vec![
+            error_with(&client, "inspect", json!({ "entity": "999999v1" })).await,
+            error_with(
+                &client,
+                "inspect",
+                json!({ "entity": hero, "components": ["Light"] }),
+            )
+            .await,
+        ];
+        client.cancel().await.unwrap();
+        (closed, hero, tree, inspections, errors)
+    }) else {
+        return;
+    };
+
+    let (closed, hero, tree, inspections, errors) = served.result;
+    assert_eq!(closed["code"], "no_scene");
+
+    let whole = &inspections[0];
+    assert_eq!(whole["entity"], hero.as_str());
+    assert_eq!(whole["name"], "Hero");
+    assert_eq!(component_names(whole), components(&tree, &hero));
+    let transform = inspected(whole, "Transform");
+    assert_eq!(
+        transform["type"],
+        "concerto_foundation::transform::Transform"
+    );
+    assert_eq!(
+        transform["value"],
+        json!({
+            "rotation": [0.0, 0.0, 0.0, 1.0],
+            "scale": [1.0, 1.0, 1.0],
+            "translation": [0.0, 0.0, 0.0],
+        })
+    );
+    assert_eq!(
+        transform["paths"],
+        json!([
+            { "path": "translation", "adapter": true },
+            { "path": "rotation", "adapter": true },
+            { "path": "scale", "adapter": true },
+        ])
+    );
+
+    assert_eq!(component_names(&inspections[1]), ["Light"]);
+    let light = inspected(&inspections[1], "Light");
+    assert_eq!(light["value"]["intensity"], 1.0);
+    assert_eq!(light["value"]["light_type"], "Point");
+    let paths = light["paths"].as_array().unwrap();
+    let claimed = |path: &str| {
+        paths
+            .iter()
+            .find(|entry| entry["path"] == path)
+            .unwrap_or_else(|| panic!("no {path} in {paths:?}"))["adapter"]
+            .clone()
+    };
+    assert_eq!(claimed("intensity"), true);
+    assert_eq!(claimed("shadowmaps_enabled"), true);
+    assert_eq!(claimed("light_type"), false);
+    assert_eq!(component_names(&inspections[2]), ["Light", "Transform"]);
+
+    let samples = inspected(&inspections[3], "Samples");
+    let values = samples["value"]["values"].as_array().unwrap();
+    assert_eq!(values.len(), 17);
+    assert_eq!(values[0], 0.0);
+    assert_eq!(values[15], 15.0);
+    assert_eq!(values[16], "… 84 more, 100 in all");
+    assert_eq!(samples["value"]["gain"], 0.5);
+    assert_eq!(
+        samples["paths"],
+        json!([
+            { "path": "values", "adapter": false },
+            { "path": "gain", "adapter": true },
+        ])
+    );
+    let unreadable = inspected(&inspections[3], "Unreadable");
+    assert_eq!(unreadable["value"], Value::Null);
+    assert_eq!(unreadable["unavailable"], true);
+    assert!(unreadable.get("paths").is_none(), "{unreadable}");
+
+    assert_eq!(errors[0]["code"], "unknown_entity");
+    assert_eq!(errors[1]["code"], "unknown_component");
+    let message = errors[1]["message"].as_str().unwrap();
+    assert!(message.contains("Transform"), "{message}");
 }
 
 #[test]

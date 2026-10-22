@@ -51,6 +51,7 @@ use numeric::{
 };
 
 use crate::tools::edits::EditComponent;
+pub(crate) use registry::InspectionSource;
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub use rows::{

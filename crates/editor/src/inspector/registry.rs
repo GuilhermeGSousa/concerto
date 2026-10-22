@@ -18,7 +18,7 @@ use concerto_ecs::{
     },
     world::UnsafeWorldCell,
 };
-use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault};
+use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault, TypeRegistry};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
@@ -197,7 +197,7 @@ impl PropertyVisitor for Collect<'_> {
     }
 }
 
-pub(super) struct InspectionSource<'w> {
+pub(crate) struct InspectionSource<'w> {
     components: ComponentMetadata<'w>,
     table: Res<'w, AppTypeRegistry>,
 }
@@ -246,6 +246,14 @@ impl InspectionSource<'_> {
             .filter_map(|&id| Some((id, self.table.get(id)?.short_name())))
             .collect()
     }
+    /// The edit `App`'s type registry.
+    pub fn types(&self) -> &TypeRegistry {
+        &self.table
+    }
+    /// The component `id` on `entity`, or `None` when it is absent or has no reflection data.
+    pub fn read(&self, entity: Entity, id: TypeId) -> Option<&dyn Reflect> {
+        (self.table.get_type_data::<ReflectComponent>(id)?.read)(&self.components, entity)
+    }
     pub fn collect_component(
         &self,
         registry: &InspectorRegistry,
@@ -253,9 +261,7 @@ impl InspectionSource<'_> {
         entity: Entity,
         id: TypeId,
     ) -> Option<Vec<Property>> {
-        let value =
-            (self.table.get_type_data::<ReflectComponent>(id)?.read)(&self.components, entity)?;
-        Some(registry.collect_at(registry_tick, value))
+        Some(registry.collect_at(registry_tick, self.read(entity, id)?))
     }
 }
 

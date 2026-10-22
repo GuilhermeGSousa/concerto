@@ -66,9 +66,17 @@ line per entity, indented, from `root` if given, `depth` levels deep (3) and at
 most `limit` entities (200); a cut subtree or a cut list ends with the call that
 continues it. `find_entities` lists the entities whose name contains `name`,
 ignoring case, and that carry `component`, by short name or full path, each with
-its path of names from the top, 50 unless `limit` says otherwise. Ids are scene
-entities written as `42v3`. `scene_tree` and `find_entities` need an open scene.
-These four look.
+its path of names from the top, 50 unless `limit` says otherwise. `inspect`
+answers `entity` as JSON: its id, its name, and each component the inspector
+lists, or only those `components` names by short name, ignoring case, or full
+path. Each component has its short `name`, its full `type`, its `value`, and
+its `paths`: every property path, dot-separated, with `adapter` saying whether
+an inspector widget edits it. A component without reflection data has
+`"value": null, "unavailable": true` and no paths. A list longer than 16
+elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
+cut list is not a value to write back. Ids are scene entities written as
+`42v3`. `scene_tree`, `find_entities` and `inspect` need an open scene. These
+five look.
 
 `open_project` opens `path` and answers once the catalogue is read.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
@@ -101,6 +109,7 @@ A failed call is a tool result marked `isError` whose text is
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening |
 | `unknown_entity`, `stale_entity` | The id names no live entity, or a slot that now holds a newer one |
+| `unknown_component` | `inspect` names a component the entity does not carry; the message lists those it does |
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits |

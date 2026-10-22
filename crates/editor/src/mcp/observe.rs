@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use concerto_app::App;
 use concerto_ecs::{
     Entity, IntoSystemConfig, Query, Res,
@@ -11,6 +13,7 @@ use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, ToolCalls, ToolError, answer_unanswered,
     receive_read_only_calls,
 };
+use concerto_reflect::to_json;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -19,6 +22,7 @@ use super::{BusyInputs, is_busy};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
+    inspector::{InspectionSource, InspectorRegistry},
     project::{Project, ProjectState},
     tools::{scene::SceneRoot, selection::Selection},
 };
@@ -69,6 +73,15 @@ pub struct FindEntities {
     pub limit: usize,
 }
 
+/// One entity's components as JSON, each with its property paths and whether an inspector adapter edits each; lists longer than 16 are cut.
+#[derive(Deserialize, JsonSchema)]
+pub struct Inspect {
+    /// The entity, such as 42v3, as scene_tree shows it.
+    pub entity: String,
+    /// The components to show, by short name such as Transform or by full type path; all of them when absent.
+    pub components: Option<Vec<String>>,
+}
+
 fn fifty() -> usize {
     50
 }
@@ -101,7 +114,8 @@ pub(super) fn build(app: &mut App) {
         .add_tool::<FindEntities, _>(
             McpTool::read_only("find_entities").needs(Needs::Scene),
             find_entities,
-        );
+        )
+        .add_tool::<Inspect, _>(McpTool::read_only("inspect").needs(Needs::Scene), inspect);
 }
 
 type StatusInputs = (
@@ -638,4 +652,141 @@ fn search(
         search(view, child, path, visit);
     }
     path.pop();
+}
+
+const LIST_LIMIT: usize = 16;
+
+fn inspect(
+    mut calls: ToolCalls<Inspect>,
+    source: EditWorld<InspectionSource>,
+    entities: EditWorld<Query<Entity>>,
+    names: EditWorld<Query<&Name>>,
+    registry: Res<InspectorRegistry>,
+) {
+    for (arguments, reply) in calls.read() {
+        let answer = resolve(&arguments.entity, &entities)
+            .and_then(|entity| inspection(&source, &registry, &names, entity, &arguments));
+        match answer {
+            Ok(text) => reply.ok(text),
+            Err(error) => reply.err(error),
+        }
+    }
+}
+
+fn names_component(short: &str, full: &str, name: &str) -> bool {
+    short.eq_ignore_ascii_case(name) || full == name
+}
+
+fn inspection(
+    source: &InspectionSource,
+    registry: &InspectorRegistry,
+    names: &Query<&Name>,
+    entity: Entity,
+    arguments: &Inspect,
+) -> Result<String, ToolError> {
+    let mut carried: Vec<_> = source
+        .visible_components(entity)
+        .into_iter()
+        .filter_map(|(id, short)| Some((short, source.types().get(id)?.type_path(), id)))
+        .collect();
+    carried.sort_unstable();
+    if let Some(requested) = &arguments.components {
+        let missing: Vec<&str> = requested
+            .iter()
+            .filter(|name| {
+                !carried
+                    .iter()
+                    .any(|(short, full, _)| names_component(short, full, name))
+            })
+            .map(String::as_str)
+            .collect();
+        if !missing.is_empty() {
+            let present: Vec<&str> = carried.iter().map(|(short, _, _)| *short).collect();
+            return Err(ToolError::new(
+                "unknown_component",
+                format!(
+                    "{} carries no {}; it carries {}.",
+                    entity.to_id_string(),
+                    missing.join(", "),
+                    if present.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        present.join(", ")
+                    }
+                ),
+            ));
+        }
+    }
+    let components: Vec<Value> = carried
+        .into_iter()
+        .filter(|(short, full, _)| {
+            arguments.components.as_ref().is_none_or(|requested| {
+                requested
+                    .iter()
+                    .any(|name| names_component(short, full, name))
+            })
+        })
+        .map(|(short, full, id)| component_json(source, registry, entity, short, full, id))
+        .collect();
+    let mut answer = Map::new();
+    answer.insert("entity".into(), entity.to_id_string().into());
+    if let Some(name) = names.get_entity(entity) {
+        answer.insert("name".into(), name.as_str().into());
+    }
+    answer.insert("components".into(), components.into());
+    Ok(Value::Object(answer).to_string())
+}
+
+fn component_json(
+    source: &InspectionSource,
+    registry: &InspectorRegistry,
+    entity: Entity,
+    short: &str,
+    full: &str,
+    id: TypeId,
+) -> Value {
+    let mut component = Map::new();
+    component.insert("name".into(), short.into());
+    component.insert("type".into(), full.into());
+    match source.read(entity, id) {
+        Some(value) => {
+            component.insert("value".into(), bounded(to_json(value, source.types())));
+            let paths: Vec<Value> = registry
+                .collect(value)
+                .iter()
+                .map(|property| {
+                    let mut path = Map::new();
+                    path.insert("path".into(), property.path.segments().join(".").into());
+                    path.insert("adapter".into(), property.has_editor().into());
+                    Value::Object(path)
+                })
+                .collect();
+            component.insert("paths".into(), paths.into());
+        }
+        None => {
+            component.insert("value".into(), Value::Null);
+            component.insert("unavailable".into(), true.into());
+        }
+    }
+    Value::Object(component)
+}
+
+fn bounded(value: Value) -> Value {
+    match value {
+        Value::Array(elements) => {
+            let total = elements.len();
+            let mut kept: Vec<Value> = elements.into_iter().take(LIST_LIMIT).map(bounded).collect();
+            if total > LIST_LIMIT {
+                kept.push(format!("… {} more, {total} in all", total - LIST_LIMIT).into());
+            }
+            Value::Array(kept)
+        }
+        Value::Object(fields) => Value::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| (key, bounded(value)))
+                .collect(),
+        ),
+        other => other,
+    }
 }
