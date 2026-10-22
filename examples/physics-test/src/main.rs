@@ -90,9 +90,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
         // Collider::cuboid(20.0, 0.5, 20.0),
         MeshCollider,
         MeshComponent { handle: floor_mesh },
-        MaterialComponent {
-            handle: floor_material,
-        },
+        MaterialComponent::all(floor_material),
         floor_transform,
     ));
 
@@ -114,9 +112,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             MeshComponent {
                 handle: asset_server.add(make_box(half)),
             },
-            MaterialComponent {
-                handle: wall_material.clone(),
-            },
+            MaterialComponent::all(wall_material.clone()),
             wall_transform,
         ));
     }
@@ -165,7 +161,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             MeshComponent {
                 handle: sphere_mesh.clone(),
             },
-            MaterialComponent { handle: material },
+            MaterialComponent::all(material),
             transform,
         ));
     }
@@ -254,7 +250,7 @@ fn make_plane(width: f32, length: f32) -> Mesh {
     // opposite winding is a floor you fall through as well as cannot see.
     let indices = vec![0, 2, 1, 0, 3, 2];
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }
@@ -295,7 +291,7 @@ fn make_box(half: Vec3) -> Mesh {
         indices.extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }
@@ -329,7 +325,7 @@ fn make_uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }

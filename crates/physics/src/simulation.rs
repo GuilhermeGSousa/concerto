@@ -56,8 +56,8 @@ mod tests {
             [half_extent, 0.0, half_extent],
             [-half_extent, 0.0, half_extent],
         ];
-        concerto_mesh::Mesh {
-            vertices: corners
+        concerto_mesh::Mesh::single(
+            corners
                 .into_iter()
                 .map(|pos_coords| concerto_mesh::vertex::Vertex {
                     pos_coords,
@@ -66,7 +66,7 @@ mod tests {
                 })
                 .collect(),
             indices,
-        }
+        )
     }
 
     fn drop_sphere_onto(mesh: concerto_mesh::Mesh) -> f32 {

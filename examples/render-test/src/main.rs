@@ -214,7 +214,7 @@ fn shoot_sphere(
         MeshComponent {
             handle: asset_server.add(make_uv_sphere(SPHERE_RADIUS, 12, 24)),
         },
-        MaterialComponent { handle: material },
+        MaterialComponent::all(material),
         Transform::from_translation_rotation(origin, Quat::IDENTITY),
     ));
 }
@@ -263,7 +263,7 @@ fn make_uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
         }
     }
 
-    let mut mesh = Mesh { vertices, indices };
+    let mut mesh = Mesh::single(vertices, indices);
     mesh.compute_tangents();
     mesh
 }

@@ -649,7 +649,7 @@ pub(crate) fn render_shadow_maps(
                 render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
                 render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                render_pass.draw_indexed(0..mesh.index_count(), 0, 0..1);
             }
         }
     }

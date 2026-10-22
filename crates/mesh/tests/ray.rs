@@ -1,4 +1,4 @@
-use concerto_mesh::{Aabb, Mesh, Ray, Vertex};
+use concerto_mesh::{Aabb, Mesh, Primitive, Ray, Vertex};
 use glam::{Mat4, Quat, Vec3};
 
 fn unit_box() -> Aabb {
@@ -23,8 +23,8 @@ fn vertex(position: [f32; 3]) -> Vertex {
 }
 
 fn two_walls() -> Mesh {
-    Mesh {
-        vertices: vec![
+    Mesh::single(
+        vec![
             vertex([-1.0, -1.0, 2.0]),
             vertex([1.0, -1.0, 2.0]),
             vertex([0.0, 1.0, 2.0]),
@@ -32,8 +32,8 @@ fn two_walls() -> Mesh {
             vertex([1.0, -1.0, 5.0]),
             vertex([0.0, 1.0, 5.0]),
         ],
-        indices: vec![3, 4, 5, 0, 1, 2],
-    }
+        vec![3, 4, 5, 0, 1, 2],
+    )
 }
 
 #[test]
@@ -103,9 +103,28 @@ fn a_ray_outside_the_triangles_edges_or_pointing_away_misses() {
 }
 
 #[test]
+fn the_nearest_hit_across_primitives_wins() {
+    let wall = |z: f32| Primitive {
+        vertices: vec![
+            vertex([-1.0, -1.0, z]),
+            vertex([1.0, -1.0, z]),
+            vertex([0.0, 1.0, z]),
+        ],
+        indices: vec![0, 1, 2],
+    };
+    let mesh = Mesh {
+        primitives: vec![wall(5.0), wall(2.0)],
+    };
+    assert_eq!(
+        mesh.ray_hit(&ray([0.0, 0.0, 0.0], [0.0, 0.0, 1.0])),
+        Some(2.0)
+    );
+}
+
+#[test]
 fn malformed_indices_are_skipped() {
     let mut mesh = two_walls();
-    mesh.indices = vec![0, 1, 99, 0, 1, 2, 7];
+    mesh.primitives[0].indices = vec![0, 1, 99, 0, 1, 2, 7];
     assert_eq!(
         mesh.ray_hit(&ray([0.0, 0.0, 0.0], [0.0, 0.0, 1.0])),
         Some(2.0)

@@ -67,11 +67,26 @@ fn a_mesh_and_its_material_keep_their_asset_ids() {
     assert_eq!(captured, stored);
     assert_eq!(referenced, [mesh]);
 
-    let (stored, captured, referenced) = round_trip(&MaterialComponent::<StandardMaterial> {
-        handle: AssetHandle::weak(material),
-    });
+    let (stored, captured, referenced) = round_trip(&MaterialComponent::<StandardMaterial>::all(
+        AssetHandle::weak(material),
+    ));
     assert_eq!(captured, stored);
     assert_eq!(referenced, [material]);
+}
+
+#[test]
+fn per_slot_materials_keep_every_asset_id() {
+    let wood = AssetId::from_path("models/crate.gltf#material/wood");
+    let rope = AssetId::from_path("models/crate.gltf#material/rope");
+
+    let (stored, captured, referenced) =
+        round_trip(&MaterialComponent::<StandardMaterial>::per_slot(vec![
+            Some(AssetHandle::weak(wood)),
+            None,
+            Some(AssetHandle::weak(rope)),
+        ]));
+    assert_eq!(captured, stored);
+    assert_eq!(referenced, [wood, rope]);
 }
 
 #[test]

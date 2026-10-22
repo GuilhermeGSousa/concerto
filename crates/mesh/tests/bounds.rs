@@ -8,10 +8,7 @@ fn mesh(extent: f32) -> Mesh {
         pos_coords: [x, x, x],
         ..Default::default()
     };
-    Mesh {
-        vertices: vec![vertex(-extent), vertex(extent)],
-        indices: vec![],
-    }
+    Mesh::single(vec![vertex(-extent), vertex(extent)], vec![])
 }
 
 fn world() -> World {
@@ -118,14 +115,7 @@ fn an_empty_mesh_gets_no_box_and_drops_a_stale_one() {
     let mut world = world();
     let (solid, empty) = (AssetId::new(), AssetId::new());
     load(&mut world, solid, mesh(1.0));
-    load(
-        &mut world,
-        empty,
-        Mesh {
-            vertices: vec![],
-            indices: vec![],
-        },
-    );
+    load(&mut world, empty, Mesh::default());
     let entity = with_mesh(&mut world, solid);
     run(&mut world);
     world

@@ -4,6 +4,7 @@ use crate::{
     components::{
         camera::{extract_cameras, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
+        fallback_material::{fallback_material_asset, FallbackMaterial, RenderFallbackMaterial},
         light::{extract_lights, update_changed_lights, Light, RenderLights},
         material::MaterialComponent,
         mesh::extract_meshes,
@@ -41,7 +42,9 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig, World};
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::assets::{
+    asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+};
 
 fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
     wgpu::SurfaceConfiguration {
@@ -119,7 +122,7 @@ impl Plugin for RenderPlugin {
         app.add_render_system(Extract, extract_cameras)
             .add_render_system(Extract, extract_meshes)
             .add_render_system(Extract, extract_lights)
-            .add_render_system(Extract, extract_skeletons);
+            .add_render_system(Extract, extract_skeletons.after(extract_meshes));
 
         if has_window {
             app.add_system(LateUpdate, sync_camera_aspect.at_edit_time())
@@ -205,6 +208,17 @@ impl Plugin for RenderPlugin {
             adapter,
         } = gpu;
 
+        let fallback_material = app
+            .get_resource::<AssetStore<StandardMaterial>>()
+            .and_then(|_| app.get_resource::<AssetServer>())
+            .map(|server| server.add(fallback_material_asset()));
+        let render_fallback_material = fallback_material
+            .as_ref()
+            .map(|handle| RenderFallbackMaterial::<StandardMaterial>::new(handle.id()));
+        if let Some(handle) = fallback_material {
+            app.insert_resource(FallbackMaterial(handle));
+        }
+
         let camera_layouts = CameraLayout::new(&device);
 
         let skeleton_layout = SkeletonLayout::new(&device);
@@ -251,5 +265,8 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
             .insert_resource(WorldEnvironment::new(Color::rgba(0.1, 0.1, 0.1, 0.1)));
+        if let Some(render_fallback_material) = render_fallback_material {
+            app.render_mut().insert_resource(render_fallback_material);
+        }
     }
 }

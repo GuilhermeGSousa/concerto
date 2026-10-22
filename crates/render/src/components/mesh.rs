@@ -5,12 +5,17 @@ use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
 use glam::Mat4;
 use wgpu::util::DeviceExt;
 
-use crate::{components::render_entity::RenderEntity, device::RenderDevice, queue::RenderQueue};
+use crate::{
+    components::{fallback_material::SlotCoverage, render_entity::RenderEntity},
+    device::RenderDevice,
+    queue::RenderQueue,
+};
 
 #[derive(Component)]
 pub(crate) struct RenderMeshInstance {
     pub(crate) mesh_asset_id: AssetId,
     pub(crate) transform: wgpu::Buffer,
+    pub(crate) coverage: SlotCoverage,
 }
 
 pub(crate) fn extract_meshes(
@@ -22,7 +27,7 @@ pub(crate) fn extract_meshes(
             &RenderEntity,
         )>,
     >,
-    render_meshes: Query<&RenderMeshInstance>,
+    render_meshes: Query<&mut RenderMeshInstance>,
     mut cmd: CommandQueue,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
@@ -35,12 +40,16 @@ pub(crate) fn extract_meshes(
             None => transform.to_raw(),
         };
 
-        if let Some(render_mesh) = render_meshes.get_entity(render_entity) {
+        if let Some(mut render_mesh) = render_meshes.get_entity(render_entity) {
             queue.write_buffer(
                 &render_mesh.transform,
                 0,
                 bytemuck::cast_slice(&[raw_transform]),
             );
+            if render_mesh.mesh_asset_id != mesh.handle.id() {
+                render_mesh.mesh_asset_id = mesh.handle.id();
+            }
+            render_mesh.coverage.clear();
             continue;
         }
 
@@ -53,6 +62,7 @@ pub(crate) fn extract_meshes(
         let instance = RenderMeshInstance {
             mesh_asset_id: mesh.handle.id(),
             transform: instance_buffer,
+            coverage: SlotCoverage::unresolved(),
         };
 
         cmd.insert(instance, render_entity);

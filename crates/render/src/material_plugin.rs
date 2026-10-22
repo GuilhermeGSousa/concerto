@@ -13,13 +13,16 @@ use concerto_ecs::{
     IntoSystemConfig,
 };
 
+use concerto_foundation::assets::AssetId;
+
 use crate::{
     assets::material::ShaderRef,
     capabilities::RenderCapabilities,
     components::{
         camera::RenderCamera,
-        material::{MaterialComponent, RenderMaterialComponent},
-        mesh::RenderMeshInstance,
+        fallback_material::RenderFallbackMaterial,
+        material::{MaterialComponent, RenderMaterialComponent, RenderSlots},
+        mesh::{extract_meshes, RenderMeshInstance},
         render_entity::RenderEntity,
         shadows::RenderLighting,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -143,25 +146,34 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
 // mirror. Upserts like the other extract systems: a mirror that already names
-// the same material asset is left alone, and one naming a different asset is
+// the same materials is left alone, and one naming different ones is
 // replaced, so swapping the handle on a live entity takes effect next frame.
 pub(crate) fn extract_materials<M: Material>(
     materials: Extracted<Query<(&MaterialComponent<M>, &RenderEntity)>>,
+    render_meshes: Query<&mut RenderMeshInstance>,
     render_materials: Query<&RenderMaterialComponent<M>>,
     mut cmd: CommandQueue,
 ) {
     for (material, render_entity) in materials.iter() {
         let render_entity = **render_entity;
 
+        if let Some(mut render_mesh) = render_meshes.get_entity(render_entity) {
+            if render_mesh.coverage.cover(&material.binding) {
+                log::warn!(
+                    "a primitive slot is covered by more than one material type; it will draw once per type"
+                );
+            }
+        }
+
         if render_materials
             .get_entity(render_entity)
-            .is_some_and(|existing| existing.material_asset_id == material.handle.id())
+            .is_some_and(|current| current.slots.matches(&material.binding))
         {
             continue;
         }
 
         cmd.insert(
-            RenderMaterialComponent::<M>::new(material.handle.id()),
+            RenderMaterialComponent::<M>::new(RenderSlots::from_binding(&material.binding)),
             render_entity,
         );
     }
@@ -228,6 +240,8 @@ pub(crate) fn material_renderpass<M: Material>(
         Option<&RenderSkeletonComponent>,
         &RenderMaterialComponent<M>,
     )>,
+    all_render_meshes: Query<(&RenderMeshInstance, Option<&RenderSkeletonComponent>)>,
+    fallback: Option<Res<RenderFallbackMaterial<M>>>,
     render_cameras: Query<&RenderCamera>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<RenderMaterial<M>>>,
@@ -290,24 +304,75 @@ pub(crate) fn material_renderpass<M: Material>(
             render_pass.set_bind_group(2, &render_lighting.bind_group, &[]);
         }
 
-        for (mesh_instance, skeleton, render_mat_comp) in render_mesh_query.iter() {
-            if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
-                if let Some(render_mat) = render_materials.get(&render_mat_comp.material_asset_id) {
-                    render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
-                } else {
-                    continue;
-                }
+        let mut draw = MaterialDraw::<M> {
+            render_pass: &mut render_pass,
+            render_meshes: &render_meshes,
+            render_materials: &render_materials,
+            skins: &skins,
+            _marker: PhantomData,
+        };
 
+        for (mesh_instance, skeleton, render_material) in render_mesh_query.iter() {
+            draw.instance(mesh_instance, skeleton, |slot| {
+                render_material.slots.slot(slot)
+            });
+        }
+
+        if let Some(fallback) = fallback.as_ref().map(|fallback| fallback.material) {
+            for (mesh_instance, skeleton) in all_render_meshes.iter() {
+                draw.instance(mesh_instance, skeleton, |slot| {
+                    (!mesh_instance.coverage.is_covered(slot)).then_some(fallback)
+                });
+            }
+        }
+    }
+}
+
+struct MaterialDraw<'a, 'pass, M: Material> {
+    render_pass: &'a mut wgpu::RenderPass<'pass>,
+    render_meshes: &'a RenderAssets<RenderMesh>,
+    render_materials: &'a RenderAssets<RenderMaterial<M>>,
+    skins: &'a SkinUniforms,
+    _marker: PhantomData<fn() -> M>,
+}
+
+impl<M: Material> MaterialDraw<'_, '_, M> {
+    fn instance(
+        &mut self,
+        mesh_instance: &RenderMeshInstance,
+        skeleton: Option<&RenderSkeletonComponent>,
+        material_for: impl Fn(u32) -> Option<AssetId>,
+    ) {
+        let Some(mesh) = self.render_meshes.get(&mesh_instance.mesh_asset_id) else {
+            return;
+        };
+
+        let mut bound = false;
+        for (slot, range) in (0u32..).zip(&mesh.primitives) {
+            let Some(render_mat) = material_for(slot).and_then(|id| self.render_materials.get(&id))
+            else {
+                continue;
+            };
+
+            if !bound {
                 if M::needs_skeleton() {
                     let offset = skeleton.map_or(0, |sk| sk.offset);
-                    render_pass.set_bind_group(3, skins.bind_group(), &[offset]);
+                    self.render_pass
+                        .set_bind_group(3, self.skins.bind_group(), &[offset]);
                 }
-
-                render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                self.render_pass
+                    .set_vertex_buffer(0, mesh.vertices.slice(..));
+                self.render_pass
+                    .set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+                self.render_pass
+                    .set_vertex_buffer(1, mesh_instance.transform.slice(..));
+                bound = true;
             }
+
+            self.render_pass
+                .set_bind_group(0, &render_mat.bind_group, &[]);
+            self.render_pass
+                .draw_indexed(range.indices.clone(), range.base_vertex, 0..1);
         }
     }
 }
@@ -383,7 +448,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         // handled by the shared extract_meshes system already registered by
         // RenderPlugin, which iterates over all entities with RenderEntity
         // regardless of material type.
-        app.add_render_system(Extract, extract_materials::<M>)
+        app.add_render_system(Extract, extract_materials::<M>.after(extract_meshes))
             .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw));
     }
 

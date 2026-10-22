@@ -1,6 +1,7 @@
 use glam::{Mat4, Vec3};
 
 use crate::mesh::{Aabb, Mesh};
+use crate::primitive::Primitive;
 
 /// A half-line from `origin` along `direction`.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -51,6 +52,16 @@ impl Aabb {
 }
 
 impl Mesh {
+    /// The nearest triangle of any primitive the ray hits, from either side.
+    pub fn ray_hit(&self, ray: &Ray) -> Option<f32> {
+        self.primitives
+            .iter()
+            .filter_map(|primitive| primitive.ray_hit(ray))
+            .reduce(f32::min)
+    }
+}
+
+impl Primitive {
     /// The nearest triangle the ray hits, from either side.
     pub fn ray_hit(&self, ray: &Ray) -> Option<f32> {
         let position = |index: u32| {
