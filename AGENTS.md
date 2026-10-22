@@ -39,6 +39,7 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 cargo build --workspace
 cargo run -p tech-demo
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
 cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && cargo run -p concerto-import -- assets/forest.glb
 cd examples/tech-demo && trunk serve

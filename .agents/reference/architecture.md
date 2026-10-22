@@ -61,8 +61,11 @@ advancing the world's tick, extracting, or touching the render world.
 `concerto::run` is the winit host: it owns the event loop, the OS window, the
 surface, and the device. `concerto::headless` builds an `App` with a device and
 no window, for tests. `concerto_terminal_renderer::run` drives one from a
-terminal. A `DrawTarget::Texture` makes an `App` draw its window into a texture
-the host can sample.
+terminal. `concerto_mcp::host::run` serves one over MCP on stdin and stdout
+with no window: it runs frames only while a call or the `App` asks for them,
+answers read-only calls between frames with `serve(McpRead)`, and quits when
+stdin closes or the `App` closes its window; the editor's `--mcp` uses it. A `DrawTarget::Texture` makes an
+`App` draw its window into a texture the host can sample.
 
 A host never touches the render world once frames are running.
 
@@ -125,8 +128,9 @@ own.
 The editor is a host as well as a hosted program. Three kinds of `App` exist
 while it runs:
 
-- **The editor `App`,** driven by the winit host. It owns the window, the UI,
-  the panels, and the documents. It draws no 3D and holds no scene entity.
+- **The editor `App`,** driven by the winit host, or by the MCP host under
+  `--mcp`. It owns the window, the UI, the panels, and the documents. It
+  draws no 3D and holds no scene entity.
 - **An edit `App`,** one per open scene, owned by the editor. It is created
   with the edit role, `App::for_editing()`, and built from the recipe passed to
   `EditorPlugin` plus `EditToolsPlugin`; the recipe is the game's, so the

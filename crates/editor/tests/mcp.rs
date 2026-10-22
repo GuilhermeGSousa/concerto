@@ -1344,3 +1344,130 @@ fn frame_answers_once_the_camera_has_framed() {
     assert_eq!(all, "Framed the whole scene.");
     assert_eq!(on_all, "0.00");
 }
+
+fn tree_id(tree: &str, name: &str) -> String {
+    tree.lines()
+        .find_map(|line| {
+            let mut words = line.split_whitespace();
+            let id = words.next()?;
+            (words.next() == Some(name)).then(|| id.to_owned())
+        })
+        .unwrap_or_else(|| panic!("no {name} in:\n{tree}"))
+}
+
+struct Walk {
+    project: String,
+    scene: String,
+    tree: String,
+    found: String,
+    hero: String,
+    sword: String,
+    selected: String,
+    framed: String,
+    status: String,
+    document: String,
+    closed: String,
+    after: String,
+}
+
+#[test]
+fn one_client_opens_looks_selects_frames_and_closes() {
+    let fixture = Fixture::new();
+    let other = Fixture::new();
+    let other_root = other.root().canonicalize().unwrap();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        until(&client, "status", |status| {
+            !status.starts_with("project: none") && status.ends_with("busy: no")
+        })
+        .await;
+        let project = ok_with(
+            &client,
+            "open_project",
+            json!({ "path": other.root().display().to_string() }),
+        )
+        .await;
+        let scene = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/level.gasset" }),
+        )
+        .await;
+        let tree = ok(&client, "scene_tree").await;
+        let found = ok_with(&client, "find_entities", json!({ "name": "sword" })).await;
+        let hero = tree_id(&tree, "Hero");
+        let sword = tree_id(&tree, "Sword");
+        let selected = ok_with(&client, "select", json!({ "entity": hero })).await;
+        let framed = ok_with(&client, "frame", json!({ "entity": sword })).await;
+        let status = ok(&client, "status").await;
+        let document = document_id(&status);
+        let closed = ok_with(&client, "close_document", json!({ "document": document })).await;
+        let after = ok(&client, "status").await;
+        client.cancel().await.unwrap();
+        drop(other);
+        Walk {
+            project,
+            scene,
+            tree,
+            found,
+            hero,
+            sword,
+            selected,
+            framed,
+            status,
+            document,
+            closed,
+            after,
+        }
+    }) else {
+        return;
+    };
+
+    let Walk {
+        project,
+        scene,
+        tree,
+        found,
+        hero,
+        sword,
+        selected,
+        framed,
+        status,
+        document,
+        closed,
+        after,
+    } = served.result;
+    let root = other_root.display().to_string();
+    assert_eq!(project, format!("Opened {root}: 1 asset, 1 scene."));
+    assert_eq!(
+        scene,
+        format!("Opened content/level.gasset in document {document}.")
+    );
+    let lamp = tree_id(&tree, "Lamp");
+    let rig = tree_id(&tree, "Rig");
+    let top = tree_id(&tree, "content/level.gasset");
+    assert_eq!(
+        without_components(&tree),
+        format!(
+            "{top} content/level.gasset\n  {hero} Hero\n    {lamp} Lamp\n      … 1 more below: scene_tree {{\"depth\":3,\"limit\":200,\"root\":\"{lamp}\"}}\n    {sword} Sword\n  {rig} Rig"
+        )
+    );
+    assert_eq!(
+        without_components(&found),
+        format!("1 entity matches:\n{sword} content/level.gasset > Hero > Sword")
+    );
+    assert_eq!(selected, format!("Selected {hero} Hero."));
+    assert_eq!(framed, format!("Framed {sword} Sword."));
+    assert_eq!(line(&status, "project: "), root);
+    assert_eq!(line(&status, "active: "), document);
+    assert_eq!(line(&status, "selection: "), format!("{sword} Sword"));
+    assert!(
+        documents(&status)[0].contains("Scene content/level.gasset · editing"),
+        "{status}"
+    );
+    assert_eq!(closed, format!("Closed document {document}."));
+    assert_eq!(line(&after, "project: "), root);
+    assert_eq!(line(&after, "documents: "), "none");
+    assert_eq!(line(&after, "active: "), "none");
+    assert_eq!(line(&after, "selection: "), "none");
+}
