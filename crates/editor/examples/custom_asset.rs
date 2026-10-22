@@ -49,7 +49,7 @@ impl AssetEditor for DialogueEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
         let document = editor.entity();
         let widget = editor
-            .spawn_child_queue(DialogueWidget {
+            .spawn_child(DialogueWidget {
                 document,
                 text: String::new(),
             })
@@ -135,6 +135,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         root: root.into(),
         assets: vec![],
         registry: AssetRegistry::default(),
+        content_root: "content".into(),
     });
     app.insert_resource(project);
     let world = app.main_mut().world_mut();

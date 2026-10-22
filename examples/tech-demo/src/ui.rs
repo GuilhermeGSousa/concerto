@@ -47,7 +47,7 @@ pub(crate) fn spawn_grounded_overlay(mut cmd: CommandQueue) {
                 UIMaterial::flat(panel_color(false)),
                 GroundedPanel,
             ),
-            |panel| {
+            |mut panel| {
                 panel.add_child((
                     UINode::default().with_flex_grow(1.0),
                     UIText {

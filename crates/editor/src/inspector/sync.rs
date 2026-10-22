@@ -4,7 +4,7 @@ use super::*;
 use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::registry::InspectionSource;
-use concerto_ecs::{component::Tick, query::filter::With};
+use concerto_ecs::query::filter::With;
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -14,7 +14,7 @@ pub struct InspectedComponent {
     pub type_id: TypeId,
     pub name: &'static str,
     body: Entity,
-    last_read_tick: Option<Tick>,
+    read: bool,
 }
 
 #[derive(Component)]
@@ -118,9 +118,7 @@ fn refresh_card(
     bodies: &Query<&Children>,
     rows: &Query<(&PropertyRow, &PropertyRowValue)>,
 ) {
-    if card.last_read_tick.is_some_and(|tick| {
-        !source.has_component_changed_since(card.scene_entity, card.type_id, tick)
-    }) {
+    if card.read && !source.is_component_changed(card.scene_entity, card.type_id) {
         return;
     }
     let properties = source
@@ -132,8 +130,9 @@ fn refresh_card(
         )
         .unwrap_or_default();
     let kept = card
-        .last_read_tick
-        .and_then(|_| kept_rows(source, registry, card.body, &properties, bodies, rows));
+        .read
+        .then(|| kept_rows(source, registry, card.body, &properties, bodies, rows))
+        .flatten();
     match kept {
         Some(kept) => {
             for (row, property) in kept.into_iter().zip(properties) {
@@ -143,7 +142,7 @@ fn refresh_card(
             }
         }
         None => {
-            if card.last_read_tick.is_some() {
+            if card.read {
                 cmd.entity(card.body).despawn_children();
             }
             let mut body = body_node(theme);
@@ -154,7 +153,7 @@ fn refresh_card(
             }
         }
     }
-    card.last_read_tick = Some(source.current_tick());
+    card.read = true;
     cmd.insert(card, entity);
 }
 
@@ -205,7 +204,7 @@ fn spawn_card(
     theme: &UITheme,
 ) -> (Entity, InspectedComponent) {
     let mut stack_queue = cmd.entity(stack);
-    let mut card_queue = stack_queue.spawn_child_queue(
+    let mut card_queue = stack_queue.spawn_child(
         theme
             .card()
             .column()
@@ -214,11 +213,12 @@ fn spawn_card(
     );
     let entity = card_queue.entity();
 
-    card_queue =
-        card_queue.add_child_with(theme.row().fixed().gap(theme.spacing_xs + 2.0), |header| {
-            let mut header = header.add_child(theme.label(name).single_line().grow());
+    card_queue.add_child_with(
+        theme.row().fixed().gap(theme.spacing_xs + 2.0),
+        |mut header| {
+            header.add_child(theme.label(name).single_line().grow());
             if removable {
-                header = header.add_child(menu_button(theme, target, type_id));
+                header.add_child(menu_button(theme, target, type_id));
             }
             header.add_child((
                 theme
@@ -229,16 +229,17 @@ fn spawn_card(
                     .fixed(),
                 UIDisabled,
             ));
-        });
+        },
+    );
 
-    let body = card_queue.spawn_child_queue(body_node(theme)).entity();
+    let body = card_queue.spawn_child(body_node(theme)).entity();
 
     let card = InspectedComponent {
         scene_entity: target,
         type_id,
         name,
         body,
-        last_read_tick: None,
+        read: false,
     };
     card_queue.insert(card);
     (entity, card)
@@ -257,7 +258,7 @@ fn spawn_row(
         label_for(&property.path)
     };
     let mut body_queue = cmd.entity(card.body);
-    let row_queue = body_queue.spawn_child_queue((
+    let mut row_queue = body_queue.spawn_child((
         theme.row().fixed().gap(theme.spacing_xs),
         target,
         property.value,

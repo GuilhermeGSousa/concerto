@@ -20,7 +20,6 @@ concerto-ecs-macros.workspace = true
 concerto-reflect.workspace = true
 concerto-asset-format.workspace = true
 any_vec = "0.14.0"
-anymap3 = "1.0.1"
 typle = "0.10.6"
 log = "0.4.27"
 petgraph = { version = "0.8" }

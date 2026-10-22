@@ -271,7 +271,7 @@ fn build_prompt(mut cmd: CommandQueue, theme: Res<UITheme>) {
                 .gap(theme.spacing_md),
             Interactable,
         ),
-        |dialog| {
+        |mut dialog| {
             dialog
                 .add_child((
                     theme
@@ -286,7 +286,7 @@ fn build_prompt(mut cmd: CommandQueue, theme: Res<UITheme>) {
                         ("Discard", GuardChoice::Discard),
                         ("Save", GuardChoice::Save),
                     ] {
-                        row = row.add_child((
+                        row.add_child((
                             theme
                                 .button(label)
                                 .width(UIValue::Px(96.0))
@@ -507,6 +507,7 @@ mod tests {
             root: std::path::PathBuf::from("project"),
             assets: vec![],
             registry: concerto_foundation::assets::content::AssetRegistry::default(),
+            content_root: "content".into(),
         });
         world.insert_resource(project);
         let mut registry = AssetEditorRegistry::default();

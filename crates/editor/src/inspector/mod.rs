@@ -7,6 +7,7 @@ use concerto_ecs::{
     command::CommandQueue,
     component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
+    query::change_detection::DetectChanges,
     signal::{On, lifecycle::Remove},
 };
 use std::any::TypeId;
@@ -94,7 +95,6 @@ pub struct InspectorPlugin;
 impl Plugin for InspectorPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(InspectorData::default());
-        app.insert_resource(InspectorScroll::default());
         app.insert_resource(InspectorRegistry::default());
         app.insert_resource(PropertyCommits::default());
         app.insert_resource(ComponentEdits::default());
@@ -183,7 +183,7 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
 
 pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     cmd.entity(parent)
-        .add_child_with(theme.column().grow().clipped(), |details| {
+        .add_child_with(theme.column().grow().clipped(), |mut details| {
             details.add_child(name_field(theme)).add_child_with(
                 (
                     UINode::default()
@@ -195,7 +195,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 ),
                 |mut view| {
                     let stack = view
-                        .spawn_child_queue((
+                        .spawn_child((
                             theme.column().fixed().gap(theme.spacing_xs + 2.0),
                             ComponentStack::default(),
                         ))
@@ -214,14 +214,12 @@ fn sync_inspector_scroll(
     stacks: Query<(&ComponentStack, &UILayout)>,
     views: Query<(&DetailsView, &mut UIScrollArea, &UILayout)>,
     data: Res<InspectorData>,
-    mut shown: ResMut<InspectorScroll>,
 ) {
     let Some((_, mut area, view)) = views.iter().next() else {
         return;
     };
 
-    if shown.changed_tick() != data.changed_tick() {
-        shown.mark_changed();
+    if data.is_changed() {
         area.offset = 0.0;
     }
     let Some((_, stack)) = stacks.iter().next() else {
@@ -234,9 +232,6 @@ fn sync_inspector_scroll(
         .offset
         .clamp(0.0, (extent - view.content_rect.size.y).max(0.0));
 }
-
-#[derive(Resource, Default)]
-pub struct InspectorScroll;
 
 #[cfg(test)]
 mod tests;

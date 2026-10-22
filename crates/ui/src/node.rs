@@ -12,6 +12,7 @@ use concerto_ecs::{
     },
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
+    signal::{On, lifecycle::Add},
 };
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_render::{
@@ -149,6 +150,11 @@ impl UIBox {
     pub fn contains(self, point: Vec2) -> bool {
         let max = self.max();
         point.x >= self.min.x && point.y >= self.min.y && point.x <= max.x && point.y <= max.y
+    }
+
+    /// Whether the box covers any area, on both axes.
+    pub fn has_area(self) -> bool {
+        self.size.x > 0.0 && self.size.y > 0.0
     }
 
     pub fn intersection(self, other: Self) -> Self {
@@ -410,11 +416,42 @@ pub struct UILayout {
     pub paint_order: i64,
 }
 
+/// Set by lists and trees, never by callers, on rows they leave out of layout; a culled node and its subtree are not laid out, drawn or hit.
+#[derive(Component)]
+pub struct UICulled;
+
+#[derive(Component)]
+pub(crate) struct UIIntrinsicHeight(pub(crate) f32);
+
+pub(crate) fn blank_culled_layouts(
+    on: On<Add<UICulled>>,
+    children: Query<&Children>,
+    layouts: Query<&mut UILayout>,
+) {
+    let mut stack = vec![on.signal().entity];
+    while let Some(entity) = stack.pop() {
+        if let Some(mut layout) = layouts.get_entity(entity) {
+            layout.clip_rect = UIBox {
+                min: layout.rect.min,
+                size: Vec2::ZERO,
+            };
+        }
+        if let Some(children) = children.get_entity(entity) {
+            stack.extend(children.iter().copied());
+        }
+    }
+}
+
 /// Layout instrumentation consumed by the showcase and profilers.
 #[derive(Resource, Default)]
 pub struct UILayoutDiagnostics {
     pub layout_passes: u64,
     pub tree_rebuilds: u64,
+}
+
+pub(crate) enum LeafMeasure {
+    Text(TextMeasure),
+    Extent(f32),
 }
 
 /// What the layout pass needs to know to measure one text node.
@@ -532,6 +569,7 @@ pub(crate) struct UILayoutEngine {
     hierarchy_signature: Vec<(Entity, Vec<Entity>)>,
     style_snapshot: Vec<(Entity, UINode)>,
     text_snapshot: Vec<(Entity, u64)>,
+    extent_snapshot: Vec<(Entity, f32)>,
     panel_snapshot: Vec<PanelPlacementSnapshot>,
     logical_size: Vec2,
     scale_factor: f64,
@@ -552,6 +590,7 @@ impl Default for UILayoutEngine {
             hierarchy_signature: Vec::new(),
             style_snapshot: Vec::new(),
             text_snapshot: Vec::new(),
+            extent_snapshot: Vec::new(),
             panel_snapshot: Vec::new(),
             logical_size: Vec2::ZERO,
             scale_factor: 0.0,
@@ -566,6 +605,11 @@ impl UILayout {
 
     pub fn size(&self) -> Vec2 {
         self.rect.size
+    }
+
+    /// Whether any of the node may be seen; false for a culled node, whose clip is empty.
+    pub fn is_shown(&self) -> bool {
+        self.clip_rect.has_area()
     }
 }
 
@@ -588,8 +632,10 @@ pub(crate) struct RenderUIMaterial {
 
 pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
-    ui_roots: Query<(Entity, &UINode, Option<&Children>), Without<ChildOf>>,
+    ui_roots: Query<(Entity, &UINode, Option<&Children>), (Without<ChildOf>, Without<UICulled>)>,
+    culled: Query<&UICulled>,
     texts: Query<&crate::text::UIText>,
+    extents: Query<&UIIntrinsicHeight>,
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
@@ -604,33 +650,23 @@ pub(crate) fn compute_ui_nodes(
         height: AvailableSpace::Definite(logical_size.y),
     };
 
-    let mut signature = ui_nodes
-        .iter()
-        .map(|(entity, _, children)| {
-            (
-                entity,
-                children
-                    .map(|children| children.iter().copied().collect())
-                    .unwrap_or_default(),
-            )
-        })
-        .collect::<Vec<_>>();
-    signature.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
-    let mut styles = ui_nodes
-        .iter()
-        .map(|(entity, node, _)| (entity, node.clone()))
-        .collect::<Vec<_>>();
-    styles.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
-    let mut text_snapshot = ui_nodes
-        .iter()
-        .filter(|(_, node, _)| !node.is_rigid())
-        .filter_map(|(entity, _, _)| {
-            texts
-                .get_entity(entity)
-                .map(|text| (entity, text_measure_signature(text)))
-        })
-        .collect::<Vec<_>>();
-    text_snapshot.sort_by_key(|(entity, _)| (entity.index(), entity.generation()));
+    let laid_out = laid_out_nodes(ui_roots.iter(), &ui_nodes, &culled);
+    let mut styles = Vec::with_capacity(laid_out.len());
+    let mut text_snapshot = Vec::new();
+    let mut extent_snapshot = Vec::new();
+    let mut signature = Vec::with_capacity(laid_out.len());
+    for (entity, node, children) in laid_out {
+        styles.push((entity, node.clone()));
+        if !node.is_rigid()
+            && let Some(text) = texts.get_entity(entity)
+        {
+            text_snapshot.push((entity, text_measure_signature(text)));
+        }
+        if let Some(extent) = extents.get_entity(entity) {
+            extent_snapshot.push((entity, extent.0));
+        }
+        signature.push((entity, children));
+    }
     let mut panel_snapshot = panels
         .iter()
         .map(|(entity, panel)| PanelPlacementSnapshot {
@@ -651,6 +687,7 @@ pub(crate) fn compute_ui_nodes(
     if !hierarchy_changed
         && engine.style_snapshot == styles
         && engine.text_snapshot == text_snapshot
+        && engine.extent_snapshot == extent_snapshot
         && engine.panel_snapshot == panel_snapshot
         && engine.logical_size == logical_size
         && engine.scale_factor == scale_factor
@@ -660,16 +697,17 @@ pub(crate) fn compute_ui_nodes(
     engine.hierarchy_signature = signature;
     engine.style_snapshot = styles;
     engine.text_snapshot = text_snapshot;
+    engine.extent_snapshot = extent_snapshot;
     engine.panel_snapshot = panel_snapshot;
     engine.logical_size = logical_size;
     engine.scale_factor = scale_factor;
 
     measurer.clear();
 
-    let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
+    let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
     let mut entity_to_taffy = HashMap::new();
     for (entity, node, children) in ui_roots.iter() {
-        let Ok(node_id) = new_node(&mut taffy, node, &texts, entity) else {
+        let Ok(node_id) = new_node(&mut taffy, node, &texts, &extents, entity) else {
             warn!("Error adding root UI node");
             continue;
         };
@@ -680,7 +718,9 @@ pub(crate) fn compute_ui_nodes(
                 node_id,
                 children,
                 &ui_nodes,
+                &culled,
                 &texts,
+                &extents,
                 &mut entity_to_taffy,
             );
         }
@@ -820,11 +860,36 @@ pub(crate) fn compute_ui_nodes(
     }
 }
 
+fn laid_out_nodes<'w>(
+    roots: impl Iterator<Item = (Entity, &'w UINode, Option<&'w Children>)>,
+    ui_nodes: &Query<'w, '_, (Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
+) -> Vec<(Entity, &'w UINode, Vec<Entity>)> {
+    let mut nodes = Vec::new();
+    let mut stack = roots.collect::<Vec<_>>();
+    while let Some((entity, node, children)) = stack.pop() {
+        let mut shown = Vec::new();
+        for &child in children.into_iter().flatten() {
+            if culled.contains_entity(child) {
+                continue;
+            }
+            let Some(item) = ui_nodes.get_entity(child) else {
+                continue;
+            };
+            shown.push(child);
+            stack.push(item);
+        }
+        nodes.push((entity, node, shown));
+    }
+    nodes.sort_by_key(|(entity, _, _)| (entity.index(), entity.generation()));
+    nodes
+}
+
 fn measure_node(
     measurer: &mut UITextMeasure,
     known: Size<Option<f32>>,
     available: Size<AvailableSpace>,
-    context: Option<&mut TextMeasure>,
+    context: Option<&mut LeafMeasure>,
 ) -> Size<f32> {
     let Some(measure) = context else {
         return Size::ZERO;
@@ -832,6 +897,19 @@ fn measure_node(
     if let (Some(width), Some(height)) = (known.width, known.height) {
         return Size { width, height };
     }
+    let measure = match measure {
+        LeafMeasure::Text(measure) => measure,
+        LeafMeasure::Extent(extent) => {
+            let natural = match available.height {
+                AvailableSpace::MinContent => 0.0,
+                _ => *extent,
+            };
+            return Size {
+                width: known.width.unwrap_or(0.0),
+                height: known.height.unwrap_or(natural),
+            };
+        }
+    };
     let constraint = match (known.width, available.width) {
         (Some(width), _) => Some(width),
         (None, AvailableSpace::Definite(width)) => Some(width),
@@ -882,13 +960,19 @@ fn text_measure_signature(text: &crate::text::UIText) -> u64 {
 }
 
 fn new_node(
-    taffy: &mut TaffyTree<TextMeasure>,
+    taffy: &mut TaffyTree<LeafMeasure>,
     node: &UINode,
     texts: &Query<&crate::text::UIText>,
+    extents: &Query<&UIIntrinsicHeight>,
     entity: Entity,
 ) -> Result<NodeId, taffy::TaffyError> {
+    if let Some(extent) = extents.get_entity(entity) {
+        return taffy.new_leaf_with_context(node.style(), LeafMeasure::Extent(extent.0));
+    }
     match text_context(texts, entity) {
-        Some(measure) => taffy.new_leaf_with_context(text_leaf_style(node, &measure), measure),
+        Some(measure) => {
+            taffy.new_leaf_with_context(text_leaf_style(node, &measure), LeafMeasure::Text(measure))
+        }
         None => taffy.new_leaf(node.style()),
     }
 }
@@ -902,21 +986,26 @@ fn text_leaf_style(node: &UINode, measure: &TextMeasure) -> Style {
 }
 
 fn build_taffy_tree(
-    taffy: &mut TaffyTree<TextMeasure>,
+    taffy: &mut TaffyTree<LeafMeasure>,
     parent_id: NodeId,
     children: &Children,
     ui_nodes: &Query<(Entity, &UINode, Option<&Children>)>,
+    culled: &Query<&UICulled>,
     texts: &Query<&crate::text::UIText>,
+    extents: &Query<&UIIntrinsicHeight>,
     entity_to_taffy: &mut HashMap<Entity, NodeId>,
 ) {
     let mut stack = vec![(parent_id, children.iter().copied().collect::<Vec<_>>())];
     while let Some((parent, child_entities)) = stack.pop() {
         let mut descendants = Vec::new();
         for child in child_entities {
+            if culled.contains_entity(child) {
+                continue;
+            }
             let Some((_, child_node, grand_children)) = ui_nodes.get_entity(child) else {
                 continue;
             };
-            let Ok(child_id) = new_node(taffy, child_node, texts, child) else {
+            let Ok(child_id) = new_node(taffy, child_node, texts, extents, child) else {
                 continue;
             };
             if taffy.add_child(parent, child_id).is_err() {
@@ -932,7 +1021,7 @@ fn build_taffy_tree(
 }
 
 fn write_absolute_positions(
-    taffy: &TaffyTree<TextMeasure>,
+    taffy: &TaffyTree<LeafMeasure>,
     parent_origin: Vec2,
     parent_clip: UIBox,
     parent_layer: i32,
@@ -1056,6 +1145,12 @@ pub(crate) fn extract_ui_nodes(
 
     for (computed_node, render_entity) in computed_nodes.iter() {
         let draw_rect = computed_node.rect.intersection(computed_node.clip_rect);
+        if !computed_node.is_shown() || !draw_rect.has_area() {
+            if render_ui_nodes.contains_entity(**render_entity) {
+                cmd.remove::<RenderUINode>(**render_entity);
+            }
+            continue;
+        }
         let location = draw_rect.min * scale;
         let size = draw_rect.size * scale;
         if render_ui_nodes
@@ -1391,10 +1486,10 @@ mod tests {
 
     fn label_width_in_row(mut measure: TextMeasure, ellipsis: bool, row_width: f32) -> f32 {
         measure.ellipsis = ellipsis;
-        let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
+        let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
         let node = UINode::default().with_flex_grow(1.0);
         let label = taffy
-            .new_leaf_with_context(text_leaf_style(&node, &measure), measure)
+            .new_leaf_with_context(text_leaf_style(&node, &measure), LeafMeasure::Text(measure))
             .unwrap();
         let row = taffy
             .new_with_children(
@@ -1422,7 +1517,7 @@ mod tests {
     }
 
     fn card_heights(rows: f32, content_position: Position) -> (f32, f32) {
-        let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
+        let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
         let mut card = || {
             let pool = taffy
                 .new_leaf(
@@ -1510,16 +1605,19 @@ mod tests {
 
     #[test]
     fn a_long_label_does_not_widen_the_row_inside_a_scroll_pool() {
-        let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
+        let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
         let mut measure = label("content/UAL1/scene.gasset");
         measure.ellipsis = true;
         let label_node = UINode::default()
             .with_flex_grow(1.0)
             .with_padding(UIRect::axes(6.0, 8.0));
         let label_id = taffy
-            .new_leaf_with_context(text_leaf_style(&label_node, &measure), measure)
+            .new_leaf_with_context(
+                text_leaf_style(&label_node, &measure),
+                LeafMeasure::Text(measure),
+            )
             .unwrap();
-        let fixed = |taffy: &mut TaffyTree<TextMeasure>, width: f32| {
+        let fixed = |taffy: &mut TaffyTree<LeafMeasure>, width: f32| {
             taffy
                 .new_leaf(
                     UINode::default()
@@ -1585,7 +1683,7 @@ mod tests {
     }
 
     fn field_widths(texts: &[&str], basis: UIValue) -> Vec<f32> {
-        let mut taffy: TaffyTree<TextMeasure> = TaffyTree::new();
+        let mut taffy: TaffyTree<LeafMeasure> = TaffyTree::new();
         let fields: Vec<_> = texts
             .iter()
             .map(|text| {
@@ -1596,7 +1694,10 @@ mod tests {
                     .with_padding(UIRect::axes(0.0, 4.0))
                     .clipped();
                 taffy
-                    .new_leaf_with_context(text_leaf_style(&node, &measure), measure)
+                    .new_leaf_with_context(
+                        text_leaf_style(&node, &measure),
+                        LeafMeasure::Text(measure),
+                    )
                     .unwrap()
             })
             .collect();
@@ -1745,7 +1846,7 @@ mod tests {
                 width: AvailableSpace::MaxContent,
                 height: AvailableSpace::MaxContent,
             },
-            Some(&mut label("anything at all")),
+            Some(&mut LeafMeasure::Text(label("anything at all"))),
         );
         assert_eq!(size.width, 120.0);
         assert_eq!(size.height, 30.0);
@@ -1812,6 +1913,272 @@ mod tests {
             before, after,
             "the layout pass keys on this to know it must re-measure"
         );
+    }
+
+    fn layout_world() -> concerto_ecs::World {
+        let mut world = concerto_ecs::World::new();
+        world.insert_resource(Window::new((800, 600), 1.0));
+        world.insert_resource(UILayoutEngine::default());
+        world.insert_resource(UILayoutDiagnostics::default());
+        world.insert_resource(UIPanelStack::default());
+        world.insert_resource(measurer());
+        world.add_listener(blank_culled_layouts);
+        lay_out(&mut world);
+        world
+    }
+
+    fn lay_out(world: &mut concerto_ecs::World) {
+        let mut system = concerto_ecs::IntoSystem::into_system(compute_ui_nodes);
+        concerto_ecs::System::initialize(&mut system, world);
+        concerto_ecs::System::run_and_apply(&mut system, (), world);
+    }
+
+    fn layout_passes(world: &concerto_ecs::World) -> u64 {
+        world
+            .get_resource::<UILayoutDiagnostics>()
+            .unwrap()
+            .layout_passes
+    }
+
+    fn rect_of(world: &concerto_ecs::World, entity: Entity) -> UIBox {
+        world
+            .get_component_for_entity::<UILayout>(entity)
+            .unwrap()
+            .rect
+    }
+
+    fn clip_of(world: &concerto_ecs::World, entity: Entity) -> UIBox {
+        world
+            .get_component_for_entity::<UILayout>(entity)
+            .unwrap()
+            .clip_rect
+    }
+
+    fn column(world: &mut concerto_ecs::World) -> Entity {
+        world.spawn(
+            UINode::default()
+                .with_size(UIValue::Px(800.0), UIValue::Px(600.0))
+                .with_flex_direction(FlexDirection::Column),
+        )
+    }
+
+    fn row(world: &mut concerto_ecs::World, parent: Entity) -> Entity {
+        world.spawn((
+            UINode::default()
+                .with_size(UIValue::Px(100.0), UIValue::Px(50.0))
+                .with_flex_shrink(0.0),
+            ChildOf::new(parent),
+        ))
+    }
+
+    #[test]
+    fn a_culled_node_and_its_subtree_get_no_layout() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let first = row(&mut world, root);
+        let middle = row(&mut world, root);
+        let inner = row(&mut world, middle);
+        let third = row(&mut world, root);
+        world.insert(UICulled, middle);
+
+        lay_out(&mut world);
+
+        assert!(world.get_component_for_entity::<UILayout>(middle).is_none());
+        assert!(world.get_component_for_entity::<UILayout>(inner).is_none());
+        assert_eq!(rect_of(&world, third).min.y, rect_of(&world, first).max().y);
+    }
+
+    #[test]
+    fn the_item_listeners_blank_a_culled_subtree_at_once() {
+        let mut world = concerto_ecs::World::new();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        crate::items::install_listeners(&mut world);
+        let rect = UIBox {
+            min: Vec2::new(5.0, 5.0),
+            size: Vec2::new(40.0, 20.0),
+        };
+        let layout = || UILayout {
+            rect,
+            content_rect: rect,
+            clip_rect: rect,
+            paint_order: 0,
+        };
+        let parent = world.spawn(layout());
+        let child = world.spawn((layout(), ChildOf::new(parent)));
+
+        world.insert(UICulled, parent);
+
+        assert!(!clip_of(&world, parent).has_area());
+        assert!(!clip_of(&world, child).has_area());
+    }
+
+    #[test]
+    fn culling_or_unculling_a_node_relays_out() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        row(&mut world, root);
+        let child = row(&mut world, root);
+        lay_out(&mut world);
+        let laid_out = layout_passes(&world);
+        let shown_clip = clip_of(&world, child);
+        assert!(shown_clip.has_area());
+
+        world.insert(UICulled, child);
+        lay_out(&mut world);
+        let culled = layout_passes(&world);
+        assert!(culled > laid_out, "culling must relay out");
+
+        world.remove_component::<UICulled>(child);
+        lay_out(&mut world);
+        assert!(layout_passes(&world) > culled, "unculling must relay out");
+        assert_eq!(rect_of(&world, child).size, Vec2::new(100.0, 50.0));
+        assert_eq!(clip_of(&world, child), shown_clip);
+    }
+
+    fn hovered_at(world: &mut concerto_ecs::World, cursor: Vec2) -> Option<Entity> {
+        world
+            .get_resource_mut::<concerto_window::input::Input>()
+            .unwrap()
+            .update_mouse_position(cursor.x as f64, cursor.y as f64);
+        let mut system =
+            concerto_ecs::IntoSystem::into_system(crate::interaction::update_ui_interaction);
+        concerto_ecs::System::initialize(&mut system, world);
+        concerto_ecs::System::run_and_apply(&mut system, (), world);
+        **world
+            .get_resource::<crate::interaction::HoveredNode>()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_newly_culled_subtree_is_neither_drawn_nor_hit() {
+        let mut world = layout_world();
+        world.insert_resource(concerto_window::input::Input::new());
+        world.insert_resource(crate::interaction::HoveredNode::default());
+        world.insert_resource(crate::interaction::UIInputState::default());
+        let root = column(&mut world);
+        row(&mut world, root);
+        let child = row(&mut world, root);
+        world.insert(crate::interaction::Interactable, child);
+        let inner = world.spawn((
+            UINode::default().with_size(UIValue::Px(10.0), UIValue::Px(10.0)),
+            crate::interaction::Interactable,
+            ChildOf::new(child),
+        ));
+        lay_out(&mut world);
+        let old = rect_of(&world, child);
+        let centre = old.min + old.size / 2.0;
+        assert_eq!(hovered_at(&mut world, centre), Some(child));
+
+        world.insert(UICulled, child);
+
+        for entity in [child, inner] {
+            assert_eq!(clip_of(&world, entity).size, Vec2::ZERO);
+        }
+        lay_out(&mut world);
+        for entity in [child, inner] {
+            assert_eq!(clip_of(&world, entity).size, Vec2::ZERO);
+        }
+        for cursor in [centre, old.min, rect_of(&world, inner).min] {
+            let hovered = hovered_at(&mut world, cursor);
+            assert!(
+                hovered != Some(child) && hovered != Some(inner),
+                "{cursor:?} hit a culled node"
+            );
+        }
+    }
+
+    #[test]
+    fn nothing_moving_means_no_layout_pass() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        row(&mut world, root);
+        let culled = row(&mut world, root);
+        row(&mut world, culled);
+        world.insert(UICulled, culled);
+        lay_out(&mut world);
+        let passes = layout_passes(&world);
+
+        lay_out(&mut world);
+        lay_out(&mut world);
+
+        assert_eq!(layout_passes(&world), passes);
+    }
+
+    #[test]
+    fn culled_subtrees_stay_out_of_the_snapshot() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let shown = row(&mut world, root);
+        for _ in 0..1_000 {
+            let hidden = row(&mut world, root);
+            world.insert(UICulled, hidden);
+        }
+
+        lay_out(&mut world);
+
+        let engine = world.get_resource::<UILayoutEngine>().unwrap();
+        assert_eq!(engine.style_snapshot.len(), 2);
+        assert_eq!(engine.hierarchy_signature.len(), 2);
+        assert!(world.get_component_for_entity::<UILayout>(shown).is_some());
+    }
+
+    fn drawing_app(gpu: &concerto_render::gpu::Gpu) -> concerto_app::App {
+        let mut app = concerto_app::App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(concerto_render::draw_target::DrawTarget::Texture(
+                SharedTexture::new(wgpu::TextureFormat::Rgba8Unorm),
+            ))
+            .insert_resource(Window::new((64, 64), 1.0));
+        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
+            .register_plugin(concerto_app::plugins::AssetManagerPlugin)
+            .register_plugin(concerto_app::plugins::TimePlugin)
+            .register_plugin(concerto_window::plugin::WindowPlugin)
+            .register_plugin(concerto_app::plugins::TransformPlugin)
+            .register_plugin(concerto_render::plugin::RenderPlugin)
+            .register_plugin(crate::plugin::UIPlugin);
+        app
+    }
+
+    fn drawn_quad(app: &concerto_app::App, node: Entity) -> bool {
+        let render_entity = **app
+            .main()
+            .world()
+            .get_component_for_entity::<RenderEntity>(node)
+            .unwrap();
+        app.render()
+            .world()
+            .get_component_for_entity::<RenderUINode>(render_entity)
+            .is_some()
+    }
+
+    #[test]
+    fn a_quad_whose_clip_is_empty_is_not_drawn() {
+        let Some(gpu) = pollster::block_on(concerto_render::gpu::Gpu::request(
+            &concerto_render::gpu::Gpu::instance(),
+            None,
+        )) else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let node = app.main_mut().world_mut().spawn((
+            UINode::default().with_size(UIValue::Px(32.0), UIValue::Px(32.0)),
+            UIMaterial::flat(concerto_color::Color::WHITE),
+        ));
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        assert!(drawn_quad(&app, node), "a shown quad is drawn");
+
+        app.main_mut().world_mut().insert(UICulled, node);
+        app.update();
+        assert!(!drawn_quad(&app, node), "a culled quad leaves no draw");
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<UICulled>(node);
+        app.update();
+        assert!(drawn_quad(&app, node), "an unculled quad is drawn again");
     }
 
     #[test]

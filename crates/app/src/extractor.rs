@@ -1,7 +1,10 @@
 use std::mem;
 
 use concerto_ecs::{
-    system::input::{ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError},
+    component::SystemTicks,
+    system::input::{
+        ForeignTicks, ReadOnlySystemInput, SystemInput, SystemInputData, ValidationError,
+    },
     Resource, World,
 };
 use derive_more::{Deref, DerefMut};
@@ -48,17 +51,18 @@ pub struct Extracted<'world, 'state, T: ReadOnlySystemInput + 'static>(
 );
 
 impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
-    type State = T::State;
+    type State = (T::State, ForeignTicks);
 
     type Data<'world, 'state> = Extracted<'world, 'state, T>;
 
     fn init_state(world: &mut World) -> Self::State {
-        T::init_state(world)
+        (T::init_state(world), ForeignTicks::default())
     }
 
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: concerto_ecs::world::UnsafeWorldCell<'world>,
+        _ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares read access to `MainWorld`.
         let main_world = unsafe { world.world() }
@@ -68,9 +72,16 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
                     "`Extract` systems run only while the main world is lent to the render world",
                 )
             })?;
+        let (state, main_ticks) = state;
+        let ticks = main_ticks.begin(main_world);
         // SAFETY: the main world is lent whole to the render world for `Extract`, and `T`
         // only reads it.
-        unsafe { T::get_data(state, main_world.as_unsafe_world_cell()) }.map(Extracted)
+        unsafe { T::get_data(state, main_world.as_unsafe_world_cell(), ticks) }.map(Extracted)
+    }
+
+    fn ran(state: &mut Self::State) {
+        T::ran(&mut state.0);
+        state.1.commit();
     }
 
     fn fill_access(
@@ -84,7 +95,10 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, Res, ResMut, System};
+    use concerto_ecs::{
+        query::change_detection::DetectChanges, system::BoxedSystem, IntoSystem, Res, ResMut,
+        System,
+    };
 
     #[derive(Resource)]
     struct Counter(usize);
@@ -132,5 +146,123 @@ mod tests {
         let mut main = World::new();
         main.insert_resource(Counter(3));
         assert_eq!(run_with(main), Some(3));
+    }
+
+    #[derive(Resource, Default)]
+    struct Changes {
+        changed: Option<bool>,
+        added: Option<bool>,
+    }
+
+    #[derive(Resource)]
+    struct Enabled;
+
+    fn watch(counter: Extracted<Res<Counter>>, mut changes: ResMut<Changes>) {
+        changes.changed = Some(counter.is_changed());
+        changes.added = Some(counter.is_added());
+    }
+
+    fn watch_when_enabled(
+        counter: Extracted<Res<Counter>>,
+        _: Res<Enabled>,
+        mut changes: ResMut<Changes>,
+    ) {
+        changes.changed = Some(counter.is_changed());
+        changes.added = Some(counter.is_added());
+    }
+
+    fn bump(mut counter: ResMut<Counter>) {
+        counter.0 += 1;
+    }
+
+    struct Frames {
+        main: World,
+        render: World,
+        system: BoxedSystem,
+    }
+
+    impl Frames {
+        fn new(system: BoxedSystem) -> Self {
+            let mut main = World::new();
+            main.insert_resource(Counter(0));
+            let mut render = World::new();
+            render.insert_resource(Changes::default());
+            render.insert_resource(Enabled);
+            let mut frames = Self {
+                main,
+                render,
+                system,
+            };
+            frames.system.initialize(&mut frames.render);
+            frames
+        }
+
+        fn extract(&mut self) -> Option<bool> {
+            *self.render.get_resource_mut::<Changes>().unwrap() = Changes::default();
+            self.render
+                .insert_resource(MainWorld::new(mem::take(&mut self.main)));
+            self.system.run_and_apply((), &mut self.render);
+            self.main = self.render.remove_resource::<MainWorld>().unwrap().0;
+            self.render.get_resource::<Changes>().unwrap().changed
+        }
+
+        fn added(&self) -> Option<bool> {
+            self.render.get_resource::<Changes>().unwrap().added
+        }
+    }
+
+    #[test]
+    fn an_extract_system_sees_a_main_world_system_write_once() {
+        let mut frames = Frames::new(watch.into_boxed_system());
+        let mut writer = bump.into_system();
+        writer.initialize(&mut frames.main);
+        frames.extract();
+        assert_eq!(frames.extract(), Some(false));
+
+        writer.run_and_apply((), &mut frames.main);
+        frames.main.tick();
+
+        assert_eq!(frames.extract(), Some(true));
+        assert_eq!(frames.extract(), Some(false));
+    }
+
+    #[test]
+    fn an_extract_system_sees_a_direct_main_world_write_between_extracts() {
+        let mut frames = Frames::new(watch.into_boxed_system());
+        frames.extract();
+        assert_eq!(frames.extract(), Some(false));
+
+        frames.main.get_resource_mut::<Counter>().unwrap().0 += 1;
+
+        assert_eq!(frames.extract(), Some(true));
+        assert_eq!(frames.extract(), Some(false));
+    }
+
+    #[test]
+    fn an_extract_systems_first_run_sees_everything() {
+        let mut frames = Frames::new(watch.into_boxed_system());
+        frames.main.tick();
+        frames.main.tick();
+
+        assert_eq!(frames.extract(), Some(true));
+        assert_eq!(frames.added(), Some(true));
+        assert_eq!(frames.extract(), Some(false));
+        assert_eq!(frames.added(), Some(false));
+    }
+
+    #[test]
+    fn a_skipped_extract_keeps_the_change() {
+        let mut frames = Frames::new(watch_when_enabled.into_boxed_system());
+        frames.extract();
+        assert_eq!(frames.extract(), Some(false));
+
+        frames.render.remove_resource::<Enabled>();
+        frames.main.get_resource_mut::<Counter>().unwrap().0 += 1;
+        assert_eq!(frames.extract(), None);
+        frames.main.tick();
+        frames.render.insert_resource(Enabled);
+
+        assert_eq!(frames.extract(), Some(true));
+        assert_eq!(frames.extract(), Some(false));
     }
 }

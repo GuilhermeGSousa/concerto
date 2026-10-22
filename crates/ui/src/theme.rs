@@ -1,7 +1,7 @@
 use concerto_color::Color;
 use concerto_ecs::resource::Resource;
 
-use crate::interaction::UIInteractionStyle;
+use crate::{interaction::UIInteractionStyle, text::FontFamily};
 
 /// Semantic colors and metrics for the Concerto editor's Nocturne UI.
 #[derive(Resource, Clone)]
@@ -34,6 +34,20 @@ pub struct UITheme {
     pub font_size_sm: f32,
     pub font_size_md: f32,
     pub font_size_lg: f32,
+    /// Space before a top-level tree item's caret, in logical pixels.
+    pub tree_inset: f32,
+    /// How much further right each nesting level starts, in logical pixels.
+    pub tree_indent: f32,
+    /// Width of the column that holds a tree item's caret, before its row content, in logical pixels.
+    pub tree_caret_column: f32,
+    /// The caret glyph a tree draws on a collapsed item that has children.
+    pub tree_caret_collapsed: char,
+    /// The caret glyph a tree draws on an expanded item that has children.
+    pub tree_caret_expanded: char,
+    /// The font family the tree's caret glyphs are drawn in.
+    pub tree_caret_family: FontFamily,
+    /// The font size the tree's caret glyphs are drawn at, in logical pixels.
+    pub tree_caret_font_size: f32,
 }
 
 /// The colour scheme an interactive element follows.
@@ -151,6 +165,13 @@ impl UITheme {
             font_size_sm: 10.5,
             font_size_md: 12.5,
             font_size_lg: 14.0,
+            tree_inset: 4.0,
+            tree_indent: 16.0,
+            tree_caret_column: 16.0,
+            tree_caret_collapsed: '▸',
+            tree_caret_expanded: '▾',
+            tree_caret_family: FontFamily::SansSerif,
+            tree_caret_font_size: 16.0,
         }
     }
 }

@@ -1,5 +1,6 @@
 use crate::{
     World,
+    component::SystemTicks,
     events::{Event, event_channel::EventChannel},
     resource::ResMut,
     system::{
@@ -26,14 +27,17 @@ pub struct EventWriter<'world, T: Event + 'static> {
 }
 
 impl<'w, T: Event> EventWriter<'w, T> {
-    /// Borrows `T`'s channel from `world`, or reports it missing.
+    /// Borrows `T`'s channel from `world` for a run with `ticks`, or reports it missing.
     ///
     /// # Safety
     /// The caller must hold write access to `T`'s [`EventChannel`].
-    pub unsafe fn new(world: UnsafeWorldCell<'w>) -> Result<Self, ValidationError> {
+    pub unsafe fn new(
+        world: UnsafeWorldCell<'w>,
+        ticks: SystemTicks,
+    ) -> Result<Self, ValidationError> {
         Ok(Self {
             // SAFETY: the caller holds write access to the channel.
-            channel: unsafe { ResMut::new(world) }?,
+            channel: unsafe { ResMut::new(world, ticks) }?,
         })
     }
 
@@ -56,9 +60,10 @@ where
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares write access to the channel.
-        unsafe { EventWriter::new(world) }
+        unsafe { EventWriter::new(world, ticks) }
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {

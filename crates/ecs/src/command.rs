@@ -26,15 +26,15 @@ impl<'a> EntityCommandQueue<'a> {
         self.entity
     }
 
-    pub fn add_child<T: IntoBundle<Bundle: 'static>>(self, components: T) -> Self {
+    pub fn add_child<T: IntoBundle<Bundle: 'static>>(&mut self, components: T) -> &mut Self {
         self.add_child_with(components, |_| {})
     }
 
     pub fn add_child_with<T: IntoBundle<Bundle: 'static>>(
-        mut self,
+        &mut self,
         components: T,
         f: impl Fn(EntityCommandQueue),
-    ) -> Self {
+    ) -> &mut Self {
         let child_ctx = self.command_queue.spawn(components);
         let child_entity = child_ctx.entity();
         f(child_ctx);
@@ -43,7 +43,7 @@ impl<'a> EntityCommandQueue<'a> {
     }
 
     /// Spawns a child of this entity and returns the child's command queue.
-    pub fn spawn_child_queue<T: IntoBundle<Bundle: 'static>>(
+    pub fn spawn_child<T: IntoBundle<Bundle: 'static>>(
         &mut self,
         components: T,
     ) -> EntityCommandQueue<'_> {
@@ -331,6 +331,7 @@ impl SystemInput for CommandQueue<'_, '_> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
+        _ticks: crate::component::SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, crate::system::input::ValidationError> {
         // SAFETY: only the entity store is touched, whose reservations are atomic and which
         // otherwise changes only under exclusive access.

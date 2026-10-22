@@ -23,6 +23,7 @@ use input::{SystemInput, ValidationError, ValidationKind};
 use typle::typle;
 
 use crate::{
+    component::{CheckChangeTicks, SystemTicks, Tick},
     system::{
         access::SystemAccess,
         input::{SystemArg, SystemArgData, SystemInputData},
@@ -71,6 +72,9 @@ pub trait System: Send + Sync + 'static {
     unsafe fn run_unsafe(&mut self, args: SysArg<'_, Self>, world: UnsafeWorldCell);
 
     fn apply(&mut self, world: &mut World);
+
+    /// Clamps the ticks this system stores that are older than the check allows.
+    fn check_change_tick(&mut self, check: CheckChangeTicks);
 }
 
 impl System for BoxedSystem {
@@ -98,6 +102,10 @@ impl System for BoxedSystem {
 
     fn initialize(&mut self, world: &mut World) {
         (**self).initialize(world);
+    }
+
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        (**self).check_change_tick(check);
     }
 }
 
@@ -156,6 +164,7 @@ where
 pub struct FunctionSystem<F: SystemFunction<Marker>, Marker> {
     pub func: F,
     system_state: Option<<F::Inputs as SystemInput>::State>,
+    last_run: Tick,
     marker: PhantomData<fn() -> Marker>,
 }
 
@@ -164,6 +173,7 @@ impl<F: SystemFunction<Marker>, Marker> FunctionSystem<F, Marker> {
         Self {
             func,
             system_state: None,
+            last_run: Tick::default(),
             marker: PhantomData,
         }
     }
@@ -182,6 +192,7 @@ where
 
     fn initialize(&mut self, world: &mut World) {
         self.system_state = Some(F::Inputs::init_state(world));
+        self.last_run = world.change_tick().relative_to(Tick::MAX);
     }
 
     fn apply(&mut self, world: &mut World) {
@@ -197,19 +208,42 @@ where
             .system_state
             .as_mut()
             .expect("Attempted to run uninitialized system.");
+        let ticks = SystemTicks {
+            last_run: self.last_run,
+            this_run: world.increment_change_tick(),
+        };
         // SAFETY: the caller guarantees no conflicting system runs, and the inputs touch
         // only the access they declared for this system.
-        match unsafe { F::Inputs::get_data(state, world) } {
-            Ok(data) => self.func.call(args, data),
+        let ran = match unsafe { F::Inputs::get_data(state, world, ticks) } {
+            Ok(data) => {
+                self.func.call(args, data);
+                true
+            }
             Err(error) if error.kind == ValidationKind::Missing => {
                 log::warn!("{} skipped: {error}", std::any::type_name::<F>());
+                false
             }
-            Err(_) => {}
+            Err(_) => false,
+        };
+        if ran {
+            F::Inputs::ran(state);
+            self.last_run = ticks.this_run;
         }
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
         F::Inputs::fill_access(meta, access);
+    }
+
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        if self.last_run.check_tick(check) {
+            let age = *check.present_tick().relative_to(self.last_run);
+            log::warn!(
+                "System '{}' has not run for {age} ticks. Changes older than {} ticks will not be detected.",
+                self.name(),
+                *Tick::MAX - 1,
+            );
+        }
     }
 }
 
@@ -282,6 +316,10 @@ where
     fn apply(&mut self, world: &mut World) {
         self.system.apply(world);
     }
+
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        self.system.check_change_tick(check);
+    }
 }
 
 #[doc(hidden)]
@@ -323,6 +361,7 @@ impl SystemInput for NonSendMarker {
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
+        _ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         Ok(NonSendMarker)
     }

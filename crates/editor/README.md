@@ -79,17 +79,38 @@ reach the running game's world instead of the scene's. Code changes the target
 only by triggering `SetEditTarget`; its listener moves the marker. A panel
 therefore keeps what it shows in a resource of its own, fills it in a system
 that takes `EditWorld<T>`, and empties it in an `On<Remove<EditTarget>>` listener.
-`has_changed()` and `Changed<T>` mean nothing through `EditWorld<T>`; the two
-worlds keep separate clocks.
+`is_changed()` and `Changed<T>` through `EditWorld<T>` mean "since this system
+last read the target", in the target's own clock: a scene system's write, a
+signal sent through `EditWorldSignals`, or a direct write by the host is seen
+on the next run. The first run against a newly targeted world sees everything
+stamped within `MAX_CHANGE_AGE` as added and changed.
 
 An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,
 `scene_target`, `scene_parent`.
 
-Selecting a supported asset in Curiosities opens its editor tab. Each asset type
+Curiosities, the content browser, is a `UITree` that mirrors the project's
+content folder, `content/` unless `content.toml` names another: the folders and
+assets directly inside it are the top-level rows, a folder shows a folder mark
+and holds its subfolders and assets, and an asset shows its kind mark and name.
+A folder appears once it holds an asset at any depth; empty directories are not
+shown. In each folder, subfolders come first, then assets, each alphabetically
+ignoring case, and folders start collapsed. After an import or a catalogue
+refresh the tree keeps the rows of folders and assets that still exist, so
+expansion and scroll survive. Clicking a row selects it, folder or asset, but
+only an asset becomes the catalogue's selection; activating a folder, by
+double-clicking it or pressing Enter, expands or collapses it. A click while a
+project is opening is ignored and the highlight returns to the selected asset. The search
+field and the kind chips hide every asset that does not match and show the
+folders leading to each match, open; clearing them restores the expansion as it
+was. The footer counts the matching assets. The navigation keys are the UI
+crate's list and tree actions, as in the hierarchy.
+
+Activating a supported asset in Curiosities, by double-clicking it or pressing
+Enter on its row, opens its editor tab. Each asset type
 has one editor: another Scene reuses the Scene tab. The old preview, camera,
 selection, and edits remain until its replacement loads successfully.
-A failed replacement preserves them. Selecting the displayed asset cancels a
+A failed replacement preserves them. Opening the displayed asset cancels a
 pending replacement. Unsupported assets remain selectable without opening a tab.
 
 With no tabs open, the editor shows an empty viewport. Switching projects
@@ -193,8 +214,19 @@ Cancel. Escape cancels.
 The scene root shown in the hierarchy is the editor's wrapper around the scene,
 not part of it, so the inspector shows nothing for it.
 
-The scene hierarchy supports selection, filtering, expansion, and keyboard
-navigation. Right-click a row to add a child, duplicate, rename, or delete it;
+The scene hierarchy is a `UITree` with one item per listed entity, nested as the
+scene is. It supports selection, filtering, expansion, and keyboard navigation.
+The navigation keys are the UI crate's list and tree actions and work while
+focus is on a row: Up and Down move the selection, Home and End jump to the
+first and last row, Right expands a row or steps into it, Left collapses it or
+steps out to its parent. While the search field holds text, every row whose
+name does not contain it, ignoring case, is hidden, the path to each match stays
+open, and clearing the field restores the expansion as it was. When an edit or
+a click in the viewport selects an entity, the hierarchy expands its ancestors
+and scrolls its row into view, also for an entity created that frame. The title
+counts every listed entity, collapsed and hidden ones included, and the footer
+reads "Loading…" while a scene loads.
+Right-click a row to add a child, duplicate, rename, or delete it;
 the `+` in the panel header adds a child to the selection, or to the scene when
 nothing is selected. Delete removes the selected entity and its descendants,
 Ctrl+D duplicates it beside itself, and F2 edits its name in the field at the

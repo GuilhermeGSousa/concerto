@@ -145,7 +145,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &NumericSnapshot, theme: &UITheme) {
         let mut row_queue = cmd.entity(row);
         for slot in 0..slot_count(value) {
-            row_queue = row_queue.add_child((
+            row_queue.add_child((
                 theme
                     .text_field("")
                     .small()

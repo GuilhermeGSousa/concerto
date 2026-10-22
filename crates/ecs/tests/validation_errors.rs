@@ -5,6 +5,7 @@ use std::{
 
 use concerto_ecs::{
     CommandQueue, IntoSystem, Res, Resource, System, World,
+    component::SystemTicks,
     system::{
         access::SystemAccess,
         input::{SystemInput, ValidationError, ValidationKind},
@@ -60,6 +61,7 @@ impl<const MISSING: bool> SystemInput for Declines<MISSING> {
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
+        _ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         if MISSING {
             Err(ValidationError::missing::<Self>("nothing to read"))
