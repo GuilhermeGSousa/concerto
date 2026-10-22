@@ -67,13 +67,13 @@ where
         std::thread::yield_now();
     }
     app.finish_plugin_build();
-    let server = spawn_server(&app, io);
 
     let mut frames = Pacer::default();
     frames.run(&mut app);
     if closes(&mut app) {
         return Ok(());
     }
+    let server = spawn_server(&app, io);
     while !server.is_finished() {
         let demanded = frame_demanded(&app);
         let timeout = if demanded { Duration::ZERO } else { IDLE_CHECK };

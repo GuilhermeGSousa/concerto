@@ -10,12 +10,15 @@ use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
     plugins::TimePlugin,
-    schedule_groups::{LateUpdate, Update},
+    schedule_groups::{First, LateUpdate, Update},
 };
-use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Resource, signal::On};
+use concerto_ecs::{
+    CommandQueue, Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, signal::On,
+};
 use concerto_mcp::{
     AppMcpExt, McpPlugin, McpRead, McpTool, PendingCall, ToolCalls,
     host::{HostClosing, HostPicture, run_with},
+    receive_calls,
 };
 use concerto_window::plugin::{Window, WindowCommand};
 use rmcp::{
@@ -126,6 +129,12 @@ fn note_picture(picture: Option<Res<HostPicture>>, window: Res<Window>, observed
     }
 }
 
+fn slow_first_frame(count: Res<UpdateCount>) {
+    if count.get() == 0 {
+        std::thread::sleep(Duration::from_millis(300));
+    }
+}
+
 fn recipe(count: UpdateCount, observed: Observed, closes: bool) -> impl FnOnce(&mut App) {
     move |app| {
         app.register_plugin(MainSchedulePlugin)
@@ -133,6 +142,7 @@ fn recipe(count: UpdateCount, observed: Observed, closes: bool) -> impl FnOnce(&
             .register_plugin(McpPlugin)
             .insert_resource(count)
             .insert_resource(observed)
+            .add_system(First, slow_first_frame.before(receive_calls))
             .add_system(Update, count_updates)
             .add_tool::<Updates, _>(McpTool::read_only("updates"), updates)
             .add_tool::<Change, _>(McpTool::new("change"), change)

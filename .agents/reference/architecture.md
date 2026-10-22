@@ -62,7 +62,9 @@ advancing the world's tick, extracting, or touching the render world.
 surface, and the device. `concerto::headless` builds an `App` with a device and
 no window, for tests. `concerto_terminal_renderer::run` drives one from a
 terminal. `concerto_mcp::host::run` serves one over MCP on stdin and stdout
-with no window: it runs frames only while a call or the `App` asks for them,
+with no window: it runs one frame before it starts the server, so no call is
+served before that frame ends, then runs frames only while a call or the `App`
+asks for them,
 answers read-only calls between frames with `serve(McpRead)`, and quits when
 stdin closes or the `App` closes its window; the editor's `--mcp` uses it. A `DrawTarget::Texture` makes an
 `App` draw its window into a texture the host can sample.
