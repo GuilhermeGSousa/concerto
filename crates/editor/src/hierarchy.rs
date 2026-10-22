@@ -19,12 +19,15 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystemConfig, Query, Ref, Res, ResMut, Resource, World,
     command::CommandQueue,
     component::name::Name,
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
-    query::filter::{With, Without},
+    query::{
+        change_detection::DetectChanges,
+        filter::{With, Without},
+    },
     signal::{
         On,
         lifecycle::{Add, Remove},
@@ -51,6 +54,7 @@ use concerto_ui::{
 };
 use concerto_window::input::MouseButton;
 use concerto_window::input::actions::{ActionFired, ActionMap};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 pub const PANEL_ID: &str = "concerto.warren";
@@ -586,13 +590,13 @@ pub(crate) fn reconcile_structure(
 
 pub(crate) fn reconcile_content(
     selection: EditWorld<Res<Selection>>,
-    names: EditWorld<Query<&Name>>,
+    names: EditWorld<Query<Ref<Name>>>,
     roots: EditWorld<Query<&SceneRoot>>,
-    scene_children: EditWorld<Query<&Children>>,
+    scene_children: EditWorld<Query<Ref<Children>>>,
     kinds: EditWorld<Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>>,
     active: Res<ActiveEditor>,
     documents: Query<&EditorDocument>,
-    items: Query<(Entity, &HierarchyItem, Option<&UISelected>)>,
+    items: Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
     texts: Query<&mut UIText>,
     marks: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
@@ -607,8 +611,9 @@ pub(crate) fn reconcile_content(
     for (entity, item, selected) in items.iter() {
         let scene_entity = item.scene_entity;
         let is_root = roots.get_entity(scene_entity).is_some();
-        let count = scene_children
-            .get_entity(scene_entity)
+        let children = scene_children.get_entity(scene_entity);
+        let count = children
+            .as_ref()
             .map_or(0, |children| children.iter().len());
         let kind = kinds.get_entity(scene_entity);
         let mark = match kind {
@@ -619,25 +624,27 @@ pub(crate) fn reconcile_content(
             _ if count > 0 => Mark::Group,
             _ => Mark::Plain,
         };
-        let label = if is_root {
-            address.to_string()
-        } else {
-            names
-                .get_entity(scene_entity)
-                .filter(|name| !name.as_str().is_empty())
-                .map(|name| name.as_str().to_string())
-                .unwrap_or_else(|| format!("Entity {}", scene_entity.index()))
+        let name = names.get_entity(scene_entity);
+        let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());
+        let label: Option<Cow<str>> = match name.as_deref() {
+            _ if is_root => Some(address.into()),
+            _ if same_name => None,
+            Some(name) if !name.as_str().is_empty() => Some(name.as_str().into()),
+            _ => Some(format!("Entity {}", scene_entity.index()).into()),
         };
-        let count = if count > 0 {
-            count.to_string()
-        } else {
-            String::new()
+        let same_children =
+            !item.is_added() && children.is_some_and(|children| !children.is_changed());
+        let count: Option<Cow<str>> = match count {
+            0 => Some("".into()),
+            _ if same_children => None,
+            count => Some(count.to_string().into()),
         };
         for (text, value) in [(item.label, label), (item.count, count)] {
-            if let Some(mut text) = texts.get_entity(text)
-                && text.text != value
+            if let Some(value) = value
+                && let Some(mut text) = texts.get_entity(text)
+                && text.text != *value
             {
-                text.text = value;
+                text.text = value.into_owned();
             }
         }
         let wanted = selection.entity() == Some(scene_entity);
@@ -1623,6 +1630,60 @@ mod tests {
             .filter(|entity| marks.contains(entity))
             .collect();
         assert!(changed.is_empty(), "{changed:?}");
+    }
+
+    #[test]
+    fn an_idle_frame_builds_no_label_strings() {
+        let mut f = fixture();
+        f.spawn_under(f.node, "child");
+        f.expand(f.root);
+        f.refresh();
+        f.scene.world.tick();
+
+        f.reconcile_content();
+
+        let texts: HashSet<Entity> = f
+            .scene
+            .world
+            .query::<&HierarchyItem, ()>()
+            .iter(&mut f.scene.world)
+            .flat_map(|item| [item.label, item.count])
+            .collect();
+        assert_eq!(texts.len(), 6);
+        let changed: Vec<Entity> = f
+            .scene
+            .world
+            .query::<Entity, Changed<UIText>>()
+            .iter(&mut f.scene.world)
+            .filter(|entity| texts.contains(entity))
+            .collect();
+        assert!(changed.is_empty(), "{changed:?}");
+
+        let node = f.node;
+        *f.scene
+            .scene_world_mut(f.document)
+            .get_component_for_entity_mut::<Name>(node)
+            .unwrap() = Name::new("renamed");
+        f.reconcile_content();
+        assert_eq!(f.label_of(node), "renamed");
+    }
+
+    #[test]
+    fn a_removed_name_and_a_last_child_leaving_reach_the_row() {
+        let mut f = fixture();
+        let node = f.node;
+        let child = f.spawn_under(node, "child");
+        f.refresh();
+        assert_eq!(f.label_of(node), "first");
+        assert_eq!(f.count_of(node), "1");
+
+        let scene = f.scene.scene_world_mut(f.document);
+        scene.remove_component::<Name>(node);
+        scene.despawn(child);
+        f.refresh();
+
+        assert_eq!(f.label_of(node), format!("Entity {}", node.index()));
+        assert_eq!(f.count_of(node), "");
     }
 
     #[test]
