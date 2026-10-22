@@ -23,6 +23,93 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+## Agents (MCP)
+
+`--mcp` runs the editor for an agent: the whole editor, panels included, with
+no window, served over [MCP](https://modelcontextprotocol.io) on stdin and
+stdout. Logs stay on stderr.
+
+```sh
+cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
+```
+
+`.mcp.json` at the repository root registers it as the `concerto` server, so an
+agent working in the repository can start its own editor. That entry opens the
+game's own project; an agent that will change anything opens a scratch copy
+with `open_project` first.
+
+The editor draws into a 1600×900 picture unless `--mcp-size <width>x<height>`
+names another size. `--decorated` is ignored there, and `--mcp-size` without
+`--mcp` is a bad argument. Without a GPU adapter it exits with status 1 and a
+message naming lavapipe.
+
+Frames run on demand, only while a call needs one or the editor is busy: a
+project or scene opening, a game starting or playing, a save under way. An idle
+editor runs none. The tools that look answer between frames, without running
+one; the tools that act run in frames, one at a time, and a second one waits
+until the first has answered.
+
+When the client disconnects, the editor quits and discards unsaved edits,
+answering its own unsaved-changes prompt with Discard. An agent that wants its
+edits keeps them by saving first.
+
+### Tools
+
+`status` reports the project and its status line, the open documents, the
+active one, the selection in the edited scene, the viewport's size, and whether
+the editor is busy. `list_assets` lists the project's assets as
+`address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
+time unless `limit` says otherwise, from `offset`; a longer list ends with the
+call that shows the rest. `scene_tree` shows the edited scene, or while a game
+plays its top-level entities as the hierarchy does, one `id name [components]`
+line per entity, indented, from `root` if given, `depth` levels deep (3) and at
+most `limit` entities (200); a cut subtree or a cut list ends with the call that
+continues it. `find_entities` lists the entities whose name contains `name`,
+ignoring case, and that carry `component`, by short name or full path, each with
+its path of names from the top, 50 unless `limit` says otherwise. Ids are scene
+entities written as `42v3`. `scene_tree` and `find_entities` need an open scene.
+These four look.
+
+`open_project` opens `path` and answers once the catalogue is read.
+`open_asset` opens `asset`, an address or an id from `list_assets`, in its
+editor: a scene answers once it has loaded, and at once if it is already shown;
+another kind answers once its document exists, and a kind with no editor
+answers `open_failed`. `close_document` closes the document `status` lists as
+`document`. When one of these three would raise the unsaved-changes prompt,
+the call cancels the prompt and answers `unsaved_changes`, naming the
+documents, once the prompt has closed.
+`select` selects `entity`, or clears the selection without one. `frame` selects
+`entity` and frames it, or frames the whole scene without one. `set_camera`
+places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
+turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a
+positive yaw turns left, and pitch is up from level, kept within ±1.55. Giving
+both forms, neither, or a `look_at` at the position answers
+`invalid_arguments`. `frame` and `set_camera` answer the camera's pose, its
+position, yaw, pitch and the direction it looks along, once the edit `App` has
+stepped and the camera shows it; the edit `App` steps only while the viewport
+shows the scene. While a game plays both answer `refused`, since the game has
+no editor camera. All three need an open scene.
+
+### Errors
+
+A failed call is a tool result marked `isError` whose text is
+`{"code": …, "message": …}`. The message says what to do next.
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_arguments` | The arguments do not match the tool's input schema |
+| `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
+| `busy` | `open_project` while a project is opening |
+| `unknown_entity`, `stale_entity` | The id names no live entity, or a slot that now holds a newer one |
+| `unknown_asset` | The asset is not in the catalogue |
+| `open_failed` | The project or asset did not open; the message is the editor's status |
+| `unsaved_changes` | The call would discard unsaved edits |
+| `refused` | The call cannot act in the current state; the message says why |
+| `timeout` | What the call waited for did not happen within 30 seconds |
+| `internal` | No system answered the call: a bug |
+
+A tool system that panics takes the editor down, as any system does.
+
 ## How the crate is laid out
 
 The editor is one `App`, the one the window host drives. It holds the window,
@@ -91,6 +178,16 @@ has one editor: another Scene reuses the Scene tab. The old preview, camera,
 selection, and edits remain until its replacement loads successfully.
 A failed replacement preserves them. Selecting the displayed asset cancels a
 pending replacement. Unsupported assets remain selectable without opening a tab.
+
+Code learns how an open ended from events in the editor's world, written in the
+frame the status text changes. Opening a project ends in `ProjectOpened { root }`
+or `ProjectOpenFailed { root, message }`; a cancelled folder pick and a project
+whose content cannot be activated are failures. A Scene document's request ends
+in `SceneOpened { document, asset }` or `SceneOpenFailed { document, asset,
+message }`: a scene that cannot be read, a build that panics, a replacement
+refused over unsaved changes, and a scene asked for with no project open each
+fail, and `message` is the status the tab shows. A request that is cancelled or
+superseded writes neither, and neither does selecting the scene already shown.
 
 With no tabs open, the editor shows an empty viewport. Switching projects
 closes all editors. There is only one Scene tab, from the first scene opened

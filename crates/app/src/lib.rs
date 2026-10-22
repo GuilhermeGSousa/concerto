@@ -259,6 +259,11 @@ impl App {
         self.subapps.update();
     }
 
+    /// Runs one main-world schedule between frames, for a host.
+    pub fn serve(&mut self, label: impl ScheduleLabel) {
+        self.main_mut().world_mut().run_schedule(label);
+    }
+
     pub fn main(&self) -> &SubApp {
         self.subapps.main()
     }

@@ -95,10 +95,11 @@ fn a_type_declaring_nothing_has_no_type_data() {
 #[test]
 fn registering_twice_changes_nothing() {
     let mut registry = TypeRegistry::default();
+    let built_in = registry.iter().count();
     registry.register::<Gain>();
     registry.register::<Gain>();
 
-    assert_eq!(registry.iter().count(), 1);
+    assert_eq!(registry.iter().count(), built_in + 1);
 }
 
 #[test]

@@ -249,6 +249,11 @@ impl HostedApp {
     pub fn push_for_test(&mut self, event: WindowEvent) {
         self.push(event);
     }
+
+    #[doc(hidden)]
+    pub fn trigger_for_test<S: Signal>(&mut self, signal: S) {
+        self.trigger(signal);
+    }
 }
 
 /// Triggers `signal` in the `App` hosted on `document`; what its listeners write is forwarded in the next `First`.

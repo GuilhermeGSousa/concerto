@@ -13,7 +13,7 @@ use concerto_app::{
 use concerto_ecs::{
     Entity, Event, IntoSystem, ResMut, Resource, System, World,
     component::name::Name,
-    events::{event_channel::EventChannel, event_writer::EventWriter},
+    events::{event_channel::EventChannel, event_cursor::EventCursor, event_writer::EventWriter},
     signal::{On, Signal},
     system::BoxedSystem,
     world_id::WorldId,
@@ -50,7 +50,7 @@ use crate::{
     hierarchy::HierarchyState,
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
     project::{AssetEntry, Project, ProjectState},
-    scene::{SceneEditor, SceneEditorState, SceneRecipe, SceneState},
+    scene::{SceneEditor, SceneEditorState, SceneOpenFailed, SceneOpened, SceneRecipe, SceneState},
     tools::{
         entity_ops::EntityEdit,
         scene::{PublishContent, RevealEntity, SceneEdited, SceneRoot, SceneStatus},
@@ -299,6 +299,8 @@ impl SceneFixture {
         world.insert_resource(Window::new((1280, 720), 1.0));
         world.insert_resource(EventChannel::<WindowEvent>::new());
         world.insert_resource(concerto_window::input::Input::new());
+        world.insert_resource(EventChannel::<SceneOpened>::new());
+        world.insert_resource(EventChannel::<SceneOpenFailed>::new());
         super::install_listeners(&mut world);
         crate::scene::install_listeners(&mut world);
         crate::hierarchy::install_listeners(&mut world);
@@ -571,6 +573,23 @@ impl SceneFixture {
         self.world
             .get_component_for_entity::<Unsaved>(document)
             .is_some()
+    }
+
+    pub(crate) fn opened(&self) -> Vec<SceneOpened> {
+        self.written()
+    }
+
+    pub(crate) fn open_failures(&self) -> Vec<SceneOpenFailed> {
+        self.written()
+    }
+
+    fn written<E: Event + Clone + 'static>(&self) -> Vec<E> {
+        self.world
+            .get_resource::<EventChannel<E>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn status(&self, document: Entity) -> String {
