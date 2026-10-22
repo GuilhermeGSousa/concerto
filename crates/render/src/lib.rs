@@ -27,6 +27,7 @@ pub mod layouts;
 pub mod material_plugin;
 pub mod plugin;
 pub mod queue;
+pub mod readback;
 pub mod render_asset;
 pub mod resources;
 pub mod sets;
