@@ -7,11 +7,14 @@ use std::{
 };
 
 use concerto_app::{
-    App, main_schedule::MainSchedulePlugin, plugins::TimePlugin, schedule_groups::Update,
+    App,
+    main_schedule::MainSchedulePlugin,
+    plugins::TimePlugin,
+    schedule_groups::{LateUpdate, Update},
 };
-use concerto_ecs::{Res, ResMut, Resource, signal::On};
+use concerto_ecs::{CommandQueue, Component, Entity, Query, Res, ResMut, Resource, signal::On};
 use concerto_mcp::{
-    AppMcpExt, McpPlugin, McpRead, McpTool, ToolCalls,
+    AppMcpExt, McpPlugin, McpRead, McpTool, PendingCall, ToolCalls,
     host::{HostClosing, HostPicture, run_with},
 };
 use concerto_window::plugin::{Window, WindowCommand};
@@ -32,6 +35,12 @@ struct Change {}
 
 #[derive(Deserialize, JsonSchema)]
 struct Quit {}
+
+#[derive(Deserialize, JsonSchema)]
+struct Open {}
+
+#[derive(Component)]
+struct Opening(u32);
 
 #[derive(Resource, Clone, Default)]
 struct UpdateCount(Arc<AtomicU32>);
@@ -77,6 +86,28 @@ fn change(mut calls: ToolCalls<Change>, count: Res<UpdateCount>) {
     }
 }
 
+fn open(mut calls: ToolCalls<Open>, count: Res<UpdateCount>, mut cmd: CommandQueue) {
+    for (_, reply) in calls.read() {
+        cmd.spawn((
+            PendingCall::new(reply, "the frame after next"),
+            Opening(count.get()),
+        ));
+    }
+}
+
+fn answer_open(
+    waiting: Query<(Entity, &PendingCall, &Opening)>,
+    count: Res<UpdateCount>,
+    mut cmd: CommandQueue,
+) {
+    for (entity, pending, opening) in waiting.iter() {
+        if count.get() > opening.0 + 1 {
+            pending.reply.ok(count.get().to_string());
+            cmd.despawn(entity);
+        }
+    }
+}
+
 fn quit(mut calls: ToolCalls<Quit>, mut window: ResMut<Window>) {
     for (_, reply) in calls.read() {
         window.send(WindowCommand::Close);
@@ -106,6 +137,8 @@ fn recipe(count: UpdateCount, observed: Observed, closes: bool) -> impl FnOnce(&
             .add_tool::<Updates, _>(McpTool::read_only("updates"), updates)
             .add_tool::<Change, _>(McpTool::new("change"), change)
             .add_tool::<Quit, _>(McpTool::new("quit"), quit)
+            .add_tool::<Open, _>(McpTool::new("open"), open)
+            .add_system(LateUpdate, answer_open)
             .add_system(McpRead, note_picture);
         if closes {
             app.add_listener(close_on_host_closing);
@@ -209,6 +242,22 @@ fn reads_are_served_between_frames_and_a_change_costs_one_frame() {
             "host closing"
         ]
     );
+}
+
+#[test]
+fn a_read_after_a_change_answered_on_a_later_frame_costs_no_frame() {
+    let count = UpdateCount::default();
+    let observed = Observed::default();
+    let Some(hosted) = host(true, &count, &observed, |client| async move {
+        let seen = vec![call(&client, "open").await, call(&client, "updates").await];
+        client.cancel().await.unwrap();
+        seen
+    }) else {
+        return;
+    };
+
+    assert_eq!(hosted.result, ["3", "3"]);
+    assert_eq!(count.get(), 3);
 }
 
 #[test]

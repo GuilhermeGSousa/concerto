@@ -53,6 +53,7 @@ pub fn expire_pending_calls(pending: Query<(Entity, &PendingCall)>, mut cmd: Com
 #[derive(Resource, Default)]
 pub struct FrameDemand {
     requested: bool,
+    waiting: Vec<Reply>,
 }
 
 impl FrameDemand {
@@ -61,9 +62,13 @@ impl FrameDemand {
         self.requested = true;
     }
 
-    /// Whether a system asked for the next frame during this one.
+    fn wait_for(&mut self, reply: &Reply) {
+        self.waiting.push(reply.clone());
+    }
+
+    /// Whether a system asked for the next frame during this one, or a call pending during it is still open.
     pub fn is_requested(&self) -> bool {
-        self.requested
+        self.requested || self.waiting.iter().any(Reply::is_open)
     }
 }
 
@@ -72,13 +77,16 @@ pub fn reset_frame_demand(mut demand: ResMut<FrameDemand>) {
     *demand = FrameDemand::default();
 }
 
-/// Requests the next frame while a call is pending or held back.
+/// Requests the next frame while a call is held back, or a pending call is open when the host decides.
 pub fn demand_frames(
     pending: Query<&PendingCall>,
     inbox: Res<McpInbox>,
     mut demand: ResMut<FrameDemand>,
 ) {
-    if pending.iter().next().is_some() || inbox.holds_calls() {
+    for call in pending.iter() {
+        demand.wait_for(&call.reply);
+    }
+    if inbox.holds_calls() {
         demand.request();
     }
 }
