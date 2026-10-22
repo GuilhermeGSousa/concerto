@@ -11,7 +11,7 @@ pub use concerto_ecs_macros::Component;
 
 use crate::{
     entity::Entity,
-    signal::lifecycle,
+    signal::{Signal, lifecycle},
     world::{RestrictedWorld, UnsafeWorldCell},
 };
 
@@ -162,13 +162,30 @@ impl Tick {
         since_last_run > since_stamp
     }
 
-    /// Clamps this tick to [`MAX_CHANGE_AGE`] before `change_tick` if it is older.
-    pub fn check_tick(&mut self, change_tick: Tick) {
-        if change_tick.relative_to(*self).0 > MAX_CHANGE_AGE {
-            *self = change_tick.relative_to(Self::MAX);
+    /// Clamps this tick to [`MAX_CHANGE_AGE`] before the check's present tick; returns whether it did.
+    pub fn check_tick(&mut self, check: CheckChangeTicks) -> bool {
+        let age = check.present_tick().relative_to(*self);
+        if age.0 > Self::MAX.0 {
+            *self = check.present_tick().relative_to(Self::MAX);
+            true
+        } else {
+            false
         }
     }
 }
+
+/// A pass that clamps stored ticks, triggered as a signal so custom tick storage can clamp itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct CheckChangeTicks(pub(crate) Tick);
+
+impl CheckChangeTicks {
+    /// The counter's value at the check, which stored ticks are compared to.
+    pub fn present_tick(self) -> Tick {
+        self.0
+    }
+}
+
+impl Signal for CheckChangeTicks {}
 
 /// The ticks of one system run: the previous run whose body executed, and this one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

@@ -1,4 +1,3 @@
-use anymap3::AnyMap;
 use log::warn;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -13,7 +12,7 @@ use crate::query::QueryData;
 use crate::query::filter::QueryFilter;
 use crate::query::state::QueryState;
 use crate::reflect::{AppTypeRegistry, ReflectSceneComponent, SceneComponentType};
-use crate::resource::ResourceStorage;
+use crate::resource::ResourceData;
 use crate::signal::listener::{GlobalListener, IntoListener, Listener, Listeners};
 use crate::signal::{EntitySignal, Signal};
 use crate::system::access::SystemAccess;
@@ -31,7 +30,7 @@ use crate::{
     utilities::TypeIdMap,
 };
 use crate::{
-    component::{CHECK_TICK_THRESHOLD, SystemTicks, Tick},
+    component::{CHECK_TICK_THRESHOLD, CheckChangeTicks, SystemTicks, Tick},
     system::meta::SystemMetadata,
 };
 use concerto_reflect::ReflectedValue;
@@ -56,8 +55,7 @@ use concerto_reflect::{GetTypeRegistration, TypeRegistration};
 pub struct World {
     id: WorldId,
     archetypes: Vec<Archetype>,
-    resources: AnyMap,
-    resource_tick_checks: TypeIdMap<ResourceTickCheck>,
+    resources: TypeIdMap<ResourceData>,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
@@ -69,15 +67,12 @@ pub struct World {
     command_queue: CommandQueueState,
 }
 
-type ResourceTickCheck = fn(&mut AnyMap, Tick);
-
 impl Default for World {
     fn default() -> Self {
         Self {
             id: WorldId::default(),
             archetypes: Vec::new(),
-            resources: AnyMap::new(),
-            resource_tick_checks: TypeIdMap::default(),
+            resources: TypeIdMap::default(),
             entity_store: EntityStore::default(),
             archetype_index: HashMap::new(),
             component_lifetimes: TypeIdMap::default(),
@@ -420,10 +415,8 @@ impl World {
 
     /// Inserts a resource into the world.  If one of the same type already exists it is replaced.
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
-        self.resource_tick_checks
-            .insert(TypeId::of::<T>(), ResourceStorage::<T>::check_change_ticks);
-        self.resources
-            .insert(ResourceStorage::new(resource, *self.change_tick()));
+        let data = ResourceData::new(resource, self.change_tick());
+        self.resources.insert(TypeId::of::<T>(), data);
     }
 
     // Inserts a resource into the world with its default value.
@@ -434,44 +427,35 @@ impl World {
     /// Removes and returns the resource of type `T`, or `None` if it was not present.
     pub fn remove_resource<T: Resource + 'static>(&mut self) -> Option<T> {
         self.resources
-            .remove::<ResourceStorage<T>>()
-            .map(|resource_storage| resource_storage.data)
+            .remove(&TypeId::of::<T>())
+            .map(ResourceData::into_inner)
     }
 
     /// Returns a shared reference to the resource of type `T`, or `None` if not present.
     pub fn get_resource<T: Resource + 'static>(&self) -> Option<&T> {
-        self.resources
-            .get::<ResourceStorage<T>>()
-            .map(|resource_storage| &resource_storage.data)
+        self.get_resource_data::<T>().map(ResourceData::get)
     }
 
     /// Returns an exclusive reference to the resource of type `T` and marks it changed, or `None` if not present.
     pub fn get_resource_mut<T: Resource + 'static>(&mut self) -> Option<&mut T> {
         let change_tick = self.change_tick();
-        self.resources
-            .get_mut::<ResourceStorage<T>>()
-            .map(|resource_storage| {
-                resource_storage.changed_tick = change_tick;
-                &mut resource_storage.data
-            })
+        self.get_resource_data_mut::<T>().map(|data| {
+            data.changed_tick = change_tick;
+            data.get_mut()
+        })
     }
 
     /// The tick of the last write to `T`, or `None` if it is not present.
     pub fn resource_changed_tick<T: Resource + 'static>(&self) -> Option<Tick> {
-        self.get_resource_storage::<T>()
-            .map(|storage| storage.changed_tick)
+        self.get_resource_data::<T>().map(|data| data.changed_tick)
     }
 
-    pub(crate) fn get_resource_storage<T: Resource + 'static>(
-        &self,
-    ) -> Option<&ResourceStorage<T>> {
-        self.resources.get()
+    pub(crate) fn get_resource_data<T: Resource>(&self) -> Option<&ResourceData> {
+        self.resources.get(&TypeId::of::<T>())
     }
 
-    pub(crate) fn get_resource_storage_mut<T: Resource + 'static>(
-        &mut self,
-    ) -> Option<&mut ResourceStorage<T>> {
-        self.resources.get_mut()
+    pub(crate) fn get_resource_data_mut<T: Resource>(&mut self) -> Option<&mut ResourceData> {
+        self.resources.get_mut(&TypeId::of::<T>())
     }
 
     pub fn as_unsafe_world_cell_mut(&mut self) -> UnsafeWorldCell<'_> {
@@ -482,10 +466,9 @@ impl World {
         UnsafeWorldCell::new_ref(self)
     }
 
-    /// Marks the frame boundary for change detection read outside any system, and clamps old ticks when due.
+    /// Marks the frame boundary for change detection read outside any system.
     pub fn tick(&mut self) {
         self.last_change_tick = self.increment_change_tick();
-        self.check_change_ticks();
     }
 
     /// The counter's current value: the tick the next system run will take.
@@ -516,26 +499,32 @@ impl World {
         *self.change_tick.get_mut() = *tick;
     }
 
-    fn check_change_ticks(&mut self) {
+    /// Once [`CHECK_TICK_THRESHOLD`] advances have passed since the last check, clamps stored ticks and triggers the check.
+    pub fn check_change_ticks(&mut self) -> Option<CheckChangeTicks> {
         let change_tick = self.change_tick();
         if *change_tick.relative_to(self.last_check_tick) < CHECK_TICK_THRESHOLD {
-            return;
+            return None;
         }
 
+        let check = CheckChangeTicks(change_tick);
+
         for archetype in &mut self.archetypes {
-            archetype.check_change_ticks(change_tick);
+            archetype.check_change_ticks(check);
         }
-        for check in self.resource_tick_checks.values() {
-            check(&mut self.resources, change_tick);
+        for data in self.resources.values_mut() {
+            data.check_change_ticks(check);
         }
-        if let Some(schedules) = self.get_resource_storage_mut::<CompiledSchedules>() {
-            schedules.data.check_change_ticks(change_tick);
+
+        if let Some(data) = self.get_resource_data_mut::<CompiledSchedules>() {
+            data.get_mut::<CompiledSchedules>()
+                .check_change_ticks(check);
         }
-        for check in self.listeners.tick_checks() {
-            check(self, change_tick);
-        }
-        self.last_change_tick.check_tick(change_tick);
+
+        self.trigger(check);
+
         self.last_check_tick = change_tick;
+
+        Some(check)
     }
 
     pub fn was_component_added(&self, entity: Entity, component_id: ComponentId) -> bool {

@@ -16,6 +16,12 @@ fix the entry in the same commit as the change that made it false.
   `world.tick()`. A test that checks change detection through a system must keep
   one system instance across runs; a new instance is a first run and passes
   vacuously.
+- **Ticks are clamped from schedule runs, not from `world.tick()`.** Each
+  schedule run starts with `world.check_change_ticks()`, Bevy's tick check. A
+  world that only ever runs systems by hand, outside a schedule, is never
+  clamped. A tick kept anywhere other than a component, a resource or a
+  schedule's system clamps itself in a `CheckChangeTicks` listener. Listener
+  ticks are never clamped, as in Bevy.
 - **Transform propagation writes every frame.** `propagate_global_transforms`
   calls `set_matrix` on every hierarchy member each frame, so
   `Changed<GlobalTransform>` does not mean "this entity moved".

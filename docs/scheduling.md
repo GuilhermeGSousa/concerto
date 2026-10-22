@@ -200,6 +200,15 @@ whatever the order of writer and reader within a frame:
 - A query made directly on a `World` sees what changed since the last
   `world.tick()`, which `Main` and `RenderMain` call once per frame.
 
+Ticks are 32-bit and wrap. As in Bevy, every schedule run starts with
+`world.check_change_ticks()`, which, once every `CHECK_TICK_THRESHOLD` counter
+advances, clamps every component stamp, resource stamp and schedule system,
+stored or running, to at most `MAX_CHANGE_AGE` old, and triggers the
+`CheckChangeTicks` signal. Ticks kept anywhere else clamp themselves in a `CheckChangeTicks`
+listener with `Tick::check_tick`. Listeners' own ticks are not clamped, as Bevy
+leaves observers: a listener idle for about `MAX_CHANGE_AGE` counter advances
+can misreport changes on its next run.
+
 A test that checks change detection through a system must keep one system instance
 across runs. A new instance is a first run and sees everything.
 

@@ -1,9 +1,9 @@
 use crate::{
     Added, Changed, CommandQueue, Component, Entity, IntoSystem, IntoSystemConfig, Query, Ref, Res,
     ResMut, Resource, Schedule, System, World,
-    component::{MAX_CHANGE_AGE, Tick},
+    component::{CHECK_TICK_THRESHOLD, CheckChangeTicks, MAX_CHANGE_AGE, Tick},
     query::change_detection::DetectChanges,
-    signal::{EntitySignal, On, Signal, listener::IntoListener},
+    signal::{On, Signal},
     system::{
         executor::{SystemExecutor, single_thread::SingleThreadedExecutor},
         input::{
@@ -329,17 +329,10 @@ fn get_resource_mut_stamps_a_change() {
 }
 
 #[derive(Resource, Default)]
-struct Looked(Vec<usize>);
-
-#[derive(Resource, Default)]
 struct Idle(Vec<usize>);
 
-struct Peek;
-impl Signal for Peek {}
-
-struct Prod;
-impl Signal for Prod {}
-impl EntitySignal for Prod {}
+#[derive(Resource, Default)]
+struct Checks(Vec<Tick>);
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 struct Frame;
@@ -361,27 +354,7 @@ fn count_changed_values(values: Query<Entity, Changed<Value>>, mut seen: ResMut<
     seen.0.push(values.iter().count());
 }
 
-fn look_into_looked(
-    _: On<Look>,
-    values: Query<Entity, Changed<Value>>,
-    mut looked: ResMut<Looked>,
-) {
-    looked.0.push(values.iter().count());
-}
-
 fn idle_reader(values: Query<Entity, Changed<Value>>, mut idle: ResMut<Idle>) {
-    idle.0.push(values.iter().count());
-}
-
-fn idle_listener(_: On<Peek>, values: Query<Entity, Changed<Value>>, mut idle: ResMut<Idle>) {
-    idle.0.push(values.iter().count());
-}
-
-fn idle_entity_listener(
-    _: On<Prod>,
-    values: Query<Entity, Changed<Value>>,
-    mut idle: ResMut<Idle>,
-) {
     idle.0.push(values.iter().count());
 }
 
@@ -389,16 +362,17 @@ fn level_reader(level: Res<Level>, mut flags: ResMut<Flags>) {
     flags.0.push(level.is_changed());
 }
 
+fn record_check(check: On<CheckChangeTicks>, mut checks: ResMut<Checks>) {
+    checks.0.push(check.signal().present_tick());
+}
+
 fn frame(world: &mut World) {
     world.run_schedule(Frame);
-    world.trigger(Look);
     world.tick();
 }
 
-fn rare_look(world: &mut World, holder: Entity) -> Vec<usize> {
+fn rare_look(world: &mut World) -> Vec<usize> {
     world.run_schedule(Rarely);
-    world.trigger(Peek);
-    world.trigger_on(holder, Prod);
     std::mem::take(&mut world.get_resource_mut::<Idle>().unwrap().0)
 }
 
@@ -406,11 +380,113 @@ fn take_flags(world: &mut World) -> Vec<bool> {
     std::mem::take(&mut world.get_resource_mut::<Flags>().unwrap().0)
 }
 
-fn take_counts(world: &mut World) -> (Vec<usize>, Vec<usize>) {
-    (
-        std::mem::take(&mut world.get_resource_mut::<Seen>().unwrap().0),
-        std::mem::take(&mut world.get_resource_mut::<Looked>().unwrap().0),
-    )
+fn take_seen(world: &mut World) -> Vec<usize> {
+    std::mem::take(&mut world.get_resource_mut::<Seen>().unwrap().0)
+}
+
+fn value_changed_tick(world: &World, entity: Entity) -> Tick {
+    let location = world.entity_store().find_location(entity).unwrap();
+    world
+        .get_component_for_entity_location_ticked::<Value>(location)
+        .unwrap()
+        .changed_tick
+}
+
+#[test]
+fn check_change_ticks_does_nothing_below_the_threshold() {
+    let mut world = World::new();
+    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD - 1));
+    assert!(world.check_change_ticks().is_none());
+
+    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD));
+    let check = world.check_change_ticks().unwrap();
+    assert_eq!(check.present_tick(), Tick::new(CHECK_TICK_THRESHOLD));
+
+    world.set_change_tick(Tick::new(2 * CHECK_TICK_THRESHOLD - 1));
+    assert!(world.check_change_ticks().is_none());
+}
+
+#[test]
+fn check_change_ticks_runs_from_a_schedule_run() {
+    let mut world = World::new();
+    let entity = world.spawn(Value(0));
+    world.set_change_tick(Tick::new(*world.change_tick() + MAX_CHANGE_AGE + 10));
+    world.insert_resource(Seen::default());
+    let present = world.change_tick();
+    let mut schedule = Schedule::new();
+    schedule.add_system(count_changed_values);
+
+    schedule
+        .compile::<SingleThreadedExecutor>(&mut world)
+        .run(&mut world);
+
+    let stamp = value_changed_tick(&world, entity);
+    assert_eq!(*present.relative_to(stamp), MAX_CHANGE_AGE);
+}
+
+#[test]
+fn a_check_change_ticks_listener_receives_the_check() {
+    let mut world = World::new();
+    world.insert_resource(Checks::default());
+    world.add_listener(record_check);
+    world.set_change_tick(Tick::new(CHECK_TICK_THRESHOLD + 5));
+    let present = world.change_tick();
+
+    let check = world.check_change_ticks().unwrap();
+
+    assert_eq!(check.present_tick(), present);
+    assert_eq!(world.get_resource::<Checks>().unwrap().0, [present]);
+}
+
+#[test]
+fn resource_stamps_are_clamped_without_a_per_type_registry() {
+    let mut world = World::new();
+    world.insert_resource(Level::default());
+    world.insert_resource(Flags::default());
+    let mut schedules = Schedules::default();
+    schedules.add_system(Frame, level_reader);
+    let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
+    world.insert_resource(compiled);
+
+    world.run_schedule(Frame);
+    world.set_change_tick(Tick::new(u32::MAX - 5));
+    for _ in 0..8 {
+        world.run_schedule(Frame);
+    }
+    assert!(*world.change_tick() < 100);
+    let mut once = vec![false; 9];
+    once[0] = true;
+    assert_eq!(take_flags(&mut world), once);
+
+    world.get_resource_mut::<Level>().unwrap().0 = 1;
+    world.run_schedule(Frame);
+    world.run_schedule(Frame);
+    assert_eq!(take_flags(&mut world), [true, false]);
+}
+
+#[test]
+fn a_schedule_run_clamps_its_own_systems() {
+    let mut world = World::new();
+    let entity = world.spawn(Value(0));
+    world.insert_resource(Seen::default());
+    world.insert_resource(GateOpen(true));
+    let mut schedule = Schedule::new();
+    schedule.add_system(gated_reader);
+    let mut compiled = schedule.compile::<SingleThreadedExecutor>(&mut world);
+
+    compiled.run(&mut world);
+    world.insert_resource(GateOpen(false));
+    world.set_change_tick(Tick::new(u32::MAX - 5));
+    compiled.run(&mut world);
+    world
+        .get_component_for_entity_mut::<Value>(entity)
+        .unwrap()
+        .0 = 1;
+    world.set_change_tick(Tick::new(20));
+    world.insert_resource(GateOpen(true));
+    compiled.run(&mut world);
+
+    assert_eq!(take_seen(&mut world), [1, 1]);
 }
 
 #[test]
@@ -418,25 +494,21 @@ fn ticks_survive_wrap_around() {
     let mut world = World::new();
     let first = world.spawn(Value(0));
     world.insert_resource(Seen::default());
-    world.insert_resource(Looked::default());
     world.insert_resource(Idle::default());
     world.insert_resource(Level::default());
     world.insert_resource(Flags::default());
-    let holder = world.spawn(idle_entity_listener.into_listener());
     let mut schedules = Schedules::default();
     schedules.add_system(Frame, count_changed_values);
     schedules.add_system(Frame, level_reader);
     schedules.add_system(Rarely, idle_reader);
     let compiled = schedules.compile::<SingleThreadedExecutor>(&mut world);
     world.insert_resource(compiled);
-    world.add_listener(look_into_looked);
-    world.add_listener(idle_listener);
 
     frame(&mut world);
     frame(&mut world);
-    assert_eq!(take_counts(&mut world), (vec![1, 0], vec![1, 0]));
+    assert_eq!(take_seen(&mut world), [1, 0]);
     assert_eq!(take_flags(&mut world), [true, false]);
-    assert_eq!(rare_look(&mut world, holder), [1, 1, 1]);
+    assert_eq!(rare_look(&mut world), [1]);
 
     world.set_change_tick(Tick::new(u32::MAX - 5));
     frame(&mut world);
@@ -450,10 +522,10 @@ fn ticks_survive_wrap_around() {
     assert!(*world.change_tick() < 100);
     let mut once = vec![0; 9];
     once[1] = 1;
-    assert_eq!(take_counts(&mut world), (once.clone(), once));
+    assert_eq!(take_seen(&mut world), once);
     assert_eq!(take_flags(&mut world), [false; 9]);
-    assert_eq!(rare_look(&mut world, holder), [1, 1, 1]);
-    assert_eq!(rare_look(&mut world, holder), [0, 0, 0]);
+    assert_eq!(rare_look(&mut world), [1]);
+    assert_eq!(rare_look(&mut world), [0]);
 
     world
         .get_component_for_entity_mut::<Value>(first)
@@ -462,16 +534,14 @@ fn ticks_survive_wrap_around() {
     world.get_resource_mut::<Level>().unwrap().0 = 1;
     frame(&mut world);
     frame(&mut world);
-    assert_eq!(take_counts(&mut world), (vec![1, 0], vec![1, 0]));
+    assert_eq!(take_seen(&mut world), [1, 0]);
     assert_eq!(take_flags(&mut world), [true, false]);
 
     world.spawn(Value(1));
     let mut fresh = count_changed_values.into_system();
     fresh.initialize(&mut world);
     fresh.run_and_apply((), &mut world);
-    world.add_listener(look_into_looked);
-    world.trigger(Look);
-    assert_eq!(take_counts(&mut world), (vec![2], vec![1, 2]));
+    assert_eq!(take_seen(&mut world), [2]);
 }
 
 #[derive(Resource, Default)]

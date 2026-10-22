@@ -8,7 +8,7 @@ use std::{
 };
 
 use crate::{
-    component::{SystemTicks, Tick},
+    component::{CheckChangeTicks, SystemTicks, Tick},
     system::{access::SystemAccess, meta::SystemMetadata},
     utilities::SyncCell,
     world::{FromWorld, UnsafeWorldCell, World},
@@ -196,7 +196,7 @@ impl ForeignTicks {
         let this_run = world.increment_change_tick();
         let last_run = match &mut self.last_run {
             Some(last_run) => {
-                last_run.check_tick(this_run);
+                last_run.check_tick(CheckChangeTicks(this_run));
                 *last_run
             }
             None => this_run.relative_to(Tick::MAX),

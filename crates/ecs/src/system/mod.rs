@@ -23,7 +23,7 @@ use input::{SystemInput, ValidationError, ValidationKind};
 use typle::typle;
 
 use crate::{
-    component::{SystemTicks, Tick},
+    component::{CheckChangeTicks, SystemTicks, Tick},
     system::{
         access::SystemAccess,
         input::{SystemArg, SystemArgData, SystemInputData},
@@ -73,8 +73,8 @@ pub trait System: Send + Sync + 'static {
 
     fn apply(&mut self, world: &mut World);
 
-    /// Clamps the ticks this system stores that are too old relative to `change_tick`.
-    fn check_change_tick(&mut self, change_tick: Tick);
+    /// Clamps the ticks this system stores that are older than the check allows.
+    fn check_change_tick(&mut self, check: CheckChangeTicks);
 }
 
 impl System for BoxedSystem {
@@ -104,8 +104,8 @@ impl System for BoxedSystem {
         (**self).initialize(world);
     }
 
-    fn check_change_tick(&mut self, change_tick: Tick) {
-        (**self).check_change_tick(change_tick);
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        (**self).check_change_tick(check);
     }
 }
 
@@ -235,8 +235,15 @@ where
         F::Inputs::fill_access(meta, access);
     }
 
-    fn check_change_tick(&mut self, change_tick: Tick) {
-        self.last_run.check_tick(change_tick);
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        if self.last_run.check_tick(check) {
+            let age = *check.present_tick().relative_to(self.last_run);
+            log::warn!(
+                "System '{}' has not run for {age} ticks. Changes older than {} ticks will not be detected.",
+                self.name(),
+                *Tick::MAX - 1,
+            );
+        }
     }
 }
 
@@ -310,8 +317,8 @@ where
         self.system.apply(world);
     }
 
-    fn check_change_tick(&mut self, change_tick: Tick) {
-        self.system.check_change_tick(change_tick);
+    fn check_change_tick(&mut self, check: CheckChangeTicks) {
+        self.system.check_change_tick(check);
     }
 }
 

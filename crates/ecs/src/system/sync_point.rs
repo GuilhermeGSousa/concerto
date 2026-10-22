@@ -22,5 +22,5 @@ impl System for SyncPoint {
 
     fn apply(&mut self, _world: &mut crate::World) {}
 
-    fn check_change_tick(&mut self, _change_tick: crate::component::Tick) {}
+    fn check_change_tick(&mut self, _check: crate::component::CheckChangeTicks) {}
 }

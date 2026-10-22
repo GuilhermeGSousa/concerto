@@ -6,7 +6,7 @@ use std::{
 use any_vec::{AnyVec, any_value::AnyValueWrapper};
 
 use crate::{
-    component::{Component, ComponentId, SystemTicks, Tick},
+    component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
 };
 
@@ -113,9 +113,9 @@ impl Column {
         self.changed_ticks[*row].set(current_tick);
     }
 
-    pub(crate) fn check_change_ticks(&mut self, change_tick: Tick) {
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
         for tick in self.added_ticks.iter_mut().chain(&mut self.changed_ticks) {
-            tick.check_tick(change_tick);
+            tick.check_tick(check);
         }
     }
 }
@@ -249,9 +249,9 @@ impl Table {
         })
     }
 
-    pub(crate) fn check_change_ticks(&mut self, change_tick: Tick) {
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
         for column in self.columns.values_mut() {
-            column.check_change_ticks(change_tick);
+            column.check_change_ticks(check);
         }
     }
 }
