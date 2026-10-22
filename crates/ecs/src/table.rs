@@ -47,7 +47,6 @@ impl Column {
             *slot = value;
         }
 
-        self.added_ticks[*row].set(tick);
         self.changed_ticks[*row].set(tick);
     }
 

@@ -415,8 +415,13 @@ impl World {
 
     /// Inserts a resource into the world.  If one of the same type already exists it is replaced.
     pub fn insert_resource<T: Resource>(&mut self, resource: T) {
-        let data = ResourceData::new(resource, self.change_tick());
-        self.resources.insert(TypeId::of::<T>(), data);
+        let change_tick = self.change_tick();
+        match self.resources.entry(TypeId::of::<T>()) {
+            Occupied(mut occupied) => occupied.get_mut().replace(resource, change_tick),
+            Vacant(vacant) => {
+                vacant.insert(ResourceData::new(resource, change_tick));
+            }
+        }
     }
 
     // Inserts a resource into the world with its default value.

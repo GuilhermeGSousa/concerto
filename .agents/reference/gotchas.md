@@ -62,7 +62,8 @@ fix the entry in the same commit as the change that made it false.
   and the old value otherwise; their `CommandQueue` applies when the operation's
   commands flush. `add_listener` panics for one that takes `&World` or
   `&mut World`, and registering one registers `T`, so its signals fire even if
-  nothing queries it. An overwrite fires `Replace`, then `Add`.
+  nothing queries it. An overwrite fires `Replace`, then `Add`, but stamps `T`
+  changed only: `Added<T>` and `is_added()` stay false, as in Bevy.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that

@@ -52,6 +52,11 @@ impl ResourceData {
         }
     }
 
+    pub(crate) fn replace<T: Resource>(&mut self, resource: T, change_tick: Tick) {
+        *self.get_mut() = resource;
+        self.changed_tick = change_tick;
+    }
+
     pub(crate) fn get<T: Resource>(&self) -> &T {
         self.data.downcast_ref().expect(STORED_UNDER_ITS_TYPE)
     }

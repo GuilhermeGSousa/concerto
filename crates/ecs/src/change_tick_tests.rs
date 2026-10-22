@@ -740,6 +740,61 @@ fn res_mut_tells_added_from_changed() {
 }
 
 #[test]
+fn overwriting_a_component_marks_it_changed_but_not_added() {
+    let mut world = World::new();
+    let entity = world.spawn(Value(0));
+    world.insert_resource(RefLog::default());
+    let mut system = log_ref.into_system();
+    system.initialize(&mut world);
+
+    system.run_and_apply((), &mut world);
+    system.run_and_apply((), &mut world);
+    world.insert(Value(1), entity);
+    system.run_and_apply((), &mut world);
+    world.insert((Value(2), Marker), entity);
+    system.run_and_apply((), &mut world);
+
+    assert_eq!(
+        world.get_resource::<RefLog>().unwrap().0,
+        [(true, true), (false, false), (false, true), (false, true)]
+    );
+}
+
+fn log_res_ref(level: Res<Level>, mut log: ResMut<ResLog>) {
+    log.0.push((level.is_added(), level.is_changed()));
+}
+
+#[test]
+fn overwriting_a_resource_marks_it_changed_but_not_added() {
+    let mut world = World::new();
+    world.insert_resource(Level::default());
+    world.insert_resource(ResLog::default());
+    let mut system = log_res_ref.into_system();
+    system.initialize(&mut world);
+
+    system.run_and_apply((), &mut world);
+    system.run_and_apply((), &mut world);
+    world.insert_resource(Level(1));
+    system.run_and_apply((), &mut world);
+    system.run_and_apply((), &mut world);
+    world.remove_resource::<Level>();
+    world.insert_resource(Level(2));
+    system.run_and_apply((), &mut world);
+
+    assert_eq!(
+        world.get_resource::<ResLog>().unwrap().0,
+        [
+            (true, true),
+            (false, false),
+            (false, true),
+            (false, false),
+            (true, true)
+        ]
+    );
+    assert_eq!(world.get_resource::<Level>().unwrap().0, 2);
+}
+
+#[test]
 fn a_first_run_does_not_see_a_stamp_clamped_to_max_change_age() {
     let mut world = World::new();
     world.spawn(Value(0));

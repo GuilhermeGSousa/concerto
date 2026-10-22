@@ -194,6 +194,9 @@ whatever the order of writer and reader within a frame:
   point or a direct `World` write between frames, is seen on the reader's next run.
 - A system does not see its own `Mut` or `ResMut` writes on its next run.
 - A system's first run sees every existing entity and resource as added and changed.
+- Overwriting a component with `insert`, or a resource with `insert_resource`,
+  marks it changed and keeps its added tick, as in Bevy: `Added<T>` and
+  `is_added()` are true again only after a remove and a fresh insert.
 - A run skipped because an input declined keeps what changed for the next run that
   executes.
 - A listener sees what changed since its own previous run.
