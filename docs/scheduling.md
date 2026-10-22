@@ -193,7 +193,8 @@ whatever the order of writer and reader within a frame:
 - A write made after a reader ran, including a command applied at a later sync
   point or a direct `World` write between frames, is seen on the reader's next run.
 - A system does not see its own `Mut` or `ResMut` writes on its next run.
-- A system's first run sees every existing entity and resource as added and changed.
+- A system's first run sees every entity and resource stamped within
+  `MAX_CHANGE_AGE` as added and changed.
 - Overwriting a component with `insert`, or a resource with `insert_resource`,
   marks it changed and keeps its added tick, as in Bevy: `Added<T>` and
   `is_added()` are true again only after a remove and a fresh insert.
@@ -214,7 +215,8 @@ observers: a listener idle for about `MAX_CHANGE_AGE` counter advances
 can misreport changes on its next run.
 
 A test that checks change detection through a system must keep one system instance
-across runs. A new instance is a first run and sees everything.
+across runs. A new instance is a first run and sees everything stamped within
+`MAX_CHANGE_AGE`.
 
 ## Rules
 

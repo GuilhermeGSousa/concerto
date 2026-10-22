@@ -62,9 +62,7 @@ where
     }
 }
 
-/// A read-only reference to a component that reports whether it was added or changed.
-///
-/// Obtained from a `Query<Ref<T>>`.  Deref gives `&T`.
+/// A read-only component reference from a `Query<Ref<T>>` that reports whether it was added or changed.
 pub struct Ref<'w, T: Component> {
     data: &'w T,
     added_tick: Tick,
