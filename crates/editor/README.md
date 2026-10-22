@@ -48,6 +48,21 @@ entities written as `42v3`; a `root` that names no live entity answers
 `unknown_entity`, and one whose slot holds a newer entity `stale_entity`. Both
 need an open scene. All four answer between frames, without running one.
 
+The tools that act run in frames, one at a time: a second one waits until the
+first has answered. `open_project` opens `path` and answers once the catalogue
+is read, or `open_failed` with the status line; it answers `busy` while a
+project is opening. `open_asset` opens `asset`, an address or an id from
+`list_assets`, in its editor: a scene answers once it has loaded, or
+`open_failed`, and at once if it is already shown; another kind answers once
+its document exists. An asset not in the catalogue answers `unknown_asset`,
+one of a kind with no editor `open_failed`. `close_document` closes the
+document `status` lists as `document`. When one of these three would raise the
+unsaved-changes prompt, the call cancels the prompt and answers
+`unsaved_changes`, naming the documents, once the prompt has closed. `select`
+selects `entity`, or clears the selection without one. `frame` selects
+`entity` and frames it, or frames the whole scene without one, and answers
+after the next frame, once the camera has moved. Both need an open scene.
+
 ## How the crate is laid out
 
 The editor is one `App`, the one the window host drives. It holds the window,

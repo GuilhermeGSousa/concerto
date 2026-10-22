@@ -11,8 +11,8 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Entity, Query, Res, ResMut, Resource, With, command::CommandQueue, component::name::Name,
-    signal::On, signal::listener::GlobalListener,
+    Entity, Query, Res, ResMut, Resource, With, Without, command::CommandQueue,
+    component::name::Name, signal::On, signal::listener::GlobalListener,
 };
 use concerto_editor::{
     asset_editor::{EditorDocument, Unsaved},
@@ -20,7 +20,7 @@ use concerto_editor::{
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
-    tools::{entity_ops::EntityEdit, scene::SceneRoot, selection::Select},
+    tools::{camera::FlyCamera, entity_ops::EntityEdit, scene::SceneRoot, selection::Select},
 };
 use concerto_foundation::{
     assets::{
@@ -32,8 +32,10 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::HostClosing, host::run_with};
+use concerto_mesh::Aabb;
 use concerto_render::components::light::Light;
 use concerto_scene::scene::{Scene, SceneNode};
+use glam::Vec3;
 use rmcp::{
     RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult},
@@ -55,10 +57,28 @@ fn count_edit_frames(mut frames: ResMut<EditFrames>) {
     frames.0 += 1;
 }
 
+fn bound_by_name(named: Query<(Entity, &Name), Without<Aabb>>, mut cmd: CommandQueue) {
+    for (entity, name) in named.iter() {
+        let x = match name.as_str() {
+            "Sword" => 9.0,
+            "Rig" => -10.0,
+            _ => continue,
+        };
+        cmd.insert(
+            Aabb {
+                min: Vec3::new(x, 0.0, 0.0),
+                max: Vec3::new(x + 1.0, 2.0, 2.0),
+            },
+            entity,
+        );
+    }
+}
+
 fn game(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins)
         .insert_resource(EditFrames::default())
-        .add_system(Update, count_edit_frames.at_edit_time());
+        .add_system(Update, count_edit_frames.at_edit_time())
+        .add_system(Update, bound_by_name.at_edit_time());
 }
 
 #[derive(Resource, Clone, Default)]
@@ -116,9 +136,13 @@ struct Ids {}
 #[derive(Deserialize, JsonSchema)]
 struct PlayScene {}
 
+#[derive(Deserialize, JsonSchema)]
+struct CameraAt {}
+
 fn state(
     mut calls: ToolCalls<State>,
     project: Res<ProjectState>,
+    guard: Res<UnsavedGuard>,
     documents: Query<(&EditorDocument, Option<&EditTarget>, Option<&Unsaved>)>,
 ) {
     for (_, reply) in calls.read() {
@@ -137,6 +161,9 @@ fn state(
             if unsaved.is_some() {
                 text.push_str(" dirty");
             }
+        }
+        if guard.asking() {
+            text.push_str(" asking");
         }
         reply.ok(text);
     }
@@ -230,6 +257,12 @@ fn play_scene(
             }
             None => reply.ok("no target"),
         }
+    }
+}
+
+fn camera_at(mut calls: ToolCalls<CameraAt>, fly: EditWorld<Res<FlyCamera>>) {
+    for (_, reply) in calls.read() {
+        reply.ok(format!("{:.2}", fly.position.x));
     }
 }
 
@@ -331,6 +364,28 @@ impl Fixture {
         }
     }
 
+    fn add_scene(&self, address: &str) -> AssetId {
+        let mut node = SceneNode {
+            name: "Crate".into(),
+            children: vec![],
+            components: vec![],
+        };
+        node.push_component(&Transform::IDENTITY).unwrap();
+        let scene = Scene {
+            nodes: vec![node],
+            referenced_assets: vec![],
+        };
+        let id = AssetId::new();
+        write_asset(
+            self.directory.path(),
+            address,
+            id,
+            Scene::name(),
+            &bincode::serialize(&scene).unwrap(),
+        );
+        id
+    }
+
     fn add(&self, address: &str, kind: &str) -> AssetId {
         let id = AssetId::new();
         write_asset(self.directory.path(), address, id, kind, &[]);
@@ -408,6 +463,10 @@ where
                 )
                 .add_tool::<Ids, _>(McpTool::read_only("ids").needs(Needs::Scene), ids)
                 .add_tool::<PlayScene, _>(McpTool::new("play_scene"), play_scene)
+                .add_tool::<CameraAt, _>(
+                    McpTool::read_only("camera_at").needs(Needs::Scene),
+                    camera_at,
+                )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -1002,4 +1061,286 @@ fn scene_tree_shows_the_running_game_without_its_listeners() {
     );
     assert!(found.starts_with("1 entity matches:\n"), "{found}");
     assert!(found.contains(" > Bulb ["), "{found}");
+}
+
+fn documents(status: &str) -> Vec<String> {
+    status
+        .lines()
+        .skip_while(|line| *line != "documents:")
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .map(|line| line.trim_start().to_owned())
+        .collect()
+}
+
+fn document_id(status: &str) -> String {
+    let documents = documents(status);
+    assert_eq!(documents.len(), 1, "{status}");
+    documents[0].split_once(' ').unwrap().0.to_owned()
+}
+
+async fn dirty(client: &Client) {
+    assert_eq!(ok(client, "rename").await, "renamed");
+    let started = Instant::now();
+    while !ok(client, "state").await.contains("dirty") {
+        assert!(
+            started.elapsed() < PATIENCE,
+            "the rename never marked the scene"
+        );
+        ok(client, "seen_frames").await;
+    }
+}
+
+#[test]
+fn open_project_waits_for_the_project_and_reports_a_failure() {
+    let fixture = Fixture::new();
+    let other = Fixture::new();
+    other.add("content/meshes/rock.gasset", "Mesh");
+    let other_root = other.root().canonicalize().unwrap();
+    let missing = fixture.root().join("missing");
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let opened = ok_with(
+            &client,
+            "open_project",
+            json!({ "path": other.root().display().to_string() }),
+        )
+        .await;
+        let status = ok(&client, "status").await;
+        let failed = error_with(
+            &client,
+            "open_project",
+            json!({ "path": missing.display().to_string() }),
+        )
+        .await;
+        let after = ok(&client, "status").await;
+        client.cancel().await.unwrap();
+        drop(other);
+        (opened, status, failed, after)
+    }) else {
+        return;
+    };
+
+    let (opened, status, failed, after) = served.result;
+    let root = other_root.display().to_string();
+    assert_eq!(opened, format!("Opened {root}: 2 assets, 1 scene."));
+    assert_eq!(line(&status, "project: "), root);
+    assert_eq!(failed["code"], "open_failed");
+    assert!(
+        failed["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Could not open project"),
+        "{failed}"
+    );
+    assert_eq!(line(&after, "project: "), root);
+}
+
+#[test]
+fn open_asset_waits_for_a_scene_and_answers_at_once_when_it_is_shown() {
+    let fixture = Fixture::new();
+    let level = fixture.scene;
+    let yard = fixture.add_scene("content/yard.gasset");
+    fixture.add("content/meshes/rock.gasset", "Mesh");
+    fixture.add("content/broken.gasset", "Scene");
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let first = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/level.gasset" }),
+        )
+        .await;
+        let state = ok(&client, "state").await;
+        let status = ok(&client, "status").await;
+        let again = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": level.simple_hex() }),
+        )
+        .await;
+        let yard = ok_with(&client, "open_asset", json!({ "asset": yard.simple_hex() })).await;
+        let tree = ok(&client, "scene_tree").await;
+        let errors = vec![
+            error_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/nothing.gasset" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/meshes/rock.gasset" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/broken.gasset" }),
+            )
+            .await,
+        ];
+        client.cancel().await.unwrap();
+        (first, state, status, again, yard, tree, errors)
+    }) else {
+        return;
+    };
+
+    let (first, state, status, again, yard, tree, errors) = served.result;
+    let document = document_id(&status);
+    assert_eq!(
+        first,
+        format!("Opened content/level.gasset in document {document}.")
+    );
+    assert!(state.contains("level target"), "{state}");
+    assert_eq!(again, first);
+    assert_eq!(
+        yard,
+        format!("Opened content/yard.gasset in document {document}.")
+    );
+    assert!(tree.contains(" Crate "), "{tree}");
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["unknown_asset", "open_failed", "open_failed"]);
+    assert!(
+        errors[1]["message"].as_str().unwrap().contains("Mesh"),
+        "{}",
+        errors[1]
+    );
+}
+
+#[test]
+fn close_document_closes_the_document_status_names() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        let document = document_id(&ok(&client, "status").await);
+        let errors = vec![
+            error_with(&client, "close_document", json!({ "document": "level" })).await,
+            error_with(&client, "close_document", json!({ "document": "999999v1" })).await,
+        ];
+        let closed = ok_with(&client, "close_document", json!({ "document": document })).await;
+        let state = ok(&client, "state").await;
+        client.cancel().await.unwrap();
+        (document, errors, closed, state)
+    }) else {
+        return;
+    };
+
+    let (document, errors, closed, state) = served.result;
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["unknown_entity", "unknown_entity"]);
+    assert_eq!(closed, format!("Closed document {document}."));
+    assert_eq!(state, "project");
+}
+
+#[test]
+fn a_call_that_would_discard_edits_cancels_the_prompt_and_fails() {
+    let fixture = Fixture::new();
+    fixture.add_scene("content/yard.gasset");
+    let root = fixture.root().display().to_string();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        open(&client).await;
+        let document = document_id(&ok(&client, "status").await);
+        dirty(&client).await;
+        let mut answers = Vec::new();
+        for (tool, arguments) in [
+            ("open_asset", json!({ "asset": "content/yard.gasset" })),
+            ("close_document", json!({ "document": document })),
+            ("open_project", json!({ "path": root })),
+        ] {
+            let error = error_with(&client, tool, arguments).await;
+            let state = ok(&client, "state").await;
+            answers.push((error, state));
+        }
+        client.cancel().await.unwrap();
+        (document, answers)
+    }) else {
+        return;
+    };
+
+    let (document, answers) = served.result;
+    for (error, state) in answers {
+        assert_eq!(error["code"], "unsaved_changes", "{error}");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("{document} content/level.gasset")),
+            "{error}"
+        );
+        assert_eq!(state, "project level target dirty");
+    }
+}
+
+#[test]
+fn select_sets_and_clears_the_selection() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error_with(&client, "select", json!({ "entity": "1v1" })).await;
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let hero = scene_id(&ids, "Hero");
+        let selected = ok_with(&client, "select", json!({ "entity": hero })).await;
+        let status = ok(&client, "status").await;
+        let unknown = error_with(&client, "select", json!({ "entity": "999999v1" })).await;
+        let cleared = ok(&client, "select").await;
+        let after = ok(&client, "status").await;
+        client.cancel().await.unwrap();
+        (closed, hero, selected, status, unknown, cleared, after)
+    }) else {
+        return;
+    };
+
+    let (closed, hero, selected, status, unknown, cleared, after) = served.result;
+    assert_eq!(closed["code"], "no_scene");
+    assert_eq!(selected, format!("Selected {hero} Hero."));
+    assert_eq!(line(&status, "selection: "), format!("{hero} Hero"));
+    assert_eq!(unknown["code"], "unknown_entity");
+    assert_eq!(cleared, "Selection cleared.");
+    assert_eq!(line(&after, "selection: "), "none");
+}
+
+#[test]
+fn frame_answers_once_the_camera_has_framed() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error(&client, "frame").await;
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let sword = scene_id(&ids, "Sword");
+        let before = ok(&client, "camera_at").await;
+        let framed = ok_with(&client, "frame", json!({ "entity": sword })).await;
+        let on_sword = ok(&client, "camera_at").await;
+        let status = ok(&client, "status").await;
+        let all = ok(&client, "frame").await;
+        let on_all = ok(&client, "camera_at").await;
+        client.cancel().await.unwrap();
+        (closed, sword, before, framed, on_sword, status, all, on_all)
+    }) else {
+        return;
+    };
+
+    let (closed, sword, before, framed, on_sword, status, all, on_all) = served.result;
+    assert_eq!(closed["code"], "no_scene");
+    assert_eq!(before, "0.00");
+    assert_eq!(framed, format!("Framed {sword} Sword."));
+    assert_eq!(on_sword, "9.50");
+    assert_eq!(line(&status, "selection: "), format!("{sword} Sword"));
+    assert_eq!(all, "Framed the whole scene.");
+    assert_eq!(on_all, "0.00");
 }

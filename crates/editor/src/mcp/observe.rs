@@ -380,7 +380,7 @@ fn children_of(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
-fn resolve(id: &str, entities: &Query<Entity>) -> Result<Entity, ToolError> {
+pub(super) fn resolve(id: &str, entities: &Query<Entity>) -> Result<Entity, ToolError> {
     let Some(entity) = Entity::parse_id(id) else {
         return Err(ToolError::new(
             "unknown_entity",
