@@ -5,6 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use concerto_app::{
     App,
     edit_time::AtEditTime,
@@ -41,6 +42,7 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::light::Light;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::Vec3;
+use image::{ImageFormat, RgbaImage};
 use rmcp::{
     RoleClient, ServiceExt,
     model::{CallToolRequestParams, CallToolResult},
@@ -1603,6 +1605,120 @@ fn set_camera_and_frame_are_refused_while_the_game_plays() {
     let (posed, framed) = served.result;
     assert_eq!(posed["code"], "refused", "{posed}");
     assert_eq!(framed["code"], "refused", "{framed}");
+}
+
+fn picture_of(result: &CallToolResult) -> RgbaImage {
+    assert_eq!(result.is_error, Some(false), "{result:?}");
+    let image = result
+        .content
+        .iter()
+        .find_map(|block| block.as_image())
+        .unwrap_or_else(|| panic!("no image in {result:?}"));
+    assert_eq!(image.mime_type, "image/png");
+    let png = STANDARD.decode(&image.data).unwrap();
+    image::load_from_memory_with_format(&png, ImageFormat::Png)
+        .unwrap()
+        .to_rgba8()
+}
+
+fn colours(picture: &RgbaImage) -> usize {
+    picture
+        .pixels()
+        .map(|pixel| pixel.0)
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+}
+
+struct Shots {
+    editor: CallToolResult,
+    small_editor: CallToolResult,
+    closed: Value,
+    zero: Value,
+    status: String,
+    viewport: CallToolResult,
+    small_viewport: CallToolResult,
+}
+
+#[test]
+fn screenshot_answers_the_viewport_and_the_whole_editor_as_png() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let editor = call_with(&client, "screenshot", json!({ "target": "editor" })).await;
+        let small_editor = call_with(
+            &client,
+            "screenshot",
+            json!({ "target": "editor", "max_edge": 200 }),
+        )
+        .await;
+        let closed = error_with(&client, "screenshot", json!({ "target": "viewport" })).await;
+        let zero = error_with(
+            &client,
+            "screenshot",
+            json!({ "target": "editor", "max_edge": 0 }),
+        )
+        .await;
+        open(&client).await;
+        let status = until(&client, "status", |status| status.ends_with("busy: no")).await;
+        let viewport = call_with(&client, "screenshot", json!({ "target": "viewport" })).await;
+        let small_viewport = call_with(
+            &client,
+            "screenshot",
+            json!({ "target": "viewport", "max_edge": 64 }),
+        )
+        .await;
+        client.cancel().await.unwrap();
+        Shots {
+            editor,
+            small_editor,
+            closed,
+            zero,
+            status,
+            viewport,
+            small_viewport,
+        }
+    }) else {
+        return;
+    };
+
+    let Shots {
+        editor,
+        small_editor,
+        closed,
+        zero,
+        status,
+        viewport,
+        small_viewport,
+    } = served.result;
+    let whole = picture_of(&editor);
+    assert_eq!(whole.dimensions(), SIZE);
+    assert!(colours(&whole) > 1);
+    assert_eq!(text(&editor), "");
+    assert_eq!(picture_of(&small_editor).dimensions(), (200, 150));
+    assert_eq!(closed["code"], "no_scene", "{closed}");
+    assert_eq!(zero["code"], "invalid_arguments", "{zero}");
+
+    let (width, height) = line(&status, "viewport: ").split_once('x').unwrap();
+    let shown = (
+        width.parse::<u32>().unwrap(),
+        height.parse::<u32>().unwrap(),
+    );
+    let picture = picture_of(&viewport);
+    assert_eq!(picture.dimensions(), shown, "{status}");
+    assert!(colours(&picture) > 1);
+    assert!(
+        text(&viewport).starts_with("Camera at (0.000, "),
+        "{viewport:?}"
+    );
+    let small = picture_of(&small_viewport).dimensions();
+    assert_eq!(small.0.max(small.1), 64, "{small:?}");
+    let longest = shown.0.max(shown.1);
+    assert_eq!(
+        (small.0.min(small.1)),
+        (shown.0.min(shown.1) * 64 + longest / 2) / longest,
+        "{small:?} from {shown:?}"
+    );
 }
 
 fn tree_id(tree: &str, name: &str) -> String {

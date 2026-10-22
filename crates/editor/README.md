@@ -75,8 +75,14 @@ an inspector widget edits it. A component without reflection data has
 `"value": null, "unavailable": true` and no paths. A list longer than 16
 elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
 cut list is not a value to write back. Ids are scene entities written as
-`42v3`. `scene_tree`, `find_entities` and `inspect` need an open scene. These
-five look.
+`42v3`. `screenshot` answers a PNG: with `target` `viewport`, the picture the
+viewport draws, the edited scene or the game while it plays, followed by the
+camera's pose while editing; with `editor`, the whole editor, panels included,
+at its window size. A picture longer than `max_edge` pixels (1024) on either
+side is scaled down to it, keeping its shape; a smaller one keeps its size. It
+is the last frame drawn: the viewport's picture changes only when the edit
+`App` steps. `scene_tree`, `find_entities`, `inspect` and `screenshot`'s
+viewport need an open scene. These six look.
 
 `open_project` opens `path` and answers once the catalogue is read.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
@@ -107,7 +113,7 @@ A failed call is a tool result marked `isError` whose text is
 | --- | --- |
 | `invalid_arguments` | The arguments do not match the tool's input schema |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
-| `busy` | `open_project` while a project is opening |
+| `busy` | `open_project` while a project is opening, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity, or a slot that now holds a newer one |
 | `unknown_component` | `inspect` names a component the entity does not carry; the message lists those it does |
 | `unknown_asset` | The asset is not in the catalogue |

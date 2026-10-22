@@ -10,21 +10,25 @@ use concerto_ecs::{
     system::input::{ComponentMetadata, StaticSystemInput, SystemInputData},
 };
 use concerto_mcp::{
-    AppMcpExt, McpRead, McpServe, McpTool, Needs, ToolCalls, ToolError, answer_unanswered,
-    receive_read_only_calls,
+    AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
+    host::HostPicture, receive_read_only_calls,
 };
 use concerto_reflect::to_json;
+use concerto_render::{
+    gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
+};
+use image::{ImageFormat, RgbaImage, imageops::FilterType};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::{BusyInputs, is_busy};
+use super::{BusyInputs, act::describe_pose, is_busy};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
     inspector::{InspectionSource, InspectorRegistry},
     project::{Project, ProjectState},
-    tools::{scene::SceneRoot, selection::Selection},
+    tools::{camera::FlyCamera, scene::SceneRoot, selection::Selection},
 };
 
 /// What the editor has open: the project, its documents, the active one, the selection, the viewport's size, and whether it is busy.
@@ -82,6 +86,26 @@ pub struct Inspect {
     pub components: Option<Vec<String>>,
 }
 
+/// A PNG of the viewport, the scene being edited or the game playing, with the camera's pose while editing; or of the whole editor, panels included.
+#[derive(Deserialize, JsonSchema)]
+pub struct Screenshot {
+    /// What to picture: viewport or editor.
+    pub target: ScreenshotTarget,
+    /// The longest edge of the PNG in pixels; a larger picture is scaled down to it, a smaller one is kept.
+    #[serde(default = "one_thousand_twenty_four")]
+    pub max_edge: u32,
+}
+
+/// What `screenshot` pictures.
+#[derive(Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScreenshotTarget {
+    /// The scene being edited, or the game while it plays, as the viewport draws it; needs an open scene.
+    Viewport,
+    /// The whole editor window, panels included.
+    Editor,
+}
+
 fn fifty() -> usize {
     50
 }
@@ -92,6 +116,10 @@ fn three() -> usize {
 
 fn two_hundred() -> usize {
     200
+}
+
+fn one_thousand_twenty_four() -> u32 {
+    1024
 }
 
 pub(super) fn build(app: &mut App) {
@@ -115,7 +143,18 @@ pub(super) fn build(app: &mut App) {
             McpTool::read_only("find_entities").needs(Needs::Scene),
             find_entities,
         )
-        .add_tool::<Inspect, _>(McpTool::read_only("inspect").needs(Needs::Scene), inspect);
+        .add_tool::<Inspect, _>(McpTool::read_only("inspect").needs(Needs::Scene), inspect)
+        .add_tool::<Screenshot, _>(
+            McpTool::read_only("screenshot").needs(Needs::Scene),
+            screenshot_editor,
+        )
+        .add_system(McpServe, screenshot_viewport.before(answer_unanswered))
+        .add_system(
+            McpRead,
+            screenshot_viewport
+                .after(receive_read_only_calls)
+                .before(answer_unanswered),
+        );
 }
 
 type StatusInputs = (
@@ -789,4 +828,81 @@ fn bounded(value: Value) -> Value {
         ),
         other => other,
     }
+}
+
+fn screenshot_editor(
+    mut calls: ToolCalls<Screenshot>,
+    gpu: Res<Gpu>,
+    host: Option<Res<HostPicture>>,
+) {
+    for (arguments, reply) in calls.read() {
+        if arguments.target == ScreenshotTarget::Editor {
+            let drawn = host.as_deref().and_then(|host| host.0.get());
+            answer_picture(reply, &gpu, drawn, arguments.max_edge, "");
+        }
+    }
+}
+
+fn screenshot_viewport(
+    mut calls: ToolCalls<Screenshot>,
+    gpu: Res<Gpu>,
+    targets: Query<&HostedApp, With<EditTarget>>,
+    fly: EditWorld<Option<Res<FlyCamera>>>,
+) {
+    let Some(target) = targets.iter().next() else {
+        return;
+    };
+    let pose = fly.as_deref().map(describe_pose).unwrap_or_default();
+    for (arguments, reply) in calls.read() {
+        if arguments.target == ScreenshotTarget::Viewport {
+            let drawn = target.picture().get();
+            answer_picture(reply, &gpu, drawn, arguments.max_edge, &pose);
+        }
+    }
+}
+
+fn answer_picture(
+    reply: &Reply,
+    gpu: &Gpu,
+    drawn: Option<RenderTexture>,
+    max_edge: u32,
+    text: &str,
+) {
+    if max_edge == 0 {
+        reply.err(ToolError::new(
+            "invalid_arguments",
+            "max_edge is the PNG's longest edge in pixels; give 1 or more.",
+        ));
+        return;
+    }
+    let Some(drawn) = drawn else {
+        reply.err(ToolError::new(
+            "busy",
+            "Nothing has been drawn there yet; try again after a call that runs a frame, such as frame.",
+        ));
+        return;
+    };
+    let picture = fitted(read_texture(gpu, drawn.texture()), max_edge);
+    let mut png = std::io::Cursor::new(Vec::new());
+    match picture.write_to(&mut png, ImageFormat::Png) {
+        Ok(()) => reply.ok_image(png.get_ref(), text),
+        Err(error) => reply.err(ToolError::new(
+            "internal",
+            format!("The picture did not encode as PNG: {error}"),
+        )),
+    }
+}
+
+fn fitted(picture: RgbaImage, max_edge: u32) -> RgbaImage {
+    let (width, height) = picture.dimensions();
+    let longest = width.max(height);
+    if longest <= max_edge {
+        return picture;
+    }
+    let scaled = |edge: u32| {
+        let edge =
+            (u64::from(edge) * u64::from(max_edge) + u64::from(longest) / 2) / u64::from(longest);
+        u32::try_from(edge).unwrap_or(max_edge).max(1)
+    };
+    image::imageops::resize(&picture, scaled(width), scaled(height), FilterType::Nearest)
 }

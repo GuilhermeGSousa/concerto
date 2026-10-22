@@ -570,7 +570,7 @@ fn shown(value: f32) -> f32 {
     (value * 1000.0).round() / 1000.0 + 0.0
 }
 
-fn describe_pose(fly: &FlyCamera) -> String {
+pub(super) fn describe_pose(fly: &FlyCamera) -> String {
     let [x, y, z] = fly.position.to_array().map(shown);
     let [fx, fy, fz] = fly.forward().to_array().map(shown);
     format!(
