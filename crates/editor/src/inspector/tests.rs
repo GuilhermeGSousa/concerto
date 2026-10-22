@@ -7,6 +7,7 @@ use concerto_ecs::{
     IntoSystem, System, World,
     entity::hierarchy::{ChildOf, Children},
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+    system::BoxedSystem,
 };
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{GetTypeRegistration, ReflectDefault};
@@ -16,6 +17,7 @@ use glam::{Vec2, Vec3};
 struct Inspecting {
     f: SceneFixture,
     document: Entity,
+    systems: [BoxedSystem; 3],
 }
 
 impl Inspecting {
@@ -33,12 +35,7 @@ impl Inspecting {
         self.scene().tick();
     }
     fn update(&mut self) {
-        for mut system in [
-            collect_inspector_data.into_boxed_system(),
-            sync_inspected_components.into_boxed_system(),
-            build_property_widgets.into_boxed_system(),
-        ] {
-            system.initialize(&mut self.f.world);
+        for system in &mut self.systems {
             system.run_and_apply((), &mut self.f.world);
         }
         self.tick();
@@ -65,7 +62,19 @@ fn inspecting() -> (Inspecting, Entity, Entity) {
     f.world.insert_resource(InspectorRegistry::default());
     f.world.insert_resource(UITheme::default());
     let document = f.open();
-    let mut w = Inspecting { f, document };
+    let mut systems = [
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
+    ];
+    for system in &mut systems {
+        system.initialize(&mut f.world);
+    }
+    let mut w = Inspecting {
+        f,
+        document,
+        systems,
+    };
     let entity = w.scene().spawn(Transform::IDENTITY);
     w.select(Some(entity));
     let stack =
@@ -775,6 +784,24 @@ fn a_component_is_read_again_only_when_the_scenes_own_clock_says_it_changed() {
         settled,
         "the editor's clock running ahead of the scene's is not a change in the scene"
     );
+}
+
+#[test]
+fn a_card_built_for_a_component_unchanged_since_the_last_run_reads_it_in_full() {
+    let (mut w, _, _) = inspecting();
+    let other = w.scene().spawn(Transform::IDENTITY);
+    w.update();
+    w.update();
+    w.update();
+
+    w.select(Some(other));
+    w.update();
+
+    let shown: Vec<Entity> = rows(&mut w.f.world)
+        .into_iter()
+        .map(|(_, row)| row.entity)
+        .collect();
+    assert_eq!(shown, [other; 3]);
 }
 
 #[test]

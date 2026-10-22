@@ -213,12 +213,8 @@ impl InspectionSource<'_> {
     pub fn entity_is_valid(&self, entity: Entity) -> bool {
         self.components.entity_is_valid(entity)
     }
-    pub fn change_tick(&self) -> Tick {
-        self.components.change_tick()
-    }
-    pub fn has_component_changed_since(&self, entity: Entity, id: TypeId, tick: Tick) -> bool {
-        self.components
-            .has_component_changed_since(entity, id, tick)
+    pub fn is_component_changed(&self, entity: Entity, id: TypeId) -> bool {
+        self.components.is_component_changed(entity, id)
     }
     pub fn is_registered(&self, id: TypeId) -> bool {
         self.table.get_type_data::<ReflectComponent>(id).is_some()

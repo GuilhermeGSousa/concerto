@@ -4,7 +4,7 @@ use super::*;
 use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::registry::InspectionSource;
-use concerto_ecs::{component::Tick, query::filter::With};
+use concerto_ecs::query::filter::With;
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -14,7 +14,7 @@ pub struct InspectedComponent {
     pub type_id: TypeId,
     pub name: &'static str,
     body: Entity,
-    last_read_tick: Option<Tick>,
+    read: bool,
 }
 
 #[derive(Component)]
@@ -118,9 +118,7 @@ fn refresh_card(
     bodies: &Query<&Children>,
     rows: &Query<(&PropertyRow, &PropertyRowValue)>,
 ) {
-    if card.last_read_tick.is_some_and(|tick| {
-        !source.has_component_changed_since(card.scene_entity, card.type_id, tick)
-    }) {
+    if card.read && !source.is_component_changed(card.scene_entity, card.type_id) {
         return;
     }
     let properties = source
@@ -132,8 +130,9 @@ fn refresh_card(
         )
         .unwrap_or_default();
     let kept = card
-        .last_read_tick
-        .and_then(|_| kept_rows(source, registry, card.body, &properties, bodies, rows));
+        .read
+        .then(|| kept_rows(source, registry, card.body, &properties, bodies, rows))
+        .flatten();
     match kept {
         Some(kept) => {
             for (row, property) in kept.into_iter().zip(properties) {
@@ -143,7 +142,7 @@ fn refresh_card(
             }
         }
         None => {
-            if card.last_read_tick.is_some() {
+            if card.read {
                 cmd.entity(card.body).despawn_children();
             }
             let mut body = body_node(theme);
@@ -154,7 +153,7 @@ fn refresh_card(
             }
         }
     }
-    card.last_read_tick = Some(source.change_tick());
+    card.read = true;
     cmd.insert(card, entity);
 }
 
@@ -240,7 +239,7 @@ fn spawn_card(
         type_id,
         name,
         body,
-        last_read_tick: None,
+        read: false,
     };
     card_queue.insert(card);
     (entity, card)
