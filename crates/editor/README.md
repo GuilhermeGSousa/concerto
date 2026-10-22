@@ -37,7 +37,16 @@ documents, the active one, the selection in the edited scene, the viewport's
 size, and whether the editor is busy. `list_assets` lists the project's assets
 as `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at
 a time unless `limit` says otherwise, from `offset`; a longer list ends with the
-call that shows the rest. Both answer between frames, without running one.
+call that shows the rest. `scene_tree` shows the edited scene, or while a game
+plays its top-level entities as the hierarchy does, one `id name [components]`
+line per entity, indented, from `root` if given, `depth` levels deep (3) and at
+most `limit` entities (200); a cut subtree or a cut list ends with the call that
+continues it. `find_entities` lists the entities whose name contains `name`,
+ignoring case, and that carry `component`, by short name or full path, each with
+its path of names from the top, 50 unless `limit` says otherwise. Ids are scene
+entities written as `42v3`; a `root` that names no live entity answers
+`unknown_entity`, and one whose slot holds a newer entity `stale_entity`. Both
+need an open scene. All four answer between frames, without running one.
 
 ## How the crate is laid out
 

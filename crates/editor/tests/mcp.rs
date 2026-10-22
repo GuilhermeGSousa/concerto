@@ -10,13 +10,17 @@ use concerto_app::{
     edit_time::AtEditTime,
     schedule_groups::{LateUpdate, Update},
 };
-use concerto_ecs::{Entity, Query, Res, ResMut, Resource, component::name::Name, signal::On};
+use concerto_ecs::{
+    Entity, Query, Res, ResMut, Resource, With, command::CommandQueue, component::name::Name,
+    signal::On, signal::listener::GlobalListener,
+};
 use concerto_editor::{
     asset_editor::{EditorDocument, Unsaved},
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     project::{EditorCommand, EditorCommands, ProjectState},
-    tools::{entity_ops::EntityEdit, selection::Select},
+    scene::Play,
+    tools::{entity_ops::EntityEdit, scene::SceneRoot, selection::Select},
 };
 use concerto_foundation::{
     assets::{
@@ -28,6 +32,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::HostClosing, host::run_with};
+use concerto_render::components::light::Light;
 use concerto_scene::scene::{Scene, SceneNode};
 use rmcp::{
     RoleClient, ServiceExt,
@@ -105,6 +110,12 @@ struct WantsPlaying {}
 #[derive(Deserialize, JsonSchema)]
 struct SelectHero {}
 
+#[derive(Deserialize, JsonSchema)]
+struct Ids {}
+
+#[derive(Deserialize, JsonSchema)]
+struct PlayScene {}
+
 fn state(
     mut calls: ToolCalls<State>,
     project: Res<ProjectState>,
@@ -181,6 +192,47 @@ fn select_hero(
     }
 }
 
+fn ids(
+    mut calls: ToolCalls<Ids>,
+    names: EditWorld<Query<(Entity, &Name)>>,
+    roots: EditWorld<Query<Entity, With<SceneRoot>>>,
+    listeners: EditWorld<Query<Entity, With<GlobalListener>>>,
+) {
+    for (_, reply) in calls.read() {
+        let mut ids = serde_json::Map::new();
+        for (entity, name) in names.iter() {
+            ids.insert(name.as_str().into(), entity.to_id_string().into());
+        }
+        if let Some(root) = roots.iter().next() {
+            ids.insert("root".into(), root.to_id_string().into());
+        }
+        ids.insert(
+            "listeners".into(),
+            listeners
+                .iter()
+                .map(|entity| Value::from(entity.to_id_string()))
+                .collect(),
+        );
+        reply.ok(Value::Object(ids).to_string());
+    }
+}
+
+fn play_scene(
+    mut calls: ToolCalls<PlayScene>,
+    targets: Query<Entity, With<EditTarget>>,
+    mut cmd: CommandQueue,
+) {
+    for (_, reply) in calls.read() {
+        match targets.iter().next() {
+            Some(document) => {
+                cmd.trigger(Play(document));
+                reply.ok("playing");
+            }
+            None => reply.ok("no target"),
+        }
+    }
+}
+
 fn seen_frames(
     mut calls: ToolCalls<SeenFrames>,
     frames: EditWorld<Res<EditFrames>>,
@@ -208,7 +260,7 @@ fn note_update(frames: EditWorld<Res<EditFrames>>, log: Res<Log>) {
     log.push(format!("update {}", frames.0));
 }
 
-fn note_closing(_: On<HostClosing>, log: Res<Log>, mut cmd: concerto_ecs::command::CommandQueue) {
+fn note_closing(_: On<HostClosing>, log: Res<Log>, mut cmd: CommandQueue) {
     log.push("host closing");
     cmd.insert_resource(Closing);
 }
@@ -253,8 +305,16 @@ impl Fixture {
             node.push_component(&Transform::IDENTITY).unwrap();
             node
         };
+        let mut bulb = node("Bulb", vec![]);
+        bulb.push_component(&Light::point_light()).unwrap();
         let scene = Scene {
-            nodes: vec![node("Hero", vec![1]), node("Lamp", vec![])],
+            nodes: vec![
+                node("Hero", vec![1, 3]),
+                node("Lamp", vec![2]),
+                bulb,
+                node("Sword", vec![]),
+                node("Rig", vec![]),
+            ],
             referenced_assets: vec![],
         };
         let id = AssetId::new();
@@ -346,6 +406,8 @@ where
                     McpTool::new("select_hero").needs(Needs::Scene),
                     select_hero,
                 )
+                .add_tool::<Ids, _>(McpTool::read_only("ids").needs(Needs::Scene), ids)
+                .add_tool::<PlayScene, _>(McpTool::new("play_scene"), play_scene)
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -414,7 +476,11 @@ async fn ok_with(client: &Client, tool: &'static str, arguments: Value) -> Strin
 }
 
 async fn error(client: &Client, tool: &'static str) -> Value {
-    let result = call(client, tool).await;
+    error_with(client, tool, json!({})).await
+}
+
+async fn error_with(client: &Client, tool: &'static str, arguments: Value) -> Value {
+    let result = call_with(client, tool, arguments).await;
     assert_eq!(result.is_error, Some(true), "{tool}: {result:?}");
     serde_json::from_str(&text(&result)).unwrap()
 }
@@ -694,4 +760,246 @@ fn list_assets_filters_and_pages_the_catalogue() {
     assert_eq!(malformed.is_error, Some(true), "{malformed:?}");
     let malformed: Value = serde_json::from_str(&text(&malformed)).unwrap();
     assert_eq!(malformed["code"], "invalid_arguments");
+}
+
+fn without_components(text: &str) -> String {
+    text.lines()
+        .map(|line| match line.rfind(" [") {
+            Some(at) if line.ends_with(']') => &line[..at],
+            _ => line,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn components<'a>(text: &'a str, id: &str) -> Vec<&'a str> {
+    let line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with(&format!("{id} ")))
+        .unwrap_or_else(|| panic!("no line for {id} in:\n{text}"));
+    let start = line.rfind(" [").unwrap() + 2;
+    line[start..line.len() - 1]
+        .split(", ")
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+fn scene_id(ids: &Value, name: &str) -> String {
+    ids[name]
+        .as_str()
+        .unwrap_or_else(|| panic!("no {name} in {ids}"))
+        .to_owned()
+}
+
+#[test]
+fn scene_tree_walks_the_open_scene_to_its_depth_and_limit() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error(&client, "scene_tree").await;
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let hero = Entity::parse_id(&scene_id(&ids, "Hero")).unwrap();
+        let stale = format!("{}v{}", hero.index(), hero.generation().get() + 1);
+        let trees = vec![
+            ok(&client, "scene_tree").await,
+            ok_with(
+                &client,
+                "scene_tree",
+                json!({ "root": scene_id(&ids, "Lamp") }),
+            )
+            .await,
+            ok_with(&client, "scene_tree", json!({ "depth": 1 })).await,
+            ok_with(&client, "scene_tree", json!({ "limit": 3 })).await,
+        ];
+        let errors = vec![
+            error_with(&client, "scene_tree", json!({ "root": stale })).await,
+            error_with(&client, "scene_tree", json!({ "root": "999999v1" })).await,
+            error_with(&client, "scene_tree", json!({ "root": "Hero" })).await,
+        ];
+        client.cancel().await.unwrap();
+        (closed, ids, trees, errors)
+    }) else {
+        return;
+    };
+
+    let (closed, ids, trees, errors) = served.result;
+    let id = |name: &str| scene_id(&ids, name);
+    let (root, hero, lamp, bulb, sword, rig) = (
+        id("root"),
+        id("Hero"),
+        id("Lamp"),
+        id("Bulb"),
+        id("Sword"),
+        id("Rig"),
+    );
+    assert_eq!(closed["code"], "no_scene");
+    assert_eq!(
+        without_components(&trees[0]),
+        format!(
+            "{root} content/level.gasset\n  {hero} Hero\n    {lamp} Lamp\n      … 1 more below: scene_tree {{\"depth\":3,\"limit\":200,\"root\":\"{lamp}\"}}\n    {sword} Sword\n  {rig} Rig"
+        )
+    );
+    assert!(
+        components(&trees[0], &root).contains(&"Transform"),
+        "{}",
+        trees[0]
+    );
+    assert!(
+        components(&trees[0], &hero).contains(&"Transform"),
+        "{}",
+        trees[0]
+    );
+    assert!(
+        !components(&trees[0], &hero).contains(&"Light"),
+        "{}",
+        trees[0]
+    );
+    assert_eq!(
+        without_components(&trees[1]),
+        format!("{lamp} Lamp\n  {bulb} Bulb")
+    );
+    let bulb_components = components(&trees[1], &bulb);
+    assert!(bulb_components.contains(&"Light"), "{}", trees[1]);
+    assert!(bulb_components.contains(&"Transform"), "{}", trees[1]);
+    let mut sorted = bulb_components.clone();
+    sorted.sort_unstable();
+    assert_eq!(bulb_components, sorted);
+    assert_eq!(
+        without_components(&trees[2]),
+        format!(
+            "{root} content/level.gasset\n  … 5 more below: scene_tree {{\"depth\":2,\"limit\":200,\"root\":\"{root}\"}}"
+        )
+    );
+    assert_eq!(
+        without_components(&trees[3]),
+        format!(
+            "{root} content/level.gasset\n  {hero} Hero\n    {lamp} Lamp\n      … 1 more below: scene_tree {{\"depth\":3,\"limit\":3,\"root\":\"{lamp}\"}}\n… 2 more within depth 3: scene_tree {{\"depth\":3,\"limit\":5}}"
+        )
+    );
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["stale_entity", "unknown_entity", "unknown_entity"]);
+}
+
+#[test]
+fn find_entities_matches_names_and_components_with_their_paths() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error(&client, "find_entities").await;
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let found = vec![
+            ok_with(&client, "find_entities", json!({ "name": "l" })).await,
+            ok_with(&client, "find_entities", json!({ "name": "LAMP" })).await,
+            ok_with(&client, "find_entities", json!({ "component": "light" })).await,
+            ok_with(
+                &client,
+                "find_entities",
+                json!({ "component": "concerto_render::components::light::Light", "name": "b" }),
+            )
+            .await,
+            ok_with(&client, "find_entities", json!({ "name": "l", "limit": 1 })).await,
+            ok_with(&client, "find_entities", json!({ "name": "nothing" })).await,
+        ];
+        client.cancel().await.unwrap();
+        (closed, ids, found)
+    }) else {
+        return;
+    };
+
+    let (closed, ids, found) = served.result;
+    let id = |name: &str| scene_id(&ids, name);
+    let (lamp, bulb) = (id("Lamp"), id("Bulb"));
+    assert_eq!(closed["code"], "no_scene");
+    let lamp_line = format!("{lamp} content/level.gasset > Hero > Lamp");
+    let bulb_line = format!("{bulb} content/level.gasset > Hero > Lamp > Bulb");
+    assert_eq!(
+        without_components(&found[0]),
+        format!("2 entities match:\n{lamp_line}\n{bulb_line}")
+    );
+    assert!(
+        components(&found[0], &bulb).contains(&"Light"),
+        "{}",
+        found[0]
+    );
+    assert_eq!(
+        without_components(&found[1]),
+        format!("1 entity matches:\n{lamp_line}")
+    );
+    assert_eq!(
+        without_components(&found[2]),
+        format!("1 entity matches:\n{bulb_line}")
+    );
+    assert_eq!(
+        without_components(&found[3]),
+        format!("1 entity matches:\n{bulb_line}")
+    );
+    assert_eq!(
+        without_components(&found[4]),
+        format!(
+            "2 entities match:\n{lamp_line}\n… 1 more: find_entities {{\"limit\":2,\"name\":\"l\"}}"
+        )
+    );
+    assert_eq!(found[5], "No entities match.");
+}
+
+#[test]
+fn scene_tree_shows_the_running_game_without_its_listeners() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        assert_eq!(ok(&client, "play_scene").await, "playing");
+        let started = Instant::now();
+        let tree = loop {
+            let result = call(&client, "scene_tree").await;
+            let answer = text(&result);
+            if result.is_error == Some(false) && answer.contains(" Hero") {
+                break answer;
+            }
+            assert!(
+                started.elapsed() < PATIENCE,
+                "scene_tree still answers {answer}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        let status = ok(&client, "status").await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let found = ok_with(&client, "find_entities", json!({ "name": "bulb" })).await;
+        client.cancel().await.unwrap();
+        (tree, status, ids, found)
+    }) else {
+        return;
+    };
+
+    let (tree, status, ids, found) = served.result;
+    assert!(status.contains(" · playing"), "{status}");
+    let listeners: Vec<&str> = ids["listeners"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap())
+        .collect();
+    assert!(!listeners.is_empty(), "{ids}");
+    for line in tree.lines() {
+        let first = line.split_whitespace().next().unwrap();
+        assert!(
+            !listeners.contains(&first),
+            "{first} is a listener:\n{tree}"
+        );
+    }
+    let hero = scene_id(&ids, "Hero");
+    assert!(
+        tree.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{hero} Hero "))),
+        "{tree}"
+    );
+    assert!(found.starts_with("1 entity matches:\n"), "{found}");
+    assert!(found.contains(" > Bulb ["), "{found}");
 }
