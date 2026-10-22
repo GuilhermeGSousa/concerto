@@ -83,7 +83,7 @@ that takes `EditWorld<T>`, and empties it in an `On<Remove<EditTarget>>` listene
 last read the target", in the target's own clock: a scene system's write, a
 signal sent through `EditWorldSignals`, or a direct write by the host is seen
 on the next run. The first run against a newly targeted world sees everything
-as added and changed.
+stamped within `MAX_CHANGE_AGE` as added and changed.
 
 An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,
