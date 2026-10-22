@@ -8,11 +8,15 @@ use concerto_ecs::{
     events::event_reader::EventReader,
     query::filter::{With, Without},
 };
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::{
+    assets::{Asset, AssetId},
+    transform::Transform,
+};
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
 };
 use concerto_scene::scene::Scene;
+use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -20,14 +24,16 @@ use super::observe::resolve;
 use crate::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument},
     guard::{GuardChoice, UnsavedGuard},
-    hosted::{EditWorld, EditWorldSignals},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
     project::{
         AssetEntry, EditorCommand, EditorCommands, Project, ProjectOpenFailed, ProjectOpened,
         ProjectState,
     },
     scene::{SceneOpenFailed, SceneOpened},
     tools::{
-        camera::{FrameAll, FrameSelection},
+        camera::{
+            EditorCamera, FlyCamera, FrameAll, FrameSelection, SetCameraPose, ViewportCommands,
+        },
         selection,
     },
 };
@@ -67,6 +73,19 @@ pub struct Frame {
     pub entity: Option<String>,
 }
 
+/// Places the editor camera at a position, facing a point or turned by yaw and pitch, and answers the pose it took.
+#[derive(Deserialize, JsonSchema)]
+pub struct SetCamera {
+    /// Where the camera goes, as [x, y, z] in metres.
+    pub position: [f32; 3],
+    /// A point to face, as [x, y, z]; give this or yaw and pitch.
+    pub look_at: Option<[f32; 3]>,
+    /// Radians around world up: 0 faces -Z and a positive yaw turns left. Give it with pitch, or look_at instead.
+    pub yaw: Option<f32>,
+    /// Radians up from level, kept within ±1.55. Give it with yaw, or look_at instead.
+    pub pitch: Option<f32>,
+}
+
 #[derive(Component)]
 struct OpeningProject {
     requested: PathBuf,
@@ -90,7 +109,9 @@ struct Guarded;
 struct CancelledPrompt(Vec<String>);
 
 #[derive(Component)]
-struct Framing(String);
+struct AwaitingPose {
+    framed: Option<String>,
+}
 
 pub(super) fn build(app: &mut App) {
     app.add_tool::<OpenProject, _>(McpTool::new("open_project"), open_project)
@@ -98,9 +119,13 @@ pub(super) fn build(app: &mut App) {
         .add_tool::<CloseDocument, _>(McpTool::new("close_document"), close_document)
         .add_tool::<Select, _>(McpTool::new("select").needs(Needs::Scene), select)
         .add_tool::<Frame, _>(McpTool::new("frame").needs(Needs::Scene), frame)
+        .add_tool::<SetCamera, _>(McpTool::new("set_camera").needs(Needs::Scene), set_camera)
         .add_system(
             McpServe,
-            answer_framed.before(frame).before(answer_unanswered),
+            answer_posed
+                .before(frame)
+                .before(set_camera)
+                .before(answer_unanswered),
         )
         .add_system(
             LateUpdate,
@@ -447,14 +472,30 @@ fn select(
     }
 }
 
+fn playing(targets: &Query<&PlayState, With<EditTarget>>) -> bool {
+    targets.iter().any(|state| *state == PlayState::Playing)
+}
+
+fn camera_refused() -> ToolError {
+    ToolError::new(
+        "refused",
+        "The game is playing and has no editor camera; stop the game to place the camera.",
+    )
+}
+
 fn frame(
     mut calls: ToolCalls<Frame>,
     entities: EditWorld<Query<Entity>>,
     names: EditWorld<Query<&Name>>,
+    targets: Query<&PlayState, With<EditTarget>>,
     mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
 ) {
     for (arguments, reply) in calls.read() {
+        if playing(&targets) {
+            reply.err(camera_refused());
+            continue;
+        }
         let framed = match arguments.entity.as_deref().map(|id| resolve(id, &entities)) {
             Some(Ok(entity)) => {
                 scene.trigger(selection::Select(Some(entity)));
@@ -472,14 +513,97 @@ fn frame(
         };
         cmd.spawn((
             PendingCall::new(reply, "the camera to frame"),
-            Framing(framed),
+            AwaitingPose {
+                framed: Some(framed),
+            },
         ));
     }
 }
 
-fn answer_framed(waiting: Query<(Entity, &PendingCall, &Framing)>, mut cmd: CommandQueue) {
-    for (entity, pending, framing) in waiting.iter() {
-        pending.reply.ok(format!("Framed {}.", framing.0));
+fn invalid_pose(message: &str) -> ToolError {
+    ToolError::new("invalid_arguments", message)
+}
+
+fn pose_of(arguments: &SetCamera) -> Result<SetCameraPose, ToolError> {
+    let position = Vec3::from_array(arguments.position);
+    match (arguments.look_at, arguments.yaw, arguments.pitch) {
+        (Some(target), None, None) => SetCameraPose::looking_at(position, Vec3::from_array(target))
+            .ok_or_else(|| {
+                invalid_pose("look_at is the camera's own position; give a point away from it.")
+            }),
+        (None, Some(yaw), Some(pitch)) => Ok(SetCameraPose {
+            position,
+            yaw,
+            pitch,
+        }),
+        _ => Err(invalid_pose(
+            "Give either look_at, or yaw and pitch together, but not both.",
+        )),
+    }
+}
+
+fn set_camera(
+    mut calls: ToolCalls<SetCamera>,
+    targets: Query<&PlayState, With<EditTarget>>,
+    mut scene: EditWorldSignals,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        if playing(&targets) {
+            reply.err(camera_refused());
+            continue;
+        }
+        match pose_of(&arguments) {
+            Ok(pose) => {
+                scene.trigger(pose);
+                cmd.spawn((
+                    PendingCall::new(reply, "the camera to move"),
+                    AwaitingPose { framed: None },
+                ));
+            }
+            Err(error) => reply.err(error),
+        }
+    }
+}
+
+fn shown(value: f32) -> f32 {
+    (value * 1000.0).round() / 1000.0 + 0.0
+}
+
+fn describe_pose(fly: &FlyCamera) -> String {
+    let [x, y, z] = fly.position.to_array().map(shown);
+    let [fx, fy, fz] = fly.forward().to_array().map(shown);
+    format!(
+        "Camera at ({x:.3}, {y:.3}, {z:.3}), yaw {:.3}, pitch {:.3}, looking along ({fx:.3}, {fy:.3}, {fz:.3}).",
+        shown(fly.yaw),
+        shown(fly.pitch)
+    )
+}
+
+fn answer_posed(
+    waiting: Query<(Entity, &PendingCall, &AwaitingPose)>,
+    fly: EditWorld<Option<Res<FlyCamera>>>,
+    requests: EditWorld<Option<Res<ViewportCommands>>>,
+    cameras: EditWorld<Query<&Transform, With<EditorCamera>>>,
+    mut cmd: CommandQueue,
+) {
+    let (Some(fly), Some(requests)) = (fly.as_deref(), requests.as_deref()) else {
+        return;
+    };
+    let framing = requests.frame_selection || requests.frame_all;
+    let placed = cameras
+        .iter()
+        .next()
+        .is_some_and(|transform| fly.placed(transform));
+    if framing || !placed {
+        return;
+    }
+    for (entity, pending, awaiting) in waiting.iter() {
+        let pose = describe_pose(fly);
+        match &awaiting.framed {
+            Some(framed) => pending.reply.ok(format!("Framed {framed}. {pose}")),
+            None => pending.reply.ok(pose),
+        }
         cmd.despawn(entity);
     }
 }

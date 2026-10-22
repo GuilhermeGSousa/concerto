@@ -1338,11 +1338,104 @@ fn frame_answers_once_the_camera_has_framed() {
     let (closed, sword, before, framed, on_sword, status, all, on_all) = served.result;
     assert_eq!(closed["code"], "no_scene");
     assert_eq!(before, "0.00");
-    assert_eq!(framed, format!("Framed {sword} Sword."));
+    let level = "yaw 0.000, pitch -0.150, looking along (0.000, -0.149, -0.989).";
+    assert!(
+        framed.starts_with(&format!("Framed {sword} Sword. Camera at (9.500, ")),
+        "{framed}"
+    );
+    assert!(framed.ends_with(level), "{framed}");
     assert_eq!(on_sword, "9.50");
     assert_eq!(line(&status, "selection: "), format!("{sword} Sword"));
-    assert_eq!(all, "Framed the whole scene.");
+    assert!(
+        all.starts_with("Framed the whole scene. Camera at (0.000, "),
+        "{all}"
+    );
+    assert!(all.ends_with(level), "{all}");
     assert_eq!(on_all, "0.00");
+}
+
+#[test]
+fn set_camera_places_the_camera_by_angles_or_by_a_point_to_face() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let angles = json!({ "position": [1.0, 2.0, 3.0], "yaw": 0.5, "pitch": 0.25 });
+        let closed = error_with(&client, "set_camera", angles.clone()).await;
+        open(&client).await;
+        let turned = ok_with(&client, "set_camera", angles).await;
+        let at = ok(&client, "camera_at").await;
+        let facing = ok_with(
+            &client,
+            "set_camera",
+            json!({ "position": [0.0, 0.0, 0.0], "look_at": [-1.0, std::f32::consts::SQRT_2, -1.0] }),
+        )
+        .await;
+        let mut invalid = Vec::new();
+        for arguments in [
+            json!({ "position": [0.0, 0.0, 0.0], "look_at": [0.0, 0.0, -1.0], "yaw": 0.0, "pitch": 0.0 }),
+            json!({ "position": [0.0, 0.0, 0.0] }),
+            json!({ "position": [0.0, 0.0, 0.0], "yaw": 1.0 }),
+            json!({ "position": [1.0, 1.0, 1.0], "look_at": [1.0, 1.0, 1.0] }),
+        ] {
+            invalid.push(error_with(&client, "set_camera", arguments).await);
+        }
+        let unmoved = ok(&client, "camera_at").await;
+        client.cancel().await.unwrap();
+        (closed, turned, at, facing, invalid, unmoved)
+    }) else {
+        return;
+    };
+
+    let (closed, turned, at, facing, invalid, unmoved) = served.result;
+    assert_eq!(closed["code"], "no_scene");
+    assert_eq!(
+        turned,
+        "Camera at (1.000, 2.000, 3.000), yaw 0.500, pitch 0.250, looking along (-0.465, 0.247, -0.850)."
+    );
+    assert_eq!(at, "1.00");
+    assert_eq!(
+        facing,
+        "Camera at (0.000, 0.000, 0.000), yaw 0.785, pitch 0.785, looking along (-0.500, 0.707, -0.500)."
+    );
+    for error in &invalid {
+        assert_eq!(error["code"], "invalid_arguments", "{error}");
+    }
+    assert_eq!(unmoved, "0.00");
+}
+
+#[test]
+fn set_camera_and_frame_are_refused_while_the_game_plays() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        assert_eq!(ok(&client, "play_scene").await, "playing");
+        until(&client, "status", |status| status.contains(" · playing")).await;
+        let started = Instant::now();
+        while call(&client, "scene_tree").await.is_error != Some(false) {
+            assert!(
+                started.elapsed() < PATIENCE,
+                "the game never became the edit target"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let posed = error_with(
+            &client,
+            "set_camera",
+            json!({ "position": [0.0, 0.0, 0.0], "yaw": 0.0, "pitch": 0.0 }),
+        )
+        .await;
+        let framed = error(&client, "frame").await;
+        client.cancel().await.unwrap();
+        (posed, framed)
+    }) else {
+        return;
+    };
+
+    let (posed, framed) = served.result;
+    assert_eq!(posed["code"], "refused", "{posed}");
+    assert_eq!(framed["code"], "refused", "{framed}");
 }
 
 fn tree_id(tree: &str, name: &str) -> String {
@@ -1457,7 +1550,10 @@ fn one_client_opens_looks_selects_frames_and_closes() {
         format!("1 entity matches:\n{sword} content/level.gasset > Hero > Sword")
     );
     assert_eq!(selected, format!("Selected {hero} Hero."));
-    assert_eq!(framed, format!("Framed {sword} Sword."));
+    assert!(
+        framed.starts_with(&format!("Framed {sword} Sword. Camera at ")),
+        "{framed}"
+    );
     assert_eq!(line(&status, "project: "), root);
     assert_eq!(line(&status, "active: "), document);
     assert_eq!(line(&status, "selection: "), format!("{sword} Sword"));

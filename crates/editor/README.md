@@ -79,8 +79,16 @@ answers `open_failed`. `close_document` closes the document `status` lists as
 the call cancels the prompt and answers `unsaved_changes`, naming the
 documents, once the prompt has closed.
 `select` selects `entity`, or clears the selection without one. `frame` selects
-`entity` and frames it, or frames the whole scene without one, and answers
-after the next frame, once the camera has moved. Both need an open scene.
+`entity` and frames it, or frames the whole scene without one. `set_camera`
+places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
+turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a
+positive yaw turns left, and pitch is up from level, kept within ±1.55. Giving
+both forms, neither, or a `look_at` at the position answers
+`invalid_arguments`. `frame` and `set_camera` answer the camera's pose, its
+position, yaw, pitch and the direction it looks along, once the edit `App` has
+stepped and the camera shows it; the edit `App` steps only while the viewport
+shows the scene. While a game plays both answer `refused`, since the game has
+no editor camera. All three need an open scene.
 
 ### Errors
 
@@ -96,6 +104,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits |
+| `refused` | The call cannot act in the current state; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |
 
