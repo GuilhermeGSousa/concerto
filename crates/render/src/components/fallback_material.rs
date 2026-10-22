@@ -19,14 +19,14 @@ pub fn fallback_material_asset() -> StandardMaterial {
 #[derive(Resource)]
 pub struct FallbackMaterial(pub AssetHandle<StandardMaterial>);
 
-/// The material `M`'s pass draws uncovered slots with; `None` for every `M` but `StandardMaterial`.
+/// The material `M`'s pass draws uncovered slots with; only `StandardMaterial` has one.
 pub struct RenderFallbackMaterial<M: 'static> {
-    pub material: Option<AssetId>,
+    pub material: AssetId,
     _marker: PhantomData<fn() -> M>,
 }
 
 impl<M: 'static> RenderFallbackMaterial<M> {
-    pub fn new(material: Option<AssetId>) -> Self {
+    pub fn new(material: AssetId) -> Self {
         Self {
             material,
             _marker: PhantomData,
@@ -34,7 +34,6 @@ impl<M: 'static> RenderFallbackMaterial<M> {
     }
 }
 
-// Manual Resource impl — #[derive(Resource)] doesn't handle PhantomData<fn()>.
 impl<M: 'static> Resource for RenderFallbackMaterial<M> {
     fn name() -> &'static str {
         std::any::type_name::<RenderFallbackMaterial<M>>()

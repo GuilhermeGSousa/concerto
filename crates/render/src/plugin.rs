@@ -212,9 +212,9 @@ impl Plugin for RenderPlugin {
             .get_resource::<AssetStore<StandardMaterial>>()
             .and_then(|_| app.get_resource::<AssetServer>())
             .map(|server| server.add(fallback_material_asset()));
-        let render_fallback_material = RenderFallbackMaterial::<StandardMaterial>::new(
-            fallback_material.as_ref().map(AssetHandle::id),
-        );
+        let render_fallback_material = fallback_material
+            .as_ref()
+            .map(|handle| RenderFallbackMaterial::<StandardMaterial>::new(handle.id()));
         if let Some(handle) = fallback_material {
             app.insert_resource(FallbackMaterial(handle));
         }
@@ -264,7 +264,9 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
-            .insert_resource(render_fallback_material)
             .insert_resource(WorldEnvironment::new(Color::rgba(0.1, 0.1, 0.1, 0.1)));
+        if let Some(render_fallback_material) = render_fallback_material {
+            app.render_mut().insert_resource(render_fallback_material);
+        }
     }
 }

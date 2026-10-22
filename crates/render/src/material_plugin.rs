@@ -241,7 +241,7 @@ pub(crate) fn material_renderpass<M: Material>(
         &RenderMaterialComponent<M>,
     )>,
     all_render_meshes: Query<(&RenderMeshInstance, Option<&RenderSkeletonComponent>)>,
-    fallback: Res<RenderFallbackMaterial<M>>,
+    fallback: Option<Res<RenderFallbackMaterial<M>>>,
     render_cameras: Query<&RenderCamera>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<RenderMaterial<M>>>,
@@ -318,7 +318,7 @@ pub(crate) fn material_renderpass<M: Material>(
             });
         }
 
-        if let Some(fallback) = fallback.material {
+        if let Some(fallback) = fallback.as_ref().map(|fallback| fallback.material) {
             for (mesh_instance, skeleton) in all_render_meshes.iter() {
                 draw.instance(mesh_instance, skeleton, |slot| {
                     (!mesh_instance.coverage.is_covered(slot)).then_some(fallback)
@@ -453,15 +453,6 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
-        if app
-            .render()
-            .get_resource::<RenderFallbackMaterial<M>>()
-            .is_none()
-        {
-            app.render_mut()
-                .insert_resource(RenderFallbackMaterial::<M>::new(None));
-        }
-
         let device = app
             .render()
             .get_resource::<RenderDevice>()

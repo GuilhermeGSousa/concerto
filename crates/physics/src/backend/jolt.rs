@@ -414,8 +414,7 @@ impl PhysicsBackend for JoltBackend {
             .flat_map(|vertex| vertex.pos_coords)
             .collect();
 
-        // SAFETY: `positions` holds `merged_vertices.len()` xyz triples and
-        // `merged_indices` `len()` indices; both are read during the call only.
+        // SAFETY: both buffers match the lengths passed and outlive the call, which only reads them.
         let shape = unsafe {
             concerto_jolt_ffi::jolt_create_mesh_shape(
                 positions.as_ptr(),
