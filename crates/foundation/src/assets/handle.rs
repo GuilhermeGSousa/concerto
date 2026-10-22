@@ -3,8 +3,8 @@ use std::{fmt::Debug, marker::PhantomData, sync::Arc};
 use super::{asset_server::AssetServer, Asset, AssetId, LoadableAsset};
 use concerto_ecs::{reflect::ReflectSceneLeaf, Event};
 use concerto_reflect::{
-    decode_leaf, encode_leaf, FromType, GetTypeRegistration, Leaf, LeafError, Reflect, ReflectMut,
-    ReflectRef, TypeRegistration,
+    decode_leaf, encode_leaf, FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, Reflect,
+    ReflectJson, ReflectMut, ReflectRef, TypeRegistration,
 };
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -150,7 +150,23 @@ impl<A: LoadableAsset> GetTypeRegistration for AssetHandle<A> {
     fn get_type_registration() -> TypeRegistration {
         let mut registration = TypeRegistration::of::<Self>();
         registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
+        registration.insert(<ReflectJson as FromType<Self>>::from_type());
         registration
+    }
+}
+
+impl<A: Asset> JsonLeaf for AssetHandle<A> {
+    /// The asset's id as 32 hex digits; reading one back gives a weak handle.
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::String(self.id().simple_hex())
+    }
+
+    fn from_json(value: &serde_json::Value) -> Result<Self, String> {
+        value
+            .as_str()
+            .and_then(|id| AssetId::from_simple_hex(id).ok())
+            .map(Self::weak)
+            .ok_or_else(|| "expected an asset id of 32 hex digits".to_owned())
     }
 }
 
@@ -200,5 +216,52 @@ mod tests {
         let AssetLifetimeEvent::Dropped(dropped_id) = receiver.try_recv().unwrap();
         assert_eq!(dropped_id, id);
         assert!(receiver.is_empty());
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Note;
+
+    impl Asset for Note {
+        fn name() -> &'static str {
+            "Note"
+        }
+    }
+
+    impl LoadableAsset for Note {}
+
+    fn json_codec() -> concerto_reflect::ReflectJson {
+        let mut registry = concerto_reflect::TypeRegistry::default();
+        registry.register::<AssetHandle<Note>>();
+        *registry
+            .get_type_data::<concerto_reflect::ReflectJson>(
+                std::any::TypeId::of::<AssetHandle<Note>>(),
+            )
+            .unwrap()
+    }
+
+    fn handle_from_json(value: &serde_json::Value) -> Result<AssetId, String> {
+        let decoded = (json_codec().from_json)(value)?;
+        let handle = (decoded.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<AssetHandle<Note>>()
+            .unwrap();
+        assert!(matches!(handle, AssetHandle::Weak(..)));
+        Ok(handle.id())
+    }
+
+    #[test]
+    fn a_handle_is_its_asset_id_as_32_hex_digits_in_json() {
+        let id = AssetId::new();
+        let handle = AssetHandle::<Note>::weak(id);
+        let json = serde_json::Value::String(id.simple_hex());
+
+        assert_eq!((json_codec().to_json)(&handle), json);
+        assert_eq!(handle_from_json(&json), Ok(id));
+    }
+
+    #[test]
+    fn a_handle_does_not_decode_from_anything_but_an_asset_id() {
+        for value in [serde_json::json!("not an id"), serde_json::json!(7)] {
+            assert!(handle_from_json(&value).is_err(), "{value} must not decode");
+        }
     }
 }

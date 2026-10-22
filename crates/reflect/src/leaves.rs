@@ -2,6 +2,8 @@ use concerto_color::Color;
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 use uuid::Uuid;
 
+use crate::{FromType, GetTypeRegistration, ReflectJson, TypeRegistration, TypeRegistry};
+
 /// Implements [`Reflect`](crate::Reflect) as a [`Leaf`](crate::Leaf) encoded through serde.
 #[macro_export]
 macro_rules! impl_reflect_leaf {
@@ -33,4 +35,27 @@ macro_rules! impl_reflect_leaf {
 impl_reflect_leaf!(
     bool, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64, String, Vec2, Vec3, Vec4,
     Quat, Mat4, Color, Uuid,
+);
+
+macro_rules! json_leaves {
+    ($($leaf:ty),* $(,)?) => {
+        $(
+            impl GetTypeRegistration for $leaf {
+                fn get_type_registration() -> TypeRegistration {
+                    let mut registration = TypeRegistration::of::<Self>();
+                    registration.insert(<ReflectJson as FromType<Self>>::from_type());
+                    registration
+                }
+            }
+        )*
+
+        pub(crate) fn register_json_leaves(registry: &mut TypeRegistry) {
+            $(registry.register::<$leaf>();)*
+        }
+    };
+}
+
+json_leaves!(
+    bool, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64, String, Vec2, Vec3, Vec4,
+    Quat,
 );

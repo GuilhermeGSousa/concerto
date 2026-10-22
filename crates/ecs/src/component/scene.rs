@@ -1,7 +1,8 @@
 use concerto_reflect::{
-    FromType, GetTypeRegistration, Leaf, LeafError, Reflect, ReflectMut, ReflectRef,
-    TypeRegistration, decode_leaf, encode_leaf,
+    FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, Reflect, ReflectJson, ReflectMut,
+    ReflectRef, TypeRegistration, decode_leaf, encode_leaf,
 };
+use serde_json::Value;
 
 use crate::{entity::Entity, reflect::ReflectSceneLeaf};
 
@@ -61,7 +62,30 @@ impl GetTypeRegistration for SceneEntityRef {
     fn get_type_registration() -> TypeRegistration {
         let mut registration = TypeRegistration::of::<Self>();
         registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
+        registration.insert(<ReflectJson as FromType<Self>>::from_type());
         registration
+    }
+}
+
+impl JsonLeaf for SceneEntityRef {
+    /// A resolved reference is its entity's id string, an unresolved one its node index.
+    fn to_json(&self) -> Value {
+        match self {
+            Self::Index(index) => Value::from(*index),
+            Self::Entity(entity) => Value::String(entity.to_id_string()),
+        }
+    }
+
+    fn from_json(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::String(id) => Entity::parse_id(id).map(Self::Entity),
+            Value::Number(index) => index
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .map(Self::Index),
+            _ => None,
+        }
+        .ok_or_else(|| "expected an entity id such as \"42v3\", or a scene node index".to_owned())
     }
 }
 

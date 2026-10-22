@@ -70,11 +70,23 @@ fn short_name(type_path: &'static str) -> &'static str {
 }
 
 /// Every registered type, by `TypeId`, with what it was declared to support.
-#[derive(Default)]
 pub struct TypeRegistry {
     registrations: HashMap<TypeId, TypeRegistration>,
     by_path: HashMap<&'static str, TypeId>,
     by_short_name: HashMap<&'static str, TypeId>,
+}
+
+impl Default for TypeRegistry {
+    /// A registry holding the built-in leaves that have a JSON codec.
+    fn default() -> Self {
+        let mut registry = Self {
+            registrations: HashMap::new(),
+            by_path: HashMap::new(),
+            by_short_name: HashMap::new(),
+        };
+        crate::leaves::register_json_leaves(&mut registry);
+        registry
+    }
 }
 
 impl TypeRegistry {
