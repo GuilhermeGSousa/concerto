@@ -1,5 +1,6 @@
+use concerto_ecs::command::EntityCommandQueue;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
+    Component, Entity, Query, Res, ResMut, events::event_reader::EventReader,
 };
 use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
@@ -142,10 +143,9 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn follows_snapshot(&self) -> bool {
         true
     }
-    fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &NumericSnapshot, theme: &UITheme) {
-        let mut row_queue = cmd.entity(row);
+    fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
         for slot in 0..slot_count(value) {
-            row_queue.add_child((
+            row.add_child((
                 theme
                     .text_field("")
                     .small()
@@ -156,7 +156,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
                     .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
                     .clipped(),
                 NumericSlot {
-                    row,
+                    row: row.entity(),
                     slot,
                     displayed: String::new(),
                 },

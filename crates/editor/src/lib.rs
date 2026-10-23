@@ -1,6 +1,7 @@
 //! Engine-native editor. Panels submit commands; project systems own I/O.
 pub mod actions;
 pub mod asset_editor;
+pub mod asset_picker;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;

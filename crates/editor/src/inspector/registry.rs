@@ -65,7 +65,7 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
         theme: &UITheme,
     ) -> Result<(), EditError> {
         let snapshot = snapshot.snapshot::<T, E>().ok_or(EditError::TypeMismatch)?;
-        self.editor.build(cmd, row, snapshot, theme);
+        self.editor.build(&mut cmd.entity(row), snapshot, theme);
         Ok(())
     }
     fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError> {

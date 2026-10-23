@@ -3,7 +3,7 @@ use std::{
     sync::Arc,
 };
 
-use concerto_ecs::{Component, Entity, Resource, command::CommandQueue, component::Tick};
+use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, component::Tick};
 use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::theme::UITheme;
 
@@ -17,8 +17,7 @@ pub trait PropertyEditor<T: Reflect>: Send + Sync + 'static {
     fn snapshot(&self, value: &T) -> Self::Snapshot;
     fn build(
         &self,
-        cmd: &mut CommandQueue,
-        row: Entity,
+        row: &mut EntityCommandQueue,
         snapshot: &Self::Snapshot,
         theme: &UITheme,
     );

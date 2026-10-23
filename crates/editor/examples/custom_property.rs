@@ -76,13 +76,12 @@ impl PropertyEditor<Setting> for SettingEditor {
 
     fn build(
         &self,
-        cmd: &mut CommandQueue,
-        row: Entity,
+        row: &mut EntityCommandQueue,
         snapshot: &SettingSnapshot,
         theme: &UITheme,
     ) {
-        let button = cmd
-            .spawn((
+        row
+            .add_child((
                 theme
                     .label(label(snapshot))
                     .height(UIValue::Px(theme.control_height))
@@ -90,9 +89,7 @@ impl PropertyEditor<Setting> for SettingEditor {
                 Interactable,
                 SettingButton(row),
                 toggle_setting.into_listener(),
-            ))
-            .entity();
-        cmd.add_child(row, button);
+            ));
     }
 
     fn apply(&self, value: &mut Setting, edit: &SettingEdit) -> Result<(), EditError> {

@@ -116,6 +116,16 @@ impl<A: Asset> Default for AssetHandle<A> {
     }
 }
 
+impl<A: Asset> PartialEq for AssetHandle<A> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Strong(l0, l1), Self::Strong(r0, r1)) => l0.id == r0.id && l1 == r1,
+            (Self::Weak(l0, l1), Self::Weak(r0, r1)) => l0 == r0 && l1 == r1,
+            _ => false,
+        }
+    }
+}
+
 impl<A: Asset> Leaf for AssetHandle<A> {
     fn encode(&self) -> Result<Vec<u8>, LeafError> {
         encode_leaf(&self.id())
