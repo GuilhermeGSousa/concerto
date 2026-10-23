@@ -24,12 +24,13 @@ pub mod window_chrome;
 mod workspace;
 
 use concerto_foundation::assets::handle::AssetHandle;
+use concerto_mesh::{Mesh, MeshComponent};
 pub use run::run;
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
 
-use crate::{asset_picker::AssetPicker, inspector::EditableApp, marks::Mark::Mesh};
+use crate::{asset_picker::AssetPicker, inspector::EditableApp};
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -89,6 +90,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(window_chrome::WindowChromePlugin {
             decorated: self.decorated,
         });
+        app.register_type::<MeshComponent>();
         app.register_property_editor::<AssetHandle<Mesh>, AssetPicker<Mesh>>();
 
         if let Some(path) = &self.project {

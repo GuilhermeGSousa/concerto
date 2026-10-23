@@ -8,7 +8,11 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::{CommandQueue, EntityCommandQueue}, entity::hierarchy::{ChildOf, Children}, reflect::ReflectComponent, signal::{On, listener::IntoListener},
+    Component, Entity, Query, Res, ResMut,
+    command::{CommandQueue, EntityCommandQueue},
+    entity::hierarchy::{ChildOf, Children},
+    reflect::ReflectComponent,
+    signal::{On, listener::IntoListener},
 };
 use concerto_editor::{
     asset_editor::ActiveEditor,
