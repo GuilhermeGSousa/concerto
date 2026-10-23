@@ -15,6 +15,7 @@ use crate::inspector::rows::{
 const BOX_SIZE: f32 = 16.0;
 
 /// A checkbox for a `bool`.
+#[derive(Default)]
 pub(crate) struct BoolCheckbox;
 
 /// The checkbox of a [`BoolCheckbox`] row.
@@ -24,7 +25,7 @@ pub(crate) struct BoolField {
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
-    registry.register_property_editor::<bool, _>(BoolCheckbox);
+    registry.register_property_editor::<bool, BoolCheckbox>();
 }
 
 impl PropertyEditor<bool> for BoolCheckbox {

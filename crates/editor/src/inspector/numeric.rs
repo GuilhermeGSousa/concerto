@@ -1,7 +1,5 @@
 use concerto_ecs::command::EntityCommandQueue;
-use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, events::event_reader::EventReader,
-};
+use concerto_ecs::{Component, Entity, Query, Res, ResMut, events::event_reader::EventReader};
 use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
@@ -18,6 +16,7 @@ use crate::inspector::rows::{
 };
 
 /// One text field per number: one for `Number`, three for `Vec3`.
+#[derive(Default)]
 pub(crate) struct NumericFields;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,10 +32,10 @@ pub(crate) struct NumericEdit {
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
-    registry.register_property_editor::<f32, _>(NumericFields);
-    registry.register_property_editor::<f64, _>(NumericFields);
-    registry.register_property_editor::<Vec3, _>(NumericFields);
-    registry.register_property_editor::<Quat, _>(NumericFields);
+    registry.register_property_editor::<f32, NumericFields>();
+    registry.register_property_editor::<f64, NumericFields>();
+    registry.register_property_editor::<Vec3, NumericFields>();
+    registry.register_property_editor::<Quat, NumericFields>();
 }
 
 pub(crate) trait NumericValue: Reflect {
@@ -308,6 +307,8 @@ pub(crate) fn refresh_numeric_fields(
 #[cfg(test)]
 mod tests {
 
+    use concerto_ecs::CommandQueue;
+
     use super::*;
 
     #[test]
@@ -498,16 +499,12 @@ mod tests {
             entity: Entity,
         }
         fn build(data: Res<Build>, mut cmd: CommandQueue) {
-            let row = cmd
-                .spawn((
-                    data.property.row(data.entity, TypeId::of::<Transform>()),
-                    data.property.value.clone(),
-                ))
-                .entity();
             <NumericFields as PropertyEditor<Vec3>>::build(
                 &NumericFields,
-                &mut cmd,
-                row,
+                &mut cmd.spawn((
+                    data.property.row(data.entity, TypeId::of::<Transform>()),
+                    data.property.value.clone(),
+                )),
                 data.property
                     .value
                     .snapshot::<Vec3, NumericFields>()

@@ -105,13 +105,13 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
-    pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self, editor: E) {
+    pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) {
         self.editors.insert(
             TypeId::of::<T>(),
             RegisteredEditor {
                 editor_type: TypeId::of::<E>(),
                 adapter: Arc::new(Adapter::<T, E> {
-                    editor,
+                    editor: E::default(),
                     marker: PhantomData,
                 }),
             },
@@ -282,18 +282,12 @@ impl SystemInput for InspectionSource<'_> {
 impl ReadOnlySystemInput for InspectionSource<'_> {}
 
 pub trait EditableApp {
-    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(
-        &mut self,
-        editor: E,
-    ) -> &mut Self;
+    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) -> &mut Self;
 }
 
 impl EditableApp for App {
-    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(
-        &mut self,
-        editor: E,
-    ) -> &mut Self {
-        registry(self).register_property_editor::<T, E>(editor);
+    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) -> &mut Self {
+        registry(self).register_property_editor::<T, E>();
         self
     }
 }

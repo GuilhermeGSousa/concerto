@@ -8,11 +8,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut,
-    command::CommandQueue,
-    entity::hierarchy::{ChildOf, Children},
-    reflect::ReflectComponent,
-    signal::{On, listener::IntoListener},
+    Component, Entity, Query, Res, ResMut, command::{CommandQueue, EntityCommandQueue}, entity::hierarchy::{ChildOf, Children}, reflect::ReflectComponent, signal::{On, listener::IntoListener},
 };
 use concerto_editor::{
     asset_editor::ActiveEditor,
@@ -58,6 +54,7 @@ pub enum SettingEdit {
     Rename(String),
 }
 
+#[derive(Default)]
 pub struct SettingEditor;
 
 #[derive(Component)]
@@ -74,22 +71,16 @@ impl PropertyEditor<Setting> for SettingEditor {
         }
     }
 
-    fn build(
-        &self,
-        row: &mut EntityCommandQueue,
-        snapshot: &SettingSnapshot,
-        theme: &UITheme,
-    ) {
-        row
-            .add_child((
-                theme
-                    .label(label(snapshot))
-                    .height(UIValue::Px(theme.control_height))
-                    .grow(),
-                Interactable,
-                SettingButton(row),
-                toggle_setting.into_listener(),
-            ));
+    fn build(&self, row: &mut EntityCommandQueue, snapshot: &SettingSnapshot, theme: &UITheme) {
+        row.add_child((
+            theme
+                .label(label(snapshot))
+                .height(UIValue::Px(theme.control_height))
+                .grow(),
+            Interactable,
+            SettingButton(row.entity()),
+            toggle_setting.into_listener(),
+        ));
     }
 
     fn apply(&self, value: &mut Setting, edit: &SettingEdit) -> Result<(), EditError> {
@@ -159,7 +150,7 @@ pub fn register(app: &mut App) {
 
 /// Gives the editor's own `App` the widget that edits a `Setting`.
 pub fn install(app: &mut App) {
-    app.register_property_editor::<Setting, SettingEditor>(SettingEditor)
+    app.register_property_editor::<Setting, SettingEditor>()
         .add_system(LateUpdate, refresh_settings);
 }
 
