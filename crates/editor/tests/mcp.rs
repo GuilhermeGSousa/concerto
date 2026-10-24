@@ -149,6 +149,7 @@ fn game(app: &mut App) {
         .add_listener(load_slowly.at_edit_time())
         .register_type::<Unreadable>()
         .register_type::<Samples>()
+        .register_type::<other::Samples>()
         .insert_resource(EditFrames::default())
         .add_system(Update, count_edit_frames.at_edit_time())
         .add_system(Update, bound_by_name.at_edit_time())
@@ -1986,4 +1987,400 @@ fn one_client_opens_looks_selects_frames_and_closes() {
     assert_eq!(line(&after, "documents: "), "none");
     assert_eq!(line(&after, "active: "), "none");
     assert_eq!(line(&after, "selection: "), "none");
+}
+
+fn stale(id: &str) -> String {
+    let (index, generation) = id.split_once('v').unwrap();
+    format!("{index}v{}", generation.parse::<u32>().unwrap() + 1)
+}
+
+fn second_word(answer: &str) -> String {
+    answer.split_whitespace().nth(1).unwrap().to_owned()
+}
+
+struct EntityEdits {
+    hero: String,
+    root: String,
+    created: String,
+    renamed: String,
+    duplicated: String,
+    deleted: String,
+    top: String,
+    tree: String,
+    errors: Vec<Value>,
+}
+
+#[test]
+fn the_entity_tools_create_rename_duplicate_and_delete() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error_with(&client, "create_entity", json!({})).await;
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let (hero, root) = (scene_id(&ids, "Hero"), scene_id(&ids, "root"));
+        let created = ok_with(&client, "create_entity", json!({ "parent": hero })).await;
+        let torch = second_word(&created);
+        let renamed = ok_with(
+            &client,
+            "rename_entity",
+            json!({ "entity": torch, "name": " Torch " }),
+        )
+        .await;
+        let duplicated = ok_with(&client, "duplicate_entity", json!({ "entity": torch })).await;
+        let copy = duplicated.split_whitespace().nth(4).unwrap().to_owned();
+        let deleted = ok_with(&client, "delete_entity", json!({ "entity": copy })).await;
+        let top = ok(&client, "create_entity").await;
+        let tree = ok(&client, "scene_tree").await;
+        let errors = vec![
+            closed,
+            error_with(&client, "delete_entity", json!({ "entity": root })).await,
+            error_with(
+                &client,
+                "rename_entity",
+                json!({ "entity": torch, "name": " " }),
+            )
+            .await,
+            error_with(
+                &client,
+                "duplicate_entity",
+                json!({ "entity": stale(&hero) }),
+            )
+            .await,
+            error_with(&client, "delete_entity", json!({ "entity": "999999v1" })).await,
+        ];
+        client.cancel().await.unwrap();
+        EntityEdits {
+            hero,
+            root,
+            created,
+            renamed,
+            duplicated,
+            deleted,
+            top,
+            tree,
+            errors,
+        }
+    }) else {
+        return;
+    };
+
+    let EntityEdits {
+        hero,
+        root,
+        created,
+        renamed,
+        duplicated,
+        deleted,
+        top,
+        tree,
+        errors,
+    } = served.result;
+    let torch = second_word(&created);
+    assert_eq!(created, format!("Created {torch} Entity in {hero} Hero."));
+    assert_eq!(renamed, format!("Renamed {torch} to Torch."));
+    let copy = duplicated.split_whitespace().nth(4).unwrap().to_owned();
+    assert_ne!(copy, torch);
+    assert_eq!(
+        duplicated,
+        format!("Duplicated {torch} Torch as {copy} Torch.")
+    );
+    assert_eq!(
+        deleted,
+        format!("Deleted {copy} Torch; the selection is {hero} Hero.")
+    );
+    let new = second_word(&top);
+    assert!(
+        top.starts_with(&format!("Created {new} Entity in {root}")),
+        "{top}"
+    );
+    assert_eq!(tree_id(&tree, "Torch"), torch);
+    assert!(
+        tree.lines()
+            .any(|line| line.starts_with(&format!("  {new} Entity "))),
+        "{tree}"
+    );
+    assert!(!tree.contains(&format!("{copy} ")), "{tree}");
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "no_scene",
+            "refused",
+            "refused",
+            "stale_entity",
+            "unknown_entity"
+        ]
+    );
+    assert_eq!(
+        errors[1]["message"],
+        "Delete failed: the scene root cannot be changed"
+    );
+    assert_eq!(
+        errors[2]["message"],
+        "Rename failed: a name cannot be empty"
+    );
+}
+
+mod other {
+    use concerto_ecs::{Component, reflect::ReflectComponent};
+    use concerto_reflect::{Reflect, ReflectDefault};
+
+    #[derive(Component, Reflect, Default)]
+    #[reflect(Component, Default)]
+    pub struct Samples {
+        count: u32,
+    }
+}
+
+#[test]
+fn the_component_tools_add_and_remove_by_name() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let (hero, root) = (scene_id(&ids, "Hero"), scene_id(&ids, "root"));
+        let added: Value = serde_json::from_str(
+            &ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": hero, "component": "light" }),
+            )
+            .await,
+        )
+        .unwrap();
+        let carried = ok_with(
+            &client,
+            "inspect",
+            json!({ "entity": hero, "components": ["Light"] }),
+        )
+        .await;
+        let twice = error_with(
+            &client,
+            "add_component",
+            json!({ "entity": hero, "component": "Light" }),
+        )
+        .await;
+        let removed = ok_with(
+            &client,
+            "remove_component",
+            json!({ "entity": hero, "component": "concerto_render::components::light::Light" }),
+        )
+        .await;
+        let errors = vec![
+            twice,
+            error_with(
+                &client,
+                "remove_component",
+                json!({ "entity": hero, "component": "Light" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "add_component",
+                json!({ "entity": hero, "component": "Lantern" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "add_component",
+                json!({ "entity": hero, "component": "samples" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "remove_component",
+                json!({ "entity": stale(&hero), "component": "Transform" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "add_component",
+                json!({ "entity": root, "component": "Light" }),
+            )
+            .await,
+        ];
+        client.cancel().await.unwrap();
+        (hero, added, carried, removed, errors)
+    }) else {
+        return;
+    };
+
+    let (hero, added, carried, removed, errors) = served.result;
+    assert_eq!(added["name"], "Light");
+    assert_eq!(added["type"], "concerto_render::components::light::Light");
+    assert_eq!(added["value"]["intensity"], 1.0);
+    assert!(added["paths"].as_array().unwrap().len() > 1, "{added}");
+    let carried: Value = serde_json::from_str(&carried).unwrap();
+    assert_eq!(component_names(&carried), ["Light"]);
+    assert_eq!(removed, format!("Removed Light from {hero} Hero."));
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "refused",
+            "unknown_component",
+            "unknown_component",
+            "ambiguous_component",
+            "stale_entity",
+            "refused"
+        ]
+    );
+    assert_eq!(
+        errors[0]["message"],
+        "Add Light failed: it is already there, or has no default value"
+    );
+    assert_eq!(
+        errors[5]["message"],
+        "Add Light failed: the scene root cannot be changed"
+    );
+    let ambiguous = errors[3]["message"].as_str().unwrap();
+    assert!(ambiguous.contains("mcp::Samples"), "{ambiguous}");
+    assert!(ambiguous.contains("mcp::other::Samples"), "{ambiguous}");
+}
+
+struct PropertySets {
+    intensity: Value,
+    color: Value,
+    rotation: Value,
+    values: Value,
+    after: Value,
+    errors: Vec<Value>,
+}
+
+#[test]
+fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_component() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let (hero, bulb, sword, root) = (
+            scene_id(&ids, "Hero"),
+            scene_id(&ids, "Bulb"),
+            scene_id(&ids, "Sword"),
+            scene_id(&ids, "root"),
+        );
+        until(&client, "scene_tree", |tree| {
+            components(tree, &sword).contains(&"Samples")
+        })
+        .await;
+        let set = |entity: &str, component: &str, path: &str, value: Value| {
+            let client = &client;
+            let arguments =
+                json!({ "entity": entity, "component": component, "path": path, "value": value });
+            async move {
+                serde_json::from_str::<Value>(&ok_with(client, "set_property", arguments).await)
+                    .unwrap()
+            }
+        };
+        let intensity = set(&bulb, "Light", "intensity", json!(3.5)).await;
+        let color = set(&bulb, "light", "color", json!([1.0, 0.5, 0.25, 1.0])).await;
+        let rotation = set(
+            &hero,
+            "Transform",
+            "rotation",
+            json!([0.0, 0.70710677, 0.0, 0.70710677]),
+        )
+        .await;
+        let values = set(&sword, "Samples", "values", json!([1.0, 2.0, 3.0])).await;
+        let refuse = |arguments: Value| {
+            let client = &client;
+            async move { error_with(client, "set_property", arguments).await }
+        };
+        let errors = vec![
+            refuse(json!({ "entity": bulb, "component": "Light", "path": "intensity", "value": "NaN" })).await,
+            refuse(json!({ "entity": bulb, "component": "Light", "path": "intensity", "value": "bright" })).await,
+            refuse(json!({ "entity": bulb, "component": "Light", "path": "brightness", "value": 1.0 })).await,
+            refuse(json!({ "entity": bulb, "component": "Camera", "path": "fov", "value": 1.0 })).await,
+            refuse(json!({ "entity": stale(&bulb), "component": "Light", "path": "intensity", "value": 1.0 })).await,
+            refuse(json!({ "entity": root, "component": "Transform", "path": "translation", "value": [1.0, 0.0, 0.0] })).await,
+        ];
+        let after: Value = serde_json::from_str(
+            &ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": bulb, "components": ["Light"] }),
+            )
+            .await,
+        )
+        .unwrap();
+        client.cancel().await.unwrap();
+        PropertySets {
+            intensity,
+            color,
+            rotation,
+            values,
+            after,
+            errors,
+        }
+    }) else {
+        return;
+    };
+
+    let PropertySets {
+        intensity,
+        color,
+        rotation,
+        values,
+        after,
+        errors,
+    } = served.result;
+    assert_eq!(intensity["name"], "Light");
+    assert_eq!(intensity["value"]["intensity"], 3.5);
+    assert!(intensity["paths"].is_array(), "{intensity}");
+    assert_eq!(color["value"]["color"], json!([1.0, 0.5, 0.25, 1.0]));
+    assert_eq!(color["value"]["intensity"], 3.5);
+    let quaternion: Vec<f64> = rotation["value"]["rotation"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|component| component.as_f64().unwrap())
+        .collect();
+    let expected = [
+        0.0,
+        std::f64::consts::FRAC_1_SQRT_2,
+        0.0,
+        std::f64::consts::FRAC_1_SQRT_2,
+    ];
+    let dot: f64 = quaternion.iter().zip(expected).map(|(a, b)| a * b).sum();
+    assert!(dot.abs() > 0.9999, "{rotation}");
+    assert_eq!(rotation["value"]["translation"], json!([0.0, 0.0, 0.0]));
+    assert_eq!(values["name"], "Samples");
+    assert_eq!(values["value"]["values"], json!([1.0, 2.0, 3.0]));
+    assert_eq!(values["value"]["gain"], 0.5);
+    assert_eq!(inspected(&after, "Light")["value"]["intensity"], 3.5);
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "refused",
+            "invalid_value",
+            "unknown_path",
+            "unknown_component",
+            "stale_entity",
+            "refused"
+        ]
+    );
+    assert_eq!(
+        errors[0]["message"],
+        "Set Light.intensity failed: the value was refused"
+    );
+    assert_eq!(
+        errors[5]["message"],
+        "Set Transform.translation failed: the scene root cannot be changed"
+    );
+    let unknown_path = errors[2]["message"].as_str().unwrap();
+    assert!(unknown_path.contains("intensity"), "{unknown_path}");
 }

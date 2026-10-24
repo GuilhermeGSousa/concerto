@@ -26,7 +26,8 @@ use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault, T
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
-    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
+    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
+    PropertyRowValue,
 };
 use crate::hosted::EditWorldSignals;
 use crate::tools::edits::CommitProperty;
@@ -327,18 +328,26 @@ fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
         .expect("InspectorPlugin must be registered first")
 }
 
+pub(crate) fn current_editor<'a>(
+    registry: &'a InspectorRegistry,
+    changed: Tick,
+    row: &PropertyRow,
+) -> Result<&'a RegisteredEditor, EditError> {
+    registry
+        .editor(row.type_id)
+        .filter(|editor| {
+            row.editor_type == Some(editor.editor_type) && row.registry_tick == changed
+        })
+        .ok_or(EditError::StaleEditor)
+}
+
 fn checked(
     registry: &InspectorRegistry,
     changed: Tick,
     commit: PropertyCommit,
 ) -> Result<CommitProperty, EditError> {
     let row = commit.row;
-    let editor = registry
-        .editor(row.type_id)
-        .filter(|editor| {
-            row.editor_type == Some(editor.editor_type) && row.registry_tick == changed
-        })
-        .ok_or(EditError::StaleEditor)?;
+    let editor = current_editor(registry, changed, &row)?;
     Ok(CommitProperty {
         editor: Arc::clone(&editor.adapter),
         row,

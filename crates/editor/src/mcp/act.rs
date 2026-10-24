@@ -442,7 +442,7 @@ fn cancel_raised_prompt(
     cmd.insert(CancelledPrompt(named), call);
 }
 
-fn label(entity: Entity, names: &Query<&Name>) -> String {
+pub(super) fn label(entity: Entity, names: &Query<&Name>) -> String {
     match names.get_entity(entity) {
         Some(name) if !name.as_str().is_empty() => {
             format!("{} {}", entity.to_id_string(), name.as_str())

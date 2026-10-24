@@ -1,4 +1,5 @@
 mod act;
+mod edit;
 mod observe;
 
 use std::path::PathBuf;
@@ -56,6 +57,7 @@ impl Plugin for EditorMcpPlugin {
         .add_listener(quit_when_host_closes);
         observe::build(app);
         act::build(app);
+        edit::build(app);
     }
 }
 

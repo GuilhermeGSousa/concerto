@@ -722,7 +722,7 @@ fn inspect(
     }
 }
 
-fn names_component(short: &str, full: &str, name: &str) -> bool {
+pub(super) fn names_component(short: &str, full: &str, name: &str) -> bool {
     short.eq_ignore_ascii_case(name) || full == name
 }
 
@@ -786,7 +786,7 @@ fn inspection(
     Ok(Value::Object(answer).to_string())
 }
 
-fn component_json(
+pub(super) fn component_json(
     source: &InspectionSource,
     registry: &InspectorRegistry,
     entity: Entity,

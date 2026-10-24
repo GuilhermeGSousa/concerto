@@ -106,6 +106,31 @@ stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
 no editor camera. All three need an open scene.
 
+The edit tools change the edited scene, or the running game while it plays, by
+triggering the signal the panels trigger, and answer once the edit `App`
+reports the outcome; an edit the tools refuse answers `refused` with their
+status text, the same text the scene's status line shows. `create_entity` adds
+an entity named Entity as the last child of `parent`, or of the scene's top
+level without one, and answers `Created <id> Entity in <parent>.`.
+`delete_entity` deletes `entity` and its descendants and answers what is
+selected afterwards. `duplicate_entity` copies `entity` beside it and answers
+the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
+name is refused. `add_component` adds `component` at its default value and
+answers it in `inspect`'s form; `remove_component` removes it. A component is
+named by its short name, ignoring case, or by its full path when the short name
+is ambiguous; `add_component` looks among the components registered in the
+scene's `App`, the others among those the entity carries. `set_property` writes
+`value`, JSON in `inspect`'s form, into the property at `path`, one of the
+paths `inspect` lists for `component`, and answers the component in `inspect`'s
+form. A struct value may leave fields out to keep them. Where `inspect` says an
+adapter edits the path, the value goes through the adapter's
+`PropertyEditor::edit_to` and `apply`, as an edit in the inspector does, so the
+adapter's validation holds: a value it refuses answers `refused` and leaves the
+component as it was. A path with no adapter is written from the JSON directly.
+A component that `inspect` lists as one value, a marker or an opaque type, has
+the path `""`. The scene root is the editor's wrapper and none of these change
+it. All seven need an open scene.
+
 ### Errors
 
 A failed call is a tool result marked `isError` whose text is
@@ -117,11 +142,15 @@ A failed call is a tool result marked `isError` whose text is
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity, or a slot that now holds a newer one |
-| `unknown_component` | `inspect` names a component the entity does not carry; the message lists those it does |
+| `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
+| `ambiguous_component` | The short name names several components; the message lists their full paths |
+| `unknown_path` | The component has no such property path; the message lists those `inspect` shows |
+| `invalid_value` | The JSON does not decode to the type an adapter edits; a path with no adapter answers `refused` instead, with the reason |
+| `not_editable` | The adapter that edits the path offers no value edit |
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits |
-| `refused` | The call cannot act in the current state; the message says why |
+| `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |
 
@@ -448,7 +477,9 @@ An edit is the widget's own type, so a value alone cannot pass through it.
 editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
-custom editor opts in by implementing it:
+custom editor opts in by implementing it; MCP's `set_property` writes a field
+an adapter claims only through it, and answers `not_editable` for an adapter
+that returns `None`:
 
 ```rust,ignore
 fn edit_to(&self, value: &Setting) -> Option<SettingEdit> {
