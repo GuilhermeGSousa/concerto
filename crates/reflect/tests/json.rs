@@ -157,6 +157,40 @@ fn a_vector_of_the_wrong_length_or_with_a_non_number_does_not_decode() {
     assert!(decode::<Quat>(&registry, &json!({ "x": 0.0 })).is_err());
 }
 
+#[test]
+fn a_color_is_an_array_of_its_linear_components() {
+    assert_codec(
+        Color::rgba(0.1, 0.5, 1.0, 0.25),
+        json!([0.1, 0.5, 1.0, 0.25]),
+    );
+    assert_codec(Color::WHITE, json!([1.0, 1.0, 1.0, 1.0]));
+}
+
+#[test]
+fn a_color_in_another_space_is_written_as_its_linear_components() {
+    let registry = TypeRegistry::default();
+    let srgb = Color::srgba(0.5, 0.5, 0.5, 1.0);
+    let [r, g, b, a] = srgb.to_array();
+
+    let json = to_json(&srgb, &registry);
+    assert_eq!(
+        decode::<Color>(&registry, &json),
+        Ok(Color::rgba(r, g, b, a))
+    );
+}
+
+#[test]
+fn a_color_of_the_wrong_length_or_with_a_non_number_does_not_decode() {
+    let registry = TypeRegistry::default();
+    assert!(decode::<Color>(&registry, &json!([1.0, 1.0, 1.0])).is_err());
+    assert!(decode::<Color>(&registry, &json!([1.0, 1.0, 1.0, 1.0, 1.0])).is_err());
+    assert!(decode::<Color>(&registry, &json!([1.0, "x", 1.0, 1.0])).is_err());
+    assert_eq!(
+        write_error::<Color>(&registry, json!("#ffffff")),
+        "expected an array of 4 numbers"
+    );
+}
+
 #[derive(Reflect, Default, Debug, PartialEq, Clone, serde::Serialize, serde::Deserialize)]
 #[reflect(opaque, Default)]
 struct Secret(u32);
@@ -238,7 +272,7 @@ fn a_nested_struct_walks_structs_enums_and_lists_and_marks_opaque_leaves() {
             "maybe": { "Some": { "0": 4 } },
             "never": "None",
             "secret": { "opaque": std::any::type_name::<Secret>() },
-            "tint": { "opaque": "concerto_color::Color" },
+            "tint": [1.0, 1.0, 1.0, 1.0],
         })
     );
 }

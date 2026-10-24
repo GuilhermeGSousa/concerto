@@ -1,5 +1,6 @@
 use std::any::{Any, TypeId};
 
+use concerto_color::Color;
 use glam::{Quat, Vec2, Vec3, Vec4};
 use serde_json::{Map, Number, Value};
 
@@ -421,3 +422,14 @@ macro_rules! json_vectors {
 }
 
 json_vectors!(Vec2: 2, Vec3: 3, Vec4: 4, Quat: 4);
+
+impl JsonLeaf for Color {
+    /// The linear components `[r, g, b, a]`; reading them back gives a linear color.
+    fn to_json(&self) -> Value {
+        components_to_json(&self.to_array())
+    }
+
+    fn from_json(value: &Value) -> Result<Self, String> {
+        components_from_json::<4>(value).map(|[r, g, b, a]| Color::rgba(r, g, b, a))
+    }
+}

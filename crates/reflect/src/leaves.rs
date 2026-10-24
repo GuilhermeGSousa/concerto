@@ -57,5 +57,5 @@ macro_rules! json_leaves {
 
 json_leaves!(
     bool, u8, u16, u32, u64, usize, i8, i16, i32, i64, isize, f32, f64, String, Vec2, Vec3, Vec4,
-    Quat,
+    Quat, Color,
 );
