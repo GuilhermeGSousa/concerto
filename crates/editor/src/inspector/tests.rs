@@ -419,7 +419,7 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
         .1;
     let commit = PropertyCommit::new::<Vec3, numeric::NumericFields>(
         row,
-        numeric::NumericEdit {
+        numeric::NumericEdit::Slot {
             slot: 0,
             number: 5.0,
         },
@@ -1171,7 +1171,7 @@ fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
         .unwrap()
         .push::<Vec3, numeric::NumericFields>(
             &row,
-            numeric::NumericEdit {
+            numeric::NumericEdit::Slot {
                 slot: 0,
                 number: 5.0,
             },
@@ -1224,7 +1224,7 @@ fn a_commit_still_queued_when_a_replacement_is_ready_refuses_it_and_is_sent() {
         .unwrap()
         .push::<Vec3, numeric::NumericFields>(
             &row,
-            numeric::NumericEdit {
+            numeric::NumericEdit::Slot {
                 slot: 0,
                 number: 5.0,
             },

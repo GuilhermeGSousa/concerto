@@ -433,9 +433,26 @@ fn recipe(app: &mut App) {
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
 the widget registry and sends it to the scene, where the tools write the value.
 
+An edit is the widget's own type, so a value alone cannot pass through it.
+`PropertyEditor::edit_to(&value)` returns the edit that sets the field to
+`value`; it still goes through `apply`, so validation holds. The built-in
+editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` implement it; `Quat` goes
+through the widget's XYZ degrees, so it comes back normalized and equal up to
+rounding. It defaults to `None`, which says the editor offers no value edit. A
+custom editor opts in by implementing it:
+
+```rust,ignore
+fn edit_to(&self, value: &Setting) -> Option<SettingEdit> {
+    Some(SettingEdit::Set {
+        title: value.title.clone(),
+        enabled: value.enabled,
+    })
+}
+```
+
 See the [complete custom widget example](examples/custom_property.rs). It
 includes both registrations, a non-Clone domain type, click handling, snapshot
-refresh, and validation. Run its headless demonstration with:
+refresh, validation, and `edit_to`. Run its headless demonstration with:
 
 ```sh
 cargo run -p concerto-editor --example custom_property

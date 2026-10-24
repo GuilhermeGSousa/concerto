@@ -42,6 +42,9 @@ pub trait ErasedEditor: Send + Sync {
         theme: &UITheme,
     ) -> Result<(), EditError>;
     fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError>;
+    /// The erased edit that [`Self::apply`] takes to set the field to `value`, or `None` when the editor offers no value edit.
+    fn edit_to(&self, value: &dyn Reflect)
+    -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError>;
     fn follows_snapshot(&self) -> bool;
 }
 
@@ -76,6 +79,18 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
             .downcast_ref::<E::Edit>()
             .ok_or(EditError::TypeMismatch)?;
         self.editor.apply(value, edit)
+    }
+    fn edit_to(
+        &self,
+        value: &dyn Reflect,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError> {
+        let value = (value as &dyn Any)
+            .downcast_ref::<T>()
+            .ok_or(EditError::TypeMismatch)?;
+        Ok(self
+            .editor
+            .edit_to(value)
+            .map(|edit| Arc::new(edit) as Arc<dyn Any + Send + Sync>))
     }
     fn follows_snapshot(&self) -> bool {
         self.editor.follows_snapshot()
@@ -445,6 +460,65 @@ mod tests {
     }
 
     #[test]
+    fn an_erased_value_edit_applies_through_its_adapter() {
+        let registry = InspectorRegistry::default();
+        let adapter = &registry.editor(TypeId::of::<Vec3>()).unwrap().adapter;
+        let target = Vec3::new(1.0, -2.0, 3.5);
+        let edit = adapter
+            .edit_to(&target)
+            .unwrap()
+            .expect("vectors offer a value edit");
+        let mut value = Vec3::ZERO;
+        adapter.apply(&mut value, edit.as_ref()).unwrap();
+        assert_eq!(value, target);
+        assert_eq!(
+            adapter.edit_to(&1.0_f32).err(),
+            Some(EditError::TypeMismatch)
+        );
+    }
+
+    #[test]
+    fn an_adapter_without_a_value_edit_offers_none() {
+        struct Label;
+        impl PropertyEditor<f32> for Label {
+            type Snapshot = f32;
+            type Edit = f32;
+            fn snapshot(&self, value: &f32) -> f32 {
+                *value
+            }
+            fn build(&self, _: &mut CommandQueue, _: Entity, _: &f32, _: &UITheme) {}
+            fn apply(&self, value: &mut f32, edit: &f32) -> Result<(), EditError> {
+                *value = *edit;
+                Ok(())
+            }
+        }
+        let mut registry = InspectorRegistry::default();
+        registry.register_property_editor::<f32, _>(Label);
+        let adapter = &registry.editor(TypeId::of::<f32>()).unwrap().adapter;
+        assert!(adapter.edit_to(&2.0_f32).unwrap().is_none());
+    }
+
+    #[test]
+    fn an_erased_value_edit_is_sent_to_the_scene() {
+        let mut s = sending();
+        let row = s.row();
+        let edit =
+            s.f.world
+                .get_resource::<InspectorRegistry>()
+                .unwrap()
+                .editor(TypeId::of::<Vec3>())
+                .unwrap()
+                .adapter
+                .edit_to(&Vec3::new(4.0, 5.0, 6.0))
+                .unwrap()
+                .unwrap();
+        s.commits().0.push(PropertyCommit { row, edit });
+        s.send();
+        assert_eq!(s.translation(), Vec3::new(4.0, 5.0, 6.0));
+        assert_eq!(s.edits(), 1);
+    }
+
+    #[test]
     fn queued_slot_edits_compose_against_the_live_vector() {
         let mut s = sending();
         let row = s.row();
@@ -452,7 +526,7 @@ mod tests {
         queue
             .push::<Vec3, NumericFields>(
                 &row,
-                NumericEdit {
+                NumericEdit::Slot {
                     slot: 0,
                     number: 4.0,
                 },
@@ -461,7 +535,7 @@ mod tests {
         queue
             .push::<Vec3, NumericFields>(
                 &row,
-                NumericEdit {
+                NumericEdit::Slot {
                     slot: 1,
                     number: 5.0,
                 },
@@ -487,7 +561,7 @@ mod tests {
 
         s.commits().0.push(PropertyCommit {
             row: stale,
-            edit: Arc::new(NumericEdit {
+            edit: Arc::new(NumericEdit::Slot {
                 slot: 0,
                 number: 1.0,
             }),
@@ -500,7 +574,7 @@ mod tests {
         s.commits()
             .push::<Vec3, NumericFields>(
                 &row,
-                NumericEdit {
+                NumericEdit::Slot {
                     slot: 0,
                     number: 4.0,
                 },
@@ -525,7 +599,7 @@ mod tests {
         s.commits()
             .push::<Vec3, NumericFields>(
                 &row,
-                NumericEdit {
+                NumericEdit::Slot {
                     slot: 0,
                     number: 4.0,
                 },
@@ -561,7 +635,7 @@ mod tests {
         assert!(matches!(
             PropertyCommit::new::<f32, NumericFields>(
                 &row,
-                NumericEdit {
+                NumericEdit::Slot {
                     slot: 0,
                     number: 9.0
                 }
@@ -604,7 +678,7 @@ mod tests {
         let edit = || {
             PropertyCommit::new::<Vec3, NumericFields>(
                 &old,
-                NumericEdit {
+                NumericEdit::Slot {
                     slot: 0,
                     number: 9.0,
                 },
@@ -630,7 +704,7 @@ mod tests {
         let registry = InspectorRegistry::default();
         let edit = PropertyCommit::new::<Vec3, NumericFields>(
             &row_in(&registry, &scene, entity),
-            NumericEdit {
+            NumericEdit::Slot {
                 slot: 0,
                 number: 9.0,
             },
@@ -651,7 +725,7 @@ mod tests {
     ) -> crate::tools::edits::CommitProperty {
         let commit = PropertyCommit {
             row,
-            edit: Arc::new(NumericEdit { slot: 0, number }),
+            edit: Arc::new(NumericEdit::Slot { slot: 0, number }),
         };
         checked(registry, Tick::default(), commit).unwrap()
     }
@@ -741,7 +815,7 @@ mod tests {
         let registry = InspectorRegistry::default();
         let edit = PropertyCommit::new::<Vec3, NumericFields>(
             &row_in(&registry, &scene, entity),
-            NumericEdit {
+            NumericEdit::Slot {
                 slot: 0,
                 number: 3.0,
             },

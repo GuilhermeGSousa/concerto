@@ -12,8 +12,8 @@ use concerto_ecs::{
 };
 use concerto_editor::hosted::{EditWorld, Hosted, HostedEventsAppExt, trigger_on};
 use concerto_editor::inspector::{
-    ComponentEdit, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits, PropertyEditor,
-    PropertyRow, PropertyRowValue,
+    ComponentEdit, EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits,
+    PropertyEditor, PropertyRow, PropertyRowValue,
 };
 use concerto_editor::tools::{
     edits::EditComponent,
@@ -277,6 +277,39 @@ fn commits_use_captured_entity_and_live_value_and_validate_before_mutation() {
     w.send(commit(&row, SettingEdit::Rename("Lighting".into())));
     assert_eq!(w.container(w.a), Some(("Lighting".into(), false)));
     assert_eq!(w.edits(), 3);
+}
+
+#[test]
+fn a_value_edit_sets_the_whole_setting_and_is_still_validated() {
+    let mut field = setting();
+    let lighting = SettingEditor
+        .edit_to(&Setting {
+            title: "Lighting".into(),
+            enabled: true,
+        })
+        .expect("the setting offers a value edit");
+    let blank = SettingEditor
+        .edit_to(&Setting {
+            title: " ".into(),
+            enabled: false,
+        })
+        .expect("the setting offers a value edit");
+    assert_eq!(
+        SettingEditor.apply(&mut field, &blank),
+        Err(EditError::Rejected)
+    );
+    assert_eq!((field.title.as_str(), field.enabled), ("Shadows", false));
+    SettingEditor.apply(&mut field, &lighting).unwrap();
+    assert_eq!((field.title.as_str(), field.enabled), ("Lighting", true));
+
+    let mut w = inspecting();
+    w.select(w.a);
+    let row = w.setting_row().1;
+    w.send(commit(&row, blank));
+    assert_eq!(w.container(w.a), Some(("Shadows".into(), false)));
+    w.send(commit(&row, lighting));
+    assert_eq!(w.container(w.a), Some(("Lighting".into(), true)));
+    assert_eq!(w.edits(), 1);
 }
 
 #[test]
