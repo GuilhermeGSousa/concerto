@@ -362,7 +362,16 @@ edit signal: `EntityEdited { edit, result }`, whose result is the entity a
 create or duplicate made; `PropertyCommitted { row, result }`; and
 `ComponentEdited { edit, result }`. A refused edit's result is the text its
 `SceneStatus` carries, so a refused property or component edit also shows in
-Chatter. An outcome written by a signal reaches the editor a frame later, as
+Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
+the shape `inspect` reports, into the field at `path` of a component, or into
+the whole component when `path` is empty, with no inspector adapter involved,
+and reports `PropertyCommitted` (its row has no editor) and `SceneEdited` as a
+property commit does. Fields the JSON leaves out keep their values. Entity
+references are live entity ids such as `42v3`, asset handles are asset ids and
+load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors
+are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
+value that does not decode, and an entity or component that is not there, and
+a refused set leaves the component as it was. An outcome written by a signal reaches the editor a frame later, as
 any forwarded event does. `HostedAppEvents<E>` is the
 system input that reads `E` from every hosted `App`, keeping one cursor per
 hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
