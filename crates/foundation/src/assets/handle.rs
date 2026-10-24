@@ -1,10 +1,20 @@
-use std::{fmt::Debug, marker::PhantomData, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    fmt::Debug,
+    marker::PhantomData,
+    sync::Arc,
+};
 
 use super::{asset_server::AssetServer, Asset, AssetId, LoadableAsset};
-use concerto_ecs::{reflect::ReflectSceneLeaf, Event};
+use concerto_ecs::{
+    component::scene::LiveEntityRefs,
+    reflect::{AppTypeRegistry, ReflectSceneLeaf},
+    Event, World,
+};
 use concerto_reflect::{
-    decode_leaf, encode_leaf, FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, Reflect,
-    ReflectJson, ReflectMut, ReflectRef, TypeRegistration,
+    decode_leaf, encode_leaf, FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, LeafHook,
+    Reflect, ReflectJson, ReflectMut, ReflectRef, TypeData, TypeRegistration,
 };
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -151,6 +161,7 @@ impl<A: LoadableAsset> GetTypeRegistration for AssetHandle<A> {
         let mut registration = TypeRegistration::of::<Self>();
         registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
         registration.insert(<ReflectJson as FromType<Self>>::from_type());
+        registration.insert(<ReflectAssetHandle as FromType<Self>>::from_type());
         registration
     }
 }
@@ -174,16 +185,7 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
     fn from_type() -> Self {
         Self {
             spawn: |leaf, bytes, spawn| {
-                let handle = (leaf as &mut dyn std::any::Any)
-                    .downcast_mut::<AssetHandle<A>>()
-                    .ok_or_else(|| LeafError("not this asset's handle".into()))?;
-                let mut id = AssetId::nil();
-                decode_leaf(&mut id, bytes)?;
-                *handle = match spawn.world.get_resource::<AssetServer>() {
-                    Some(server) if !id.is_nil() => server.load::<A>(id),
-                    _ => AssetHandle::weak(id),
-                };
-                Ok(())
+                load_handle::<A>(leaf, bytes, spawn.world.get_resource::<AssetServer>())
             },
             capture: |leaf, capture| {
                 let handle = (leaf as &dyn std::any::Any)
@@ -193,6 +195,83 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
                 encode_leaf(&handle.id())
             },
         }
+    }
+}
+
+/// Sets a handle leaf from its stored id, loading the asset through the server when there is one.
+#[derive(Clone, Copy)]
+pub struct ReflectAssetHandle {
+    pub load: fn(&mut dyn Reflect, &[u8], Option<&AssetServer>) -> Result<(), LeafError>,
+}
+
+impl TypeData for ReflectAssetHandle {}
+
+impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
+    fn from_type() -> Self {
+        Self {
+            load: load_handle::<A>,
+        }
+    }
+}
+
+fn load_handle<A: LoadableAsset>(
+    leaf: &mut dyn Reflect,
+    bytes: &[u8],
+    server: Option<&AssetServer>,
+) -> Result<(), LeafError> {
+    let handle = (leaf as &mut dyn Any)
+        .downcast_mut::<AssetHandle<A>>()
+        .ok_or_else(|| LeafError("not this asset's handle".into()))?;
+    let mut id = AssetId::nil();
+    decode_leaf(&mut id, bytes)?;
+    *handle = match server {
+        Some(server) if !id.is_nil() => server.load::<A>(id),
+        _ => AssetHandle::weak(id),
+    };
+    Ok(())
+}
+
+/// Writes values into a live world: entity references as [`LiveEntityRefs`] stores them, and asset handles loaded through the world's [`AssetServer`] as a scene spawns them.
+pub struct LiveLeaves {
+    server: Option<AssetServer>,
+    handles: HashMap<TypeId, ReflectAssetHandle>,
+}
+
+impl LiveLeaves {
+    /// Takes the handle types registered in `world` and its asset server, if it has one.
+    pub fn new(world: &World) -> Self {
+        let handles = world
+            .get_resource::<AppTypeRegistry>()
+            .map(|registry| {
+                registry
+                    .iter()
+                    .filter_map(|registration| {
+                        Some((
+                            registration.type_id(),
+                            *registration.data::<ReflectAssetHandle>()?,
+                        ))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            server: world.get_resource::<AssetServer>().cloned(),
+            handles,
+        }
+    }
+}
+
+impl LeafHook for LiveLeaves {
+    fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
+        LiveEntityRefs.encode(leaf)
+    }
+
+    fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>> {
+        if let Some(decoded) = LiveEntityRefs.decode(leaf, bytes) {
+            return Some(decoded);
+        }
+        let handle = self.handles.get(&(&*leaf as &dyn Any).type_id())?;
+        Some((handle.load)(leaf, bytes, self.server.as_ref()))
     }
 }
 

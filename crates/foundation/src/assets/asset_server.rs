@@ -659,6 +659,77 @@ mod tests {
     }
 
     #[test]
+    fn a_handle_written_through_live_leaves_loads_through_the_server() {
+        use crate::assets::handle::LiveLeaves;
+        use concerto_ecs::reflect::AppTypeRegistry;
+        use std::any::TypeId;
+
+        let dir = temp_root("live-handle");
+        let store = AssetStore::<FixtureAsset>::new();
+        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        server.register_asset::<FixtureAsset>(&store);
+        let mut world = World::new();
+        world.insert_resource(server.clone());
+        world.register_type::<AssetHandle<FixtureAsset>>();
+        let id = AssetId::new();
+        let mut hook = LiveLeaves::new(&world);
+        let stored = concerto_reflect::json_to_value_with(
+            &serde_json::Value::String(id.simple_hex()),
+            TypeId::of::<AssetHandle<FixtureAsset>>(),
+            world.get_resource::<AppTypeRegistry>().unwrap(),
+            &mut hook,
+        )
+        .unwrap();
+
+        let mut handle = AssetHandle::<FixtureAsset>::default();
+        let warnings = concerto_reflect::apply_value_with(&mut handle, &stored, &mut hook);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(matches!(handle, AssetHandle::Strong(..)));
+        assert_eq!(handle.id(), id);
+        assert!(server.data.pending_tasks.read().unwrap().contains_key(&id));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn live_leaves_keep_entity_references_live_and_handles_weak_without_a_server() {
+        use crate::assets::handle::LiveLeaves;
+        use concerto_ecs::{component::scene::SceneEntityRef, reflect::AppTypeRegistry};
+        use std::any::TypeId;
+
+        let mut world = World::new();
+        world.register_type::<AssetHandle<FixtureAsset>>();
+        let entity = world.spawn(());
+        let id = AssetId::new();
+        let mut hook = LiveLeaves::new(&world);
+        let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+        let reference = concerto_reflect::json_to_value_with(
+            &serde_json::Value::String(entity.to_id_string()),
+            TypeId::of::<SceneEntityRef>(),
+            registry,
+            &mut hook,
+        )
+        .unwrap();
+        let asset = concerto_reflect::json_to_value_with(
+            &serde_json::Value::String(id.simple_hex()),
+            TypeId::of::<AssetHandle<FixtureAsset>>(),
+            registry,
+            &mut hook,
+        )
+        .unwrap();
+
+        let mut written = SceneEntityRef::default();
+        let mut handle = AssetHandle::<FixtureAsset>::default();
+        assert!(concerto_reflect::apply_value_with(&mut written, &reference, &mut hook).is_empty());
+        assert!(concerto_reflect::apply_value_with(&mut handle, &asset, &mut hook).is_empty());
+
+        assert_eq!(written, SceneEntityRef::Entity(entity));
+        assert!(matches!(handle, AssetHandle::Weak(..)));
+        assert_eq!(handle.id(), id);
+    }
+
+    #[test]
     fn load_fails_for_an_unregistered_id() {
         let dir = temp_root("load-by-id-miss");
         let store = AssetStore::<FixtureAsset>::new();
