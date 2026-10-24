@@ -2,11 +2,14 @@ use std::any::{Any, TypeId};
 
 use concerto_ecs::{
     Component, Entity, World,
-    component::scene::SceneEntityRef,
+    component::scene::{LiveEntityRefs, SceneEntityRef},
     reflect::{AppTypeRegistry, ReflectComponent},
     system::input::ComponentMetadata,
 };
-use concerto_reflect::{Reflect, ReflectDefault, ReflectJson, TypeRegistry, to_json};
+use concerto_reflect::{
+    Reflect, ReflectDefault, ReflectJson, TypeRegistry, apply_value, apply_value_with,
+    json_to_value, json_to_value_with, to_json,
+};
 use serde_json::{Value, json};
 
 #[derive(Component, Reflect, Default)]
@@ -86,6 +89,69 @@ fn an_entity_reference_does_not_decode_from_a_malformed_id() {
             "{value} must not decode"
         );
     }
+}
+
+#[derive(Component, Reflect, Default, Debug, PartialEq)]
+#[reflect(Component, Default)]
+struct Rope {
+    ends: Vec<SceneEntityRef>,
+}
+
+fn rope_world() -> World {
+    let mut world = World::new();
+    world.register_type::<Rope>();
+    world
+}
+
+#[test]
+fn an_unresolved_entity_reference_written_from_json_applies_as_its_index() {
+    let world = rope_world();
+    let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+    let value = Rope {
+        ends: vec![SceneEntityRef::Index(7)],
+    };
+
+    let stored = json_to_value(&to_json(&value, registry), TypeId::of::<Rope>(), registry).unwrap();
+    let mut loaded = Rope::default();
+    assert!(apply_value(&mut loaded, &stored).is_empty());
+    assert_eq!(loaded, value);
+}
+
+#[test]
+fn a_resolved_entity_reference_is_not_written_from_json_without_live_references() {
+    let world = rope_world();
+    let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+
+    assert_eq!(
+        json_to_value(&json!({ "ends": ["42v3"] }), TypeId::of::<Rope>(), registry),
+        Err(
+            "ends[0]: a resolved scene entity can only be stored while its scene is captured"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn live_references_write_resolved_and_unresolved_entity_references_from_json() {
+    let world = rope_world();
+    let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+    let value = Rope {
+        ends: vec![
+            SceneEntityRef::Entity(Entity::parse_id("42v3").unwrap()),
+            SceneEntityRef::Index(7),
+        ],
+    };
+
+    let stored = json_to_value_with(
+        &to_json(&value, registry),
+        TypeId::of::<Rope>(),
+        registry,
+        &mut LiveEntityRefs,
+    )
+    .unwrap();
+    let mut loaded = Rope::default();
+    assert!(apply_value_with(&mut loaded, &stored, &mut LiveEntityRefs).is_empty());
+    assert_eq!(loaded, value);
 }
 
 #[test]

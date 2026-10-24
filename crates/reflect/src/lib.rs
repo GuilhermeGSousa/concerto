@@ -19,7 +19,7 @@ use std::any::Any;
 /// struct HasOpaque { inner: Opaque }
 /// ```
 pub use concerto_reflect_macros::Reflect;
-pub use json::{JsonLeaf, ReflectJson, to_json};
+pub use json::{JsonLeaf, ReflectJson, json_to_value, json_to_value_with, to_json};
 pub use kinds::{
     Enum, Fields, Leaf, LeafError, List, ReflectMut, ReflectRef, decode_leaf, encode_leaf,
 };

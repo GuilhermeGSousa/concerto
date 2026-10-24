@@ -264,4 +264,39 @@ mod tests {
             assert!(handle_from_json(&value).is_err(), "{value} must not decode");
         }
     }
+
+    fn handle_registry() -> concerto_reflect::TypeRegistry {
+        let mut registry = concerto_reflect::TypeRegistry::default();
+        registry.register::<AssetHandle<Note>>();
+        registry
+    }
+
+    #[test]
+    fn a_handle_written_back_from_its_json_names_the_same_asset() {
+        let registry = handle_registry();
+        let id = AssetId::new();
+        let json = concerto_reflect::to_json(&AssetHandle::<Note>::weak(id), &registry);
+
+        let stored = concerto_reflect::json_to_value(
+            &json,
+            std::any::TypeId::of::<AssetHandle<Note>>(),
+            &registry,
+        )
+        .unwrap();
+        let mut loaded = AssetHandle::<Note>::default();
+        assert!(concerto_reflect::apply_value(&mut loaded, &stored).is_empty());
+        assert_eq!(loaded.id(), id);
+    }
+
+    #[test]
+    fn a_handle_written_from_anything_but_an_asset_id_says_what_it_expected() {
+        assert_eq!(
+            concerto_reflect::json_to_value(
+                &serde_json::json!(7),
+                std::any::TypeId::of::<AssetHandle<Note>>(),
+                &handle_registry(),
+            ),
+            Err("expected an asset id of 32 hex digits".to_owned())
+        );
+    }
 }

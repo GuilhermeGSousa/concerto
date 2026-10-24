@@ -20,7 +20,7 @@ pub trait LeafHook {
     fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>>;
 }
 
-struct NoHook;
+pub(crate) struct NoHook;
 
 impl LeafHook for NoHook {
     fn encode(&mut self, _: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
@@ -102,10 +102,10 @@ pub fn apply_value_with(
 }
 
 #[derive(Default)]
-struct Path(Vec<String>);
+pub(crate) struct Path(Vec<String>);
 
 impl Path {
-    fn field(&mut self, name: &str) {
+    pub(crate) fn field(&mut self, name: &str) {
         self.0.push(if self.0.is_empty() {
             name.to_owned()
         } else {
@@ -113,15 +113,15 @@ impl Path {
         });
     }
 
-    fn index(&mut self, index: usize) {
+    pub(crate) fn index(&mut self, index: usize) {
         self.0.push(format!("[{index}]"));
     }
 
-    fn pop(&mut self) {
+    pub(crate) fn pop(&mut self) {
         self.0.pop();
     }
 
-    fn render(&self) -> String {
+    pub(crate) fn render(&self) -> String {
         self.0.concat()
     }
 }

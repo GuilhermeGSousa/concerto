@@ -1,9 +1,13 @@
-use std::any::Any;
+use std::any::{Any, TypeId};
 
 use glam::{Quat, Vec2, Vec3, Vec4};
 use serde_json::{Map, Number, Value};
 
-use crate::{Fields, FromType, Reflect, ReflectRef, TypeData, TypeRegistry};
+use crate::{
+    Enum, Fields, FromType, LeafError, LeafHook, List, Reflect, ReflectDefault, ReflectMut,
+    ReflectRef, ReflectedValue, TypeData, TypeRegistry,
+    value::{NoHook, Path},
+};
 
 /// A leaf type's JSON form, from which its [`ReflectJson`] is built.
 pub trait JsonLeaf: Reflect + Sized {
@@ -79,6 +83,208 @@ fn fields_to_json(fields: &dyn Fields, registry: &TypeRegistry) -> Value {
         }
     }
     Value::Object(object)
+}
+
+/// Builds the stored value of the type `type_id` from JSON shaped as [`to_json`] writes it, leaving out fields it omits or marks opaque.
+pub fn json_to_value(
+    value: &Value,
+    type_id: TypeId,
+    registry: &TypeRegistry,
+) -> Result<ReflectedValue, String> {
+    json_to_value_with(value, type_id, registry, &mut NoHook)
+}
+
+/// [`json_to_value`], letting `hook` encode any leaf first.
+pub fn json_to_value_with(
+    value: &Value,
+    type_id: TypeId,
+    registry: &TypeRegistry,
+    hook: &mut dyn LeafHook,
+) -> Result<ReflectedValue, String> {
+    let mut decoder = Decoder {
+        registry,
+        hook,
+        path: Path::default(),
+    };
+    if let Some(codec) = registry.get_type_data::<ReflectJson>(type_id) {
+        return decoder.leaf(codec, value);
+    }
+    let Some(registration) = registry.get(type_id) else {
+        return Err("the type is not registered, so JSON cannot build it".to_owned());
+    };
+    let Some(default) = registration.data::<ReflectDefault>() else {
+        return Err(format!(
+            "{} has no JSON form and no registered Default, so JSON cannot build it",
+            registration.type_path()
+        ));
+    };
+    let mut scratch = default.default();
+    decoder.value(value, scratch.as_mut())
+}
+
+struct Decoder<'a> {
+    registry: &'a TypeRegistry,
+    hook: &'a mut dyn LeafHook,
+    path: Path,
+}
+
+impl Decoder<'_> {
+    fn error(&self, reason: impl std::fmt::Display) -> String {
+        let path = self.path.render();
+        if path.is_empty() {
+            reason.to_string()
+        } else {
+            format!("{path}: {reason}")
+        }
+    }
+
+    fn codec(&self, value: &dyn Reflect) -> Option<&ReflectJson> {
+        self.registry
+            .get_type_data::<ReflectJson>((value as &dyn Any).type_id())
+    }
+
+    fn value(
+        &mut self,
+        value: &Value,
+        scratch: &mut dyn Reflect,
+    ) -> Result<ReflectedValue, String> {
+        if matches!(scratch.reflect_ref(), ReflectRef::Leaf(_)) {
+            let Some(codec) = self.codec(scratch).copied() else {
+                return Err(self.error(format!(
+                    "{} has no JSON form, so it cannot be written",
+                    scratch.type_name()
+                )));
+            };
+            return self.leaf(&codec, value);
+        }
+        match scratch.reflect_mut() {
+            ReflectMut::Struct(fields) => self.fields(value, fields).map(ReflectedValue::Struct),
+            ReflectMut::Enum(variant) => self.variant(value, variant),
+            ReflectMut::List(list) => self.list(value, list).map(ReflectedValue::List),
+            ReflectMut::Leaf(_) => unreachable!("checked not to be a leaf"),
+        }
+    }
+
+    fn leaf(&mut self, codec: &ReflectJson, value: &Value) -> Result<ReflectedValue, String> {
+        let decoded = (codec.from_json)(value).map_err(|reason| self.error(reason))?;
+        let encoded = match decoded.reflect_ref() {
+            ReflectRef::Leaf(leaf) => self
+                .hook
+                .encode(decoded.as_ref())
+                .unwrap_or_else(|| leaf.encode()),
+            _ => Err(LeafError("its JSON codec does not build a leaf".into())),
+        };
+        encoded
+            .map(ReflectedValue::Leaf)
+            .map_err(|error| self.error(error))
+    }
+
+    fn fields(
+        &mut self,
+        value: &Value,
+        fields: &mut dyn Fields,
+    ) -> Result<Vec<(String, ReflectedValue)>, String> {
+        let Some(object) = value.as_object() else {
+            return Err(self.error(format!(
+                "expected an object with the fields {}",
+                field_names(fields)
+            )));
+        };
+        let mut stored = Vec::with_capacity(object.len());
+        for (name, value) in object {
+            self.path.field(name);
+            let field = self.field(name, value, fields);
+            self.path.pop();
+            if let Some(field) = field? {
+                stored.push((name.clone(), field));
+            }
+        }
+        Ok(stored)
+    }
+
+    fn field(
+        &mut self,
+        name: &str,
+        value: &Value,
+        fields: &mut dyn Fields,
+    ) -> Result<Option<ReflectedValue>, String> {
+        let Some(index) = fields.index_of(name) else {
+            return Err(self.error(format!(
+                "no such field; the fields are {}",
+                field_names(fields)
+            )));
+        };
+        let Some(field) = fields.field_at_mut(index) else {
+            return Err(self.error("the field cannot be written"));
+        };
+        if self.is_opaque_marker(value, field) {
+            return Ok(None);
+        }
+        self.value(value, field).map(Some)
+    }
+
+    fn is_opaque_marker(&self, value: &Value, field: &dyn Reflect) -> bool {
+        matches!(field.reflect_ref(), ReflectRef::Leaf(_))
+            && self.codec(field).is_none()
+            && value.as_object().is_some_and(|object| {
+                object.len() == 1
+                    && object.get("opaque").and_then(Value::as_str) == Some(field.type_name())
+            })
+    }
+
+    fn variant(&mut self, value: &Value, variant: &mut dyn Enum) -> Result<ReflectedValue, String> {
+        let named = match value {
+            Value::String(name) => Some((name, None)),
+            Value::Object(object) if object.len() == 1 => object
+                .iter()
+                .next()
+                .map(|(name, fields)| (name, Some(fields))),
+            _ => None,
+        };
+        let Some((name, fields)) = named else {
+            return Err(
+                self.error("expected a variant name, or an object with one key naming the variant")
+            );
+        };
+        if variant.variant_name() != name && !variant.set_variant(name) {
+            return Err(self.error(format!("no variant '{name}'")));
+        }
+        let fields = match fields {
+            Some(fields) => self.fields(fields, variant)?,
+            None => Vec::new(),
+        };
+        Ok(ReflectedValue::Variant {
+            name: name.clone(),
+            fields,
+        })
+    }
+
+    fn list(&mut self, value: &Value, list: &mut dyn List) -> Result<Vec<ReflectedValue>, String> {
+        let Some(elements) = value.as_array() else {
+            return Err(self.error("expected an array"));
+        };
+        let mut stored = Vec::with_capacity(elements.len());
+        for (index, element) in elements.iter().enumerate() {
+            if list.len() <= index {
+                list.push_default();
+            }
+            self.path.index(index);
+            let decoded = match list.get_mut(index) {
+                Some(scratch) => self.value(element, scratch),
+                None => Err(self.error("the list cannot grow to hold this element")),
+            };
+            self.path.pop();
+            stored.push(decoded?);
+        }
+        Ok(stored)
+    }
+}
+
+fn field_names(fields: &dyn Fields) -> String {
+    (0..fields.field_len())
+        .filter_map(|index| fields.name_at(index))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl JsonLeaf for bool {
