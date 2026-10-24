@@ -32,7 +32,14 @@ pub enum EditError {
 
 impl std::fmt::Display for EditError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{self:?}")
+        f.write_str(match self {
+            Self::Rejected => "the value was refused",
+            Self::TypeMismatch => "the value has the wrong type",
+            Self::NotFound => "the property was not found",
+            Self::StaleEditor => "its editor changed since it was read",
+            Self::MissingTarget => "the entity or its component no longer exists",
+            Self::UnregisteredComponent => "the component type is not registered",
+        })
     }
 }
 impl std::error::Error for EditError {}
@@ -174,10 +181,15 @@ fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditE
 }
 
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
+    let row = &on.signal().row;
+    let property = std::iter::once(component_name(world, row.component))
+        .chain(row.path.segments().iter().copied())
+        .collect::<Vec<_>>()
+        .join(".");
     let result = on
         .signal()
         .apply(world)
-        .map_err(|error| format!("Property commit dropped: {error}"));
+        .map_err(|error| format!("Set {property} failed: {error}"));
     report(world, &result);
     write(
         world,
@@ -190,10 +202,32 @@ pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
 
 pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
     let edit = on.signal().0;
-    let result = apply_component_edit(world, edit)
-        .map_err(|error| format!("Component edit {edit:?} dropped: {error}"));
+    let (verb, component) = match edit {
+        ComponentEdit::Add { component, .. } => ("Add", component),
+        ComponentEdit::Remove { component, .. } => ("Remove", component),
+    };
+    let name = component_name(world, component);
+    let result = apply_component_edit(world, edit).map_err(|error| {
+        let reason = match (edit, error) {
+            (ComponentEdit::Add { .. }, EditError::Rejected) => {
+                "it is already there, or has no default value".to_owned()
+            }
+            (ComponentEdit::Remove { .. }, EditError::NotFound) => {
+                "the entity does not have it".to_owned()
+            }
+            (_, error) => error.to_string(),
+        };
+        format!("{verb} {name} failed: {reason}")
+    });
     report(world, &result);
     write(world, ComponentEdited { edit, result });
+}
+
+fn component_name(world: &World, component: TypeId) -> &'static str {
+    world
+        .get_resource::<AppTypeRegistry>()
+        .and_then(|registry| registry.get(component))
+        .map_or("the component", |registration| registration.short_name())
 }
 
 fn report(world: &mut World, result: &Result<(), String>) {
@@ -394,6 +428,20 @@ mod tests {
             .collect()
     }
 
+    #[test]
+    fn a_refused_component_removal_says_what_was_missing() {
+        let (mut app, entity) = fixture();
+
+        app.main_mut()
+            .world_mut()
+            .trigger(EditComponent(remove::<Gain>(entity)));
+
+        assert_eq!(
+            statuses(&app),
+            ["Remove Gain failed: the entity does not have it"]
+        );
+    }
+
     fn gain(app: &mut App, entity: Entity) -> f32 {
         app.main_mut()
             .world_mut()
@@ -425,7 +473,10 @@ mod tests {
         app.main_mut().world_mut().trigger(gain_to(entity, -1.0));
 
         assert_eq!(gain(&mut app, entity), 0.0);
-        assert_eq!(statuses(&app), ["Property commit dropped: Rejected"]);
+        assert_eq!(
+            statuses(&app),
+            ["Set Gain.amount failed: the value was refused"]
+        );
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].row.entity, entity);
@@ -444,11 +495,9 @@ mod tests {
         }
 
         let statuses = statuses(&app);
-        assert_eq!(statuses.len(), 1);
-        assert!(
-            statuses[0].starts_with("Component edit Add"),
-            "{}",
-            statuses[0]
+        assert_eq!(
+            statuses,
+            ["Add Gain failed: it is already there, or has no default value"]
         );
         let outcomes: Vec<_> = written::<ComponentEdited>(&app)
             .into_iter()
