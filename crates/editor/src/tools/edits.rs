@@ -8,12 +8,16 @@ use concerto_app::{App, edit_time::AtEditTime};
 use concerto_ecs::{
     Component, Entity, Resource, World,
     component::Tick,
+    events::Event,
     reflect::{AppTypeRegistry, ReflectComponent},
     signal::{On, Signal},
 };
 use concerto_reflect::{PropertyPath, with_property_mut};
 
-use crate::{inspector::ErasedEditor, tools::scene::report_edit};
+use crate::{
+    inspector::ErasedEditor,
+    tools::scene::{SceneStatus, report_edit, write},
+};
 
 /// A rejected edit leaves the target unchanged.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +68,13 @@ pub struct CommitProperty {
 }
 
 impl Signal for CommitProperty {}
+
+/// What one `CommitProperty` did to the row it addressed, or the status text saying why it was refused.
+#[derive(Event, Clone)]
+pub struct PropertyCommitted {
+    pub row: PropertyRow,
+    pub result: Result<(), String>,
+}
 
 impl CommitProperty {
     /// Writes the value into the component the row addresses.
@@ -121,6 +132,13 @@ pub struct EditComponent(pub ComponentEdit);
 
 impl Signal for EditComponent {}
 
+/// What one `EditComponent` did, or the status text saying why it was refused.
+#[derive(Event, Clone)]
+pub struct ComponentEdited {
+    pub edit: ComponentEdit,
+    pub result: Result<(), String>,
+}
+
 /// Apply one structural edit to the live world.
 pub fn apply_component_edit(world: &mut World, edit: ComponentEdit) -> Result<(), EditError> {
     let (ComponentEdit::Add { entity, component } | ComponentEdit::Remove { entity, component }) =
@@ -156,21 +174,39 @@ fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditE
 }
 
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
-    match on.signal().apply(world) {
-        Ok(()) => report_edit(world),
-        Err(error) => log::warn!("Property commit dropped: {error}"),
-    }
+    let result = on
+        .signal()
+        .apply(world)
+        .map_err(|error| format!("Property commit dropped: {error}"));
+    report(world, &result);
+    write(
+        world,
+        PropertyCommitted {
+            row: on.signal().row.clone(),
+            result,
+        },
+    );
 }
 
 pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
-    match apply_component_edit(world, on.signal().0) {
+    let edit = on.signal().0;
+    let result = apply_component_edit(world, edit)
+        .map_err(|error| format!("Component edit {edit:?} dropped: {error}"));
+    report(world, &result);
+    write(world, ComponentEdited { edit, result });
+}
+
+fn report(world: &mut World, result: &Result<(), String>) {
+    match result {
         Ok(()) => report_edit(world),
-        Err(error) => log::warn!("Component edit {:?} dropped: {error}", on.signal().0),
+        Err(status) => write(world, SceneStatus(status.clone())),
     }
 }
 
 pub(crate) fn build(app: &mut App) {
-    app.add_listener(commit_property.at_edit_time())
+    app.register_event::<PropertyCommitted>()
+        .register_event::<ComponentEdited>()
+        .add_listener(commit_property.at_edit_time())
         .add_listener(edit_component.at_edit_time());
 }
 
@@ -181,8 +217,14 @@ mod tests {
         SceneEdited,
         testing::{tools_app, written},
     };
+    use crate::{
+        inspector::{InspectorRegistry, PropertyEditor},
+        tools::scene::SceneStatus,
+    };
+    use concerto_ecs::command::CommandQueue;
     use concerto_foundation::transform::Transform;
     use concerto_reflect::ReflectDefault;
+    use concerto_ui::theme::UITheme;
 
     #[derive(Component, concerto_reflect::Reflect, Default)]
     #[reflect(Component, Default)]
@@ -304,5 +346,120 @@ mod tests {
         world.insert(Lens { focal: 35.0 }, entity);
         assert_eq!(apply_component_edit(world, remove::<Lens>(entity)), Ok(()));
         assert!(world.get_component_for_entity::<Lens>(entity).is_none());
+    }
+
+    struct NonNegative;
+
+    impl PropertyEditor<f32> for NonNegative {
+        type Snapshot = f32;
+        type Edit = f32;
+
+        fn snapshot(&self, value: &f32) -> f32 {
+            *value
+        }
+
+        fn build(&self, _: &mut CommandQueue, _: Entity, _: &f32, _: &UITheme) {}
+
+        fn apply(&self, value: &mut f32, edit: &f32) -> Result<(), EditError> {
+            if *edit < 0.0 {
+                return Err(EditError::Rejected);
+            }
+            *value = *edit;
+            Ok(())
+        }
+    }
+
+    fn gain_to(entity: Entity, amount: f32) -> CommitProperty {
+        let mut registry = InspectorRegistry::default();
+        registry.register_property_editor::<f32, _>(NonNegative);
+        let editor = registry.editor(TypeId::of::<f32>()).unwrap();
+        CommitProperty {
+            row: PropertyRow {
+                entity,
+                component: TypeId::of::<Gain>(),
+                path: PropertyPath::new(["amount"]),
+                type_id: TypeId::of::<f32>(),
+                editor_type: Some(editor.editor_type),
+                registry_tick: Tick::default(),
+            },
+            edit: Arc::new(amount),
+            editor: Arc::clone(&editor.adapter),
+        }
+    }
+
+    fn statuses(app: &App) -> Vec<String> {
+        written::<SceneStatus>(app)
+            .into_iter()
+            .map(|status| status.0)
+            .collect()
+    }
+
+    fn gain(app: &mut App, entity: Entity) -> f32 {
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity::<Gain>(entity)
+            .unwrap()
+            .amount
+    }
+
+    #[test]
+    fn a_committed_property_writes_its_outcome() {
+        let (mut app, entity) = fixture();
+        app.main_mut().world_mut().insert(Gain::default(), entity);
+
+        app.main_mut().world_mut().trigger(gain_to(entity, 2.0));
+
+        assert_eq!(gain(&mut app, entity), 2.0);
+        let outcomes = written::<PropertyCommitted>(&app);
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].row.entity, entity);
+        assert_eq!(outcomes[0].result, Ok(()));
+        assert!(statuses(&app).is_empty());
+    }
+
+    #[test]
+    fn a_refused_property_commit_writes_its_outcome_and_a_status_with_the_same_text() {
+        let (mut app, entity) = fixture();
+        app.main_mut().world_mut().insert(Gain::default(), entity);
+
+        app.main_mut().world_mut().trigger(gain_to(entity, -1.0));
+
+        assert_eq!(gain(&mut app, entity), 0.0);
+        assert_eq!(statuses(&app), ["Property commit dropped: Rejected"]);
+        let outcomes = written::<PropertyCommitted>(&app);
+        assert_eq!(outcomes.len(), 1);
+        assert_eq!(outcomes[0].row.entity, entity);
+        assert_eq!(outcomes[0].result, Err(statuses(&app).remove(0)));
+        assert!(written::<SceneEdited>(&app).is_empty());
+    }
+
+    #[test]
+    fn each_component_edit_writes_its_outcome_and_a_refused_one_a_status_with_the_same_text() {
+        let (mut app, entity) = fixture();
+
+        for _ in 0..2 {
+            app.main_mut()
+                .world_mut()
+                .trigger(EditComponent(add::<Gain>(entity)));
+        }
+
+        let statuses = statuses(&app);
+        assert_eq!(statuses.len(), 1);
+        assert!(
+            statuses[0].starts_with("Component edit Add"),
+            "{}",
+            statuses[0]
+        );
+        let outcomes: Vec<_> = written::<ComponentEdited>(&app)
+            .into_iter()
+            .map(|outcome| (outcome.edit, outcome.result))
+            .collect();
+        assert_eq!(
+            outcomes,
+            vec![
+                (add::<Gain>(entity), Ok(())),
+                (add::<Gain>(entity), Err(statuses[0].clone())),
+            ]
+        );
     }
 }

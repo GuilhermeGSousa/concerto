@@ -39,6 +39,8 @@ use crate::{
     project::{AssetEntry, ProjectState},
     tools::{
         EditToolsCorePlugin, EditToolsPlugin,
+        edits::{ComponentEdited, PropertyCommitted},
+        entity_ops::EntityEdited,
         scene::{OpenScene, PublishContent, RevealEntity, SceneEdited, SceneStatus},
     },
 };
@@ -143,7 +145,10 @@ impl Plugin for ScenePlugin {
         install_listeners(app.main_mut().world_mut());
         app.forward_hosted_event::<SceneEdited>()
             .forward_hosted_event::<SceneStatus>()
-            .forward_hosted_event::<RevealEntity>();
+            .forward_hosted_event::<RevealEntity>()
+            .forward_hosted_event::<EntityEdited>()
+            .forward_hosted_event::<PropertyCommitted>()
+            .forward_hosted_event::<ComponentEdited>();
         app.add_system(
             First,
             refuse_edited_replacements.before(hosted::finish_pending),

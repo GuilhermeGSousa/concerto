@@ -357,7 +357,13 @@ know nothing about documents or panels. They report back through events that
 the editor re-writes in its own world as `Hosted<E>` events carrying the
 document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
 scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
-and `RevealEntity`, which the hierarchy scrolls to. `HostedAppEvents<E>` is the
+`RevealEntity`, which the hierarchy scrolls to; and one outcome per applied
+edit signal: `EntityEdited { edit, result }`, whose result is the entity a
+create or duplicate made; `PropertyCommitted { row, result }`; and
+`ComponentEdited { edit, result }`. A refused edit's result is the text its
+`SceneStatus` carries, so a refused property or component edit also shows in
+Chatter. An outcome written by a signal reaches the editor a frame later, as
+any forwarded event does. `HostedAppEvents<E>` is the
 system input that reads `E` from every hosted `App`, keeping one cursor per
 hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
 Whether the scene has unsaved edits is state kept in the edit `App`
