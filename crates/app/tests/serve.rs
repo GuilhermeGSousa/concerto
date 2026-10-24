@@ -65,29 +65,21 @@ fn render_runs(app: &App) -> u32 {
 fn serve_runs_one_main_schedule_without_advancing_the_frame() {
     let mut app = built_app();
     app.update();
-    let tick = app.main().world().current_tick();
+    let frame = app.main().world().last_change_tick();
     assert_eq!(update_runs(&app), 1);
     assert_eq!(render_runs(&app), 1);
 
     app.serve(Served);
     assert_eq!(served_runs(&app), 1);
-    assert_eq!(
-        app.main().world().resource_changed_tick::<ServedRuns>(),
-        Some(tick)
-    );
 
     app.serve(Served);
     assert_eq!(served_runs(&app), 2);
-    assert_eq!(
-        app.main().world().resource_changed_tick::<ServedRuns>(),
-        Some(tick)
-    );
 
-    assert_eq!(app.main().world().current_tick(), tick);
+    assert_eq!(app.main().world().last_change_tick(), frame);
     assert_eq!(update_runs(&app), 1);
     assert_eq!(render_runs(&app), 1);
 
     app.update();
-    assert_ne!(app.main().world().current_tick(), tick);
+    assert_ne!(app.main().world().last_change_tick(), frame);
     assert_eq!(served_runs(&app), 2);
 }

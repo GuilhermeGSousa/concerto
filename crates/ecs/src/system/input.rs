@@ -8,6 +8,7 @@ use std::{
 };
 
 use crate::{
+    component::{CheckChangeTicks, SystemTicks, Tick},
     system::{access::SystemAccess, meta::SystemMetadata},
     utilities::SyncCell,
     world::{FromWorld, UnsafeWorldCell, World},
@@ -73,7 +74,7 @@ pub trait SystemInput {
 
     fn init_state(world: &mut World) -> Self::State;
 
-    /// Builds the input's data for one run, or declines with why.
+    /// Builds the input's data for one run with `ticks`, or declines with why.
     ///
     /// # Safety
     /// `world` may be used only for what [`SystemInput::fill_access`] declared, and no
@@ -81,7 +82,11 @@ pub trait SystemInput {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError>;
+
+    /// Runs after the system's body ran with this input's data; a skipped run never calls it.
+    fn ran(_state: &mut Self::State) {}
 
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
@@ -107,9 +112,14 @@ where
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: the tuple's access is the union of its parts', which the caller upholds.
-        Ok(typle_for!(i in .. => unsafe { <T<{i}>>::get_data(&mut state[[i]], world) }?))
+        Ok(typle_for!(i in .. => unsafe { <T<{i}>>::get_data(&mut state[[i]], world, ticks) }?))
+    }
+
+    fn ran(state: &mut Self::State) {
+        typle_for!(i in .. => <T<{i}>>::ran(&mut state[[i]]));
     }
 
     fn apply(state: &mut Self::State, world: &mut World) {
@@ -158,13 +168,48 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: this input declares exactly `P`'s access.
-        unsafe { P::get_data(state, world) }.map(StaticSystemInput)
+        unsafe { P::get_data(state, world, ticks) }.map(StaticSystemInput)
+    }
+
+    fn ran(state: &mut Self::State) {
+        P::ran(state);
     }
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         P::fill_access(meta, access);
+    }
+}
+
+/// An input's `last_run` in another world's tick space, advanced only once its system's body ran.
+#[derive(Debug, Default)]
+pub struct ForeignTicks {
+    last_run: Option<Tick>,
+    pending: Option<Tick>,
+}
+
+impl ForeignTicks {
+    /// Takes this run's ticks from `world`'s counter and holds `this_run` until [`commit`](Self::commit).
+    pub fn begin(&mut self, world: &World) -> SystemTicks {
+        let this_run = world.increment_change_tick();
+        let last_run = match &mut self.last_run {
+            Some(last_run) => {
+                last_run.check_tick(CheckChangeTicks(this_run));
+                *last_run
+            }
+            None => this_run.relative_to(Tick::MAX),
+        };
+        self.pending = Some(this_run);
+        SystemTicks { last_run, this_run }
+    }
+
+    /// Makes the last [`begin`](Self::begin)'s `this_run` the next `last_run`, from [`SystemInput::ran`].
+    pub fn commit(&mut self) {
+        if let Some(this_run) = self.pending.take() {
+            self.last_run = Some(this_run);
+        }
     }
 }
 
@@ -183,6 +228,7 @@ impl<'s, T: FromWorld + Send + 'static> SystemInput for SystemLocal<'s, T> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         _world: UnsafeWorldCell<'world>,
+        _ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         Ok(SystemLocal(state.get()))
     }
@@ -209,6 +255,7 @@ pub(crate) mod test_support {
         unsafe fn get_data<'world, 'state>(
             _state: &'state mut Self::State,
             world: UnsafeWorldCell<'world>,
+            _ticks: SystemTicks,
         ) -> Result<Self::Data<'world, 'state>, ValidationError> {
             // SAFETY: reads only `GateOpen`, which `fill_access` declares.
             let open = unsafe { world.world() }

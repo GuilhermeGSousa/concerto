@@ -1,5 +1,6 @@
 use concerto_color::Color;
 use concerto_ecs::{
+    component::SystemTicks,
     resource::ResMut,
     system::{
         access::SystemAccess,
@@ -231,10 +232,11 @@ impl<'w> SystemInput for DebugGizmos<'w> {
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         Ok(DebugGizmos {
             // SAFETY: `fill_access` declares write access to the gizmo storage.
-            storage: unsafe { ResMut::new(world) }?,
+            storage: unsafe { ResMut::new(world, ticks) }?,
             width: 1.0,
         })
     }

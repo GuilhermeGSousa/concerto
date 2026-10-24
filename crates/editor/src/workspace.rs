@@ -47,7 +47,7 @@ pub(crate) fn create_editor_hosts(
                 };
                 let host = commands
                     .entity(parent.parent())
-                    .spawn_child_queue((surface.node(|_| node), EditorOwned(editor), Interactable))
+                    .spawn_child((surface.node(|_| node), EditorOwned(editor), Interactable))
                     .entity();
                 hosts[index] = Some(host);
             }
@@ -83,7 +83,7 @@ pub(crate) fn sync_workspace(
     children: Query<&mut Children>,
 ) {
     let hosts_changed = changed_hosts.iter().next().is_some();
-    if !active.has_changed() && !registry.has_changed() && !hosts_changed {
+    if !active.is_changed() && !registry.is_changed() && !hosts_changed {
         return;
     }
     let scene = active
@@ -102,7 +102,7 @@ pub(crate) fn sync_workspace(
             set_visible(&nodes, host, active.0 == Some(entity));
         }
     }
-    if hosts_changed || registry.has_changed() {
+    if hosts_changed || registry.is_changed() {
         if let Some(base) = bases[1] {
             if let Some(mut siblings) = parents
                 .get_entity(base)
@@ -132,7 +132,7 @@ pub(crate) fn reset_workspace_input(
     mut input: ResMut<UIInputState>,
     mut actions: ResMut<ActionMap>,
 ) {
-    if active.has_changed() {
+    if active.is_changed() {
         clear_transient_input(&mut focus, &mut hovered, &mut input, &mut actions);
     }
 }
@@ -163,21 +163,33 @@ fn clear_transient_input(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, System, World};
+    use concerto_ecs::{IntoSystem, Resource, System, World};
     use concerto_window::input::MouseButton;
     fn process_editor_commands(world: &mut World) {
         let mut system = crate::asset_editor::process_editor_commands.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
     }
+    #[derive(Resource)]
+    struct WorkspaceSystems([concerto_ecs::system::BoxedSystem; 2]);
+
     fn sync_workspace(world: &mut World) {
-        for mut system in [
-            super::sync_workspace.into_boxed_system(),
-            super::reset_workspace_input.into_boxed_system(),
-        ] {
-            system.initialize(world);
+        let mut systems = world
+            .remove_resource::<WorkspaceSystems>()
+            .unwrap_or_else(|| {
+                let mut systems = [
+                    super::sync_workspace.into_boxed_system(),
+                    super::reset_workspace_input.into_boxed_system(),
+                ];
+                for system in &mut systems {
+                    system.initialize(world);
+                }
+                WorkspaceSystems(systems)
+            });
+        for system in &mut systems.0 {
             system.run_and_apply((), world);
         }
+        world.insert_resource(systems);
     }
     use crate::asset_editor::{
         AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
@@ -412,6 +424,7 @@ mod tests {
             root: std::path::PathBuf::from("project"),
             assets: vec![],
             registry: content,
+            content_root: "content".into(),
         });
         world
             .get_resource_mut::<AssetEditorCommands>()

@@ -2,6 +2,7 @@ use std::{collections::VecDeque, marker::PhantomData, time::Duration};
 
 use concerto_ecs::{
     CommandQueue, Event, Query, Res, ResMut, Resource, World,
+    component::SystemTicks,
     events::{event_reader::EventReader, event_writer::EventWriter},
     system::{
         access::SystemAccess,
@@ -165,9 +166,10 @@ impl<A: 'static> SystemInput for ToolCalls<'_, '_, A> {
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: this input declares exactly the access of its parts.
-        let (calls, registry) = unsafe { <Inputs>::get_data(state, world) }?;
+        let (calls, registry) = unsafe { <Inputs>::get_data(state, world, ticks) }?;
         let tool = registry.name_of::<A>().ok_or_else(|| {
             ValidationError::missing::<Self>("the tool was not added with add_tool")
         })?;

@@ -106,7 +106,7 @@ normal.
 
 **No revision counters.** Do not add a number that is bumped to say "this
 changed" and compared somewhere else. State that changed is read through change
-detection (`Changed<T>`, `has_changed()`). Something that happened is an event.
+detection (`Changed<T>`, `is_changed()`). Something that happened is an event.
 Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.

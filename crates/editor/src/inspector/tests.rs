@@ -7,15 +7,17 @@ use concerto_ecs::{
     IntoSystem, System, World,
     entity::hierarchy::{ChildOf, Children},
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
+    system::BoxedSystem,
 };
 use concerto_foundation::transform::Transform;
 use concerto_reflect::{GetTypeRegistration, ReflectDefault};
-use concerto_ui::text::UIText;
-use glam::Vec3;
+use concerto_ui::{node::UIBox, text::UIText};
+use glam::{Vec2, Vec3};
 
 struct Inspecting {
     f: SceneFixture,
     document: Entity,
+    systems: [BoxedSystem; 3],
 }
 
 impl Inspecting {
@@ -33,12 +35,7 @@ impl Inspecting {
         self.scene().tick();
     }
     fn update(&mut self) {
-        for mut system in [
-            collect_inspector_data.into_boxed_system(),
-            sync_inspected_components.into_boxed_system(),
-            build_property_widgets.into_boxed_system(),
-        ] {
-            system.initialize(&mut self.f.world);
+        for system in &mut self.systems {
             system.run_and_apply((), &mut self.f.world);
         }
         self.tick();
@@ -65,7 +62,19 @@ fn inspecting() -> (Inspecting, Entity, Entity) {
     f.world.insert_resource(InspectorRegistry::default());
     f.world.insert_resource(UITheme::default());
     let document = f.open();
-    let mut w = Inspecting { f, document };
+    let mut systems = [
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
+    ];
+    for system in &mut systems {
+        system.initialize(&mut f.world);
+    }
+    let mut w = Inspecting {
+        f,
+        document,
+        systems,
+    };
     let entity = w.scene().spawn(Transform::IDENTITY);
     w.select(Some(entity));
     let stack =
@@ -148,6 +157,65 @@ fn alternating_selections_keep_showing_their_properties() {
             "the card body for {target:?} is hidden, so its properties cannot be edited"
         );
     }
+}
+
+fn layout(height: f32) -> UILayout {
+    let rect = UIBox {
+        min: Vec2::ZERO,
+        size: Vec2::new(200.0, height),
+    };
+    UILayout {
+        rect,
+        content_rect: rect,
+        clip_rect: rect,
+        paint_order: 0,
+    }
+}
+
+#[test]
+fn a_scrolled_inspector_keeps_its_offset_across_runs() {
+    let (mut w, _, stack) = inspecting();
+    let other = w.scene().spawn(Transform::IDENTITY);
+    w.f.world.insert(layout(1000.0), stack);
+    let view = w.f.world.spawn((
+        DetailsView,
+        UIScrollArea {
+            content: Some(stack),
+            ..Default::default()
+        },
+        layout(100.0),
+    ));
+    let mut collect = collect_inspector_data.into_system();
+    let mut scroll = sync_inspector_scroll.into_system();
+    collect.initialize(&mut w.f.world);
+    scroll.initialize(&mut w.f.world);
+    let mut frame = |w: &mut Inspecting| {
+        collect.run_and_apply((), &mut w.f.world);
+        scroll.run_and_apply((), &mut w.f.world);
+        w.tick();
+    };
+    let offset = |w: &Inspecting| {
+        w.f.world
+            .get_component_for_entity::<UIScrollArea>(view)
+            .unwrap()
+            .offset
+    };
+    let scroll_and_hold = |w: &mut Inspecting, frame: &mut dyn FnMut(&mut Inspecting)| {
+        w.f.world
+            .get_component_for_entity_mut::<UIScrollArea>(view)
+            .unwrap()
+            .offset = 300.0;
+        frame(w);
+        frame(w);
+        assert_eq!(offset(w), 300.0);
+    };
+    frame(&mut w);
+    scroll_and_hold(&mut w, &mut frame);
+
+    w.select(Some(other));
+    frame(&mut w);
+    assert_eq!(offset(&w), 0.0);
+    scroll_and_hold(&mut w, &mut frame);
 }
 
 fn cards(world: &mut World) -> Vec<(Entity, InspectedComponent)> {
@@ -262,8 +330,9 @@ impl PropertyEditor<Transform> for WholeTransform {
 }
 
 fn registry_mut(world: &mut World) -> ResMut<'_, InspectorRegistry> {
+    let ticks = world.out_of_system_ticks();
     // SAFETY: the exclusive borrow of the world covers any access.
-    unsafe { ResMut::new(world.as_unsafe_world_cell_mut()) }.unwrap()
+    unsafe { ResMut::new(world.as_unsafe_world_cell_mut(), ticks) }.unwrap()
 }
 
 #[test]
@@ -383,10 +452,10 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     w.update();
     assert!(cards(&mut w.f.world).is_empty());
     assert!(rows(&mut w.f.world).is_empty());
-    let mut inputs = w.f.world.query::<
-        &concerto_ui::text_input::UITextInput,
+    let mut inputs = w.f.world.query::<&concerto_ui::text_input::UITextInput, (
         concerto_ecs::query::filter::Without<add_component::AddComponentSearch>,
-    >();
+        concerto_ecs::query::filter::Without<crate::hierarchy::Filter>,
+    )>();
     assert_eq!(inputs.iter(&mut w.f.world).count(), 0);
 }
 
@@ -619,7 +688,7 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
     w.update();
     let settled = count.load(Ordering::Relaxed);
     let row = rows(&mut w.f.world)[0].0;
-    let row_tick = w.f.world.current_tick();
+    let row_tick = w.f.world.change_tick();
     for _ in 0..3 {
         w.update();
     }
@@ -718,6 +787,24 @@ fn a_component_is_read_again_only_when_the_scenes_own_clock_says_it_changed() {
 }
 
 #[test]
+fn a_card_built_for_a_component_unchanged_since_the_last_run_reads_it_in_full() {
+    let (mut w, _, _) = inspecting();
+    let other = w.scene().spawn(Transform::IDENTITY);
+    w.update();
+    w.update();
+    w.update();
+
+    w.select(Some(other));
+    w.update();
+
+    let shown: Vec<Entity> = rows(&mut w.f.world)
+        .into_iter()
+        .map(|(_, row)| row.entity)
+        .collect();
+    assert_eq!(shown, [other; 3]);
+}
+
+#[test]
 fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
     let (mut w, target, stack) = inspecting();
     w.update();
@@ -743,7 +830,7 @@ fn panel_recreation_and_target_despawn_reconcile_without_selection_changes() {
     assert!(cards(&mut w.f.world).is_empty());
     assert!(rows(&mut w.f.world).is_empty());
     assert_eq!(shown(&w), None);
-    let since = w.f.world.current_tick();
+    let since = w.f.world.change_tick();
     w.update();
     assert!(
         !w.f.world

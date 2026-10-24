@@ -185,6 +185,39 @@ app.add_listener(on_select.at_edit_time());
 - An edit `App` has no `PhysicsPipeline`, so a marked system must not require it;
   `PhysicsState` is present and empty.
 
+## Change detection
+
+`Changed<T>`, `Added<T>` and `is_changed()` mean "since this system last ran",
+whatever the order of writer and reader within a frame:
+
+- A write made after a reader ran, including a command applied at a later sync
+  point or a direct `World` write between frames, is seen on the reader's next run.
+- A system does not see its own `Mut` or `ResMut` writes on its next run.
+- A system's first run sees every entity and resource stamped within
+  `MAX_CHANGE_AGE` as added and changed.
+- Overwriting a component with `insert`, or a resource with `insert_resource`,
+  marks it changed and keeps its added tick, as in Bevy: `Added<T>` and
+  `is_added()` are true again only after a remove and a fresh insert.
+- A run skipped because an input declined keeps what changed for the next run that
+  executes.
+- A listener sees what changed since its own previous run.
+- A query made directly on a `World` sees what changed since the last
+  `world.tick()`, which `Main` and `RenderMain` call once per frame.
+
+Ticks are 32-bit and wrap. As in Bevy, every schedule run starts with
+`world.check_change_ticks()`, which, once every `CHECK_TICK_THRESHOLD` counter
+advances, clamps every component stamp, resource stamp, every stored
+schedule's systems, and those of the schedule whose run made the check, to at
+most `MAX_CHANGE_AGE` old, and triggers the `CheckChangeTicks` signal. Ticks
+kept anywhere else clamp themselves in a `CheckChangeTicks` listener with
+`Tick::check_tick`. Listeners' own ticks are not clamped, as Bevy leaves
+observers: a listener idle for about `MAX_CHANGE_AGE` counter advances
+can misreport changes on its next run.
+
+A test that checks change detection through a system must keep one system instance
+across runs. A new instance is a first run and sees everything stamped within
+`MAX_CHANGE_AGE`.
+
 ## Rules
 
 - Conflicting systems (overlapping data access) with no explicit constraint

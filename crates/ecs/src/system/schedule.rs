@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{
-    Resource, System, define_label,
+    Resource, System,
+    component::CheckChangeTicks,
+    define_label,
     intern::Interned,
     system::{
         BoxedSystem,
@@ -422,8 +424,19 @@ pub struct CompiledSchedule {
 }
 
 impl CompiledSchedule {
+    /// Runs the schedule once, first giving the world its tick check when one is due.
     pub fn run(&mut self, world: &mut World) {
+        if let Some(check) = world.check_change_ticks() {
+            self.check_change_ticks(check);
+        }
         self.executor.run(&mut self.compiled_data, world);
+    }
+
+    /// Clamps every system's stored ticks that are older than the check allows.
+    pub fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        for system in &mut self.compiled_data.systems {
+            system.check_change_tick(check);
+        }
     }
 }
 
@@ -537,6 +550,12 @@ impl CompiledSchedules {
 
     pub(crate) fn insert(&mut self, label: impl ScheduleLabel, schedule: CompiledSchedule) {
         self.compiled_schedules.insert(label.intern(), schedule);
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        for schedule in self.compiled_schedules.values_mut() {
+            schedule.check_change_ticks(check);
+        }
     }
 }
 

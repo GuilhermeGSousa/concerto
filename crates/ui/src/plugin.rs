@@ -7,6 +7,10 @@ use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
     resources::RenderContext, sets::RenderSet,
 };
+use concerto_window::input::{
+    KeyCode,
+    actions::{ActionMap, Shortcut},
+};
 use glyphon::{Cache, SwashCache, Viewport};
 
 use crate::{
@@ -17,6 +21,11 @@ use crate::{
         update_focus,
     },
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
+    items::{
+        UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
+        UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
+    },
+    list::update_lists,
     material::UIMaterial,
     node::{
         UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
@@ -27,7 +36,7 @@ use crate::{
     resources::UIRenderDiagnostics,
     scroll::{
         setup_scrollbars, sync_scroll_content, sync_scrollbar_thumbs, sync_scrollbar_tracks,
-        sync_split_panes, update_scroll_areas, update_virtual_lists,
+        sync_split_panes, update_scroll_areas,
     },
     sets::UiSet,
     slider::{setup_slider_visuals, sync_slider_fill},
@@ -42,8 +51,22 @@ use crate::{
         UITextInputCancelled, UITextInputChanged, UITextInputSubmitted, update_text_inputs,
     },
     theme::UITheme,
+    tree::update_trees,
     widgets::{sync_tab_bodies, update_tooltips},
 };
+
+fn bind_default_actions(actions: &mut ActionMap) {
+    actions.bind_global(UIFocusNext, Shortcut::key(KeyCode::Tab));
+    actions.bind_global(UIFocusPrevious, Shortcut::key(KeyCode::Tab).with_shift());
+    actions.bind_global(UIDismissPanel, Shortcut::key(KeyCode::Escape));
+    actions.bind_global(UIListNext, Shortcut::key(KeyCode::ArrowDown));
+    actions.bind_global(UIListPrevious, Shortcut::key(KeyCode::ArrowUp));
+    actions.bind_global(UIListFirst, Shortcut::key(KeyCode::Home));
+    actions.bind_global(UIListLast, Shortcut::key(KeyCode::End));
+    actions.bind_global(UIListActivate, Shortcut::key(KeyCode::Enter));
+    actions.bind_global(UITreeExpand, Shortcut::key(KeyCode::ArrowRight));
+    actions.bind_global(UITreeCollapse, Shortcut::key(KeyCode::ArrowLeft));
+}
 
 /// Registers the UI's resources, events and systems, ordered by [`UiSet`] in `LateUpdate`.
 ///
@@ -56,30 +79,10 @@ impl Plugin for UIPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.register_plugin(MaterialPlugin::<UIMaterial>::pipeline_only());
 
-        {
-            let actions = app
-                .get_resource_mut::<concerto_window::input::actions::ActionMap>()
-                .expect("WindowPlugin must be registered before UIPlugin");
-            actions.bind_global(
-                UIFocusNext,
-                concerto_window::input::actions::Shortcut::key(
-                    concerto_window::input::KeyCode::Tab,
-                ),
-            );
-            actions.bind_global(
-                UIFocusPrevious,
-                concerto_window::input::actions::Shortcut::key(
-                    concerto_window::input::KeyCode::Tab,
-                )
-                .with_shift(),
-            );
-            actions.bind_global(
-                UIDismissPanel,
-                concerto_window::input::actions::Shortcut::key(
-                    concerto_window::input::KeyCode::Escape,
-                ),
-            );
-        }
+        bind_default_actions(
+            app.get_resource_mut::<ActionMap>()
+                .expect("WindowPlugin must be registered before UIPlugin"),
+        );
 
         app.insert_resource(HoveredNode::default());
         app.insert_resource(UIInputState::default());
@@ -88,6 +91,9 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
+        crate::list::install_listeners(app.main_mut().world_mut());
+        crate::tree::install_listeners(app.main_mut().world_mut());
+        install_listeners(app.main_mut().world_mut());
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
@@ -129,7 +135,8 @@ impl Plugin for UIPlugin {
                 sync_tab_bodies,
                 update_tooltips,
                 update_scroll_areas,
-                update_virtual_lists.after(update_scroll_areas),
+                keep_focus_on_shown_items,
+                navigate_items.after(keep_focus_on_shown_items),
             )
                 .in_set(UiSet::Widgets),
         );
@@ -139,7 +146,14 @@ impl Plugin for UIPlugin {
         );
         app.add_system(
             LateUpdate,
-            (sync_slider_fill, sync_scroll_content, sync_split_panes).in_set(UiSet::Project),
+            (
+                sync_slider_fill,
+                sync_scroll_content,
+                sync_split_panes,
+                update_lists,
+                update_trees,
+            )
+                .in_set(UiSet::Project),
         );
         app.add_system(
             LateUpdate,
@@ -148,6 +162,7 @@ impl Plugin for UIPlugin {
                 sync_viewport_textures,
                 sync_shared_viewport_textures,
                 apply_interaction_styles,
+                paint_items,
             )
                 .in_set(UiSet::Materials),
         );
@@ -213,5 +228,30 @@ impl Plugin for UIPlugin {
             .insert_resource(TextViewport(viewport))
             .insert_resource(TextFontSystem(font_system))
             .insert_resource(TextAtlas(atlas));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_window::input::actions::ActionLabel;
+
+    use super::*;
+
+    #[test]
+    fn the_list_and_tree_keys_resolve_to_their_actions() {
+        let mut actions = ActionMap::default();
+        bind_default_actions(&mut actions);
+
+        for (key, action) in [
+            (KeyCode::ArrowDown, UIListNext.intern()),
+            (KeyCode::ArrowUp, UIListPrevious.intern()),
+            (KeyCode::Home, UIListFirst.intern()),
+            (KeyCode::End, UIListLast.intern()),
+            (KeyCode::Enter, UIListActivate.intern()),
+            (KeyCode::ArrowRight, UITreeExpand.intern()),
+            (KeyCode::ArrowLeft, UITreeCollapse.intern()),
+        ] {
+            assert_eq!(actions.resolve(Shortcut::key(key)), Some(action), "{key:?}");
+        }
     }
 }

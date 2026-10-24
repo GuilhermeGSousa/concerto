@@ -52,7 +52,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
     if let Some(brand) = registry.body(BRAND_ID) {
         cmd.entity(brand)
             .add_child_with(theme.row().grow(), |mut row| {
-                row = row.add_child_with(
+                row.add_child_with(
                     theme
                         .canvas()
                         .fill(Color::TRANSPARENT)
@@ -65,7 +65,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                             top: 4.0,
                             ..Default::default()
                         }),
-                    |mark| {
+                    |mut mark| {
                         mark.add_child(
                             theme
                                 .canvas()
@@ -77,7 +77,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                     },
                 );
 
-                row = row.add_child(theme.label("Concerto").weight(MEDIUM));
+                row.add_child(theme.label("Concerto").weight(MEDIUM));
 
                 row.add_child_with(
                     (
@@ -96,7 +96,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                         crate::window_chrome::WindowChromeControl,
                         TabScroll::default(),
                     ),
-                    |tabs| {
+                    |mut tabs| {
                         tabs.add_child((
                             UINode::default()
                                 .with_flex_direction(FlexDirection::Row)
@@ -127,7 +127,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                 .align_items(taffy::AlignItems::Center)
                 .padding(UIRect::axes(0.0, theme.spacing_md))
                 .clipped(),
-            |strip| {
+            |mut strip| {
                 strip
                     .add_child((
                         UINode::default()

@@ -6,11 +6,22 @@ fix the entry in the same commit as the change that made it false.
 
 ## ECS
 
-- **`Changed<T>` is frame-exact.** It is true only when the component's changed
-  or added tick equals the world's current tick, and the tick advances once per
-  frame, at the end of `Main`. A `Changed<T>` filter therefore fires only in a
-  system that runs later in the same frame than the write. A system that runs
-  earlier in the frame never sees it, on this frame or the next.
+- **`Changed<T>` means "since this system last ran".** Each system and listener
+  run takes a tick from the world's counter, and sees writes stamped after its
+  previous executed run, whatever the order within a frame. It never sees its own
+  `Mut`/`ResMut` writes on its next run, and its first run sees everything
+  stamped within `MAX_CHANGE_AGE`. An `Extracted<T>` reads the main world with
+  its own ticks there, so an extract system sees main-world changes, direct
+  writes included, since its last executed run. A query made directly on a
+  `World` sees what changed since the last `world.tick()`. A test that checks
+  change detection through a system must keep one system instance across runs;
+  a new instance is a first run and passes vacuously.
+- **Ticks are clamped from schedule runs, not from `world.tick()`.** Each
+  schedule run starts with `world.check_change_ticks()`, Bevy's tick check. A
+  world that only ever runs systems by hand, outside a schedule, is never
+  clamped. A tick kept anywhere other than a component, a resource or a
+  schedule's system clamps itself in a `CheckChangeTicks` listener. Listener
+  ticks are never clamped, as in Bevy.
 - **Transform propagation writes every frame.** `propagate_global_transforms`
   calls `set_matrix` on every hierarchy member each frame, so
   `Changed<GlobalTransform>` does not mean "this entity moved".
@@ -51,7 +62,8 @@ fix the entry in the same commit as the change that made it false.
   and the old value otherwise; their `CommandQueue` applies when the operation's
   commands flush. `add_listener` panics for one that takes `&World` or
   `&mut World`, and registering one registers `T`, so its signals fire even if
-  nothing queries it. An overwrite fires `Replace`, then `Add`.
+  nothing queries it. An overwrite fires `Replace`, then `Add`, but stamps `T`
+  changed only: `Added<T>` and `is_added()` stay false, as in Bevy.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that
@@ -136,10 +148,12 @@ fix the entry in the same commit as the change that made it false.
   through `HostedApp::mark_saved` after a successful write.
 - **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
   `App` finishes building.
-- **Change detection does not cross the seam.** `has_changed()` and
-  `Changed<T>` compare against the tick of the world they are read in. Through
-  `EditWorld<T>` they give no usable answer; a panel learns of a change from a
-  `Hosted<E>` event.
+- **Change detection crosses the seam in the target's ticks.** `EditWorld<T>`
+  keeps its own last run in the edit target's tick space, so `is_changed()` and
+  `Changed<T>` through it mean "since this system last read this world",
+  including signals sent through `EditWorldSignals` and direct writes by the
+  host. Its first look at a newly targeted world, another scene or a play
+  `App`, sees as added and changed everything stamped within `MAX_CHANGE_AGE`.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
   looked up through `EditWorld<…>`.

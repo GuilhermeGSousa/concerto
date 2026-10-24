@@ -6,7 +6,7 @@ use std::{
 use any_vec::{AnyVec, any_value::AnyValueWrapper};
 
 use crate::{
-    component::{Component, ComponentId, Tick},
+    component::{CheckChangeTicks, Component, ComponentId, SystemTicks, Tick},
     entity::Entity,
 };
 
@@ -37,7 +37,7 @@ impl Column {
     pub fn push<T: Component>(&mut self, value: T, tick: u32) {
         self.data.push(AnyValueWrapper::new(value));
         self.added_ticks.push(Tick::new(tick));
-        self.changed_ticks.push(Tick::new(0));
+        self.changed_ticks.push(Tick::new(tick));
     }
 
     pub fn insert<T: Component>(&mut self, value: T, tick: u32, row: TableRowIndex) {
@@ -47,7 +47,6 @@ impl Column {
             *slot = value;
         }
 
-        self.added_ticks[*row].set(tick);
         self.changed_ticks[*row].set(tick);
     }
 
@@ -77,6 +76,22 @@ impl Column {
         unsafe { self.data.get_unchecked(*row).downcast_ref() }
     }
 
+    pub(crate) unsafe fn get_unsafe_ticked<T: 'static>(
+        &self,
+        row: TableRowIndex,
+    ) -> Option<CellAccessor<'_, T>> {
+        unsafe {
+            self.data
+                .get_unchecked(*row)
+                .downcast_ref()
+                .map(|data| CellAccessor {
+                    data,
+                    added_tick: self.added_ticks[*row],
+                    changed_tick: self.changed_ticks[*row],
+                })
+        }
+    }
+
     pub(crate) unsafe fn get_unsafe_mut<T: 'static>(
         &mut self,
         row: TableRowIndex,
@@ -87,6 +102,7 @@ impl Column {
                 .downcast_mut()
                 .map(|data| MutableCellAccessor {
                     data,
+                    added_tick: self.added_ticks[*row],
                     changed_tick: &mut self.changed_ticks[*row],
                 })
         }
@@ -94,6 +110,12 @@ impl Column {
 
     pub fn set_changed(&mut self, row: TableRowIndex, current_tick: u32) {
         self.changed_ticks[*row].set(current_tick);
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        for tick in self.added_ticks.iter_mut().chain(&mut self.changed_ticks) {
+            tick.check_tick(check);
+        }
     }
 }
 
@@ -191,16 +213,14 @@ impl Table {
         &self,
         row: TableRowIndex,
         component_id: ComponentId,
-        current_tick: u32,
+        ticks: SystemTicks,
     ) -> bool {
-        if let Some(column) = self.columns.get(&component_id) {
-            *column.added_ticks[*row] == current_tick
-        } else {
-            false
-        }
+        self.columns
+            .get(&component_id)
+            .is_some_and(|column| ticks.is_changed(column.added_ticks[*row]))
     }
 
-    pub(crate) fn has_changed_since(
+    pub(crate) fn changed_since(
         &self,
         row: TableRowIndex,
         component_id: ComponentId,
@@ -220,12 +240,17 @@ impl Table {
         &self,
         row: TableRowIndex,
         component_id: ComponentId,
-        current_tick: u32,
+        ticks: SystemTicks,
     ) -> bool {
-        if let Some(column) = self.columns.get(&component_id) {
-            *column.changed_ticks[*row] == current_tick || *column.added_ticks[*row] == current_tick
-        } else {
-            false
+        self.columns.get(&component_id).is_some_and(|column| {
+            ticks.is_changed(column.changed_ticks[*row])
+                || ticks.is_changed(column.added_ticks[*row])
+        })
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        for column in self.columns.values_mut() {
+            column.check_change_ticks(check);
         }
     }
 }
@@ -259,7 +284,14 @@ impl DerefMut for TableRowIndex {
     }
 }
 
+pub(crate) struct CellAccessor<'w, T> {
+    pub(crate) data: &'w T,
+    pub(crate) added_tick: Tick,
+    pub(crate) changed_tick: Tick,
+}
+
 pub(crate) struct MutableCellAccessor<'w, T> {
     pub(crate) data: &'w mut T,
+    pub(crate) added_tick: Tick,
     pub(crate) changed_tick: &'w mut Tick,
 }

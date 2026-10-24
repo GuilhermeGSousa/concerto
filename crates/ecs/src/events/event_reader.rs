@@ -2,6 +2,7 @@ use std::{iter::Chain, slice::Iter};
 
 use crate::{
     World,
+    component::SystemTicks,
     events::{Event, event_channel::EventChannel, event_cursor::EventCursor},
     resource::Res,
     system::{
@@ -75,11 +76,12 @@ where
     unsafe fn get_data<'world, 'state>(
         state: &'state mut Self::State,
         world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: this input declares exactly the access of its two parts.
         Ok(EventReader {
-            channel: unsafe { <ChannelParam<T>>::get_data(&mut (), world) }?,
-            cursor: unsafe { <CursorParam<T>>::get_data(state, world) }?,
+            channel: unsafe { <ChannelParam<T>>::get_data(&mut (), world, ticks) }?,
+            cursor: unsafe { <CursorParam<T>>::get_data(state, world, ticks) }?,
         })
     }
 

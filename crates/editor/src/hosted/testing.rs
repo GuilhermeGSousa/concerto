@@ -11,8 +11,10 @@ use concerto_app::{
     schedule_groups::Update,
 };
 use concerto_ecs::{
-    Entity, Event, IntoSystem, ResMut, Resource, System, World,
+    Entity, Event, IntoSystem, Res, ResMut, Resource, System, World,
+    command::CommandQueue,
     component::name::Name,
+    entity::hierarchy::{ChildOf, Children},
     events::{event_channel::EventChannel, event_cursor::EventCursor, event_writer::EventWriter},
     signal::{On, Signal},
     system::BoxedSystem,
@@ -29,6 +31,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_scene::scene::{Scene, SceneNode};
+use concerto_ui::{focus::FocusedWidget, node::UINode, theme::UITheme};
 use concerto_window::{
     events::WindowEvent,
     plugin::{Window, WindowPlugin},
@@ -241,6 +244,11 @@ pub(crate) fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes
     .unwrap();
 }
 
+fn build_hierarchy_panel(mut cmd: CommandQueue, theme: Res<UITheme>) {
+    let parent = cmd.spawn(UINode::default()).entity();
+    crate::hierarchy::spawn_panel(&mut cmd, parent, &theme);
+}
+
 pub(crate) struct SceneFixture {
     pub world: World,
     pub project_root: PathBuf,
@@ -285,6 +293,7 @@ impl SceneFixture {
             root: project_root.clone(),
             assets: vec![],
             registry,
+            content_root: "content".into(),
         });
         world.insert_resource(project);
 
@@ -301,10 +310,19 @@ impl SceneFixture {
         world.insert_resource(concerto_window::input::Input::new());
         world.insert_resource(EventChannel::<SceneOpened>::new());
         world.insert_resource(EventChannel::<SceneOpenFailed>::new());
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        world.insert_resource(UITheme::default());
+        world.insert_resource(FocusedWidget::default());
         super::install_listeners(&mut world);
         crate::scene::install_listeners(&mut world);
         crate::hierarchy::install_listeners(&mut world);
         crate::inspector::install_listeners(&mut world);
+        concerto_ui::items::install_listeners(&mut world);
+        concerto_ui::tree::install_listeners(&mut world);
+        let mut panel = build_hierarchy_panel.into_system();
+        panel.initialize(&mut world);
+        panel.run_and_apply((), &mut world);
 
         let mut systems = vec![
             super::input::sync_in_viewport.into_boxed_system(),
@@ -318,7 +336,9 @@ impl SceneFixture {
             crate::asset_editor::process_editor_commands.into_boxed_system(),
             crate::scene::update_scenes.into_boxed_system(),
             crate::scene::request_scene_saves.into_boxed_system(),
-            crate::hierarchy::rebuild_rows.into_boxed_system(),
+            crate::hierarchy::reconcile_structure.into_boxed_system(),
+            concerto_ui::tree::update_trees_system(),
+            crate::hierarchy::reconcile_content.into_boxed_system(),
             crate::inspector::collect_inspector_data.into_boxed_system(),
             crate::scene::show_play_failures.into_boxed_system(),
         ]);

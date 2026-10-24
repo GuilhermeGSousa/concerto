@@ -15,31 +15,6 @@ define_action!(
 );
 
 define_action!(
-    /// Move the tree selection down one row.
-    SelectNext
-);
-define_action!(
-    /// Move the tree selection up one row.
-    SelectPrevious
-);
-define_action!(
-    /// Jump to the first row.
-    SelectFirst
-);
-define_action!(
-    /// Jump to the last row.
-    SelectLast
-);
-define_action!(
-    /// Expand the selected row, or step into it.
-    ExpandRow
-);
-define_action!(
-    /// Collapse the selected row, or step out to its parent.
-    CollapseRow
-);
-
-define_action!(
     /// Write the active document to disk.
     Save
 );
@@ -148,13 +123,6 @@ fn install_default_bindings(mut actions: ResMut<ActionMap>) {
         ViewportContext,
     );
     actions.bind(GizmoRotate, Shortcut::key(KeyCode::KeyE), ViewportContext);
-
-    actions.bind(SelectNext, Shortcut::key(KeyCode::ArrowDown), TreeContext);
-    actions.bind(SelectPrevious, Shortcut::key(KeyCode::ArrowUp), TreeContext);
-    actions.bind(SelectFirst, Shortcut::key(KeyCode::Home), TreeContext);
-    actions.bind(SelectLast, Shortcut::key(KeyCode::End), TreeContext);
-    actions.bind(ExpandRow, Shortcut::key(KeyCode::ArrowRight), TreeContext);
-    actions.bind(CollapseRow, Shortcut::key(KeyCode::ArrowLeft), TreeContext);
 }
 
 #[cfg(test)]
@@ -198,6 +166,28 @@ mod tests {
         assert_eq!(
             actions.resolve(Shortcut::ctrl(KeyCode::KeyP)),
             Some(TogglePlay.intern())
+        );
+    }
+
+    #[test]
+    fn the_tree_context_leaves_the_navigation_keys_to_the_ui_crate() {
+        let mut world = bound();
+        let actions = world.get_resource_mut::<ActionMap>().unwrap();
+        actions.push_context(TreeContext);
+
+        for key in [
+            KeyCode::ArrowDown,
+            KeyCode::ArrowUp,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::ArrowRight,
+            KeyCode::ArrowLeft,
+        ] {
+            assert_eq!(actions.resolve(Shortcut::key(key)), None, "{key:?}");
+        }
+        assert_eq!(
+            actions.resolve(Shortcut::key(KeyCode::Delete)),
+            Some(DeleteEntity.intern())
         );
     }
 

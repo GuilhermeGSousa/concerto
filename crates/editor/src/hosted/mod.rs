@@ -820,7 +820,7 @@ mod tests {
         run_step(&mut world);
 
         assert_eq!(world.resource_changed_tick::<Window>(), written);
-        assert_ne!(Some(world.current_tick()), written);
+        assert_ne!(Some(world.change_tick()), written);
     }
 
     #[test]

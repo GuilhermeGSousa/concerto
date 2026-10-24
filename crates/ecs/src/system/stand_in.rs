@@ -2,6 +2,7 @@ use std::any::TypeId;
 
 use crate::{
     System,
+    component::CheckChangeTicks,
     system::{access::SystemAccess, meta::SystemMetadata},
     world::{UnsafeWorldCell, World},
 };
@@ -38,4 +39,6 @@ impl System for StandIn {
     unsafe fn run_unsafe(&mut self, _args: Self::In, _world: UnsafeWorldCell) {}
 
     fn apply(&mut self, _world: &mut World) {}
+
+    fn check_change_tick(&mut self, _check: CheckChangeTicks) {}
 }

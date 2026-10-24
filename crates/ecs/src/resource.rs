@@ -1,5 +1,5 @@
 use std::{
-    any::TypeId,
+    any::{Any, TypeId},
     ops::{Deref, DerefMut},
 };
 
@@ -7,7 +7,7 @@ pub use concerto_ecs_macros::Resource;
 
 use crate::{
     World,
-    component::Tick,
+    component::{CheckChangeTicks, SystemTicks, Tick},
     query::change_detection::DetectChanges,
     system::{
         input::{SystemInput, ValidationError},
@@ -37,22 +37,50 @@ pub trait Resource: Send + Sync + 'static {
     fn name() -> &'static str;
 }
 
-#[allow(dead_code)]
-pub(crate) struct ResourceStorage<T: Resource> {
-    pub(crate) data: T,
+pub(crate) struct ResourceData {
+    data: Box<dyn Any + Send + Sync>,
     pub(crate) added_tick: Tick,
     pub(crate) changed_tick: Tick,
 }
 
-impl<T: Resource> ResourceStorage<T> {
-    pub(crate) fn new(resource: T, current_tick: u32) -> Self {
+impl ResourceData {
+    pub(crate) fn new<T: Resource>(resource: T, change_tick: Tick) -> Self {
         Self {
-            data: resource,
-            added_tick: Tick::new(current_tick),
-            changed_tick: Tick::new(current_tick),
+            data: Box::new(resource),
+            added_tick: change_tick,
+            changed_tick: change_tick,
         }
     }
+
+    pub(crate) fn replace<T: Resource>(&mut self, resource: T, change_tick: Tick) {
+        *self.get_mut() = resource;
+        self.changed_tick = change_tick;
+    }
+
+    pub(crate) fn get<T: Resource>(&self) -> &T {
+        self.data.downcast_ref().expect(STORED_UNDER_ITS_TYPE)
+    }
+
+    pub(crate) fn get_mut<T: Resource>(&mut self) -> &mut T {
+        self.data.downcast_mut().expect(STORED_UNDER_ITS_TYPE)
+    }
+
+    pub(crate) fn into_inner<T: Resource>(self) -> T {
+        *self.data.downcast().expect(STORED_UNDER_ITS_TYPE)
+    }
+
+    pub(crate) fn parts_mut<T: Resource>(&mut self) -> (&mut T, &Tick, &mut Tick) {
+        let data = self.data.downcast_mut().expect(STORED_UNDER_ITS_TYPE);
+        (data, &self.added_tick, &mut self.changed_tick)
+    }
+
+    pub(crate) fn check_change_ticks(&mut self, check: CheckChangeTicks) {
+        self.added_tick.check_tick(check);
+        self.changed_tick.check_tick(check);
+    }
 }
+
+const STORED_UNDER_ITS_TYPE: &str = "a resource is stored under its own type id";
 
 /// Read-only system parameter that borrows a [`Resource`] from the world.
 ///
@@ -63,25 +91,30 @@ impl<T: Resource> ResourceStorage<T> {
 /// `Option<Res<T>>` for a resource that may be absent.
 pub struct Res<'world, T: Resource> {
     pub value: &'world T,
+    added_tick: &'world Tick,
     changed_tick: &'world Tick,
-    current_tick: Tick,
+    ticks: SystemTicks,
 }
 
 impl<'world, T: Resource> Res<'world, T> {
-    /// Borrows `T` from `world`, or reports it missing.
+    /// Borrows `T` from `world` for a run with `ticks`, or reports it missing.
     ///
     /// # Safety
     /// The caller must hold read access to `T`.
-    pub unsafe fn new(world: UnsafeWorldCell<'world>) -> Result<Self, ValidationError> {
-        // SAFETY: only `T`'s storage and the world's tick are read, which the caller covers.
+    pub unsafe fn new(
+        world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
+    ) -> Result<Self, ValidationError> {
+        // SAFETY: only `T`'s storage is read, which the caller covers.
         let world = unsafe { world.world() };
-        let res_storage = world
-            .get_resource_storage::<T>()
+        let data = world
+            .get_resource_data::<T>()
             .ok_or_else(|| missing::<T>())?;
         Ok(Self {
-            value: &res_storage.data,
-            changed_tick: &res_storage.changed_tick,
-            current_tick: world.current_tick(),
+            value: data.get(),
+            added_tick: &data.added_tick,
+            changed_tick: &data.changed_tick,
+            ticks,
         })
     }
 }
@@ -108,9 +141,10 @@ where
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares read access to `T`.
-        unsafe { Res::new(world) }
+        unsafe { Res::new(world, ticks) }
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -132,9 +166,10 @@ where
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares read access to `T`.
-        Ok(unsafe { Res::new(world) }.ok())
+        Ok(unsafe { Res::new(world, ticks) }.ok())
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -159,8 +194,12 @@ impl<T> DetectChanges for Res<'_, T>
 where
     T: Resource,
 {
-    fn has_changed(&self) -> bool {
-        *self.changed_tick == self.current_tick
+    fn is_changed(&self) -> bool {
+        self.ticks.is_changed(*self.changed_tick)
+    }
+
+    fn is_added(&self) -> bool {
+        self.ticks.is_changed(*self.added_tick)
     }
 }
 
@@ -172,30 +211,34 @@ where
 /// A system taking it is skipped with a warning while the resource is missing.
 pub struct ResMut<'world, T: Resource> {
     pub value: &'world mut T,
+    added_tick: &'world Tick,
     changed_tick: &'world mut Tick,
-    current_tick: Tick,
-    has_changed: bool,
+    ticks: SystemTicks,
+    written: bool,
 }
 
 impl<'world, T: Resource> ResMut<'world, T> {
-    /// Borrows `T` mutably from `world`, or reports it missing.
+    /// Borrows `T` mutably from `world` for a run with `ticks`, or reports it missing.
     ///
     /// # Safety
     /// The caller must hold write access to `T`.
-    pub unsafe fn new(world: UnsafeWorldCell<'world>) -> Result<Self, ValidationError> {
-        // SAFETY: only `T`'s storage is written and the world's tick read, which the caller
-        // covers.
+    pub unsafe fn new(
+        world: UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
+    ) -> Result<Self, ValidationError> {
+        // SAFETY: only `T`'s storage is written, which the caller covers.
         let world = unsafe { world.world_mut() };
-        let current_tick = world.current_tick();
-        let res_storage = world
-            .get_resource_storage_mut::<T>()
-            .ok_or_else(|| missing::<T>())?;
+        let (value, added_tick, changed_tick) = world
+            .get_resource_data_mut::<T>()
+            .ok_or_else(|| missing::<T>())?
+            .parts_mut();
 
         Ok(Self {
-            value: &mut res_storage.data,
-            changed_tick: &mut res_storage.changed_tick,
-            current_tick,
-            has_changed: false,
+            value,
+            added_tick,
+            changed_tick,
+            ticks,
+            written: false,
         })
     }
 
@@ -220,9 +263,10 @@ where
     unsafe fn get_data<'world, 'state>(
         _state: &'state mut Self::State,
         world: crate::world::UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
     ) -> Result<Self::Data<'world, 'state>, ValidationError> {
         // SAFETY: `fill_access` declares write access to `T`.
-        unsafe { ResMut::new(world) }
+        unsafe { ResMut::new(world, ticks) }
     }
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
@@ -246,11 +290,25 @@ where
     T: Resource,
 {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        if !self.has_changed {
-            self.has_changed = true;
-            *self.changed_tick = self.current_tick;
+        if !self.written {
+            self.written = true;
+            *self.changed_tick = self.ticks.this_run;
         }
         self.value
+    }
+}
+
+impl<T> ResMut<'_, T>
+where
+    T: Resource + PartialEq,
+{
+    /// Writes `value` and stamps the change only if it differs; returns whether it wrote.
+    pub fn set_if_neq(&mut self, value: T) -> bool {
+        if *self.value == value {
+            return false;
+        }
+        *self.deref_mut() = value;
+        true
     }
 }
 
@@ -258,8 +316,12 @@ impl<T> DetectChanges for ResMut<'_, T>
 where
     T: Resource,
 {
-    fn has_changed(&self) -> bool {
-        *self.changed_tick == self.current_tick
+    fn is_changed(&self) -> bool {
+        self.ticks.is_changed(*self.changed_tick)
+    }
+
+    fn is_added(&self) -> bool {
+        self.ticks.is_changed(*self.added_tick)
     }
 }
 

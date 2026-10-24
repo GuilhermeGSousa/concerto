@@ -109,7 +109,7 @@ fn build_controls(
 
     if let Some(body) = registry.body(PANEL_ID) {
         let mut body_queue = cmd.entity(body);
-        let mut bar = body_queue.spawn_child_queue(
+        let mut bar = body_queue.spawn_child(
             theme
                 .row()
                 .gap(2.0)
@@ -121,7 +121,7 @@ fn build_controls(
             (Control::Maximise, glyph::CORNERS_OUT),
             (Control::Close, glyph::X),
         ] {
-            bar = bar.add_child_with(
+            bar.add_child_with(
                 (
                     theme
                         .pressable()
@@ -149,7 +149,7 @@ fn build_controls(
     if let Some(root) = registry.root() {
         let mut root_queue = cmd.entity(root);
         for grip in grips() {
-            root_queue = root_queue.add_child(grip);
+            root_queue.add_child(grip);
         }
     }
 }

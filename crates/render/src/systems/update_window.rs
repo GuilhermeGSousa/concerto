@@ -17,7 +17,7 @@ pub(crate) fn extract_window(
     window: Extracted<Res<Window>>,
     mut render_window: ResMut<RenderWindow>,
 ) {
-    // if !window.has_changed() {
+    // if !window.is_changed() {
     //     return;
     // }
 
@@ -30,7 +30,7 @@ pub(crate) fn update_render_window(
     device: Res<RenderDevice>,
     render_cameras: Query<&mut RenderCamera>,
 ) {
-    if !render_window.has_changed() {
+    if !render_window.is_changed() {
         return;
     }
 

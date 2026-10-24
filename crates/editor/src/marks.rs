@@ -1,5 +1,6 @@
 //! The small geometric marks the design uses in place of icons.
 use concerto_color::Color;
+use concerto_ecs::query::change_detection::Mut;
 use concerto_ui::{
     material::UIMaterial,
     node::{UINode, UIRect},
@@ -15,6 +16,8 @@ pub const COLUMN: f32 = 18.0;
 pub enum Mark {
     /// A group: something with children and nothing of its own to draw.
     Group,
+    /// A folder of assets: an outlined square in the secondary accent.
+    Folder,
     Mesh,
     Camera,
     Light,
@@ -63,6 +66,16 @@ impl Mark {
             Mark::Group => Shape {
                 size: 8.0,
                 border: outline,
+                border_width: 1.5,
+                ..plain
+            },
+            Mark::Folder => Shape {
+                size: 8.0,
+                border: if selected {
+                    theme.accent
+                } else {
+                    theme.accent_secondary
+                },
                 border_width: 1.5,
                 ..plain
             },
@@ -127,36 +140,55 @@ pub fn node() -> (UINode, UIMaterial) {
     )
 }
 
-/// Applies a mark to the node and material spawned by [`node`].
+/// A mark node already drawn as `mark`, unselected, for a row spawned this frame.
+pub fn shaped(mark: Mark, theme: &UITheme) -> (UINode, UIMaterial) {
+    let shape = mark.shape(theme, false);
+    let (mut node, mut material) = node();
+    fit_node(&shape, &mut node);
+    fit_material(&shape, &mut material);
+    (node, material)
+}
+
+/// Applies a mark to the node and material spawned by [`node`], writing to each only when it differs, so an unchanged mark is not flagged as changed.
 pub fn apply(
     mark: Mark,
     theme: &UITheme,
     selected: bool,
-    node: &mut UINode,
-    material: &mut UIMaterial,
+    node: &mut Mut<UINode>,
+    material: &mut Mut<UIMaterial>,
 ) {
     let shape = mark.shape(theme, selected);
+    if !node_fits(&shape, node) {
+        fit_node(&shape, node);
+    }
+    if !material_fits(&shape, material) {
+        fit_material(&shape, material);
+    }
+}
+
+fn node_fits(shape: &Shape, node: &UINode) -> bool {
+    node.width == UIValue::Px(shape.size)
+}
+
+fn fit_node(shape: &Shape, node: &mut UINode) {
     let size = UIValue::Px(shape.size);
-    if node.width != size {
-        node.width = size;
-        node.height = size;
-        node.margin = UIRect::axes(0.0, (COLUMN - shape.size) / 2.0);
-    }
-    let fill = shape.fill.to_linear();
-    if material.color != fill {
-        material.color = fill;
-    }
-    let border = shape.border.to_linear();
-    if material.border_color != border {
-        material.border_color = border;
-    }
-    if material.border_width != shape.border_width {
-        material.border_width = shape.border_width;
-    }
-    if material.corner_radius != shape.corner_radius {
-        material.corner_radius = shape.corner_radius;
-    }
-    if material.rotation != shape.rotation {
-        material.rotation = shape.rotation;
-    }
+    node.width = size;
+    node.height = size;
+    node.margin = UIRect::axes(0.0, (COLUMN - shape.size) / 2.0);
+}
+
+fn material_fits(shape: &Shape, material: &UIMaterial) -> bool {
+    material.color == shape.fill.to_linear()
+        && material.border_color == shape.border.to_linear()
+        && material.border_width == shape.border_width
+        && material.corner_radius == shape.corner_radius
+        && material.rotation == shape.rotation
+}
+
+fn fit_material(shape: &Shape, material: &mut UIMaterial) {
+    material.color = shape.fill.to_linear();
+    material.border_color = shape.border.to_linear();
+    material.border_width = shape.border_width;
+    material.corner_radius = shape.corner_radius;
+    material.rotation = shape.rotation;
 }
