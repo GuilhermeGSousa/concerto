@@ -319,8 +319,20 @@ Stop drops the game and returns to the scene exactly as it was before Play.
 Changes made while playing are lost and never mark the scene unsaved. Saving is
 refused while the game starts or plays, with "Stop to save". Opening another
 scene, opening another project, and quitting stop the game first, before any
-question about unsaved changes. Play does nothing while that question is open.
+question about unsaved changes. Play is refused while that question is open.
 A game that asks to quit is stopped.
+
+Code learns how a Play ended from events in the editor's world. It ends in
+`PlayStarted { document }` once the game plays, or in `PlayFailed { document,
+message }`. Where the tab shows a status, `message` is that status: "Wait for
+the scene to load", "No scene is open", the failed save's "Save failed: …", or
+"Could not start the game: …". A Play the tab says nothing about fails too:
+"The game is already playing", "Answer the question about unsaved changes
+first", "Wait for the project to open", a Play on an entity that is not a
+document ("No scene is open"), and "The game was stopped before it started"
+when the game is stopped while it builds. Every stop of a starting or playing
+game writes `PlayStopped { document }`, so a stop while the game builds writes
+both `PlayFailed` and `PlayStopped`; a stop with no game on writes nothing.
 
 ### Who has input
 
@@ -349,6 +361,13 @@ saves the active document over the scene it was opened from, imported or not.
 A saved scene belongs to the editor from then on: re-importing its source
 leaves it alone and re-imports the source's other outputs. A failed save
 reports why in Chatter and leaves the document dirty.
+
+Each save, whether asked for with `SaveRequested` or made by Play, ends in an
+event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
+the scene the document now shows, or `SaveFailed { document, message }`, where
+`message` is the status the tab shows, "Stop to save" included. Ctrl+S asks for
+a save only when the document has unsaved changes; otherwise it writes neither,
+even while it shows "Stop to save".
 
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or

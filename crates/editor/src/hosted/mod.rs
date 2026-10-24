@@ -13,9 +13,9 @@ use std::{
 
 use concerto_app::{App, Plugin, plugins::PluginsState, schedule_groups::First};
 use concerto_ecs::{
-    Component, Entity, IntoSystemConfig, Query, World,
+    Component, Entity, Event, IntoSystemConfig, Query, World,
     command::CommandQueue,
-    events::event_channel::EventChannel,
+    events::{event_channel::EventChannel, event_writer::EventWriter},
     signal::{On, Signal},
     system::NonSendMarker,
 };
@@ -340,15 +340,43 @@ pub struct ParkedEditApp(pub(crate) HostedApp);
 #[derive(Component, Debug)]
 pub struct PlayFailure(pub String);
 
+impl PlayFailure {
+    /// The status a document shows for this failure.
+    pub fn status(&self) -> String {
+        format!("Could not start the game: {}", self.0)
+    }
+}
+
 /// Stops the play `App` on a document, starting or playing, and returns to its edit `App`.
 pub struct StopPlay(pub Entity);
 impl Signal for StopPlay {}
+
+/// A document's game finished building and is playing.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct PlayStarted {
+    pub document: Entity,
+}
+
+/// A request to play a document's game ended without it playing; `message` says why.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct PlayFailed {
+    pub document: Entity,
+    pub message: String,
+}
+
+/// A document's game, starting or playing, was stopped and its edit `App` is back.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct PlayStopped {
+    pub document: Entity,
+}
 
 pub(crate) fn finish_pending_play(
     _: NonSendMarker,
     pending: Query<(Entity, &mut PendingPlayApp)>,
     hosted: Query<&mut HostedApp>,
     failures: Query<&PlayFailure>,
+    mut started: EventWriter<PlayStarted>,
+    mut failed: EventWriter<PlayFailed>,
     mut cmd: CommandQueue,
 ) {
     for (document, mut pending) in pending.iter() {
@@ -371,8 +399,13 @@ pub(crate) fn finish_pending_play(
                 cmd.remove::<PlayFailure>(document);
             }
             cmd.trigger(SetEditTarget(Some(document)));
+            started.write(PlayStarted { document });
         } else if let Some(failure) = pending.failure() {
             let failure = PlayFailure(failure.to_owned());
+            failed.write(PlayFailed {
+                document,
+                message: failure.status(),
+            });
             cmd.remove::<PendingPlayApp>(document);
             cmd.insert((failure, PlayState::Editing), document);
             cmd.trigger(SetEditTarget(Some(document)));
@@ -385,6 +418,8 @@ pub(crate) fn stop_play(
     pending: Query<&PendingPlayApp>,
     playing: Query<(&mut HostedApp, &mut ParkedEditApp)>,
     owners: Query<&input::InputOwner>,
+    mut failed: EventWriter<PlayFailed>,
+    mut stops: EventWriter<PlayStopped>,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
@@ -392,6 +427,10 @@ pub(crate) fn stop_play(
     if let Some(pending) = pending.get_entity(document) {
         pending.cancel_loads();
         cmd.remove::<PendingPlayApp>(document);
+        failed.write(PlayFailed {
+            document,
+            message: "The game was stopped before it started".into(),
+        });
         stopped = true;
     }
     if let Some((mut hosted, mut parked)) = playing.get_entity(document) {
@@ -406,6 +445,7 @@ pub(crate) fn stop_play(
     if stopped {
         cmd.insert(PlayState::Editing, document);
         cmd.trigger(SetEditTarget(Some(document)));
+        stops.write(PlayStopped { document });
     }
 }
 
@@ -424,6 +464,9 @@ pub struct HostedPlugin;
 impl Plugin for HostedPlugin {
     fn build(&self, app: &mut App) {
         install_listeners(app.main_mut().world_mut());
+        app.register_event::<PlayStarted>()
+            .register_event::<PlayFailed>()
+            .register_event::<PlayStopped>();
         app.insert_resource(input::Routing::default())
             .insert_resource(input::HostCursor::default())
             .insert_resource(input::ViewportShown::default())
