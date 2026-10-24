@@ -360,7 +360,7 @@ pub(crate) fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Enti
 fn frame_requested_bounds(
     bounded: Query<(Entity, &Aabb, &GlobalTransform)>,
     children: Query<&Children>,
-    cameras: Query<(&EditorCamera, &Camera, &mut Transform)>,
+    cameras: Query<(&EditorCamera, &mut Camera, &mut Transform)>,
     selection: Res<Selection>,
     mut commands: ResMut<ViewportCommands>,
     mut fly: ResMut<FlyCamera>,
@@ -389,8 +389,12 @@ fn frame_requested_bounds(
         .unwrap_or(0.78);
     let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
     fly.position = bounds.center() - fly.forward() * distance;
-    for (_, _, mut transform) in cameras.iter() {
+    for (_, mut camera, mut transform) in cameras.iter() {
         apply_fly_transform(&fly, &mut transform);
+        let far = distance + radius * 2.0;
+        if camera.zfar < far {
+            camera.zfar = far;
+        }
     }
 }
 
@@ -563,6 +567,48 @@ mod tests {
         assert!(f.looks_at(Vec3::ZERO));
         let commands = f.world.get_resource::<ViewportCommands>().unwrap();
         assert!(!commands.frame_all && !commands.frame_selection);
+    }
+
+    fn far_plane(f: &mut Framing) -> f32 {
+        f.world
+            .query::<&Camera, ()>()
+            .iter(&mut f.world)
+            .next()
+            .unwrap()
+            .zfar
+    }
+
+    #[test]
+    fn framing_keeps_everything_it_frames_inside_the_far_plane() {
+        let mut f = framing();
+        f.world.trigger(FrameAll);
+        f.run();
+        let farthest = [Vec3::new(41.0, 1.0, 1.0), Vec3::new(-41.0, 1.0, 1.0)]
+            .map(|corner| (corner - f.fly().position).length())
+            .into_iter()
+            .fold(0.0, f32::max);
+        let all = far_plane(&mut f);
+        assert!(farthest < all, "{farthest} lies beyond the far plane {all}");
+
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .set(Some(f.near));
+        f.world.trigger(FrameSelection);
+        f.run();
+        assert_eq!(far_plane(&mut f), all, "framing less never clips the rest");
+    }
+
+    #[test]
+    fn framing_a_small_scene_keeps_the_default_far_plane() {
+        let mut f = framing();
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .set(Some(f.near));
+        f.world.trigger(FrameSelection);
+        f.run();
+        assert_eq!(far_plane(&mut f), Camera::default().zfar);
     }
 
     fn pointing(over: bool) -> World {
