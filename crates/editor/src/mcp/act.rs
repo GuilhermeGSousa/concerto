@@ -10,7 +10,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::{
     assets::{Asset, AssetId},
-    transform::Transform,
+    transform::{GlobalTransform, Transform},
 };
 use concerto_mcp::{
     AppMcpExt, McpServe, McpTool, Needs, PendingCall, ToolCalls, ToolError, answer_unanswered,
@@ -584,17 +584,16 @@ fn answer_posed(
     waiting: Query<(Entity, &PendingCall, &AwaitingPose)>,
     fly: EditWorld<Option<Res<FlyCamera>>>,
     requests: EditWorld<Option<Res<ViewportCommands>>>,
-    cameras: EditWorld<Query<&Transform, With<EditorCamera>>>,
+    cameras: EditWorld<Query<(&Transform, &GlobalTransform), With<EditorCamera>>>,
     mut cmd: CommandQueue,
 ) {
     let (Some(fly), Some(requests)) = (fly.as_deref(), requests.as_deref()) else {
         return;
     };
     let framing = requests.frame_selection || requests.frame_all;
-    let placed = cameras
-        .iter()
-        .next()
-        .is_some_and(|transform| fly.placed(transform));
+    let placed = cameras.iter().next().is_some_and(|(transform, drawn)| {
+        fly.placed(transform) && drawn.matrix() == transform.compute_matrix()
+    });
     if framing || !placed {
         return;
     }

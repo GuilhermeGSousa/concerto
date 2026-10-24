@@ -225,6 +225,12 @@ impl AssetServer {
         Ok(false)
     }
 
+    /// Whether an asset requested with `load` or `add` has yet to reach the world; a failed load counts until its failure is handled.
+    pub fn is_loading(&self) -> bool {
+        !self.data.pending_tasks.read().unwrap().is_empty()
+            || !self.data.asset_load_event_receiver.is_empty()
+    }
+
     /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
     pub fn cancel_pending(&self) {
         let mut pending = self.data.pending_tasks.write().unwrap();
@@ -813,6 +819,72 @@ mod tests {
         let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
         assert!(store.get(&handle).is_none());
         assert!(server.data.pending_tasks.read().unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_load_is_in_flight_until_its_asset_reaches_the_world() {
+        let dir = temp_root("in-flight-load");
+        let id = saved_fixture(&dir, 6);
+        let (server, mut world) = fixture_server(&dir);
+        assert!(!server.is_loading());
+
+        let handle = server.load::<FixtureAsset>(id);
+        assert!(server.is_loading());
+        wait_until("the load", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+        assert!(server.is_loading());
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading());
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(6));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_load_is_in_flight_until_its_failure_is_handled() {
+        let dir = temp_root("in-flight-failure");
+        let (server, mut world) = fixture_server(&dir);
+
+        let _handle = server.load::<FixtureAsset>(AssetId::new());
+        wait_until("the failure", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+        assert!(server.is_loading());
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_added_asset_is_in_flight_until_it_reaches_the_world() {
+        let dir = temp_root("in-flight-added");
+        let (server, mut world) = fixture_server(&dir);
+
+        let _handle = server.add(FixtureAsset {
+            value: 9,
+            initialized: false,
+        });
+        assert!(server.is_loading());
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancelled_loads_are_no_longer_in_flight() {
+        let dir = temp_root("in-flight-cancelled");
+        let id = saved_fixture(&dir, 4);
+        let (server, _world) = fixture_server(&dir);
+        let _handle = server.load::<FixtureAsset>(id);
+
+        server.cancel_pending();
+
+        assert!(!server.is_loading());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

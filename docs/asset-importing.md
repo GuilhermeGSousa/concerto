@@ -268,6 +268,10 @@ continues to use the same UUID if its runtime registry points to the new path.
 before startup systems run. Configure `ContentAssetRoot` before that phase.
 A malformed registry fails initialization explicitly. Standalone callers can
 request `load` before initialization; its task loads the registry lazily.
+
+`AssetServer::is_loading` reports whether an asset requested with `load` or
+`add` has yet to reach the world. A load counts until the frame that inserts
+its asset, or handles its failure; cancelled loads do not count.
 Constructing a macro-generated UUID never requires runtime initialization.
 
 ```rust

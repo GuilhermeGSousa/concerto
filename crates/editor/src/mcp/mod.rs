@@ -14,12 +14,13 @@ use concerto_ecs::{
     signal::On,
     system::input::{StaticSystemInput, SystemInputData},
 };
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::HostClosing};
 
 use crate::{
     asset_editor::{EditorDocument, SaveRequested},
     guard::{GuardChoice, UnsavedGuard},
-    hosted::{PendingApp, PendingPlayApp, PlayState},
+    hosted::{EditWorld, PendingApp, PendingPlayApp, PlayState},
     project::ProjectState,
 };
 
@@ -50,6 +51,7 @@ impl Plugin for EditorMcpPlugin {
             ToolError::new("not_playing", "Start the game with play."),
         )
         .add_system(LateUpdate, demand_frames_while_busy)
+        .add_system(LateUpdate, demand_frames_while_the_scene_loads)
         .add_system(Update, discard_while_closing)
         .add_listener(quit_when_host_closes);
         observe::build(app);
@@ -82,6 +84,15 @@ fn is_busy(
 
 fn demand_frames_while_busy(busy: StaticSystemInput<BusyInputs>, mut demand: ResMut<FrameDemand>) {
     if is_busy(&busy) {
+        demand.request();
+    }
+}
+
+fn demand_frames_while_the_scene_loads(
+    assets: EditWorld<Option<Res<AssetServer>>>,
+    mut demand: ResMut<FrameDemand>,
+) {
+    if assets.as_deref().is_some_and(AssetServer::is_loading) {
         demand.request();
     }
 }

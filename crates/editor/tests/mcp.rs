@@ -1,7 +1,10 @@
 use std::{
     future::Future,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, PoisonError},
+    sync::{
+        Arc, Mutex, PoisonError,
+        atomic::{AtomicBool, Ordering},
+    },
     time::{Duration, Instant},
 };
 
@@ -17,6 +20,7 @@ use concerto_ecs::{
     component::name::Name,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
+    signal::Signal,
     signal::listener::GlobalListener,
 };
 use concerto_editor::{
@@ -29,17 +33,19 @@ use concerto_editor::{
 };
 use concerto_foundation::{
     assets::{
-        Asset, AssetId,
+        Asset, AssetId, LoadableAsset,
+        asset_server::{AssetLoadContext, AssetServer},
         content::{
             CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset,
         },
+        handle::AssetHandle,
     },
-    transform::Transform,
+    transform::{GlobalTransform, Transform},
 };
 use concerto_mcp::{AppMcpExt, McpTool, Needs, ToolCalls, host::HostClosing, host::run_with};
 use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_render::components::light::Light;
+use concerto_render::components::{camera::Camera, light::Light};
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::Vec3;
 use image::{ImageFormat, RgbaImage};
@@ -49,7 +55,7 @@ use rmcp::{
     service::RunningService,
 };
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const SIZE: (u32, u32) = (800, 600);
@@ -101,8 +107,46 @@ fn sample_the_sword(named: Query<(Entity, &Name), Without<Samples>>, mut cmd: Co
     }
 }
 
+static RELEASE_THE_SLOW_ASSET: AtomicBool = AtomicBool::new(false);
+
+const SLOW_ADDRESS: &str = "content/slow.gasset";
+
+#[derive(Serialize, Deserialize)]
+struct SlowAsset;
+
+impl Asset for SlowAsset {
+    fn name() -> &'static str {
+        "SlowAsset"
+    }
+}
+
+impl LoadableAsset for SlowAsset {
+    fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
+        while !RELEASE_THE_SLOW_ASSET.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(())
+    }
+}
+
+struct LoadSlowly;
+
+impl Signal for LoadSlowly {}
+
+#[derive(Resource)]
+struct SlowLoad {
+    _handle: AssetHandle<SlowAsset>,
+}
+
+fn load_slowly(_: On<LoadSlowly>, server: Res<AssetServer>, mut cmd: CommandQueue) {
+    let handle = server.load::<SlowAsset>(AssetId::from_path(SLOW_ADDRESS));
+    cmd.insert_resource(SlowLoad { _handle: handle });
+}
+
 fn game(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins)
+        .register_asset::<SlowAsset>()
+        .add_listener(load_slowly.at_edit_time())
         .register_type::<Unreadable>()
         .register_type::<Samples>()
         .insert_resource(EditFrames::default())
@@ -168,6 +212,15 @@ struct PlayScene {}
 
 #[derive(Deserialize, JsonSchema)]
 struct CameraAt {}
+
+#[derive(Deserialize, JsonSchema)]
+struct DrawnCameraAt {}
+
+#[derive(Deserialize, JsonSchema)]
+struct StartSlowLoad {}
+
+#[derive(Deserialize, JsonSchema)]
+struct EditFramesSoFar {}
 
 fn state(
     mut calls: ToolCalls<State>,
@@ -293,6 +346,29 @@ fn play_scene(
 fn camera_at(mut calls: ToolCalls<CameraAt>, fly: EditWorld<Res<FlyCamera>>) {
     for (_, reply) in calls.read() {
         reply.ok(format!("{:.2}", fly.position.x));
+    }
+}
+
+fn drawn_camera_at(
+    mut calls: ToolCalls<DrawnCameraAt>,
+    cameras: EditWorld<Query<&GlobalTransform, With<Camera>>>,
+) {
+    for (_, reply) in calls.read() {
+        let x = cameras.iter().next().map(|global| global.translation().x);
+        reply.ok(format!("{:.2}", x.unwrap_or(f32::NAN)));
+    }
+}
+
+fn start_slow_load(mut calls: ToolCalls<StartSlowLoad>, mut scene: EditWorldSignals) {
+    for (_, reply) in calls.read() {
+        scene.trigger(LoadSlowly);
+        reply.ok("loading");
+    }
+}
+
+fn edit_frames_so_far(mut calls: ToolCalls<EditFramesSoFar>, frames: EditWorld<Res<EditFrames>>) {
+    for (_, reply) in calls.read() {
+        reply.ok(frames.0.to_string());
     }
 }
 
@@ -496,6 +572,18 @@ where
                 .add_tool::<CameraAt, _>(
                     McpTool::read_only("camera_at").needs(Needs::Scene),
                     camera_at,
+                )
+                .add_tool::<DrawnCameraAt, _>(
+                    McpTool::read_only("drawn_camera_at").needs(Needs::Scene),
+                    drawn_camera_at,
+                )
+                .add_tool::<StartSlowLoad, _>(
+                    McpTool::new("start_slow_load").needs(Needs::Scene),
+                    start_slow_load,
+                )
+                .add_tool::<EditFramesSoFar, _>(
+                    McpTool::read_only("edit_frames_so_far").needs(Needs::Scene),
+                    edit_frames_so_far,
                 )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
@@ -754,6 +842,44 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     let (width, height) = line(&after, "viewport: ").split_once('x').unwrap();
     assert!(width.parse::<u32>().unwrap() > 0, "{after}");
     assert!(height.parse::<u32>().unwrap() > 0, "{after}");
+}
+
+async fn edit_frames(client: &Client) -> u32 {
+    ok(client, "edit_frames_so_far").await.parse().unwrap()
+}
+
+#[test]
+fn frames_run_while_the_edited_scene_loads_and_stop_once_it_has_loaded() {
+    let fixture = Fixture::new();
+    write_asset(
+        &fixture.root(),
+        SLOW_ADDRESS,
+        AssetId::from_path(SLOW_ADDRESS),
+        SlowAsset::name(),
+        &[],
+    );
+    let Some(served) = serve(&fixture, &Log::default(), |client| async move {
+        open(&client).await;
+        until(&client, "status", |status| status.ends_with("busy: no")).await;
+        ok(&client, "start_slow_load").await;
+        let loading = ok(&client, "status").await;
+        let first = edit_frames(&client).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let later = edit_frames(&client).await;
+        RELEASE_THE_SLOW_ASSET.store(true, Ordering::SeqCst);
+        until(&client, "status", |status| status.ends_with("busy: no")).await;
+        let loaded = edit_frames(&client).await;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let idle = edit_frames(&client).await;
+        client.cancel().await.unwrap();
+        (loading, first, later, loaded, idle)
+    }) else {
+        return;
+    };
+    let (loading, first, later, loaded, idle) = served.result;
+    assert!(loading.ends_with("busy: yes"), "{loading}");
+    assert!(later > first, "{first} then {later} frames while loading");
+    assert_eq!(idle, loaded, "frames ran once the scene had loaded");
 }
 
 #[test]
@@ -1495,11 +1621,22 @@ fn frame_answers_once_the_camera_has_framed() {
         let before = ok(&client, "camera_at").await;
         let framed = ok_with(&client, "frame", json!({ "entity": sword })).await;
         let on_sword = ok(&client, "camera_at").await;
+        let drawn_on_sword = ok(&client, "drawn_camera_at").await;
         let status = ok(&client, "status").await;
         let all = ok(&client, "frame").await;
         let on_all = ok(&client, "camera_at").await;
+        let drawn_on_all = ok(&client, "drawn_camera_at").await;
         client.cancel().await.unwrap();
-        (closed, sword, before, framed, on_sword, status, all, on_all)
+        (
+            closed,
+            sword,
+            before,
+            framed,
+            (on_sword, drawn_on_sword),
+            status,
+            all,
+            (on_all, drawn_on_all),
+        )
     }) else {
         return;
     };
@@ -1513,14 +1650,14 @@ fn frame_answers_once_the_camera_has_framed() {
         "{framed}"
     );
     assert!(framed.ends_with(level), "{framed}");
-    assert_eq!(on_sword, "9.50");
+    assert_eq!(on_sword, ("9.50".into(), "9.50".into()));
     assert_eq!(line(&status, "selection: "), format!("{sword} Sword"));
     assert!(
         all.starts_with("Framed the whole scene. Camera at (0.000, "),
         "{all}"
     );
     assert!(all.ends_with(level), "{all}");
-    assert_eq!(on_all, "0.00");
+    assert_eq!(on_all, ("0.00".into(), "0.00".into()));
 }
 
 #[test]

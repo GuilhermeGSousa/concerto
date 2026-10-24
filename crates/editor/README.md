@@ -44,10 +44,12 @@ names another size. `--decorated` is ignored there, and `--mcp-size` without
 message naming lavapipe.
 
 Frames run on demand, only while a call needs one or the editor is busy: a
-project or scene opening, a game starting or playing, a save under way. An idle
-editor runs none. The tools that look answer between frames, without running
-one; the tools that act run in frames, one at a time, and a second one waits
-until the first has answered.
+project or scene opening, the edited scene's assets still loading, a game
+starting or playing, a save under way. An idle editor runs none, so once
+`status` reports `busy: no` the viewport shows the scene with everything it
+loads. The tools that look answer between frames, without running one; the
+tools that act run in frames, one at a time, and a second one waits until the
+first has answered.
 
 When the client disconnects, the editor quits and discards unsaved edits,
 answering its own unsaved-changes prompt with Discard. An agent that wants its

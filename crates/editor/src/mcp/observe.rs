@@ -9,6 +9,7 @@ use concerto_ecs::{
     signal::listener::GlobalListener,
     system::input::{ComponentMetadata, StaticSystemInput, SystemInputData},
 };
+use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
@@ -182,7 +183,7 @@ fn status(
     let editing = targets.iter().next().is_some();
     for (_, reply) in calls.read() {
         if !editing {
-            reply.ok(describe(&editor, "none"));
+            reply.ok(describe(&editor, "none", false));
         }
     }
 }
@@ -192,6 +193,7 @@ fn status_of_edit_target(
     editor: StaticSystemInput<StatusInputs>,
     selection: EditWorld<Option<Res<Selection>>>,
     names: EditWorld<Query<&Name>>,
+    assets: EditWorld<Option<Res<AssetServer>>>,
 ) {
     let selected = match selection.as_deref().and_then(Selection::entity) {
         Some(entity) => match names.get_entity(entity) {
@@ -201,11 +203,15 @@ fn status_of_edit_target(
         None => "none".to_owned(),
     };
     for (_, reply) in calls.read() {
-        reply.ok(describe(&editor, &selected));
+        reply.ok(describe(
+            &editor,
+            &selected,
+            assets.as_deref().is_some_and(AssetServer::is_loading),
+        ));
     }
 }
 
-fn describe(editor: &SystemInputData<StatusInputs>, selection: &str) -> String {
+fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bool) -> String {
     let (project, active, viewport, documents, busy) = editor;
     let mut lines = vec![
         match &project.project {
@@ -237,7 +243,11 @@ fn describe(editor: &SystemInputData<StatusInputs>, selection: &str) -> String {
     });
     lines.push(format!(
         "busy: {}",
-        if is_busy(busy) { "yes" } else { "no" }
+        if loading || is_busy(busy) {
+            "yes"
+        } else {
+            "no"
+        }
     ));
     lines.join("\n")
 }
