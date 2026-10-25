@@ -107,8 +107,8 @@ nothing ignores `unsaved`.
 places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
 turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a
 positive yaw turns left, and pitch is up from level, kept within ±1.55. Giving
-both forms, neither, or a `look_at` at the position answers
-`invalid_arguments`. `frame` and `set_camera` answer the camera's pose, its
+both forms, neither, a `look_at` at the position, or a number that is not
+finite in an `f32` (beyond about ±3.4e38) answers `invalid_arguments`. `frame` and `set_camera` answer the camera's pose, its
 position, yaw, pitch and the direction it looks along, once the edit `App` has
 stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has

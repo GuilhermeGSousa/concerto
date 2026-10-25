@@ -2161,14 +2161,25 @@ fn set_camera_places_the_camera_by_angles_or_by_a_point_to_face() {
         ] {
             invalid.push(error_with(&client, "set_camera", arguments).await);
         }
+        let mut non_finite = Vec::new();
+        for arguments in [
+            json!({ "position": [1e39, 0.0, 0.0], "yaw": 0.0, "pitch": 0.0 }),
+            json!({ "position": [0.0, 2.0, 8.0], "yaw": 1e39, "pitch": 0.0 }),
+            json!({ "position": [0.0, 2.0, 8.0], "yaw": 0.0, "pitch": -1e39 }),
+            json!({ "position": [0.0, 2.0, 8.0], "look_at": [1e39, 0.0, 0.0] }),
+        ] {
+            let started = Instant::now();
+            let error = error_with(&client, "set_camera", arguments).await;
+            non_finite.push((error, started.elapsed()));
+        }
         let unmoved = ok(&client, "camera_at").await;
         client.cancel().await.unwrap();
-        (closed, turned, at, facing, invalid, unmoved)
+        (closed, turned, at, facing, (invalid, non_finite), unmoved)
     }) else {
         return;
     };
 
-    let (closed, turned, at, facing, invalid, unmoved) = served.result;
+    let (closed, turned, at, facing, (invalid, non_finite), unmoved) = served.result;
     assert_eq!(closed["code"], "no_scene");
     assert_eq!(
         turned,
@@ -2181,6 +2192,14 @@ fn set_camera_places_the_camera_by_angles_or_by_a_point_to_face() {
     );
     for error in &invalid {
         assert_eq!(error["code"], "invalid_arguments", "{error}");
+    }
+    for (error, took) in &non_finite {
+        assert_eq!(error["code"], "invalid_arguments", "{error}");
+        assert!(
+            error["message"].as_str().unwrap().contains("finite"),
+            "{error}"
+        );
+        assert!(*took < Duration::from_secs(5), "{error} took {took:?}");
     }
     assert_eq!(unmoved, "0.00");
 }

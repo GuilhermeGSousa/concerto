@@ -590,6 +590,17 @@ fn invalid_pose(message: &str) -> ToolError {
 }
 
 fn pose_of(arguments: &SetCamera) -> Result<SetCameraPose, ToolError> {
+    let numbers = arguments
+        .position
+        .iter()
+        .chain(arguments.look_at.iter().flatten())
+        .chain(&arguments.yaw)
+        .chain(&arguments.pitch);
+    if numbers.any(|number| !number.is_finite()) {
+        return Err(invalid_pose(
+            "position, look_at, yaw and pitch must be finite numbers within f32's range, about ±3.4e38.",
+        ));
+    }
     let position = Vec3::from_array(arguments.position);
     match (arguments.look_at, arguments.yaw, arguments.pitch) {
         (Some(target), None, None) => SetCameraPose::looking_at(position, Vec3::from_array(target))
