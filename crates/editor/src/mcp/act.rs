@@ -590,13 +590,14 @@ fn invalid_pose(message: &str) -> ToolError {
 }
 
 fn pose_of(arguments: &SetCamera) -> Result<SetCameraPose, ToolError> {
-    let numbers = arguments
+    let finite = arguments
         .position
         .iter()
         .chain(arguments.look_at.iter().flatten())
         .chain(&arguments.yaw)
-        .chain(&arguments.pitch);
-    if numbers.any(|number| !number.is_finite()) {
+        .chain(&arguments.pitch)
+        .all(|number| number.is_finite());
+    if !finite {
         return Err(invalid_pose(
             "position, look_at, yaw and pitch must be finite numbers within f32's range, about ±3.4e38.",
         ));
