@@ -15,10 +15,10 @@ use serde::Deserialize;
 
 use crate::hosted::{
     EditTarget, HostedApp, PlayState,
-    input::{InViewport, InputOwner, ViewportShown, ViewportView},
+    input::{InViewport, InputOwner, Routing, ViewportShown, ViewportView},
 };
 
-/// Sends key, mouse button, pointer and wheel events to the game playing in the viewport, one per frame in order, as the editor window passes them on, and answers once the game has had the last; a key left pressed stays held until a later call releases it, and while the editor has input a list must start with a click on the picture, which gives the game input back.
+/// Sends key, mouse button, pointer and wheel events to the game playing in the viewport, one per frame in order, as the editor window passes them on, and answers once the game has had the last; a key left pressed stays held until a later call releases it, and the answer names the keys held on either side; while the editor has input only key and button releases go through, to the editor, unless the list starts with a click on the picture, which gives the game input back.
 #[derive(Deserialize, JsonSchema)]
 pub struct SendInput {
     /// The events, in order; points are pixels of the viewport's picture from its top-left, at the full size status gives as viewport.
@@ -91,9 +91,18 @@ pub struct WheelInput {
 struct Sending {
     document: Entity,
     events: VecDeque<WindowEvent>,
-    sent: usize,
     total: usize,
     capturing: usize,
+    to_game: usize,
+    to_editor: usize,
+    held_back: Option<HeldBack>,
+}
+
+#[derive(Clone, Copy)]
+enum HeldBack {
+    Editor,
+    Hidden,
+    Stopped,
 }
 
 macro_rules! key_names {
@@ -142,15 +151,8 @@ fn send_input(
         if !playing {
             continue;
         }
-        let (document, view, released) = match (targets.iter().next(), shown.0) {
-            (Some((document, Some(InputOwner::Game))), Some(view)) => (document, view, false),
-            (Some((document, Some(InputOwner::Editor))), Some(view)) => {
-                if !starts_with_a_click(&arguments.events) {
-                    reply.err(ToolError::new("input_released", RELEASED));
-                    continue;
-                }
-                (document, view, true)
-            }
+        let (document, view, owner) = match (targets.iter().next(), shown.0) {
+            (Some((document, Some(owner))), Some(view)) => (document, view, *owner),
             _ => {
                 reply.err(ToolError::new(
                     "input_released",
@@ -168,22 +170,25 @@ fn send_input(
         }
         match window_events(&arguments.events, &view, input.mouse_position()) {
             Ok(events) => {
-                let capturing = if released {
-                    events
-                        .iter()
-                        .position(|event| matches!(event, WindowEvent::MouseButton { .. }))
-                        .map_or(0, |click| click + 1)
-                } else {
-                    0
-                };
+                let capturing =
+                    if owner == InputOwner::Editor && starts_with_a_click(&arguments.events) {
+                        events
+                            .iter()
+                            .position(|event| matches!(event, WindowEvent::MouseButton { .. }))
+                            .map_or(0, |click| click + 1)
+                    } else {
+                        0
+                    };
                 cmd.spawn((
                     PendingCall::new(reply, "the game to receive the input"),
                     Sending {
                         document,
                         total: events.len(),
                         events,
-                        sent: 0,
                         capturing,
+                        to_game: 0,
+                        to_editor: 0,
+                        held_back: None,
                     },
                 ));
             }
@@ -196,6 +201,7 @@ fn send_queued_input(
     owners: Query<&InputOwner>,
     routed: Query<(), (With<EditTarget>, With<InViewport>)>,
     hosted: Query<&HostedApp>,
+    routing: Res<Routing>,
     sending: Query<(Entity, &PendingCall, &mut Sending)>,
     mut events: EventWriter<WindowEvent>,
     mut cmd: CommandQueue,
@@ -205,50 +211,45 @@ fn send_queued_input(
     };
     let document = sending.document;
     let owner = owners.get_entity(document).copied();
-    let Some(event) = sending.events.pop_front() else {
-        pending
-            .reply
-            .ok(sent(document, sending.total, owner, &hosted));
-        cmd.despawn(entity);
-        return;
-    };
-    let failure = match owner {
-        Some(_) if sending.sent < sending.capturing && routed.get_entity(document).is_some() => {
-            None
-        }
-        Some(InputOwner::Game) if routed.get_entity(document).is_some() => None,
-        Some(InputOwner::Game) => Some(ToolError::new(
-            "input_released",
-            format!(
-                "The game left the viewport after {} of {} window events.",
-                sending.sent, sending.total
-            ),
-        )),
-        Some(InputOwner::Editor) => Some(ToolError::new(
-            "input_released",
-            format!(
-                "Sent {} of {} window events. {RELEASED}",
-                sending.sent, sending.total
-            ),
-        )),
-        None => Some(ToolError::new(
-            "not_playing",
-            format!(
-                "The game stopped after {} of {} window events.",
-                sending.sent, sending.total
-            ),
-        )),
-    };
-    match failure {
-        Some(error) => {
-            pending.reply.err(error);
+    let shown = routed.get_entity(document).is_some();
+    loop {
+        let capturing = sending.total - sending.events.len() < sending.capturing;
+        let Some(event) = sending.events.pop_front() else {
+            let held = held(document, owner, &hosted, &routing);
+            match sending.held_back {
+                None => pending.reply.ok(sent(document, &sending, owner, &held)),
+                Some(why) => pending.reply.err(held_back(why, &sending, &held)),
+            }
             cmd.despawn(entity);
+            return;
+        };
+        let to_game = match owner {
+            Some(InputOwner::Game) => shown,
+            Some(InputOwner::Editor) => capturing && shown,
+            None => false,
+        };
+        if to_game {
+            sending.to_game += 1;
+        } else if is_release(&event) {
+            sending.to_editor += 1;
+        } else {
+            sending.held_back.get_or_insert(match owner {
+                Some(InputOwner::Editor) if shown => HeldBack::Editor,
+                Some(_) => HeldBack::Hidden,
+                None => HeldBack::Stopped,
+            });
+            continue;
         }
-        None => {
-            events.write(event);
-            sending.sent += 1;
-        }
+        events.write(event);
+        return;
     }
+}
+
+fn is_release(event: &WindowEvent) -> bool {
+    matches!(
+        event,
+        WindowEvent::Key { pressed: false, .. } | WindowEvent::MouseButton { pressed: false, .. }
+    )
 }
 
 fn starts_with_a_click(events: &[InputEvent]) -> bool {
@@ -262,36 +263,51 @@ fn starts_with_a_click(events: &[InputEvent]) -> bool {
     )
 }
 
-fn sent(
+fn held(
     document: Entity,
-    total: usize,
     owner: Option<InputOwner>,
     hosted: &Query<&HostedApp>,
+    routing: &Routing,
 ) -> String {
-    let events = if total == 1 { "event" } else { "events" };
-    let mut answer = format!(
-        "Sent {total} window {events} to the game in document {}",
-        document.to_id_string()
-    );
-    if owner.is_some() {
-        let mut held: Vec<String> = hosted
-            .get_entity(document)
-            .and_then(|app| app.world().get_resource::<Input>())
-            .map(|input| {
-                input
-                    .held_keys()
-                    .filter_map(|key| match key {
-                        PhysicalKey::Code(code) => Some(format!("{code:?}")),
-                        PhysicalKey::Unidentified(_) => None,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        held.sort_unstable();
-        if !held.is_empty() {
-            answer.push_str(&format!("; held in the game: {}", held.join(", ")));
+    let name = |key: &PhysicalKey| match key {
+        PhysicalKey::Code(code) => Some(format!("{code:?}")),
+        PhysicalKey::Unidentified(_) => None,
+    };
+    let in_game: Vec<PhysicalKey> = owner
+        .and_then(|_| hosted.get_entity(document))
+        .and_then(|app| app.world().get_resource::<Input>())
+        .map(|input| input.held_keys().collect())
+        .unwrap_or_default();
+    let mut game: Vec<String> = in_game.iter().filter_map(name).collect();
+    let mut editor: Vec<String> = routing
+        .held_keys()
+        .map(PhysicalKey::Code)
+        .filter(|key| !in_game.contains(key))
+        .filter_map(|key| name(&key))
+        .collect();
+    game.sort_unstable();
+    editor.sort_unstable();
+    let mut held = String::new();
+    for (side, keys) in [("game", game), ("editor", editor)] {
+        if !keys.is_empty() {
+            held.push_str(&format!("; held in the {side}: {}", keys.join(", ")));
         }
     }
+    held
+}
+
+fn sent(document: Entity, sending: &Sending, owner: Option<InputOwner>, held: &str) -> String {
+    let total = sending.total;
+    let events = if total == 1 { "event" } else { "events" };
+    let document = document.to_id_string();
+    let mut answer = match (sending.to_game, sending.to_editor) {
+        (_, 0) => format!("Sent {total} window {events} to the game in document {document}"),
+        (0, _) => format!("Sent {total} window {events} to the editor in document {document}"),
+        (game, editor) => format!(
+            "Sent {total} window events in document {document}, {game} to the game and {editor} to the editor"
+        ),
+    };
+    answer.push_str(held);
     answer.push('.');
     match owner {
         Some(InputOwner::Game) => {}
@@ -299,6 +315,32 @@ fn sent(
         None => answer.push_str(" The game has stopped."),
     }
     answer
+}
+
+fn held_back(why: HeldBack, sending: &Sending, held: &str) -> ToolError {
+    let sent = format!(
+        "Sent {} of {} window events{held}.",
+        sending.to_game + sending.to_editor,
+        sending.total
+    );
+    match why {
+        HeldBack::Editor => ToolError::new(
+            "input_released",
+            format!(
+                "{sent} While the editor has input, only key and button releases reach it. {RELEASED}"
+            ),
+        ),
+        HeldBack::Hidden => ToolError::new(
+            "input_released",
+            format!(
+                "{sent} The game left the viewport, so only key and button releases went on after that."
+            ),
+        ),
+        HeldBack::Stopped => ToolError::new(
+            "not_playing",
+            format!("{sent} The game stopped, so only key and button releases went on after that."),
+        ),
+    }
 }
 
 fn window_events(

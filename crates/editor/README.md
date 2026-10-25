@@ -170,7 +170,8 @@ and `stop` a game starting or playing.
 `send_input` sends `events` to the game playing in the viewport as the editor
 window passes on a person's input, one window event per frame in order, and
 answers once the game has had the last: `Sent <n> window events to the game in
-document <id>.`, naming the keys still held in the game. An event is
+document <id>.`, naming the keys still held in the game and those held in the
+editor, which a later call should release. An event is
 `{ "key", "pressed", "text"? }`, a key named as the window crate's `KeyCode`
 names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`), ignoring case, with
 the text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
@@ -189,10 +190,13 @@ call releases it. `send_input` needs a game playing. While the editor has
 input, a list that starts with a press `at` a point on the picture goes
 through: that press gives the game input back, as a person's click on the
 viewport does, without reaching the game as a click, and the rest of the list
-follows. Any other list answers `input_released`. An event that gives the
-editor input, or stops the game, is the last sent: a call with events after it
-answers `input_released` or `not_playing`, saying how many were sent, and one
-that ends with it says so in its answer.
+follows. In any other list only key and button releases go through, to the
+editor, so a key pressed before the editor took input is not left held; a list
+that holds anything else answers `input_released` once its releases are sent.
+After an event that gives the editor input, or stops the game, the same holds
+for the rest of the list: its releases are sent, and if anything else was left
+out the call answers `input_released` or `not_playing`, saying how many were
+sent; a call whose events all went through says so in its answer.
 
 ### Errors
 
@@ -215,7 +219,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
 | `play_failed` | The game did not start; the message is the editor's status |
-| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture |
+| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture and holds more than key and button releases; the releases were sent |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |

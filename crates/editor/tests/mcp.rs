@@ -244,6 +244,7 @@ fn watched_game(app: &mut App) {
 #[reflect(Component, Default)]
 struct Received {
     w_presses: u32,
+    f1_presses: u32,
     clicks: u32,
     pointer: Vec2,
 }
@@ -256,6 +257,9 @@ fn count_input(input: Res<Input>, counters: Query<&mut Received>) {
     for mut received in counters.iter() {
         if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyW)) {
             received.w_presses += 1;
+        }
+        if input.is_just_pressed(PhysicalKey::Code(KeyCode::F1)) {
+            received.f1_presses += 1;
         }
         if input.is_mouse_button_just_pressed(MouseButton::Left) {
             received.clicks += 1;
@@ -3614,13 +3618,181 @@ fn send_input_starting_with_a_click_on_the_picture_gives_the_game_input_back() {
             .contains("Start the list with a click on the picture"),
         "{key_first}"
     );
-    assert!(captured.ends_with("held in the game: KeyW."), "{captured}");
+    assert!(
+        captured.ends_with("held in the game: KeyW; held in the editor: F1, ShiftLeft."),
+        "{captured}"
+    );
     assert_eq!(after["w_presses"], 1, "{after}");
     assert_eq!(after["clicks"], 0, "{after}");
     assert!(
         again.starts_with("Sent 1 window event to the game"),
         "{again}"
     );
+}
+
+#[test]
+fn a_release_sent_while_the_editor_has_input_reaches_it_and_leaves_no_key_held() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        counting_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            ok(&client, "play").await;
+            let status = ok(&client, "status").await;
+            let (width, height) = viewport_size(&status);
+            let document = document_id(&status);
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let counter = scene_id(&ids, "Counter");
+            let send = |events: Value| {
+                let client = &client;
+                async move { ok_with(client, "send_input", json!({ "events": events })).await }
+            };
+            let handed = send(json!([
+                { "key": "ShiftLeft", "pressed": true },
+                { "key": "F1", "pressed": true },
+            ]))
+            .await;
+            let released = send(json!([{ "key": "ShiftLeft", "pressed": false }])).await;
+            let centre = [(width / 2.0).floor(), (height / 2.0).floor()];
+            let back = send(json!([
+                { "button": "left", "pressed": true, "at": centre },
+                { "button": "left", "pressed": false },
+                { "key": "F1", "pressed": false },
+            ]))
+            .await;
+            let f1 = send(json!([
+                { "key": "F1", "pressed": true },
+                { "key": "F1", "pressed": false },
+            ]))
+            .await;
+            let w = send(json!([
+                { "key": "KeyW", "pressed": true },
+                { "key": "KeyW", "pressed": false },
+            ]))
+            .await;
+            let after = received(&ok_with(&client, "inspect", json!({ "entity": counter })).await);
+            client.cancel().await.unwrap();
+            (document, handed, released, back, f1, w, after)
+        },
+    ) else {
+        return;
+    };
+
+    let (document, handed, released, back, f1, w, after) = served.result;
+    assert_eq!(
+        handed,
+        format!(
+            "Sent 2 window events to the game in document {document}; held in the editor: F1, ShiftLeft. The editor has input now."
+        )
+    );
+    assert_eq!(
+        released,
+        format!(
+            "Sent 1 window event to the editor in document {document}; held in the editor: F1. The editor has input now."
+        )
+    );
+    assert!(
+        back.ends_with(&format!("to the game in document {document}.")),
+        "{back}"
+    );
+    assert_eq!(
+        f1,
+        format!("Sent 2 window events to the game in document {document}.")
+    );
+    assert_eq!(
+        w,
+        format!("Sent 2 window events to the game in document {document}.")
+    );
+    assert_eq!(after["f1_presses"], 1, "{after}");
+    assert_eq!(after["w_presses"], 1, "{after}");
+}
+
+#[test]
+fn when_the_editor_takes_input_partway_the_lists_releases_still_reach_it() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        counting_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            ok(&client, "play").await;
+            let status = ok(&client, "status").await;
+            let (width, height) = viewport_size(&status);
+            let document = document_id(&status);
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let counter = scene_id(&ids, "Counter");
+            let partway = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "key": "ShiftLeft", "pressed": true },
+                    { "key": "F1", "pressed": true },
+                    { "key": "KeyW", "pressed": true },
+                    { "key": "ShiftLeft", "pressed": false },
+                ] }),
+            )
+            .await;
+            let released = ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "F1", "pressed": false }] }),
+            )
+            .await;
+            let centre = [(width / 2.0).floor(), (height / 2.0).floor()];
+            ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "button": "left", "pressed": true, "at": centre },
+                    { "button": "left", "pressed": false },
+                ] }),
+            )
+            .await;
+            let f1 = ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "key": "F1", "pressed": true },
+                    { "key": "F1", "pressed": false },
+                ] }),
+            )
+            .await;
+            let after = received(&ok_with(&client, "inspect", json!({ "entity": counter })).await);
+            client.cancel().await.unwrap();
+            (document, partway, released, f1, after)
+        },
+    ) else {
+        return;
+    };
+
+    let (document, partway, released, f1, after) = served.result;
+    assert_eq!(partway["code"], "input_released", "{partway}");
+    let message = partway["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("Sent 3 of 4 window events; held in the editor: F1."),
+        "{message}"
+    );
+    assert!(
+        message.contains("Start the list with a click on the picture"),
+        "{message}"
+    );
+    assert_eq!(
+        released,
+        format!(
+            "Sent 1 window event to the editor in document {document}. The editor has input now."
+        )
+    );
+    assert_eq!(
+        f1,
+        format!("Sent 2 window events to the game in document {document}.")
+    );
+    assert_eq!(after["f1_presses"], 1, "{after}");
+    assert_eq!(after["w_presses"], 0, "{after}");
 }
 
 #[derive(Reflect, Default)]
