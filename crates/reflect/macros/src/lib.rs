@@ -97,6 +97,10 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                     let pattern = ignore_pattern(&variant.fields);
                     quote!(Self::#ident #pattern => #label)
                 });
+                let labels = data
+                    .variants
+                    .iter()
+                    .map(|variant| variant.ident.to_string());
                 let builds = data.variants.iter().map(|variant| {
                     let ident = &variant.ident;
                     let label = ident.to_string();
@@ -128,6 +132,10 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                             match self {
                                 #(#names,)*
                             }
+                        }
+
+                        fn variant_names(&self) -> &'static [&'static str] {
+                            &[#(#labels),*]
                         }
 
                         fn set_variant(&mut self, name: &str) -> bool {

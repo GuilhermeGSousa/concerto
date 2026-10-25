@@ -459,11 +459,15 @@ fn an_enum_names_the_variant_shape_it_expects() {
     let registry = nested_registry();
     assert_eq!(
         write_error::<Nested>(&registry, json!({ "shape": "Cube" })),
-        "shape: no variant 'Cube'"
+        "shape: no variant 'Cube'; the variants are Point, Sphere, Cone"
     );
     assert_eq!(
         write_error::<Nested>(&registry, json!({ "shape": { "Cube": {} } })),
-        "shape: no variant 'Cube'"
+        "shape: no variant 'Cube'; the variants are Point, Sphere, Cone"
+    );
+    assert_eq!(
+        write_error::<Nested>(&registry, json!({ "maybe": "Many" })),
+        "maybe: no variant 'Many'; the variants are None, Some"
     );
     let shape = "shape: expected a variant name, or an object with one key naming the variant";
     assert_eq!(

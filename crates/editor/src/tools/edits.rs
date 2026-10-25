@@ -867,7 +867,7 @@ mod tests {
         )));
         let refused = [
             "Set Gain.amount failed: expected a number, or \"NaN\", \"inf\" or \"-inf\"",
-            "Set Rig.mode failed: mode: no variant 'Spinning'",
+            "Set Rig.mode failed: mode: no variant 'Spinning'; the variants are Fixed, Orbit",
         ];
         assert_eq!(statuses(&app), refused);
         assert_eq!(

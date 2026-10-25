@@ -19,13 +19,13 @@ use serde_json::Value;
 
 use super::{
     act::label,
-    observe::{component_json, names_component, resolve},
+    observe::{ListedPath, component_json, listed_paths, names_component, resolve},
 };
 use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
-        ErasedEditor, InspectionSource, InspectorRegistry, Property, PropertyCommit,
-        PropertyCommits, current_editor,
+        ErasedEditor, InspectionSource, InspectorRegistry, PropertyCommit, PropertyCommits,
+        current_editor,
     },
     tools::{
         edits::{ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, SetValue},
@@ -72,7 +72,7 @@ pub struct SetProperty {
     pub entity: String,
     /// The component, by short name such as Light, or by full type path when the short name is ambiguous.
     pub component: String,
-    /// The property, one of the paths inspect lists for the component, such as intensity or translation; "" for a component inspect lists as one value.
+    /// The property, one of the paths inspect lists for the component, such as intensity or translation; "" for a component inspect lists as one value; a path inspect marks enum takes the whole enum, such as "Point" or {"Spot": {"cone_angle": 40}}.
     pub path: String,
     /// The value, as JSON in the shape inspect reports it; a struct may leave fields out to keep them.
     pub value: Value,
@@ -451,8 +451,8 @@ fn property_name(component: &str, path: &PropertyPath) -> String {
         .join(".")
 }
 
-fn unknown_path(component: &str, path: &str, rows: &[Property]) -> ToolError {
-    if rows.is_empty() {
+fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> ToolError {
+    if listed.is_empty() {
         return ToolError::new(
             "unknown_path",
             format!(
@@ -460,9 +460,9 @@ fn unknown_path(component: &str, path: &str, rows: &[Property]) -> ToolError {
             ),
         );
     }
-    let paths: Vec<String> = rows
+    let paths: Vec<String> = listed
         .iter()
-        .map(|row| match shown_path(&row.path) {
+        .map(|listed| match shown_path(&listed.path) {
             shown if shown.is_empty() => "\"\"".to_owned(),
             shown => shown,
         })
@@ -559,25 +559,29 @@ fn property_write(
     let rows = source
         .collect_component(registry, changed, entity, component)
         .unwrap_or_default();
-    let Some(property) = rows
+    let listed = source
+        .read(entity, component)
+        .map(|value| listed_paths(value, &rows))
+        .unwrap_or_default();
+    let Some(found) = listed
         .iter()
-        .find(|property| shown_path(&property.path) == arguments.path)
+        .find(|listed| shown_path(&listed.path) == arguments.path)
     else {
-        return Err(unknown_path(short, &arguments.path, &rows));
+        return Err(unknown_path(short, &arguments.path, &listed));
     };
-    let row = property.row(entity, component);
-    let name = property_name(short, &row.path);
+    let name = property_name(short, &found.path);
     if root {
         return Err(root_refused(&format!("Set {name}")));
     }
-    if !row.has_editor() {
+    let Some(property) = found.row.filter(|property| property.has_editor()) else {
         return Ok(Write::Value(SetValue {
             entity,
             component,
-            path: row.path,
+            path: found.path.clone(),
             value: arguments.value,
         }));
-    }
+    };
+    let row = property.row(entity, component);
     let editor = current_editor(registry, changed, &row)
         .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
     let mut edit = Err(unknown_path(short, &arguments.path, &[]));

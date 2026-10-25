@@ -14,7 +14,7 @@ use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
 };
-use concerto_reflect::to_json;
+use concerto_reflect::{PropertyPath, Reflect, ReflectRef, to_json, with_property};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
@@ -27,7 +27,7 @@ use super::{BusyInputs, act::describe_pose, is_busy};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
-    inspector::{InspectionSource, InspectorRegistry},
+    inspector::{InspectionSource, InspectorRegistry, Property},
     project::{Project, ProjectState},
     tools::{camera::FlyCamera, scene::SceneRoot, selection::Selection},
 };
@@ -78,7 +78,7 @@ pub struct FindEntities {
     pub limit: usize,
 }
 
-/// One entity's components as JSON, each with its property paths and whether an inspector adapter edits each; lists longer than 16 are cut.
+/// One entity's components as JSON, each with its property paths, whether an inspector adapter edits each, and which name an enum to write whole; lists longer than 16 are cut.
 #[derive(Deserialize, JsonSchema)]
 pub struct Inspect {
     /// The entity, such as 42v3, as scene_tree shows it.
@@ -800,13 +800,19 @@ pub(super) fn component_json(
     match source.read(entity, id) {
         Some(value) => {
             component.insert("value".into(), bounded(to_json(value, source.types())));
-            let paths: Vec<Value> = registry
-                .collect(value)
+            let rows = registry.collect(value);
+            let paths: Vec<Value> = listed_paths(value, &rows)
                 .iter()
-                .map(|property| {
+                .map(|listed| {
                     let mut path = Map::new();
-                    path.insert("path".into(), property.path.segments().join(".").into());
-                    path.insert("adapter".into(), property.has_editor().into());
+                    path.insert("path".into(), listed.path.segments().join(".").into());
+                    path.insert(
+                        "adapter".into(),
+                        listed.row.is_some_and(Property::has_editor).into(),
+                    );
+                    if listed.names_enum {
+                        path.insert("enum".into(), true.into());
+                    }
                     Value::Object(path)
                 })
                 .collect();
@@ -818,6 +824,43 @@ pub(super) fn component_json(
         }
     }
     Value::Object(component)
+}
+
+pub(super) struct ListedPath<'a> {
+    pub(super) path: PropertyPath,
+    pub(super) row: Option<&'a Property>,
+    pub(super) names_enum: bool,
+}
+
+pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec<ListedPath<'a>> {
+    let mut listed: Vec<ListedPath> = Vec::new();
+    for row in rows {
+        let segments = row.path.segments();
+        for depth in 0..segments.len() {
+            let above = PropertyPath::new(segments[..depth].iter().copied());
+            if names_enum(value, &above) && listed.iter().all(|listed| listed.path != above) {
+                listed.push(ListedPath {
+                    path: above,
+                    row: None,
+                    names_enum: true,
+                });
+            }
+        }
+        listed.push(ListedPath {
+            path: row.path.clone(),
+            row: Some(row),
+            names_enum: !row.has_editor() && names_enum(value, &row.path),
+        });
+    }
+    listed
+}
+
+fn names_enum(value: &dyn Reflect, path: &PropertyPath) -> bool {
+    let mut found = false;
+    let _ = with_property(value, path, &mut |field| {
+        found = matches!(field.reflect_ref(), ReflectRef::Enum(_));
+    });
+    found
 }
 
 fn bounded(value: Value) -> Value {

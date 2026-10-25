@@ -73,7 +73,10 @@ answers `entity` as JSON: its id, its name, and each component the inspector
 lists, or only those `components` names by short name, ignoring case, or full
 path. Each component has its short `name`, its full `type`, its `value`, and
 its `paths`: every property path, dot-separated, with `adapter` saying whether
-an inspector widget edits it. A component without reflection data has
+an inspector widget edits it. A path that names an enum, one some of those
+paths sit under such as `light_type` above `light_type.cone_angle`, or one with
+no fields in its current variant, is listed too, with `"enum": true` and no
+adapter. A component without reflection data has
 `"value": null, "unavailable": true` and no paths. A list longer than 16
 elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
 cut list is not a value to write back. Ids are scene entities written as
@@ -127,6 +130,13 @@ adapter edits the path, the value goes through the adapter's
 `PropertyEditor::edit_to` and `apply`, as an edit in the inspector does, so the
 adapter's validation holds: a value it refuses answers `refused` and leaves the
 component as it was. A path with no adapter is written from the JSON directly.
+A path `inspect` marks `enum` takes the whole enum, its variant's name for a
+variant without fields (`"Point"`) or an object with the variant's name as its
+one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
+left out of the new variant takes its default, and an unknown variant answers
+`refused`, naming the variants. A path that names a struct above a property is
+not one `set_property` takes, so an adapter's validation holds for the fields
+it edits.
 A component that `inspect` lists as one value, a marker or an opaque type, has
 the path `""`. The scene root is the editor's wrapper and none of these change
 it. All seven need an open scene.

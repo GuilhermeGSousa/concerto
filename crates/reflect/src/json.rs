@@ -248,7 +248,10 @@ impl Decoder<'_> {
             );
         };
         if variant.variant_name() != name && !variant.set_variant(name) {
-            return Err(self.error(format!("no variant '{name}'")));
+            return Err(self.error(format!(
+                "no variant '{name}'; the variants are {}",
+                variant.variant_names().join(", ")
+            )));
         }
         let fields = match fields {
             Some(fields) => self.fields(fields, variant)?,

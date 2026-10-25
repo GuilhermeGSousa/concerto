@@ -107,6 +107,36 @@ fn sample_the_sword(named: Query<(Entity, &Name), Without<Samples>>, mut cmd: Co
     }
 }
 
+#[derive(Reflect, Default)]
+struct Stride {
+    length: f32,
+    height: f32,
+}
+
+#[derive(Reflect)]
+enum Pace {
+    Still,
+    Walk { stride: Stride },
+    Run { stride: Stride, lean: f32 },
+}
+
+impl Default for Pace {
+    fn default() -> Self {
+        Self::Walk {
+            stride: Stride {
+                length: 1.0,
+                height: 0.25,
+            },
+        }
+    }
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Gait {
+    pace: Pace,
+}
+
 static RELEASE_THE_SLOW_ASSET: AtomicBool = AtomicBool::new(false);
 
 const SLOW_ADDRESS: &str = "content/slow.gasset";
@@ -150,6 +180,7 @@ fn game(app: &mut App) {
         .register_type::<Unreadable>()
         .register_type::<Samples>()
         .register_type::<other::Samples>()
+        .register_type::<Gait>()
         .insert_resource(EditFrames::default())
         .add_system(Update, count_edit_frames.at_edit_time())
         .add_system(Update, bound_by_name.at_edit_time())
@@ -2383,4 +2414,152 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
     );
     let unknown_path = errors[2]["message"].as_str().unwrap();
     assert!(unknown_path.contains("intensity"), "{unknown_path}");
+}
+
+struct EnumSets {
+    walk: Value,
+    run: Value,
+    spot: Value,
+    directional: Value,
+    after: Value,
+    errors: Vec<Value>,
+}
+
+#[test]
+fn set_property_writes_a_whole_enum_at_a_path_its_rows_sit_under() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let (bulb, rig) = (scene_id(&ids, "Bulb"), scene_id(&ids, "Rig"));
+        let walk: Value = serde_json::from_str(
+            &ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": rig, "component": "Gait" }),
+            )
+            .await,
+        )
+        .unwrap();
+        let set = |entity: &str, component: &str, path: &str, value: Value| {
+            let client = &client;
+            let arguments =
+                json!({ "entity": entity, "component": component, "path": path, "value": value });
+            async move {
+                serde_json::from_str::<Value>(&ok_with(client, "set_property", arguments).await)
+                    .unwrap()
+            }
+        };
+        let run = set(&rig, "Gait", "pace", json!({ "Run": { "lean": 0.5 } })).await;
+        let spot = set(
+            &bulb,
+            "Light",
+            "light_type",
+            json!({ "Spot": { "cone_angle": 40.0 } }),
+        )
+        .await;
+        let directional = set(&bulb, "Light", "light_type", json!("Directional")).await;
+        let refuse = |arguments: Value| {
+            let client = &client;
+            async move { error_with(client, "set_property", arguments).await }
+        };
+        let errors = vec![
+            refuse(json!({ "entity": rig, "component": "Gait", "path": "pace.stride", "value": { "length": 2.0 } })).await,
+            refuse(json!({ "entity": rig, "component": "Gait", "path": "pace", "value": "Sprint" })).await,
+        ];
+        let after: Value = serde_json::from_str(
+            &ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": rig, "components": ["Gait"] }),
+            )
+            .await,
+        )
+        .unwrap();
+        client.cancel().await.unwrap();
+        EnumSets {
+            walk,
+            run,
+            spot,
+            directional,
+            after,
+            errors,
+        }
+    }) else {
+        return;
+    };
+
+    let EnumSets {
+        walk,
+        run,
+        spot,
+        directional,
+        after,
+        errors,
+    } = served.result;
+    assert_eq!(
+        walk["value"],
+        json!({ "pace": { "Walk": { "stride": { "height": 0.25, "length": 1.0 } } } })
+    );
+    assert_eq!(
+        walk["paths"],
+        json!([
+            { "path": "pace", "adapter": false, "enum": true },
+            { "path": "pace.stride.length", "adapter": true },
+            { "path": "pace.stride.height", "adapter": true },
+        ])
+    );
+    assert_eq!(
+        run["value"],
+        json!({ "pace": { "Run": { "lean": 0.5, "stride": { "height": 0.0, "length": 0.0 } } } })
+    );
+    assert_eq!(
+        run["paths"],
+        json!([
+            { "path": "pace", "adapter": false, "enum": true },
+            { "path": "pace.stride.length", "adapter": true },
+            { "path": "pace.stride.height", "adapter": true },
+            { "path": "pace.lean", "adapter": true },
+        ])
+    );
+    assert_eq!(
+        spot["value"]["light_type"],
+        json!({ "Spot": { "cone_angle": 40.0 } })
+    );
+    let paths = |light: &Value| -> Vec<Value> {
+        light["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|entry| entry["path"].as_str().unwrap().starts_with("light_type"))
+            .cloned()
+            .collect()
+    };
+    assert_eq!(
+        paths(&spot),
+        [
+            json!({ "path": "light_type", "adapter": false, "enum": true }),
+            json!({ "path": "light_type.cone_angle", "adapter": true }),
+        ]
+    );
+    assert_eq!(directional["value"]["light_type"], "Directional");
+    assert_eq!(
+        paths(&directional),
+        [json!({ "path": "light_type", "adapter": false, "enum": true })]
+    );
+    let codes: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(codes, ["unknown_path", "refused"]);
+    assert_eq!(
+        errors[0]["message"],
+        "Gait has no path `pace.stride`; its paths are pace, pace.stride.length, pace.stride.height, pace.lean."
+    );
+    assert_eq!(
+        errors[1]["message"],
+        "Set Gait.pace failed: pace: no variant 'Sprint'; the variants are Still, Walk, Run"
+    );
+    assert_eq!(inspected(&after, "Gait")["value"], run["value"]);
 }
