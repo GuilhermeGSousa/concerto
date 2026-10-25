@@ -3,6 +3,8 @@ mod edit;
 mod observe;
 mod run;
 
+pub use run::PlayTimeout;
+
 use std::path::PathBuf;
 
 use concerto_app::{

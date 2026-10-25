@@ -1,15 +1,20 @@
+use std::time::{Duration, Instant};
+
 use concerto_app::{App, schedule_groups::LateUpdate};
 use concerto_ecs::{
-    Component, Entity, Query, Res, command::CommandQueue, events::event_reader::EventReader,
+    Component, Entity, IntoSystemConfig, Query, Res, Resource, With, command::CommandQueue,
+    events::event_reader::EventReader,
 };
+use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, ToolCalls, ToolError};
+use concerto_scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
 use super::act::{describe_document, unknown_document};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, SaveRequested, Unsaved},
-    hosted::{PlayFailed, PlayStarted, PlayState, PlayStopped, StopPlay},
+    hosted::{EditTarget, EditWorld, PlayFailed, PlayStarted, PlayState, PlayStopped, StopPlay},
     scene::{self, SaveFailed, SceneSaved},
 };
 
@@ -20,13 +25,17 @@ pub struct Save {
     pub document: Option<String>,
 }
 
-/// Starts the active scene's game in the viewport, saving the scene's unsaved changes first, and waits until it plays.
+/// Starts the active scene's game in the viewport, saving the scene's unsaved changes first, and waits until it plays and has loaded.
 #[derive(Deserialize, JsonSchema)]
 pub struct Play {}
 
 /// Stops the running game and brings back the scene as it was before play.
 #[derive(Deserialize, JsonSchema)]
 pub struct Stop {}
+
+#[doc(hidden)]
+#[derive(Resource)]
+pub struct PlayTimeout(pub Duration);
 
 #[derive(Component)]
 struct Saving(Entity);
@@ -35,6 +44,7 @@ struct Saving(Entity);
 struct Starting {
     document: Entity,
     saved: bool,
+    playing: Option<(Instant, String)>,
 }
 
 #[derive(Component)]
@@ -44,7 +54,15 @@ pub(super) fn build(app: &mut App) {
     app.add_tool::<Save, _>(McpTool::new("save").needs(Needs::Scene), save)
         .add_tool::<Play, _>(McpTool::new("play").needs(Needs::Scene), play)
         .add_tool::<Stop, _>(McpTool::new("stop").needs(Needs::Playing), stop)
-        .add_system(LateUpdate, (answer_saves, answer_plays, answer_stops));
+        .add_system(
+            LateUpdate,
+            (
+                answer_saves,
+                answer_plays,
+                answer_loaded_plays.after(answer_plays),
+                answer_stops,
+            ),
+        );
 }
 
 fn save(
@@ -126,16 +144,26 @@ fn answer_saves(
     }
 }
 
-fn play(mut calls: ToolCalls<Play>, active: Res<ActiveEditor>, mut cmd: CommandQueue) {
+fn play(
+    mut calls: ToolCalls<Play>,
+    active: Res<ActiveEditor>,
+    timeout: Option<Res<PlayTimeout>>,
+    mut cmd: CommandQueue,
+) {
     for (_, reply) in calls.read() {
         let Some(document) = active.0 else {
             continue;
         };
+        let pending = PendingCall::new(reply, "the game to start");
         cmd.spawn((
-            PendingCall::new(reply, "the game to start"),
+            match &timeout {
+                Some(timeout) => pending.timeout(timeout.0),
+                None => pending,
+            },
             Starting {
                 document,
                 saved: false,
+                playing: None,
             },
         ));
         cmd.trigger(scene::Play(document));
@@ -147,7 +175,7 @@ fn answer_plays(
     mut started: EventReader<PlayStarted>,
     mut failed: EventReader<PlayFailed>,
     documents: Query<&EditorDocument>,
-    waiting: Query<(Entity, &PendingCall, &mut Starting)>,
+    waiting: Query<(Entity, &mut PendingCall, &mut Starting)>,
     mut cmd: CommandQueue,
 ) {
     for event in saved.read() {
@@ -158,7 +186,7 @@ fn answer_plays(
         }
     }
     for event in started.read() {
-        for (entity, pending, starting) in waiting.iter() {
+        for (_, mut pending, mut starting) in waiting.iter() {
             if starting.document != event.document {
                 continue;
             }
@@ -171,11 +199,14 @@ fn answer_plays(
             } else {
                 ""
             };
-            pending.reply.ok(format!(
-                "Playing {shown} in document {}{saved}.",
+            let playing = format!(
+                "Playing {shown} in document {}{saved}",
                 event.document.to_id_string()
+            );
+            pending.at_deadline = Some(format!(
+                "{playing}; it is still loading, so scene_tree and screenshot show it as it arrives."
             ));
-            cmd.despawn(entity);
+            starting.playing = Some((Instant::now(), playing));
         }
     }
     for event in failed.read() {
@@ -187,6 +218,37 @@ fn answer_plays(
                 cmd.despawn(entity);
             }
         }
+    }
+}
+
+fn answer_loaded_plays(
+    assets: EditWorld<Option<Res<AssetServer>>>,
+    scenes: EditWorld<Option<Res<AssetStore<Scene>>>>,
+    spawners: EditWorld<Query<&SceneSpawnerComponent>>,
+    targets: Query<Entity, With<EditTarget>>,
+    waiting: Query<(Entity, &PendingCall, &Starting)>,
+    mut cmd: CommandQueue,
+) {
+    let spawning = scenes.as_deref().is_some_and(|scenes| {
+        spawners
+            .iter()
+            .any(|spawner| scenes.get(&spawner.0).is_some())
+    });
+    if spawning || assets.as_deref().is_some_and(AssetServer::is_loading) {
+        return;
+    }
+    for (entity, pending, starting) in waiting.iter() {
+        let Some((started, playing)) = &starting.playing else {
+            continue;
+        };
+        if targets.get_entity(starting.document).is_none() {
+            continue;
+        }
+        pending.reply.ok(format!(
+            "{playing}; it loaded in {:.2} s.",
+            started.elapsed().as_secs_f64()
+        ));
+        cmd.despawn(entity);
     }
 }
 

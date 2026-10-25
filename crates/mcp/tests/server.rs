@@ -95,7 +95,9 @@ struct Open {
 struct Progress {}
 
 #[derive(Deserialize, JsonSchema)]
-struct Wait {}
+struct Wait {
+    at_deadline: Option<String>,
+}
 
 #[derive(Component)]
 struct Opening(String);
@@ -146,8 +148,10 @@ fn progress(mut calls: ToolCalls<Progress>, log: Res<OpenLog>) {
 }
 
 fn wait(mut calls: ToolCalls<Wait>, mut cmd: CommandQueue) {
-    for (_, reply) in calls.read() {
-        cmd.spawn(PendingCall::new(reply, "nothing").timeout(Duration::from_millis(50)));
+    for (arguments, reply) in calls.read() {
+        let mut pending = PendingCall::new(reply, "nothing").timeout(Duration::from_millis(50));
+        pending.at_deadline = arguments.at_deadline;
+        cmd.spawn(pending);
     }
 }
 
@@ -421,6 +425,16 @@ fn a_pending_call_past_its_deadline_is_answered_timeout() {
         json!({ "code": "timeout", "message": "Timed out waiting for nothing." })
     );
     assert_eq!(text(&after), "first");
+}
+
+#[test]
+fn a_pending_call_given_text_for_its_deadline_answers_it_there() {
+    let (_, waited) = serve(App::update, |client| async move {
+        call(&client, "wait", json!({ "at_deadline": "still waiting" })).await
+    });
+
+    assert_eq!(waited.is_error, Some(false), "{waited:?}");
+    assert_eq!(text(&waited), "still waiting");
 }
 
 #[test]

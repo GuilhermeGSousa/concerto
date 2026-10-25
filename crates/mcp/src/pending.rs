@@ -10,6 +10,8 @@ pub struct PendingCall {
     pub reply: Reply,
     pub deadline: Instant,
     pub waiting_for: &'static str,
+    /// What the call answers at its deadline in place of `timeout`; its waiting system may set it while it waits.
+    pub at_deadline: Option<String>,
 }
 
 impl PendingCall {
@@ -23,6 +25,7 @@ impl PendingCall {
             reply: reply.clone(),
             deadline: Instant::now() + Self::TIMEOUT,
             waiting_for,
+            at_deadline: None,
         }
     }
 
@@ -33,15 +36,18 @@ impl PendingCall {
     }
 }
 
-/// Answers `timeout` to each pending call past its deadline, and despawns it and every answered one.
+/// Answers each pending call past its deadline with its `at_deadline` text or `timeout`, and despawns it and every answered one.
 pub fn expire_pending_calls(pending: Query<(Entity, &PendingCall)>, mut cmd: CommandQueue) {
     let now = Instant::now();
     for (entity, call) in pending.iter() {
         if call.reply.is_open() && now >= call.deadline {
-            call.reply.err(ToolError::new(
-                "timeout",
-                format!("Timed out waiting for {}.", call.waiting_for),
-            ));
+            match &call.at_deadline {
+                Some(text) => call.reply.ok(text.clone()),
+                None => call.reply.err(ToolError::new(
+                    "timeout",
+                    format!("Timed out waiting for {}.", call.waiting_for),
+                )),
+            }
         }
         if !call.reply.is_open() {
             cmd.despawn(entity);

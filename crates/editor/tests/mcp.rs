@@ -12,7 +12,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use concerto_app::{
     App,
     edit_time::AtEditTime,
-    schedule_groups::{LateUpdate, Update},
+    schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, With, Without,
@@ -172,6 +172,60 @@ struct SlowLoad {
 fn load_slowly(_: On<LoadSlowly>, server: Res<AssetServer>, mut cmd: CommandQueue) {
     let handle = server.load::<SlowAsset>(AssetId::from_path(SLOW_ADDRESS));
     cmd.insert_resource(SlowLoad { _handle: handle });
+}
+
+static OPEN_THE_GATE: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
+const GATED_ADDRESS: &str = "content/gated.gasset";
+
+#[derive(Serialize, Deserialize)]
+struct GatedAsset {
+    gate: usize,
+}
+
+impl Asset for GatedAsset {
+    fn name() -> &'static str {
+        "GatedAsset"
+    }
+}
+
+impl LoadableAsset for GatedAsset {
+    fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
+        while !OPEN_THE_GATE[self.gate].load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        Ok(())
+    }
+}
+
+#[derive(Resource)]
+struct GatedLoad {
+    _handle: AssetHandle<GatedAsset>,
+}
+
+fn load_through_the_gate(server: Res<AssetServer>, mut cmd: CommandQueue) {
+    let handle = server.load::<GatedAsset>(AssetId::from_path(GATED_ADDRESS));
+    cmd.insert_resource(GatedLoad { _handle: handle });
+}
+
+fn gated_game(app: &mut App) {
+    game(app);
+    app.register_asset::<GatedAsset>()
+        .add_system(Startup, load_through_the_gate);
+}
+
+static HERO_SEEN: Mutex<Option<Instant>> = Mutex::new(None);
+
+fn note_the_hero(named: Query<&Name>) {
+    let mut seen = HERO_SEEN.lock().unwrap_or_else(PoisonError::into_inner);
+    if seen.is_none() && named.iter().any(|name| name.as_str() == "Hero") {
+        *seen = Some(Instant::now());
+    }
+}
+
+fn watched_game(app: &mut App) {
+    game(app);
+    app.add_system(LateUpdate, note_the_hero);
 }
 
 fn game(app: &mut App) {
@@ -571,6 +625,20 @@ where
     T: Send + 'static,
     F: Future<Output = T>,
 {
+    serve_with(fixture, log, game, |_| {}, scenario)
+}
+
+fn serve_with<T, F>(
+    fixture: &Fixture,
+    log: &Log,
+    recipe: fn(&mut App),
+    configure: impl FnOnce(&mut App),
+    scenario: impl FnOnce(Client) -> F + Send + 'static,
+) -> Option<Served<T>>
+where
+    T: Send + 'static,
+    F: Future<Output = T>,
+{
     let _turn = ONE_APP_AT_A_TIME
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
@@ -597,7 +665,7 @@ where
     let served = run_with(
         server_io,
         move |app| {
-            concerto_editor::mcp::editor(game, root)(app);
+            concerto_editor::mcp::editor(recipe, root)(app);
             app.insert_resource(log)
                 .insert_resource(FixtureScene(scene))
                 .add_tool::<State, _>(McpTool::read_only("state"), state)
@@ -641,6 +709,7 @@ where
                 .add_system(Update, note_update)
                 .add_system(LateUpdate, note_prompt)
                 .add_listener(note_closing);
+            configure(app);
         },
         SIZE,
     );
@@ -2962,12 +3031,11 @@ fn play_runs_the_game_and_stop_brings_back_the_edited_scene() {
         idle_again,
     } = served.result;
     assert_eq!(idle["code"], "not_playing", "{idle}");
-    assert_eq!(
-        played,
-        format!(
-            "Playing content/level.gasset in document {document}; its unsaved changes were saved first."
-        )
+    let saved = format!(
+        "Playing content/level.gasset in document {document}; its unsaved changes were saved first; it loaded in "
     );
+    assert!(played.starts_with(&saved), "{played}");
+    assert!(played.ends_with(" s."), "{played}");
     assert!(holds(&played_file, "Villain"));
     assert!(status.contains(" · playing"), "{status}");
     assert_eq!(again["code"], "play_failed", "{again}");
@@ -3012,4 +3080,117 @@ fn the_panels_show_the_edited_scene_again_once_the_stopped_editor_is_quiet() {
     assert!(fields.contains(&"Hero"), "{before}");
     assert!(fields.contains(&"1.000"), "{before}");
     assert_eq!(after, before);
+}
+
+fn gated_fixture(gate: usize) -> Fixture {
+    let fixture = Fixture::new();
+    write_asset(
+        &fixture.root(),
+        GATED_ADDRESS,
+        AssetId::from_path(GATED_ADDRESS),
+        GatedAsset::name(),
+        &bincode::serialize(&GatedAsset { gate }).unwrap(),
+    );
+    fixture
+}
+
+#[test]
+fn play_answers_once_what_the_game_loads_at_start_has_loaded() {
+    let fixture = gated_fixture(0);
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        gated_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            let document = document_id(&ok(&client, "status").await);
+            let play = async {
+                let played = ok(&client, "play").await;
+                (played, Instant::now())
+            };
+            let open_the_gate = async {
+                let status = until(&client, "status", |status| status.contains(" · playing")).await;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                OPEN_THE_GATE[0].store(true, Ordering::SeqCst);
+                (status, Instant::now())
+            };
+            let ((played, answered), (status, opened)) = tokio::join!(play, open_the_gate);
+            client.cancel().await.unwrap();
+            (document, played, answered, status, opened)
+        },
+    ) else {
+        OPEN_THE_GATE[0].store(true, Ordering::SeqCst);
+        return;
+    };
+
+    let (document, played, answered, status, opened) = served.result;
+    assert!(status.contains(" · playing"), "{status}");
+    assert!(answered >= opened, "play answered before the gate opened");
+    let loaded = format!("Playing content/level.gasset in document {document}; it loaded in ");
+    assert!(played.starts_with(&loaded), "{played}");
+    assert!(played.ends_with(" s."), "{played}");
+}
+
+#[test]
+fn play_answers_that_the_game_is_still_loading_when_its_wait_runs_out() {
+    let fixture = gated_fixture(1);
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        gated_game,
+        |app| {
+            app.insert_resource(concerto_editor::mcp::PlayTimeout(Duration::from_secs(8)));
+        },
+        |client| async move {
+            open(&client).await;
+            let document = document_id(&ok(&client, "status").await);
+            let played = call(&client, "play").await;
+            let status = ok(&client, "status").await;
+            OPEN_THE_GATE[1].store(true, Ordering::SeqCst);
+            let stopped = call(&client, "stop").await;
+            client.cancel().await.unwrap();
+            (document, played, status, stopped)
+        },
+    ) else {
+        OPEN_THE_GATE[1].store(true, Ordering::SeqCst);
+        return;
+    };
+
+    let (document, played, status, stopped) = served.result;
+    assert_eq!(played.is_error, Some(false), "{played:?}");
+    assert_eq!(
+        text(&played),
+        format!(
+            "Playing content/level.gasset in document {document}; it is still loading, so scene_tree and screenshot show it as it arrives."
+        )
+    );
+    assert!(status.contains(" · playing"), "{status}");
+    assert_eq!(stopped.is_error, Some(false), "{stopped:?}");
+}
+
+#[test]
+fn play_answers_once_the_game_has_spawned_its_scene() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        watched_game,
+        |_| {},
+        |client| async move {
+            *HERO_SEEN.lock().unwrap_or_else(PoisonError::into_inner) = None;
+            open(&client).await;
+            ok(&client, "play").await;
+            let answered = Instant::now();
+            let seen = *HERO_SEEN.lock().unwrap_or_else(PoisonError::into_inner);
+            client.cancel().await.unwrap();
+            (seen, answered)
+        },
+    ) else {
+        return;
+    };
+
+    let (seen, answered) = served.result;
+    let seen = seen.expect("the game spawned its scene before play answered");
+    assert!(seen <= answered);
 }

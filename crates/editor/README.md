@@ -152,15 +152,18 @@ no unsaved changes answers `Nothing to save in document <id> <address>.`, which
 is not an error. A save that fails answers `save_failed` with the editor's
 message, as does a save while the game plays (`Stop to save`), and a scene still
 loading answers `busy`. `play` starts the active scene's game in the viewport,
-as the play button does, and answers `Playing <address> in document <id>.` once
-the game has built and plays. Like the play button it first saves the scene's
-unsaved changes, and the answer then says so. The game loads its scene over the
-frames that follow, so `scene_tree` and `screenshot` show it as it arrives. A
-game that does not start, a save before it that fails, or a `play` while the
-game is on answers `play_failed` with the editor's message. `stop` stops the
-game, starting or playing, and answers once the edited scene is back as it was
-before play; edits made to the running game are gone. `save` and `play` need an
-open scene, and `stop` a game starting or playing.
+as the play button does, and answers once the game has built, plays, has
+spawned every scene it loaded, and has no asset loads in flight: `Playing
+<address> in document <id>; it loaded in <seconds> s.` Like the play button it first saves the scene's unsaved changes,
+and the answer then says so. If the game is still loading when the call's 30
+second wait runs out, `play` answers anyway, not as an error, saying `it is
+still loading`; `scene_tree` and `screenshot` then show the game as it arrives.
+A game that has not started by then answers `timeout`. A game that does not
+start, a save before it that fails, or a `play` while the game is on answers
+`play_failed` with the editor's message. `stop` stops the game, starting or
+playing, and answers once the edited scene is back as it was before play;
+edits made to the running game are gone. `save` and `play` need an open scene,
+and `stop` a game starting or playing.
 
 ### Errors
 
