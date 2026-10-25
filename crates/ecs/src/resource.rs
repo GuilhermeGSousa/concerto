@@ -13,7 +13,6 @@ use crate::{
         input::{SystemInput, ValidationError},
         meta::SystemMetadata,
     },
-    utilities::TypeIdMap,
     world::UnsafeWorldCell,
 };
 
@@ -36,17 +35,6 @@ pub type ResourceId = TypeId;
 pub trait Resource: Send + Sync + 'static {
     /// Returns the human-readable name of this resource (usually the type name).
     fn name() -> &'static str;
-}
-
-/// Every resource of a world, readable while one of its components is borrowed for writing.
-#[derive(Clone, Copy)]
-pub struct WorldResources<'w>(pub(crate) &'w TypeIdMap<ResourceData>);
-
-impl<'w> WorldResources<'w> {
-    /// The resource of type `T`, or `None` if the world has none.
-    pub fn get<T: Resource>(&self) -> Option<&'w T> {
-        self.0.get(&TypeId::of::<T>()).map(ResourceData::get)
-    }
 }
 
 pub(crate) struct ResourceData {

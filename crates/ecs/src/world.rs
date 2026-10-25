@@ -24,7 +24,7 @@ use crate::{
     common::generate_type_id,
     component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
-    resource::{Resource, WorldResources},
+    resource::Resource,
     system::input::{SystemInput, ValidationError},
     table::TableRowIndex,
     utilities::TypeIdMap,
@@ -382,25 +382,6 @@ impl World {
             })
     }
 
-    /// `entity`'s `T` for writing, marked changed, beside every resource of the world for reading.
-    pub fn get_component_and_resources_mut<T: Component>(
-        &mut self,
-        entity: Entity,
-    ) -> Option<(&mut T, WorldResources<'_>)> {
-        let change_tick = self.change_tick();
-        let location = self.entity_store.find_location(entity)?;
-        let archetype = self.archetypes.get_mut(location.archetype_index as usize)?;
-        // SAFETY: the row comes from the entity store's live location of `entity` in this archetype.
-        let accessor = unsafe { archetype.get_component_unsafe_mut::<T>(location.row) }?;
-        *accessor.changed_tick = change_tick;
-        Some((accessor.data, WorldResources(&self.resources)))
-    }
-
-    /// Every resource of the world, for reading.
-    pub fn resources(&self) -> WorldResources<'_> {
-        WorldResources(&self.resources)
-    }
-
     pub(crate) fn get_component_for_entity_location<T: Component>(
         &self,
         entity_location: EntityLocation,
@@ -453,6 +434,25 @@ impl World {
         self.resources
             .remove(&TypeId::of::<T>())
             .map(ResourceData::into_inner)
+    }
+
+    /// Takes `T` out of the world while `f` runs, then puts it back with its change ticks as they were.
+    pub fn resource_scope<T: Resource + 'static, U>(
+        &mut self,
+        f: impl FnOnce(&mut World, Option<&T>) -> U,
+    ) -> U {
+        let id = TypeId::of::<T>();
+        let Some(data) = self.resources.remove(&id) else {
+            return f(self, None);
+        };
+        let result = f(self, Some(data.get::<T>()));
+        assert!(
+            !self.resources.contains_key(&id),
+            "{} was inserted during its own resource_scope",
+            T::name()
+        );
+        self.resources.insert(id, data);
+        result
     }
 
     /// Returns a shared reference to the resource of type `T`, or `None` if not present.

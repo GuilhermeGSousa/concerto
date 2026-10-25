@@ -262,6 +262,11 @@ impl AssetServer {
             .register_asset::<A>(asset.clone_drop_sender());
     }
 
+    /// Whether `A` was registered, without which `load` and `add` panic.
+    pub fn is_registered<A: Asset>(&self) -> bool {
+        self.data.handle_provider.is_registered::<A>()
+    }
+
     pub fn add<A: Asset>(&self, asset: A) -> AssetHandle<A> {
         let id = AssetId::new();
 
@@ -451,6 +456,13 @@ impl AssetHandleProvider {
             .write()
             .unwrap()
             .insert(type_id, lifetime_sender);
+    }
+
+    fn is_registered<A: Asset>(&self) -> bool {
+        self.asset_lifetime_send_map
+            .read()
+            .unwrap()
+            .contains_key(&TypeId::of::<A>())
     }
 
     pub fn request_handle<A: Asset>(&self, id: AssetId) -> AssetHandle<A> {
@@ -1000,5 +1012,16 @@ mod tests {
         let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
         assert_eq!(store.get(&handle).map(|asset| asset.value), Some(8));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_server_knows_only_the_asset_types_registered_with_it() {
+        let mut server = AssetServer::new();
+        assert!(!server.is_registered::<FixtureAsset>());
+
+        server.register_asset(&AssetStore::<FixtureAsset>::new());
+
+        assert!(server.is_registered::<FixtureAsset>());
+        assert!(!server.is_registered::<GatedAsset>());
     }
 }

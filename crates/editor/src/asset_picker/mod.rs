@@ -12,8 +12,6 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId, LoadableAsset,
-    asset_server::AssetServer,
-    asset_store::AssetStore,
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -123,14 +121,13 @@ impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
         context: &EditContext,
     ) -> Result<(), EditError> {
         let holds_t = context
-            .resource::<AssetRegistry>()
+            .registry
             .and_then(|registry| registry.get(*edit))
             .is_some_and(AssetEntry::is::<T>);
-        let (true, Some(assets), Some(_)) = (
-            holds_t,
-            context.resource::<AssetServer>(),
-            context.resource::<AssetStore<T>>(),
-        ) else {
+        let Some(assets) = context
+            .assets
+            .filter(|assets| holds_t && assets.is_registered::<T>())
+        else {
             return Err(EditError::Rejected);
         };
         *value = assets.load(*edit);

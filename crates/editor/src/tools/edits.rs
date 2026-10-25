@@ -9,9 +9,9 @@ use concerto_ecs::{
     Component, Entity, Resource, World,
     component::Tick,
     reflect::{AppTypeRegistry, ReflectComponent},
-    resource::WorldResources,
     signal::{On, Signal},
 };
+use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 use concerto_reflect::{PropertyPath, with_property_mut};
 
 use crate::{inspector::ErasedEditor, tools::scene::report_edit};
@@ -36,18 +36,10 @@ impl std::error::Error for EditError {}
 
 /// What an edit can read from the world it changes.
 pub struct EditContext<'w> {
-    resources: WorldResources<'w>,
-}
-
-impl<'w> EditContext<'w> {
-    pub fn new(resources: WorldResources<'w>) -> Self {
-        Self { resources }
-    }
-
-    /// The resource of type `R` in the world being edited.
-    pub fn resource<R: Resource>(&self) -> Option<&'w R> {
-        self.resources.get()
-    }
+    /// The world's `AssetServer`, which loads what an edit points a handle at.
+    pub assets: Option<&'w AssetServer>,
+    /// The world's catalogue of content assets.
+    pub registry: Option<&'w AssetRegistry>,
 }
 
 /// Captured at rebuild, so a queued edit always addresses its original target.
@@ -86,14 +78,19 @@ impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
         let component = reflected(world, self.row.component)?;
-        apply_through(
-            world,
-            component,
-            self.row.entity,
-            &self.row.path,
-            self.editor.as_ref(),
-            self.edit.as_ref(),
-        )
+        world.resource_scope::<AssetServer, _>(|world, assets| {
+            world.resource_scope::<AssetRegistry, _>(|world, registry| {
+                apply_through(
+                    world,
+                    component,
+                    self.row.entity,
+                    &self.row.path,
+                    self.editor.as_ref(),
+                    self.edit.as_ref(),
+                    &EditContext { assets, registry },
+                )
+            })
+        })
     }
 }
 
@@ -104,12 +101,12 @@ fn apply_through(
     path: &PropertyPath,
     editor: &dyn ErasedEditor,
     edit: &dyn Any,
+    context: &EditContext,
 ) -> Result<(), EditError> {
     let mut result = Err(EditError::NotFound);
-    let found = (component.edit)(world, entity, &mut |value, resources| {
-        let context = EditContext::new(resources);
+    let found = (component.edit)(world, entity, &mut |value| {
         if with_property_mut(value, path, &mut |value| {
-            result = editor.apply(value, edit, &context);
+            result = editor.apply(value, edit, context);
         })
         .is_err()
         {

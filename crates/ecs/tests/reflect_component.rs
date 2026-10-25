@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use concerto_ecs::{
-    Component, Resource, World,
+    Component, World,
     reflect::{AppTypeRegistry, ReflectComponent},
     system::input::ComponentMetadata,
 };
@@ -48,36 +48,17 @@ fn a_reflected_component_is_read_edited_inserted_at_default_and_removed() {
     let entity = world.spawn(());
 
     assert!((reflect.read)(&ComponentMetadata::new(&world), entity).is_none());
-    assert!(!(reflect.edit)(&mut world, entity, &mut |_, _| {}));
+    assert!(!(reflect.edit)(&mut world, entity, &mut |_| {}));
 
     assert!(reflect.insert_default(TypeId::of::<Health>(), &mut world, entity));
     assert!((reflect.read)(&ComponentMetadata::new(&world), entity).is_some());
 
     let mut visited = false;
-    assert!((reflect.edit)(&mut world, entity, &mut |_, _| visited = true));
+    assert!((reflect.edit)(&mut world, entity, &mut |_| visited = true));
     assert!(visited);
 
     (reflect.remove)(&mut world, entity);
     assert!((reflect.read)(&ComponentMetadata::new(&world), entity).is_none());
-}
-
-#[derive(Resource)]
-struct Gravity(f32);
-
-#[test]
-fn an_edit_reads_the_worlds_resources_beside_the_component() {
-    let mut world = World::new();
-    world.register_type::<Health>();
-    world.insert_resource(Gravity(9.8));
-    let reflect = component::<Health>(&world);
-    let entity = world.spawn(Health::default());
-
-    let mut gravity = None;
-    assert!((reflect.edit)(&mut world, entity, &mut |_, resources| {
-        gravity = resources.get::<Gravity>().map(|gravity| gravity.0);
-    }));
-
-    assert_eq!(gravity, Some(9.8));
 }
 
 #[test]

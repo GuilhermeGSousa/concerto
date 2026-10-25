@@ -252,7 +252,10 @@ fn an_asset_of_another_type_is_rejected_and_leaves_the_handle_alone() {
     let result = AssetPicker::<Mesh>::default().apply(
         &mut handle,
         &scene_asset,
-        &EditContext::new(p.scene().resources()),
+        &EditContext {
+            assets: p.scene().get_resource(),
+            registry: p.scene().get_resource(),
+        },
     );
 
     assert_eq!(result, Err(EditError::Rejected));
@@ -260,17 +263,18 @@ fn an_asset_of_another_type_is_rejected_and_leaves_the_handle_alone() {
 }
 
 #[test]
-fn without_the_asset_type_registered_in_the_scene_an_edit_is_rejected() {
-    let mut p = picking();
+fn an_asset_type_the_scenes_server_never_registered_is_rejected() {
+    let p = picking();
     let cube = p.cube.id;
-    p.f.scene_world_mut(p.document)
-        .remove_resource::<AssetStore<Mesh>>();
     let mut handle = AssetHandle::<Mesh>::default();
 
     let result = AssetPicker::<Mesh>::default().apply(
         &mut handle,
         &cube,
-        &EditContext::new(p.scene().resources()),
+        &EditContext {
+            assets: Some(&AssetServer::new()),
+            registry: p.scene().get_resource(),
+        },
     );
 
     assert_eq!(result, Err(EditError::Rejected));
