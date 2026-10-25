@@ -12,6 +12,8 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use concerto_app::{
     App,
     edit_time::AtEditTime,
+    main_schedule::MainSchedulePlugin,
+    plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
@@ -27,6 +29,7 @@ use concerto_editor::{
     asset_editor::{EditorDocument, Unsaved},
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
+    inspector::{EditError, EditableApp, PropertyEditor},
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
     tools::{
@@ -52,8 +55,11 @@ use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::{camera::Camera, light::Light};
 use concerto_scene::scene::{Scene, SceneNode};
-use concerto_ui::{text::UIText, text_input::UITextInput};
-use concerto_window::input::{Input, KeyCode, MouseButton, PhysicalKey};
+use concerto_ui::{text::UIText, text_input::UITextInput, theme::UITheme};
+use concerto_window::{
+    input::{Input, KeyCode, MouseButton, PhysicalKey},
+    plugin::WindowPlugin,
+};
 use glam::{Vec2, Vec3};
 use image::{ImageFormat, RgbaImage};
 use rmcp::{
@@ -3615,4 +3621,313 @@ fn send_input_starting_with_a_click_on_the_picture_gives_the_game_input_back() {
         again.starts_with("Sent 1 window event to the game"),
         "{again}"
     );
+}
+
+#[derive(Reflect, Default)]
+#[reflect(Default)]
+struct Seal {
+    code: u32,
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Sealed {
+    seal: Seal,
+}
+
+struct SealEditor;
+
+impl PropertyEditor<Seal> for SealEditor {
+    type Snapshot = u32;
+    type Edit = u32;
+
+    fn snapshot(&self, value: &Seal) -> u32 {
+        value.code
+    }
+
+    fn build(&self, _: &mut CommandQueue, _: Entity, _: &u32, _: &UITheme) {}
+
+    fn apply(&self, value: &mut Seal, edit: &u32) -> Result<(), EditError> {
+        value.code = *edit;
+        Ok(())
+    }
+}
+
+fn sealed_game(app: &mut App) {
+    game(app);
+    app.register_type::<Seal>().register_type::<Sealed>();
+}
+
+#[test]
+fn set_property_answers_not_editable_for_an_adapter_with_no_value_edit() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        sealed_game,
+        |app| {
+            app.register_property_editor::<Seal, _>(SealEditor);
+        },
+        |client| async move {
+            open(&client).await;
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let rig = scene_id(&ids, "Rig");
+            let added: Value = serde_json::from_str(
+                &ok_with(
+                    &client,
+                    "add_component",
+                    json!({ "entity": rig, "component": "Sealed" }),
+                )
+                .await,
+            )
+            .unwrap();
+            let refused = error_with(
+                &client,
+                "set_property",
+                json!({ "entity": rig, "component": "Sealed", "path": "seal", "value": { "code": 3 } }),
+            )
+            .await;
+            client.cancel().await.unwrap();
+            (added, refused)
+        },
+    ) else {
+        return;
+    };
+
+    let (added, refused) = served.result;
+    assert_eq!(
+        added["paths"],
+        json!([{ "path": "seal", "adapter": true }]),
+        "{added}"
+    );
+    assert_eq!(refused["code"], "not_editable", "{refused}");
+    assert_eq!(
+        refused["message"],
+        "Sealed.seal's inspector adapter offers no value edit, so set_property cannot write it."
+    );
+}
+
+#[derive(Resource)]
+struct KeepOpening(Option<PathBuf>);
+
+#[derive(Deserialize, JsonSchema)]
+struct HoldOpening {
+    hold: bool,
+}
+
+fn hold_opening(
+    mut calls: ToolCalls<HoldOpening>,
+    state: Res<ProjectState>,
+    mut cmd: CommandQueue,
+) {
+    for (arguments, reply) in calls.read() {
+        match (arguments.hold, &state.project) {
+            (true, Some(project)) => cmd.insert_resource(KeepOpening(Some(project.root.clone()))),
+            (true, None) => {
+                reply.ok("no project");
+                continue;
+            }
+            (false, _) => cmd.insert_resource(KeepOpening(None)),
+        }
+        reply.ok("held");
+    }
+}
+
+fn keep_opening(keep: Option<Res<KeepOpening>>, mut commands: ResMut<EditorCommands>) {
+    let Some(root) = keep.and_then(|keep| keep.0.clone()) else {
+        return;
+    };
+    if !commands
+        .0
+        .iter()
+        .any(|command| matches!(command, EditorCommand::OpenProject(_)))
+    {
+        commands.0.push_back(EditorCommand::OpenProject(root));
+    }
+}
+
+#[test]
+fn open_project_and_open_asset_answer_busy_while_a_project_opens() {
+    let fixture = Fixture::new();
+    let root = fixture.root();
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        |app| {
+            app.add_tool::<HoldOpening, _>(McpTool::new("hold_opening"), hold_opening)
+                .add_system(LateUpdate, keep_opening);
+        },
+        move |client| async move {
+            until(&client, "state", |state| state.starts_with("project")).await;
+            assert_eq!(
+                ok_with(&client, "hold_opening", json!({ "hold": true })).await,
+                "held"
+            );
+            let project = error_with(
+                &client,
+                "open_project",
+                json!({ "path": root.display().to_string() }),
+            )
+            .await;
+            let asset = error_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            ok_with(&client, "hold_opening", json!({ "hold": false })).await;
+            until(&client, "status", |status| status.ends_with("busy: no")).await;
+            let opened = ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/level.gasset" }),
+            )
+            .await;
+            client.cancel().await.unwrap();
+            (project, asset, opened)
+        },
+    ) else {
+        return;
+    };
+
+    let (project, asset, opened) = served.result;
+    for error in [&project, &asset] {
+        assert_eq!(error["code"], "busy", "{error}");
+        assert_eq!(
+            error["message"],
+            "A project is opening; call status until it says busy: no, then try again."
+        );
+    }
+    assert!(
+        opened.starts_with("Opened content/level.gasset"),
+        "{opened}"
+    );
+}
+
+#[derive(Resource)]
+struct OtherScene(AssetId);
+
+#[derive(Deserialize, JsonSchema)]
+struct OpenOther {}
+
+fn open_other(
+    mut calls: ToolCalls<OpenOther>,
+    other: Res<OtherScene>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for (_, reply) in calls.read() {
+        commands.0.push_back(EditorCommand::OpenAsset(other.0));
+        reply.ok("queued");
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn save_answers_busy_while_the_scene_loads() {
+    let fixture = Fixture::new();
+    let other = fixture.add_scene("content/other.gasset");
+    let other_file = fixture.root().join("content/other.gasset");
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        move |app| {
+            app.insert_resource(OtherScene(other))
+                .add_tool::<OpenOther, _>(McpTool::new("open_other"), open_other);
+        },
+        move |client| async move {
+            open(&client).await;
+            until(&client, "status", |status| status.ends_with("busy: no")).await;
+            let bytes = std::fs::read(&other_file).unwrap();
+            std::fs::remove_file(&other_file).unwrap();
+            let made = std::process::Command::new("mkfifo")
+                .arg(&other_file)
+                .status()
+                .unwrap();
+            assert!(made.success());
+            assert_eq!(ok(&client, "open_other").await, "queued");
+            let loading = until(&client, "status", |status| {
+                status.contains("Opening content/other.gasset")
+            })
+            .await;
+            assert_eq!(ok(&client, "rename").await, "renamed");
+            until(&client, "state", |state| state.contains("dirty")).await;
+            let saved = error(&client, "save").await;
+            let writer = std::thread::spawn(move || std::fs::write(&other_file, bytes).unwrap());
+            let after = until(&client, "status", |status| {
+                !status.contains("Opening content/other.gasset")
+            })
+            .await;
+            writer.join().unwrap();
+            client.cancel().await.unwrap();
+            (loading, saved, after)
+        },
+    ) else {
+        return;
+    };
+
+    let (loading, saved, after) = served.result;
+    assert!(loading.contains("busy: yes"), "{loading}");
+    assert_eq!(saved["code"], "busy", "{saved}");
+    assert_eq!(
+        saved["message"],
+        "The scene is still loading; call status until it says busy: no, then save."
+    );
+    assert!(
+        after.contains("unsaved changes were made while it loaded"),
+        "{after}"
+    );
+}
+
+fn drawless_game(app: &mut App) {
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(WindowPlugin)
+        .register_plugin(TransformPlugin)
+        .register_plugin(concerto_scene::plugin::ScenePlugin);
+}
+
+#[test]
+fn screenshot_answers_busy_while_nothing_is_drawn() {
+    let fixture = Fixture::new();
+    fixture.add_scene("content/plain.gasset");
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        drawless_game,
+        |_| {},
+        |client| async move {
+            until(&client, "state", |state| state.starts_with("project")).await;
+            ok_with(
+                &client,
+                "open_asset",
+                json!({ "asset": "content/plain.gasset" }),
+            )
+            .await;
+            until(&client, "status", |status| status.ends_with("busy: no")).await;
+            let viewport = error_with(&client, "screenshot", json!({ "target": "viewport" })).await;
+            let editor = call_with(&client, "screenshot", json!({ "target": "editor" })).await;
+            client.cancel().await.unwrap();
+            (viewport, editor.is_error)
+        },
+    ) else {
+        return;
+    };
+
+    let (viewport, editor) = served.result;
+    assert_eq!(viewport["code"], "busy", "{viewport}");
+    assert!(
+        viewport["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Nothing has been drawn there yet"),
+        "{viewport}"
+    );
+    assert_eq!(editor, Some(false));
 }
