@@ -20,7 +20,7 @@ use concerto_editor::tools::{
     scene::SceneEdited,
     selection::{Select, Selection},
 };
-use concerto_reflect::{PropertyPath, Reflect, ReflectDefault};
+use concerto_reflect::{PropertyPath, Reflect, ReflectDefault, TypeRegistry};
 use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
@@ -194,7 +194,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
         setting: setting(),
         gain: 1.0,
     };
-    let fallback = registry.collect(&value);
+    let fallback = registry.collect(&value, &TypeRegistry::default());
     assert_eq!(
         fallback.iter().map(|p| p.path.clone()).collect::<Vec<_>>(),
         vec![
@@ -215,7 +215,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
 
     let mut registry = registry;
     registry.register_property_editor::<Setting, SettingEditor>();
-    let properties = registry.collect(&value);
+    let properties = registry.collect(&value, &TypeRegistry::default());
     assert_eq!(properties.len(), 2);
     assert_eq!(properties[0].path, PropertyPath::new(["setting"]));
     assert_eq!(properties[0].type_id, TypeId::of::<Setting>());
@@ -225,10 +225,10 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
         .unwrap();
     assert_eq!(snapshot.title, "Shadows");
     assert!(!snapshot.enabled);
-    assert!(properties[0].value == registry.collect(&value)[0].value);
+    assert!(properties[0].value == registry.collect(&value, &TypeRegistry::default())[0].value);
     let mut changed = value;
     changed.setting.enabled = true;
-    assert!(properties[0].value != registry.collect(&changed)[0].value);
+    assert!(properties[0].value != registry.collect(&changed, &TypeRegistry::default())[0].value);
 }
 
 #[test]
@@ -444,7 +444,7 @@ fn registration_splits_between_the_recipe_and_the_editors_app() {
         editor
             .get_resource::<InspectorRegistry>()
             .unwrap()
-            .collect(&setting())
+            .collect(&setting(), &TypeRegistry::default())
             .len(),
         1
     );

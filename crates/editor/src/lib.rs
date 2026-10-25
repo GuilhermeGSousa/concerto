@@ -23,18 +23,13 @@ pub mod viewport;
 pub mod window_chrome;
 mod workspace;
 
-use concerto_foundation::assets::handle::AssetHandle;
-use concerto_mesh::{Mesh, MeshComponent};
-use concerto_render::assets::material::StandardMaterial;
+use concerto_mesh::MeshComponent;
 pub use run::run;
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
 
-use crate::{
-    asset_picker::{AssetPicker, AssetPickerPlugin},
-    inspector::EditableApp,
-};
+use crate::asset_picker::AssetPickerPlugin;
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -97,10 +92,6 @@ impl Plugin for EditorPlugin {
         });
         app.register_type::<MeshComponent>();
         app.register_plugin(AssetPickerPlugin);
-
-        // TODO: Figure out a better way to register these
-        app.register_property_editor::<AssetHandle<Mesh>, AssetPicker<Mesh>>();
-        app.register_property_editor::<AssetHandle<StandardMaterial>, AssetPicker<StandardMaterial>>();
 
         if let Some(path) = &self.project {
             app.get_resource_mut::<project::EditorCommands>()

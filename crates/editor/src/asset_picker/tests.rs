@@ -1,4 +1,5 @@
 use super::*;
+use crate::inspector::PropertyEditor;
 use crate::{
     hosted::testing::SceneFixture,
     inspector::{InspectorRegistry, row_systems, spawn_panel},
@@ -7,13 +8,20 @@ use crate::{
 use concerto_ecs::{
     Entity, IntoSystem, System, World,
     entity::hierarchy::{ChildOf, Children},
+    reflect::AppTypeRegistry,
     system::BoxedSystem,
 };
 use concerto_foundation::assets::{
-    Asset, asset_server::AssetServer, asset_store::AssetStore, registry::AssetEntry,
+    Asset,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
+    handle::{AssetHandle, ReflectAssetHandle},
+    registry::AssetEntry,
 };
 use concerto_mesh::{Mesh, MeshComponent};
+use concerto_reflect::TypeRegistry;
 use concerto_ui::node::UINode;
+use std::any::TypeId;
 
 struct Picking {
     f: SceneFixture,
@@ -42,9 +50,7 @@ fn picking() -> Picking {
     let mut f = SceneFixture::new();
     f.world.register_component::<ChildOf>();
     f.world.register_component::<Children>();
-    let mut registry = InspectorRegistry::default();
-    registry.register_property_editor::<AssetHandle<Mesh>, AssetPicker<Mesh>>();
-    f.world.insert_resource(registry);
+    f.world.insert_resource(InspectorRegistry::default());
     let cube = mesh_entry("props/cube");
     let sphere = mesh_entry("props/sphere");
     f.add_to_project(&cube);
@@ -53,7 +59,6 @@ fn picking() -> Picking {
 
     let scene = f.scene_world_mut(document);
     scene.register_type::<MeshComponent>();
-    scene.register_type::<AssetHandle<Mesh>>();
     let store = AssetStore::<Mesh>::new();
     scene
         .get_resource_mut::<AssetServer>()
@@ -174,6 +179,16 @@ impl Picking {
             .map(|item| (item, self.text(self.children(item)[0])))
             .collect()
     }
+    fn picker(&self) -> AssetPicker {
+        AssetPicker::new(
+            *self
+                .scene()
+                .get_resource::<AppTypeRegistry>()
+                .unwrap()
+                .get_type_data::<ReflectAssetHandle>(TypeId::of::<AssetHandle<Mesh>>())
+                .unwrap(),
+        )
+    }
     fn held(&self) -> &AssetHandle<Mesh> {
         &self
             .scene()
@@ -249,7 +264,7 @@ fn an_asset_of_another_type_is_rejected_and_leaves_the_handle_alone() {
     let mut handle = AssetHandle::<Mesh>::default();
     let scene_asset = p.f.scene.id;
 
-    let result = AssetPicker::<Mesh>::default().apply(
+    let result = p.picker().apply(
         &mut handle,
         &scene_asset,
         &EditContext {
@@ -268,7 +283,7 @@ fn an_asset_type_the_scenes_server_never_registered_is_rejected() {
     let cube = p.cube.id;
     let mut handle = AssetHandle::<Mesh>::default();
 
-    let result = AssetPicker::<Mesh>::default().apply(
+    let result = p.picker().apply(
         &mut handle,
         &cube,
         &EditContext {
@@ -279,4 +294,44 @@ fn an_asset_type_the_scenes_server_never_registered_is_rejected() {
 
     assert_eq!(result, Err(EditError::Rejected));
     assert!(handle.id().is_nil());
+}
+
+#[derive(Default)]
+struct IdOnly;
+
+impl PropertyEditor<AssetHandle<Mesh>> for IdOnly {
+    type Snapshot = AssetId;
+    type Edit = ();
+
+    fn snapshot(&self, value: &AssetHandle<Mesh>) -> AssetId {
+        value.id()
+    }
+
+    fn build(&self, _: &mut EntityCommandQueue, _: &AssetId, _: &UITheme) {}
+
+    fn apply(&self, _: &mut AssetHandle<Mesh>, _: &(), _: &EditContext) -> Result<(), EditError> {
+        Ok(())
+    }
+}
+
+#[test]
+fn an_editor_registered_for_the_handle_type_wins_over_the_picker() {
+    let mut types = TypeRegistry::default();
+    types.register::<MeshComponent>();
+    let mut registry = InspectorRegistry::default();
+    let editor = |registry: &InspectorRegistry| {
+        registry.collect(&MeshComponent::default(), &types)[0].editor_type
+    };
+    assert_eq!(editor(&registry), Some(TypeId::of::<AssetPicker>()));
+
+    registry.register_property_editor::<AssetHandle<Mesh>, IdOnly>();
+
+    assert_eq!(editor(&registry), Some(TypeId::of::<IdOnly>()));
+}
+
+#[test]
+fn a_handle_type_the_scene_never_registered_has_no_picker() {
+    let types = TypeRegistry::default();
+    let properties = InspectorRegistry::default().collect(&MeshComponent::default(), &types);
+    assert_eq!(properties[0].editor_type, None);
 }

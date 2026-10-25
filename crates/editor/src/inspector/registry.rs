@@ -22,14 +22,16 @@ use concerto_ecs::{
     },
     world::UnsafeWorldCell,
 };
-use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault};
+use concerto_foundation::assets::handle::ReflectAssetHandle;
+use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault, TypeRegistry};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
     EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRowValue,
 };
-use crate::hosted::EditWorldSignals;
+use crate::asset_picker::AssetPicker;
+use crate::hosted::{EditWorld, EditWorldSignals};
 use crate::tools::edits::CommitProperty;
 
 /// A registered property editor with its value and edit types erased.
@@ -93,6 +95,7 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct RegisteredEditor {
     pub editor_type: TypeId,
     pub adapter: Arc<dyn ErasedEditor>,
@@ -129,14 +132,27 @@ impl InspectorRegistry {
         );
     }
 
-    pub(crate) fn editor(&self, id: TypeId) -> Option<&RegisteredEditor> {
-        self.editors.get(&id)
+    /// The editor registered for `id`, or else the asset picker if `types` describes `id` as an asset handle.
+    pub(crate) fn editor(
+        &self,
+        id: TypeId,
+        types: Option<&TypeRegistry>,
+    ) -> Option<RegisteredEditor> {
+        if let Some(editor) = self.editors.get(&id) {
+            return Some(editor.clone());
+        }
+        let handle = types?.get_type_data::<ReflectAssetHandle>(id)?;
+        Some(RegisteredEditor {
+            editor_type: TypeId::of::<AssetPicker>(),
+            adapter: Arc::new(AssetPicker::new(*handle)),
+        })
     }
 
     /// Collect fresh owned snapshots, preferring an editor for each node over its children.
-    pub fn collect(&self, root: &dyn Reflect) -> Vec<Property> {
+    pub fn collect(&self, root: &dyn Reflect, types: &TypeRegistry) -> Vec<Property> {
         let mut collector = Collect {
             registry: self,
+            types,
             path: Vec::new(),
             properties: Vec::new(),
         };
@@ -152,15 +168,19 @@ impl InspectorRegistry {
         entity: Entity,
         component: TypeId,
     ) -> Option<Vec<Property>> {
-        let entry = scene
-            .get_resource::<AppTypeRegistry>()?
-            .get_type_data::<ReflectComponent>(component)?;
+        let types = scene.get_resource::<AppTypeRegistry>()?;
+        let entry = types.get_type_data::<ReflectComponent>(component)?;
         let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
-        Some(self.collect_at(registry_tick, value))
+        Some(self.collect_at(registry_tick, value, types))
     }
 
-    fn collect_at(&self, registry_tick: Tick, root: &dyn Reflect) -> Vec<Property> {
-        let mut properties = self.collect(root);
+    fn collect_at(
+        &self,
+        registry_tick: Tick,
+        root: &dyn Reflect,
+        types: &TypeRegistry,
+    ) -> Vec<Property> {
+        let mut properties = self.collect(root, types);
         for property in &mut properties {
             property.registry_tick = registry_tick;
         }
@@ -170,6 +190,7 @@ impl InspectorRegistry {
 
 struct Collect<'a> {
     registry: &'a InspectorRegistry,
+    types: &'a TypeRegistry,
     path: Vec<&'static str>,
     properties: Vec<Property>,
 }
@@ -177,7 +198,7 @@ struct Collect<'a> {
 impl Collect<'_> {
     fn node(&mut self, value: &dyn Reflect) {
         let type_id = (value as &dyn Any).type_id();
-        if let Some(editor) = self.registry.editor(type_id) {
+        if let Some(editor) = self.registry.editor(type_id, Some(self.types)) {
             match editor.adapter.snapshot(value) {
                 Ok(snapshot) => self.properties.push(Property {
                     path: PropertyPath::new(self.path.iter().copied()),
@@ -231,9 +252,12 @@ impl InspectionSource<'_> {
         self.table.get_type_data::<ReflectComponent>(id).is_some()
     }
     pub fn follows_snapshot(&self, registry: &InspectorRegistry, property: &Property) -> bool {
-        registry.editor(property.type_id).is_some_and(|editor| {
-            Some(editor.editor_type) == property.editor_type && editor.adapter.follows_snapshot()
-        })
+        registry
+            .editor(property.type_id, Some(&self.table))
+            .is_some_and(|editor| {
+                Some(editor.editor_type) == property.editor_type
+                    && editor.adapter.follows_snapshot()
+            })
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {
@@ -266,7 +290,7 @@ impl InspectionSource<'_> {
     ) -> Option<Vec<Property>> {
         let value =
             (self.table.get_type_data::<ReflectComponent>(id)?.read)(&self.components, entity)?;
-        Some(registry.collect_at(registry_tick, value))
+        Some(registry.collect_at(registry_tick, value, &self.table))
     }
 }
 
@@ -313,18 +337,19 @@ fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
 
 fn checked(
     registry: &InspectorRegistry,
+    types: Option<&TypeRegistry>,
     changed: Tick,
     commit: PropertyCommit,
 ) -> Result<CommitProperty, EditError> {
     let row = commit.row;
     let editor = registry
-        .editor(row.type_id)
+        .editor(row.type_id, types)
         .filter(|editor| {
             row.editor_type == Some(editor.editor_type) && row.registry_tick == changed
         })
         .ok_or(EditError::StaleEditor)?;
     Ok(CommitProperty {
-        editor: Arc::clone(&editor.adapter),
+        editor: editor.adapter,
         row,
         edit: commit.edit,
     })
@@ -333,13 +358,15 @@ fn checked(
 pub(super) fn send_property_commits(
     mut commits: ResMut<PropertyCommits>,
     registry: Res<InspectorRegistry>,
+    types: EditWorld<Option<Res<AppTypeRegistry>>>,
     mut scene: EditWorldSignals,
 ) {
     if commits.0.is_empty() {
         return;
     }
+    let types = types.as_deref().map(|types| &types.0);
     for commit in std::mem::take(&mut commits.0) {
-        match checked(&registry, registry.changed_tick(), commit) {
+        match checked(&registry, types, registry.changed_tick(), commit) {
             Ok(commit) => scene.trigger(commit),
             Err(error) => log::warn!("Property commit dropped: {error}"),
         }
@@ -445,7 +472,7 @@ mod tests {
         changed: Tick,
         commit: PropertyCommit,
     ) -> Option<EditError> {
-        checked(registry, changed, commit).err()
+        checked(registry, None, changed, commit).err()
     }
 
     #[test]
@@ -576,7 +603,7 @@ mod tests {
             row,
             edit: Arc::new("wrong payload"),
         };
-        let commit = checked(&registry, Tick::default(), malformed)
+        let commit = checked(&registry, None, Tick::default(), malformed)
             .expect("the row still names the registered editor");
         assert_eq!(commit.apply(&mut scene), Err(EditError::TypeMismatch));
         assert_eq!(
@@ -641,7 +668,7 @@ mod tests {
         )
         .unwrap();
         scene.insert_resource(AppTypeRegistry::default());
-        let commit = checked(&registry, Tick::default(), edit).unwrap();
+        let commit = checked(&registry, None, Tick::default(), edit).unwrap();
         assert_eq!(
             commit.apply(&mut scene),
             Err(EditError::UnregisteredComponent)
@@ -657,7 +684,7 @@ mod tests {
             row,
             edit: Arc::new(NumericEdit { slot: 0, number }),
         };
-        checked(registry, Tick::default(), commit).unwrap()
+        checked(registry, None, Tick::default(), commit).unwrap()
     }
 
     #[test]
@@ -773,7 +800,7 @@ mod tests {
             },
         )
         .unwrap();
-        checked(&registry, Tick::default(), edit)
+        checked(&registry, None, Tick::default(), edit)
             .unwrap()
             .apply(&mut scene)
             .unwrap();

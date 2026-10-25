@@ -43,14 +43,19 @@ pub struct PropertyRowValue(pub(crate) Option<Snapshot>);
 
 impl PropertyRowValue {
     pub(crate) fn new<T: Reflect, E: PropertyEditor<T>>(value: E::Snapshot) -> Self {
+        Self::erased::<E, E::Snapshot>(TypeId::of::<T>(), value)
+    }
+
+    /// A snapshot from editor `E` of a value whose type is known only by id.
+    pub(crate) fn erased<E: 'static, S: Clone + PartialEq + Send + Sync + 'static>(
+        value_type: TypeId,
+        value: S,
+    ) -> Self {
         Self(Some(Snapshot {
             data: Arc::new(value),
-            value_type: TypeId::of::<T>(),
+            value_type,
             editor_type: TypeId::of::<E>(),
-            equals: |a, b| match (
-                a.downcast_ref::<E::Snapshot>(),
-                b.downcast_ref::<E::Snapshot>(),
-            ) {
+            equals: |a, b| match (a.downcast_ref::<S>(), b.downcast_ref::<S>()) {
                 (Some(a), Some(b)) => a == b,
                 _ => false,
             },
@@ -131,7 +136,21 @@ impl PropertyCommit {
         if row.editor_type.is_none() {
             return Err(EditError::StaleEditor);
         }
-        if row.type_id != TypeId::of::<T>() || row.editor_type != Some(TypeId::of::<E>()) {
+        if row.type_id != TypeId::of::<T>() {
+            return Err(EditError::TypeMismatch);
+        }
+        Self::erased::<E>(row, edit)
+    }
+
+    /// An edit from editor `E` to a row whose value type is known only by id.
+    pub(crate) fn erased<E: 'static>(
+        row: &PropertyRow,
+        edit: impl Any + Send + Sync,
+    ) -> Result<Self, EditError> {
+        if row.editor_type.is_none() {
+            return Err(EditError::StaleEditor);
+        }
+        if row.editor_type != Some(TypeId::of::<E>()) {
             return Err(EditError::TypeMismatch);
         }
         Ok(Self {

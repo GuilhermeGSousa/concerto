@@ -1,4 +1,4 @@
-use std::marker::PhantomData;
+use std::any::Any;
 
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
@@ -11,10 +11,11 @@ use concerto_ecs::{
     },
 };
 use concerto_foundation::assets::{
-    AssetId, LoadableAsset,
-    handle::AssetHandle,
-    registry::{AssetEntry, AssetRegistry},
+    AssetId,
+    handle::{ReflectAssetHandle, SetHandleError},
+    registry::AssetRegistry,
 };
+use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
@@ -30,7 +31,7 @@ use concerto_window::input::MouseButton;
 use crate::fonts::{glyph, icon};
 use crate::hosted::EditTarget;
 use crate::inspector::{
-    EditContext, EditError, MENU_FILL, PropertyCommits, PropertyEditor, PropertyRow,
+    EditContext, EditError, ErasedEditor, MENU_FILL, PropertyCommit, PropertyCommits, PropertyRow,
     PropertyRowValue,
 };
 
@@ -39,12 +40,14 @@ const ITEM_HEIGHT: f32 = 26.0;
 const LIST_MAX_HEIGHT: f32 = 280.0;
 const SCROLLBAR_GUTTER: f32 = 10.0;
 
-/// Picks the asset an `AssetHandle<T>` names from the project's assets of type `T`.
-pub struct AssetPicker<T: LoadableAsset>(PhantomData<fn() -> T>);
+/// Picks the asset a reflected asset handle names from the project's assets of its kind.
+pub struct AssetPicker {
+    handle: ReflectAssetHandle,
+}
 
-impl<T: LoadableAsset> Default for AssetPicker<T> {
-    fn default() -> Self {
-        Self(PhantomData)
+impl AssetPicker {
+    pub fn new(handle: ReflectAssetHandle) -> Self {
+        Self { handle }
     }
 }
 
@@ -70,21 +73,27 @@ pub(crate) struct AssetPickerMenu {
     row: Option<Entity>,
 }
 
-impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
-    type Snapshot = AssetId;
-    type Edit = AssetId;
-
-    fn snapshot(&self, value: &AssetHandle<T>) -> AssetId {
-        value.id()
+impl ErasedEditor for AssetPicker {
+    fn snapshot(&self, value: &dyn Reflect) -> Result<PropertyRowValue, EditError> {
+        let id = self.handle.id(value).ok_or(EditError::TypeMismatch)?;
+        Ok(PropertyRowValue::erased::<Self, AssetId>(
+            (value as &dyn Any).type_id(),
+            id,
+        ))
     }
 
     fn follows_snapshot(&self) -> bool {
         true
     }
 
-    fn build(&self, row: &mut EntityCommandQueue, _: &AssetId, theme: &UITheme) {
-        let entity = row.entity();
-        row.add_child_with(
+    fn build(
+        &self,
+        cmd: &mut CommandQueue,
+        entity: Entity,
+        _: &PropertyRowValue,
+        theme: &UITheme,
+    ) -> Result<(), EditError> {
+        cmd.entity(entity).add_child_with(
             theme
                 .pressable()
                 .bordered()
@@ -96,7 +105,7 @@ impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
                 .grow()
                 .shrink(1.0)
                 .min_width(UIValue::Px(0.0))
-                .on_click(toggle_asset_picker::<T>(entity)),
+                .on_click(toggle_asset_picker(entity, self.handle.kind())),
             |mut button| {
                 button
                     .add_child((
@@ -112,20 +121,31 @@ impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
                     .add_child(icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted());
             },
         );
+        Ok(())
     }
 
     fn apply(
         &self,
-        value: &mut AssetHandle<T>,
-        edit: &AssetId,
+        value: &mut dyn Reflect,
+        edit: &dyn Any,
         context: &EditContext,
     ) -> Result<(), EditError> {
-        let holds_t = context.registry.get(*edit).is_some_and(AssetEntry::is::<T>);
-        if !holds_t || !context.assets.is_registered::<T>() {
+        let id = *edit
+            .downcast_ref::<AssetId>()
+            .ok_or(EditError::TypeMismatch)?;
+        let of_kind = context
+            .registry
+            .get(id)
+            .is_some_and(|entry| entry.kind == self.handle.kind());
+        if !of_kind {
             return Err(EditError::Rejected);
         }
-        *value = context.assets.load(*edit);
-        Ok(())
+        self.handle
+            .set(value, context.assets, id)
+            .map_err(|error| match error {
+                SetHandleError::NotThisHandle => EditError::TypeMismatch,
+                SetHandleError::AssetNotRegistered => EditError::Rejected,
+            })
     }
 }
 
@@ -154,7 +174,7 @@ fn menu_panel(button: Entity) -> UIAnchoredPanel {
 }
 
 /// Opens the shared menu on `row`'s assets, or closes it if `row`'s button opened it.
-fn toggle_asset_picker<T: LoadableAsset>(row: Entity) -> Listener<UIClick> {
+fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            values: Query<&PropertyRowValue>,
            menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
@@ -184,22 +204,23 @@ fn toggle_asset_picker<T: LoadableAsset>(row: Entity) -> Listener<UIClick> {
                 AssetPickerMenu { row: Some(row) },
             )),
         };
-        fill_menu::<T>(&mut menu, &registry, held(&values, row), &theme);
+        fill_menu(&mut menu, kind, &registry, held(&values, row), &theme);
     })
     .into_listener()
 }
 
-fn fill_menu<T: LoadableAsset>(
+fn fill_menu(
     menu: &mut EntityCommandQueue,
+    kind: &str,
     registry: &AssetRegistry,
     current: Option<AssetId>,
     theme: &UITheme,
 ) {
-    let entries: Vec<_> = registry.of_type::<T>().collect();
+    let entries: Vec<_> = registry.of_kind(kind).collect();
     if entries.is_empty() {
         menu.add_child(
             theme
-                .label(&format!("No {} assets", T::name()))
+                .label(&format!("No {kind} assets"))
                 .muted()
                 .font_size(12.0)
                 .no_wrap()
@@ -229,7 +250,7 @@ fn fill_menu<T: LoadableAsset>(
                         .fixed()
                         .height(UIValue::Px(ITEM_HEIGHT))
                         .padding(UIRect::axes(0.0, 8.0))
-                        .on_click(pick_asset::<T>(entry.id)),
+                        .on_click(pick_asset(entry.id)),
                     |mut item| {
                         item.add_child(
                             theme
@@ -261,7 +282,7 @@ fn fill_menu<T: LoadableAsset>(
 }
 
 /// Commits `id` to the row the open menu was opened for, then closes the menu.
-fn pick_asset<T: LoadableAsset>(id: AssetId) -> Listener<UIClick> {
+fn pick_asset(id: AssetId) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            menus: Query<(&AssetPickerMenu, &mut UIAnchoredPanel)>,
            rows: Query<(&PropertyRow, &PropertyRowValue)>,
@@ -275,9 +296,11 @@ fn pick_asset<T: LoadableAsset>(id: AssetId) -> Listener<UIClick> {
                 .filter(|_| panel.open)
                 .and_then(|row| rows.get_entity(row))
                 && value.downcast::<AssetId>() != Some(&id)
-                && let Err(error) = commits.push::<AssetHandle<T>, AssetPicker<T>>(row, id)
             {
-                log::warn!("Asset pick dropped: {error}");
+                match PropertyCommit::erased::<AssetPicker>(row, id) {
+                    Ok(commit) => commits.0.push(commit),
+                    Err(error) => log::warn!("Asset pick dropped: {error}"),
+                }
             }
             panel.open = false;
         }
