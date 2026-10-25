@@ -376,6 +376,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         }
 
         app.register_asset::<M>();
+        app.register_type::<MaterialComponent<M>>();
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         // extract_materials<M> must be per-material so we know which material handle
@@ -551,6 +552,32 @@ mod tests {
             .iter(world)
             .map(|material| material.material_asset_id)
             .collect()
+    }
+
+    #[test]
+    fn a_material_plugin_registers_its_component_and_the_handle_it_holds() {
+        use concerto_ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneLeaf};
+        use concerto_foundation::assets::handle::ReflectAssetHandle;
+        use std::any::TypeId;
+
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(MaterialPlugin::<StandardMaterial>::new());
+
+        let registry = app.get_resource::<AppTypeRegistry>().unwrap();
+        let component = TypeId::of::<MaterialComponent<StandardMaterial>>();
+        let handle = TypeId::of::<AssetHandle<StandardMaterial>>();
+        assert!(registry
+            .get_type_data::<ReflectComponent>(component)
+            .is_some());
+        assert!(registry.get_type_data::<ReflectSceneLeaf>(handle).is_some());
+        assert_eq!(
+            registry
+                .get_type_data::<ReflectAssetHandle>(handle)
+                .map(ReflectAssetHandle::kind),
+            Some("StandardMaterial")
+        );
     }
 
     #[test]
