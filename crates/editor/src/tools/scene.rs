@@ -190,12 +190,11 @@ mod tests {
     #[test]
     fn a_capture_lists_the_assets_the_open_scene_names_not_the_ones_its_file_listed() {
         use concerto_foundation::assets::handle::AssetHandle;
-        use concerto_mesh::mesh::{Mesh, MeshComponent};
+        use concerto_mesh::mesh::MeshComponent;
 
         let mut app = tools_app();
         let world = app.main_mut().world_mut();
         world.register_type::<MeshComponent>();
-        world.register_type::<AssetHandle<Mesh>>();
         world.trigger(OpenScene(family()));
         let child = world
             .query::<(Entity, &Name), ()>()

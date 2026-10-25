@@ -1320,7 +1320,7 @@ mod tests {
     #[test]
     fn a_save_lists_the_assets_the_scene_names_instead_of_the_ones_its_file_listed() {
         use concerto_foundation::assets::handle::AssetHandle;
-        use concerto_mesh::mesh::{Mesh, MeshComponent};
+        use concerto_mesh::mesh::MeshComponent;
 
         let mut f = SceneFixture::new();
         let mut scene = f.saved_scene();
@@ -1338,7 +1338,6 @@ mod tests {
         let mesh = AssetId::new();
         let world = f.scene_world_mut(document);
         world.register_type::<MeshComponent>();
-        world.register_type::<AssetHandle<Mesh>>();
         world.insert(
             MeshComponent {
                 handle: AssetHandle::weak(mesh),

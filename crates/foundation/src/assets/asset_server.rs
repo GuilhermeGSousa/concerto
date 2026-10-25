@@ -675,7 +675,6 @@ mod tests {
         server.register_asset::<FixtureAsset>(&store);
         let mut world = World::new();
         world.insert_resource(server);
-        world.register_type::<AssetHandle<FixtureAsset>>();
         world.register_type::<Holder>();
         let id = AssetId::new();
         let stored = concerto_reflect::to_value(&Holder {
