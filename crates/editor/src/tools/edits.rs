@@ -25,6 +25,7 @@ pub enum EditError {
     StaleEditor,
     MissingTarget,
     UnregisteredComponent,
+    MissingAssets,
 }
 
 impl std::fmt::Display for EditError {
@@ -36,10 +37,8 @@ impl std::error::Error for EditError {}
 
 /// What an edit can read from the world it changes.
 pub struct EditContext<'w> {
-    /// The world's `AssetServer`, which loads what an edit points a handle at.
-    pub assets: Option<&'w AssetServer>,
-    /// The world's catalogue of content assets.
-    pub registry: Option<&'w AssetRegistry>,
+    pub assets: &'w AssetServer,
+    pub registry: &'w AssetRegistry,
 }
 
 /// Captured at rebuild, so a queued edit always addresses its original target.
@@ -78,9 +77,10 @@ impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
         let component = reflected(world, self.row.component)?;
-        world.resource_scope::<AssetServer, _>(|world, assets| {
-            world.resource_scope::<AssetRegistry, _>(|world, registry| {
-                apply_through(
+        let mut result = Err(EditError::MissingAssets);
+        world.resource_scope::<AssetServer>(|world, assets| {
+            world.resource_scope::<AssetRegistry>(|world, registry| {
+                result = apply_through(
                     world,
                     component,
                     self.row.entity,
@@ -88,9 +88,10 @@ impl CommitProperty {
                     self.editor.as_ref(),
                     self.edit.as_ref(),
                     &EditContext { assets, registry },
-                )
-            })
-        })
+                );
+            });
+        });
+        result
     }
 }
 

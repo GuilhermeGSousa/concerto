@@ -15,12 +15,12 @@ fn a_scope_reads_the_resource_while_writing_the_world_and_puts_it_back_unchanged
     let changed = world.resource_changed_tick::<Gravity>();
     world.tick();
 
-    world.resource_scope::<Gravity, _>(|world, gravity| {
+    world.resource_scope::<Gravity>(|world, gravity| {
         assert!(world.get_resource::<Gravity>().is_none());
         world
             .get_component_for_entity_mut::<Velocity>(entity)
             .unwrap()
-            .0 = gravity.unwrap().0;
+            .0 = gravity.0;
     });
 
     assert_eq!(
@@ -35,11 +35,12 @@ fn a_scope_reads_the_resource_while_writing_the_world_and_puts_it_back_unchanged
 }
 
 #[test]
-fn a_scope_over_a_missing_resource_runs_without_it() {
+fn a_scope_over_a_missing_resource_does_not_run() {
     let mut world = World::new();
+    let mut ran = false;
 
-    let ran = world.resource_scope::<Gravity, _>(|_, gravity| gravity.is_none());
+    world.resource_scope::<Gravity>(|_, _| ran = true);
 
-    assert!(ran);
+    assert!(!ran);
     assert!(world.get_resource::<Gravity>().is_none());
 }

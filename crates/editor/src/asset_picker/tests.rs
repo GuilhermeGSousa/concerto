@@ -253,8 +253,8 @@ fn an_asset_of_another_type_is_rejected_and_leaves_the_handle_alone() {
         &mut handle,
         &scene_asset,
         &EditContext {
-            assets: p.scene().get_resource(),
-            registry: p.scene().get_resource(),
+            assets: p.scene().get_resource().unwrap(),
+            registry: p.scene().get_resource().unwrap(),
         },
     );
 
@@ -272,8 +272,8 @@ fn an_asset_type_the_scenes_server_never_registered_is_rejected() {
         &mut handle,
         &cube,
         &EditContext {
-            assets: Some(&AssetServer::new()),
-            registry: p.scene().get_resource(),
+            assets: &AssetServer::new(),
+            registry: p.scene().get_resource().unwrap(),
         },
     );
 

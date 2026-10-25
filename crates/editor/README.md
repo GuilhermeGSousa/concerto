@@ -316,7 +316,8 @@ fn recipe(app: &mut App) {
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
 the widget registry and sends it to the scene, where the tools write the value.
 `PropertyEditor::apply` runs there, and its `EditContext` holds the scene
-world's `AssetServer` and `AssetRegistry`, when it has them.
+world's `AssetServer` and `AssetRegistry`, which `AssetManagerPlugin` provides.
+A scene `App` without either refuses every edit with `EditError::MissingAssets`.
 
 ### Asset handles
 

@@ -355,7 +355,10 @@ mod tests {
     use super::*;
     use crate::{hosted::testing::SceneFixture, tools::scene::SceneEdited};
     use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
-    use concerto_foundation::transform::Transform;
+    use concerto_foundation::{
+        assets::{asset_server::AssetServer, registry::AssetRegistry},
+        transform::Transform,
+    };
     use glam::Vec3;
 
     struct Sending {
@@ -423,6 +426,8 @@ mod tests {
         let mut world = World::default();
         world.register_component::<Transform>();
         world.register_type::<Transform>();
+        world.insert_resource(AssetServer::new());
+        world.insert_resource(AssetRegistry::default());
         let entity = world.spawn(Transform::IDENTITY);
         world.tick();
         (world, entity)
@@ -699,6 +704,28 @@ mod tests {
                 .translation,
             Vec3::ZERO
         );
+    }
+
+    #[test]
+    fn a_scene_without_its_asset_resources_refuses_every_edit_and_keeps_them() {
+        let (mut scene, entity) = scene();
+        let registry = InspectorRegistry::default();
+        let row = row_in(&registry, &scene, entity);
+        scene.remove_resource::<AssetRegistry>();
+
+        assert_eq!(
+            numeric(&registry, row, 4.0).apply(&mut scene),
+            Err(EditError::MissingAssets)
+        );
+
+        assert_eq!(
+            scene
+                .get_component_for_entity::<Transform>(entity)
+                .unwrap()
+                .translation,
+            Vec3::ZERO
+        );
+        assert!(scene.get_resource::<AssetServer>().is_some());
     }
 
     #[test]

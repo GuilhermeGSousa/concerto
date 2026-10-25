@@ -120,17 +120,11 @@ impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
         edit: &AssetId,
         context: &EditContext,
     ) -> Result<(), EditError> {
-        let holds_t = context
-            .registry
-            .and_then(|registry| registry.get(*edit))
-            .is_some_and(AssetEntry::is::<T>);
-        let Some(assets) = context
-            .assets
-            .filter(|assets| holds_t && assets.is_registered::<T>())
-        else {
+        let holds_t = context.registry.get(*edit).is_some_and(AssetEntry::is::<T>);
+        if !holds_t || !context.assets.is_registered::<T>() {
             return Err(EditError::Rejected);
-        };
-        *value = assets.load(*edit);
+        }
+        *value = context.assets.load(*edit);
         Ok(())
     }
 }

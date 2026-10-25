@@ -4,7 +4,7 @@
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
-    plugins::TimePlugin,
+    plugins::{AssetManagerPlugin, TimePlugin},
     schedule_groups::{LateUpdate, Startup},
 };
 use concerto_ecs::{
@@ -165,6 +165,7 @@ pub fn install(app: &mut App) {
 
 fn headless_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin);
     register(app);
