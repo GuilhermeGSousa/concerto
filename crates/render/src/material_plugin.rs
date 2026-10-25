@@ -499,3 +499,77 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
             .insert_resource(MaterialPipeline::<M>::new(pipeline, material_layout));
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        assets::material::StandardMaterial, components::render_entity::SyncWithRenderWorld,
+        draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
+    };
+    use concerto_app::{
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
+        App,
+    };
+    use concerto_ecs::Entity;
+    use concerto_foundation::{
+        assets::{handle::AssetHandle, AssetId},
+        transform::Transform,
+    };
+    use concerto_window::plugin::{Window, WindowPlugin};
+
+    fn app(gpu: &Gpu, material: AssetId) -> (App, Entity) {
+        let mut app = App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(DrawTarget::None)
+            .insert_resource(Window::new((64, 48), 1.0));
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(RenderPlugin)
+            .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+        let world = app.main_mut().world_mut();
+        world.register_component::<Transform>();
+        let entity = world.spawn((
+            MaterialComponent::<StandardMaterial> {
+                handle: AssetHandle::weak(material),
+            },
+            Transform::IDENTITY,
+            SyncWithRenderWorld,
+        ));
+        app.finish_plugin_build();
+        (app, entity)
+    }
+
+    fn drawn_with(app: &mut App) -> Vec<AssetId> {
+        let world = app.render_mut().world_mut();
+        world
+            .query::<&RenderMaterialComponent<StandardMaterial>, ()>()
+            .iter(world)
+            .map(|material| material.material_asset_id)
+            .collect()
+    }
+
+    #[test]
+    fn swapping_a_material_handle_changes_the_material_its_render_entity_draws_with() {
+        let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+            return;
+        };
+        let (first, second) = (AssetId::new(), AssetId::new());
+        let (mut app, entity) = app(&gpu, first);
+        app.update();
+        assert_eq!(drawn_with(&mut app), [first]);
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<MaterialComponent<StandardMaterial>>(entity)
+            .unwrap()
+            .handle = AssetHandle::weak(second);
+        app.update();
+
+        assert_eq!(drawn_with(&mut app), [second]);
+    }
+}
