@@ -8,10 +8,11 @@ use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, command::CommandQueue, component::name::Name,
     events::event_reader::EventReader, query::filter::With, reflect::ReflectComponent,
 };
+use concerto_foundation::assets::{asset_server::AssetServer, handle::LiveLeaves};
 use concerto_mcp::{AppMcpExt, McpTool, Needs, PendingCall, Reply, ToolCalls, ToolError};
 use concerto_reflect::{
-    PropertyPath, Reflect, ReflectDefault, ReflectJson, TypeRegistry, apply_value, json_to_value,
-    to_value, with_property,
+    PropertyPath, Reflect, ReflectDefault, ReflectJson, TypeRegistry, apply_value_with,
+    json_to_value_with, to_value_with, with_property,
 };
 use schemars::JsonSchema;
 use serde::Deserialize;
@@ -483,27 +484,30 @@ fn decoded(
     field: &dyn Reflect,
     value: &Value,
     types: &TypeRegistry,
+    hook: &mut LiveLeaves,
 ) -> Result<Box<dyn Reflect>, ToolError> {
     let type_id = (field as &dyn Any).type_id();
     let invalid = |reason: String| ToolError::new("invalid_value", reason);
-    if let Some(codec) = types.get_type_data::<ReflectJson>(type_id) {
-        return (codec.from_json)(value).map_err(invalid);
-    }
-    let Some(default) = types.get_type_data::<ReflectDefault>(type_id) else {
-        return Err(ToolError::new(
-            "not_editable",
-            format!(
-                "{} has no JSON form and no registered Default, so a value cannot be built from JSON.",
-                field.type_name()
-            ),
-        ));
+    let mut built = if let Some(codec) = types.get_type_data::<ReflectJson>(type_id) {
+        (codec.from_json)(value).map_err(invalid)?
+    } else {
+        let Some(default) = types.get_type_data::<ReflectDefault>(type_id) else {
+            return Err(ToolError::new(
+                "not_editable",
+                format!(
+                    "{} has no JSON form and no registered Default, so a value cannot be built from JSON.",
+                    field.type_name()
+                ),
+            ));
+        };
+        let mut built = default.default();
+        if let Ok(current) = to_value_with(field, hook) {
+            apply_value_with(built.as_mut(), &current, hook);
+        }
+        built
     };
-    let mut built = default.default();
-    if let Ok(current) = to_value(field) {
-        apply_value(built.as_mut(), &current);
-    }
-    let stored = json_to_value(value, type_id, types).map_err(invalid)?;
-    let warnings = apply_value(built.as_mut(), &stored);
+    let stored = json_to_value_with(value, type_id, types, hook).map_err(invalid)?;
+    let warnings = apply_value_with(built.as_mut(), &stored, hook);
     if warnings.is_empty() {
         Ok(built)
     } else {
@@ -521,10 +525,11 @@ fn value_edit(
     field: &dyn Reflect,
     value: &Value,
     types: &TypeRegistry,
+    hook: &mut LiveLeaves,
     editor: &dyn ErasedEditor,
     property: &str,
 ) -> Result<Arc<dyn Any + Send + Sync>, ToolError> {
-    let built = decoded(field, value, types).map_err(|error| {
+    let built = decoded(field, value, types, hook).map_err(|error| {
         ToolError::new(
             error.code,
             format!("{value} does not fit {property}: {}", error.message),
@@ -553,6 +558,7 @@ enum Write {
 fn property_write(
     source: &InspectionSource,
     registry: &Res<InspectorRegistry>,
+    server: Option<&AssetServer>,
     entity: Entity,
     root: bool,
     arguments: SetProperty,
@@ -588,12 +594,14 @@ fn property_write(
     let editor = current_editor(registry, changed, &row)
         .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
     let mut edit = Err(unknown_path(short, &arguments.path, &[]));
+    let mut hook = LiveLeaves::from_parts(source.types(), server);
     if let Some(value) = source.read(entity, component) {
         let _ = with_property(value, &row.path, &mut |field| {
             edit = value_edit(
                 field,
                 &arguments.value,
                 source.types(),
+                &mut hook,
                 editor.adapter.as_ref(),
                 &name,
             );
@@ -607,6 +615,7 @@ fn set_property(
     source: EditWorld<InspectionSource>,
     entities: EditWorld<SceneEntities>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
+    server: EditWorld<Option<Res<AssetServer>>>,
     registry: Res<InspectorRegistry>,
     targets: Query<Entity, With<EditTarget>>,
     mut commits: ResMut<PropertyCommits>,
@@ -619,7 +628,14 @@ fn set_property(
     for (arguments, reply) in calls.read() {
         let write = resolve(&arguments.entity, &entities).and_then(|entity| {
             let root = roots.get_entity(entity).is_some();
-            property_write(&source, &registry, entity, root, arguments)
+            property_write(
+                &source,
+                &registry,
+                server.as_deref(),
+                entity,
+                root,
+                arguments,
+            )
         });
         let row = match write {
             Ok(Write::Adapter(commit)) => {

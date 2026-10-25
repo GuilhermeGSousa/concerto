@@ -138,7 +138,9 @@ adapter edits the path, the value goes through the adapter's
 adapter's validation holds: a value it refuses answers `refused` and leaves the
 component as it was. A path with no adapter is written from the JSON directly.
 On either route a value that does not decode to the property's type answers
-`invalid_value` and leaves the component as it was.
+`invalid_value` and leaves the component as it was, an entity reference is a
+live id such as `42v3`, and an asset handle is an asset id that loads through
+the edit `App`'s `AssetServer`, as a spawned scene's handles do.
 A path `inspect` marks `enum` takes the whole enum, its variant's name for a
 variant without fields (`"Point"`) or an object with the variant's name as its
 one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field

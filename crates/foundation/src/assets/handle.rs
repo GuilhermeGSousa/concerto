@@ -14,7 +14,7 @@ use concerto_ecs::{
 };
 use concerto_reflect::{
     decode_leaf, encode_leaf, FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, LeafHook,
-    Reflect, ReflectJson, ReflectMut, ReflectRef, TypeData, TypeRegistration,
+    Reflect, ReflectJson, ReflectMut, ReflectRef, TypeData, TypeRegistration, TypeRegistry,
 };
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -240,22 +240,29 @@ pub struct LiveLeaves {
 impl LiveLeaves {
     /// Takes the handle types registered in `world` and its asset server, if it has one.
     pub fn new(world: &World) -> Self {
-        let handles = world
-            .get_resource::<AppTypeRegistry>()
-            .map(|registry| {
-                registry
-                    .iter()
-                    .filter_map(|registration| {
-                        Some((
-                            registration.type_id(),
-                            *registration.data::<ReflectAssetHandle>()?,
-                        ))
-                    })
-                    .collect()
+        let server = world.get_resource::<AssetServer>();
+        match world.get_resource::<AppTypeRegistry>() {
+            Some(registry) => Self::from_parts(registry, server),
+            None => Self {
+                server: server.cloned(),
+                handles: HashMap::new(),
+            },
+        }
+    }
+
+    /// Takes the handle types registered in `registry` and the asset server to load them through, for a caller that reads a world's resources without holding the world.
+    pub fn from_parts(registry: &TypeRegistry, server: Option<&AssetServer>) -> Self {
+        let handles = registry
+            .iter()
+            .filter_map(|registration| {
+                Some((
+                    registration.type_id(),
+                    *registration.data::<ReflectAssetHandle>()?,
+                ))
             })
-            .unwrap_or_default();
+            .collect();
         Self {
-            server: world.get_resource::<AssetServer>().cloned(),
+            server: server.cloned(),
             handles,
         }
     }

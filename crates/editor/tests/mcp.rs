@@ -19,7 +19,7 @@ use concerto_app::{
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, With, Without,
     command::CommandQueue,
-    component::name::Name,
+    component::{name::Name, scene::SceneEntityRef},
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
     signal::Signal,
@@ -3885,6 +3885,139 @@ fn set_property_answers_not_editable_for_an_adapter_with_no_value_edit() {
         refused["message"],
         "Sealed.seal's inspector adapter offers no value edit, so set_property cannot write it."
     );
+}
+
+#[derive(Serialize, Deserialize)]
+struct Chime;
+
+impl Asset for Chime {
+    fn name() -> &'static str {
+        "Chime"
+    }
+}
+
+impl LoadableAsset for Chime {}
+
+#[derive(Reflect, Default)]
+#[reflect(Default)]
+struct Voice {
+    note: AssetHandle<Chime>,
+    target: SceneEntityRef,
+    level: u32,
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Voiced {
+    voice: Voice,
+}
+
+struct VoiceEditor;
+
+impl PropertyEditor<Voice> for VoiceEditor {
+    type Snapshot = u32;
+    type Edit = (AssetHandle<Chime>, SceneEntityRef, u32);
+
+    fn snapshot(&self, value: &Voice) -> u32 {
+        value.level
+    }
+
+    fn build(&self, _: &mut CommandQueue, _: Entity, _: &u32, _: &UITheme) {}
+
+    fn apply(&self, value: &mut Voice, edit: &Self::Edit) -> Result<(), EditError> {
+        value.note = edit.0.clone();
+        value.target = edit.1;
+        value.level = edit.2;
+        Ok(())
+    }
+
+    fn edit_to(&self, value: &Voice) -> Option<Self::Edit> {
+        Some((value.note.clone(), value.target, value.level))
+    }
+}
+
+fn voiced_game(app: &mut App) {
+    game(app);
+    app.register_asset::<Chime>()
+        .register_type::<AssetHandle<Chime>>()
+        .register_type::<Voice>()
+        .register_type::<Voiced>();
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct VoiceHeld {}
+
+fn voice_held(mut calls: ToolCalls<VoiceHeld>, voiced: EditWorld<Query<&Voiced>>) {
+    for (_, reply) in calls.read() {
+        let held = voiced.iter().next().map(|voiced| {
+            let voice = &voiced.voice;
+            let strength = match voice.note {
+                AssetHandle::Strong(..) => "strong",
+                _ => "weak",
+            };
+            let target = match voice.target {
+                SceneEntityRef::Entity(entity) => entity.to_id_string(),
+                SceneEntityRef::Index(index) => format!("index {index}"),
+            };
+            format!(
+                "{strength} {} {target} {}",
+                voice.note.id().simple_hex(),
+                voice.level
+            )
+        });
+        reply.ok(held.unwrap_or_default());
+    }
+}
+
+#[test]
+fn set_property_through_an_adapter_loads_asset_handles_and_keeps_live_entity_references() {
+    let fixture = Fixture::new();
+    let chime = fixture.add("content/chime.gasset", "Chime").simple_hex();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        voiced_game,
+        |app| {
+            app.register_property_editor::<Voice, _>(VoiceEditor)
+                .add_tool::<VoiceHeld, _>(
+                    McpTool::read_only("voice_held").needs(Needs::Scene),
+                    voice_held,
+                );
+        },
+        move |client| async move {
+            open(&client).await;
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let (rig, hero) = (scene_id(&ids, "Rig"), scene_id(&ids, "Hero"));
+            ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": rig, "component": "Voiced" }),
+            )
+            .await;
+            ok_with(
+                &client,
+                "set_property",
+                json!({ "entity": rig, "component": "Voiced", "path": "voice", "value": { "note": chime, "target": hero, "level": 2 } }),
+            )
+            .await;
+            let set = ok(&client, "voice_held").await;
+            ok_with(
+                &client,
+                "set_property",
+                json!({ "entity": rig, "component": "Voiced", "path": "voice", "value": { "level": 3 } }),
+            )
+            .await;
+            let merged = ok(&client, "voice_held").await;
+            client.cancel().await.unwrap();
+            (chime, hero, set, merged)
+        },
+    ) else {
+        return;
+    };
+
+    let (chime, hero, set, merged) = served.result;
+    assert_eq!(set, format!("strong {chime} {hero} 2"));
+    assert_eq!(merged, format!("strong {chime} {hero} 3"));
 }
 
 #[derive(Resource)]
