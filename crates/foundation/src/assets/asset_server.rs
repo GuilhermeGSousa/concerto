@@ -503,6 +503,7 @@ impl AssetHandleProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::handle::ReflectAssetHandle;
     use crate::assets::{
         asset_store::AssetStore,
         content::{read_content_asset_header, save_content_asset},
@@ -701,6 +702,50 @@ mod tests {
             .unwrap();
         assert_eq!(captured, stored);
         assert_eq!(capture.referenced_assets(), [id]);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    fn handle_type_data(world: &World) -> ReflectAssetHandle {
+        *world
+            .get_resource::<concerto_ecs::reflect::AppTypeRegistry>()
+            .unwrap()
+            .get_type_data::<ReflectAssetHandle>(std::any::TypeId::of::<AssetHandle<FixtureAsset>>())
+            .unwrap()
+    }
+
+    #[test]
+    fn a_handle_registered_through_its_component_describes_itself_without_naming_its_asset() {
+        let mut world = World::new();
+        world.register_type::<Holder>();
+        let handle = handle_type_data(&world);
+        let id = AssetId::new();
+
+        assert_eq!(handle.kind(), "FixtureAsset");
+        assert_eq!(handle.id(&AssetHandle::<FixtureAsset>::weak(id)), Some(id));
+        assert_eq!(handle.id(&7u32), None);
+    }
+
+    #[test]
+    fn a_described_handle_loads_only_through_a_server_that_registered_its_asset() {
+        let mut world = World::new();
+        world.register_type::<Holder>();
+        let handle = handle_type_data(&world);
+        let dir = temp_root("described-handle");
+        let id = AssetId::new();
+        let mut value = AssetHandle::<FixtureAsset>::default();
+
+        let bare = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        assert!(handle.set(&mut value, &bare, id).is_err());
+        assert!(value.id().is_nil());
+
+        let store = AssetStore::<FixtureAsset>::new();
+        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        server.register_asset::<FixtureAsset>(&store);
+        assert!(handle.set(&mut 7u32, &server, id).is_err());
+        handle.set(&mut value, &server, id).unwrap();
+        assert!(matches!(value, AssetHandle::Strong(..)));
+        assert_eq!(value.id(), id);
 
         std::fs::remove_dir_all(&dir).ok();
     }
