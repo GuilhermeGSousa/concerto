@@ -28,7 +28,10 @@ use crate::{
         current_editor,
     },
     tools::{
-        edits::{ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, SetValue},
+        edits::{
+            ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, PropertyRefusal,
+            SetValue,
+        },
         entity_ops::{EntityEdit, EntityEdited},
         scene::SceneRoot,
         selection::Selection,
@@ -686,7 +689,10 @@ fn answer_property_commits(
                     setting.entity,
                     setting.component,
                 )),
-                Err(reason) => pending.reply.err(refused(reason)),
+                Err(PropertyRefusal::Undecodable(reason)) => {
+                    pending.reply.err(ToolError::new("invalid_value", reason))
+                }
+                Err(PropertyRefusal::Refused(reason)) => pending.reply.err(refused(reason)),
             }
             cmd.despawn(call);
         }

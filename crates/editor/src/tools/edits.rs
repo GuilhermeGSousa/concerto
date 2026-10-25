@@ -85,11 +85,46 @@ pub struct CommitProperty {
 
 impl Signal for CommitProperty {}
 
-/// What one `CommitProperty` did to the row it addressed, or the status text saying why it was refused.
+/// What one `CommitProperty` or `SetValue` did to the row it addressed, or why it was refused.
 #[derive(Event, Clone)]
 pub struct PropertyCommitted {
     pub row: PropertyRow,
-    pub result: Result<(), String>,
+    pub result: Result<(), PropertyRefusal>,
+}
+
+/// Why a property write was refused, each carrying the status text Chatter shows.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PropertyRefusal {
+    /// The JSON value does not decode to the property's type.
+    Undecodable(String),
+    /// Anything else: the scene root, a missing target, or an adapter's validation.
+    Refused(String),
+}
+
+impl PropertyRefusal {
+    /// The status text.
+    pub fn status(&self) -> &str {
+        match self {
+            Self::Undecodable(status) | Self::Refused(status) => status,
+        }
+    }
+
+    fn map(self, reword: impl FnOnce(String) -> String) -> Self {
+        match self {
+            Self::Undecodable(status) => Self::Undecodable(reword(status)),
+            Self::Refused(status) => Self::Refused(reword(status)),
+        }
+    }
+}
+
+impl std::fmt::Display for PropertyRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.status())
+    }
+}
+
+fn refused(reason: impl ToString) -> PropertyRefusal {
+    PropertyRefusal::Refused(reason.to_string())
 }
 
 impl CommitProperty {
@@ -143,27 +178,28 @@ pub struct SetValue {
 impl Signal for SetValue {}
 
 impl SetValue {
-    fn write(&self, world: &mut World, field: &mut TypeId) -> Result<(), String> {
-        let component = reflected(world, self.component).map_err(|error| error.to_string())?;
+    fn write(&self, world: &mut World, field: &mut TypeId) -> Result<(), PropertyRefusal> {
+        let component = reflected(world, self.component).map_err(refused)?;
         if !world.entity_is_valid(self.entity) {
-            return Err(EditError::MissingTarget.to_string());
+            return Err(refused(EditError::MissingTarget));
         }
         if world
             .get_component_for_entity::<SceneRoot>(self.entity)
             .is_some()
         {
-            return Err("the scene root cannot be changed".to_owned());
+            return Err(refused("the scene root cannot be changed"));
         }
-        in_open_scene(world, self.entity).map_err(|error| error.to_string())?;
+        in_open_scene(world, self.entity).map_err(refused)?;
         let mut hook = LiveLeaves::new(world);
         let stored = {
             let live = (component.read)(&ComponentMetadata::new(world), self.entity)
-                .ok_or_else(|| EditError::MissingTarget.to_string())?;
+                .ok_or_else(|| refused(EditError::MissingTarget))?;
             with_property(live, &self.path, &mut |value| {
                 *field = (value as &dyn Any).type_id();
             })
-            .map_err(|_| EditError::NotFound.to_string())?;
-            self.decode(world, live, *field, &mut hook)?
+            .map_err(|_| refused(EditError::NotFound))?;
+            self.decode(world, live, *field, &mut hook)
+                .map_err(PropertyRefusal::Undecodable)?
         };
         let mut warnings = Vec::new();
         (component.edit)(world, self.entity, &mut |value| {
@@ -174,11 +210,13 @@ impl SetValue {
         if warnings.is_empty() {
             Ok(())
         } else {
-            Err(warnings
-                .iter()
-                .map(ToString::to_string)
-                .collect::<Vec<_>>()
-                .join("; "))
+            Err(PropertyRefusal::Undecodable(
+                warnings
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join("; "),
+            ))
         }
     }
 
@@ -306,7 +344,7 @@ pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
     let result = in_open_scene(world, row.entity)
         .map_err(|error| error.to_string())
         .and_then(|()| on.signal().apply(world).map_err(|error| error.to_string()))
-        .map_err(|reason| format!("Set {property} failed: {reason}"));
+        .map_err(|reason| refused(format!("Set {property} failed: {reason}")));
     report(world, &result);
     write(
         world,
@@ -323,7 +361,7 @@ pub(crate) fn set_value(on: On<SetValue>, world: &mut World) {
     let mut field = TypeId::of::<()>();
     let result = set
         .write(world, &mut field)
-        .map_err(|reason| format!("Set {property} failed: {reason}"));
+        .map_err(|refusal| refusal.map(|reason| format!("Set {property} failed: {reason}")));
     report(world, &result);
     write(
         world,
@@ -380,10 +418,10 @@ fn component_name(world: &World, component: TypeId) -> &'static str {
         .map_or("the component", |registration| registration.short_name())
 }
 
-fn report(world: &mut World, result: &Result<(), String>) {
+fn report(world: &mut World, result: &Result<(), impl ToString>) {
     match result {
         Ok(()) => report_edit(world),
-        Err(status) => write(world, SceneStatus(status.clone())),
+        Err(status) => write(world, SceneStatus(status.to_string())),
     }
 }
 
@@ -639,7 +677,10 @@ mod tests {
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 1);
         assert_eq!(outcomes[0].row.entity, entity);
-        assert_eq!(outcomes[0].result, Err(statuses(&app).remove(0)));
+        assert_eq!(
+            outcomes[0].result,
+            Err(PropertyRefusal::Refused(statuses(&app).remove(0)))
+        );
         assert!(written::<SceneEdited>(&app).is_empty());
     }
 
@@ -762,7 +803,7 @@ mod tests {
         )
     }
 
-    fn results(app: &App) -> Vec<Result<(), String>> {
+    fn results(app: &App) -> Vec<Result<(), PropertyRefusal>> {
         written::<PropertyCommitted>(app)
             .into_iter()
             .map(|outcome| outcome.result)
@@ -880,8 +921,8 @@ mod tests {
             results(&app),
             [
                 Ok(()),
-                Err(refused[0].to_owned()),
-                Err(refused[1].to_owned())
+                Err(PropertyRefusal::Undecodable(refused[0].to_owned())),
+                Err(PropertyRefusal::Undecodable(refused[1].to_owned()))
             ]
         );
         assert_eq!(written::<SceneEdited>(&app).len(), 1);
@@ -898,9 +939,9 @@ mod tests {
         assert_eq!(gain(&mut app, root), 0.0);
         assert_eq!(
             results(&app),
-            [Err(
+            [Err(PropertyRefusal::Refused(
                 "Set Gain.amount failed: the scene root cannot be changed".to_owned()
-            )]
+            ))]
         );
     }
 

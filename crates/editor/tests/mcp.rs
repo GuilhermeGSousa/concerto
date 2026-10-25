@@ -2806,6 +2806,7 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
             refuse(json!({ "entity": bulb, "component": "Camera", "path": "fov", "value": 1.0 })).await,
             refuse(json!({ "entity": stale(&bulb), "component": "Light", "path": "intensity", "value": 1.0 })).await,
             refuse(json!({ "entity": root, "component": "Transform", "path": "translation", "value": [1.0, 0.0, 0.0] })).await,
+            refuse(json!({ "entity": sword, "component": "Samples", "path": "values", "value": "loud" })).await,
         ];
         let after: Value = serde_json::from_str(
             &ok_with(
@@ -2873,7 +2874,8 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
             "unknown_path",
             "unknown_component",
             "stale_entity",
-            "refused"
+            "refused",
+            "invalid_value"
         ]
     );
     assert_eq!(
@@ -2883,6 +2885,11 @@ fn set_property_writes_through_the_adapter_or_set_value_and_answers_the_componen
     assert_eq!(
         errors[5]["message"],
         "Set Transform.translation failed: the scene root cannot be changed"
+    );
+    let undecodable = errors[6]["message"].as_str().unwrap();
+    assert!(
+        undecodable.starts_with("Set Samples.values failed: "),
+        "{undecodable}"
     );
     let unknown_path = errors[2]["message"].as_str().unwrap();
     assert!(unknown_path.contains("intensity"), "{unknown_path}");
@@ -3024,7 +3031,7 @@ fn set_property_writes_a_whole_enum_at_a_path_its_rows_sit_under() {
         .iter()
         .map(|error| error["code"].as_str().unwrap())
         .collect();
-    assert_eq!(codes, ["unknown_path", "refused"]);
+    assert_eq!(codes, ["unknown_path", "invalid_value"]);
     assert_eq!(
         errors[0]["message"],
         "Gait has no path `pace.stride`; its paths are pace, pace.stride.length, pace.stride.height, pace.lean."

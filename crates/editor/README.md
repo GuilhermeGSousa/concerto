@@ -137,11 +137,13 @@ adapter edits the path, the value goes through the adapter's
 `PropertyEditor::edit_to` and `apply`, as an edit in the inspector does, so the
 adapter's validation holds: a value it refuses answers `refused` and leaves the
 component as it was. A path with no adapter is written from the JSON directly.
+On either route a value that does not decode to the property's type answers
+`invalid_value` and leaves the component as it was.
 A path `inspect` marks `enum` takes the whole enum, its variant's name for a
 variant without fields (`"Point"`) or an object with the variant's name as its
 one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
 left out of the new variant takes its default, and an unknown variant answers
-`refused`, naming the variants. A path that names a struct above a property is
+`invalid_value`, naming the variants. A path that names a struct above a property is
 not one `set_property` takes, so an adapter's validation holds for the fields
 it edits.
 A component that `inspect` lists as one value, a marker or an opaque type, has
@@ -212,7 +214,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
 | `unknown_path` | The component has no such property path; the message lists those `inspect` shows |
-| `invalid_value` | The JSON does not decode to the type an adapter edits; a path with no adapter answers `refused` instead, with the reason |
+| `invalid_value` | The JSON does not decode to the property's type, whether an adapter edits the path or not; the message says why |
 | `not_editable` | The adapter that edits the path offers no value edit |
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
@@ -479,7 +481,9 @@ document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
 scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
 `RevealEntity`, which the hierarchy scrolls to; and one outcome per applied
 edit signal: `EntityEdited { edit, result }`, whose result is the entity a
-create or duplicate made; `PropertyCommitted { row, result }`; and
+create or duplicate made; `PropertyCommitted { row, result }`, whose refusal
+is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
+`Refused` for any other reason; and
 `ComponentEdited { edit, result }`. A refused edit's result is the text its
 `SceneStatus` carries, so a refused property or component edit also shows in
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
