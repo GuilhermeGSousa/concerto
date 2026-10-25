@@ -29,7 +29,9 @@ use crate::{
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
     inspector::{InspectionSource, InspectorRegistry, Property},
     project::{Project, ProjectState},
-    tools::{camera::FlyCamera, scene::SceneRoot, selection::Selection},
+    tools::{
+        camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
+    },
 };
 
 /// What the editor has open: the project, its documents, the active one, the selection, the viewport's size, and whether it is busy.
@@ -443,7 +445,23 @@ fn children_of(children: &Query<&Children>, entity: Entity) -> Vec<Entity> {
         .unwrap_or_default()
 }
 
-pub(super) fn resolve(id: &str, entities: &Query<Entity>) -> Result<Entity, ToolError> {
+pub(super) type SceneEntities =
+    Query<'static, 'static, (Entity, Option<&'static ChildOf>, Option<&'static SceneRoot>)>;
+
+fn outside_open_scene(entity: Entity, entities: &SystemInputData<SceneEntities>) -> bool {
+    entities.iter().any(|(_, _, root)| root.is_some())
+        && scene_member_by(entity, |entity| {
+            entities
+                .get_entity(entity)
+                .map(|(_, parent, root)| (root.is_some(), parent.map(ChildOf::parent)))
+        })
+        .is_err()
+}
+
+pub(super) fn resolve(
+    id: &str,
+    entities: &SystemInputData<SceneEntities>,
+) -> Result<Entity, ToolError> {
     let Some(entity) = Entity::parse_id(id) else {
         return Err(ToolError::new(
             "unknown_entity",
@@ -451,8 +469,18 @@ pub(super) fn resolve(id: &str, entities: &Query<Entity>) -> Result<Entity, Tool
         ));
     };
     if entities.get_entity(entity).is_some() {
-        Ok(entity)
-    } else if entities.iter().any(|live| live.index() == entity.index()) {
+        if outside_open_scene(entity, entities) {
+            Err(ToolError::new(
+                "unknown_entity",
+                format!("{id} is not part of the open scene; call scene_tree for the scene's ids."),
+            ))
+        } else {
+            Ok(entity)
+        }
+    } else if entities
+        .iter()
+        .any(|(live, ..)| live.index() == entity.index())
+    {
         Err(ToolError::new(
             "stale_entity",
             format!(
@@ -473,7 +501,7 @@ fn scene_tree(
     top_level: EditWorld<TopLevel>,
     children: EditWorld<Query<&Children>>,
     names: EditWorld<Query<&Name>>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     components: EditWorld<ComponentMetadata>,
     documents: StaticSystemInput<EditTargetDocument>,
 ) {
@@ -708,7 +736,7 @@ const LIST_LIMIT: usize = 16;
 fn inspect(
     mut calls: ToolCalls<Inspect>,
     source: EditWorld<InspectionSource>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
     registry: Res<InspectorRegistry>,
 ) {

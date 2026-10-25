@@ -20,7 +20,7 @@ use glam::Vec3;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::observe::resolve;
+use super::observe::{SceneEntities, resolve};
 use crate::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument},
     guard::{GuardChoice, UnsavedGuard},
@@ -518,7 +518,7 @@ pub(super) fn label(entity: Entity, names: &Query<&Name>) -> String {
 
 fn select(
     mut calls: ToolCalls<Select>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
     mut scene: EditWorldSignals,
 ) {
@@ -550,7 +550,7 @@ fn camera_refused() -> ToolError {
 
 fn frame(
     mut calls: ToolCalls<Frame>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
     targets: Query<&PlayState, With<EditTarget>>,
     mut scene: EditWorldSignals,

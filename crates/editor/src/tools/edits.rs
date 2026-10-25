@@ -22,7 +22,10 @@ use serde_json::Value;
 
 use crate::{
     inspector::ErasedEditor,
-    tools::scene::{SceneRoot, SceneStatus, report_edit, write},
+    tools::{
+        entity_ops::in_open_scene,
+        scene::{SceneRoot, SceneStatus, report_edit, write},
+    },
 };
 
 /// A rejected edit leaves the target unchanged.
@@ -151,6 +154,7 @@ impl SetValue {
         {
             return Err("the scene root cannot be changed".to_owned());
         }
+        in_open_scene(world, self.entity).map_err(|error| error.to_string())?;
         let mut hook = LiveLeaves::new(world);
         let stored = {
             let live = (component.read)(&ComponentMetadata::new(world), self.entity)
@@ -299,10 +303,10 @@ fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditE
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
     let row = &on.signal().row;
     let property = property_name(world, row.component, &row.path);
-    let result = on
-        .signal()
-        .apply(world)
-        .map_err(|error| format!("Set {property} failed: {error}"));
+    let result = in_open_scene(world, row.entity)
+        .map_err(|error| error.to_string())
+        .and_then(|()| on.signal().apply(world).map_err(|error| error.to_string()))
+        .map_err(|reason| format!("Set {property} failed: {reason}"));
     report(world, &result);
     write(
         world,
@@ -346,23 +350,25 @@ fn property_name(world: &World, component: TypeId, path: &PropertyPath) -> Strin
 
 pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
     let edit = on.signal().0;
-    let (verb, component) = match edit {
-        ComponentEdit::Add { component, .. } => ("Add", component),
-        ComponentEdit::Remove { component, .. } => ("Remove", component),
+    let (verb, entity, component) = match edit {
+        ComponentEdit::Add { entity, component } => ("Add", entity, component),
+        ComponentEdit::Remove { entity, component } => ("Remove", entity, component),
     };
     let name = component_name(world, component);
-    let result = apply_component_edit(world, edit).map_err(|error| {
-        let reason = match (edit, error) {
-            (ComponentEdit::Add { .. }, EditError::Rejected) => {
-                "it is already there, or has no default value".to_owned()
-            }
-            (ComponentEdit::Remove { .. }, EditError::NotFound) => {
-                "the entity does not have it".to_owned()
-            }
-            (_, error) => error.to_string(),
-        };
-        format!("{verb} {name} failed: {reason}")
-    });
+    let result = in_open_scene(world, entity)
+        .map_err(|error| error.to_string())
+        .and_then(|()| {
+            apply_component_edit(world, edit).map_err(|error| match (edit, error) {
+                (ComponentEdit::Add { .. }, EditError::Rejected) => {
+                    "it is already there, or has no default value".to_owned()
+                }
+                (ComponentEdit::Remove { .. }, EditError::NotFound) => {
+                    "the entity does not have it".to_owned()
+                }
+                (_, error) => error.to_string(),
+            })
+        })
+        .map_err(|reason| format!("{verb} {name} failed: {reason}"));
     report(world, &result);
     write(world, ComponentEdited { edit, result });
 }
@@ -896,6 +902,45 @@ mod tests {
                 "Set Gain.amount failed: the scene root cannot be changed".to_owned()
             )]
         );
+    }
+
+    #[test]
+    fn every_listener_refuses_an_entity_outside_the_open_scene() {
+        let (mut app, outsider) = values();
+        let world = app.main_mut().world_mut();
+        let root = world.spawn((Transform::IDENTITY, SceneRoot));
+        let member = world.spawn((Transform::IDENTITY, Gain::default()));
+        world.entity_mut(root).add_child(member);
+
+        set::<Gain>(&mut app, outsider, &["amount"], json!(3.0));
+        app.main_mut().world_mut().trigger(gain_to(outsider, 2.0));
+        app.main_mut()
+            .world_mut()
+            .trigger(EditComponent(remove::<Lens>(outsider)));
+        set::<Gain>(&mut app, member, &["amount"], json!(1.0));
+        app.main_mut().world_mut().trigger(gain_to(member, 2.0));
+        app.main_mut()
+            .world_mut()
+            .trigger(EditComponent(add::<Rig>(member)));
+
+        assert_eq!(gain(&mut app, outsider), 0.0);
+        assert_eq!(read(&mut app, outsider, |lens: &Lens| lens.focal), 35.0);
+        assert_eq!(gain(&mut app, member), 2.0);
+        assert!(
+            app.main_mut()
+                .world_mut()
+                .get_component_for_entity::<Rig>(member)
+                .is_some()
+        );
+        assert_eq!(
+            statuses(&app),
+            [
+                "Set Gain.amount failed: the entity is not part of an open scene",
+                "Set Gain.amount failed: the entity is not part of an open scene",
+                "Remove Lens failed: the entity is not part of an open scene",
+            ]
+        );
+        assert_eq!(written::<SceneEdited>(&app).len(), 3);
     }
 
     #[test]

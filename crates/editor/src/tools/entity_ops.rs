@@ -179,21 +179,45 @@ fn spawn_beside(world: &mut World, scene: &Scene, parent: Option<Entity>) -> Opt
     spawned.node_entities.first().copied()
 }
 
+/// Refuses a live entity outside the open scene; in a world without a scene root, as a running game's, every entity passes.
+pub(crate) fn in_open_scene(world: &mut World, entity: Entity) -> anyhow::Result<()> {
+    if world.entity_is_valid(entity) && has_scene_root(world) {
+        scene_member(world, entity)?;
+    }
+    Ok(())
+}
+
 /// Whether `entity` is the scene root; an error if it is not part of an open scene at all.
 fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
+    scene_member_by(entity, |entity| {
+        world.entity_is_valid(entity).then(|| {
+            (
+                world
+                    .get_component_for_entity::<SceneRoot>(entity)
+                    .is_some(),
+                world
+                    .get_component_for_entity::<ChildOf>(entity)
+                    .map(ChildOf::parent),
+            )
+        })
+    })
+}
+
+/// `scene_member` over `node`, which gives a live entity's root mark and parent, and `None` for a dead one.
+pub(crate) fn scene_member_by(
+    entity: Entity,
+    node: impl Fn(Entity) -> Option<(bool, Option<Entity>)>,
+) -> anyhow::Result<bool> {
     let mut current = entity;
     let mut is_root = true;
-    while world.entity_is_valid(current) {
-        if world
-            .get_component_for_entity::<SceneRoot>(current)
-            .is_some()
-        {
+    while let Some((root, parent)) = node(current) {
+        if root {
             return Ok(is_root);
         }
-        let Some(parent) = world.get_component_for_entity::<ChildOf>(current) else {
+        let Some(parent) = parent else {
             break;
         };
-        current = parent.parent();
+        current = parent;
         is_root = false;
     }
     bail!("the entity is not part of an open scene")

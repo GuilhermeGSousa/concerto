@@ -19,7 +19,7 @@ use serde_json::Value;
 
 use super::{
     act::label,
-    observe::{ListedPath, component_json, listed_paths, names_component, resolve},
+    observe::{ListedPath, SceneEntities, component_json, listed_paths, names_component, resolve},
 };
 use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
@@ -186,7 +186,7 @@ fn edit_entity(
 
 fn create_entity(
     mut calls: ToolCalls<CreateEntity>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     names: EditWorld<Query<&Name>>,
     targets: Query<Entity, With<EditTarget>>,
@@ -222,7 +222,7 @@ fn create_entity(
 
 fn delete_entity(
     mut calls: ToolCalls<DeleteEntity>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
     targets: Query<Entity, With<EditTarget>>,
     mut scene: EditWorldSignals,
@@ -248,7 +248,7 @@ fn delete_entity(
 
 fn duplicate_entity(
     mut calls: ToolCalls<DuplicateEntity>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
     targets: Query<Entity, With<EditTarget>>,
     mut scene: EditWorldSignals,
@@ -274,7 +274,7 @@ fn duplicate_entity(
 
 fn rename_entity(
     mut calls: ToolCalls<RenameEntity>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     targets: Query<Entity, With<EditTarget>>,
     mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
@@ -602,7 +602,7 @@ fn property_write(
 fn set_property(
     mut calls: ToolCalls<SetProperty>,
     source: EditWorld<InspectionSource>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     registry: Res<InspectorRegistry>,
     targets: Query<Entity, With<EditTarget>>,
@@ -696,7 +696,7 @@ fn answer_property_commits(
 fn add_component(
     mut calls: ToolCalls<AddComponent>,
     source: EditWorld<InspectionSource>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     targets: Query<Entity, With<EditTarget>>,
     mut scene: EditWorldSignals,
@@ -733,7 +733,7 @@ fn add_component(
 fn remove_component(
     mut calls: ToolCalls<RemoveComponent>,
     source: EditWorld<InspectionSource>,
-    entities: EditWorld<Query<Entity>>,
+    entities: EditWorld<SceneEntities>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     names: EditWorld<Query<&Name>>,
     targets: Query<Entity, With<EditTarget>>,

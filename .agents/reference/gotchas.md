@@ -190,7 +190,10 @@ fix the entry in the same commit as the change that made it false.
 - **Entity edits pick their rules from whether the world has a `SceneRoot`.**
   With one, only that scene's entities other than the root can be changed;
   without one, as in a play world, any entity can, and `Create` with no parent
-  adds a top-level entity. Only the edit `App`'s `open_scene` may spawn a
+  adds a top-level entity. Property and component edits (`SetValue`,
+  `CommitProperty`, `EditComponent`) and the MCP tools' entity ids follow the
+  same rule through `entity_ops::in_open_scene` and `scene_member_by`, so the
+  editor camera and other helpers are out of reach while a scene is edited. Only the edit `App`'s `open_scene` may spawn a
   `SceneRoot`, and an edit world always has exactly one.
 - **The viewport tools learn about the pointer from one resource.** The fly
   camera, the wheel, picking, and the gizmo read `ViewportPointer`, which

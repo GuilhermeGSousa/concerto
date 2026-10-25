@@ -202,7 +202,7 @@ A failed call is a tool result marked `isError` whose text is
 | `invalid_arguments` | The arguments do not match the tool's input schema |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
-| `unknown_entity`, `stale_entity` | The id names no live entity, or a slot that now holds a newer one |
+| `unknown_entity`, `stale_entity` | The id names no live entity of the open scene, such as the editor's camera, or of the game while it plays; or a slot that now holds a newer one |
 | `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
 | `unknown_path` | The component has no such property path; the message lists those `inspect` shows |

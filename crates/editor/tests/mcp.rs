@@ -29,7 +29,12 @@ use concerto_editor::{
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
-    tools::{camera::FlyCamera, entity_ops::EntityEdit, scene::SceneRoot, selection::Select},
+    tools::{
+        camera::{EditorHelper, FlyCamera},
+        entity_ops::EntityEdit,
+        scene::SceneRoot,
+        selection::Select,
+    },
 };
 use concerto_foundation::{
     assets::{
@@ -431,6 +436,7 @@ fn ids(
     names: EditWorld<Query<(Entity, &Name)>>,
     roots: EditWorld<Query<Entity, With<SceneRoot>>>,
     listeners: EditWorld<Query<Entity, With<GlobalListener>>>,
+    cameras: EditWorld<Query<Entity, (With<Camera>, With<EditorHelper>)>>,
 ) {
     for (_, reply) in calls.read() {
         let mut ids = serde_json::Map::new();
@@ -439,6 +445,9 @@ fn ids(
         }
         if let Some(root) = roots.iter().next() {
             ids.insert("root".into(), root.to_id_string().into());
+        }
+        if let Some(camera) = cameras.iter().next() {
+            ids.insert("editor_camera".into(), camera.to_id_string().into());
         }
         ids.insert(
             "listeners".into(),
@@ -1956,6 +1965,122 @@ fn select_sets_and_clears_the_selection() {
     assert_eq!(unknown["code"], "unknown_entity");
     assert_eq!(cleared, "Selection cleared.");
     assert_eq!(line(&after, "selection: "), "none");
+}
+
+struct Outsiders {
+    refused: Vec<(&'static str, Value)>,
+    root: String,
+    root_tree: String,
+    state: String,
+    selection: String,
+    while_playing: Vec<Value>,
+}
+
+#[test]
+fn tools_treat_an_entity_outside_the_open_scene_as_unknown_but_not_while_playing() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let camera = scene_id(&ids, "editor_camera");
+        let root = scene_id(&ids, "root");
+        let mut refused = Vec::new();
+        for (tool, arguments) in [
+            ("inspect", json!({ "entity": camera })),
+            ("select", json!({ "entity": camera })),
+            ("frame", json!({ "entity": camera })),
+            ("scene_tree", json!({ "root": camera })),
+            ("create_entity", json!({ "parent": camera })),
+            ("delete_entity", json!({ "entity": camera })),
+            ("duplicate_entity", json!({ "entity": camera })),
+            (
+                "rename_entity",
+                json!({ "entity": camera, "name": "hijacked" }),
+            ),
+            (
+                "set_property",
+                json!({ "entity": camera, "component": "Camera", "path": "fovy", "value": 0.2 }),
+            ),
+            (
+                "set_property",
+                json!({ "entity": camera, "component": "Camera", "path": "clear_color", "value": [1.0, 0.0, 0.0, 1.0] }),
+            ),
+            (
+                "add_component",
+                json!({ "entity": camera, "component": "Gait" }),
+            ),
+            (
+                "remove_component",
+                json!({ "entity": camera, "component": "Camera" }),
+            ),
+        ] {
+            refused.push((tool, error_with(&client, tool, arguments).await));
+        }
+        let root_tree = ok_with(&client, "scene_tree", json!({ "root": root, "depth": 1 })).await;
+        let state = ok(&client, "state").await;
+        let selection = line(&ok(&client, "status").await, "selection: ").to_owned();
+        ok(&client, "play").await;
+        let game_ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let rig = scene_id(&game_ids, "Rig");
+        let mut while_playing = Vec::new();
+        for (tool, arguments) in [
+            (
+                "add_component",
+                json!({ "entity": rig, "component": "Gait" }),
+            ),
+            (
+                "set_property",
+                json!({ "entity": rig, "component": "Gait", "path": "pace", "value": "Still" }),
+            ),
+            (
+                "set_property",
+                json!({ "entity": rig, "component": "Transform", "path": "translation", "value": [1.0, 2.0, 3.0] }),
+            ),
+        ] {
+            let answer = ok_with(&client, tool, arguments).await;
+            while_playing.push(serde_json::from_str(&answer).unwrap());
+        }
+        client.cancel().await.unwrap();
+        Outsiders {
+            refused,
+            root,
+            root_tree,
+            state,
+            selection,
+            while_playing,
+        }
+    }) else {
+        return;
+    };
+
+    let Outsiders {
+        refused,
+        root,
+        root_tree,
+        state,
+        selection,
+        while_playing,
+    } = served.result;
+    for (tool, error) in &refused {
+        assert_eq!(error["code"], "unknown_entity", "{tool}: {error}");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap()
+                .contains("not part of the open scene"),
+            "{tool}: {error}"
+        );
+    }
+    assert!(root_tree.contains("content/level.gasset"), "{root_tree}");
+    assert!(!state.contains("dirty"), "{state}");
+    assert_eq!(selection, root);
+    assert_eq!(while_playing[0]["name"], "Gait");
+    assert_eq!(while_playing[1]["value"]["pace"], "Still");
+    assert_eq!(
+        while_playing[2]["value"]["translation"],
+        json!([1.0, 2.0, 3.0])
+    );
 }
 
 #[test]
