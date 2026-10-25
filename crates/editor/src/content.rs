@@ -109,7 +109,7 @@ impl Plugin for ContentPlugin {
         app.insert_resource(ContentState::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
-            title: "Curiosities",
+            title: "Asset Browser",
             region: Region::Rail,
         });
         app.add_system(Startup, build_panel)
