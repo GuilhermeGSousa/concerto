@@ -47,6 +47,7 @@ use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::{camera::Camera, light::Light};
 use concerto_scene::scene::{Scene, SceneNode};
+use concerto_ui::{text::UIText, text_input::UITextInput};
 use glam::Vec3;
 use image::{ImageFormat, RgbaImage};
 use rmcp::{
@@ -254,6 +255,9 @@ struct StartSlowLoad {}
 #[derive(Deserialize, JsonSchema)]
 struct EditFramesSoFar {}
 
+#[derive(Deserialize, JsonSchema)]
+struct TextFields {}
+
 fn state(
     mut calls: ToolCalls<State>,
     project: Res<ProjectState>,
@@ -401,6 +405,14 @@ fn start_slow_load(mut calls: ToolCalls<StartSlowLoad>, mut scene: EditWorldSign
 fn edit_frames_so_far(mut calls: ToolCalls<EditFramesSoFar>, frames: EditWorld<Res<EditFrames>>) {
     for (_, reply) in calls.read() {
         reply.ok(frames.0.to_string());
+    }
+}
+
+fn text_fields(mut calls: ToolCalls<TextFields>, fields: Query<&UIText, With<UITextInput>>) {
+    for (_, reply) in calls.read() {
+        let mut values: Vec<&str> = fields.iter().map(|field| field.text.as_str()).collect();
+        values.sort_unstable();
+        reply.ok(values.join("|"));
     }
 }
 
@@ -617,6 +629,7 @@ where
                     McpTool::read_only("edit_frames_so_far").needs(Needs::Scene),
                     edit_frames_so_far,
                 )
+                .add_tool::<TextFields, _>(McpTool::read_only("text_fields"), text_fields)
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -2974,4 +2987,29 @@ fn play_runs_the_game_and_stop_brings_back_the_edited_scene() {
     assert!(ids.get("root").is_some(), "{ids}");
     assert_eq!(state, "project level target");
     assert_eq!(idle_again["code"], "not_playing", "{idle_again}");
+}
+
+#[test]
+fn the_panels_show_the_edited_scene_again_once_the_stopped_editor_is_quiet() {
+    let fixture = Fixture::new();
+    let Some(served) = serve(&fixture, &Log::default(), |client| async move {
+        open(&client).await;
+        ok(&client, "select_hero").await;
+        until(&client, "status", |status| status.ends_with("busy: no")).await;
+        let before = ok(&client, "text_fields").await;
+        ok(&client, "play").await;
+        ok(&client, "stop").await;
+        until(&client, "status", |status| status.ends_with("busy: no")).await;
+        let after = ok(&client, "text_fields").await;
+        client.cancel().await.unwrap();
+        (before, after)
+    }) else {
+        return;
+    };
+
+    let (before, after) = served.result;
+    let fields: Vec<&str> = before.split('|').collect();
+    assert!(fields.contains(&"Hero"), "{before}");
+    assert!(fields.contains(&"1.000"), "{before}");
+    assert_eq!(after, before);
 }

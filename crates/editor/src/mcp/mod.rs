@@ -10,14 +10,15 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Query, Res, ResMut, Resource,
+    Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
-    query::filter::With,
+    query::filter::{Changed, Or, With},
     signal::On,
     system::input::{StaticSystemInput, SystemInputData},
 };
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::HostClosing};
+use concerto_ui::{sets::UiSet, text::UIText, text_input::UITextInput};
 
 use crate::{
     asset_editor::{EditorDocument, SaveRequested},
@@ -52,7 +53,15 @@ impl Plugin for EditorMcpPlugin {
             Needs::Playing,
             ToolError::new("not_playing", "Start the game with play."),
         )
-        .add_system(LateUpdate, demand_frames_while_busy)
+        .insert_resource(PanelTextChanged(false))
+        .add_system(
+            LateUpdate,
+            (
+                note_text_changes.after(UiSet::PostLayout),
+                demand_frames_while_busy,
+            )
+                .chain(),
+        )
         .add_system(LateUpdate, demand_frames_while_the_scene_loads)
         .add_system(Update, discard_while_closing)
         .add_listener(quit_when_host_closes);
@@ -66,6 +75,11 @@ impl Plugin for EditorMcpPlugin {
 #[derive(Resource)]
 struct HostIsClosing;
 
+#[derive(Resource)]
+struct PanelTextChanged(bool);
+
+type TextChanges = Or<(Changed<UIText>, Changed<UITextInput>)>;
+
 type BusyInputs = (
     Res<'static, ProjectState>,
     Query<'static, 'static, &'static EditorDocument>,
@@ -73,17 +87,26 @@ type BusyInputs = (
     Query<'static, 'static, &'static PendingPlayApp>,
     Query<'static, 'static, &'static EditorDocument, With<SaveRequested>>,
     Query<'static, 'static, &'static PlayState>,
+    Res<'static, PanelTextChanged>,
 );
 
 fn is_busy(
-    (project, documents, building, starting, saving, states): &SystemInputData<BusyInputs>,
+    (project, documents, building, starting, saving, states, text): &SystemInputData<BusyInputs>,
 ) -> bool {
-    project.busy()
+    text.0
+        || project.busy()
         || documents.iter().any(|document| document.pending.is_some())
         || building.iter().next().is_some()
         || starting.iter().next().is_some()
         || saving.iter().next().is_some()
         || states.iter().any(|state| state.is_on())
+}
+
+fn note_text_changes(changes: Query<Entity, TextChanges>, mut changed: ResMut<PanelTextChanged>) {
+    let now = changes.iter().next().is_some();
+    if changed.0 != now {
+        changed.0 = now;
+    }
 }
 
 fn demand_frames_while_busy(busy: StaticSystemInput<BusyInputs>, mut demand: ResMut<FrameDemand>) {
