@@ -39,6 +39,7 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 cargo build --workspace
 cargo run -p tech-demo
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
+cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
 cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && cargo run -p concerto-import -- assets/forest.glb
@@ -51,7 +52,9 @@ Examples are `animation-test`, `physics-test`, `render-test`, `tech-demo`, and
 `ui-showcase`. `import` runs from the directory that owns the `content/` tree.
 An example may have an `editor/` crate, named `<game>-editor`, that runs the
 editor over the game's library; an editor exists only for a game that has one.
-Today that is `tech-demo`.
+Today that is `tech-demo`. Build `tech-demo-editor` before an MCP client starts
+it through `.mcp.json`: that entry runs `cargo run`, which compiles first and
+can outlast the client's connect timeout.
 
 ## Done gate
 

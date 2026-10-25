@@ -36,7 +36,9 @@ cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-
 `.mcp.json` at the repository root registers it as the `concerto` server, so an
 agent working in the repository can start its own editor. That entry opens the
 game's own project; an agent that will change anything opens a scratch copy
-with `open_project` first.
+with `open_project` first. The entry runs `cargo run`, which compiles the editor
+before it starts and can outlast an MCP client's connect timeout, so build it
+first with `cargo build -p tech-demo-editor`.
 
 The editor draws into a 1600×900 picture unless `--mcp-size <width>x<height>`
 names another size. `--decorated` is ignored there, and `--mcp-size` without

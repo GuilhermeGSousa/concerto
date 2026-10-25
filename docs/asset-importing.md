@@ -268,10 +268,6 @@ continues to use the same UUID if its runtime registry points to the new path.
 before startup systems run. Configure `ContentAssetRoot` before that phase.
 A malformed registry fails initialization explicitly. Standalone callers can
 request `load` before initialization; its task loads the registry lazily.
-
-`AssetServer::is_loading` reports whether an asset requested with `load` or
-`add` has yet to reach the world. A load counts until the frame that inserts
-its asset, or handles its failure; cancelled loads do not count.
 Constructing a macro-generated UUID never requires runtime initialization.
 
 ```rust
@@ -282,6 +278,10 @@ let mesh: AssetHandle<Mesh> = asset_server.load::<Mesh>(id);
 Loads return immediately with a handle; the bytes load on a background task
 pool. A registry miss on `load` fails the load and logs the id — it
 does not fall back to anything.
+
+`AssetServer::is_loading` reports whether an asset requested with `load` or
+`add` has yet to reach the world. A load counts until the frame that inserts
+its asset, or handles its failure; cancelled loads do not count.
 
 Stored assets can only be requested by UUID. Use `asset_id!` for references
 written in code and `load` for both those IDs and serialized references.
