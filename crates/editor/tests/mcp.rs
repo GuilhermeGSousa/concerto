@@ -3396,3 +3396,79 @@ fn send_input_refuses_unknown_keys_points_off_the_picture_and_a_game_without_inp
     );
     assert_eq!(refused["code"], "input_released", "{refused}");
 }
+
+#[test]
+fn send_input_starting_with_a_click_on_the_picture_gives_the_game_input_back() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        counting_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            ok(&client, "play").await;
+            let (width, height) = viewport_size(&ok(&client, "status").await);
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let counter = scene_id(&ids, "Counter");
+            ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "key": "ShiftLeft", "pressed": true },
+                    { "key": "F1", "pressed": true },
+                ] }),
+            )
+            .await;
+            let key_first = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "key": "KeyW", "pressed": true },
+                    { "button": "left", "pressed": true, "at": [width / 2.0, height / 2.0] },
+                ] }),
+            )
+            .await;
+            let centre = [(width / 2.0).floor(), (height / 2.0).floor()];
+            let captured = ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "button": "left", "pressed": true, "at": centre },
+                    { "button": "left", "pressed": false },
+                    { "key": "KeyW", "pressed": true },
+                ] }),
+            )
+            .await;
+            let after =
+                received(&ok_with(&client, "inspect", json!({ "entity": counter.clone() })).await);
+            let again = ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "KeyW", "pressed": false }] }),
+            )
+            .await;
+            client.cancel().await.unwrap();
+            (key_first, captured, after, again)
+        },
+    ) else {
+        return;
+    };
+
+    let (key_first, captured, after, again) = served.result;
+    assert_eq!(key_first["code"], "input_released", "{key_first}");
+    assert!(
+        key_first["message"]
+            .as_str()
+            .unwrap()
+            .contains("Start the list with a click on the picture"),
+        "{key_first}"
+    );
+    assert!(captured.ends_with("held in the game: KeyW."), "{captured}");
+    assert_eq!(after["w_presses"], 1, "{after}");
+    assert_eq!(after["clicks"], 0, "{after}");
+    assert!(
+        again.starts_with("Sent 1 window event to the game"),
+        "{again}"
+    );
+}

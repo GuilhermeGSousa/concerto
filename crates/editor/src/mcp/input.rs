@@ -18,7 +18,7 @@ use crate::hosted::{
     input::{InViewport, InputOwner, ViewportShown, ViewportView},
 };
 
-/// Sends key, mouse button, pointer and wheel events to the game playing in the viewport, one per frame in order, as the editor window passes them on, and answers once the game has had the last; a key left pressed stays held until a later call releases it.
+/// Sends key, mouse button, pointer and wheel events to the game playing in the viewport, one per frame in order, as the editor window passes them on, and answers once the game has had the last; a key left pressed stays held until a later call releases it, and while the editor has input a list must start with a click on the picture, which gives the game input back.
 #[derive(Deserialize, JsonSchema)]
 pub struct SendInput {
     /// The events, in order; points are pixels of the viewport's picture from its top-left, at the full size status gives as viewport.
@@ -93,6 +93,7 @@ struct Sending {
     events: VecDeque<WindowEvent>,
     sent: usize,
     total: usize,
+    capturing: usize,
 }
 
 macro_rules! key_names {
@@ -121,7 +122,7 @@ const KEYS: &[(&str, KeyCode)] = key_names![
     F17 F18 F19 F20 F21 F22 F23 F24 F25 F26 F27 F28 F29 F30 F31 F32 F33 F34 F35
 ];
 
-const RELEASED: &str = "The editor has the window's input, not the game: a click outside the viewport's picture or Shift+F1 gave it back. Call stop, then play, to give the game input again.";
+const RELEASED: &str = "The editor has the window's input, not the game: a click outside the viewport's picture or Shift+F1 gave it back. Start the list with a click on the picture, such as { \"button\": \"left\", \"pressed\": true, \"at\": [x, y] }, to give the game input again, as a person would.";
 
 pub(super) fn build(app: &mut App) {
     app.add_tool::<SendInput, _>(McpTool::new("send_input").needs(Needs::Playing), send_input)
@@ -141,11 +142,14 @@ fn send_input(
         if !playing {
             continue;
         }
-        let (document, view) = match (targets.iter().next(), shown.0) {
-            (Some((document, Some(InputOwner::Game))), Some(view)) => (document, view),
-            (Some((_, Some(InputOwner::Editor))), Some(_)) => {
-                reply.err(ToolError::new("input_released", RELEASED));
-                continue;
+        let (document, view, released) = match (targets.iter().next(), shown.0) {
+            (Some((document, Some(InputOwner::Game))), Some(view)) => (document, view, false),
+            (Some((document, Some(InputOwner::Editor))), Some(view)) => {
+                if !starts_with_a_click(&arguments.events) {
+                    reply.err(ToolError::new("input_released", RELEASED));
+                    continue;
+                }
+                (document, view, true)
             }
             _ => {
                 reply.err(ToolError::new(
@@ -164,6 +168,14 @@ fn send_input(
         }
         match window_events(&arguments.events, &view, input.mouse_position()) {
             Ok(events) => {
+                let capturing = if released {
+                    events
+                        .iter()
+                        .position(|event| matches!(event, WindowEvent::MouseButton { .. }))
+                        .map_or(0, |click| click + 1)
+                } else {
+                    0
+                };
                 cmd.spawn((
                     PendingCall::new(reply, "the game to receive the input"),
                     Sending {
@@ -171,6 +183,7 @@ fn send_input(
                         total: events.len(),
                         events,
                         sent: 0,
+                        capturing,
                     },
                 ));
             }
@@ -200,6 +213,9 @@ fn send_queued_input(
         return;
     };
     let failure = match owner {
+        Some(_) if sending.sent < sending.capturing && routed.get_entity(document).is_some() => {
+            None
+        }
         Some(InputOwner::Game) if routed.get_entity(document).is_some() => None,
         Some(InputOwner::Game) => Some(ToolError::new(
             "input_released",
@@ -233,6 +249,17 @@ fn send_queued_input(
             sending.sent += 1;
         }
     }
+}
+
+fn starts_with_a_click(events: &[InputEvent]) -> bool {
+    matches!(
+        events.first(),
+        Some(InputEvent::Button(ButtonInput {
+            pressed: true,
+            at: Some(_),
+            ..
+        }))
+    )
 }
 
 fn sent(

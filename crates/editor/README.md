@@ -184,11 +184,13 @@ sends nothing. The events then take the path real input takes: Ctrl+P stops
 the game, and Shift+F1 or a press off the viewport's picture gives input to the
 editor. A key left pressed stays held in the game, across calls, until a later
 call releases it. `send_input` needs a game playing. While the editor has
-input it answers `input_released`, and since only a click in the viewport gives
-input back, an agent gives the game input again with `stop` and `play`. An
-event that gives the editor input, or stops the game, is the last sent: a call
-with events after it answers `input_released` or `not_playing`, saying how
-many were sent, and one that ends with it says so in its answer.
+input, a list that starts with a press `at` a point on the picture goes
+through: that press gives the game input back, as a person's click on the
+viewport does, without reaching the game as a click, and the rest of the list
+follows. Any other list answers `input_released`. An event that gives the
+editor input, or stops the game, is the last sent: a call with events after it
+answers `input_released` or `not_playing`, saying how many were sent, and one
+that ends with it says so in its answer.
 
 ### Errors
 
@@ -211,7 +213,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
 | `play_failed` | The game did not start; the message is the editor's status |
-| `input_released` | `send_input` while the editor, not the game, has input |
+| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |
