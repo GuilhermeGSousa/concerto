@@ -96,7 +96,11 @@ another kind answers once its document exists, and a kind with no editor
 answers `open_failed`. `close_document` closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
-documents, once the prompt has closed.
+documents, once the prompt has closed, unless it says `unsaved`: `"discard"`
+drops those changes and `"save"` saves them first, and the call carries on as
+if nothing had been unsaved. A save that fails answers `save_failed` with the
+editor's message, and the documents keep their changes. A call that would lose
+nothing ignores `unsaved`.
 `select` selects `entity`, or clears the selection without one. `frame` selects
 `entity` and frames it, or frames the whole scene without one. `set_camera`
 places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
@@ -159,7 +163,8 @@ A failed call is a tool result marked `isError` whose text is
 | `not_editable` | The adapter that edits the path offers no value edit |
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
-| `unsaved_changes` | The call would discard unsaved edits |
+| `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
+| `save_failed` | A save asked for by `unsaved: "save"` failed; the message is the editor's status |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |

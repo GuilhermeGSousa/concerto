@@ -1610,6 +1610,208 @@ fn a_call_that_would_discard_edits_cancels_the_prompt_and_fails() {
     }
 }
 
+async fn rename_to(client: &Client, from: &str, to: &str) {
+    let ids: Value = serde_json::from_str(&ok(client, "ids").await).unwrap();
+    ok_with(
+        client,
+        "rename_entity",
+        json!({ "entity": scene_id(&ids, from), "name": to }),
+    )
+    .await;
+    let started = Instant::now();
+    while !ok(client, "state").await.contains("dirty") {
+        assert!(
+            started.elapsed() < PATIENCE,
+            "the rename never marked the scene"
+        );
+        ok(client, "seen_frames").await;
+    }
+}
+
+fn holds(file: &[u8], name: &str) -> bool {
+    file.windows(name.len())
+        .any(|window| window == name.as_bytes())
+}
+
+struct OverriddenOpens {
+    document: String,
+    refused: Value,
+    discarded: String,
+    discarded_file: Vec<u8>,
+    unused: String,
+    after_unused: String,
+    saved: String,
+    saved_file: Vec<u8>,
+    state: String,
+}
+
+#[test]
+fn open_asset_discards_or_saves_unsaved_edits_when_told_to() {
+    let fixture = Fixture::new();
+    fixture.add_scene("content/yard.gasset");
+    let original = fixture.scene_file();
+    let level = fixture.root().join("content/level.gasset");
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        open(&client).await;
+        let document = document_id(&ok(&client, "status").await);
+        let yard = |unsaved: Option<&str>| match unsaved {
+            Some(unsaved) => json!({ "asset": "content/yard.gasset", "unsaved": unsaved }),
+            None => json!({ "asset": "content/yard.gasset" }),
+        };
+        rename_to(&client, "Hero", "Villain").await;
+        let refused = error_with(&client, "open_asset", yard(None)).await;
+        let discarded = ok_with(&client, "open_asset", yard(Some("discard"))).await;
+        let discarded_file = std::fs::read(&level).unwrap();
+        let unused = ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/level.gasset", "unsaved": "save" }),
+        )
+        .await;
+        let after_unused = ok(&client, "scene_tree").await;
+        rename_to(&client, "Hero", "Knight").await;
+        let saved = ok_with(&client, "open_asset", yard(Some("save"))).await;
+        let saved_file = std::fs::read(&level).unwrap();
+        let state = ok(&client, "state").await;
+        client.cancel().await.unwrap();
+        OverriddenOpens {
+            document,
+            refused,
+            discarded,
+            discarded_file,
+            unused,
+            after_unused,
+            saved,
+            saved_file,
+            state,
+        }
+    }) else {
+        return;
+    };
+
+    let OverriddenOpens {
+        document,
+        refused,
+        discarded,
+        discarded_file,
+        unused,
+        after_unused,
+        saved,
+        saved_file,
+        state,
+    } = served.result;
+    let yard = format!("Opened content/yard.gasset in document {document}.");
+    assert_eq!(refused["code"], "unsaved_changes", "{refused}");
+    assert_eq!(discarded, yard);
+    assert_eq!(discarded_file, original);
+    assert_eq!(
+        unused,
+        format!("Opened content/level.gasset in document {document}.")
+    );
+    assert!(after_unused.contains(" Hero "), "{after_unused}");
+    assert!(!after_unused.contains("Villain"), "{after_unused}");
+    assert_eq!(saved, yard);
+    assert!(holds(&saved_file, "Knight"));
+    assert!(!holds(&saved_file, "Hero"));
+    assert!(!state.contains("dirty"), "{state}");
+    assert!(!state.contains("asking"), "{state}");
+}
+
+struct OverriddenCloses {
+    closed: String,
+    closed_state: String,
+    closed_file: Vec<u8>,
+    reopened: String,
+    reopened_file: Vec<u8>,
+    failed: Value,
+    failed_state: String,
+}
+
+#[test]
+fn close_document_and_open_project_take_the_override_and_a_failed_save_answers() {
+    let fixture = Fixture::new();
+    fixture.add_scene("content/yard.gasset");
+    let original = fixture.scene_file();
+    let root = fixture.root();
+    let canonical = root.canonicalize().unwrap();
+    let level = root.join("content/level.gasset");
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        open(&client).await;
+        let document = document_id(&ok(&client, "status").await);
+        rename_to(&client, "Hero", "Villain").await;
+        let closed = ok_with(
+            &client,
+            "close_document",
+            json!({ "document": document, "unsaved": "discard" }),
+        )
+        .await;
+        let closed_state = ok(&client, "state").await;
+        let closed_file = std::fs::read(&level).unwrap();
+        let level_asset = json!({ "asset": "content/level.gasset" });
+        ok_with(&client, "open_asset", level_asset.clone()).await;
+        rename_to(&client, "Hero", "Knight").await;
+        let reopened = ok_with(
+            &client,
+            "open_project",
+            json!({ "path": root.display().to_string(), "unsaved": "save" }),
+        )
+        .await;
+        let reopened_file = std::fs::read(&level).unwrap();
+        ok_with(&client, "open_asset", level_asset).await;
+        rename_to(&client, "Knight", "Rogue").await;
+        std::fs::remove_file(&level).unwrap();
+        std::fs::create_dir(&level).unwrap();
+        let failed = error_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/yard.gasset", "unsaved": "save" }),
+        )
+        .await;
+        let failed_state = ok(&client, "state").await;
+        client.cancel().await.unwrap();
+        OverriddenCloses {
+            closed,
+            closed_state,
+            closed_file,
+            reopened,
+            reopened_file,
+            failed,
+            failed_state,
+        }
+    }) else {
+        return;
+    };
+
+    let OverriddenCloses {
+        closed,
+        closed_state,
+        closed_file,
+        reopened,
+        reopened_file,
+        failed,
+        failed_state,
+    } = served.result;
+    assert!(closed.starts_with("Closed document "), "{closed}");
+    assert_eq!(closed_state, "project");
+    assert_eq!(closed_file, original);
+    assert!(
+        reopened.starts_with(&format!("Opened {}:", canonical.display())),
+        "{reopened}"
+    );
+    assert!(holds(&reopened_file, "Knight"));
+    assert_eq!(failed["code"], "save_failed", "{failed}");
+    assert!(
+        failed["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Save failed"),
+        "{failed}"
+    );
+    assert_eq!(failed_state, "project level target dirty");
+}
+
 #[test]
 fn select_sets_and_clears_the_selection() {
     let fixture = Fixture::new();

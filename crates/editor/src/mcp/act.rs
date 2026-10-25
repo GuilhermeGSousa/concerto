@@ -29,7 +29,7 @@ use crate::{
         AssetEntry, EditorCommand, EditorCommands, Project, ProjectOpenFailed, ProjectOpened,
         ProjectState,
     },
-    scene::{SceneOpenFailed, SceneOpened},
+    scene::{SaveFailed, SceneOpenFailed, SceneOpened},
     tools::{
         camera::{
             EditorCamera, FlyCamera, FrameAll, FrameSelection, SetCameraPose, ViewportCommands,
@@ -43,6 +43,8 @@ use crate::{
 pub struct OpenProject {
     /// The project's directory; a relative path is read from the editor's working directory.
     pub path: String,
+    /// What to do with unsaved changes the call would lose; without it such a call fails with unsaved_changes.
+    pub unsaved: Option<UnsavedChoice>,
 }
 
 /// Opens an asset of the project in its editor; a scene replaces the one shown, and the call waits until it has loaded.
@@ -50,6 +52,8 @@ pub struct OpenProject {
 pub struct OpenAsset {
     /// The asset's address, such as content/level.gasset, or its id, as list_assets shows them.
     pub asset: String,
+    /// What to do with unsaved changes the call would lose; without it such a call fails with unsaved_changes.
+    pub unsaved: Option<UnsavedChoice>,
 }
 
 /// Closes an open document.
@@ -57,6 +61,27 @@ pub struct OpenAsset {
 pub struct CloseDocument {
     /// The document's id, such as 3v1, as status lists it.
     pub document: String,
+    /// What to do with unsaved changes the call would lose; without it such a call fails with unsaved_changes.
+    pub unsaved: Option<UnsavedChoice>,
+}
+
+/// What a call does with unsaved changes it would lose; a call that loses none ignores it.
+#[derive(Deserialize, JsonSchema, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+pub enum UnsavedChoice {
+    /// Save them first, then carry on; a save that fails answers save_failed.
+    Save,
+    /// Drop them and carry on.
+    Discard,
+}
+
+impl From<UnsavedChoice> for GuardChoice {
+    fn from(choice: UnsavedChoice) -> Self {
+        match choice {
+            UnsavedChoice::Save => GuardChoice::Save,
+            UnsavedChoice::Discard => GuardChoice::Discard,
+        }
+    }
 }
 
 /// Selects an entity of the open scene, or clears the selection when no entity is given.
@@ -103,10 +128,19 @@ struct OpeningAsset {
 struct ClosingDocument(Entity);
 
 #[derive(Component)]
-struct Guarded;
+struct Guarded(Option<GuardChoice>);
+
+impl Guarded {
+    fn new(unsaved: Option<UnsavedChoice>) -> Self {
+        Self(unsaved.map(GuardChoice::from))
+    }
+}
 
 #[derive(Component)]
 struct CancelledPrompt(Vec<String>);
+
+#[derive(Component)]
+struct SavingFirst(Vec<Entity>);
 
 #[derive(Component)]
 struct AwaitingPose {
@@ -130,7 +164,8 @@ pub(super) fn build(app: &mut App) {
         .add_system(
             LateUpdate,
             (
-                cancel_raised_prompt,
+                answer_raised_prompt,
+                answer_failed_saves,
                 answer_project_opens,
                 answer_asset_opens,
                 answer_closes,
@@ -174,7 +209,7 @@ fn open_project(
                 canonical: requested.canonicalize().ok(),
                 requested,
             },
-            Guarded,
+            Guarded::new(arguments.unsaved),
         ));
     }
 }
@@ -304,7 +339,7 @@ fn open_asset(
                 kind,
                 document: document.map(|(entity, _)| entity),
             },
-            Guarded,
+            Guarded::new(arguments.unsaved),
         ));
     }
 }
@@ -376,7 +411,7 @@ fn close_document(
         cmd.spawn((
             PendingCall::new(reply, "the document to close"),
             ClosingDocument(document),
-            Guarded,
+            Guarded::new(arguments.unsaved),
         ));
     }
 }
@@ -410,9 +445,9 @@ fn describe_document(entity: Entity, documents: &Query<&EditorDocument>) -> Stri
     }
 }
 
-fn cancel_raised_prompt(
+fn answer_raised_prompt(
     mut guard: ResMut<UnsavedGuard>,
-    raising: Query<Entity, (With<PendingCall>, With<Guarded>, Without<CancelledPrompt>)>,
+    raising: Query<(Entity, &Guarded), (With<PendingCall>, Without<CancelledPrompt>)>,
     cancelled: Query<(Entity, &PendingCall, &CancelledPrompt)>,
     documents: Query<&EditorDocument>,
     mut cmd: CommandQueue,
@@ -430,9 +465,16 @@ fn cancel_raised_prompt(
         }
         return;
     }
-    let Some(call) = raising.iter().next() else {
+    let Some((call, guarded)) = raising.iter().next() else {
         return;
     };
+    if let Some(choice) = guarded.0 {
+        if choice == GuardChoice::Save {
+            cmd.insert(SavingFirst(guard.documents().to_vec()), call);
+        }
+        guard.choose(choice);
+        return;
+    }
     let named = guard
         .documents()
         .iter()
@@ -440,6 +482,25 @@ fn cancel_raised_prompt(
         .collect();
     guard.choose(GuardChoice::Cancel);
     cmd.insert(CancelledPrompt(named), call);
+}
+
+fn answer_failed_saves(
+    mut failed: EventReader<SaveFailed>,
+    waiting: Query<(Entity, &PendingCall, &SavingFirst)>,
+    mut cmd: CommandQueue,
+) {
+    let failures: Vec<&SaveFailed> = failed.read().collect();
+    for (entity, pending, saving) in waiting.iter() {
+        if let Some(failure) = failures
+            .iter()
+            .find(|failure| saving.0.contains(&failure.document))
+        {
+            pending
+                .reply
+                .err(ToolError::new("save_failed", failure.message.clone()));
+            cmd.despawn(entity);
+        }
+    }
 }
 
 pub(super) fn label(entity: Entity, names: &Query<&Name>) -> String {
