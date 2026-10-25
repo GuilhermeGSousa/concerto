@@ -315,6 +315,24 @@ fn recipe(app: &mut App) {
 
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
 the widget registry and sends it to the scene, where the tools write the value.
+`PropertyEditor::apply` runs there, and its `EditContext` reads the scene
+world's resources, such as its `AssetServer` and `AssetRegistry`, beside the
+value being changed.
+
+### Asset handles
+
+`AssetPicker<T>` edits an `AssetHandle<T>`. Its row names the asset the handle
+holds, "None" for an empty handle or "Missing" for an id the registry does not
+know, and opens a menu of the project's assets of kind `T`. Picking one writes a
+handle loaded through the scene's `AssetServer`, so the viewport shows the new
+asset at once. The edit is refused if the id is not an asset of kind `T`, or if
+the scene `App` never registered `T` with `register_asset`. `AssetPickerPlugin`
+keeps the row's text current; `EditorPlugin` adds it and registers the picker for
+`AssetHandle<Mesh>`. Another handle type registers its own picker:
+
+```rust,ignore
+app.register_property_editor::<AssetHandle<Material>, AssetPicker<Material>>();
+```
 
 See the [complete custom widget example](examples/custom_property.rs). It
 includes both registrations, a non-Clone domain type, click handling, snapshot

@@ -26,7 +26,8 @@ use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
-    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRowValue,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyRowValue,
 };
 use crate::hosted::EditWorldSignals;
 use crate::tools::edits::CommitProperty;
@@ -41,7 +42,12 @@ pub trait ErasedEditor: Send + Sync {
         snapshot: &PropertyRowValue,
         theme: &UITheme,
     ) -> Result<(), EditError>;
-    fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError>;
+    fn apply(
+        &self,
+        value: &mut dyn Reflect,
+        edit: &dyn Any,
+        context: &EditContext,
+    ) -> Result<(), EditError>;
     fn follows_snapshot(&self) -> bool;
 }
 
@@ -68,14 +74,19 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
         self.editor.build(&mut cmd.entity(row), snapshot, theme);
         Ok(())
     }
-    fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError> {
+    fn apply(
+        &self,
+        value: &mut dyn Reflect,
+        edit: &dyn Any,
+        context: &EditContext,
+    ) -> Result<(), EditError> {
         let value = (value as &mut dyn Any)
             .downcast_mut::<T>()
             .ok_or(EditError::TypeMismatch)?;
         let edit = edit
             .downcast_ref::<E::Edit>()
             .ok_or(EditError::TypeMismatch)?;
-        self.editor.apply(value, edit)
+        self.editor.apply(value, edit, context)
     }
     fn follows_snapshot(&self) -> bool {
         self.editor.follows_snapshot()
@@ -509,7 +520,7 @@ mod tests {
         // SAFETY: the exclusive borrow of the world covers any access.
         unsafe { ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut(), ticks) }
             .unwrap()
-            .register_property_editor::<Vec3, _>(NumericFields);
+            .register_property_editor::<Vec3, NumericFields>();
         s.commits()
             .push::<Vec3, NumericFields>(
                 &row,

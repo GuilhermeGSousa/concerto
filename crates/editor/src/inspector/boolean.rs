@@ -9,7 +9,7 @@ use concerto_ui::{
 };
 
 use crate::inspector::rows::{
-    EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
+    EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
 const BOX_SIZE: f32 = 16.0;
@@ -34,7 +34,7 @@ impl PropertyEditor<bool> for BoolCheckbox {
     fn snapshot(&self, value: &bool) -> bool {
         *value
     }
-    fn apply(&self, value: &mut bool, edit: &bool) -> Result<(), EditError> {
+    fn apply(&self, value: &mut bool, edit: &bool, _: &EditContext) -> Result<(), EditError> {
         *value = *edit;
         Ok(())
     }

@@ -7,7 +7,7 @@ use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, com
 use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::theme::UITheme;
 
-pub use crate::tools::edits::{EditError, PropertyRow};
+pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
 pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
@@ -17,7 +17,12 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
     fn snapshot(&self, value: &T) -> Self::Snapshot;
     fn build(&self, row: &mut EntityCommandQueue, snapshot: &Self::Snapshot, theme: &UITheme);
     /// Validate before mutating. On error the target must remain unchanged.
-    fn apply(&self, value: &mut T, edit: &Self::Edit) -> Result<(), EditError>;
+    fn apply(
+        &self,
+        value: &mut T,
+        edit: &Self::Edit,
+        context: &EditContext,
+    ) -> Result<(), EditError>;
     /// Whether the widgets `build` spawns keep themselves current from the row's [`PropertyRowValue`], so a value change leaves the row in place.
     fn follows_snapshot(&self) -> bool {
         false

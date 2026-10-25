@@ -15,7 +15,7 @@ use concerto_window::input::MouseButton;
 
 const MENU_WIDTH: f32 = 272.0;
 const MENU_LIST_MAX_HEIGHT: f32 = 320.0;
-pub(super) const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
+pub(crate) const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
 const ROW_HEIGHT: f32 = 30.0;
 const MARK_SIZE: f32 = 7.0;
 

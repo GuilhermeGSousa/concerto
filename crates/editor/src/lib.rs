@@ -30,7 +30,10 @@ pub use run::run;
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
 
-use crate::{asset_picker::AssetPicker, inspector::EditableApp};
+use crate::{
+    asset_picker::{AssetPicker, AssetPickerPlugin},
+    inspector::EditableApp,
+};
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -92,6 +95,7 @@ impl Plugin for EditorPlugin {
             decorated: self.decorated,
         });
         app.register_type::<MeshComponent>();
+        app.register_plugin(AssetPickerPlugin);
         app.register_property_editor::<AssetHandle<Mesh>, AssetPicker<Mesh>>();
 
         if let Some(path) = &self.project {

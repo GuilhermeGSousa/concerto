@@ -12,7 +12,7 @@ use concerto_ui::{
 use glam::{EulerRot, Quat, Vec3};
 
 use crate::inspector::rows::{
-    EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
+    EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
 /// One text field per number: one for `Number`, three for `Vec3`.
@@ -136,7 +136,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn snapshot(&self, value: &T) -> NumericSnapshot {
         value.numbers()
     }
-    fn apply(&self, value: &mut T, edit: &NumericEdit) -> Result<(), EditError> {
+    fn apply(&self, value: &mut T, edit: &NumericEdit, _: &EditContext) -> Result<(), EditError> {
         value.edit(edit)
     }
     fn follows_snapshot(&self) -> bool {

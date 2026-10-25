@@ -21,8 +21,8 @@ use concerto_editor::{
         HostRequest, HostRole, HostedPlugin, SetEditTarget, begin, finish_blocking, trigger_on,
     },
     inspector::{
-        EditError, EditableApp, InspectorPlugin, PropertyCommits, PropertyEditor, PropertyRow,
-        PropertyRowValue, spawn_panel,
+        EditContext, EditError, EditableApp, InspectorPlugin, PropertyCommits, PropertyEditor,
+        PropertyRow, PropertyRowValue, spawn_panel,
     },
     tools::{EditToolsPlugin, selection::Select},
 };
@@ -87,7 +87,12 @@ impl PropertyEditor<Setting> for SettingEditor {
         ));
     }
 
-    fn apply(&self, value: &mut Setting, edit: &SettingEdit) -> Result<(), EditError> {
+    fn apply(
+        &self,
+        value: &mut Setting,
+        edit: &SettingEdit,
+        _: &EditContext,
+    ) -> Result<(), EditError> {
         match edit {
             SettingEdit::Toggle => value.enabled = !value.enabled,
             SettingEdit::Rename(title) => {

@@ -10,7 +10,9 @@ use concerto_reflect::{
 };
 use derive_more::{Deref, DerefMut};
 
-use crate::{Component, Entity, Resource, World, system::input::ComponentMetadata};
+use crate::{
+    Component, Entity, Resource, World, resource::WorldResources, system::input::ComponentMetadata,
+};
 
 /// The world's type registry.
 #[derive(Resource, Default, Deref, DerefMut)]
@@ -20,7 +22,7 @@ pub struct AppTypeRegistry(pub TypeRegistry);
 #[derive(Clone, Copy)]
 pub struct ReflectComponent {
     pub read: for<'w> fn(&ComponentMetadata<'w>, Entity) -> Option<&'w dyn Reflect>,
-    pub edit: fn(&mut World, Entity, &mut dyn FnMut(&mut dyn Reflect)) -> bool,
+    pub edit: fn(&mut World, Entity, &mut dyn FnMut(&mut dyn Reflect, WorldResources<'_>)) -> bool,
     pub insert_boxed: fn(&mut World, Entity, Box<dyn Reflect>) -> bool,
     pub remove: fn(&mut World, Entity),
 }
@@ -64,12 +66,12 @@ fn read<'w, T: Component + Reflect>(
 fn edit<T: Component + Reflect>(
     world: &mut World,
     entity: Entity,
-    visit: &mut dyn FnMut(&mut dyn Reflect),
+    visit: &mut dyn FnMut(&mut dyn Reflect, WorldResources<'_>),
 ) -> bool {
-    let Some(value) = world.get_component_for_entity_mut::<T>(entity) else {
+    let Some((value, resources)) = world.get_component_and_resources_mut::<T>(entity) else {
         return false;
     };
-    visit(&mut *value);
+    visit(value, resources);
     true
 }
 

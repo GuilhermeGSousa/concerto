@@ -9,6 +9,7 @@ use concerto_ecs::{
     Component, Entity, Resource, World,
     component::Tick,
     reflect::{AppTypeRegistry, ReflectComponent},
+    resource::WorldResources,
     signal::{On, Signal},
 };
 use concerto_reflect::{PropertyPath, with_property_mut};
@@ -32,6 +33,22 @@ impl std::fmt::Display for EditError {
     }
 }
 impl std::error::Error for EditError {}
+
+/// What an edit can read from the world it changes.
+pub struct EditContext<'w> {
+    resources: WorldResources<'w>,
+}
+
+impl<'w> EditContext<'w> {
+    pub fn new(resources: WorldResources<'w>) -> Self {
+        Self { resources }
+    }
+
+    /// The resource of type `R` in the world being edited.
+    pub fn resource<R: Resource>(&self) -> Option<&'w R> {
+        self.resources.get()
+    }
+}
 
 /// Captured at rebuild, so a queued edit always addresses its original target.
 #[derive(Component, Clone, Debug)]
@@ -89,9 +106,10 @@ fn apply_through(
     edit: &dyn Any,
 ) -> Result<(), EditError> {
     let mut result = Err(EditError::NotFound);
-    let found = (component.edit)(world, entity, &mut |value| {
+    let found = (component.edit)(world, entity, &mut |value, resources| {
+        let context = EditContext::new(resources);
         if with_property_mut(value, path, &mut |value| {
-            result = editor.apply(value, edit);
+            result = editor.apply(value, edit, &context);
         })
         .is_err()
         {

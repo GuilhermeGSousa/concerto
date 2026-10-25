@@ -214,7 +214,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
     );
 
     let mut registry = registry;
-    registry.register_property_editor::<Setting, SettingEditor>(SettingEditor);
+    registry.register_property_editor::<Setting, SettingEditor>();
     let properties = registry.collect(&value);
     assert_eq!(properties.len(), 2);
     assert_eq!(properties[0].path, PropertyPath::new(["setting"]));
@@ -311,7 +311,7 @@ fn replacing_an_adapter_invalidates_old_edits_even_for_the_same_adapter_type() {
     w.select(w.a);
     let old = w.setting_row().1;
     w.editor
-        .register_property_editor::<Setting, SettingEditor>(SettingEditor);
+        .register_property_editor::<Setting, SettingEditor>();
 
     w.send(commit(&old, SettingEdit::Toggle));
     assert!(!w.enabled(w.a));
@@ -365,13 +365,13 @@ struct BuildRow {
 struct Built(Entity);
 
 fn build_widget(data: Res<BuildRow>, mut cmd: CommandQueue) {
-    let row = cmd.spawn((data.row.clone(), data.shown.clone())).entity();
+    let mut row = cmd.spawn((data.row.clone(), data.shown.clone()));
     SettingEditor.build(
-        &mut cmd,
-        row,
+        &mut row,
         data.shown.snapshot::<Setting, SettingEditor>().unwrap(),
         &UITheme::default(),
     );
+    let row = row.entity();
     cmd.insert_resource(Built(row));
 }
 
