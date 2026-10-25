@@ -26,6 +26,12 @@ macro_rules! impl_reflect_leaf {
                     $crate::ReflectMut::Leaf(self)
                 }
             }
+
+            impl $crate::GetTypeRegistration for $leaf {
+                fn get_type_registration() -> $crate::TypeRegistration {
+                    $crate::TypeRegistration::of::<Self>()
+                }
+            }
         )*
     };
 }

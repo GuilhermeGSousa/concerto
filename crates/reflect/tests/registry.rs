@@ -96,9 +96,10 @@ fn a_type_declaring_nothing_has_no_type_data() {
 fn registering_twice_changes_nothing() {
     let mut registry = TypeRegistry::default();
     registry.register::<Gain>();
+    let once = registry.iter().count();
     registry.register::<Gain>();
 
-    assert_eq!(registry.iter().count(), 1);
+    assert_eq!(registry.iter().count(), once);
 }
 
 #[test]
@@ -217,4 +218,78 @@ fn a_generic_type_registers_where_its_type_data_applies() {
             .get_type_data::<ReflectSpecial>(TypeId::of::<Wrapper<Yes>>())
             .is_some()
     );
+    assert!(registry.get(TypeId::of::<Yes>()).is_some());
+}
+
+#[derive(Reflect, Default)]
+struct Leafy {
+    level: u8,
+}
+
+#[derive(Reflect, Default)]
+struct Twig {
+    length: u16,
+}
+
+#[derive(Reflect, Default)]
+enum Shape {
+    #[default]
+    Empty,
+    Round {
+        radius: i64,
+    },
+    Pair(u32, Leafy),
+}
+
+#[derive(Reflect, Default)]
+struct Tree {
+    height: f32,
+    crown: Option<Leafy>,
+    twigs: Vec<Twig>,
+    shape: Shape,
+}
+
+#[test]
+fn registering_a_type_registers_the_types_its_fields_hold() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Tree>();
+
+    for id in [
+        TypeId::of::<f32>(),
+        TypeId::of::<Option<Leafy>>(),
+        TypeId::of::<Leafy>(),
+        TypeId::of::<u8>(),
+        TypeId::of::<Vec<Twig>>(),
+        TypeId::of::<Twig>(),
+        TypeId::of::<u16>(),
+        TypeId::of::<Shape>(),
+        TypeId::of::<i64>(),
+        TypeId::of::<u32>(),
+    ] {
+        assert!(registry.get(id).is_some(), "{id:?} was not registered");
+    }
+}
+
+#[derive(Reflect, Default)]
+struct Node {
+    children: Vec<Node>,
+}
+
+#[test]
+fn a_type_that_holds_itself_registers_once() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Node>();
+
+    assert!(registry.get(TypeId::of::<Node>()).is_some());
+    assert!(registry.get(TypeId::of::<Vec<Node>>()).is_some());
+    assert_eq!(registry.iter().count(), 2);
+}
+
+#[test]
+fn an_opaque_type_registers_none_of_its_fields() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Handle>();
+
+    assert_eq!(registry.iter().count(), 1);
+    assert!(registry.get(TypeId::of::<u32>()).is_none());
 }
