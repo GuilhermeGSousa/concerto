@@ -1,9 +1,9 @@
 use std::marker::PhantomData;
 
 use concerto_ecs::component::Component;
-use concerto_ecs::reflect::ReflectSceneComponent;
+use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 
 use crate::{assets::material::StandardMaterial, Material};
 
@@ -14,7 +14,7 @@ use crate::{assets::material::StandardMaterial, Material};
 /// `MaterialComponent { handle: … }` with a `StandardMaterial` handle continues to work
 /// without any change.  Custom materials use `MaterialComponent::<MyMaterial> { handle: … }`.
 #[derive(Component, Reflect)]
-#[reflect(SceneComponent)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {
     pub handle: AssetHandle<M>,
 }
