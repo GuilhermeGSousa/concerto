@@ -232,7 +232,12 @@ impl AssetRegistry {
 
     /// Every entry holding an `A`, in [`AssetRegistry::iter`] order.
     pub fn of_type<A: Asset>(&self) -> impl Iterator<Item = &AssetEntry> {
-        self.iter().filter(|entry| entry.is::<A>())
+        self.of_kind(A::name())
+    }
+
+    /// The entries of the kind an [`Asset::name`] gives, for a caller that does not know the type.
+    pub fn of_kind<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a AssetEntry> {
+        self.iter().filter(move |entry| entry.kind == kind)
     }
 
     /// Adds `entry`, replacing any entry with the same id.

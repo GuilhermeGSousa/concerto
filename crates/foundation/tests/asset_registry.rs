@@ -399,6 +399,21 @@ fn of_type_lists_only_that_kind_ordered_by_folder_then_name() {
 }
 
 #[test]
+fn of_kind_lists_the_same_entries_as_of_type_for_that_kind() {
+    let mut registry = AssetRegistry::new();
+    let [a, b, c] = [(); 3].map(|_| AssetId::new());
+    registry.insert(entry(a, "content/z/rock.gasset", "Mesh"));
+    registry.insert(entry(b, "content/a/level.gasset", "Thing"));
+    registry.insert(entry(c, "content/a/bush.gasset", "Mesh"));
+
+    let meshes: Vec<_> = registry
+        .of_kind(Mesh::name())
+        .map(|entry| entry.id)
+        .collect();
+    assert_eq!(meshes, [c, a]);
+}
+
+#[test]
 fn inserting_an_existing_id_moves_it_and_frees_its_old_address() {
     let mut registry = AssetRegistry::new();
     let id = AssetId::new();
