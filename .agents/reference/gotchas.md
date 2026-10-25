@@ -145,7 +145,9 @@ fix the entry in the same commit as the change that made it false.
 - **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
   `follow_unsaved_edits` inserts or removes it each frame while the document is
   `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
-  through `HostedApp::mark_saved` after a successful write.
+  through `HostedApp::mark_saved` after a successful write. The guard's
+  Discard does the same through the `DiscardEdits` signal, whose scene
+  listener calls `mark_saved`.
 - **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
   `App` finishes building.
 - **Change detection crosses the seam in the target's ticks.** `EditWorld<T>`

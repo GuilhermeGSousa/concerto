@@ -381,7 +381,9 @@ even while it shows "Stop to save".
 
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or
-Cancel. Escape cancels.
+Cancel. Escape cancels. Discard marks the scene clean, so its replacement
+loads; if the replacement then fails to load, the old scene stays on screen
+with the discarded edits, marked clean.
 
 The scene root shown in the hierarchy is the editor's wrapper around the scene,
 not part of it, so the inspector shows nothing for it.

@@ -29,6 +29,7 @@ use crate::{
         ActiveEditor, AssetEditor, AssetEditorAppExt, EditorDocument, SaveRequested, Unsaved,
         asset_request_is_current, finish_asset_request,
     },
+    guard::DiscardEdits,
     hierarchy::HierarchyState,
     hosted::{
         self, HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, ParkedEditApp,
@@ -181,6 +182,13 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(save_scene);
     world.add_listener(publish_to_hosted);
     world.add_listener(play);
+    world.add_listener(forget_discarded_edits);
+}
+
+fn forget_discarded_edits(on: On<DiscardEdits>, documents: Query<&mut HostedApp>) {
+    if let Some(mut hosted) = documents.get_entity(on.signal().0) {
+        hosted.mark_saved();
+    }
 }
 
 /// Keeps a Scene document's `Unsaved` in step with its edit `App`'s `SceneDirty`.

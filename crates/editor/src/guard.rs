@@ -5,8 +5,11 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
-    events::event_reader::EventReader, query::filter::With, signal::On,
+    Component, Entity, Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    events::event_reader::EventReader,
+    query::filter::With,
+    signal::{On, Signal},
 };
 use concerto_ui::{
     elements::prelude::*,
@@ -40,6 +43,10 @@ pub enum GuardedIntent {
     Project(EditorCommand),
     Quit,
 }
+
+/// The user discarded a document's unsaved changes; its editor forgets that they were made.
+pub struct DiscardEdits(pub Entity);
+impl Signal for DiscardEdits {}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum GuardChoice {
@@ -188,6 +195,7 @@ fn resolve_guard(
                     .is_some_and(|(_, unsaved, _)| unsaved.is_some())
                 {
                     commands.remove::<Unsaved>(entity);
+                    commands.trigger(DiscardEdits(entity));
                 }
             }
             true
@@ -562,6 +570,26 @@ mod tests {
         assert!(finish_asset_request(opened, &next, Ok(())));
         assert_eq!(opened.current, Some(next));
         assert!(!is_dirty(&world, doc));
+    }
+
+    #[test]
+    fn discarding_an_edited_scene_lets_its_held_replacement_load() {
+        use crate::hosted::testing::SceneFixture;
+        let mut f = SceneFixture::new();
+        f.world.insert_resource(EditorCommands::default());
+        let document = f.open();
+        f.rename(document, "first", "renamed");
+        assert!(f.unsaved(document));
+        f.request_other_scene(document);
+        assert_eq!(guard(&mut f.world).documents(), [document]);
+
+        guard(&mut f.world).choose(GuardChoice::Discard);
+        run(&mut f.world, resolve_guard);
+        f.frames_until_idle();
+
+        assert!(f.open_failures().is_empty(), "{}", f.status(document));
+        assert_eq!(f.document(document).current, Some(f.other.clone()));
+        assert!(!f.unsaved(document));
     }
 
     #[test]
