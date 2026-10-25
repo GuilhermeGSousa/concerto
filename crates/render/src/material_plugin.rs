@@ -43,7 +43,7 @@ use crate::{
 // Registering `MaterialPlugin::<M>::new()` sets up everything needed to render
 // meshes that use material type `M`:
 //
-// * Registers `M` as an asset type.
+// * Registers `M` as an asset type and `MaterialComponent<M>` for reflection.
 // * Creates a `wgpu::RenderPipeline` whose layout is built from `M`'s own bind
 //   group layout plus whichever engine bind groups `M` declares it needs via
 //   [`Material::needs_camera`], [`Material::needs_lighting`] and
@@ -54,7 +54,7 @@ use crate::{
 // # Using a custom material
 //
 // 1. Derive (or manually implement) [`AsBindGroup`] for your type, then implement
-//    [`Material`] (usually with default methods).
+//    [`Material`] (usually with default methods) and `LoadableAsset`.
 // 2. Register the plugin: `app.register_plugin(MaterialPlugin::<MyMaterial>::new())`.
 // 3. Attach [`MaterialComponent::<MyMaterial>`] + [`MeshComponent`] to an entity.
 //

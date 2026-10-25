@@ -107,7 +107,8 @@ fix the entry in the same commit as the change that made it false.
 - **A type nothing registered is invisible.** Scenes spawn and capture, and the
   inspector shows, only types registered with `app.register_type::<T>()` in that
   `App`. The derive's `#[reflect(...)]` says what a type supports; registering
-  is a separate call, made once by the plugin that owns the type.
+  is a separate call, made once by the plugin that owns the type. It also
+  registers the types the type's fields hold.
 - **`#[reflect(Component, Default, SceneComponent)]` names types at the use
   site.** `ReflectComponent` and `ReflectSceneComponent` (from
   `concerto_ecs::reflect`) and `ReflectDefault` (from `concerto_reflect`) must
@@ -119,10 +120,9 @@ fix the entry in the same commit as the change that made it false.
 - **`#[reflect(opaque)]` makes a type a serde leaf.** It is stored as bytes
   through its `Serialize` and `Deserialize`, so it needs both. Use it only for
   values with no reflected inside; structs and enums derive `Reflect` plainly.
-- **A handle type must be registered to load from a scene.** A plugin that
-  registers a component holding `AssetHandle<A>` also registers
-  `AssetHandle<A>`, or the handle spawns weak and loads nothing, with a
-  warning.
+- **A handle type must be registered to load from a scene.** Registering the
+  component that holds `AssetHandle<A>` registers it. A handle whose type
+  nothing registered spawns weak and loads nothing, with a warning.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
