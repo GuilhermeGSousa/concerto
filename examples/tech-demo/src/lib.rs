@@ -72,7 +72,7 @@ mod tests {
 mod derives {
     use concerto::{
         ecs::{Component, Event, Resource, SystemSet, SystemTag, system::schedule::ScheduleLabel},
-        foundation::assets::{Asset, handle::AssetHandle},
+        foundation::assets::{Asset, LoadableAsset, handle::AssetHandle},
         reflect::Reflect,
         render::{AsBindGroup, assets::texture::Texture},
     };
@@ -106,6 +106,8 @@ mod derives {
         #[sampler(2)]
         texture: Option<AssetHandle<Texture>>,
     }
+
+    impl LoadableAsset for Glow {}
 
     #[test]
     fn engine_derives_compile_from_a_crate_that_depends_on_concerto_alone() {

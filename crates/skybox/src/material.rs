@@ -1,4 +1,4 @@
-use concerto_foundation::assets::{Asset, handle::AssetHandle};
+use concerto_foundation::assets::{Asset, LoadableAsset, handle::AssetHandle};
 
 use concerto_render::{
     AsBindGroup,
@@ -41,3 +41,5 @@ pub struct SkyboxMaterial {
     #[sampler(1)]
     pub texture: Option<AssetHandle<Texture>>,
 }
+
+impl LoadableAsset for SkyboxMaterial {}
