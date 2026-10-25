@@ -4,7 +4,11 @@ use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut,
     command::{CommandQueue, EntityCommandQueue},
-    signal::{On, lifecycle::Remove},
+    signal::{
+        On,
+        lifecycle::Remove,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_foundation::assets::{
     AssetId, LoadableAsset,
@@ -56,13 +60,7 @@ impl Plugin for AssetPickerPlugin {
     }
 }
 
-/// The button of an [`AssetPicker`] row, which opens the menu.
-#[derive(Component)]
-pub(crate) struct AssetPickerButton {
-    row: Entity,
-}
-
-/// The text inside an [`AssetPickerButton`], naming the row's asset.
+/// The text inside an [`AssetPicker`] row's button, naming the row's asset.
 #[derive(Component)]
 pub(crate) struct AssetPickerLabel {
     row: Entity,
@@ -73,10 +71,6 @@ pub(crate) struct AssetPickerLabel {
 pub(crate) struct AssetPickerMenu {
     row: Option<Entity>,
 }
-
-/// An item of the [`AssetPickerMenu`] and the asset it picks.
-#[derive(Component)]
-pub(crate) struct AssetPickerItem(pub AssetId);
 
 impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
     type Snapshot = AssetId;
@@ -93,21 +87,18 @@ impl<T: LoadableAsset> PropertyEditor<AssetHandle<T>> for AssetPicker<T> {
     fn build(&self, row: &mut EntityCommandQueue, _: &AssetId, theme: &UITheme) {
         let entity = row.entity();
         row.add_child_with(
-            (
-                theme
-                    .pressable()
-                    .bordered()
-                    .radius_sm()
-                    .row()
-                    .gap(6.0)
-                    .height(UIValue::Px(theme.control_height))
-                    .padding(UIRect::axes(0.0, 8.0))
-                    .grow()
-                    .shrink(1.0)
-                    .min_width(UIValue::Px(0.0))
-                    .on_click(toggle_asset_picker::<T>),
-                AssetPickerButton { row: entity },
-            ),
+            theme
+                .pressable()
+                .bordered()
+                .radius_sm()
+                .row()
+                .gap(6.0)
+                .height(UIValue::Px(theme.control_height))
+                .padding(UIRect::axes(0.0, 8.0))
+                .grow()
+                .shrink(1.0)
+                .min_width(UIValue::Px(0.0))
+                .on_click(toggle_asset_picker::<T>(entity)),
             |mut button| {
                 button
                     .add_child((
@@ -171,44 +162,40 @@ fn menu_panel(button: Entity) -> UIAnchoredPanel {
         .with_open(true)
 }
 
-fn toggle_asset_picker<T: LoadableAsset>(
-    on: On<UIClick>,
-    buttons: Query<&AssetPickerButton>,
-    values: Query<&PropertyRowValue>,
-    menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
-    registry: Res<AssetRegistry>,
-    theme: Res<UITheme>,
-    mut cmd: CommandQueue,
-) {
-    if on.signal().button != MouseButton::Left {
-        return;
-    }
-    let Some(button) = buttons.get_entity(on.entity()) else {
-        return;
-    };
-    let mut menu = match menus.iter().next() {
-        Some((entity, mut menu, mut panel)) => {
-            if panel.open && panel.owner == Some(on.entity()) {
-                panel.open = false;
-                return;
-            }
-            menu.row = Some(button.row);
-            **panel = menu_panel(on.entity());
-            cmd.entity(entity).despawn_children()
+/// Opens the shared menu on `row`'s assets, or closes it if `row`'s button opened it.
+fn toggle_asset_picker<T: LoadableAsset>(row: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           values: Query<&PropertyRowValue>,
+           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           registry: Res<AssetRegistry>,
+           theme: Res<UITheme>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
         }
-        None => cmd.spawn((
-            theme
-                .popup()
-                .fill(MENU_FILL)
-                .width(UIValue::Px(MENU_WIDTH))
-                .padding(theme.spacing_xs),
-            menu_panel(on.entity()),
-            AssetPickerMenu {
-                row: Some(button.row),
-            },
-        )),
-    };
-    fill_menu::<T>(&mut menu, &registry, held(&values, button.row), &theme);
+        let mut menu = match menus.iter().next() {
+            Some((entity, mut menu, mut panel)) => {
+                if panel.open && panel.owner == Some(on.entity()) {
+                    panel.open = false;
+                    return;
+                }
+                menu.row = Some(row);
+                **panel = menu_panel(on.entity());
+                cmd.entity(entity).despawn_children()
+            }
+            None => cmd.spawn((
+                theme
+                    .popup()
+                    .fill(MENU_FILL)
+                    .width(UIValue::Px(MENU_WIDTH))
+                    .padding(theme.spacing_xs),
+                menu_panel(on.entity()),
+                AssetPickerMenu { row: Some(row) },
+            )),
+        };
+        fill_menu::<T>(&mut menu, &registry, held(&values, row), &theme);
+    })
+    .into_listener()
 }
 
 fn fill_menu<T: LoadableAsset>(
@@ -243,18 +230,15 @@ fn fill_menu<T: LoadableAsset>(
             }));
             for entry in &entries {
                 list.add_child_with(
-                    (
-                        theme
-                            .pressable()
-                            .selected(current == Some(entry.id))
-                            .row()
-                            .gap(8.0)
-                            .fixed()
-                            .height(UIValue::Px(ITEM_HEIGHT))
-                            .padding(UIRect::axes(0.0, 8.0))
-                            .on_click(pick_asset::<T>),
-                        AssetPickerItem(entry.id),
-                    ),
+                    theme
+                        .pressable()
+                        .selected(current == Some(entry.id))
+                        .row()
+                        .gap(8.0)
+                        .fixed()
+                        .height(UIValue::Px(ITEM_HEIGHT))
+                        .padding(UIRect::axes(0.0, 8.0))
+                        .on_click(pick_asset::<T>(entry.id)),
                     |mut item| {
                         item.add_child(
                             theme
@@ -285,31 +269,29 @@ fn fill_menu<T: LoadableAsset>(
     );
 }
 
-fn pick_asset<T: LoadableAsset>(
-    on: On<UIClick>,
-    items: Query<&AssetPickerItem>,
-    menus: Query<(&AssetPickerMenu, &mut UIAnchoredPanel)>,
-    rows: Query<(&PropertyRow, &PropertyRowValue)>,
-    mut commits: ResMut<PropertyCommits>,
-) {
-    if on.signal().button != MouseButton::Left {
-        return;
-    }
-    let Some(item) = items.get_entity(on.entity()) else {
-        return;
-    };
-    for (menu, mut panel) in menus.iter() {
-        if let Some((row, value)) = menu
-            .row
-            .filter(|_| panel.open)
-            .and_then(|row| rows.get_entity(row))
-            && value.downcast::<AssetId>() != Some(&item.0)
-            && let Err(error) = commits.push::<AssetHandle<T>, AssetPicker<T>>(row, item.0)
-        {
-            log::warn!("Asset pick dropped: {error}");
+/// Commits `id` to the row the open menu was opened for, then closes the menu.
+fn pick_asset<T: LoadableAsset>(id: AssetId) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           menus: Query<(&AssetPickerMenu, &mut UIAnchoredPanel)>,
+           rows: Query<(&PropertyRow, &PropertyRowValue)>,
+           mut commits: ResMut<PropertyCommits>| {
+        if on.signal().button != MouseButton::Left {
+            return;
         }
-        panel.open = false;
-    }
+        for (menu, mut panel) in menus.iter() {
+            if let Some((row, value)) = menu
+                .row
+                .filter(|_| panel.open)
+                .and_then(|row| rows.get_entity(row))
+                && value.downcast::<AssetId>() != Some(&id)
+                && let Err(error) = commits.push::<AssetHandle<T>, AssetPicker<T>>(row, id)
+            {
+                log::warn!("Asset pick dropped: {error}");
+            }
+            panel.open = false;
+        }
+    })
+    .into_listener()
 }
 
 fn forget_scene(

@@ -104,14 +104,35 @@ impl Picking {
             },
         );
     }
-    fn button(&mut self) -> Entity {
+    fn children(&self, entity: Entity) -> Vec<Entity> {
         self.f
             .world
-            .query::<(Entity, &AssetPickerButton), ()>()
+            .get_component_for_entity::<Children>(entity)
+            .map(|children| children.iter().copied().collect())
+            .unwrap_or_default()
+    }
+    fn text(&self, entity: Entity) -> String {
+        self.f
+            .world
+            .get_component_for_entity::<UIText>(entity)
+            .unwrap()
+            .text
+            .clone()
+    }
+    fn button(&mut self) -> Entity {
+        let label = self
+            .f
+            .world
+            .query::<(Entity, &AssetPickerLabel), ()>()
             .iter(&mut self.f.world)
             .map(|(entity, _)| entity)
             .next()
-            .expect("the inspector built a picker row")
+            .expect("the inspector built a picker row");
+        self.f
+            .world
+            .get_component_for_entity::<ChildOf>(label)
+            .unwrap()
+            .parent()
     }
     fn label(&mut self) -> String {
         self.f
@@ -129,12 +150,28 @@ impl Picking {
             .iter(&mut self.f.world)
             .any(|(_, panel)| panel.open)
     }
-    fn items(&mut self) -> Vec<(Entity, AssetId)> {
-        self.f
+    fn items(&mut self) -> Vec<(Entity, String)> {
+        let menus: Vec<Entity> = self
+            .f
             .world
-            .query::<(Entity, &AssetPickerItem), ()>()
+            .query::<(Entity, &AssetPickerMenu), ()>()
             .iter(&mut self.f.world)
-            .map(|(entity, item)| (entity, item.0))
+            .map(|(entity, _)| entity)
+            .collect();
+        let lists: Vec<Entity> = menus
+            .iter()
+            .flat_map(|&menu| self.children(menu))
+            .filter_map(|view| {
+                self.f
+                    .world
+                    .get_component_for_entity::<UIScrollArea>(view)?
+                    .content
+            })
+            .collect();
+        lists
+            .iter()
+            .flat_map(|&list| self.children(list))
+            .map(|item| (item, self.text(self.children(item)[0])))
             .collect()
     }
     fn held(&self) -> &AssetHandle<Mesh> {
@@ -161,8 +198,8 @@ fn the_menu_lists_only_assets_of_the_pickers_type() {
     p.click(button);
 
     assert!(p.menu_open());
-    let ids: Vec<_> = p.items().into_iter().map(|(_, id)| id).collect();
-    assert_eq!(ids, [p.cube.id, p.sphere.id]);
+    let names: Vec<_> = p.items().into_iter().map(|(_, name)| name).collect();
+    assert_eq!(names, ["cube", "sphere"]);
 }
 
 #[test]
@@ -180,7 +217,11 @@ fn picking_an_item_gives_the_scene_a_loaded_handle_to_it_and_closes_the_menu() {
     let button = p.button();
     p.click(button);
     let sphere = p.sphere.id;
-    let (item, _) = p.items().into_iter().find(|(_, id)| *id == sphere).unwrap();
+    let (item, _) = p
+        .items()
+        .into_iter()
+        .find(|(_, name)| name == "sphere")
+        .unwrap();
 
     p.click(item);
     p.update();

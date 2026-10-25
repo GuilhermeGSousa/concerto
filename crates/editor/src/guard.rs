@@ -5,8 +5,14 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, command::CommandQueue,
-    events::event_reader::EventReader, query::filter::With, signal::On,
+    Component, Entity, Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    events::event_reader::EventReader,
+    query::filter::With,
+    signal::{
+        On,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_ui::{
     elements::prelude::*,
@@ -243,9 +249,6 @@ struct Prompt;
 #[derive(Component)]
 struct PromptMessage;
 
-#[derive(Component)]
-struct PromptButton(GuardChoice);
-
 const PROMPT_LAYER: i32 = 900;
 
 fn build_prompt(mut cmd: CommandQueue, theme: Res<UITheme>) {
@@ -286,30 +289,25 @@ fn build_prompt(mut cmd: CommandQueue, theme: Res<UITheme>) {
                         ("Discard", GuardChoice::Discard),
                         ("Save", GuardChoice::Save),
                     ] {
-                        row.add_child((
+                        row.add_child(
                             theme
                                 .button(label)
                                 .width(UIValue::Px(96.0))
-                                .on_click(press_prompt_button),
-                            PromptButton(choice),
-                        ));
+                                .on_click(press_prompt_button(choice)),
+                        );
                     }
                 });
         },
     );
 }
 
-fn press_prompt_button(
-    on: On<UIClick>,
-    buttons: Query<&PromptButton>,
-    mut guard: ResMut<UnsavedGuard>,
-) {
-    if on.signal().button != MouseButton::Left {
-        return;
-    }
-    if let Some(button) = buttons.get_entity(on.entity()) {
-        guard.choose(button.0);
-    }
+fn press_prompt_button(choice: GuardChoice) -> Listener<UIClick> {
+    (move |on: On<UIClick>, mut guard: ResMut<UnsavedGuard>| {
+        if on.signal().button == MouseButton::Left {
+            guard.choose(choice);
+        }
+    })
+    .into_listener()
 }
 
 fn dismiss_prompt(mut fired: EventReader<ActionFired>, mut guard: ResMut<UnsavedGuard>) {
@@ -598,6 +596,44 @@ mod tests {
         guard(&mut world).request_quit();
         run(&mut world, guard_quit);
         assert!(guard(&mut world).asking(), "the guard is free to ask again");
+    }
+
+    fn prompt_button(world: &mut World, label: &str) -> Entity {
+        world
+            .query::<(Entity, &UIText), ()>()
+            .iter(world)
+            .find(|(_, text)| text.text == label)
+            .map(|(entity, _)| entity)
+            .expect("the prompt has the button")
+    }
+
+    #[test]
+    fn each_prompt_button_chooses_its_own_answer() {
+        for (label, choice) in [
+            ("Cancel", GuardChoice::Cancel),
+            ("Discard", GuardChoice::Discard),
+            ("Save", GuardChoice::Save),
+        ] {
+            let mut world = world();
+            world.insert_resource(UITheme::default());
+            world.register_component::<concerto_ecs::entity::hierarchy::ChildOf>();
+            world.register_component::<concerto_ecs::entity::hierarchy::Children>();
+            run(&mut world, build_prompt);
+            document(&mut world, true);
+            guard(&mut world).request_quit();
+            run(&mut world, guard_quit);
+
+            let button = prompt_button(&mut world, label);
+            world.trigger_on(
+                button,
+                UIClick {
+                    position: Default::default(),
+                    button: MouseButton::Left,
+                },
+            );
+
+            assert_eq!(guard(&mut world).choice, Some(choice), "{label}");
+        }
     }
 
     #[test]
