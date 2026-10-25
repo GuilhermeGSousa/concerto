@@ -53,7 +53,7 @@ first has answered.
 
 When the client disconnects, the editor quits and discards unsaved edits,
 answering its own unsaved-changes prompt with Discard. An agent that wants its
-edits keeps them by saving first.
+edits keeps them by saving first, with `save`.
 
 ### Tools
 
@@ -145,6 +145,22 @@ A component that `inspect` lists as one value, a marker or an opaque type, has
 the path `""`. The scene root is the editor's wrapper and none of these change
 it. All seven need an open scene.
 
+`save` writes `document`, or the active document without one, to its file as
+Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
+no unsaved changes answers `Nothing to save in document <id> <address>.`, which
+is not an error. A save that fails answers `save_failed` with the editor's
+message, as does a save while the game plays (`Stop to save`), and a scene still
+loading answers `busy`. `play` starts the active scene's game in the viewport,
+as the play button does, and answers `Playing <address> in document <id>.` once
+the game has built and plays. Like the play button it first saves the scene's
+unsaved changes, and the answer then says so. The game loads its scene over the
+frames that follow, so `scene_tree` and `screenshot` show it as it arrives. A
+game that does not start, a save before it that fails, or a `play` while the
+game is on answers `play_failed` with the editor's message. `stop` stops the
+game, starting or playing, and answers once the edited scene is back as it was
+before play; edits made to the running game are gone. `save` and `play` need an
+open scene, and `stop` a game starting or playing.
+
 ### Errors
 
 A failed call is a tool result marked `isError` whose text is
@@ -154,7 +170,7 @@ A failed call is a tool result marked `isError` whose text is
 | --- | --- |
 | `invalid_arguments` | The arguments do not match the tool's input schema |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
-| `busy` | `open_project` while a project is opening, or `screenshot` of a picture not drawn yet |
+| `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity, or a slot that now holds a newer one |
 | `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
@@ -164,7 +180,8 @@ A failed call is a tool result marked `isError` whose text is
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
-| `save_failed` | A save asked for by `unsaved: "save"` failed; the message is the editor's status |
+| `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
+| `play_failed` | The game did not start; the message is the editor's status |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |

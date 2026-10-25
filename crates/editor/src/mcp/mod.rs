@@ -1,6 +1,7 @@
 mod act;
 mod edit;
 mod observe;
+mod run;
 
 use std::path::PathBuf;
 
@@ -58,6 +59,7 @@ impl Plugin for EditorMcpPlugin {
         observe::build(app);
         act::build(app);
         edit::build(app);
+        run::build(app);
     }
 }
 

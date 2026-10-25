@@ -92,7 +92,7 @@ fn bound_by_name(named: Query<(Entity, &Name), Without<Aabb>>, mut cmd: CommandQ
 struct Unreadable;
 
 #[derive(Component, Reflect, Default)]
-#[reflect(Component, Default)]
+#[reflect(Component, Default, SceneComponent)]
 struct Samples {
     values: Vec<f32>,
     gain: f32,
@@ -2764,4 +2764,214 @@ fn set_property_writes_a_whole_enum_at_a_path_its_rows_sit_under() {
         "Set Gait.pace failed: pace: no variant 'Sprint'; the variants are Still, Walk, Run"
     );
     assert_eq!(inspected(&after, "Gait")["value"], run["value"]);
+}
+
+struct Saves {
+    closed: Value,
+    document: String,
+    clean: String,
+    saved: String,
+    saved_file: Vec<u8>,
+    state: String,
+    again: String,
+    unknown: Value,
+    reread: Value,
+}
+
+#[test]
+fn save_writes_the_scene_and_answers_when_there_is_nothing_to_save() {
+    let fixture = Fixture::new();
+    let level = fixture.root().join("content/level.gasset");
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        until(&client, "state", |state| state.starts_with("project")).await;
+        let closed = error(&client, "save").await;
+        open(&client).await;
+        let document = document_id(&ok(&client, "status").await);
+        let clean = ok(&client, "save").await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let sword = scene_id(&ids, "Sword");
+        until(&client, "scene_tree", |tree| {
+            components(tree, &sword).contains(&"Samples")
+        })
+        .await;
+        ok_with(
+            &client,
+            "set_property",
+            json!({ "entity": sword, "component": "Samples", "path": "gain", "value": 2.0 }),
+        )
+        .await;
+        rename_to(&client, "Hero", "Villain").await;
+        let saved = ok_with(&client, "save", json!({ "document": document })).await;
+        let saved_file = std::fs::read(&level).unwrap();
+        let state = ok(&client, "state").await;
+        let again = ok(&client, "save").await;
+        let unknown = error_with(&client, "save", json!({ "document": "999999v1" })).await;
+        ok_with(&client, "close_document", json!({ "document": document })).await;
+        ok_with(
+            &client,
+            "open_asset",
+            json!({ "asset": "content/level.gasset" }),
+        )
+        .await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let reread = serde_json::from_str(
+            &ok_with(
+                &client,
+                "inspect",
+                json!({ "entity": scene_id(&ids, "Sword"), "components": ["Samples", "Unreadable"] }),
+            )
+            .await,
+        )
+        .unwrap();
+        client.cancel().await.unwrap();
+        Saves {
+            closed,
+            document,
+            clean,
+            saved,
+            saved_file,
+            state,
+            again,
+            unknown,
+            reread,
+        }
+    }) else {
+        return;
+    };
+
+    let Saves {
+        closed,
+        document,
+        clean,
+        saved,
+        saved_file,
+        state,
+        again,
+        unknown,
+        reread,
+    } = served.result;
+    assert_eq!(closed["code"], "no_scene", "{closed}");
+    let nothing = format!("Nothing to save in document {document} content/level.gasset.");
+    assert_eq!(clean, nothing);
+    assert_eq!(saved, "Saved content/level.gasset.");
+    assert!(holds(&saved_file, "Villain"));
+    assert!(!holds(&saved_file, "Hero"));
+    assert!(holds(&saved_file, "Samples"));
+    assert!(holds(&saved_file, "Unreadable"));
+    assert_eq!(state, "project level target");
+    assert_eq!(again, nothing);
+    assert_eq!(unknown["code"], "unknown_entity", "{unknown}");
+    assert_eq!(inspected(&reread, "Samples")["value"]["gain"], 2.0);
+    assert_eq!(inspected(&reread, "Unreadable")["unavailable"], true);
+}
+
+struct Plays {
+    document: String,
+    idle: Value,
+    played: String,
+    played_file: Vec<u8>,
+    status: String,
+    again: Value,
+    save_while: Value,
+    game_tree: String,
+    game_ids: Value,
+    stopped: String,
+    tree: String,
+    ids: Value,
+    state: String,
+    idle_again: Value,
+}
+
+#[test]
+fn play_runs_the_game_and_stop_brings_back_the_edited_scene() {
+    let fixture = Fixture::new();
+    let level = fixture.root().join("content/level.gasset");
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, move |client| async move {
+        open(&client).await;
+        let document = document_id(&ok(&client, "status").await);
+        let idle = error(&client, "stop").await;
+        rename_to(&client, "Hero", "Villain").await;
+        let played = ok(&client, "play").await;
+        let played_file = std::fs::read(&level).unwrap();
+        let status = ok(&client, "status").await;
+        let again = error(&client, "play").await;
+        let save_while = error(&client, "save").await;
+        let game_tree = until(&client, "scene_tree", |tree| tree.contains(" Villain ")).await;
+        let game_ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        ok_with(
+            &client,
+            "rename_entity",
+            json!({ "entity": scene_id(&game_ids, "Villain"), "name": "Knight" }),
+        )
+        .await;
+        let stopped = ok(&client, "stop").await;
+        let tree = ok(&client, "scene_tree").await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let state = ok(&client, "state").await;
+        let idle_again = error(&client, "stop").await;
+        client.cancel().await.unwrap();
+        Plays {
+            document,
+            idle,
+            played,
+            played_file,
+            status,
+            again,
+            save_while,
+            game_tree,
+            game_ids,
+            stopped,
+            tree,
+            ids,
+            state,
+            idle_again,
+        }
+    }) else {
+        return;
+    };
+
+    let Plays {
+        document,
+        idle,
+        played,
+        played_file,
+        status,
+        again,
+        save_while,
+        game_tree,
+        game_ids,
+        stopped,
+        tree,
+        ids,
+        state,
+        idle_again,
+    } = served.result;
+    assert_eq!(idle["code"], "not_playing", "{idle}");
+    assert_eq!(
+        played,
+        format!(
+            "Playing content/level.gasset in document {document}; its unsaved changes were saved first."
+        )
+    );
+    assert!(holds(&played_file, "Villain"));
+    assert!(status.contains(" · playing"), "{status}");
+    assert_eq!(again["code"], "play_failed", "{again}");
+    assert_eq!(again["message"], "The game is already playing");
+    assert_eq!(save_while["code"], "save_failed", "{save_while}");
+    assert_eq!(save_while["message"], "Stop to save");
+    assert!(game_ids.get("root").is_none(), "{game_ids}");
+    assert!(!game_tree.contains("Knight"), "{game_tree}");
+    assert_eq!(
+        stopped,
+        format!(
+            "Stopped the game in document {document}; the scene is back as it was before play."
+        )
+    );
+    assert!(tree.contains(" Villain "), "{tree}");
+    assert!(!tree.contains("Knight"), "{tree}");
+    assert!(ids.get("root").is_some(), "{ids}");
+    assert_eq!(state, "project level target");
+    assert_eq!(idle_again["code"], "not_playing", "{idle_again}");
 }

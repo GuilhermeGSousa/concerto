@@ -390,6 +390,13 @@ fn answer_asset_opens(
     }
 }
 
+pub(super) fn unknown_document(id: &str) -> ToolError {
+    ToolError::new(
+        "unknown_entity",
+        format!("No open document `{id}`; status lists the documents and their ids."),
+    )
+}
+
 fn close_document(
     mut calls: ToolCalls<CloseDocument>,
     documents: Query<Entity, With<EditorDocument>>,
@@ -401,10 +408,7 @@ fn close_document(
         let Some(document) =
             Entity::parse_id(id).filter(|&entity| documents.get_entity(entity).is_some())
         else {
-            reply.err(ToolError::new(
-                "unknown_entity",
-                format!("No open document `{id}`; status lists the documents and their ids."),
-            ));
+            reply.err(unknown_document(id));
             continue;
         };
         requests.0.push_back(AssetEditorCommand::Close(document));
@@ -431,7 +435,7 @@ fn answer_closes(
     }
 }
 
-fn describe_document(entity: Entity, documents: &Query<&EditorDocument>) -> String {
+pub(super) fn describe_document(entity: Entity, documents: &Query<&EditorDocument>) -> String {
     let address = documents.get_entity(entity).map(|document| {
         document
             .current
