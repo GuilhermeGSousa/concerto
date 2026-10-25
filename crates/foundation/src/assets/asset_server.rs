@@ -1,6 +1,6 @@
 use std::{
     any::TypeId,
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     path::Path,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -9,7 +9,11 @@ use std::{
 };
 
 use anyhow::Context;
-use concerto_ecs::{resource::Resource, world};
+use concerto_ecs::{
+    query::change_detection::DetectChanges,
+    resource::{Res, Resource},
+    world,
+};
 use concerto_tasks::load_pool::LoadTaskPool;
 use crossbeam_channel::{Receiver, Sender};
 
@@ -22,6 +26,7 @@ use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
     handle::{AssetHandle, AssetLifetimeEvent},
+    registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot,
 };
 
@@ -95,7 +100,7 @@ pub(crate) struct AssetServerData {
 
 struct ContentState {
     root: ContentAssetRoot,
-    registry: Option<Arc<BTreeMap<AssetId, String>>>,
+    registry: Option<Arc<AssetRegistry>>,
     initialization: Option<Task<()>>,
     error: Option<String>,
 }
@@ -136,7 +141,7 @@ impl AssetServer {
     pub fn publish_project_content(
         &self,
         project_root: &Path,
-        registry: crate::assets::content::AssetRegistry,
+        registry: AssetRegistry,
     ) -> anyhow::Result<()> {
         let root = project_root.canonicalize().with_context(|| {
             format!(
@@ -150,11 +155,7 @@ impl AssetServer {
 
     /// Atomically replaces the root and UUID registry used by subsequent
     /// loads. This is also available for non-native content providers.
-    pub fn publish_content_source(
-        &self,
-        root: ContentAssetRoot,
-        registry: crate::assets::content::AssetRegistry,
-    ) {
+    pub fn publish_content_source(&self, root: ContentAssetRoot, registry: AssetRegistry) {
         // `load` takes these locks in the same order. Holding the pending lock
         // closes the gap where a request could otherwise attach to the old
         // snapshot while it is being replaced.
@@ -162,11 +163,23 @@ impl AssetServer {
         {
             let mut content = self.data.content.write().unwrap();
             content.root = root;
-            content.registry = Some(Arc::new(registry.into_entries()));
+            content.registry = Some(Arc::new(registry));
             content.initialization = None;
             content.error = None;
         };
         pending.clear();
+    }
+
+    /// Replaces the registry subsequent loads resolve through, keeping the root and pending loads.
+    pub fn publish_registry(&self, registry: AssetRegistry) {
+        let mut content = self.data.content.write().unwrap();
+        content.registry = Some(Arc::new(registry));
+        content.error = None;
+    }
+
+    /// The registry loads resolve through, once it has been loaded or published.
+    pub fn registry(&self) -> Option<Arc<AssetRegistry>> {
+        self.data.content.read().unwrap().registry.clone()
     }
 
     /// Eagerly loads the UUID-to-path registry.
@@ -191,7 +204,7 @@ impl AssetServer {
         let mut content = self.data.content.write().unwrap();
         match result {
             Ok(registry) => {
-                content.registry = Some(Arc::new(registry.into_entries()));
+                content.registry.get_or_insert_with(|| Arc::new(registry));
                 content.error = None;
                 Ok(())
             }
@@ -286,17 +299,17 @@ impl AssetServer {
 
     #[cfg(test)]
     async fn resolve_by_id(&self, id: AssetId) -> Option<String> {
-        self.resolve_asset(id).await.map(|(_, address)| address)
+        self.resolve_asset(id).await.map(|(_, entry)| entry.address)
     }
 
-    async fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, String)> {
+    async fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
         if let Err(error) = self.initialize().await {
             log::error!("{error:#}");
             return None;
         }
         let content = self.data.content.read().unwrap();
-        let address = content.registry.as_ref()?.get(&id)?.clone();
-        Some((content.root.clone(), address))
+        let entry = content.registry.as_ref()?.get(id)?.clone();
+        Some((content.root.clone(), entry))
     }
 
     /// Resolves the UUID through the registry before reading the cooked asset.
@@ -315,7 +328,7 @@ impl AssetServer {
         // held across .await (tasks can migrate between worker threads).
         // Load costs show up on the named "asset-load-N" threads instead.
         LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
-            let (content_root, address) = match server.resolve_asset(id).await {
+            let (content_root, entry) = match server.resolve_asset(id).await {
                 Some(resolved) => resolved,
                 None => {
                     log::error!(
@@ -326,6 +339,17 @@ impl AssetServer {
                     return;
                 }
             };
+            if !entry.is::<A>() {
+                log::error!(
+                    "content asset '{}' holds a {} but a {} was requested",
+                    entry.address,
+                    entry.kind,
+                    A::name()
+                );
+                deliver(AssetLoadEvent::LoadFailed { id });
+                return;
+            }
+            let address = entry.address;
             let asset = async {
                 let bytes = crate::assets::utils::load_content_asset_bytes(
                     &content_root,
@@ -358,6 +382,13 @@ impl AssetServer {
                 }
             }
         })
+    }
+}
+
+/// Hands the server the world's [`AssetRegistry`] whenever it changes.
+pub fn sync_asset_registry(registry: Option<Res<AssetRegistry>>, server: Res<AssetServer>) {
+    if let Some(registry) = registry.filter(|registry| registry.is_changed()) {
+        server.publish_registry(registry.clone());
     }
 }
 
@@ -462,7 +493,8 @@ mod tests {
     use super::*;
     use crate::assets::{
         asset_store::AssetStore,
-        content::{read_content_asset_header, save_content_asset, AssetRegistry},
+        content::{read_content_asset_header, save_content_asset},
+        registry::{AssetEntry, AssetRegistry},
     };
     use concerto_ecs::{component::Component, reflect::ReflectSceneComponent, world::World};
 
@@ -495,6 +527,15 @@ mod tests {
         }
     }
 
+    fn scene_entry(id: AssetId) -> AssetEntry {
+        AssetEntry {
+            id,
+            address: "content/hero/scene.gasset".into(),
+            kind: "Scene".into(),
+            provenance: None,
+        }
+    }
+
     /// Runs the load task spawned for `id` to completion.
     ///
     /// Taking the real `Task` out of `pending_tasks` and awaiting it makes the
@@ -518,7 +559,7 @@ mod tests {
         let dir = temp_root("resolve-hit");
         let id = AssetId::from_path("content/hero/scene.gasset");
         let mut registry = AssetRegistry::new();
-        registry.insert(id, "content/hero/scene.gasset");
+        registry.insert(scene_entry(id));
         registry.save(&dir).expect("save registry");
 
         let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
@@ -542,7 +583,7 @@ mod tests {
         let dir = temp_root("resolve-cache");
         let id = AssetId::from_path("content/hero/scene.gasset");
         let mut registry = AssetRegistry::new();
-        registry.insert(id, "content/hero/scene.gasset");
+        registry.insert(scene_entry(id));
         registry.save(&dir).expect("save registry");
 
         let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
@@ -784,6 +825,77 @@ mod tests {
         read_content_asset_header(&dir.join(address))
             .unwrap()
             .asset_id
+    }
+
+    #[test]
+    fn load_fails_without_reading_when_the_registry_names_another_kind() {
+        let dir = temp_root("kind-mismatch");
+        let id = saved_fixture(&dir, 5);
+        let (server, mut world) = fixture_server(&dir);
+        let mut registry = AssetRegistry::load(&dir).unwrap();
+        let entry = registry.get(id).unwrap().clone();
+        registry.insert(AssetEntry {
+            kind: "Mesh".into(),
+            ..entry
+        });
+        server.publish_registry(registry);
+
+        let handle = server.load::<FixtureAsset>(id);
+        drive_pending_load(&server, id);
+        handle_asset_load_events(&mut world);
+
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        assert!(
+            store.get(&handle).is_none(),
+            "the registry says the id holds a Mesh, so a FixtureAsset load must fail"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_server_resolves_through_the_registry_resource_once_it_changes() {
+        use concerto_ecs::{IntoSystem, System};
+
+        let dir = temp_root("sync-registry");
+        let (server, mut world) = fixture_server(&dir);
+        let id = AssetId::new();
+        let mut system = sync_asset_registry.into_system();
+        system.initialize(&mut world);
+        world.insert_resource(AssetRegistry::new());
+        system.run_and_apply((), &mut world);
+        assert_eq!(pollster::block_on(server.resolve_by_id(id)), None);
+
+        world
+            .get_resource_mut::<AssetRegistry>()
+            .unwrap()
+            .insert(scene_entry(id));
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(
+            pollster::block_on(server.resolve_by_id(id)).as_deref(),
+            Some("content/hero/scene.gasset")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_late_registry_read_does_not_replace_a_published_snapshot() {
+        let dir = temp_root("late-read");
+        AssetRegistry::new().save(&dir).unwrap();
+        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        let id = AssetId::new();
+        let mut published = AssetRegistry::new();
+        published.insert(scene_entry(id));
+        server.publish_registry(published);
+
+        pollster::block_on(server.initialize_root(ContentAssetRoot::Directory(dir.clone())))
+            .unwrap();
+
+        assert_eq!(
+            pollster::block_on(server.resolve_by_id(id)).as_deref(),
+            Some("content/hero/scene.gasset")
+        );
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     fn wait_until(what: &str, mut done: impl FnMut() -> bool) {

@@ -89,8 +89,10 @@ An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,
 `scene_target`, `scene_parent`.
 
-Curiosities, the content browser, is a `UITree` that mirrors the project's
-content folder, `content/` unless `content.toml` names another: the folders and
+Curiosities, the content browser, is a `UITree` over the editor world's
+`AssetRegistry`, which opening or refreshing a project fills by scanning the
+content headers and which is empty while no project is open. It mirrors the
+project's content folder, `content/` unless `content.toml` names another: the folders and
 assets directly inside it are the top-level rows, a folder shows a folder mark
 and holds its subfolders and assets, and an asset shows its kind mark and name.
 A folder appears once it holds an asset at any depth; empty directories are not
@@ -101,7 +103,8 @@ expansion and scroll survive. Clicking a row selects it, folder or asset, but
 only an asset becomes the catalogue's selection; activating a folder, by
 double-clicking it or pressing Enter, expands or collapses it. A click while a
 project is opening is ignored and the highlight returns to the selected asset. The search
-field and the kind chips hide every asset that does not match and show the
+field and the kind chips (`Scene`, `Mesh`, `Texture`, `StandardMaterial`)
+hide every asset that does not match and show the
 folders leading to each match, open; clearing them restores the expansion as it
 was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.

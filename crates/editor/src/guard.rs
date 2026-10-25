@@ -505,8 +505,6 @@ mod tests {
         let mut project = crate::project::ProjectState::default();
         project.project = Some(crate::project::Project {
             root: std::path::PathBuf::from("project"),
-            assets: vec![],
-            registry: concerto_foundation::assets::content::AssetRegistry::default(),
             content_root: "content".into(),
         });
         world.insert_resource(project);
@@ -516,20 +514,15 @@ mod tests {
             .unwrap();
         world.insert_resource(registry);
         let doc = document(&mut world, true);
-        let next = crate::project::AssetEntry::from_address(
-            AssetId::new(),
-            "next.gasset",
-            Scene::name().into(),
-            None,
-        );
-        world
-            .get_resource_mut::<crate::project::ProjectState>()
-            .unwrap()
-            .project
-            .as_mut()
-            .unwrap()
-            .registry
-            .insert(next.id, next.address.clone());
+        let next = concerto_foundation::assets::registry::AssetEntry {
+            id: AssetId::new(),
+            address: "next.gasset".into(),
+            kind: Scene::name().into(),
+            provenance: None,
+        };
+        let mut assets = concerto_foundation::assets::registry::AssetRegistry::default();
+        assets.insert(next.clone());
+        world.insert_resource(assets);
         let open = |world: &mut World| {
             world
                 .get_resource_mut::<AssetEditorCommands>()

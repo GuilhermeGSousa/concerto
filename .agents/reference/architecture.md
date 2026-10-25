@@ -88,6 +88,12 @@ time. The running game never reads them.
   `<source>.import.toml` beside the source to pin each sub-asset's UUID.
 - Code names an asset with `asset_id!("content/hero/mesh_0.gasset")`, resolved
   at compile time. The runtime finds files by UUID through the registry.
+- `AssetRegistry` is the one catalogue of content on disk: id, address, kind.
+  It is a resource; `registry.of_type::<T>()` lists assets without loading
+  them. `AssetServer` resolves loads against a snapshot of it, refreshed by
+  `sync_asset_registry` in `First` when the resource changes. The editor builds
+  it by scanning headers and gives each hosted `App` the project root and a
+  copy when the `App` is created, and the new registry whenever it changes.
 - A scene is a tree of nodes whose components are stored by type name as
   reflected values (`concerto_reflect::ReflectedValue`), with field and variant
   names. A component takes part by deriving `Reflect` and `Default` with

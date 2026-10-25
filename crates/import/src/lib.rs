@@ -7,9 +7,10 @@ use std::sync::{Arc, Mutex};
 use anyhow::{bail, Context};
 use concerto_asset_import::{DependencyEntry, ImportContext, Importer, SubAssetIdResolver};
 use concerto_foundation::assets::content::{
-    read_content_asset_header, write_content_asset, AssetRegistry, ContentAssetHeader,
-    ImportProvenance, CONTENT_FORMAT_VERSION, REGISTRY_FILE_NAME,
+    read_content_asset_header, write_content_asset, ContentAssetHeader, ImportProvenance,
+    CONTENT_FORMAT_VERSION,
 };
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, REGISTRY_FILE_NAME};
 use concerto_foundation::assets::AssetId;
 
 pub mod config;
@@ -169,8 +170,11 @@ fn import_placed(
     let mut registry =
         AssetRegistry::from_content_tree(project_root, &config.root, &config.extension)?;
     let mut headers = HashMap::new();
-    for (id, address) in registry.iter() {
-        headers.insert(id, read_content_asset_header(&project_root.join(address))?);
+    for entry in registry.iter() {
+        headers.insert(
+            entry.id,
+            read_content_asset_header(&project_root.join(&entry.address))?,
+        );
     }
     let mut metadata = if sidecar.try_exists()? {
         let metadata = SourceMetadata::load(&sidecar)?;
@@ -263,7 +267,7 @@ fn import_placed(
         }
         let address = registry
             .get(sub_asset.asset_id)
-            .map(str::to_owned)
+            .map(|entry| entry.address.clone())
             .unwrap_or_else(|| content_address(config, relative_source, &sub_asset.name));
         if !destinations.insert(address.clone()) {
             bail!("multiple sub-assets would write '{address}'");
@@ -294,7 +298,12 @@ fn import_placed(
             project_root.join(&address),
             write_content_asset(&header, &sub_asset.bytes)?,
         ));
-        registry.insert(sub_asset.asset_id, &address);
+        registry.insert(AssetEntry {
+            id: sub_asset.asset_id,
+            address: address.clone(),
+            kind: header.kind.clone(),
+            provenance: header.provenance.clone(),
+        });
         metadata.outputs.insert(
             sub_asset.name.clone(),
             OutputMetadata {
@@ -328,16 +337,7 @@ fn import_placed(
         .iter()
         .map(|(path, bytes)| stage(path, bytes).map(|file| (path, file)))
         .collect::<anyhow::Result<_>>()?;
-    #[derive(serde::Serialize)]
-    struct RegistryFile {
-        assets: BTreeMap<String, String>,
-    }
-    let registry_text = toml::to_string_pretty(&RegistryFile {
-        assets: registry
-            .iter()
-            .map(|(id, address)| (id.simple_hex(), address.to_owned()))
-            .collect(),
-    })?;
+    let registry_text = registry.to_toml();
     let registry_path = project_root.join(REGISTRY_FILE_NAME);
     let registry_file = stage(&registry_path, registry_text.as_bytes())?;
     for (path, file) in copied {

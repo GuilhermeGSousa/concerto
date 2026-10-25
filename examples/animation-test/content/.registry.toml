@@ -1,21 +1,21 @@
 [assets]
-06b96aad52da5eefb8f2591437743f61 = "content/idle/animation_0.gasset"
-0fc586efb06c53458ef678db4d50ab56 = "content/strafe_right/animation_0.gasset"
-13c2626b9f1c5dacaa96cd527374fab9 = "content/strafe_left/skeleton_0.gasset"
-22585eeb46b45888952bf6bc7f55ef64 = "content/ninja/animation_0.gasset"
-2651addda9885c5496ec51870a0faea2 = "content/walk/skeleton_0.gasset"
-4cfc41d3bfd6508e8a59e6e5347b47d8 = "content/ninja/texture_1_linear.gasset"
-5f21384bc7bd5e75847844799b414d86 = "content/ninja/scene.gasset"
-601258e4ba4c56c2ba33c4a4837ade8a = "content/ninja/skeleton_0.gasset"
-63e08d3a07065d558682d0f0e7b7c875 = "content/ninja/mesh_0.gasset"
-928727804f3055bd9582323268f6bc95 = "content/ninja/texture_2.gasset"
-9715c866287452e0962890ae59b591d9 = "content/strafe_left/scene.gasset"
-b5ec8a416e0a54b0ab9dc12fc7e00dce = "content/strafe_right/scene.gasset"
-b7bc83686260557c94f4f1eb8efd70d9 = "content/idle/skeleton_0.gasset"
-b96e83b1d5e251c1b92f22ed4358bd92 = "content/strafe_left/animation_0.gasset"
-c50e90ad690150c0b0c661eaaf68f13b = "content/walk/scene.gasset"
-cd48342228f75173924257ba5a527adb = "content/ninja/material_0.gasset"
-d263e3221de55f6a973e12dc920a9394 = "content/strafe_right/skeleton_0.gasset"
-d5dfdd2b38e757c98b2f48d8b6775e1c = "content/idle/scene.gasset"
-e8386b76315a5717a350a74c656b9dac = "content/ninja/texture_3_linear.gasset"
-f200fcb7c5ea5a30915e7417d4154652 = "content/walk/animation_0.gasset"
+06b96aad52da5eefb8f2591437743f61 = { address = "content/idle/animation_0.gasset", kind = "AnimationClip" }
+0fc586efb06c53458ef678db4d50ab56 = { address = "content/strafe_right/animation_0.gasset", kind = "AnimationClip" }
+13c2626b9f1c5dacaa96cd527374fab9 = { address = "content/strafe_left/skeleton_0.gasset", kind = "Skeleton" }
+22585eeb46b45888952bf6bc7f55ef64 = { address = "content/ninja/animation_0.gasset", kind = "AnimationClip" }
+2651addda9885c5496ec51870a0faea2 = { address = "content/walk/skeleton_0.gasset", kind = "Skeleton" }
+4cfc41d3bfd6508e8a59e6e5347b47d8 = { address = "content/ninja/texture_1_linear.gasset", kind = "Texture" }
+5f21384bc7bd5e75847844799b414d86 = { address = "content/ninja/scene.gasset", kind = "Scene" }
+601258e4ba4c56c2ba33c4a4837ade8a = { address = "content/ninja/skeleton_0.gasset", kind = "Skeleton" }
+63e08d3a07065d558682d0f0e7b7c875 = { address = "content/ninja/mesh_0.gasset", kind = "Mesh" }
+928727804f3055bd9582323268f6bc95 = { address = "content/ninja/texture_2.gasset", kind = "Texture" }
+9715c866287452e0962890ae59b591d9 = { address = "content/strafe_left/scene.gasset", kind = "Scene" }
+b5ec8a416e0a54b0ab9dc12fc7e00dce = { address = "content/strafe_right/scene.gasset", kind = "Scene" }
+b7bc83686260557c94f4f1eb8efd70d9 = { address = "content/idle/skeleton_0.gasset", kind = "Skeleton" }
+b96e83b1d5e251c1b92f22ed4358bd92 = { address = "content/strafe_left/animation_0.gasset", kind = "AnimationClip" }
+c50e90ad690150c0b0c661eaaf68f13b = { address = "content/walk/scene.gasset", kind = "Scene" }
+cd48342228f75173924257ba5a527adb = { address = "content/ninja/material_0.gasset", kind = "StandardMaterial" }
+d263e3221de55f6a973e12dc920a9394 = { address = "content/strafe_right/skeleton_0.gasset", kind = "Skeleton" }
+d5dfdd2b38e757c98b2f48d8b6775e1c = { address = "content/idle/scene.gasset", kind = "Scene" }
+e8386b76315a5717a350a74c656b9dac = { address = "content/ninja/texture_3_linear.gasset", kind = "Texture" }
+f200fcb7c5ea5a30915e7417d4154652 = { address = "content/walk/animation_0.gasset", kind = "AnimationClip" }

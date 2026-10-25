@@ -1,7 +1,7 @@
 use anyhow::Context;
 use cfg_if::cfg_if;
 
-use super::content::AssetRegistry;
+use super::registry::{AssetRegistry, REGISTRY_FILE_NAME};
 use super::ContentAssetRoot;
 
 /// Reads an asset's payload from the content asset at `<root>/<address>`.
@@ -30,11 +30,11 @@ pub async fn load_content_asset_bytes(
 /// ever been imported or saved into this root) is an empty registry, not
 /// an error.
 pub async fn load_registry(root: &ContentAssetRoot) -> anyhow::Result<AssetRegistry> {
-    match try_read_relative(root, crate::assets::content::REGISTRY_FILE_NAME).await? {
+    match try_read_relative(root, REGISTRY_FILE_NAME).await? {
         Some(bytes) => {
             let text =
                 String::from_utf8(bytes).context("asset registry file is not valid UTF-8")?;
-            AssetRegistry::parse(&text)
+            AssetRegistry::parse(&text).with_context(|| format!("in '{REGISTRY_FILE_NAME}'"))
         }
         None => Ok(AssetRegistry::default()),
     }

@@ -1,6 +1,4 @@
 //! What the scene tools tell whoever hosts them, and the root they edit under.
-use std::path::PathBuf;
-
 use concerto_app::{App, edit_time::AtEditTime};
 use concerto_ecs::{
     Component, Entity, Resource, World,
@@ -8,10 +6,7 @@ use concerto_ecs::{
     events::{Event, event_channel::EventChannel},
     signal::{On, Signal},
 };
-use concerto_foundation::{
-    assets::{asset_server::AssetServer, content::AssetRegistry},
-    transform::Transform,
-};
+use concerto_foundation::transform::Transform;
 use concerto_scene::{capture::capture_scene, scene::Scene, spawner::spawn_scene_in_world};
 
 use crate::tools::selection::Select;
@@ -36,29 +31,9 @@ pub struct SceneStatus(pub String);
 #[derive(Event, Clone)]
 pub struct RevealEntity(pub Entity);
 
-/// Tells the scene's asset server where the project's content is.
-pub struct PublishContent {
-    pub root: PathBuf,
-    pub registry: AssetRegistry,
-}
-impl Signal for PublishContent {}
-
 /// Replaces whatever scene is open with this one.
 pub struct OpenScene(pub Scene);
 impl Signal for OpenScene {}
-
-fn publish_content(on: On<PublishContent>, world: &mut World) {
-    let Some(server) = world.get_resource::<AssetServer>() else {
-        return;
-    };
-    let PublishContent { root, registry } = on.signal();
-    if let Err(error) = server.publish_project_content(root, registry.clone()) {
-        write(
-            world,
-            SceneStatus(format!("Could not activate project assets: {error:#}")),
-        );
-    }
-}
 
 fn open_scene(on: On<OpenScene>, world: &mut World) {
     let stale: Vec<Entity> = world
@@ -96,7 +71,6 @@ pub(crate) fn build(app: &mut App) {
         .register_event::<SceneStatus>()
         .register_event::<RevealEntity>()
         .insert_resource(SceneDirty::default())
-        .add_listener(publish_content.at_edit_time())
         .add_listener(open_scene.at_edit_time());
 }
 
@@ -289,38 +263,5 @@ mod tests {
         let captured = capture_open_scene(app.main_mut().world_mut());
 
         assert_eq!(captured.unwrap_err(), "No scene is open");
-    }
-
-    #[test]
-    fn a_content_root_that_cannot_be_resolved_is_reported_as_a_status() {
-        let mut app = tools_app();
-        app.insert_resource(AssetServer::new());
-
-        app.main_mut().world_mut().trigger(PublishContent {
-            root: PathBuf::from("/nowhere/that/exists"),
-            registry: AssetRegistry::default(),
-        });
-
-        let statuses = written::<SceneStatus>(&app);
-        assert_eq!(statuses.len(), 1);
-        assert!(
-            statuses[0]
-                .0
-                .starts_with("Could not activate project assets: "),
-            "{}",
-            statuses[0].0
-        );
-    }
-
-    #[test]
-    fn the_tools_need_no_asset_server_to_be_told_of_content() {
-        let mut app = tools_app();
-
-        app.main_mut().world_mut().trigger(PublishContent {
-            root: PathBuf::from("/nowhere/that/exists"),
-            registry: AssetRegistry::default(),
-        });
-
-        assert!(written::<SceneStatus>(&app).is_empty());
     }
 }

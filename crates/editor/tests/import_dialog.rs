@@ -9,7 +9,6 @@ use concerto_editor::{
     },
     project::{Project, ProjectState},
 };
-use concerto_foundation::assets::content::AssetRegistry;
 use concerto_ui::{
     focus::FocusedWidget,
     text_input::{UITextInput, UITextInputChanged},
@@ -135,8 +134,6 @@ fn editor(sources: &[&str]) -> (App, tempfile::TempDir) {
     let mut state = ProjectState::default();
     state.project = Some(Project {
         root: project.path().to_path_buf(),
-        assets: Vec::new(),
-        registry: AssetRegistry::default(),
         content_root: "content".into(),
     });
     app.insert_resource(state);

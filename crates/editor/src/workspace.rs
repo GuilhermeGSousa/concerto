@@ -404,26 +404,23 @@ mod tests {
         world.insert_resource(HoveredNode::default());
         world.insert_resource(UIInputState::default());
         world.insert_resource(ActionMap::default());
-        let asset = crate::project::AssetEntry {
+        let asset = concerto_foundation::assets::registry::AssetEntry {
             id: AssetId::new(),
             address: "notes.gasset".into(),
             kind: "Notes".into(),
-            display_name: "notes".into(),
-            folder: String::new(),
             provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: "notes".into(),
             }),
         };
-        let mut content = concerto_foundation::assets::content::AssetRegistry::default();
-        content.insert(asset.id, asset.address.clone());
+        let mut content = concerto_foundation::assets::registry::AssetRegistry::default();
+        content.insert(asset.clone());
+        world.insert_resource(content);
         world
             .get_resource_mut::<crate::project::ProjectState>()
             .unwrap()
             .project = Some(crate::project::Project {
             root: std::path::PathBuf::from("project"),
-            assets: vec![],
-            registry: content,
             content_root: "content".into(),
         });
         world

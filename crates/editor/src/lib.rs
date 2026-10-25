@@ -48,6 +48,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(actions::ActionsPlugin);
         app.insert_resource(project::EditorCommands::default());
         app.insert_resource(project::ProjectState::default());
+        app.insert_resource(concerto_foundation::assets::registry::AssetRegistry::default());
         app.register_plugin(project::ProjectPlugin);
         app.register_plugin(hierarchy::HierarchyPlugin);
         app.register_plugin(content::ContentPlugin);
