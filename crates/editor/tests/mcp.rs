@@ -48,7 +48,8 @@ use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::{camera::Camera, light::Light};
 use concerto_scene::scene::{Scene, SceneNode};
 use concerto_ui::{text::UIText, text_input::UITextInput};
-use glam::Vec3;
+use concerto_window::input::{Input, KeyCode, MouseButton, PhysicalKey};
+use glam::{Vec2, Vec3};
 use image::{ImageFormat, RgbaImage};
 use rmcp::{
     RoleClient, ServiceExt,
@@ -226,6 +227,39 @@ fn note_the_hero(named: Query<&Name>) {
 fn watched_game(app: &mut App) {
     game(app);
     app.add_system(LateUpdate, note_the_hero);
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Received {
+    w_presses: u32,
+    clicks: u32,
+    pointer: Vec2,
+}
+
+fn spawn_the_counter(mut cmd: CommandQueue) {
+    cmd.spawn((Name::new("Counter"), Received::default()));
+}
+
+fn count_input(input: Res<Input>, counters: Query<&mut Received>) {
+    for mut received in counters.iter() {
+        if input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyW)) {
+            received.w_presses += 1;
+        }
+        if input.is_mouse_button_just_pressed(MouseButton::Left) {
+            received.clicks += 1;
+        }
+        if received.pointer != input.mouse_position() {
+            received.pointer = input.mouse_position();
+        }
+    }
+}
+
+fn counting_game(app: &mut App) {
+    game(app);
+    app.register_type::<Received>()
+        .add_system(Startup, spawn_the_counter)
+        .add_system(Update, count_input);
 }
 
 fn game(app: &mut App) {
@@ -3193,4 +3227,172 @@ fn play_answers_once_the_game_has_spawned_its_scene() {
     let (seen, answered) = served.result;
     let seen = seen.expect("the game spawned its scene before play answered");
     assert!(seen <= answered);
+}
+
+fn viewport_size(status: &str) -> (f32, f32) {
+    let (width, height) = line(status, "viewport: ").split_once('x').unwrap();
+    (width.parse().unwrap(), height.parse().unwrap())
+}
+
+fn received(inspection: &str) -> Value {
+    let inspection: Value = serde_json::from_str(inspection).unwrap();
+    inspected(&inspection, "Received")["value"].clone()
+}
+
+fn near(value: &Value, expected: [f32; 2]) -> bool {
+    value.as_array().is_some_and(|pair| {
+        pair.len() == 2
+            && pair.iter().zip(expected).all(|(got, wanted)| {
+                got.as_f64()
+                    .is_some_and(|got| (got - f64::from(wanted)).abs() < 0.01)
+            })
+    })
+}
+
+#[test]
+fn send_input_reaches_the_game_as_the_editor_window_would_pass_it_on() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        counting_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            ok(&client, "play").await;
+            let status = ok(&client, "status").await;
+            let (width, height) = viewport_size(&status);
+            let document = document_id(&status);
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let counter = scene_id(&ids, "Counter");
+            let read = || {
+                let client = &client;
+                let counter = counter.clone();
+                async move { received(&ok_with(client, "inspect", json!({ "entity": counter })).await) }
+            };
+            let typed = ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "key": "KeyW", "pressed": true },
+                    { "key": "KeyW", "pressed": false },
+                    { "key": "KeyW", "pressed": true, "text": "w" },
+                ] }),
+            )
+            .await;
+            let after_keys = read().await;
+            ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "KeyW", "pressed": false }, { "move": [10.0, 20.0] }] }),
+            )
+            .await;
+            let after_move = read().await;
+            let centre = [(width / 2.0).floor(), (height / 2.0).floor()];
+            ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [
+                    { "button": "left", "pressed": true, "at": centre },
+                    { "button": "left", "pressed": false },
+                    { "wheel": [0.0, 1.0] },
+                ] }),
+            )
+            .await;
+            let after_click = read().await;
+            client.cancel().await.unwrap();
+            (document, typed, after_keys, after_move, centre, after_click)
+        },
+    ) else {
+        return;
+    };
+
+    let (document, typed, after_keys, after_move, centre, after_click) = served.result;
+    assert_eq!(
+        typed,
+        format!("Sent 3 window events to the game in document {document}; held in the game: KeyW.")
+    );
+    assert_eq!(after_keys["w_presses"], 2, "{after_keys}");
+    assert!(near(&after_move["pointer"], [10.0, 20.0]), "{after_move}");
+    assert_eq!(after_click["clicks"], 1, "{after_click}");
+    assert!(near(&after_click["pointer"], centre), "{after_click}");
+}
+
+#[test]
+fn send_input_refuses_unknown_keys_points_off_the_picture_and_a_game_without_input() {
+    let fixture = Fixture::new();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        counting_game,
+        |_| {},
+        |client| async move {
+            open(&client).await;
+            let idle = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "KeyW", "pressed": true }] }),
+            )
+            .await;
+            ok(&client, "play").await;
+            let (width, _) = viewport_size(&ok(&client, "status").await);
+            let unknown = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "KeyW", "pressed": true }, { "key": "Kew", "pressed": true }] }),
+            )
+            .await;
+            let off = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "move": [width, 0.0] }] }),
+            )
+            .await;
+            let malformed = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "KeyW" }] }),
+            )
+            .await;
+            let released = ok_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "ShiftLeft", "pressed": true }, { "key": "F1", "pressed": true }] }),
+            )
+            .await;
+            let refused = error_with(
+                &client,
+                "send_input",
+                json!({ "events": [{ "key": "KeyW", "pressed": true }] }),
+            )
+            .await;
+            client.cancel().await.unwrap();
+            (idle, unknown, off, malformed, released, refused, width)
+        },
+    ) else {
+        return;
+    };
+
+    let (idle, unknown, off, malformed, released, refused, width) = served.result;
+    assert_eq!(idle["code"], "not_playing", "{idle}");
+    assert_eq!(unknown["code"], "invalid_arguments", "{unknown}");
+    let message = unknown["message"].as_str().unwrap();
+    assert!(
+        message.starts_with("events[1]: no key named Kew"),
+        "{message}"
+    );
+    assert!(message.contains("KeyW"), "{message}");
+    assert_eq!(off["code"], "invalid_arguments", "{off}");
+    assert!(
+        off["message"].as_str().unwrap().contains(&format!(
+            "outside the viewport's picture, which is {width}x"
+        )),
+        "{off}"
+    );
+    assert_eq!(malformed["code"], "invalid_arguments", "{malformed}");
+    assert!(
+        released.ends_with(" The editor has input now."),
+        "{released}"
+    );
+    assert_eq!(refused["code"], "input_released", "{refused}");
 }

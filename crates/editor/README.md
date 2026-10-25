@@ -165,6 +165,31 @@ playing, and answers once the edited scene is back as it was before play;
 edits made to the running game are gone. `save` and `play` need an open scene,
 and `stop` a game starting or playing.
 
+`send_input` sends `events` to the game playing in the viewport as the editor
+window passes on a person's input, one window event per frame in order, and
+answers once the game has had the last: `Sent <n> window events to the game in
+document <id>.`, naming the keys still held in the game. An event is
+`{ "key", "pressed", "text"? }`, a key named as the window crate's `KeyCode`
+names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`), ignoring case, with
+the text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
+`right`, `middle`, `back` and `forward`, moving the pointer to `at` first;
+`{ "move": [x, y] }`, which moves the pointer there and, as a mouse does, adds
+the mouse motion that takes it there, a second window event; or
+`{ "wheel": [x, y] }`, in lines. Points are pixels of the viewport's picture
+from its top-left corner at its full size, the `viewport` size `status`
+reports; on a screenshot scaled down by `max_edge`, multiply a point by the
+full size over the PNG's size. A point off the picture, or a key name
+`KeyCode` lacks, answers `invalid_arguments`, the latter with close names, and
+sends nothing. The events then take the path real input takes: Ctrl+P stops
+the game, and Shift+F1 or a press off the viewport's picture gives input to the
+editor. A key left pressed stays held in the game, across calls, until a later
+call releases it. `send_input` needs a game playing. While the editor has
+input it answers `input_released`, and since only a click in the viewport gives
+input back, an agent gives the game input again with `stop` and `play`. An
+event that gives the editor input, or stops the game, is the last sent: a call
+with events after it answers `input_released` or `not_playing`, saying how
+many were sent, and one that ends with it says so in its answer.
+
 ### Errors
 
 A failed call is a tool result marked `isError` whose text is
@@ -186,6 +211,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
 | `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
 | `play_failed` | The game did not start; the message is the editor's status |
+| `input_released` | `send_input` while the editor, not the game, has input |
 | `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
 | `timeout` | What the call waited for did not happen within 30 seconds |
 | `internal` | No system answered the call: a bug |

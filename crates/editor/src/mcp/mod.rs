@@ -1,5 +1,6 @@
 mod act;
 mod edit;
+mod input;
 mod observe;
 mod run;
 
@@ -71,6 +72,7 @@ impl Plugin for EditorMcpPlugin {
         act::build(app);
         edit::build(app);
         run::build(app);
+        input::build(app);
     }
 }
 
