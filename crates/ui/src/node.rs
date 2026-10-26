@@ -408,7 +408,7 @@ impl Default for UINode {
 }
 
 /// Computed read-only layout in logical pixels.
-#[derive(Component)]
+#[derive(Component, Clone, PartialEq)]
 pub struct UILayout {
     pub rect: UIBox,
     pub content_rect: UIBox,
@@ -633,9 +633,12 @@ pub(crate) struct RenderUIMaterial {
 pub(crate) fn compute_ui_nodes(
     ui_nodes: Query<(Entity, &UINode, Option<&Children>)>,
     ui_roots: Query<(Entity, &UINode, Option<&Children>), (Without<ChildOf>, Without<UICulled>)>,
-    culled: Query<&UICulled>,
-    texts: Query<&crate::text::UIText>,
-    extents: Query<&UIIntrinsicHeight>,
+    (culled, texts, extents): (
+        Query<&UICulled>,
+        Query<&crate::text::UIText>,
+        Query<&UIIntrinsicHeight>,
+    ),
+    layouts: Query<&mut UILayout>,
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
     window: Res<Window>,
@@ -766,17 +769,16 @@ pub(crate) fn compute_ui_nodes(
 
         let rect = UIBox { min: abs_pos, size };
         let clip_rect = node_clip(rect, window_clip, root_node);
-        cmd.insert(
-            (
-                UILayout {
-                    rect,
-                    content_rect: root_node.padding.inset_box(rect),
-                    clip_rect,
-                    paint_order: paint_order(root_node.z_index, sequence),
-                },
-                SyncWithRenderWorld,
-            ),
+        write_layout(
+            &layouts,
+            &mut cmd,
             entity,
+            UILayout {
+                rect,
+                content_rect: root_node.padding.inset_box(rect),
+                clip_rect,
+                paint_order: paint_order(root_node.z_index, sequence),
+            },
         );
         if root_node.visible {
             anchor_rects.insert(entity, rect);
@@ -793,6 +795,7 @@ pub(crate) fn compute_ui_nodes(
                 children,
                 &ui_nodes,
                 &entity_to_taffy,
+                &layouts,
                 &mut cmd,
                 &mut sequence,
                 &mut anchor_rects,
@@ -829,17 +832,16 @@ pub(crate) fn compute_ui_nodes(
         };
         let clip_rect = node_clip(rect, window_clip, root_node);
         let layer = root_node.z_index;
-        cmd.insert(
-            (
-                UILayout {
-                    rect,
-                    content_rect: root_node.padding.inset_box(rect),
-                    clip_rect,
-                    paint_order: paint_order(layer, sequence),
-                },
-                SyncWithRenderWorld,
-            ),
+        write_layout(
+            &layouts,
+            &mut cmd,
             entity,
+            UILayout {
+                rect,
+                content_rect: root_node.padding.inset_box(rect),
+                clip_rect,
+                paint_order: paint_order(layer, sequence),
+            },
         );
         anchor_rects.insert(entity, rect);
         sequence += 1;
@@ -854,6 +856,7 @@ pub(crate) fn compute_ui_nodes(
                 children,
                 &ui_nodes,
                 &entity_to_taffy,
+                &layouts,
                 &mut cmd,
                 &mut sequence,
                 &mut anchor_rects,
@@ -1031,6 +1034,7 @@ fn write_absolute_positions(
     children: &Children,
     ui_nodes: &Query<(Entity, &UINode, Option<&Children>)>,
     entity_to_taffy: &HashMap<Entity, NodeId>,
+    layouts: &Query<&mut UILayout>,
     cmd: &mut CommandQueue,
     sequence: &mut i64,
     anchor_rects: &mut HashMap<Entity, UIBox>,
@@ -1068,17 +1072,16 @@ fn write_absolute_positions(
         let clip_rect = node_clip(rect, inherited_clip, node);
         let layer = effective_layer(inherited_layer, node.z_index);
 
-        cmd.insert(
-            (
-                UILayout {
-                    rect,
-                    content_rect: node.padding.inset_box(rect),
-                    clip_rect,
-                    paint_order: paint_order(layer, *sequence),
-                },
-                SyncWithRenderWorld,
-            ),
+        write_layout(
+            layouts,
+            cmd,
             child_entity,
+            UILayout {
+                rect,
+                content_rect: node.padding.inset_box(rect),
+                clip_rect,
+                paint_order: paint_order(layer, *sequence),
+            },
         );
         let visible = inherited_visible && node.visible;
         if visible {
@@ -1095,6 +1098,20 @@ fn write_absolute_positions(
             descendants.reverse();
             stack.extend(descendants);
         }
+    }
+}
+
+fn write_layout(
+    layouts: &Query<&mut UILayout>,
+    cmd: &mut CommandQueue,
+    entity: Entity,
+    layout: UILayout,
+) {
+    match layouts.get_entity(entity) {
+        Some(mut current) => {
+            current.set_if_neq(layout);
+        }
+        None => cmd.insert((layout, SyncWithRenderWorld), entity),
     }
 }
 
@@ -1929,10 +1946,20 @@ mod tests {
         world
     }
 
+    #[derive(Resource)]
+    struct LayOut(concerto_ecs::system::BoxedSystem);
+
     fn lay_out(world: &mut concerto_ecs::World) {
-        let mut system = concerto_ecs::IntoSystem::into_system(compute_ui_nodes);
-        concerto_ecs::System::initialize(&mut system, world);
-        concerto_ecs::System::run_and_apply(&mut system, (), world);
+        let mut system = match world.remove_resource::<LayOut>() {
+            Some(LayOut(system)) => system,
+            None => {
+                let mut system = concerto_ecs::IntoSystem::into_boxed_system(compute_ui_nodes);
+                system.initialize(world);
+                system
+            }
+        };
+        system.run_and_apply((), world);
+        world.insert_resource(LayOut(system));
     }
 
     fn layout_passes(world: &concerto_ecs::World) -> u64 {
@@ -1971,6 +1998,69 @@ mod tests {
                 .with_flex_shrink(0.0),
             ChildOf::new(parent),
         ))
+    }
+
+    #[test]
+    fn a_first_layout_inserts_a_layout_and_a_render_mirror_on_every_node() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let first = row(&mut world, root);
+        let inner = row(&mut world, first);
+        let second = row(&mut world, root);
+
+        lay_out(&mut world);
+
+        for entity in [root, first, inner, second] {
+            assert!(world.get_component_for_entity::<UILayout>(entity).is_some());
+            assert!(
+                world
+                    .get_component_for_entity::<SyncWithRenderWorld>(entity)
+                    .is_some()
+            );
+        }
+    }
+
+    fn settled_column(world: &mut concerto_ecs::World) -> (crate::testing::Watch, Vec<Entity>) {
+        let root = column(world);
+        let rows = (0..4).map(|_| row(world, root)).collect::<Vec<_>>();
+        let mut watch = crate::testing::Watch::new::<UILayout, _>(world, compute_ui_nodes);
+        watch.run(world);
+        assert_eq!(watch.run(world), 0, "a settled layout writes nothing");
+        (watch, rows)
+    }
+
+    #[test]
+    fn a_taller_last_row_restamps_only_that_row() {
+        let mut world = layout_world();
+        let (mut watch, rows) = settled_column(&mut world);
+        let above = rows[..3]
+            .iter()
+            .map(|&row| rect_of(&world, row))
+            .collect::<Vec<_>>();
+        let last = rows[3];
+        world
+            .get_component_for_entity_mut::<UINode>(last)
+            .unwrap()
+            .height = UIValue::Px(80.0);
+
+        assert_eq!(watch.run(&mut world), 1);
+        assert_eq!(rect_of(&world, last).size.y, 80.0);
+        for (&row, rect) in rows[..3].iter().zip(above) {
+            assert_eq!(rect_of(&world, row), rect);
+        }
+    }
+
+    #[test]
+    fn a_taller_first_row_restamps_it_and_the_rows_below_but_not_the_column() {
+        let mut world = layout_world();
+        let (mut watch, rows) = settled_column(&mut world);
+        world
+            .get_component_for_entity_mut::<UINode>(rows[0])
+            .unwrap()
+            .height = UIValue::Px(80.0);
+
+        assert_eq!(watch.run(&mut world), rows.len());
+        assert_eq!(rect_of(&world, rows[1]).min.y, 80.0);
     }
 
     #[test]

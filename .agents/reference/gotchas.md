@@ -102,6 +102,13 @@ fix the entry in the same commit as the change that made it false.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 
+## UI
+
+- **`UILayout` is written only when it differs,** so `Changed<UILayout>` means
+  the rectangle, clip or paint order moved. It is inserted, with
+  `SyncWithRenderWorld`, the first time a node is laid out, so a node spawned
+  this frame has none until the layout set runs.
+
 ## Scenes and assets
 
 - **A type nothing registered is invisible.** Scenes spawn and capture, and the
