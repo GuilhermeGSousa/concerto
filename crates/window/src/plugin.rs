@@ -2,6 +2,7 @@ use concerto_ecs::resource::{ResMut, Resource};
 use glam::Vec2;
 
 use crate::{
+    clipboard::{answer_paste_requests, ClipboardPasted, WindowClipboard},
     events::{fold_input, fold_window, FoldInput, InputGate, WindowEvent},
     input::{
         actions::{resolve_actions, ActionFired, ActionMap},
@@ -17,20 +18,6 @@ use concerto_app::{
 
 pub use crate::window::{CursorMode, Window, WindowCommand, WindowSettings};
 pub use winit::window::ResizeDirection;
-
-/// Clipboard adapter consumed by UI controls.
-#[derive(Resource, Default)]
-pub struct WindowClipboard(String);
-
-impl WindowClipboard {
-    pub fn read(&self) -> &str {
-        &self.0
-    }
-
-    pub fn write(&mut self, value: impl Into<String>) {
-        self.0 = value.into();
-    }
-}
 
 /// What a left press would do to the window, were it to land here.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -86,6 +73,8 @@ impl Plugin for WindowPlugin {
         app.add_system(First, fold_window.at_edit_time());
         app.add_system(LateUpdate, resolve_actions);
         app.insert_resource(WindowClipboard::default());
+        app.register_event::<ClipboardPasted>();
+        app.add_system(First, answer_paste_requests);
         app.insert_resource(WindowGestureRegion::default());
         app.add_system(Main, update_input.at_edit_time());
     }

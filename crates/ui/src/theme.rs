@@ -20,6 +20,10 @@ pub struct UITheme {
     pub focus: Color,
     pub error: Color,
     pub warning: Color,
+    /// The fill behind selected text in a text field.
+    pub text_selection: Color,
+    /// A text field's caret.
+    pub caret: Color,
     pub spacing_xs: f32,
     pub spacing_sm: f32,
     pub spacing_md: f32,
@@ -153,6 +157,8 @@ impl UITheme {
             focus: Color::srgba(0.710, 0.671, 0.988, 1.0),
             error: Color::srgba(0.851, 0.404, 0.451, 1.0),
             warning: Color::srgba(0.878, 0.694, 0.400, 1.0),
+            text_selection: Color::srgba(0.569, 0.518, 0.851, 0.4),
+            caret: Color::srgba(0.914, 0.914, 0.929, 1.0),
             spacing_xs: 4.0,
             spacing_sm: 7.0,
             spacing_md: 10.0,

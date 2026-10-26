@@ -3,7 +3,7 @@ use concerto_ecs::{Component, Entity, Query, Res, ResMut, events::event_reader::
 use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
-    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+    focus::{FocusedWidget, UIFocusLost},
     node::UIRect,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
@@ -206,24 +206,6 @@ fn revert(slot: &NumericSlot, input: &mut UITextInput) {
     input.selection_anchor = None;
 }
 
-/// Selects a field's whole text when it gains focus, so the first keystroke replaces it rather than landing after it.
-pub(crate) fn select_numeric_field_on_focus(
-    mut gained: EventReader<UIFocusGained>,
-    fields: Query<(&NumericSlot, &mut UITextInput)>,
-) {
-    for event in gained.read() {
-        let Some((_, mut input)) = fields.get_entity(event.0) else {
-            continue;
-        };
-        select_all(&mut input);
-    }
-}
-
-fn select_all(input: &mut UITextInput) {
-    input.selection_anchor = Some(0);
-    input.cursor = input.value.len();
-}
-
 pub(crate) fn commit_numeric_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
@@ -340,19 +322,6 @@ mod tests {
                 number: -4.5
             })
         );
-    }
-
-    #[test]
-    fn focus_selects_the_whole_field() {
-        let mut input = UITextInput::new("");
-        input.value = "1.000".into();
-        input.cursor = 5;
-        input.selection_anchor = None;
-
-        select_all(&mut input);
-
-        assert_eq!(input.selection_anchor, Some(0));
-        assert_eq!(input.cursor, input.value.len());
     }
 
     #[test]

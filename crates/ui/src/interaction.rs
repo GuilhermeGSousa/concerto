@@ -110,8 +110,8 @@ impl CaptureOutcome {
     }
 }
 
-const DRAG_THRESHOLD: f32 = 4.0;
-const DOUBLE_CLICK: Duration = Duration::from_millis(400);
+pub(crate) const DRAG_THRESHOLD: f32 = 4.0;
+pub(crate) const DOUBLE_CLICK: Duration = Duration::from_millis(400);
 
 fn advance_capture(
     capture: &mut ButtonCapture,
