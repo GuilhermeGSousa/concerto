@@ -3,14 +3,17 @@ use concerto_ecs::{
     command::CommandQueue,
     component::Component,
     entity::Entity,
-    events::{Event, event_writer::EventWriter},
+    events::{Event, event_reader::EventReader, event_writer::EventWriter},
     query::{
         Query,
         filter::{Added, With},
     },
     resource::{Res, ResMut},
 };
-use concerto_window::input::{Input, InputState, KeyCode, PhysicalKey};
+use concerto_window::{
+    clipboard::{ClipboardPasted, WindowClipboard},
+    input::{Input, InputState, KeyCode, PhysicalKey},
+};
 
 use crate::{
     focus::FocusedWidget,
@@ -92,12 +95,18 @@ fn finish_key(just_pressed: impl Fn(KeyCode) -> bool) -> Option<Finish> {
 pub(crate) fn update_text_inputs(
     mut focused: ResMut<FocusedWidget>,
     input: Res<Input>,
-    mut clipboard: ResMut<concerto_window::plugin::WindowClipboard>,
+    mut clipboard: ResMut<WindowClipboard>,
     text_inputs: Query<(Entity, &mut UITextInput)>,
     mut writer: EventWriter<UITextInputChanged>,
     mut submitted: EventWriter<UITextInputSubmitted>,
     mut cancelled: EventWriter<UITextInputCancelled>,
+    mut pasted: EventReader<ClipboardPasted>,
 ) {
+    let pastes: Vec<String> = pasted
+        .read()
+        .filter(|paste| !paste.0.is_empty())
+        .map(|paste| single_line(&paste.0))
+        .collect();
     for (entity, mut text_input) in text_inputs.iter() {
         if **focused == Some(entity) {
             let mut changed = false;
@@ -129,11 +138,13 @@ pub(crate) fn update_text_inputs(
                 changed = true;
             }
             if command && input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyV)) {
+                clipboard.request_paste();
+            }
+            for paste in &pastes {
                 delete_selection(&mut text_input);
-                let value = clipboard.read().to_owned();
                 let cursor = text_input.cursor;
-                text_input.value.insert_str(cursor, &value);
-                text_input.cursor += value.len();
+                text_input.value.insert_str(cursor, paste);
+                text_input.cursor += paste.len();
                 changed = true;
             }
 
@@ -210,6 +221,10 @@ pub(crate) fn update_text_inputs(
             }
         }
     }
+}
+
+fn single_line(text: &str) -> String {
+    text.replace("\r\n", " ").replace(['\r', '\n'], " ")
 }
 
 fn shown_text(input: &UITextInput) -> &str {
@@ -313,11 +328,12 @@ fn next_boundary(value: &str, cursor: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use concerto_ecs::{
-        IntoSetConfig, IntoSystemConfig, Schedule, World,
+        IntoSetConfig, IntoSystem, IntoSystemConfig, Schedule, System, World,
         entity::hierarchy::{ChildOf, Children},
+        events::event_channel::EventChannel,
         system::{executor::single_thread::SingleThreadedExecutor, schedule::CompiledSchedule},
     };
-    use concerto_window::plugin::Window;
+    use concerto_window::{clipboard::answer_paste_requests, plugin::Window};
 
     use super::*;
     use crate::{
@@ -496,6 +512,159 @@ mod tests {
             clip.max().x <= rect.max().x && clip.max().y <= rect.max().y,
             "{clip:?} in {rect:?}"
         );
+    }
+
+    struct Editing {
+        world: World,
+        edit: Box<dyn System<In = ()>>,
+        answer: Box<dyn System<In = ()>>,
+    }
+
+    impl Editing {
+        fn new() -> Self {
+            let mut world = World::new();
+            world.insert_resource(FocusedWidget::default());
+            world.insert_resource(Input::new());
+            world.insert_resource(WindowClipboard::default());
+            world.insert_resource(EventChannel::<UITextInputChanged>::default());
+            world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
+            world.insert_resource(EventChannel::<UITextInputCancelled>::default());
+            world.insert_resource(EventChannel::<ClipboardPasted>::default());
+            let mut edit: Box<dyn System<In = ()>> = Box::new(update_text_inputs.into_system());
+            edit.initialize(&mut world);
+            let mut answer: Box<dyn System<In = ()>> =
+                Box::new(answer_paste_requests.into_system());
+            answer.initialize(&mut world);
+            Self {
+                world,
+                edit,
+                answer,
+            }
+        }
+
+        fn field(&mut self, value: &str, cursor: usize, anchor: Option<usize>) -> Entity {
+            let mut input = UITextInput::new("");
+            input.value = value.into();
+            input.cursor = cursor;
+            input.selection_anchor = anchor;
+            self.world.spawn(input)
+        }
+
+        fn focus(&mut self, field: Option<Entity>) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = field;
+        }
+
+        fn paste(&mut self, text: &str) {
+            self.world
+                .get_resource_mut::<EventChannel<ClipboardPasted>>()
+                .unwrap()
+                .push_event(ClipboardPasted(text.into()));
+        }
+
+        fn input(&mut self) -> &mut Input {
+            self.world.get_resource_mut::<Input>().unwrap()
+        }
+
+        fn frame(&mut self) {
+            self.answer.run_and_apply((), &mut self.world);
+            self.edit.run_and_apply((), &mut self.world);
+            self.input().update();
+        }
+
+        fn value(&self, field: Entity) -> &str {
+            &self
+                .world
+                .get_component_for_entity::<UITextInput>(field)
+                .unwrap()
+                .value
+        }
+
+        fn cursor(&self, field: Entity) -> usize {
+            self.world
+                .get_component_for_entity::<UITextInput>(field)
+                .unwrap()
+                .cursor
+        }
+    }
+
+    #[test]
+    fn a_paste_lands_in_the_focused_field_with_line_breaks_as_spaces() {
+        let mut editing = Editing::new();
+        let other = editing.field("other", 0, None);
+        let field = editing.field("ab", 1, None);
+        editing.focus(Some(field));
+        editing.paste("x\ny\r\nz");
+        editing.frame();
+
+        assert_eq!(editing.value(field), "ax y zb");
+        assert_eq!(editing.cursor(field), 6);
+        assert_eq!(editing.value(other), "other");
+    }
+
+    #[test]
+    fn a_paste_replaces_the_selection() {
+        let mut editing = Editing::new();
+        let field = editing.field("abcd", 3, Some(1));
+        editing.focus(Some(field));
+        editing.paste("X");
+        editing.frame();
+
+        assert_eq!(editing.value(field), "aXd");
+        assert_eq!(editing.cursor(field), 2);
+    }
+
+    #[test]
+    fn a_paste_without_a_focused_field_is_dropped() {
+        let mut editing = Editing::new();
+        let field = editing.field("ab", 1, None);
+        editing.paste("x");
+        editing.frame();
+        assert_eq!(editing.value(field), "ab");
+
+        editing.focus(Some(field));
+        editing.frame();
+        assert_eq!(editing.value(field), "ab");
+    }
+
+    #[test]
+    fn an_empty_paste_keeps_the_selection() {
+        let mut editing = Editing::new();
+        let field = editing.field("abc", 3, Some(0));
+        editing.focus(Some(field));
+        editing.paste("");
+        editing.frame();
+
+        assert_eq!(editing.value(field), "abc");
+        let input = editing
+            .world
+            .get_component_for_entity::<UITextInput>(field)
+            .unwrap();
+        assert_eq!((input.cursor, input.selection_anchor), (3, Some(0)));
+    }
+
+    #[test]
+    fn command_v_pastes_the_clipboard_on_a_later_frame() {
+        let mut editing = Editing::new();
+        let field = editing.field("", 0, None);
+        editing.focus(Some(field));
+        editing
+            .world
+            .get_resource_mut::<WindowClipboard>()
+            .unwrap()
+            .write("copied");
+        editing
+            .input()
+            .update_key_input(PhysicalKey::Code(KeyCode::ControlLeft), true);
+        editing
+            .input()
+            .update_key_input(PhysicalKey::Code(KeyCode::KeyV), true);
+        editing.frame();
+        assert_eq!(editing.value(field), "");
+
+        editing.frame();
+        assert_eq!(editing.value(field), "copied");
+        editing.frame();
+        assert_eq!(editing.value(field), "copied");
     }
 
     #[test]
