@@ -1,5 +1,15 @@
 use std::{collections::VecDeque, sync::Mutex};
 
+#[cfg(not(target_arch = "wasm32"))]
+mod native;
+#[cfg(target_arch = "wasm32")]
+mod web;
+
+#[cfg(not(target_arch = "wasm32"))]
+use native::OsClipboard;
+#[cfg(target_arch = "wasm32")]
+use web::OsClipboard;
+
 use concerto_ecs::{
     events::{event_writer::EventWriter, Event},
     resource::{ResMut, Resource},
@@ -14,6 +24,14 @@ pub enum ClipboardRead {
     NoText,
     /// The clipboard could not be read, or the platform refused; the reason is logged.
     Unavailable(String),
+}
+
+fn text_read(result: Result<String, String>) -> ClipboardRead {
+    match result {
+        Ok(text) if text.is_empty() => ClipboardRead::NoText,
+        Ok(text) => ClipboardRead::Text(text),
+        Err(reason) => ClipboardRead::Unavailable(reason),
+    }
 }
 
 /// Where [`WindowClipboard`] sends copies and asks for reads; a read may be answered on any later frame.
@@ -78,6 +96,16 @@ impl WindowClipboard {
     /// Replaces the backend, keeping the in-process copy.
     pub fn set_backend(&mut self, backend: impl ClipboardBackend) {
         self.backend = Mutex::new(Box::new(backend));
+    }
+
+    /// Copies to and pastes from the platform's clipboard, keeping the current backend with a warning when it cannot be opened.
+    pub fn use_os_clipboard(&mut self) {
+        match OsClipboard::open() {
+            Ok(os) => self.set_backend(os),
+            Err(reason) => {
+                log::warn!("Clipboard unavailable, copies stay in this process: {reason}")
+            }
+        }
     }
 
     /// Stores `text` as the in-process copy and puts it on the backend's clipboard.
@@ -206,5 +234,18 @@ mod tests {
         clipboard.write("kept here");
         clipboard.request_paste();
         assert_eq!(answers(&mut clipboard), ["from the OS"]);
+    }
+
+    #[test]
+    fn read_text_maps_to_text_no_text_or_unavailable() {
+        assert_eq!(
+            text_read(Ok("bunny".into())),
+            ClipboardRead::Text("bunny".into())
+        );
+        assert_eq!(text_read(Ok(String::new())), ClipboardRead::NoText);
+        assert_eq!(
+            text_read(Err("NotAllowedError".into())),
+            ClipboardRead::Unavailable("NotAllowedError".into())
+        );
     }
 }
