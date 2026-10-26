@@ -1,4 +1,5 @@
-use concerto_ecs::{Component, Entity, Query, ResMut, command::CommandQueue, signal::On};
+use concerto_ecs::command::EntityCommandQueue;
+use concerto_ecs::{Component, Entity, Query, ResMut, signal::On};
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     checkbox::{UICheckbox, UICheckboxChanged},
@@ -8,12 +9,13 @@ use concerto_ui::{
 };
 
 use crate::inspector::rows::{
-    EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
+    EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
 const BOX_SIZE: f32 = 16.0;
 
 /// A checkbox for a `bool`.
+#[derive(Default)]
 pub(crate) struct BoolCheckbox;
 
 /// The checkbox of a [`BoolCheckbox`] row.
@@ -23,7 +25,7 @@ pub(crate) struct BoolField {
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
-    registry.register_property_editor::<bool, _>(BoolCheckbox);
+    registry.register_property_editor::<bool, BoolCheckbox>();
 }
 
 impl PropertyEditor<bool> for BoolCheckbox {
@@ -32,16 +34,16 @@ impl PropertyEditor<bool> for BoolCheckbox {
     fn snapshot(&self, value: &bool) -> bool {
         *value
     }
-    fn apply(&self, value: &mut bool, edit: &bool) -> Result<(), EditError> {
+    fn apply(&self, value: &mut bool, edit: &bool, _: &EditContext) -> Result<(), EditError> {
         *value = *edit;
         Ok(())
     }
     fn follows_snapshot(&self) -> bool {
         true
     }
-    fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &bool, theme: &UITheme) {
+    fn build(&self, row: &mut EntityCommandQueue, value: &bool, theme: &UITheme) {
         let margin = ((theme.control_height - BOX_SIZE) / 2.0).max(0.0);
-        cmd.entity(row).add_child((
+        row.add_child((
             theme
                 .checkbox("", *value)
                 .size(UIValue::Px(BOX_SIZE), UIValue::Px(BOX_SIZE))
@@ -50,7 +52,7 @@ impl PropertyEditor<bool> for BoolCheckbox {
                 .radius_sm()
                 .fixed()
                 .on_change(commit_bool_field),
-            BoolField { row },
+            BoolField { row: row.entity() },
         ));
     }
 }

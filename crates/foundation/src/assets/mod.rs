@@ -28,6 +28,7 @@ pub mod asset_server;
 pub mod asset_store;
 pub mod content;
 pub mod handle;
+pub mod registry;
 pub mod utils;
 
 /// Where the runtime finds content asset files. Only the root differs per
@@ -61,7 +62,7 @@ impl ContentAssetRoot {
                         let isolated_root = exe.file_stem()
                             .map(|name| exe_dir.join(format!("{}-content", name.to_string_lossy())));
                         Some(isolated_root
-                            .filter(|root| root.join(content::REGISTRY_FILE_NAME).is_file())
+                            .filter(|root| root.join(registry::REGISTRY_FILE_NAME).is_file())
                             .unwrap_or(exe_dir))
                     })
                     .unwrap_or_else(|| PathBuf::from("."));

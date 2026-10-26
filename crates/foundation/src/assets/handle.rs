@@ -4,7 +4,7 @@ use super::{asset_server::AssetServer, Asset, AssetId, LoadableAsset};
 use concerto_ecs::{reflect::ReflectSceneLeaf, Event};
 use concerto_reflect::{
     decode_leaf, encode_leaf, FromType, GetTypeRegistration, Leaf, LeafError, Reflect, ReflectMut,
-    ReflectRef, TypeRegistration,
+    ReflectRef, TypeData, TypeRegistration,
 };
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -116,6 +116,16 @@ impl<A: Asset> Default for AssetHandle<A> {
     }
 }
 
+impl<A: Asset> PartialEq for AssetHandle<A> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Strong(l0, l1), Self::Strong(r0, r1)) => l0.id == r0.id && l1 == r1,
+            (Self::Weak(l0, l1), Self::Weak(r0, r1)) => l0 == r0 && l1 == r1,
+            _ => false,
+        }
+    }
+}
+
 impl<A: Asset> Leaf for AssetHandle<A> {
     fn encode(&self) -> Result<Vec<u8>, LeafError> {
         encode_leaf(&self.id())
@@ -150,7 +160,70 @@ impl<A: LoadableAsset> GetTypeRegistration for AssetHandle<A> {
     fn get_type_registration() -> TypeRegistration {
         let mut registration = TypeRegistration::of::<Self>();
         registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
+        registration.insert(<ReflectAssetHandle as FromType<Self>>::from_type());
         registration
+    }
+}
+
+/// Why [`ReflectAssetHandle::set`] left a value unchanged.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SetHandleError {
+    NotThisHandle,
+    AssetNotRegistered,
+}
+
+/// An `AssetHandle<A>` described without naming `A`.
+#[derive(Clone, Copy)]
+pub struct ReflectAssetHandle {
+    kind: &'static str,
+    id: fn(&dyn Reflect) -> Option<AssetId>,
+    set: fn(&mut dyn Reflect, &AssetServer, AssetId) -> Result<(), SetHandleError>,
+}
+
+impl TypeData for ReflectAssetHandle {}
+
+impl ReflectAssetHandle {
+    /// The handled asset's kind, as [`Asset::name`] gives it.
+    pub fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    /// The id `value` holds, or `None` if it is not this handle type.
+    pub fn id(&self, value: &dyn Reflect) -> Option<AssetId> {
+        (self.id)(value)
+    }
+
+    /// Writes into `value` a handle to `id` loaded through `server`.
+    pub fn set(
+        &self,
+        value: &mut dyn Reflect,
+        server: &AssetServer,
+        id: AssetId,
+    ) -> Result<(), SetHandleError> {
+        (self.set)(value, server, id)
+    }
+}
+
+impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
+    fn from_type() -> Self {
+        Self {
+            kind: A::name(),
+            id: |value| {
+                (value as &dyn std::any::Any)
+                    .downcast_ref::<AssetHandle<A>>()
+                    .map(AssetHandle::id)
+            },
+            set: |value, server, id| {
+                let handle = (value as &mut dyn std::any::Any)
+                    .downcast_mut::<AssetHandle<A>>()
+                    .ok_or(SetHandleError::NotThisHandle)?;
+                if !server.is_registered::<A>() {
+                    return Err(SetHandleError::AssetNotRegistered);
+                }
+                *handle = server.load(id);
+                Ok(())
+            },
+        }
     }
 }
 

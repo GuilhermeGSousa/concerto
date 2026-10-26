@@ -37,6 +37,7 @@ mod rows;
 mod sync;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
+pub(crate) use add_component::MENU_FILL;
 use add_component::{
     add_highlighted_component, clear_add_component_search, populate_add_component_menu,
 };
@@ -55,7 +56,7 @@ use crate::tools::edits::EditComponent;
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub use rows::{
-    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
     PropertyRowValue,
 };
 
@@ -231,6 +232,18 @@ fn sync_inspector_scroll(
     area.offset = area
         .offset
         .clamp(0.0, (extent - view.content_rect.size.y).max(0.0));
+}
+
+/// The systems that build the inspector's rows from the selection and send their edits.
+#[cfg(test)]
+pub(crate) fn row_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
+    use concerto_ecs::IntoSystem;
+    vec![
+        collect_inspector_data.into_boxed_system(),
+        sync_inspected_components.into_boxed_system(),
+        build_property_widgets.into_boxed_system(),
+        send_property_commits.into_boxed_system(),
+    ]
 }
 
 #[cfg(test)]

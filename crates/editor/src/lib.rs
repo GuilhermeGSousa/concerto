@@ -1,6 +1,7 @@
 //! Engine-native editor. Panels submit commands; project systems own I/O.
 pub mod actions;
 pub mod asset_editor;
+pub mod asset_picker;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
@@ -22,10 +23,13 @@ pub mod viewport;
 pub mod window_chrome;
 mod workspace;
 
+use concerto_mesh::MeshComponent;
 pub use run::run;
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
+
+use crate::asset_picker::AssetPickerPlugin;
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -43,6 +47,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(actions::ActionsPlugin);
         app.insert_resource(project::EditorCommands::default());
         app.insert_resource(project::ProjectState::default());
+        app.insert_resource(concerto_foundation::assets::registry::AssetRegistry::default());
         app.register_plugin(project::ProjectPlugin);
         app.register_plugin(hierarchy::HierarchyPlugin);
         app.register_plugin(content::ContentPlugin);
@@ -85,6 +90,9 @@ impl Plugin for EditorPlugin {
         app.register_plugin(window_chrome::WindowChromePlugin {
             decorated: self.decorated,
         });
+        app.register_type::<MeshComponent>();
+        app.register_plugin(AssetPickerPlugin);
+
         if let Some(path) = &self.project {
             app.get_resource_mut::<project::EditorCommands>()
                 .expect("EditorCommands was just inserted")

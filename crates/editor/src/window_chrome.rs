@@ -3,7 +3,14 @@ use concerto_app::{
     App, Plugin,
     schedule_groups::{LateUpdate, Startup},
 };
-use concerto_ecs::{Component, Query, Res, ResMut, Resource, command::CommandQueue, signal::On};
+use concerto_ecs::{
+    Component, Query, Res, ResMut, Resource,
+    command::CommandQueue,
+    signal::{
+        On,
+        listener::{IntoListener, Listener},
+    },
+};
 use concerto_ui::{
     elements::prelude::*,
     interaction::{Interactable, UIClick},
@@ -33,7 +40,7 @@ const CONTROL_LAYER: i32 = 60;
 #[derive(Component, Clone, Copy, Default)]
 pub struct WindowChromeControl;
 
-#[derive(Component, Clone, Copy)]
+#[derive(Clone, Copy)]
 enum Control {
     Minimise,
     Maximise,
@@ -132,9 +139,8 @@ fn build_controls(
                         .size(UIValue::Px(30.0), UIValue::Px(26.0))
                         .padding(UIRect::axes(3.0, 8.0))
                         .z_index(CONTROL_LAYER)
-                        .on_click(press_control),
+                        .on_click(press_control(control)),
                     icon(&theme, mark, theme.font_size_lg).muted(),
-                    control,
                     WindowChromeControl,
                 ),
                 |mut button| {
@@ -232,7 +238,6 @@ fn grips() -> Vec<(UINode, ResizeGrip, Interactable)> {
 fn publish_window_gestures(
     grips: Query<(&ResizeGrip, &UILayout)>,
     handles: Query<(&DragHandle, &UILayout)>,
-    controls: Query<(&Control, &UILayout)>,
     chrome_controls: Query<(&WindowChromeControl, &UILayout)>,
     mut region: ResMut<WindowGestureRegion>,
 ) {
@@ -246,9 +251,6 @@ fn publish_window_gestures(
     }
     for (_, layout) in handles.iter() {
         push_zone(&mut zones, layout, Some(WindowGesture::Move));
-    }
-    for (_, layout) in controls.iter() {
-        push_zone(&mut zones, layout, None);
     }
     for (_, layout) in chrome_controls.iter() {
         push_zone(&mut zones, layout, None);
@@ -276,26 +278,23 @@ fn push_zone(
     ));
 }
 
-fn press_control(
-    on: On<UIClick>,
-    controls: Query<&Control>,
-    mut window: ResMut<Window>,
-    mut guard: ResMut<crate::guard::UnsavedGuard>,
-) {
-    if on.signal().button != MouseButton::Left {
-        return;
-    }
-    let Some(control) = controls.get_entity(on.entity()) else {
-        return;
-    };
-    match control {
-        Control::Minimise => window.send(WindowCommand::Minimise),
-        Control::Maximise => {
-            let maximised = window.is_maximised();
-            window.send(WindowCommand::SetMaximised(!maximised));
+fn press_control(control: Control) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           mut window: ResMut<Window>,
+           mut guard: ResMut<crate::guard::UnsavedGuard>| {
+        if on.signal().button != MouseButton::Left {
+            return;
         }
-        Control::Close => guard.request_quit(),
-    }
+        match control {
+            Control::Minimise => window.send(WindowCommand::Minimise),
+            Control::Maximise => {
+                let maximised = window.is_maximised();
+                window.send(WindowCommand::SetMaximised(!maximised));
+            }
+            Control::Close => guard.request_quit(),
+        }
+    })
+    .into_listener()
 }
 
 fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut UIText)>) {
@@ -309,5 +308,35 @@ fn sync_maximise_glyph(window: Res<Window>, glyphs: Query<(&MaximiseGlyph, &mut 
         if text.text != mark {
             text.text = mark;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concerto_ecs::World;
+
+    fn clicked(control: Control) -> Vec<WindowCommand> {
+        let mut world = World::new();
+        world.insert_resource(Window::new((1280, 720), 1.0));
+        world.insert_resource(crate::guard::UnsavedGuard::default());
+        let button = world.spawn(press_control(control));
+        world.trigger_on(
+            button,
+            UIClick {
+                position: Default::default(),
+                button: MouseButton::Left,
+            },
+        );
+        world.get_resource_mut::<Window>().unwrap().drain_commands()
+    }
+
+    #[test]
+    fn each_control_sends_its_own_window_command() {
+        assert_eq!(clicked(Control::Minimise), [WindowCommand::Minimise]);
+        assert_eq!(
+            clicked(Control::Maximise),
+            [WindowCommand::SetMaximised(true)]
+        );
     }
 }

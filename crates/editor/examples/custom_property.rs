@@ -4,12 +4,12 @@
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
-    plugins::TimePlugin,
+    plugins::{AssetManagerPlugin, TimePlugin},
     schedule_groups::{LateUpdate, Startup},
 };
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut,
-    command::CommandQueue,
+    command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::{ChildOf, Children},
     reflect::ReflectComponent,
     signal::{On, listener::IntoListener},
@@ -21,8 +21,8 @@ use concerto_editor::{
         HostRequest, HostRole, HostedPlugin, SetEditTarget, begin, finish_blocking, trigger_on,
     },
     inspector::{
-        EditError, EditableApp, InspectorPlugin, PropertyCommits, PropertyEditor, PropertyRow,
-        PropertyRowValue, spawn_panel,
+        EditContext, EditError, EditableApp, InspectorPlugin, PropertyCommits, PropertyEditor,
+        PropertyRow, PropertyRowValue, spawn_panel,
     },
     tools::{EditToolsPlugin, selection::Select},
 };
@@ -58,6 +58,7 @@ pub enum SettingEdit {
     Rename(String),
 }
 
+#[derive(Default)]
 pub struct SettingEditor;
 
 #[derive(Component)]
@@ -74,28 +75,24 @@ impl PropertyEditor<Setting> for SettingEditor {
         }
     }
 
-    fn build(
-        &self,
-        cmd: &mut CommandQueue,
-        row: Entity,
-        snapshot: &SettingSnapshot,
-        theme: &UITheme,
-    ) {
-        let button = cmd
-            .spawn((
-                theme
-                    .label(label(snapshot))
-                    .height(UIValue::Px(theme.control_height))
-                    .grow(),
-                Interactable,
-                SettingButton(row),
-                toggle_setting.into_listener(),
-            ))
-            .entity();
-        cmd.add_child(row, button);
+    fn build(&self, row: &mut EntityCommandQueue, snapshot: &SettingSnapshot, theme: &UITheme) {
+        row.add_child((
+            theme
+                .label(label(snapshot))
+                .height(UIValue::Px(theme.control_height))
+                .grow(),
+            Interactable,
+            SettingButton(row.entity()),
+            toggle_setting.into_listener(),
+        ));
     }
 
-    fn apply(&self, value: &mut Setting, edit: &SettingEdit) -> Result<(), EditError> {
+    fn apply(
+        &self,
+        value: &mut Setting,
+        edit: &SettingEdit,
+        _: &EditContext,
+    ) -> Result<(), EditError> {
         match edit {
             SettingEdit::Toggle => value.enabled = !value.enabled,
             SettingEdit::Rename(title) => {
@@ -162,12 +159,13 @@ pub fn register(app: &mut App) {
 
 /// Gives the editor's own `App` the widget that edits a `Setting`.
 pub fn install(app: &mut App) {
-    app.register_property_editor::<Setting, SettingEditor>(SettingEditor)
+    app.register_property_editor::<Setting, SettingEditor>()
         .add_system(LateUpdate, refresh_settings);
 }
 
 fn headless_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin);
     register(app);

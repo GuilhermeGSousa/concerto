@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, AssetRegistry, ImportProvenance,
+    read_content_asset, read_content_asset_header, ImportProvenance,
 };
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
 use concerto_scene::scene::Scene;
@@ -100,8 +101,13 @@ fn import_upserts_the_registry_for_every_written_asset() {
         assert_eq!(asset.asset_id, id);
         assert_eq!(
             registry.get(id),
-            Some(asset.address.as_str()),
-            "import must register every content asset it writes"
+            Some(&AssetEntry {
+                id,
+                address: asset.address.clone(),
+                kind: asset.kind.clone(),
+                provenance: None,
+            }),
+            "import must register every content asset it writes, with its kind"
         );
     }
 
@@ -143,7 +149,12 @@ fn import_writes_a_registry_rebuilt_from_the_tree() {
     // A stale entry that no file backs. A merge would keep it; a rebuild
     // from the tree must drop it.
     let mut stale = AssetRegistry::new();
-    stale.insert(AssetId::new(), "content/gone/removed.gasset");
+    stale.insert(AssetEntry {
+        id: AssetId::new(),
+        address: "content/gone/removed.gasset".into(),
+        kind: "Mesh".into(),
+        provenance: None,
+    });
     stale.save(&project_root).unwrap();
 
     let written =
@@ -160,7 +171,10 @@ fn import_writes_a_registry_rebuilt_from_the_tree() {
         let id = read_content_asset_header(&project_root.join(&asset.address))
             .unwrap()
             .asset_id;
-        assert_eq!(registry.get(id), Some(asset.address.as_str()));
+        assert_eq!(
+            registry.get(id).map(|entry| entry.address.as_str()),
+            Some(asset.address.as_str())
+        );
         assert_eq!(registry.id_for_address(&asset.address), Some(id));
     }
 

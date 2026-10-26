@@ -178,12 +178,12 @@ fn sync_tabs(
         let title = document
             .pending
             .as_ref()
-            .map(|asset| format!("{} ·", asset.display_name))
+            .map(|asset| format!("{} ·", asset.name()))
             .or_else(|| {
                 document
                     .current
                     .as_ref()
-                    .map(|asset| asset.display_name.clone())
+                    .map(|asset| asset.name().to_owned())
             })
             .unwrap_or_else(|| {
                 if document.status.is_empty() {

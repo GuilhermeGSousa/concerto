@@ -1,199 +1,199 @@
 [assets]
-029467de5552568fb45fe59885125085 = "content/Sponza/mesh_79.gasset"
-02bc2fa032375d7098cda6a7e0c3cca2 = "content/Sponza/texture_47.gasset"
-03d3b7027fdc579e90cc35ef4f0ed405 = "content/Sponza/mesh_25.gasset"
-059ff3f9d32450048cd9045b51846692 = "content/Sponza/mesh_22.gasset"
-060d517730f756de8d89c3e8d825078e = "content/Sponza/texture_61_linear.gasset"
-07e8a26a85c75fbdad9269493f900c8a = "content/Sponza/material_23.gasset"
-08e06b58127d5d189d92e0fc9dedbf90 = "content/Sponza/mesh_40.gasset"
-0b40427656da5fafa06c1bb38c1c1036 = "content/Sponza/mesh_34.gasset"
-0c71b5344ce0561d8f84da2b9f9f4e91 = "content/Sponza/mesh_44.gasset"
-0c7a6b7c92c95a03ab6944d55c1d9157 = "content/Sponza/mesh_88.gasset"
-0e5f2935d22e511f8782e9a76cd82b0a = "content/Sponza/mesh_9.gasset"
-0e9622b8ba8650c9a30fc9c6b7855cce = "content/Sponza/material_5.gasset"
-0edb852f05b95de28326191eeb185457 = "content/Sponza/texture_0_linear.gasset"
-10251c6afa1a5d4b825ff08ea1984118 = "content/Sponza/mesh_98.gasset"
-104fd88175e15f87b090f63200f83692 = "content/Sponza/texture_12_linear.gasset"
-115e43c568d6588aae0d3408bdafbda3 = "content/Sponza/mesh_7.gasset"
-121d79d888f8503fb57c53cf7f5debd4 = "content/Sponza/mesh_62.gasset"
-13e84bc1e48052d7b06e87c7d4907d34 = "content/Sponza/mesh_59.gasset"
-154318c9da095dd28fdd87f4ba37e48f = "content/Sponza/material_2.gasset"
-160f8016fc765647922567df5980fdb7 = "content/Sponza/mesh_63.gasset"
-18fccffe68e25605850873fcfd1572fa = "content/Sponza/mesh_37.gasset"
-19e6a03e1d235fee83a143b152b82cb4 = "content/Sponza/texture_60.gasset"
-1b37eee6f43c55028c48a820f56b52a8 = "content/Sponza/mesh_49.gasset"
-1ea5203e75b850e6aed9843a3a44d099 = "content/Sponza/material_7.gasset"
-1f2629a78d2d50bd999c71dbc6ea7e51 = "content/Sponza/texture_33_linear.gasset"
-209967e56deb5b58b0a9143b16530373 = "content/Sponza/mesh_94.gasset"
-20cea93303a55465932bd45f5e06d6d9 = "content/Sponza/texture_53_linear.gasset"
-2110942c18a7559fa297a79331dca9f0 = "content/Sponza/texture_38_linear.gasset"
-21ebbedc77355e119991e62e3dfacb53 = "content/Sponza/material_17.gasset"
-222c6a60aa1354529aa87700d82bf47a = "content/Sponza/texture_51_linear.gasset"
-2295a5e3bd6f57098b90af603b815081 = "content/Sponza/texture_5_linear.gasset"
-255fd80b69f757129d1025c2766a1251 = "content/Sponza/texture_43.gasset"
-26b2a44b4a0c5b729393cd1506609a65 = "content/Sponza/texture_62_linear.gasset"
-28064b868be956d8bb7959f4484ef64d = "content/Sponza/mesh_85.gasset"
-2e0674f283a2589bb5225853e0eac3a9 = "content/Sponza/mesh_73.gasset"
-2e3acf20d3585a82825eaf1397365a34 = "content/Sponza/texture_58_linear.gasset"
-2f1a59b07085503fbfc6317919c88611 = "content/Sponza/mesh_97.gasset"
-30c0a1b5adc45f678c17ef0faf9a7eb2 = "content/Sponza/material_22.gasset"
-334355e69c015565a7e9e1b1913c0b7c = "content/Sponza/texture_50.gasset"
-33df190a2e1b5018b32e86287a8f72e9 = "content/Sponza/material_13.gasset"
-34ca12b0a6e354dea57dc62a5900068a = "content/Sponza/texture_6_linear.gasset"
-36b6e2f3854354b78e97009a4dbead6b = "content/Sponza/texture_36_linear.gasset"
-3fae7451d6b651638d16ef3f7bef25cf = "content/Sponza/texture_25.gasset"
-421fd74a062355c8a73df3ff743513ae = "content/Sponza/mesh_27.gasset"
-42583d638769511382372a665903102d = "content/Sponza/texture_42_linear.gasset"
-4482c23c2c0f54f487e1b4e42ca92f39 = "content/Sponza/mesh_38.gasset"
-4a39e04acb5655c5b892624760943e20 = "content/Sponza/mesh_91.gasset"
-4abb6572fd7f5ba1abba0e846f161fb6 = "content/Sponza/mesh_15.gasset"
-4ae83d62af445929898b0ae0a291a59f = "content/Sponza/material_18.gasset"
-4afef801415355e9872e3e17acccc719 = "content/Sponza/mesh_19.gasset"
-4b5f4e503f4a5e2f974e9fc02d8a8fba = "content/Sponza/texture_39_linear.gasset"
-4d595358aa2554229e5bdd8dfdbfb5d7 = "content/Sponza/texture_26_linear.gasset"
-4f6ee309e0385ceaa32616cbba514c5d = "content/Sponza/mesh_23.gasset"
-4ffff5c4456857279e25f3ec9722c7a4 = "content/Sponza/texture_13.gasset"
-50a83f04d97d57e69b69ff03ad4ef946 = "content/Sponza/mesh_60.gasset"
-521c027ebbcc5f5496c371618e3e7095 = "content/Sponza/texture_19.gasset"
-5231f7c12e1954798718b17f32fead94 = "content/Sponza/mesh_42.gasset"
-529ef0ae501257f88f335341ea0b4ea3 = "content/Sponza/mesh_2.gasset"
-52a1b80e4f13561cb2a79e39afc4e258 = "content/Sponza/mesh_70.gasset"
-5371630b0c9f5e2ab46603f4984a6181 = "content/Sponza/texture_8_linear.gasset"
-54317551f38451f8bc1602ced42810a6 = "content/Sponza/texture_52.gasset"
-5537cfff5ec0534fb4058dfb6dd54136 = "content/Sponza/mesh_14.gasset"
-5559bd1eca4e5c80960908df74fcd0f0 = "content/Sponza/texture_46_linear.gasset"
-5729a344769b5b8e882d411bb1e1436a = "content/Sponza/mesh_102.gasset"
-588a08aa3f04592b821d0185d947a804 = "content/Sponza/mesh_58.gasset"
-5b524ee9fd065503be98d9fd5c5e3f85 = "content/Sponza/texture_55_linear.gasset"
-5de0de15c51952a8aa7383db2403ac1b = "content/Sponza/texture_27_linear.gasset"
-5e1e6e93cb4554e2a839d7b7079c3f58 = "content/Sponza/mesh_101.gasset"
-5e473725d31e5b869f6bb0d920d0e79e = "content/Sponza/mesh_64.gasset"
-5f5ed80290ca58c5967c38bf6137a1d8 = "content/Sponza/mesh_24.gasset"
-5f6a1ef142355c55a630cfcf99ad224b = "content/Sponza/mesh_32.gasset"
-60e29e9e5fa35f0fbf04e8ee09556c8e = "content/Sponza/texture_7.gasset"
-628bf2c728825d2baddc41c60decd155 = "content/Sponza/material_15.gasset"
-670b093d915d5ede8ea4a766031fec3c = "content/Sponza/mesh_17.gasset"
-6bf35b1641ae50d98a63f1faa7de58ae = "content/Sponza/material_11.gasset"
-6c783bc1edf75f90beefbd7dee1aaefd = "content/Sponza/material_6.gasset"
-6ee57f92f77a519bb97ad9c38eee2101 = "content/Sponza/mesh_21.gasset"
-737c594a3cf957019569058b7833b68c = "content/Sponza/mesh_1.gasset"
-74c4e2caabd25aaba08a90d049404119 = "content/Sponza/texture_24_linear.gasset"
-75e39a3a73eb56c8b38903461b37ca6f = "content/Sponza/texture_63.gasset"
-77ca0ed859eb53c6a11621f6bd3c066c = "content/Sponza/material_10.gasset"
-77da6983be8c50d69cee35988e1ebf90 = "content/Sponza/mesh_35.gasset"
-79d40ebda8115381b7cc69bef2988799 = "content/Sponza/mesh_74.gasset"
-7aeef558b2365423a5ae6c8e30559cff = "content/Sponza/mesh_76.gasset"
-7cfa68e4d8a1598ba814fee18fd5f271 = "content/Sponza/texture_17_linear.gasset"
-7d13d11603ef51f4bc54454dbeaf0afe = "content/Sponza/mesh_54.gasset"
-7d7cf3eb806a55a3a37fcb41e8cd8837 = "content/Sponza/mesh_39.gasset"
-7da973e6277b5ff09e424777dec04117 = "content/Sponza/texture_56_linear.gasset"
-7e46f507d1fb5de88e553999224fd634 = "content/Sponza/mesh_89.gasset"
-7f660c941f24554c8b77ca0c2e018ef4 = "content/Sponza/texture_45.gasset"
-7f7d9897ee915c46af552d94e81a55cd = "content/Sponza/mesh_48.gasset"
-802783ad0ad254a181e243ab35c10802 = "content/Sponza/mesh_87.gasset"
-8373876e420356ddaa5763d1b914a0e4 = "content/Sponza/mesh_72.gasset"
-8427027472095aeead305223b9a01aae = "content/Sponza/texture_31.gasset"
-863d73b5053e5b3a8d5c9dd6433cfef3 = "content/Sponza/material_21.gasset"
-87ec0969b1e85f43b742b67e3b592916 = "content/Sponza/mesh_8.gasset"
-88d356c8eebb5e16b5cda8e54dfd7d5b = "content/Sponza/texture_68.gasset"
-8ab1e6daa08253908aa5ac8befb2d93c = "content/Sponza/texture_57.gasset"
-8b50f9e408e85891ba70e306396a8cc6 = "content/Sponza/texture_14_linear.gasset"
-8c0e9c86148b54779132fa443e1424d9 = "content/Sponza/mesh_57.gasset"
-8c887d90fd7052c0910e0fe50d1544d2 = "content/Sponza/texture_10.gasset"
-8d3fff051a0f5885b9451f07214ef967 = "content/Sponza/texture_21_linear.gasset"
-8d67b9b9a8015a5badcd5dbb2c2f041c = "content/Sponza/texture_41_linear.gasset"
-8f4b1d110e7e57baa2ba4bae9c2c7587 = "content/Sponza/mesh_36.gasset"
-91f88a4cfeef5e5b95e84e36f71ea409 = "content/Sponza/mesh_31.gasset"
-91fad0a0b8485f00a8bf780d025f19e4 = "content/Sponza/texture_3_linear.gasset"
-92c1bd58a95254c69523a287dbe3d5b5 = "content/Sponza/mesh_4.gasset"
-92e778bd34a0589b8434e22e81ab62dd = "content/Sponza/mesh_26.gasset"
-92f35290084157bebfb8cc1c8e50139a = "content/Sponza/texture_37.gasset"
-93e2648e232f59d5b147d250760aa5cc = "content/Sponza/texture_32_linear.gasset"
-943ccaf87fd35ea7a021de1fba19ca06 = "content/Sponza/mesh_95.gasset"
-94a1983c3e345fc898b0bb175c683737 = "content/Sponza/mesh_86.gasset"
-9519a0e1cc255123b36685222deb5fdf = "content/Sponza/material_19.gasset"
-9749df9e44485da1a2901693276b1217 = "content/Sponza/mesh_77.gasset"
-9a82ab73d4c65488aae24096e7980b68 = "content/Sponza/mesh_13.gasset"
-9ada38c5e10d52959213e067bc31221c = "content/Sponza/mesh_96.gasset"
-9ae42070907b52248096d0d00ee381ab = "content/Sponza/material_8.gasset"
-9b049c00ae235454a8bf3fd36b6c3a51 = "content/Sponza/material_1.gasset"
-9e4e6cd0ecdc58d695047b1ddacc3786 = "content/Sponza/mesh_83.gasset"
-9e7fd2bd14df5be8bae78db437a1a519 = "content/Sponza/texture_22.gasset"
-9ea39261a5ad5534931c8b7b17d1b15d = "content/Sponza/mesh_18.gasset"
-9f6cb0b0da41596689dab73683ed376d = "content/Sponza/mesh_16.gasset"
-a01f9b29192c5fcc9f7102d11ab55b78 = "content/Sponza/mesh_52.gasset"
-a057cb6a37795da9b48c11bba51bed4e = "content/Sponza/texture_64_linear.gasset"
-a08d6d3957a95355b5eee1de01bcfeab = "content/Sponza/mesh_50.gasset"
-a1b472aa8f7153b2b6b41408e9afc2f6 = "content/Sponza/mesh_51.gasset"
-a2bacbf053d4565d8363b96c0eb592de = "content/Sponza/texture_30_linear.gasset"
-a31103b571a7561db157c30dc15aa741 = "content/Sponza/mesh_93.gasset"
-a70b447de4a850b7bb08955235a4a430 = "content/Sponza/mesh_90.gasset"
-a7d069e6836d5390aabe2129708e09c1 = "content/Sponza/mesh_67.gasset"
-a85d4d990bfa5e5e89d6e8ef6d355107 = "content/Sponza/mesh_69.gasset"
-a85dcb031ad4571da9080514c92a59db = "content/Sponza/material_3.gasset"
-a875bcd6a0b35d7cbe8d57f96b632875 = "content/Sponza/mesh_82.gasset"
-a9f298ba47825f0292c22bf89454d69e = "content/Sponza/mesh_47.gasset"
-ac22e4769cb45bedb9476b7495b162a1 = "content/Sponza/mesh_55.gasset"
-acb9819e746854e182effa37a11ba7ab = "content/Sponza/mesh_53.gasset"
-aeb80dde157059e796a0e2d824bcb18e = "content/Sponza/material_4.gasset"
-af1e81f914eb521d971f77445bfa86c3 = "content/Sponza/scene.gasset"
-b1707df88a255aebae6aa392ca6020ce = "content/Sponza/mesh_66.gasset"
-b24b77d41fb75413b63186e59da18e93 = "content/Sponza/texture_29_linear.gasset"
-b35605f390945ed7aef650b429b30ed8 = "content/Sponza/texture_4.gasset"
-b3cf4cefb8b25ebf945b335d6d56fba5 = "content/Sponza/material_0.gasset"
-b64d8a5deb9c5e43b3a333dc3dbdb124 = "content/Sponza/mesh_81.gasset"
-b66c21ca2ca0569fb79ea7bd0be67fef = "content/Sponza/mesh_45.gasset"
-b6ab961fc6935996b6f9f24f4fd358ec = "content/Sponza/mesh_84.gasset"
-b7317c0083ca5923bee9febdb809185c = "content/Sponza/mesh_75.gasset"
-b75e8c3e83d753e3943a1bb36f3c0e91 = "content/Sponza/mesh_0.gasset"
-b780eeb6ed825d58b70df70691498807 = "content/Sponza/texture_20_linear.gasset"
-b86be9d068595a75aa36a7589c6dedb8 = "content/Sponza/texture_66.gasset"
-b91f2eac5d8159bfa30c624a26a891d8 = "content/Sponza/mesh_80.gasset"
-baf9a315bcc055108673a48c4e7b81ed = "content/Sponza/texture_35_linear.gasset"
-bafb6cc3515a5e67a0fe4185f9d3542e = "content/Sponza/texture_2_linear.gasset"
-bb27ae771874558d9e0effe3c00afa1a = "content/Sponza/mesh_28.gasset"
-bb98291f215553aaa31e67ab461c30fb = "content/Sponza/material_20.gasset"
-c468fc0a2c1950e689d72c687a897d47 = "content/Sponza/texture_48_linear.gasset"
-c63b6ded14f45c37b081acb2970122ed = "content/Sponza/mesh_92.gasset"
-c65a5984c35e55e4bd1dce0d2dd0d82c = "content/Sponza/texture_65_linear.gasset"
-c7561a289b285be4a1f396b28ab17634 = "content/Sponza/texture_59_linear.gasset"
-c7643be990b35697aa1590e4a3fa9778 = "content/Sponza/mesh_56.gasset"
-c7c8ddf080845573a9858cabc1da200f = "content/Sponza/material_12.gasset"
-c9a670f220be5250a574df26f871bb76 = "content/Sponza/mesh_65.gasset"
-ca7946e49e7056e996afc5ed58d7b697 = "content/Sponza/mesh_11.gasset"
-ccdef6e27d265db3a1ec9a015255fb81 = "content/Sponza/texture_9_linear.gasset"
-cdcad58c21a454b392dd008bd762ef1c = "content/Sponza/mesh_100.gasset"
-cf4b16f9bb6b54d5ad4893ae1e89250d = "content/Sponza/texture_40.gasset"
-d2aca61390835079a9ff87af266e1c87 = "content/Sponza/material_14.gasset"
-d4891a71add05d97a45b1d6fac80b124 = "content/Sponza/texture_18_linear.gasset"
-d5f969ba37595e3d8729e41077e26ba2 = "content/Sponza/mesh_46.gasset"
-d893a23e71035f90bfc817eb4381a98a = "content/Sponza/mesh_30.gasset"
-d8c8da52854d564a91a6907b465d4dd8 = "content/Sponza/mesh_33.gasset"
-dad51f89200c50af99cec03eee8404d3 = "content/Sponza/mesh_29.gasset"
-dbb1a3282e6e510294b027ed7994794d = "content/Sponza/texture_54.gasset"
-de20e3caed09523aab27e0b0a0eea1f3 = "content/Sponza/material_9.gasset"
-df286f7238ce51e4a86a8e2aada5b7dd = "content/Sponza/texture_23_linear.gasset"
-dfccd626033e5fe18a059cdc14ca74db = "content/Sponza/texture_49_linear.gasset"
-e0123f78d48c500a88ce2ee9c8b991db = "content/Sponza/mesh_10.gasset"
-e0e49e5a58b35bb2a6cdf20871fe6212 = "content/Sponza/material_16.gasset"
-e149ba82570f51f9a301e5280eaa2a6c = "content/Sponza/mesh_61.gasset"
-e70362ad423d52fdbb87aa77823256b7 = "content/Sponza/mesh_41.gasset"
-eae3af4dfdd35d18a09500a3cbd359a0 = "content/Sponza/mesh_43.gasset"
-eb4dc45949bf52cd8b697df4a05b5fc9 = "content/Sponza/mesh_68.gasset"
-eb65eab6122b5d9ebd9f51bbc4da48eb = "content/Sponza/mesh_5.gasset"
-edd8e29563c05f12b6aaad20a68000d6 = "content/Sponza/texture_67_linear.gasset"
-ef21fbb15786574aa332ac2f213958e9 = "content/Sponza/mesh_78.gasset"
-f1114df4479b5ddfb7e8e933000ec735 = "content/Sponza/material_24.gasset"
-f169a7d06c6a572ca1c30a19aad66745 = "content/Sponza/texture_1.gasset"
-f1bc8457cd02593988dd8624aff63cae = "content/Sponza/mesh_99.gasset"
-f1c8c3f985335958aa1cc44e6491c553 = "content/Sponza/mesh_3.gasset"
-f3182c529e1a567286d9ce5adbbea674 = "content/Sponza/mesh_71.gasset"
-f4b4e5f42fbe555089b317faca0c4a3a = "content/Sponza/mesh_20.gasset"
-f62706e8404951b5bdeb8aa683b1f249 = "content/Sponza/mesh_6.gasset"
-f7f7e61e715d564dbb7b8e5d78f7b51a = "content/Sponza/texture_15_linear.gasset"
-f8aed8613c7d52bca7287d28422d9cd4 = "content/Sponza/texture_34.gasset"
-faa7794e5ce25ebe95d85607431b7217 = "content/Sponza/texture_44_linear.gasset"
-fba221e0aedc59bc93ddb5429ec644ea = "content/Sponza/mesh_12.gasset"
-fcc4380e05745454bfc5874a40526f43 = "content/Sponza/texture_11_linear.gasset"
-fd7bb497369252e4933853687bca830f = "content/Sponza/texture_28.gasset"
-ff2852ee66ad543ba673d4f33638e9ef = "content/Sponza/texture_16.gasset"
+029467de5552568fb45fe59885125085 = { address = "content/Sponza/mesh_79.gasset", kind = "Mesh" }
+02bc2fa032375d7098cda6a7e0c3cca2 = { address = "content/Sponza/texture_47.gasset", kind = "Texture" }
+03d3b7027fdc579e90cc35ef4f0ed405 = { address = "content/Sponza/mesh_25.gasset", kind = "Mesh" }
+059ff3f9d32450048cd9045b51846692 = { address = "content/Sponza/mesh_22.gasset", kind = "Mesh" }
+060d517730f756de8d89c3e8d825078e = { address = "content/Sponza/texture_61_linear.gasset", kind = "Texture" }
+07e8a26a85c75fbdad9269493f900c8a = { address = "content/Sponza/material_23.gasset", kind = "StandardMaterial" }
+08e06b58127d5d189d92e0fc9dedbf90 = { address = "content/Sponza/mesh_40.gasset", kind = "Mesh" }
+0b40427656da5fafa06c1bb38c1c1036 = { address = "content/Sponza/mesh_34.gasset", kind = "Mesh" }
+0c71b5344ce0561d8f84da2b9f9f4e91 = { address = "content/Sponza/mesh_44.gasset", kind = "Mesh" }
+0c7a6b7c92c95a03ab6944d55c1d9157 = { address = "content/Sponza/mesh_88.gasset", kind = "Mesh" }
+0e5f2935d22e511f8782e9a76cd82b0a = { address = "content/Sponza/mesh_9.gasset", kind = "Mesh" }
+0e9622b8ba8650c9a30fc9c6b7855cce = { address = "content/Sponza/material_5.gasset", kind = "StandardMaterial" }
+0edb852f05b95de28326191eeb185457 = { address = "content/Sponza/texture_0_linear.gasset", kind = "Texture" }
+10251c6afa1a5d4b825ff08ea1984118 = { address = "content/Sponza/mesh_98.gasset", kind = "Mesh" }
+104fd88175e15f87b090f63200f83692 = { address = "content/Sponza/texture_12_linear.gasset", kind = "Texture" }
+115e43c568d6588aae0d3408bdafbda3 = { address = "content/Sponza/mesh_7.gasset", kind = "Mesh" }
+121d79d888f8503fb57c53cf7f5debd4 = { address = "content/Sponza/mesh_62.gasset", kind = "Mesh" }
+13e84bc1e48052d7b06e87c7d4907d34 = { address = "content/Sponza/mesh_59.gasset", kind = "Mesh" }
+154318c9da095dd28fdd87f4ba37e48f = { address = "content/Sponza/material_2.gasset", kind = "StandardMaterial" }
+160f8016fc765647922567df5980fdb7 = { address = "content/Sponza/mesh_63.gasset", kind = "Mesh" }
+18fccffe68e25605850873fcfd1572fa = { address = "content/Sponza/mesh_37.gasset", kind = "Mesh" }
+19e6a03e1d235fee83a143b152b82cb4 = { address = "content/Sponza/texture_60.gasset", kind = "Texture" }
+1b37eee6f43c55028c48a820f56b52a8 = { address = "content/Sponza/mesh_49.gasset", kind = "Mesh" }
+1ea5203e75b850e6aed9843a3a44d099 = { address = "content/Sponza/material_7.gasset", kind = "StandardMaterial" }
+1f2629a78d2d50bd999c71dbc6ea7e51 = { address = "content/Sponza/texture_33_linear.gasset", kind = "Texture" }
+209967e56deb5b58b0a9143b16530373 = { address = "content/Sponza/mesh_94.gasset", kind = "Mesh" }
+20cea93303a55465932bd45f5e06d6d9 = { address = "content/Sponza/texture_53_linear.gasset", kind = "Texture" }
+2110942c18a7559fa297a79331dca9f0 = { address = "content/Sponza/texture_38_linear.gasset", kind = "Texture" }
+21ebbedc77355e119991e62e3dfacb53 = { address = "content/Sponza/material_17.gasset", kind = "StandardMaterial" }
+222c6a60aa1354529aa87700d82bf47a = { address = "content/Sponza/texture_51_linear.gasset", kind = "Texture" }
+2295a5e3bd6f57098b90af603b815081 = { address = "content/Sponza/texture_5_linear.gasset", kind = "Texture" }
+255fd80b69f757129d1025c2766a1251 = { address = "content/Sponza/texture_43.gasset", kind = "Texture" }
+26b2a44b4a0c5b729393cd1506609a65 = { address = "content/Sponza/texture_62_linear.gasset", kind = "Texture" }
+28064b868be956d8bb7959f4484ef64d = { address = "content/Sponza/mesh_85.gasset", kind = "Mesh" }
+2e0674f283a2589bb5225853e0eac3a9 = { address = "content/Sponza/mesh_73.gasset", kind = "Mesh" }
+2e3acf20d3585a82825eaf1397365a34 = { address = "content/Sponza/texture_58_linear.gasset", kind = "Texture" }
+2f1a59b07085503fbfc6317919c88611 = { address = "content/Sponza/mesh_97.gasset", kind = "Mesh" }
+30c0a1b5adc45f678c17ef0faf9a7eb2 = { address = "content/Sponza/material_22.gasset", kind = "StandardMaterial" }
+334355e69c015565a7e9e1b1913c0b7c = { address = "content/Sponza/texture_50.gasset", kind = "Texture" }
+33df190a2e1b5018b32e86287a8f72e9 = { address = "content/Sponza/material_13.gasset", kind = "StandardMaterial" }
+34ca12b0a6e354dea57dc62a5900068a = { address = "content/Sponza/texture_6_linear.gasset", kind = "Texture" }
+36b6e2f3854354b78e97009a4dbead6b = { address = "content/Sponza/texture_36_linear.gasset", kind = "Texture" }
+3fae7451d6b651638d16ef3f7bef25cf = { address = "content/Sponza/texture_25.gasset", kind = "Texture" }
+421fd74a062355c8a73df3ff743513ae = { address = "content/Sponza/mesh_27.gasset", kind = "Mesh" }
+42583d638769511382372a665903102d = { address = "content/Sponza/texture_42_linear.gasset", kind = "Texture" }
+4482c23c2c0f54f487e1b4e42ca92f39 = { address = "content/Sponza/mesh_38.gasset", kind = "Mesh" }
+4a39e04acb5655c5b892624760943e20 = { address = "content/Sponza/mesh_91.gasset", kind = "Mesh" }
+4abb6572fd7f5ba1abba0e846f161fb6 = { address = "content/Sponza/mesh_15.gasset", kind = "Mesh" }
+4ae83d62af445929898b0ae0a291a59f = { address = "content/Sponza/material_18.gasset", kind = "StandardMaterial" }
+4afef801415355e9872e3e17acccc719 = { address = "content/Sponza/mesh_19.gasset", kind = "Mesh" }
+4b5f4e503f4a5e2f974e9fc02d8a8fba = { address = "content/Sponza/texture_39_linear.gasset", kind = "Texture" }
+4d595358aa2554229e5bdd8dfdbfb5d7 = { address = "content/Sponza/texture_26_linear.gasset", kind = "Texture" }
+4f6ee309e0385ceaa32616cbba514c5d = { address = "content/Sponza/mesh_23.gasset", kind = "Mesh" }
+4ffff5c4456857279e25f3ec9722c7a4 = { address = "content/Sponza/texture_13.gasset", kind = "Texture" }
+50a83f04d97d57e69b69ff03ad4ef946 = { address = "content/Sponza/mesh_60.gasset", kind = "Mesh" }
+521c027ebbcc5f5496c371618e3e7095 = { address = "content/Sponza/texture_19.gasset", kind = "Texture" }
+5231f7c12e1954798718b17f32fead94 = { address = "content/Sponza/mesh_42.gasset", kind = "Mesh" }
+529ef0ae501257f88f335341ea0b4ea3 = { address = "content/Sponza/mesh_2.gasset", kind = "Mesh" }
+52a1b80e4f13561cb2a79e39afc4e258 = { address = "content/Sponza/mesh_70.gasset", kind = "Mesh" }
+5371630b0c9f5e2ab46603f4984a6181 = { address = "content/Sponza/texture_8_linear.gasset", kind = "Texture" }
+54317551f38451f8bc1602ced42810a6 = { address = "content/Sponza/texture_52.gasset", kind = "Texture" }
+5537cfff5ec0534fb4058dfb6dd54136 = { address = "content/Sponza/mesh_14.gasset", kind = "Mesh" }
+5559bd1eca4e5c80960908df74fcd0f0 = { address = "content/Sponza/texture_46_linear.gasset", kind = "Texture" }
+5729a344769b5b8e882d411bb1e1436a = { address = "content/Sponza/mesh_102.gasset", kind = "Mesh" }
+588a08aa3f04592b821d0185d947a804 = { address = "content/Sponza/mesh_58.gasset", kind = "Mesh" }
+5b524ee9fd065503be98d9fd5c5e3f85 = { address = "content/Sponza/texture_55_linear.gasset", kind = "Texture" }
+5de0de15c51952a8aa7383db2403ac1b = { address = "content/Sponza/texture_27_linear.gasset", kind = "Texture" }
+5e1e6e93cb4554e2a839d7b7079c3f58 = { address = "content/Sponza/mesh_101.gasset", kind = "Mesh" }
+5e473725d31e5b869f6bb0d920d0e79e = { address = "content/Sponza/mesh_64.gasset", kind = "Mesh" }
+5f5ed80290ca58c5967c38bf6137a1d8 = { address = "content/Sponza/mesh_24.gasset", kind = "Mesh" }
+5f6a1ef142355c55a630cfcf99ad224b = { address = "content/Sponza/mesh_32.gasset", kind = "Mesh" }
+60e29e9e5fa35f0fbf04e8ee09556c8e = { address = "content/Sponza/texture_7.gasset", kind = "Texture" }
+628bf2c728825d2baddc41c60decd155 = { address = "content/Sponza/material_15.gasset", kind = "StandardMaterial" }
+670b093d915d5ede8ea4a766031fec3c = { address = "content/Sponza/mesh_17.gasset", kind = "Mesh" }
+6bf35b1641ae50d98a63f1faa7de58ae = { address = "content/Sponza/material_11.gasset", kind = "StandardMaterial" }
+6c783bc1edf75f90beefbd7dee1aaefd = { address = "content/Sponza/material_6.gasset", kind = "StandardMaterial" }
+6ee57f92f77a519bb97ad9c38eee2101 = { address = "content/Sponza/mesh_21.gasset", kind = "Mesh" }
+737c594a3cf957019569058b7833b68c = { address = "content/Sponza/mesh_1.gasset", kind = "Mesh" }
+74c4e2caabd25aaba08a90d049404119 = { address = "content/Sponza/texture_24_linear.gasset", kind = "Texture" }
+75e39a3a73eb56c8b38903461b37ca6f = { address = "content/Sponza/texture_63.gasset", kind = "Texture" }
+77ca0ed859eb53c6a11621f6bd3c066c = { address = "content/Sponza/material_10.gasset", kind = "StandardMaterial" }
+77da6983be8c50d69cee35988e1ebf90 = { address = "content/Sponza/mesh_35.gasset", kind = "Mesh" }
+79d40ebda8115381b7cc69bef2988799 = { address = "content/Sponza/mesh_74.gasset", kind = "Mesh" }
+7aeef558b2365423a5ae6c8e30559cff = { address = "content/Sponza/mesh_76.gasset", kind = "Mesh" }
+7cfa68e4d8a1598ba814fee18fd5f271 = { address = "content/Sponza/texture_17_linear.gasset", kind = "Texture" }
+7d13d11603ef51f4bc54454dbeaf0afe = { address = "content/Sponza/mesh_54.gasset", kind = "Mesh" }
+7d7cf3eb806a55a3a37fcb41e8cd8837 = { address = "content/Sponza/mesh_39.gasset", kind = "Mesh" }
+7da973e6277b5ff09e424777dec04117 = { address = "content/Sponza/texture_56_linear.gasset", kind = "Texture" }
+7e46f507d1fb5de88e553999224fd634 = { address = "content/Sponza/mesh_89.gasset", kind = "Mesh" }
+7f660c941f24554c8b77ca0c2e018ef4 = { address = "content/Sponza/texture_45.gasset", kind = "Texture" }
+7f7d9897ee915c46af552d94e81a55cd = { address = "content/Sponza/mesh_48.gasset", kind = "Mesh" }
+802783ad0ad254a181e243ab35c10802 = { address = "content/Sponza/mesh_87.gasset", kind = "Mesh" }
+8373876e420356ddaa5763d1b914a0e4 = { address = "content/Sponza/mesh_72.gasset", kind = "Mesh" }
+8427027472095aeead305223b9a01aae = { address = "content/Sponza/texture_31.gasset", kind = "Texture" }
+863d73b5053e5b3a8d5c9dd6433cfef3 = { address = "content/Sponza/material_21.gasset", kind = "StandardMaterial" }
+87ec0969b1e85f43b742b67e3b592916 = { address = "content/Sponza/mesh_8.gasset", kind = "Mesh" }
+88d356c8eebb5e16b5cda8e54dfd7d5b = { address = "content/Sponza/texture_68.gasset", kind = "Texture" }
+8ab1e6daa08253908aa5ac8befb2d93c = { address = "content/Sponza/texture_57.gasset", kind = "Texture" }
+8b50f9e408e85891ba70e306396a8cc6 = { address = "content/Sponza/texture_14_linear.gasset", kind = "Texture" }
+8c0e9c86148b54779132fa443e1424d9 = { address = "content/Sponza/mesh_57.gasset", kind = "Mesh" }
+8c887d90fd7052c0910e0fe50d1544d2 = { address = "content/Sponza/texture_10.gasset", kind = "Texture" }
+8d3fff051a0f5885b9451f07214ef967 = { address = "content/Sponza/texture_21_linear.gasset", kind = "Texture" }
+8d67b9b9a8015a5badcd5dbb2c2f041c = { address = "content/Sponza/texture_41_linear.gasset", kind = "Texture" }
+8f4b1d110e7e57baa2ba4bae9c2c7587 = { address = "content/Sponza/mesh_36.gasset", kind = "Mesh" }
+91f88a4cfeef5e5b95e84e36f71ea409 = { address = "content/Sponza/mesh_31.gasset", kind = "Mesh" }
+91fad0a0b8485f00a8bf780d025f19e4 = { address = "content/Sponza/texture_3_linear.gasset", kind = "Texture" }
+92c1bd58a95254c69523a287dbe3d5b5 = { address = "content/Sponza/mesh_4.gasset", kind = "Mesh" }
+92e778bd34a0589b8434e22e81ab62dd = { address = "content/Sponza/mesh_26.gasset", kind = "Mesh" }
+92f35290084157bebfb8cc1c8e50139a = { address = "content/Sponza/texture_37.gasset", kind = "Texture" }
+93e2648e232f59d5b147d250760aa5cc = { address = "content/Sponza/texture_32_linear.gasset", kind = "Texture" }
+943ccaf87fd35ea7a021de1fba19ca06 = { address = "content/Sponza/mesh_95.gasset", kind = "Mesh" }
+94a1983c3e345fc898b0bb175c683737 = { address = "content/Sponza/mesh_86.gasset", kind = "Mesh" }
+9519a0e1cc255123b36685222deb5fdf = { address = "content/Sponza/material_19.gasset", kind = "StandardMaterial" }
+9749df9e44485da1a2901693276b1217 = { address = "content/Sponza/mesh_77.gasset", kind = "Mesh" }
+9a82ab73d4c65488aae24096e7980b68 = { address = "content/Sponza/mesh_13.gasset", kind = "Mesh" }
+9ada38c5e10d52959213e067bc31221c = { address = "content/Sponza/mesh_96.gasset", kind = "Mesh" }
+9ae42070907b52248096d0d00ee381ab = { address = "content/Sponza/material_8.gasset", kind = "StandardMaterial" }
+9b049c00ae235454a8bf3fd36b6c3a51 = { address = "content/Sponza/material_1.gasset", kind = "StandardMaterial" }
+9e4e6cd0ecdc58d695047b1ddacc3786 = { address = "content/Sponza/mesh_83.gasset", kind = "Mesh" }
+9e7fd2bd14df5be8bae78db437a1a519 = { address = "content/Sponza/texture_22.gasset", kind = "Texture" }
+9ea39261a5ad5534931c8b7b17d1b15d = { address = "content/Sponza/mesh_18.gasset", kind = "Mesh" }
+9f6cb0b0da41596689dab73683ed376d = { address = "content/Sponza/mesh_16.gasset", kind = "Mesh" }
+a01f9b29192c5fcc9f7102d11ab55b78 = { address = "content/Sponza/mesh_52.gasset", kind = "Mesh" }
+a057cb6a37795da9b48c11bba51bed4e = { address = "content/Sponza/texture_64_linear.gasset", kind = "Texture" }
+a08d6d3957a95355b5eee1de01bcfeab = { address = "content/Sponza/mesh_50.gasset", kind = "Mesh" }
+a1b472aa8f7153b2b6b41408e9afc2f6 = { address = "content/Sponza/mesh_51.gasset", kind = "Mesh" }
+a2bacbf053d4565d8363b96c0eb592de = { address = "content/Sponza/texture_30_linear.gasset", kind = "Texture" }
+a31103b571a7561db157c30dc15aa741 = { address = "content/Sponza/mesh_93.gasset", kind = "Mesh" }
+a70b447de4a850b7bb08955235a4a430 = { address = "content/Sponza/mesh_90.gasset", kind = "Mesh" }
+a7d069e6836d5390aabe2129708e09c1 = { address = "content/Sponza/mesh_67.gasset", kind = "Mesh" }
+a85d4d990bfa5e5e89d6e8ef6d355107 = { address = "content/Sponza/mesh_69.gasset", kind = "Mesh" }
+a85dcb031ad4571da9080514c92a59db = { address = "content/Sponza/material_3.gasset", kind = "StandardMaterial" }
+a875bcd6a0b35d7cbe8d57f96b632875 = { address = "content/Sponza/mesh_82.gasset", kind = "Mesh" }
+a9f298ba47825f0292c22bf89454d69e = { address = "content/Sponza/mesh_47.gasset", kind = "Mesh" }
+ac22e4769cb45bedb9476b7495b162a1 = { address = "content/Sponza/mesh_55.gasset", kind = "Mesh" }
+acb9819e746854e182effa37a11ba7ab = { address = "content/Sponza/mesh_53.gasset", kind = "Mesh" }
+aeb80dde157059e796a0e2d824bcb18e = { address = "content/Sponza/material_4.gasset", kind = "StandardMaterial" }
+af1e81f914eb521d971f77445bfa86c3 = { address = "content/Sponza/scene.gasset", kind = "Scene" }
+b1707df88a255aebae6aa392ca6020ce = { address = "content/Sponza/mesh_66.gasset", kind = "Mesh" }
+b24b77d41fb75413b63186e59da18e93 = { address = "content/Sponza/texture_29_linear.gasset", kind = "Texture" }
+b35605f390945ed7aef650b429b30ed8 = { address = "content/Sponza/texture_4.gasset", kind = "Texture" }
+b3cf4cefb8b25ebf945b335d6d56fba5 = { address = "content/Sponza/material_0.gasset", kind = "StandardMaterial" }
+b64d8a5deb9c5e43b3a333dc3dbdb124 = { address = "content/Sponza/mesh_81.gasset", kind = "Mesh" }
+b66c21ca2ca0569fb79ea7bd0be67fef = { address = "content/Sponza/mesh_45.gasset", kind = "Mesh" }
+b6ab961fc6935996b6f9f24f4fd358ec = { address = "content/Sponza/mesh_84.gasset", kind = "Mesh" }
+b7317c0083ca5923bee9febdb809185c = { address = "content/Sponza/mesh_75.gasset", kind = "Mesh" }
+b75e8c3e83d753e3943a1bb36f3c0e91 = { address = "content/Sponza/mesh_0.gasset", kind = "Mesh" }
+b780eeb6ed825d58b70df70691498807 = { address = "content/Sponza/texture_20_linear.gasset", kind = "Texture" }
+b86be9d068595a75aa36a7589c6dedb8 = { address = "content/Sponza/texture_66.gasset", kind = "Texture" }
+b91f2eac5d8159bfa30c624a26a891d8 = { address = "content/Sponza/mesh_80.gasset", kind = "Mesh" }
+baf9a315bcc055108673a48c4e7b81ed = { address = "content/Sponza/texture_35_linear.gasset", kind = "Texture" }
+bafb6cc3515a5e67a0fe4185f9d3542e = { address = "content/Sponza/texture_2_linear.gasset", kind = "Texture" }
+bb27ae771874558d9e0effe3c00afa1a = { address = "content/Sponza/mesh_28.gasset", kind = "Mesh" }
+bb98291f215553aaa31e67ab461c30fb = { address = "content/Sponza/material_20.gasset", kind = "StandardMaterial" }
+c468fc0a2c1950e689d72c687a897d47 = { address = "content/Sponza/texture_48_linear.gasset", kind = "Texture" }
+c63b6ded14f45c37b081acb2970122ed = { address = "content/Sponza/mesh_92.gasset", kind = "Mesh" }
+c65a5984c35e55e4bd1dce0d2dd0d82c = { address = "content/Sponza/texture_65_linear.gasset", kind = "Texture" }
+c7561a289b285be4a1f396b28ab17634 = { address = "content/Sponza/texture_59_linear.gasset", kind = "Texture" }
+c7643be990b35697aa1590e4a3fa9778 = { address = "content/Sponza/mesh_56.gasset", kind = "Mesh" }
+c7c8ddf080845573a9858cabc1da200f = { address = "content/Sponza/material_12.gasset", kind = "StandardMaterial" }
+c9a670f220be5250a574df26f871bb76 = { address = "content/Sponza/mesh_65.gasset", kind = "Mesh" }
+ca7946e49e7056e996afc5ed58d7b697 = { address = "content/Sponza/mesh_11.gasset", kind = "Mesh" }
+ccdef6e27d265db3a1ec9a015255fb81 = { address = "content/Sponza/texture_9_linear.gasset", kind = "Texture" }
+cdcad58c21a454b392dd008bd762ef1c = { address = "content/Sponza/mesh_100.gasset", kind = "Mesh" }
+cf4b16f9bb6b54d5ad4893ae1e89250d = { address = "content/Sponza/texture_40.gasset", kind = "Texture" }
+d2aca61390835079a9ff87af266e1c87 = { address = "content/Sponza/material_14.gasset", kind = "StandardMaterial" }
+d4891a71add05d97a45b1d6fac80b124 = { address = "content/Sponza/texture_18_linear.gasset", kind = "Texture" }
+d5f969ba37595e3d8729e41077e26ba2 = { address = "content/Sponza/mesh_46.gasset", kind = "Mesh" }
+d893a23e71035f90bfc817eb4381a98a = { address = "content/Sponza/mesh_30.gasset", kind = "Mesh" }
+d8c8da52854d564a91a6907b465d4dd8 = { address = "content/Sponza/mesh_33.gasset", kind = "Mesh" }
+dad51f89200c50af99cec03eee8404d3 = { address = "content/Sponza/mesh_29.gasset", kind = "Mesh" }
+dbb1a3282e6e510294b027ed7994794d = { address = "content/Sponza/texture_54.gasset", kind = "Texture" }
+de20e3caed09523aab27e0b0a0eea1f3 = { address = "content/Sponza/material_9.gasset", kind = "StandardMaterial" }
+df286f7238ce51e4a86a8e2aada5b7dd = { address = "content/Sponza/texture_23_linear.gasset", kind = "Texture" }
+dfccd626033e5fe18a059cdc14ca74db = { address = "content/Sponza/texture_49_linear.gasset", kind = "Texture" }
+e0123f78d48c500a88ce2ee9c8b991db = { address = "content/Sponza/mesh_10.gasset", kind = "Mesh" }
+e0e49e5a58b35bb2a6cdf20871fe6212 = { address = "content/Sponza/material_16.gasset", kind = "StandardMaterial" }
+e149ba82570f51f9a301e5280eaa2a6c = { address = "content/Sponza/mesh_61.gasset", kind = "Mesh" }
+e70362ad423d52fdbb87aa77823256b7 = { address = "content/Sponza/mesh_41.gasset", kind = "Mesh" }
+eae3af4dfdd35d18a09500a3cbd359a0 = { address = "content/Sponza/mesh_43.gasset", kind = "Mesh" }
+eb4dc45949bf52cd8b697df4a05b5fc9 = { address = "content/Sponza/mesh_68.gasset", kind = "Mesh" }
+eb65eab6122b5d9ebd9f51bbc4da48eb = { address = "content/Sponza/mesh_5.gasset", kind = "Mesh" }
+edd8e29563c05f12b6aaad20a68000d6 = { address = "content/Sponza/texture_67_linear.gasset", kind = "Texture" }
+ef21fbb15786574aa332ac2f213958e9 = { address = "content/Sponza/mesh_78.gasset", kind = "Mesh" }
+f1114df4479b5ddfb7e8e933000ec735 = { address = "content/Sponza/material_24.gasset", kind = "StandardMaterial" }
+f169a7d06c6a572ca1c30a19aad66745 = { address = "content/Sponza/texture_1.gasset", kind = "Texture" }
+f1bc8457cd02593988dd8624aff63cae = { address = "content/Sponza/mesh_99.gasset", kind = "Mesh" }
+f1c8c3f985335958aa1cc44e6491c553 = { address = "content/Sponza/mesh_3.gasset", kind = "Mesh" }
+f3182c529e1a567286d9ce5adbbea674 = { address = "content/Sponza/mesh_71.gasset", kind = "Mesh" }
+f4b4e5f42fbe555089b317faca0c4a3a = { address = "content/Sponza/mesh_20.gasset", kind = "Mesh" }
+f62706e8404951b5bdeb8aa683b1f249 = { address = "content/Sponza/mesh_6.gasset", kind = "Mesh" }
+f7f7e61e715d564dbb7b8e5d78f7b51a = { address = "content/Sponza/texture_15_linear.gasset", kind = "Texture" }
+f8aed8613c7d52bca7287d28422d9cd4 = { address = "content/Sponza/texture_34.gasset", kind = "Texture" }
+faa7794e5ce25ebe95d85607431b7217 = { address = "content/Sponza/texture_44_linear.gasset", kind = "Texture" }
+fba221e0aedc59bc93ddb5429ec644ea = { address = "content/Sponza/mesh_12.gasset", kind = "Mesh" }
+fcc4380e05745454bfc5874a40526f43 = { address = "content/Sponza/texture_11_linear.gasset", kind = "Texture" }
+fd7bb497369252e4933853687bca830f = { address = "content/Sponza/texture_28.gasset", kind = "Texture" }
+ff2852ee66ad543ba673d4f33638e9ef = { address = "content/Sponza/texture_16.gasset", kind = "Texture" }

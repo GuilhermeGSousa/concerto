@@ -1,6 +1,6 @@
 //! `utils::load_registry` — the async, ContentAssetRoot-aware counterpart to
 //! `AssetRegistry::load` that `AssetServer::resolve_by_id` uses at runtime.
-use concerto_foundation::assets::content::AssetRegistry;
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::utils::load_registry;
 use concerto_foundation::assets::{AssetId, ContentAssetRoot};
 
@@ -12,12 +12,17 @@ fn loads_a_registry_written_by_asset_registry_save() {
 
     let id = AssetId::from_path("content/hero/scene.gasset");
     let mut registry = AssetRegistry::new();
-    registry.insert(id, "content/hero/scene.gasset");
+    registry.insert(AssetEntry {
+        id,
+        address: "content/hero/scene.gasset".into(),
+        kind: "Scene".into(),
+        provenance: None,
+    });
     registry.save(&dir).expect("save");
 
     let loaded =
         pollster::block_on(load_registry(&ContentAssetRoot::Directory(dir.clone()))).expect("load");
-    assert_eq!(loaded.get(id), Some("content/hero/scene.gasset"));
+    assert_eq!(loaded.get(id), registry.get(id));
 
     std::fs::remove_dir_all(&dir).ok();
 }

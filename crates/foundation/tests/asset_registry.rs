@@ -2,10 +2,24 @@
 //! upserting it.
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset, write_content_asset,
-    AssetRegistry, ContentAssetHeader, CONTENT_FORMAT_VERSION,
+    ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
 use serde::{Deserialize, Serialize};
+
+fn entry(id: AssetId, address: &str, kind: &str) -> AssetEntry {
+    AssetEntry {
+        id,
+        address: address.into(),
+        kind: kind.into(),
+        provenance: None,
+    }
+}
+
+fn address_of(registry: &AssetRegistry, id: AssetId) -> Option<&str> {
+    registry.get(id).map(|entry| entry.address.as_str())
+}
 
 fn temp_root(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!("asset-registry-{tag}-{}", std::process::id()));
@@ -19,14 +33,18 @@ fn insert_get_remove_round_trip_in_memory() {
     let id = AssetId::from_path("content/hero/scene.gasset");
     assert_eq!(registry.get(id), None);
 
-    registry.insert(id, "content/hero/scene.gasset");
-    assert_eq!(registry.get(id), Some("content/hero/scene.gasset"));
+    registry.insert(entry(id, "content/hero/scene.gasset", "Scene"));
+    assert_eq!(
+        registry.get(id),
+        Some(&entry(id, "content/hero/scene.gasset", "Scene"))
+    );
 
     assert_eq!(
         registry.remove(id),
-        Some("content/hero/scene.gasset".to_string())
+        Some(entry(id, "content/hero/scene.gasset", "Scene"))
     );
     assert_eq!(registry.get(id), None);
+    assert_eq!(registry.id_for_address("content/hero/scene.gasset"), None);
 }
 
 #[test]
@@ -35,13 +53,23 @@ fn save_then_load_round_trips_every_entry() {
     let mut registry = AssetRegistry::new();
     let a = AssetId::from_path("content/a.gasset");
     let b = AssetId::from_path("content/b.gasset");
-    registry.insert(a, "content/a.gasset");
-    registry.insert(b, "content/b.gasset");
+    registry.insert(entry(a, "content/a.gasset", "Mesh"));
+    registry.insert(AssetEntry {
+        provenance: Some(ImportProvenance {
+            source: "assets/b.glb".into(),
+            sub_asset: "b".into(),
+        }),
+        ..entry(b, "content/b.gasset", "Scene")
+    });
     registry.save(&dir).expect("save");
 
     let loaded = AssetRegistry::load(&dir).expect("load");
-    assert_eq!(loaded.get(a), Some("content/a.gasset"));
-    assert_eq!(loaded.get(b), Some("content/b.gasset"));
+    assert_eq!(loaded.get(a), Some(&entry(a, "content/a.gasset", "Mesh")));
+    assert_eq!(
+        loaded.get(b),
+        Some(&entry(b, "content/b.gasset", "Scene")),
+        "provenance is read from headers, not stored in the registry file"
+    );
     assert_eq!(loaded.iter().count(), 2);
 
     std::fs::remove_dir_all(&dir).ok();
@@ -60,13 +88,16 @@ fn registry_file_lands_under_content_and_is_keyed_by_simple_hex() {
     let dir = temp_root("on-disk-shape");
     let mut registry = AssetRegistry::new();
     let id = AssetId::from_path("content/hero/scene.gasset");
-    registry.insert(id, "content/hero/scene.gasset");
+    registry.insert(entry(id, "content/hero/scene.gasset", "Scene"));
     registry.save(&dir).expect("save");
 
     let text = std::fs::read_to_string(dir.join("content/.registry.toml")).expect("file exists");
-    assert!(
-        text.contains(&id.simple_hex()),
-        "the registry must key entries by simple_hex(), got: {text}"
+    assert_eq!(
+        text,
+        format!(
+            "[assets]\n{} = {{ address = \"content/hero/scene.gasset\", kind = \"Scene\" }}\n",
+            id.simple_hex()
+        )
     );
 
     std::fs::remove_dir_all(&dir).ok();
@@ -94,8 +125,8 @@ fn save_content_asset_upserts_the_registry() {
     let registry = AssetRegistry::load(&dir).expect("load");
     assert_eq!(
         registry.get(header.asset_id),
-        Some(address),
-        "save_content_asset must register the asset it just wrote"
+        Some(&entry(header.asset_id, address, "Thing")),
+        "save_content_asset must register the asset it just wrote, with its kind"
     );
 
     assert_eq!(
@@ -138,9 +169,9 @@ fn read_content_asset_header_does_not_read_the_payload() {
 fn id_for_address_is_the_inverse_of_get() {
     let mut registry = AssetRegistry::new();
     let id = AssetId::new();
-    registry.insert(id, "content/hero/scene.gasset");
+    registry.insert(entry(id, "content/hero/scene.gasset", "Scene"));
 
-    assert_eq!(registry.get(id), Some("content/hero/scene.gasset"));
+    assert_eq!(address_of(&registry, id), Some("content/hero/scene.gasset"));
     assert_eq!(
         registry.id_for_address("content/hero/scene.gasset"),
         Some(id)
@@ -151,7 +182,7 @@ fn id_for_address_is_the_inverse_of_get() {
 #[test]
 fn parse_rejects_two_ids_sharing_one_address() {
     let text = format!(
-        "[assets]\n\"{}\" = \"content/a.gasset\"\n\"{}\" = \"content/a.gasset\"\n",
+        "[assets]\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n\"{}\" = {{ address = \"content/a.gasset\", kind = \"Mesh\" }}\n",
         AssetId::new().simple_hex(),
         AssetId::new().simple_hex(),
     );
@@ -169,12 +200,16 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id() {
     for (sub, kind) in [("mesh/Body", "Mesh"), ("animation/Idle", "AnimationClip")] {
         let address = format!("content/hero/{}.gasset", sub.replace('/', "_"));
         let id = AssetId::new();
+        let provenance = (kind == "Mesh").then(|| ImportProvenance {
+            source: "assets/hero.glb".into(),
+            sub_asset: sub.into(),
+        });
         let header = ContentAssetHeader {
             format_version: CONTENT_FORMAT_VERSION,
             asset_id: id,
             references: Vec::new(),
             kind: kind.to_string(),
-            provenance: None,
+            provenance: provenance.clone(),
         };
         std::fs::create_dir_all(dir.join("content/hero")).unwrap();
         std::fs::write(
@@ -182,17 +217,20 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id() {
             write_content_asset(&header, b"payload").unwrap(),
         )
         .unwrap();
-        expected.push((id, address));
+        expected.push(AssetEntry {
+            provenance,
+            ..entry(id, &address, kind)
+        });
     }
 
     let registry = AssetRegistry::from_content_tree(&dir, "content", "gasset").expect("scan");
 
     assert_eq!(registry.iter().count(), 2);
-    for (id, address) in &expected {
+    for expected in &expected {
         assert_eq!(
-            registry.get(*id),
-            Some(address.as_str()),
-            "the scan keys each file by the id in its own header"
+            registry.get(expected.id),
+            Some(expected),
+            "the scan keys each file by the id in its own header and keeps its kind and provenance"
         );
     }
 
@@ -215,7 +253,7 @@ fn from_content_tree_repoints_a_moved_file_at_its_new_address() {
     std::fs::write(dir.join("content/hero/old.gasset"), &bytes).unwrap();
 
     let before = AssetRegistry::from_content_tree(&dir, "content", "gasset").unwrap();
-    assert_eq!(before.get(id), Some("content/hero/old.gasset"));
+    assert_eq!(address_of(&before, id), Some("content/hero/old.gasset"));
 
     // The rename an artist (or a future editor) would do by hand.
     std::fs::rename(
@@ -226,7 +264,7 @@ fn from_content_tree_repoints_a_moved_file_at_its_new_address() {
 
     let after = AssetRegistry::from_content_tree(&dir, "content", "gasset").unwrap();
     assert_eq!(
-        after.get(id),
+        address_of(&after, id),
         Some("content/hero/new.gasset"),
         "the id follows the file, which is what keeps baked references resolving"
     );
@@ -290,7 +328,7 @@ fn save_content_asset_mints_an_id_not_derived_from_the_address() {
         "identity must be minted, not derived from where the file happens to sit"
     );
     assert_eq!(
-        AssetRegistry::load(&dir).unwrap().get(header.asset_id),
+        address_of(&AssetRegistry::load(&dir).unwrap(), header.asset_id),
         Some(address),
         "the registry points at the minted id"
     );
@@ -319,4 +357,86 @@ fn saving_over_an_existing_asset_reuses_its_id() {
     );
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn parse_rejects_the_old_format_and_says_how_to_rebuild() {
+    let text = format!(
+        "[assets]\n{} = \"content/a.gasset\"\n",
+        AssetId::new().simple_hex()
+    );
+    let err = AssetRegistry::parse(&text).expect_err("the address-only format is gone");
+    assert!(
+        format!("{err:#}").contains("rebuild"),
+        "the error must say how to rebuild the registry, got: {err:#}"
+    );
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct Mesh;
+
+impl Asset for Mesh {
+    fn name() -> &'static str {
+        "Mesh"
+    }
+}
+
+#[test]
+fn of_type_lists_only_that_kind_ordered_by_folder_then_name() {
+    let mut registry = AssetRegistry::new();
+    let [a, b, c, d] = [(); 4].map(|_| AssetId::new());
+    registry.insert(entry(a, "content/z/rock.gasset", "Mesh"));
+    registry.insert(entry(b, "content/a/tree.gasset", "Mesh"));
+    registry.insert(entry(c, "content/a/level.gasset", "Thing"));
+    registry.insert(entry(d, "content/a/bush.gasset", "Mesh"));
+
+    let meshes: Vec<_> = registry.of_type::<Mesh>().map(|entry| entry.id).collect();
+    assert_eq!(meshes, [d, b, a]);
+    let things: Vec<_> = registry.of_type::<Thing>().map(|entry| entry.id).collect();
+    assert_eq!(things, [c]);
+    let all: Vec<_> = registry.iter().map(|entry| entry.id).collect();
+    assert_eq!(all, [d, c, b, a]);
+}
+
+#[test]
+fn of_kind_lists_the_same_entries_as_of_type_for_that_kind() {
+    let mut registry = AssetRegistry::new();
+    let [a, b, c] = [(); 3].map(|_| AssetId::new());
+    registry.insert(entry(a, "content/z/rock.gasset", "Mesh"));
+    registry.insert(entry(b, "content/a/level.gasset", "Thing"));
+    registry.insert(entry(c, "content/a/bush.gasset", "Mesh"));
+
+    let meshes: Vec<_> = registry
+        .of_kind(Mesh::name())
+        .map(|entry| entry.id)
+        .collect();
+    assert_eq!(meshes, [c, a]);
+}
+
+#[test]
+fn inserting_an_existing_id_moves_it_and_frees_its_old_address() {
+    let mut registry = AssetRegistry::new();
+    let id = AssetId::new();
+    let other = AssetId::new();
+    registry.insert(entry(id, "content/c.gasset", "Mesh"));
+    registry.insert(entry(other, "content/b.gasset", "Mesh"));
+    registry.insert(entry(id, "content/a.gasset", "Mesh"));
+
+    assert_eq!(registry.id_for_address("content/c.gasset"), None);
+    assert_eq!(registry.id_for_address("content/a.gasset"), Some(id));
+    let order: Vec<_> = registry.iter().map(|entry| entry.id).collect();
+    assert_eq!(order, [id, other]);
+}
+
+#[test]
+fn an_entry_names_itself_and_its_folder_from_its_address() {
+    let nested = entry(AssetId::new(), "content/hero/body.mesh.gasset", "Mesh");
+    assert_eq!(nested.name(), "body.mesh");
+    assert_eq!(nested.folder(), "content/hero");
+    assert!(nested.is::<Mesh>());
+    assert!(!nested.is::<Thing>());
+
+    let top = entry(AssetId::new(), "loose.gasset", "Mesh");
+    assert_eq!(top.name(), "loose");
+    assert_eq!(top.folder(), "");
 }

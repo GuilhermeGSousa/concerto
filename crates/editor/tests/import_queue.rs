@@ -6,7 +6,7 @@ use concerto_editor::{
     import::{ImportPlugin, ImportQueue, stage_sources},
     project::{EditorCommands, ProjectPlugin, ProjectState, discover_project},
 };
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 use std::path::{Path, PathBuf};
 
 fn scratch_source() -> (tempfile::TempDir, PathBuf) {
@@ -61,9 +61,11 @@ fn editor(root: &Path) -> App {
     app.insert_resource(UnsavedGuard::default());
     app.insert_resource(AssetServer::new());
     app.insert_resource(concerto_ui::theme::UITheme::default());
+    let (opened, registry) = discover_project(root).expect("discover");
     let mut state = ProjectState::default();
-    state.project = Some(discover_project(root).expect("discover"));
+    state.project = Some(opened);
     app.insert_resource(state);
+    app.insert_resource(registry);
     app.register_plugin(ProjectPlugin);
     app.register_plugin(ImportPlugin);
     app.finish_plugin_build();
@@ -101,9 +103,11 @@ fn a_batch_imports_every_row_and_shows_up_in_the_catalogue() {
 
     assert!(project.path().join("assets/square.obj").is_file());
     assert!(project.path().join("assets/other.obj").is_file());
-    let state = app.get_resource::<ProjectState>().expect("state");
     assert_eq!(
-        state.project.as_ref().expect("project").assets.len(),
+        app.get_resource::<AssetRegistry>()
+            .expect("registry")
+            .iter()
+            .count(),
         6,
         "both imports reached the catalogue, a mesh, a material and a scene each"
     );
@@ -312,7 +316,7 @@ fn rows_still_waiting_when_the_project_is_swapped_are_dropped() {
 
     app.get_resource_mut::<ProjectState>()
         .expect("state")
-        .project = Some(discover_project(other.path()).expect("discover"));
+        .project = Some(discover_project(other.path()).expect("discover").0);
     drain(&mut app);
 
     assert!(project.path().join("assets/first.obj").is_file());

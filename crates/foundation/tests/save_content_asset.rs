@@ -60,14 +60,20 @@ fn creates_missing_parent_directories() {
 #[test]
 fn saving_into_a_registry_returns_the_id_and_leaves_the_registry_file_alone() {
     use concerto_foundation::assets::content::{
-        read_content_asset_header, save_content_asset_into, AssetRegistry, REGISTRY_FILE_NAME,
+        read_content_asset_header, save_content_asset_into,
     };
+    use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, REGISTRY_FILE_NAME};
     let project_root =
         std::env::temp_dir().join(format!("save-content-into-{}", std::process::id()));
     let address = "content/widgets/wheel.gasset";
     let mut registry = AssetRegistry::new();
     let existing = AssetId::new();
-    registry.insert(existing, "content/other.gasset");
+    registry.insert(AssetEntry {
+        id: existing,
+        address: "content/other.gasset".into(),
+        kind: "Widget".into(),
+        provenance: None,
+    });
 
     let id = save_content_asset_into(&Widget { spokes: 3 }, &project_root, address, &mut registry)
         .expect("save");
@@ -78,8 +84,14 @@ fn saving_into_a_registry_returns_the_id_and_leaves_the_registry_file_alone() {
             .asset_id,
         id
     );
-    assert_eq!(registry.get(id), Some(address));
-    assert_eq!(registry.get(existing), Some("content/other.gasset"));
+    assert_eq!(
+        registry.get(id).map(|entry| entry.address.as_str()),
+        Some(address)
+    );
+    assert_eq!(
+        registry.get(existing).map(|entry| entry.address.as_str()),
+        Some("content/other.gasset")
+    );
     assert!(
         !project_root.join(REGISTRY_FILE_NAME).exists(),
         "the caller decides when its registry is persisted"

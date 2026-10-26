@@ -13,7 +13,7 @@ use concerto_window::input::actions::ActionFired;
 use derive_more::Deref;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use crate::project::AssetEntry;
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 
 /// Installs an editor's components when its document is created.
 pub trait AssetEditor: Send + Sync + 'static {
@@ -142,7 +142,7 @@ pub fn finish_asset_request(
         Ok(()) => {
             doc.current = doc.pending.take();
             if let Some(asset) = &doc.current {
-                doc.title = asset.display_name.clone();
+                doc.title = asset.name().to_owned();
             }
             doc.status.clear();
         }
@@ -163,7 +163,7 @@ pub fn asset_request_is_current(doc: &EditorDocument, asset: &AssetEntry) -> boo
 pub fn process_editor_commands(
     mut requests: ResMut<AssetEditorCommands>,
     registry: Res<AssetEditorRegistry>,
-    project: Res<crate::project::ProjectState>,
+    assets: Res<AssetRegistry>,
     mut active: ResMut<ActiveEditor>,
     mut guard: ResMut<crate::guard::UnsavedGuard>,
     documents: Query<(Entity, &EditorDocument)>,
@@ -188,11 +188,7 @@ pub fn process_editor_commands(
     for request in requests.0.drain(..) {
         match request {
             AssetEditorCommand::Open(asset) => {
-                if !project
-                    .project
-                    .as_ref()
-                    .is_some_and(|project| project.registry.get(asset.id).is_some())
-                {
+                if assets.get(asset.id).is_none() {
                     continue;
                 }
                 let Some(asset_type) = registry.editor_kind(&asset.kind) else {
@@ -229,7 +225,7 @@ pub fn process_editor_commands(
                         entity,
                         EditorDocument {
                             asset_type,
-                            title: asset.display_name.clone(),
+                            title: asset.name().to_owned(),
                             status: format!("Opening {}…", asset.address),
                             current: None,
                             pending: Some(asset),
@@ -343,8 +339,6 @@ mod tests {
             id: AssetId::from_path(path),
             address: path.into(),
             kind: "TestAsset".into(),
-            display_name: path.into(),
-            folder: String::new(),
             provenance: Some(concerto_foundation::assets::content::ImportProvenance {
                 source: path.into(),
                 sub_asset: String::new(),
@@ -356,18 +350,11 @@ mod tests {
         w.insert_resource(AssetEditorCommands::default());
         w.insert_resource(ActiveEditor::default());
         w.insert_resource(crate::guard::UnsavedGuard::default());
-        let mut registry = concerto_foundation::assets::content::AssetRegistry::default();
+        let mut registry = AssetRegistry::default();
         for path in ["a", "b", "c", "d", "other", "scene", "third"] {
-            registry.insert(asset(path).id, path);
+            registry.insert(asset(path));
         }
-        let mut project = crate::project::ProjectState::default();
-        project.project = Some(crate::project::Project {
-            root: std::path::PathBuf::from("project"),
-            assets: vec![],
-            registry,
-            content_root: "content".into(),
-        });
-        w.insert_resource(project);
+        w.insert_resource(registry);
         let mut r = AssetEditorRegistry::default();
         r.register::<TestAsset>(Fake).unwrap();
         w.insert_resource(r);
@@ -504,7 +491,7 @@ mod tests {
             AssetId::from_path("a")
         );
 
-        w.insert_resource(crate::project::ProjectState::default());
+        w.insert_resource(AssetRegistry::default());
         push(&mut w, AssetEditorCommand::Open(asset("c")));
         assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, Some(e));
         assert!(
@@ -713,13 +700,9 @@ mod tests {
         let mut unsupported = asset("other");
         unsupported.kind = OtherAsset::name().into();
         for asset in [unknown, unsupported] {
-            w.get_resource_mut::<crate::project::ProjectState>()
+            w.get_resource_mut::<AssetRegistry>()
                 .unwrap()
-                .project
-                .as_mut()
-                .unwrap()
-                .registry
-                .insert(asset.id, asset.address.clone());
+                .insert(asset.clone());
             w.get_resource_mut::<AssetEditorCommands>()
                 .unwrap()
                 .0

@@ -434,7 +434,6 @@ mod tests {
         entity::hierarchy::{ChildOf, Children},
         events::event_channel::EventChannel,
     };
-    use concerto_foundation::assets::content::AssetRegistry;
     use concerto_ui::{
         items::UIItem,
         list::update_lists_system,
@@ -487,8 +486,6 @@ mod tests {
         let mut state = ProjectState::default();
         state.project = Some(Project {
             root: project.path().to_path_buf(),
-            assets: Vec::new(),
-            registry: AssetRegistry::default(),
             content_root: "content".into(),
         });
         world.insert_resource(state);

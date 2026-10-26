@@ -3,27 +3,26 @@ use std::{
     sync::Arc,
 };
 
-use concerto_ecs::{Component, Entity, Resource, command::CommandQueue, component::Tick};
+use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, component::Tick};
 use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::theme::UITheme;
 
-pub use crate::tools::edits::{EditError, PropertyRow};
+pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
-pub trait PropertyEditor<T: Reflect>: Send + Sync + 'static {
+pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
     type Snapshot: Clone + PartialEq + Send + Sync + 'static;
     type Edit: Send + Sync + 'static;
 
     fn snapshot(&self, value: &T) -> Self::Snapshot;
-    fn build(
-        &self,
-        cmd: &mut CommandQueue,
-        row: Entity,
-        snapshot: &Self::Snapshot,
-        theme: &UITheme,
-    );
+    fn build(&self, row: &mut EntityCommandQueue, snapshot: &Self::Snapshot, theme: &UITheme);
     /// Validate before mutating. On error the target must remain unchanged.
-    fn apply(&self, value: &mut T, edit: &Self::Edit) -> Result<(), EditError>;
+    fn apply(
+        &self,
+        value: &mut T,
+        edit: &Self::Edit,
+        context: &EditContext,
+    ) -> Result<(), EditError>;
     /// Whether the widgets `build` spawns keep themselves current from the row's [`PropertyRowValue`], so a value change leaves the row in place.
     fn follows_snapshot(&self) -> bool {
         false
@@ -44,14 +43,19 @@ pub struct PropertyRowValue(pub(crate) Option<Snapshot>);
 
 impl PropertyRowValue {
     pub(crate) fn new<T: Reflect, E: PropertyEditor<T>>(value: E::Snapshot) -> Self {
+        Self::erased::<E, E::Snapshot>(TypeId::of::<T>(), value)
+    }
+
+    /// A snapshot from editor `E` of a value whose type is known only by id.
+    pub(crate) fn erased<E: 'static, S: Clone + PartialEq + Send + Sync + 'static>(
+        value_type: TypeId,
+        value: S,
+    ) -> Self {
         Self(Some(Snapshot {
             data: Arc::new(value),
-            value_type: TypeId::of::<T>(),
+            value_type,
             editor_type: TypeId::of::<E>(),
-            equals: |a, b| match (
-                a.downcast_ref::<E::Snapshot>(),
-                b.downcast_ref::<E::Snapshot>(),
-            ) {
+            equals: |a, b| match (a.downcast_ref::<S>(), b.downcast_ref::<S>()) {
                 (Some(a), Some(b)) => a == b,
                 _ => false,
             },
@@ -132,7 +136,21 @@ impl PropertyCommit {
         if row.editor_type.is_none() {
             return Err(EditError::StaleEditor);
         }
-        if row.type_id != TypeId::of::<T>() || row.editor_type != Some(TypeId::of::<E>()) {
+        if row.type_id != TypeId::of::<T>() {
+            return Err(EditError::TypeMismatch);
+        }
+        Self::erased::<E>(row, edit)
+    }
+
+    /// An edit from editor `E` to a row whose value type is known only by id.
+    pub(crate) fn erased<E: 'static>(
+        row: &PropertyRow,
+        edit: impl Any + Send + Sync,
+    ) -> Result<Self, EditError> {
+        if row.editor_type.is_none() {
+            return Err(EditError::StaleEditor);
+        }
+        if row.editor_type != Some(TypeId::of::<E>()) {
             return Err(EditError::TypeMismatch);
         }
         Ok(Self {

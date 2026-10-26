@@ -23,10 +23,12 @@ use concerto_ecs::{
 use concerto_foundation::{
     assets::{
         Asset, AssetId,
+        asset_server::AssetServer,
         content::{
-            AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
-            read_content_asset, write_content_asset,
+            CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, read_content_asset,
+            write_content_asset,
         },
+        registry::{AssetEntry, AssetRegistry},
     },
     transform::Transform,
 };
@@ -52,11 +54,11 @@ use crate::{
     guard::UnsavedGuard,
     hierarchy::HierarchyState,
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
-    project::{AssetEntry, Project, ProjectState},
+    project::{Project, ProjectState},
     scene::{SceneEditor, SceneEditorState, SceneRecipe, SceneState},
     tools::{
         entity_ops::EntityEdit,
-        scene::{PublishContent, RevealEntity, SceneEdited, SceneRoot, SceneStatus},
+        scene::{RevealEntity, SceneEdited, SceneRoot, SceneStatus},
         selection::Selection,
     },
 };
@@ -166,37 +168,32 @@ pub(crate) fn scene_recipe(app: &mut App) {
 }
 
 #[derive(Resource, Default)]
-struct PublishedRoots(Vec<PathBuf>);
-
-fn note_published(on: On<PublishContent>, mut roots: ResMut<PublishedRoots>) {
-    roots.0.push(on.signal().root.clone());
-}
-
-#[derive(Resource)]
-pub(crate) struct ReportPublishing;
-
-fn report_published(_: On<PublishContent>, world: &mut World) {
-    if world.get_resource::<ReportPublishing>().is_some() {
-        crate::tools::scene::write(world, SceneStatus("published".into()));
-    }
-}
-
-#[derive(Resource, Default)]
 pub(crate) struct GameRan(pub bool);
 
 fn note_game_ran(mut ran: ResMut<GameRan>) {
     ran.0 = true;
 }
 
+#[derive(Resource)]
+struct HoldReady;
+
+struct ReadyUnlessHeld;
+
+impl concerto_app::Plugin for ReadyUnlessHeld {
+    fn build(&self, _: &mut App) {}
+
+    fn ready(&self, app: &App) -> bool {
+        app.get_resource::<HoldReady>().is_none()
+    }
+}
+
 fn fixture_recipe(app: &mut App) {
     scene_recipe(app);
+    app.register_plugin(ReadyUnlessHeld);
     app.insert_resource(Frames::default())
-        .insert_resource(PublishedRoots::default())
         .insert_resource(GameRan::default())
         .add_system(Update, note_game_ran)
-        .add_system(Update, count_frame.at_edit_time())
-        .add_listener(note_published.at_edit_time())
-        .add_listener(report_published.at_edit_time());
+        .add_system(Update, count_frame.at_edit_time());
 }
 
 pub(crate) fn scene_entry(name: &str) -> AssetEntry {
@@ -204,8 +201,6 @@ pub(crate) fn scene_entry(name: &str) -> AssetEntry {
         id: AssetId::new(),
         address: format!("{name}.gasset"),
         kind: Scene::name().into(),
-        display_name: name.into(),
-        folder: String::new(),
         provenance: Some(ImportProvenance {
             source: "fixture".into(),
             sub_asset: name.into(),
@@ -287,15 +282,14 @@ impl SceneFixture {
         world.insert_resource(editors);
         let mut project = ProjectState::default();
         let mut registry = AssetRegistry::default();
-        registry.insert(scene.id, scene.address.clone());
-        registry.insert(other.id, other.address.clone());
+        registry.insert(scene.clone());
+        registry.insert(other.clone());
         project.project = Some(Project {
             root: project_root.clone(),
-            assets: vec![],
-            registry,
             content_root: "content".into(),
         });
         world.insert_resource(project);
+        world.insert_resource(registry);
 
         world.insert_resource(Routing::default());
         world.insert_resource(HostCursor::default());
@@ -325,6 +319,7 @@ impl SceneFixture {
         let mut systems = vec![
             super::input::sync_in_viewport.into_boxed_system(),
             crate::scene::refuse_edited_replacements.into_boxed_system(),
+            super::forward_registry.into_boxed_system(),
             super::finish_pending.into_boxed_system(),
             super::finish_pending_play.into_boxed_system(),
             super::input::step_edit_target.into_boxed_system(),
@@ -449,9 +444,26 @@ impl SceneFixture {
             assert!(Instant::now() < deadline, "nothing was built");
             std::thread::sleep(Duration::from_millis(1));
         }
+        self.world
+            .get_component_for_entity_mut::<PendingApp>(document)
+            .and_then(|pending| pending.hosted.as_mut())
+            .expect("the build is held before it is first asked if it is ready")
+            .app
+            .insert_resource(HoldReady);
     }
 
     pub(crate) fn wait_until_the_build_is_ready(&mut self, document: Entity) {
+        if let Some(hosted) = self
+            .world
+            .get_component_for_entity_mut::<PendingApp>(document)
+            .and_then(|pending| pending.hosted.as_mut())
+        {
+            hosted
+                .app
+                .main_mut()
+                .world_mut()
+                .remove_resource::<HoldReady>();
+        }
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let ready = self
@@ -478,13 +490,9 @@ impl SceneFixture {
 
     pub(crate) fn add_to_project(&mut self, asset: &AssetEntry) {
         self.world
-            .get_resource_mut::<ProjectState>()
+            .get_resource_mut::<AssetRegistry>()
             .unwrap()
-            .project
-            .as_mut()
-            .unwrap()
-            .registry
-            .insert(asset.id, asset.address.clone());
+            .insert(asset.clone());
     }
 
     pub(crate) fn request(&mut self, asset: &AssetEntry) {
@@ -635,20 +643,16 @@ impl SceneFixture {
             .0
     }
 
-    pub(crate) fn published_roots(&self, document: Entity) -> Vec<PathBuf> {
-        self.scene_world(document)
-            .get_resource::<PublishedRoots>()
-            .unwrap()
-            .0
-            .clone()
-    }
-
-    pub(crate) fn parked_published_roots(&self, document: Entity) -> Vec<PathBuf> {
-        self.parked_world(document)
-            .get_resource::<PublishedRoots>()
-            .unwrap()
-            .0
-            .clone()
+    /// Whether `world`'s registry and its asset server both know `id`.
+    pub(crate) fn knows(&self, world: &World, id: AssetId) -> bool {
+        let resource = world
+            .get_resource::<AssetRegistry>()
+            .is_some_and(|registry| registry.get(id).is_some());
+        let server = world
+            .get_resource::<AssetServer>()
+            .and_then(AssetServer::registry)
+            .is_some_and(|registry| registry.get(id).is_some());
+        resource && server
     }
 
     pub(crate) fn play_state(&self, document: Entity) -> Option<PlayState> {

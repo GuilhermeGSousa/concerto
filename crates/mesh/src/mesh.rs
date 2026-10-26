@@ -1,6 +1,9 @@
-use concerto_ecs::{reflect::ReflectSceneComponent, Component};
+use concerto_ecs::{
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    Component,
+};
 use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Mat4, Vec2, Vec3};
 
 use crate::vertex::Vertex;
@@ -159,7 +162,7 @@ impl Mesh {
 }
 
 #[derive(Component, Reflect, Default)]
-#[reflect(SceneComponent)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct MeshComponent {
     pub handle: AssetHandle<Mesh>,
 }
