@@ -108,8 +108,8 @@ metallic-roughness, emissive and occlusion textures, an alpha cutoff and a UV
 scale. Share one mesh or material handle between many entities by cloning the
 handle.
 
-`physics-test` builds a plane, boxes and spheres this way, and is a good place
-to copy shape builders from.
+`examples/physics-test/src/main.rs` has functions that build a plane, a box
+and a sphere this way, which you can copy.
 
 ## The world grid and the sky
 
@@ -119,9 +119,15 @@ The skybox is drawn by `SkyboxPlugin`, part of `DefaultPlugins`.
 
 ## Debug drawing
 
-`concerto-debug-gizmos` draws lines and shapes for one frame. Add the crate
-to your `Cargo.toml`, register `DebugGizmosPlugin`, and take a `DebugGizmos`
-parameter:
+`concerto-debug-gizmos` draws lines and shapes for one frame. It is not
+re-exported by `concerto`, so add it to your `Cargo.toml`, with the path to
+your Concerto checkout:
+
+```toml
+concerto-debug-gizmos = { path = "<checkout>/crates/debug-gizmos" }
+```
+
+Then register `DebugGizmosPlugin` and take a `DebugGizmos` parameter:
 
 ```rust
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};

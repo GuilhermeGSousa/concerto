@@ -28,12 +28,14 @@ window manager's title bar.
 
 ## What you can do
 
-- **Import** glTF, OBJ and image files with **Import…** in the content
-  browser. Each becomes `.gasset` files in `content/` (chapter 5).
-- **Open** a scene by double-clicking it in the content browser.
-- **Arrange** the scene: the hierarchy adds, duplicates, renames (F2) and
-  deletes entities; the viewport selects by clicking and moves with the gizmo;
-  the inspector adds and edits components.
+- **Import** glTF, OBJ and image files with **Import…** in the asset
+  browser, the panel titled **Asset Browser**. Each becomes `.gasset` files in
+  `content/` (chapter 5).
+- **Open** a scene by double-clicking it in the asset browser.
+- **Arrange** the scene: the hierarchy, titled **Warren**, adds, duplicates,
+  renames (F2) and deletes entities; the viewport selects by clicking and
+  moves with the gizmo; the inspector, titled **Looking Glass**, adds and
+  edits components.
 - **Save** with Ctrl+S. The saved scene belongs to the editor from then on:
   re-importing its source leaves it alone.
 - **Play** with the button on the Scene tab, or Ctrl+P. The game is built from
@@ -87,8 +89,10 @@ pub struct Door {
 app.register_type::<Door>();
 ```
 
-Numbers, booleans, vectors and asset handles get editors out of the box. A type that needs its own widget gets a
-`PropertyEditor`; see
+`bool`, `f32`, `f64`, `Vec3`, `Quat` and asset handles get editors out of the
+box; a field of any other type shows as unsupported until a property editor is
+registered for it. A type that needs its own widget gets a `PropertyEditor`;
+see
 [Custom property editors](../../crates/editor/README.md#custom-property-editors)
 in the editor's README, and `cargo run -p concerto-editor --example custom_property`.
 

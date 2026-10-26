@@ -19,8 +19,8 @@ struct Died {
 }
 ```
 
-Register the type in the recipe. Without this its buffers are never swapped
-and grow forever:
+Register the type in the recipe. Until it is registered, a system that reads
+or writes it is skipped, with a warning every frame:
 
 ```rust
 app.register_event::<Died>();

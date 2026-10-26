@@ -28,8 +28,8 @@ wins: please open an issue.
 
 ## Conventions
 
-Code imports items through the `concerto` crate, which re-exports every engine
-crate under a short name: `concerto::ecs`, `concerto::render`,
+Code imports items through the `concerto` crate, which re-exports most engine
+crates under a short name: `concerto::ecs`, `concerto::render`,
 `concerto::ui`, and so on. Examples also use `glam` for vectors and
 quaternions; add it to your `Cargo.toml` when you need it.
 

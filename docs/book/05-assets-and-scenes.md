@@ -16,15 +16,26 @@ assets/hero.glb  ──import──▶  content/hero/scene.gasset
 assets/hero.glb.import.toml
 ```
 
-Import from the directory that owns `content/`:
+Import with **Import…** in the editor, or with the `concerto-import`
+command, run from the directory that owns `content/`. Install it once from the
+Concerto checkout:
 
 ```sh
-cargo run -p concerto-import -- assets/hero.glb
+cargo install --path crates/import
 ```
 
-or with **Import…** in the editor. A glTF yields meshes, materials, textures,
-skeletons, animations and one scene; an OBJ yields meshes, a material and a
-scene; an image yields a texture. Commit `content/` and every
+then, in your game's directory:
+
+```sh
+concerto-import assets/hero.glb
+```
+
+Inside the Concerto repository itself, `cargo run -p concerto-import -- <source>`
+does the same.
+
+A glTF yields meshes, materials, textures, skeletons, animations and one
+scene; an OBJ yields meshes, a material and a scene; an image yields a
+texture. Commit `content/` and every
 `<source>.import.toml`: the import file pins each sub-asset's id, so importing
 again after the artist changes the source keeps every reference intact.
 
@@ -110,8 +121,9 @@ app.register_type::<PlayerSpawner>();
 
 The tech demo works this way: its forest scene contains an entity with a
 `PlayerSpawner`, placed in the editor, and a system spawns the character where
-it stands. Every type a scene component contains must implement `Default`.
-Asset handles are saved as their ids, and entity references as positions in
+it stands. The component itself must implement `Default`: spawning builds it
+with `Default::default()` and then sets the saved fields. So must a type held
+in an `Option`. Asset handles are saved as their ids, and entity references as positions in
 the scene's tree.
 
 ## More

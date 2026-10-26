@@ -17,7 +17,8 @@ and animation, an engine-native UI, and an editor built on that same UI.
   maps, a skybox, skinned meshes, a world grid and debug gizmos. Runs natively
   and in the browser on WebGL2.
 - **Assets.** glTF, OBJ and images are imported ahead of time into `.gasset`
-  files, which code names by UUID through `asset_id!`, checked at compile time.
+  files. Code names an asset by its path with `asset_id!`, which resolves it to
+  a stable id at compile time.
 - **Scenes.** Reflection-based scenes that the editor saves and the game
   spawns, with asset and entity references.
 - **Physics.** One API over two backends: Jolt natively, Rapier on the web.
@@ -36,7 +37,8 @@ and animation, an engine-native UI, and an editor built on that same UI.
 
 ### Prerequisites
 
-- Rust, stable, from <https://rustup.rs>.
+- Rust, stable, from <https://rustup.rs>, and a C++ compiler: Jolt, the
+  native physics library, is built from source.
 - This repository with its Jolt submodule. Without the submodule every native
   build fails:
 
