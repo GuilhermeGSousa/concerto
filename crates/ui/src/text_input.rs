@@ -13,8 +13,10 @@ use concerto_ecs::{
 use concerto_foundation::time::Instant;
 use concerto_window::{
     clipboard::{ClipboardPasted, WindowClipboard},
-    input::{Input, KeyCode, PhysicalKey},
+    input::{Input, InputState, KeyCode, MouseButton, PhysicalKey},
+    plugin::Window,
 };
+use glam::Vec2;
 use glyphon::{
     Action, Attrs, Buffer, Cursor, Edit, Editor, FontSystem, Shaping, Wrap,
     cosmic_text::{Change, Motion, Selection},
@@ -22,8 +24,9 @@ use glyphon::{
 
 use crate::{
     focus::FocusedWidget,
+    interaction::{DOUBLE_CLICK, DRAG_THRESHOLD, UIInputState},
     material::UIMaterial,
-    node::{Position, UINode, UITextMeasure, ui_text_attrs, ui_text_metrics},
+    node::{Position, UILayout, UINode, UITextMeasure, ui_text_attrs, ui_text_metrics},
     text::UIText,
     transform::UIValue,
 };
@@ -96,6 +99,12 @@ impl Written {
     }
 }
 
+struct PointerPress {
+    origin: Vec2,
+    focusing: bool,
+    dragging: bool,
+}
+
 #[derive(Component)]
 pub(crate) struct UITextEditState {
     editor: Editor<'static>,
@@ -107,10 +116,9 @@ pub(crate) struct UITextEditState {
     typing: bool,
     #[expect(dead_code)]
     blink_start: Instant,
-    #[expect(dead_code)]
     press_time: Option<Instant>,
-    #[expect(dead_code)]
     press_count: u32,
+    pointer: Option<PointerPress>,
 }
 
 impl UITextEditState {
@@ -128,6 +136,7 @@ impl UITextEditState {
             blink_start: Instant::now(),
             press_time: None,
             press_count: 0,
+            pointer: None,
         };
         state.load(font_system, input);
         state
@@ -279,10 +288,77 @@ impl UITextEditState {
         }
     }
 
+    fn hit_point(&self, at: Vec2) -> (i32, i32) {
+        let line_height = self
+            .editor
+            .with_buffer(|buffer| buffer.metrics().line_height);
+        let y = at.y.clamp(0.0, (line_height - 1.0).max(0.0));
+        (at.x.round() as i32, y as i32)
+    }
+
+    fn press(
+        &mut self,
+        font_system: &mut FontSystem,
+        at: Vec2,
+        extend: bool,
+        focusing: bool,
+        now: Instant,
+    ) {
+        self.typing = false;
+        let count = count_press(self.press_time, self.press_count, now);
+        self.press_time = Some(now);
+        self.press_count = count;
+        self.pointer = Some(PointerPress {
+            origin: at,
+            focusing,
+            dragging: false,
+        });
+        if focusing {
+            return;
+        }
+        let (x, y) = self.hit_point(at);
+        let action = match count {
+            1 if extend => Action::Drag { x, y },
+            1 => Action::Click { x, y },
+            2 => Action::DoubleClick { x, y },
+            _ => Action::TripleClick { x, y },
+        };
+        self.editor.shape_as_needed(font_system, false);
+        self.editor.action(font_system, action);
+        self.collapse_empty_selection();
+    }
+
+    fn drag(&mut self, font_system: &mut FontSystem, at: Vec2) {
+        let Some(press) = self.pointer.as_mut() else {
+            return;
+        };
+        if !press.dragging && press.origin.distance(at) < DRAG_THRESHOLD {
+            return;
+        }
+        let restart = press.focusing && !press.dragging;
+        press.dragging = true;
+        let origin = press.origin;
+        self.editor.shape_as_needed(font_system, false);
+        if restart {
+            let (x, y) = self.hit_point(origin);
+            self.editor.action(font_system, Action::Click { x, y });
+        }
+        let (x, y) = self.hit_point(at);
+        self.editor.action(font_system, Action::Drag { x, y });
+        self.collapse_empty_selection();
+    }
+
     fn forget_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
         self.typing = false;
+    }
+}
+
+fn count_press(last: Option<Instant>, count: u32, now: Instant) -> u32 {
+    match last {
+        Some(at) if now.duration_since(at) < DOUBLE_CLICK => (count + 1).min(3),
+        _ => 1,
     }
 }
 
@@ -310,6 +386,31 @@ fn finish_key(just_pressed: impl Fn(KeyCode) -> bool) -> Option<Finish> {
     }
 }
 
+fn shift_held(input: &Input) -> bool {
+    input.is_held(PhysicalKey::Code(KeyCode::ShiftLeft))
+        || input.is_held(PhysicalKey::Code(KeyCode::ShiftRight))
+}
+
+fn apply_pointer(
+    state: &mut UITextEditState,
+    font_system: &mut FontSystem,
+    input: &Input,
+    pointer: &UIInputState,
+    entity: Entity,
+    at: Vec2,
+    focusing: bool,
+) {
+    match input.get_mouse_button_state(MouseButton::Left) {
+        InputState::Pressed if pointer.pressed(MouseButton::Left) == Some(entity) => {
+            state.press(font_system, at, shift_held(input), focusing, Instant::now());
+        }
+        InputState::Down if pointer.captured(MouseButton::Left) == Some(entity) => {
+            state.drag(font_system, at);
+        }
+        _ => {}
+    }
+}
+
 fn apply_keys(
     state: &mut UITextEditState,
     font_system: &mut FontSystem,
@@ -323,7 +424,7 @@ fn apply_keys(
         || held(KeyCode::ControlRight)
         || held(KeyCode::SuperLeft)
         || held(KeyCode::SuperRight);
-    let shift = held(KeyCode::ShiftLeft) || held(KeyCode::ShiftRight);
+    let shift = shift_held(input);
 
     if command && pressed(KeyCode::KeyA) {
         state.select_all();
@@ -398,7 +499,7 @@ fn apply_keys(
 /// Edits the focused [`UITextInput`] through its cosmic-text editor and writes the result back to it.
 pub(crate) fn update_text_inputs(
     mut focused: ResMut<FocusedWidget>,
-    input: Res<Input>,
+    (input, window, pointer): (Res<Input>, Res<Window>, Res<UIInputState>),
     mut clipboard: ResMut<WindowClipboard>,
     mut measure: ResMut<UITextMeasure>,
     fields: Query<(
@@ -408,6 +509,7 @@ pub(crate) fn update_text_inputs(
         Option<&UITextInputParts>,
     )>,
     texts: Query<&UIText>,
+    layouts: Query<&UILayout>,
     mut cmd: CommandQueue,
     (mut changed, mut submitted, mut cancelled): (
         EventWriter<UITextInputChanged>,
@@ -428,17 +530,20 @@ pub(crate) fn update_text_inputs(
             {
                 state.focused = false;
                 state.forget_history();
+                state.press_time = None;
+                state.pointer = None;
             }
             continue;
         }
 
         let font_system = measure.font_system();
+        let label = parts.map_or(entity, |parts| parts.label);
         let mut created = None;
         let state: &mut UITextEditState = match existing.as_mut() {
             Some(state) => state,
             None => {
                 let default_text = UIText::default();
-                let text = texts.get_entity(parts.map_or(entity, |parts| parts.label));
+                let text = texts.get_entity(label);
                 created.insert(UITextEditState::new(
                     font_system,
                     text.unwrap_or(&default_text),
@@ -448,9 +553,14 @@ pub(crate) fn update_text_inputs(
         };
 
         state.sync(font_system, &text_input);
-        if !state.focused {
+        let focusing = !state.focused;
+        if focusing {
             state.focused = true;
             state.select_all();
+        }
+        if let Some(layout) = layouts.get_entity(label) {
+            let at = window.logical_pointer_position(&input) - layout.content_rect.min;
+            apply_pointer(state, font_system, &input, &pointer, entity, at, focusing);
         }
         apply_keys(state, font_system, &input, &mut clipboard, &pastes);
 
@@ -572,15 +682,16 @@ mod tests {
         input::{MouseButton, actions::ActionFired},
         plugin::Window,
     };
+    use glam::Vec2;
 
     use super::*;
     use crate::{
         anchor::UIPanelStack,
         elements::prelude::*,
         focus::{UIFocusGained, UIFocusLost, update_focus},
-        interaction::HoveredNode,
+        interaction::{HoveredNode, Interactable, UIInputState, update_ui_interaction},
         node::{
-            AlignItems, FlexDirection, UILayout, UILayoutDiagnostics, UILayoutEngine,
+            AlignItems, FlexDirection, UIBox, UILayout, UILayoutDiagnostics, UILayoutEngine,
             UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         sets::UiSet,
@@ -756,6 +867,18 @@ mod tests {
 
     const COMMAND: KeyCode = KeyCode::ControlLeft;
     const SHIFT: KeyCode = KeyCode::ShiftLeft;
+    const SCALE: f32 = 1.5;
+    const LABEL: Vec2 = Vec2::new(40.0, 20.0);
+
+    fn layout(min: Vec2, size: Vec2) -> UILayout {
+        let rect = UIBox { min, size };
+        UILayout {
+            rect,
+            content_rect: rect,
+            clip_rect: rect,
+            paint_order: 0,
+        }
+    }
 
     struct Editing {
         world: World,
@@ -765,8 +888,10 @@ mod tests {
     impl Editing {
         fn new() -> Self {
             let mut world = World::new();
+            world.insert_resource(Window::new((1200, 900), SCALE as f64));
             world.insert_resource(FocusedWidget::default());
             world.insert_resource(HoveredNode::default());
+            world.insert_resource(UIInputState::default());
             world.insert_resource(Input::new());
             world.insert_resource(WindowClipboard::default());
             world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
@@ -778,6 +903,7 @@ mod tests {
             world.insert_resource(EventChannel::<UIFocusGained>::default());
             world.insert_resource(EventChannel::<UIFocusLost>::default());
             let mut systems: Vec<Box<dyn System<In = ()>>> = vec![
+                Box::new(update_ui_interaction.into_system()),
                 Box::new(answer_paste_requests.into_system()),
                 Box::new(update_focus.into_system()),
                 Box::new(update_text_inputs.into_system()),
@@ -866,11 +992,92 @@ mod tests {
             self.frame();
         }
 
-        fn press(&mut self, field: Entity) {
-            **self.world.get_resource_mut::<HoveredNode>().unwrap() = Some(field);
+        fn laid_out(&mut self, value: &str) -> Entity {
+            let label = self.world.spawn((
+                UIText {
+                    text: value.into(),
+                    wrap: false,
+                    ..UIText::default()
+                },
+                layout(LABEL, Vec2::new(300.0, 18.0)),
+            ));
+            let selection = self.world.spawn(UIMaterial::flat(Color::TRANSPARENT));
+            let caret = self.world.spawn(UIMaterial::flat(Color::TRANSPARENT));
+            let mut input = UITextInput::new("");
+            input.value = value.into();
+            self.world.spawn((
+                input,
+                UITextInputParts {
+                    selection,
+                    label,
+                    caret,
+                },
+                layout(LABEL - Vec2::new(6.0, 4.0), Vec2::new(312.0, 26.0)),
+                Interactable,
+            ))
+        }
+
+        fn x_of(&self, field: Entity, index: usize) -> f32 {
+            self.world
+                .get_component_for_entity::<UITextEditState>(field)
+                .expect("the field has been focused")
+                .editor
+                .with_buffer(|buffer| {
+                    let run = buffer.layout_runs().next().unwrap();
+                    let glyph = run
+                        .glyphs
+                        .iter()
+                        .find(|glyph| glyph.start == index)
+                        .unwrap();
+                    glyph.x + glyph.w * 0.25
+                })
+        }
+
+        fn point(&mut self, x: f32) {
+            let at = (LABEL + Vec2::new(x, 9.0)) * SCALE;
+            self.input().update_mouse_position(at.x as f64, at.y as f64);
+        }
+
+        fn hold(&mut self, x: f32) {
+            self.point(x);
             self.input().update_mouse_button(MouseButton::Left, true);
             self.frame();
+        }
+
+        fn drag(&mut self, x: f32) {
+            self.point(x);
+            self.frame();
+        }
+
+        fn release(&mut self) {
             self.input().update_mouse_button(MouseButton::Left, false);
+            self.frame();
+        }
+
+        fn click(&mut self, x: f32) {
+            self.hold(x);
+            self.release();
+        }
+
+        fn shift_click(&mut self, x: f32) {
+            self.input()
+                .update_key_input(PhysicalKey::Code(SHIFT), true);
+            self.click(x);
+            self.input()
+                .update_key_input(PhysicalKey::Code(SHIFT), false);
+        }
+
+        fn let_the_last_press_age(&mut self, field: Entity) {
+            let state = self
+                .world
+                .get_component_for_entity_mut::<UITextEditState>(field)
+                .unwrap();
+            state.press_time = state.press_time.map(|at| at - DOUBLE_CLICK);
+        }
+
+        fn selection(&self, field: Entity) -> Option<(usize, usize)> {
+            let (cursor, anchor) = self.caret(field);
+            anchor.map(|anchor| (anchor.min(cursor), anchor.max(cursor)))
         }
 
         fn value(&self, field: Entity) -> &str {
@@ -1218,11 +1425,157 @@ mod tests {
     #[test]
     fn gaining_focus_by_a_press_selects_everything() {
         let mut editing = Editing::new();
-        let field = editing.field("abc", 1, None);
-        editing.press(field);
+        let field = editing.laid_out("abc");
+        editing.click(5.0);
 
         assert_eq!(editing.focused_widget(), Some(field));
         assert_eq!(editing.caret(field), (3, Some(0)));
+    }
+
+    #[test]
+    fn a_press_places_the_caret_and_a_shift_press_extends_the_selection() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello world");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+
+        let x = editing.x_of(field, 6);
+        editing.click(x);
+        assert_eq!(editing.caret(field), (6, None));
+        editing.let_the_last_press_age(field);
+
+        let x = editing.x_of(field, 2);
+        editing.shift_click(x);
+        assert_eq!(editing.caret(field), (2, Some(6)));
+        editing.let_the_last_press_age(field);
+
+        let x = editing.x_of(field, 9);
+        editing.shift_click(x);
+        assert_eq!(editing.caret(field), (9, Some(6)));
+    }
+
+    #[test]
+    fn a_press_ends_a_typed_run() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("ab");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+        let x = editing.x_of(field, 1);
+        editing.click(x);
+        editing.type_text("c");
+        editing.let_the_last_press_age(field);
+        editing.click(x);
+        editing.type_text("d");
+        assert_eq!(editing.value(field), "adcb");
+
+        editing.keys(&[COMMAND, KeyCode::KeyZ]);
+        assert_eq!(editing.value(field), "acb");
+    }
+
+    #[test]
+    fn a_wobble_under_the_drag_threshold_keeps_the_focusing_select_all() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello world");
+        editing.hold(20.0);
+        editing.drag(20.0 + DRAG_THRESHOLD - 1.0);
+        assert_eq!(editing.caret(field), (11, Some(0)));
+        editing.release();
+        assert_eq!(editing.caret(field), (11, Some(0)));
+    }
+
+    #[test]
+    fn a_drag_selects_from_the_press_to_the_pointer() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello world");
+        editing.click(0.0);
+        let (two, seven, nine) = (
+            editing.x_of(field, 2),
+            editing.x_of(field, 7),
+            editing.x_of(field, 9),
+        );
+        editing.focus(None);
+        editing.frame();
+
+        editing.hold(two);
+        editing.drag(seven);
+        assert_eq!(
+            editing.caret(field),
+            (7, Some(2)),
+            "a drag replaces the select-all"
+        );
+        editing.drag(nine);
+        assert_eq!(editing.caret(field), (9, Some(2)));
+        editing.release();
+        assert_eq!(editing.caret(field), (9, Some(2)));
+        editing.let_the_last_press_age(field);
+
+        editing.hold(seven);
+        editing.drag(two);
+        assert_eq!(editing.caret(field), (2, Some(7)));
+        editing.release();
+    }
+
+    #[test]
+    fn a_double_press_selects_a_word_that_survives_the_next_frame() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+        let x = editing.x_of(field, 7);
+
+        editing.click(x);
+        assert_eq!(editing.caret(field), (7, None));
+        editing.click(x);
+        assert_eq!(editing.selection(field), Some((6, 9)));
+        editing.frame();
+        editing.frame();
+        assert_eq!(editing.selection(field), Some((6, 9)));
+
+        editing.type_text("small");
+        assert_eq!(editing.value(field), "hello small world");
+    }
+
+    #[test]
+    fn a_triple_press_selects_the_whole_line() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+        let x = editing.x_of(field, 7);
+
+        editing.click(x);
+        assert_eq!(editing.caret(field), (7, None));
+        editing.click(x);
+        assert_eq!(editing.selection(field), Some((6, 9)));
+        editing.click(x);
+        assert_eq!(editing.selection(field), Some((0, 15)));
+    }
+
+    #[test]
+    fn a_press_after_blur_starts_a_new_count() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        editing.focus(None);
+        editing.frame();
+        editing.click(0.0);
+        assert_eq!(editing.caret(field), (15, Some(0)));
+        let x = editing.x_of(field, 7);
+        editing.let_the_last_press_age(field);
+        editing.click(x);
+        assert_eq!(editing.caret(field), (7, None));
+    }
+
+    #[test]
+    fn presses_inside_the_double_click_window_count_up_to_three() {
+        let start = Instant::now();
+        let soon = DOUBLE_CLICK / 2;
+        assert_eq!(count_press(None, 0, start), 1);
+        assert_eq!(count_press(Some(start), 1, start + soon), 2);
+        assert_eq!(count_press(Some(start), 2, start + soon), 3);
+        assert_eq!(count_press(Some(start), 3, start + soon), 3);
+        assert_eq!(count_press(Some(start), 1, start + DOUBLE_CLICK), 1);
+        assert_eq!(count_press(Some(start), 2, start + DOUBLE_CLICK * 2), 1);
     }
 
     #[test]
