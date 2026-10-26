@@ -48,7 +48,8 @@ use crate::{
         },
     },
     text_input::{
-        UITextInputCancelled, UITextInputChanged, UITextInputSubmitted, update_text_inputs,
+        UITextInputCancelled, UITextInputChanged, UITextInputSubmitted, project_text_inputs,
+        setup_text_inputs, update_text_inputs,
     },
     theme::UITheme,
     tree::update_trees,
@@ -143,12 +144,13 @@ impl Plugin for UIPlugin {
         );
         app.add_system(
             LateUpdate,
-            (setup_slider_visuals, setup_scrollbars).in_set(UiSet::Setup),
+            (setup_slider_visuals, setup_scrollbars, setup_text_inputs).in_set(UiSet::Setup),
         );
         app.add_system(
             LateUpdate,
             (
                 sync_slider_fill,
+                project_text_inputs,
                 sync_scroll_content,
                 sync_split_panes,
                 update_lists,
