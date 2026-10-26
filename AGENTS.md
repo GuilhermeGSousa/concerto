@@ -19,9 +19,11 @@ defines `DefaultPlugins`.
 | [docs/asset-importing.md](docs/asset-importing.md) | Importing sources, `.gasset` files, `asset_id!` |
 | [docs/profiling.md](docs/profiling.md) | Measuring performance |
 | [crates/editor/README.md](crates/editor/README.md) | Anything in the editor |
+| [docs/agent-pipeline.md](docs/agent-pipeline.md) | Working on an issue labelled `agent`, or a PR from a `claude/issue-<n>` branch |
 
 Skills in [.agents/skills/](.agents/skills/) cover visual verification, driving
-the editor without real input, and running on wasm. Roles in
+the editor without real input, running on wasm, the issue pipeline, and acting
+on events on a pipeline PR (`steward`). Roles in
 [.agents/agents/](.agents/agents/) are the spec reviewer, the implementer, and
 the whole-branch reviewer. Both are linked into `.claude/`.
 
@@ -72,11 +74,13 @@ cargo build --target wasm32-unknown-unknown
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
-alone needs none of them.
+alone needs none of them. A cloud pipeline session runs only the first and
+leaves the rest to CI.
 
 Rendering, UI, and editor changes also need a look at the running program; a
 passing test suite says nothing about what is on screen. Use the
-`visual-verification` skill.
+`visual-verification` skill. A cloud pipeline session has no display: it lists
+the checks for the owner in its review comment.
 
 ## Code rules
 
@@ -130,7 +134,9 @@ import fails the build.
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.
 
-**Tests first.** Write the failing test, watch it fail, then make it pass.
+**Tests first.** Write the failing test, watch it fail, then make it pass. A
+cloud pipeline session writes the test first but cannot run it, so the red step
+is not observed.
 
 ## Constraints
 
@@ -153,7 +159,9 @@ style follow the file you are in.
   time and refresh on completion".
 - Stage the paths you changed by name. Never `git add -A`.
 - Never push, never commit to `master`, never rewrite history, never force
-  anything. Squashing and rewriting branches is the owner's job.
+  anything. Squashing and rewriting branches is the owner's job. The one
+  exception: a pipeline session pushes its `claude/issue-<n>` branch and opens
+  its PR.
 - The owner edits files while you work. Re-read a file before you edit it, and
   expect the build state to shift between commands.
 
@@ -168,6 +176,10 @@ style follow the file you are in.
    - a plan at `.agents/plans/YYYY-MM-DD-<topic>.md`, one `implementer` per
      task, and a `branch-reviewer` pass over the whole branch at the end.
 
+An issue labelled `agent` follows the issue pipeline instead: questions, spec
+and plan happen in its PR, and the owner approves each with a `/approve`
+comment. See [docs/agent-pipeline.md](docs/agent-pipeline.md).
+
 When a design question has a known answer in Bevy, say how Bevy does it and
 what differs here.
 
@@ -177,6 +189,22 @@ While brainstorming a design, before the spec is written:
   asking until none is left.
 - Aim for the architecture that is easiest to maintain, even when that means
   changing an established public API.
+
+## Issues
+
+Work found outside the task at hand, and follow-up work agreed with the owner
+in a session, becomes a GitHub issue. Open it without asking. Do not do that
+work in the current task.
+
+- Search open issues first; if one covers it, comment there instead.
+- Start the body with the line `<!-- concerto-agent -->`. Then say what is
+  wrong or missing, where (`path:line`), the evidence, a size estimate, and
+  where it was found (the PR, or the session link).
+- Label it `agent` and `agent:filed`, plus `documentation` or `lint` when the
+  change is only that, and `agent:local` when it needs a look at the running
+  program.
+- Only the top-level session files. The `implementer`, `spec-reviewer` and
+  `branch-reviewer` roles report such findings to their caller.
 
 ## Documentation
 

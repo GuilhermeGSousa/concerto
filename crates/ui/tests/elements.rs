@@ -484,6 +484,11 @@ fn text_field_defaults() {
     assert_eq!(node.height, UIValue::Px(t.control_height));
     assert_eq!(node.flex_shrink, 0.0);
     assert_eq!(node.padding, UIRect::axes(t.spacing_xs, t.spacing_sm));
+    assert_eq!(
+        node.overflow_x,
+        Overflow::Hidden,
+        "a long value is clipped to the field"
+    );
     let material = spawned.get::<UIMaterial>();
     assert_eq!(material.color, t.canvas.to_linear());
     assert_eq!(material.border_color, t.border.to_linear());

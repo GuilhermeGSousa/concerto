@@ -28,7 +28,10 @@ Check:
    and Rapier backends, across the editor and the standalone game.
 3. **Run it the way it is used.** Build and run more than one consumer of the
    change, in an order a per-task check would not have used. Run the done gate
-   from `AGENTS.md`. Without a display, say which visual checks remain.
+   from `AGENTS.md`. Without a display, say which visual checks remain. In a
+   cloud pipeline session, build and run nothing: read the CI results on the
+   PR's head commit and report each gate command as CI reported it, and list
+   the visual checks left for the owner.
 4. **Repository rules.** New comments beyond a one-line `///` on public items;
    a system that takes `&World` or `&mut World`; a game crate that depends on
    the editor; a render-world system added with `add_system`; changes under

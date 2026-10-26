@@ -47,10 +47,7 @@ pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
-use numeric::{
-    cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields,
-    select_numeric_field_on_focus,
-};
+use numeric::{cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields};
 
 use crate::tools::edits::EditComponent;
 use registry::send_property_commits;
@@ -110,8 +107,7 @@ impl Plugin for InspectorPlugin {
         app.add_system(Startup, build_panel);
         app.add_system(Update, send_property_commits)
             .add_system(Update, send_component_edits);
-        app.add_system(LateUpdate, select_numeric_field_on_focus)
-            .add_system(LateUpdate, commit_numeric_fields)
+        app.add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
             .add_system(LateUpdate, collect_inspector_data)
             .add_system(LateUpdate, update_name_field)

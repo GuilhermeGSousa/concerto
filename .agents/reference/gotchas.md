@@ -120,6 +120,11 @@ fix the entry in the same commit as the change that made it false.
   clipping overflow (`single_line` counts as a minimum on the width). A
   readout that changes every frame, such as a counter, should be sized that
   way, or it lays itself out on every refresh and counts its own passes.
+- **A text field's `UIText` is on its label child.** In the frame a node with
+  `UITextInput`, `UIText` and `UINode` appears, its `UIText` moves to the
+  second of three children, between the selection and caret quads, so a query
+  for `UIText` on the field entity no longer matches it. Write
+  `UITextInput::value`; the label follows it.
 
 ## Scenes and assets
 

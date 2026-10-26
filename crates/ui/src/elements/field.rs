@@ -6,14 +6,14 @@ use crate::{
     focus::UIFocusable,
     interaction::Interactable,
     material::UIMaterial,
-    node::{UINode, UIRect},
+    node::{Overflow, UINode, UIRect},
     text::UIText,
     text_input::UITextInput,
     theme::UITheme,
     transform::UIValue,
 };
 
-/// An editable, focusable, one-line text field.
+/// An editable, focusable, one-line text field whose text is drawn by a label child, clipped to the field.
 pub struct TextField {
     theme: UITheme,
     node: UINode,
@@ -30,7 +30,8 @@ impl UITheme {
             node: UINode::default()
                 .with_height(UIValue::Px(self.control_height))
                 .with_flex_shrink(0.0)
-                .with_padding(UIRect::axes(self.spacing_xs, self.spacing_sm)),
+                .with_padding(UIRect::axes(self.spacing_xs, self.spacing_sm))
+                .with_overflow_x(Overflow::Hidden),
             material: UIMaterial {
                 corner_radius: self.radius_md,
                 ..UIMaterial::with_border(self.canvas, self.border, 1.0)

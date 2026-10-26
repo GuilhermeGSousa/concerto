@@ -4,7 +4,7 @@ use std::{cell::RefCell, rc::Rc, sync::Arc};
 
 use concerto_app::App;
 use concerto_render::{draw_target::DrawTarget, gpu::Gpu};
-use concerto_window::plugin::Window;
+use concerto_window::{clipboard::WindowClipboard, plugin::Window};
 use winit::{
     event_loop::{ControlFlow, EventLoop},
     window::Window as WinitWindow,
@@ -87,5 +87,8 @@ async fn build_app(
             window.scale_factor(),
         ));
     build(&mut app);
+    if let Some(clipboard) = app.get_resource_mut::<WindowClipboard>() {
+        clipboard.use_os_clipboard();
+    }
     *slot.borrow_mut() = Some(app);
 }

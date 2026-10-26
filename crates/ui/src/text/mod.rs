@@ -42,7 +42,7 @@ pub enum FontStyle {
 }
 
 /// Text node component.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct UIText {
     pub text: String,
     pub font_size: f32,
