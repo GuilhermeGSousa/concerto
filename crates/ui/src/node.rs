@@ -762,6 +762,18 @@ impl FromWorld for ExtractedSurface {
     }
 }
 
+pub(crate) struct WatchedMaterials {
+    entities: HashSet<Entity>,
+}
+
+impl FromWorld for WatchedMaterials {
+    fn from_world(_: &World) -> Self {
+        Self {
+            entities: HashSet::new(),
+        }
+    }
+}
+
 #[derive(Component)]
 pub(crate) struct RenderUIMaterial {
     pub(crate) material_bind_group: wgpu::BindGroup,
@@ -1438,8 +1450,10 @@ fn quad_vertices(source: UIBox, draw_rect: UIBox, window: Vec2, scale: f32) -> [
     ]
 }
 
-/// Syncs the user-facing material fields into the GPU-side uniforms each frame.
-pub(crate) fn sync_material_params(nodes: Query<(&UILayout, &mut UIMaterial)>) {
+/// Syncs material fields into the GPU-side uniforms when a node's layout or material changes.
+pub(crate) fn sync_material_params(
+    nodes: Query<(&UILayout, &mut UIMaterial), Or<(Changed<UILayout>, Changed<UIMaterial>)>>,
+) {
     for (node, mut material) in nodes.iter() {
         let params = [
             material.border_width,
@@ -1537,29 +1551,34 @@ pub(crate) fn extract_shared_viewports(
 
 /// Extracts [`UIMaterial`] changes into GPU-side [`RenderUIMaterial`] bind groups.
 pub(crate) fn extract_ui_materials(
-    computed_nodes: Extracted<Query<(&UIMaterial, &RenderEntity)>>,
+    changed_materials: Extracted<
+        Query<(Entity, &UIMaterial, &RenderEntity), Or<(Changed<UIMaterial>, Added<RenderEntity>)>>,
+    >,
+    all_materials: Extracted<Query<(&UIMaterial, &RenderEntity)>>,
     device: Res<RenderDevice>,
     render_textures: Res<RenderAssets<RenderTexture>>,
     dummy_texture: Res<DummyRenderTexture>,
     ui_pipeline: Res<concerto_render::MaterialPipeline<UIMaterial>>,
     render_materials: Query<&RenderUIMaterial>,
     diagnostics: Res<UIRenderDiagnostics>,
+    mut watched: SystemLocal<WatchedMaterials>,
     mut cmd: CommandQueue,
 ) {
-    for (node_material, render_entity) in computed_nodes.iter() {
+    let mut extract = |node_material: &UIMaterial, render_entity: &RenderEntity| -> bool {
         if node_material
             .texture
             .as_ref()
             .is_some_and(|handle| !render_textures.contains(&handle.id()))
         {
-            continue;
+            return true;
         }
+        let textured = node_material.texture.is_some();
         let signature = material_signature(node_material, &render_textures);
         if render_materials
             .get_entity(**render_entity)
             .is_some_and(|material| material.signature == signature)
         {
-            continue;
+            return textured;
         }
         let Ok(material_bind_group) = node_material.create_bind_group(
             &device,
@@ -1567,7 +1586,7 @@ pub(crate) fn extract_ui_materials(
             &dummy_texture,
             &ui_pipeline.bind_group_layout,
         ) else {
-            continue;
+            return true;
         };
         diagnostics.record_binding_rebuild();
 
@@ -1578,6 +1597,25 @@ pub(crate) fn extract_ui_materials(
             },
             **render_entity,
         );
+        textured
+    };
+
+    let previous = std::mem::take(&mut watched.entities);
+    for (entity, node_material, render_entity) in changed_materials.iter() {
+        if extract(node_material, render_entity) {
+            watched.entities.insert(entity);
+        }
+    }
+    for entity in previous {
+        if changed_materials.contains_entity(entity) {
+            continue;
+        }
+        let Some((node_material, render_entity)) = all_materials.get_entity(entity) else {
+            continue;
+        };
+        if extract(node_material, render_entity) {
+            watched.entities.insert(entity);
+        }
     }
 }
 
@@ -3000,11 +3038,16 @@ mod tests {
     }
 
     fn drawing_app(gpu: &concerto_render::gpu::Gpu) -> concerto_app::App {
+        drawing_app_into(gpu, SharedTexture::new(wgpu::TextureFormat::Rgba8Unorm))
+    }
+
+    fn drawing_app_into(
+        gpu: &concerto_render::gpu::Gpu,
+        target: SharedTexture,
+    ) -> concerto_app::App {
         let mut app = concerto_app::App::new();
         app.insert_resource(gpu.clone())
-            .insert_resource(concerto_render::draw_target::DrawTarget::Texture(
-                SharedTexture::new(wgpu::TextureFormat::Rgba8Unorm),
-            ))
+            .insert_resource(concerto_render::draw_target::DrawTarget::Texture(target))
             .insert_resource(Window::new((64, 64), 1.0));
         app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
             .register_plugin(concerto_app::plugins::AssetManagerPlugin)
@@ -3177,6 +3220,144 @@ mod tests {
         app.update();
 
         assert_eq!(geometry_rebuilds(&app), rebuilds + 3);
+    }
+
+    fn binding_rebuilds(app: &concerto_app::App) -> u64 {
+        app.get_resource::<UIRenderDiagnostics>()
+            .unwrap()
+            .binding_rebuilds()
+    }
+
+    fn bound_material(app: &concerto_app::App, node: Entity) -> bool {
+        let render_entity = **app
+            .main()
+            .world()
+            .get_component_for_entity::<RenderEntity>(node)
+            .unwrap();
+        app.render()
+            .world()
+            .get_component_for_entity::<RenderUIMaterial>(render_entity)
+            .is_some()
+    }
+
+    #[test]
+    fn idle_frames_rebuild_no_binding() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        quad(&mut app, 32.0);
+        quad(&mut app, 16.0);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        app.update();
+        let rebuilds = binding_rebuilds(&app);
+
+        app.update();
+        app.update();
+
+        assert_eq!(binding_rebuilds(&app), rebuilds);
+    }
+
+    #[test]
+    fn a_material_whose_texture_arrives_late_is_bound_on_the_frame_it_arrives() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let texture = AssetId::new();
+        let node = app.main_mut().world_mut().spawn((
+            UINode::default().with_size(UIValue::Px(32.0), UIValue::Px(32.0)),
+            UIMaterial {
+                texture: Some(AssetHandle::weak(texture)),
+                ..UIMaterial::flat(concerto_color::Color::WHITE)
+            },
+        ));
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        assert!(
+            !bound_material(&app, node),
+            "no binding without its texture"
+        );
+
+        let render_texture = concerto_render::components::camera::create_rtt(
+            &gpu.device,
+            wgpu::TextureFormat::Rgba8Unorm,
+            8,
+            8,
+        );
+        app.render_mut()
+            .get_resource_mut::<RenderAssets<RenderTexture>>()
+            .unwrap()
+            .insert(texture, render_texture);
+        app.update();
+
+        assert!(bound_material(&app, node), "bound once its texture arrives");
+    }
+
+    #[test]
+    fn a_shared_viewport_whose_picture_is_replaced_is_rebound() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let picture = SharedTexture::new(wgpu::TextureFormat::Rgba8Unorm);
+        let mut game = drawing_app_into(&gpu, picture.clone());
+        game.finish_plugin_build();
+        game.update();
+        let mut app = drawing_app(&gpu);
+        let mut viewport = UISharedViewport::new();
+        viewport.picture = Some(picture.clone());
+        let node = app.main_mut().world_mut().spawn((
+            UINode::default().with_size(UIValue::Px(32.0), UIValue::Px(32.0)),
+            UIMaterial::flat(concerto_color::Color::WHITE),
+            viewport,
+        ));
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        app.update();
+        assert!(bound_material(&app, node), "the first picture is bound");
+        let rebuilds = binding_rebuilds(&app);
+
+        game.insert_resource(Window::new((48, 48), 1.0));
+        game.update();
+        app.update();
+        app.update();
+
+        assert_eq!(binding_rebuilds(&app), rebuilds + 1);
+    }
+
+    #[test]
+    fn resizing_a_node_updates_its_border_params_and_rebuilds_its_binding_once() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let node = quad(&mut app, 32.0);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        app.update();
+        let rebuilds = binding_rebuilds(&app);
+
+        *app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<UINode>(node)
+            .unwrap() = UINode::default().with_size(UIValue::Px(48.0), UIValue::Px(40.0));
+        app.update();
+        app.update();
+        app.update();
+
+        let params = app
+            .main()
+            .world()
+            .get_component_for_entity::<UIMaterial>(node)
+            .unwrap()
+            .border_params;
+        assert_eq!((params[1], params[2]), (48.0, 40.0));
+        assert_eq!(binding_rebuilds(&app), rebuilds + 1);
     }
 
     #[test]
