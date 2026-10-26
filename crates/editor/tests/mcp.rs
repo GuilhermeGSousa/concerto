@@ -20,6 +20,7 @@ use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, With, Without,
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
+    entity::hierarchy::ChildOf,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
     signal::Signal,
@@ -515,9 +516,17 @@ fn edit_frames_so_far(mut calls: ToolCalls<EditFramesSoFar>, frames: EditWorld<R
     }
 }
 
-fn text_fields(mut calls: ToolCalls<TextFields>, fields: Query<&UIText, With<UITextInput>>) {
+fn text_fields(
+    mut calls: ToolCalls<TextFields>,
+    fields: Query<Entity, With<UITextInput>>,
+    labels: Query<(&UIText, &ChildOf)>,
+) {
     for (_, reply) in calls.read() {
-        let mut values: Vec<&str> = fields.iter().map(|field| field.text.as_str()).collect();
+        let mut values: Vec<&str> = labels
+            .iter()
+            .filter(|(_, child_of)| fields.get_entity(child_of.parent()).is_some())
+            .map(|(label, _)| label.text.as_str())
+            .collect();
         values.sort_unstable();
         reply.ok(values.join("|"));
     }
