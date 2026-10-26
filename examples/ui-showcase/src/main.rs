@@ -10,6 +10,7 @@ use concerto::{
     ecs::{
         CommandQueue, Component, Query, Res, ResMut, Resource, With,
         command::EntityCommandQueue,
+        entity::hierarchy::Children,
         signal::{On, listener::IntoListener},
     },
     foundation::time::Time,
@@ -31,7 +32,7 @@ use concerto::{
         theme::{ButtonVariant, UITheme},
         transform::UIValue,
         tree::{UITree, UITreeElement},
-        widgets::{UITab, UITabBody, UITabChanged, UITabStrip, select_tab},
+        widgets::{UITabBody, UITabChanged, UITabStrip, select_tab},
     },
     window::{
         input::MouseButton,
@@ -58,6 +59,7 @@ const STRESS_COLUMNS: usize = 15;
 const STRESS_LABELS: usize = 300;
 const STRESS_TICK: f32 = 0.1;
 const DIAGNOSTICS_REFRESH: f32 = 0.25;
+const DIAGNOSTICS_WIDTH: f32 = 1040.0;
 
 #[derive(Resource, Default)]
 struct StressTicker {
@@ -124,7 +126,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
     ));
     let strip = tabs.entity();
     for (index, name) in ["SHOWCASE", "STRESS"].into_iter().enumerate() {
-        tabs.add_child((
+        tabs.add_child(
             theme
                 .button(name)
                 .tab()
@@ -132,9 +134,8 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
                 .radius(0.0)
                 .width(UIValue::Px(120.0))
                 .font_size(12.0)
-                .on_click(select_tab),
-            UITab { strip, index },
-        ));
+                .on_click(select_tab(strip, index)),
+        );
     }
 
     let mut body = root.spawn_child((
@@ -458,16 +459,30 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         },
     );
 
-    root.add_child((
+    root.add_child_with(
         theme
             .card()
             .radius(0.0)
             .height(UIValue::Px(28.0))
             .fixed()
-            .padding(UIRect::axes(5.0, 8.0)),
-        theme.text("").mono().font_size(11.0),
-        Diagnostics,
-    ));
+            .padding(UIRect::axes(5.0, 8.0))
+            .clipped(),
+        |mut card| {
+            card.add_child((
+                theme
+                    .label("")
+                    .mono()
+                    .font_size(11.0)
+                    .single_line()
+                    .size(
+                        UIValue::Px(DIAGNOSTICS_WIDTH),
+                        UIValue::Px(theme.line_height(11.0)),
+                    )
+                    .fixed(),
+                Diagnostics,
+            ));
+        },
+    );
 
     let mut menu = cmd.spawn(
         theme
@@ -642,13 +657,17 @@ fn open_context_menu(
 fn restyle_tabs(
     on: On<UITabChanged>,
     theme: Res<UITheme>,
-    tabs: Query<(&UITab, &mut UIInteractionStyle)>,
+    strips: Query<&Children>,
+    styles: Query<&mut UIInteractionStyle>,
 ) {
-    for (tab, mut style) in tabs.iter() {
-        if tab.strip != on.entity() {
+    let Some(tabs) = strips.get_entity(on.entity()) else {
+        return;
+    };
+    for (index, &tab) in tabs.iter().enumerate() {
+        let Some(mut style) = styles.get_entity(tab) else {
             continue;
-        }
-        let wanted = theme.interaction(ButtonVariant::Tab, tab.index == on.signal().selected);
+        };
+        let wanted = theme.interaction(ButtonVariant::Tab, index == on.signal().selected);
         if style.normal != wanted.normal {
             **style = wanted;
         }
