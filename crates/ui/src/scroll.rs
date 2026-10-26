@@ -111,11 +111,20 @@ pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, nodes: Query<&mut
         let Some(content) = area.content else {
             continue;
         };
-        if let Some(mut node) = nodes.get_entity(content) {
+        let Some(mut node) = nodes.get_entity(content) else {
+            continue;
+        };
+        if node.position != Position::Absolute {
             node.position = Position::Absolute;
-            node.inset.left = UIValue::Px(0.0);
-            node.inset.right = UIValue::Px(0.0);
-            node.inset.top = UIValue::Px(-area.offset);
+        }
+        let inset = UIInset {
+            top: UIValue::Px(0.0),
+            left: UIValue::Px(0.0),
+            right: UIValue::Px(0.0),
+            ..node.inset
+        };
+        if node.inset != inset {
+            node.inset = inset;
         }
     }
 }
@@ -260,24 +269,58 @@ pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, m
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, System, World};
+    use crate::list::tests::Harness;
+    use concerto_ecs::World;
+
+    fn plain_area(harness: &mut Harness, offset: f32) -> (Entity, Entity) {
+        let root = harness.root();
+        let area = harness.node(
+            UINode::default()
+                .with_height(UIValue::Px(100.0))
+                .with_flex_shrink(0.0),
+            root,
+        );
+        let content = harness.node(UINode::default().with_height(UIValue::Px(900.0)), area);
+        harness.world.insert(
+            UIScrollArea {
+                offset,
+                content_extent: 900.0,
+                content: Some(content),
+            },
+            area,
+        );
+        harness.settle();
+        (area, content)
+    }
 
     #[test]
     fn a_plain_scroll_area_moves_its_content_by_the_whole_offset() {
-        let mut world = World::new();
-        let content = world.spawn(UINode::default());
-        world.spawn(UIScrollArea {
-            offset: 140.0,
-            content_extent: 900.0,
-            content: Some(content),
-        });
+        let mut harness = Harness::new();
+        let (area, content) = plain_area(&mut harness, 140.0);
 
-        let mut system = sync_scroll_content.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
+        assert_eq!(
+            harness.layout(content).rect.min.y,
+            harness.layout(area).rect.min.y - 140.0
+        );
+    }
 
-        let node = world.get_component_for_entity::<UINode>(content).unwrap();
-        assert_eq!(node.inset.top, UIValue::Px(-140.0));
+    #[test]
+    fn scrolling_a_plain_area_moves_its_content_but_not_its_scrollbar_without_a_layout_pass() {
+        let mut harness = Harness::new();
+        let (area, content) = plain_area(&mut harness, 0.0);
+        let track = harness.track(area);
+        let content_top = harness.layout(content).rect.min.y;
+        let track_rect = harness.layout(track).rect;
+        let track_clip = harness.layout(track).clip_rect;
+        let passes = harness.layout_passes();
+
+        harness.set_offset(area, 140.0);
+        harness.frame();
+
+        assert_eq!(harness.layout_passes(), passes);
+        assert_eq!(harness.layout(content).rect.min.y, content_top - 140.0);
+        assert_eq!(harness.layout(track).rect, track_rect);
+        assert_eq!(harness.layout(track).clip_rect, track_clip);
     }
 
     fn pane(ratio: f32) -> UISplitPane {

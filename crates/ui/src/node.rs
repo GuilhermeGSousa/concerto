@@ -45,8 +45,10 @@ use wgpu::{Buffer, util::DeviceExt};
 
 use crate::{
     anchor::{UIAnchoredPanel, UIPanelStack},
+    items::UIWidgetPart,
     material::UIMaterial,
     resources::UIRenderDiagnostics,
+    scroll::UIScrollArea,
     transform::UIValue,
     vertex::{QUAD_INDICES, UIVertex},
 };
@@ -764,6 +766,11 @@ pub(crate) fn compute_ui_nodes(
         Query<&UIIntrinsicHeight>,
         Query<&ChildOf>,
     ),
+    (scroll_areas, widget_parts, scrolled): (
+        Query<&UIScrollArea>,
+        Query<&UIWidgetPart>,
+        Query<Entity, Changed<UIScrollArea>>,
+    ),
     layouts: Query<&mut UILayout>,
     panels: Query<(Entity, &mut UIAnchoredPanel)>,
     panel_stack: Res<UIPanelStack>,
@@ -922,7 +929,8 @@ pub(crate) fn compute_ui_nodes(
                 .get_entity(*entity)
                 .is_some_and(|(_, panel)| panel.is_changed())
         });
-    let walk = computed || roots_changed || layers_changed || panels_changed;
+    let scrolling = scrolled.iter().next().is_some();
+    let walk = computed || roots_changed || layers_changed || panels_changed || scrolling;
     if examined || walk {
         diagnostics.nodes_updated = updated.len() as u64;
     }
@@ -975,12 +983,12 @@ pub(crate) fn compute_ui_nodes(
         if let Some(children) = children {
             write_absolute_positions(
                 engine,
-                abs_pos,
+                (abs_pos, scroll_offset(&scroll_areas, entity)),
                 clip_rect,
                 root_node.z_index,
                 root_node.visible,
                 children,
-                (&nodes, &culled),
+                (&nodes, &culled, &scroll_areas, &widget_parts),
                 &layouts,
                 &mut cmd,
                 &mut sequence,
@@ -1039,12 +1047,12 @@ pub(crate) fn compute_ui_nodes(
         if let Some(children) = children {
             write_absolute_positions(
                 engine,
-                placement.origin,
+                (placement.origin, scroll_offset(&scroll_areas, entity)),
                 clip_rect,
                 layer,
                 root_node.visible,
                 children,
-                (&nodes, &culled),
+                (&nodes, &culled, &scroll_areas, &widget_parts),
                 &layouts,
                 &mut cmd,
                 &mut sequence,
@@ -1155,16 +1163,22 @@ fn leaf_style(node: &UINode, ellipsis: bool, wrap: bool) -> Style {
     style
 }
 
+fn scroll_offset(areas: &Query<&UIScrollArea>, entity: Entity) -> f32 {
+    areas.get_entity(entity).map_or(0.0, |area| area.offset)
+}
+
 fn write_absolute_positions(
     engine: &UILayoutEngine,
-    parent_origin: Vec2,
+    (parent_origin, parent_scroll): (Vec2, f32),
     parent_clip: UIBox,
     parent_layer: i32,
     parent_visible: bool,
     children: &Children,
-    (ui_nodes, culled): (
+    (ui_nodes, culled, scroll_areas, widget_parts): (
         &Query<(Entity, &UINode, Option<&Children>)>,
         &Query<&UICulled>,
+        &Query<&UIScrollArea>,
+        &Query<&UIWidgetPart>,
     ),
     layouts: &Query<&mut UILayout>,
     cmd: &mut CommandQueue,
@@ -1177,6 +1191,7 @@ fn write_absolute_positions(
         .map(|entity| {
             (
                 parent_origin,
+                parent_scroll,
                 parent_clip,
                 parent_layer,
                 parent_visible,
@@ -1185,8 +1200,14 @@ fn write_absolute_positions(
         })
         .collect::<Vec<_>>();
     stack.reverse();
-    while let Some((origin, inherited_clip, inherited_layer, inherited_visible, child_entity)) =
-        stack.pop()
+    while let Some((
+        origin,
+        inherited_scroll,
+        inherited_clip,
+        inherited_layer,
+        inherited_visible,
+        child_entity,
+    )) = stack.pop()
     {
         if culled.contains_entity(child_entity) {
             continue;
@@ -1198,7 +1219,12 @@ fn write_absolute_positions(
             continue;
         };
 
-        let abs_pos = origin + Vec2::new(layout.location.x, layout.location.y);
+        let scroll = if widget_parts.contains_entity(child_entity) {
+            0.0
+        } else {
+            inherited_scroll
+        };
+        let abs_pos = origin + Vec2::new(layout.location.x, layout.location.y - scroll);
         let size = Vec2::new(layout.size.width, layout.size.height);
         let Some((_, node, grand_children)) = ui_nodes.get_entity(child_entity) else {
             continue;
@@ -1225,10 +1251,11 @@ fn write_absolute_positions(
         *sequence += 1;
 
         if let Some(grand_children) = grand_children {
+            let own_scroll = scroll_offset(scroll_areas, child_entity);
             let mut descendants = grand_children
                 .iter()
                 .copied()
-                .map(|entity| (abs_pos, clip_rect, layer, visible, entity))
+                .map(|entity| (abs_pos, own_scroll, clip_rect, layer, visible, entity))
                 .collect::<Vec<_>>();
             descendants.reverse();
             stack.extend(descendants);

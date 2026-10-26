@@ -610,7 +610,7 @@ pub(crate) fn place_rows(
         }
         let top = match parent {
             Some(parent) => (index - parent) as f32 * row_height,
-            None => index as f32 * row_height - offset,
+            None => index as f32 * row_height,
         };
         if let Some(mut node) = nodes.get_entity(row) {
             place_row(&mut node, top, row_height);

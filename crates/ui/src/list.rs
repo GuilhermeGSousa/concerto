@@ -176,8 +176,8 @@ pub(crate) mod tests {
             UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         scroll::{
-            UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scrollbar_thumbs,
-            sync_scrollbar_tracks, update_scroll_areas,
+            UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scroll_content,
+            sync_scrollbar_thumbs, sync_scrollbar_tracks, update_scroll_areas,
         },
         sets::UiSet,
         text::fonts::{UIFonts, build_font_system},
@@ -243,7 +243,9 @@ pub(crate) mod tests {
                     .in_set(UiSet::Widgets),
             );
             schedule.add_system(setup_scrollbars.in_set(UiSet::Setup));
-            schedule.add_system((update_lists, update_trees).in_set(UiSet::Project));
+            schedule.add_system(
+                (sync_scroll_content, update_lists, update_trees).in_set(UiSet::Project),
+            );
             schedule.add_system(paint_items.in_set(UiSet::Materials));
             schedule.add_system(compute_ui_nodes.in_set(UiSet::Layout));
             schedule.add_system(
@@ -296,6 +298,26 @@ pub(crate) mod tests {
             self.world
                 .get_component_for_entity::<UIScrollArea>(list)
                 .expect("a list is its own scroll area")
+        }
+
+        pub(crate) fn track(&self, area: Entity) -> Entity {
+            self.world
+                .get_component_for_entity::<Children>(area)
+                .into_iter()
+                .flat_map(|children| children.iter().copied())
+                .find(|child| {
+                    self.world
+                        .get_component_for_entity::<UIScrollBar>(*child)
+                        .is_some()
+                })
+                .expect("the area has a scrollbar track")
+        }
+
+        pub(crate) fn layout_passes(&self) -> u64 {
+            self.world
+                .get_resource::<UILayoutDiagnostics>()
+                .unwrap()
+                .layout_passes
         }
 
         pub(crate) fn set_offset(&mut self, list: Entity, offset: f32) {
@@ -542,6 +564,31 @@ pub(crate) mod tests {
         harness.settle();
 
         assert_eq!(harness.unculled(&rows), (0..=6).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn scrolling_a_long_list_by_less_than_a_row_moves_every_shown_row_without_a_layout_pass() {
+        let mut harness = Harness::new();
+        let (list, rows) = long_list(&mut harness, 405.0);
+        let shown = harness.unculled(&rows);
+        let tops = shown
+            .iter()
+            .map(|index| harness.layout(rows[*index]).rect.min.y)
+            .collect::<Vec<_>>();
+        let passes = harness.layout_passes();
+
+        harness.set_offset(list, 415.0);
+        harness.frame();
+
+        assert_eq!(harness.layout_passes(), passes);
+        assert_eq!(harness.unculled(&rows), shown);
+        for (index, top) in shown.iter().zip(tops) {
+            assert_eq!(
+                harness.layout(rows[*index]).rect.min.y,
+                top - 10.0,
+                "row {index}"
+            );
+        }
     }
 
     #[test]

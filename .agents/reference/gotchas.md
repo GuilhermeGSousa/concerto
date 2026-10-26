@@ -108,6 +108,12 @@ fix the entry in the same commit as the change that made it false.
   the rectangle, clip or paint order moved. It is inserted, with
   `SyncWithRenderWorld`, the first time a node is laid out, so a node spawned
   this frame has none until the layout set runs.
+- **A scroll area's offset is applied in the layout walk,** not in Taffy. Every
+  child of a node with `UIScrollArea` except its `UIWidgetPart`s is moved up by
+  the offset, so a scrolled child's `UINode` says where it sits in unscrolled
+  content and its `UILayout` says where it is drawn.
+- **A write to `UIScrollArea` causes a walk of the whole tree,** so compare
+  before writing it.
 
 ## Scenes and assets
 
