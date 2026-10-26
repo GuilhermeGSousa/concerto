@@ -36,7 +36,7 @@ use crate::{
 
 const BLINK: Duration = Duration::from_millis(530);
 
-/// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label inside it that holds that text.
+/// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label inside it that holds that text, and scrolls horizontally to keep the caret visible.
 #[derive(Component)]
 pub struct UITextInput {
     /// Current string value of the field.
@@ -122,6 +122,8 @@ pub(crate) struct UITextEditState {
     press_time: Option<Instant>,
     press_count: u32,
     pointer: Option<PointerPress>,
+    scroll: f32,
+    follow: bool,
 }
 
 impl UITextEditState {
@@ -140,6 +142,8 @@ impl UITextEditState {
             press_time: None,
             press_count: 0,
             pointer: None,
+            scroll: 0.0,
+            follow: false,
         };
         state.load(font_system, input);
         state
@@ -333,6 +337,7 @@ impl UITextEditState {
         if focusing {
             return;
         }
+        self.follow = true;
         let (x, y) = self.hit_point(at);
         let action = match count {
             1 if extend => Action::Drag { x, y },
@@ -355,6 +360,7 @@ impl UITextEditState {
         let restart = press.focusing && !press.dragging;
         press.dragging = true;
         let origin = press.origin;
+        self.follow = true;
         self.editor.shape_as_needed(font_system, false);
         if restart {
             let (x, y) = self.hit_point(origin);
@@ -365,12 +371,12 @@ impl UITextEditState {
         self.collapse_empty_selection();
     }
 
-    fn marks(&self) -> (f32, Option<(f32, f32)>) {
+    fn marks(&self) -> (f32, f32, Option<(f32, f32)>) {
         let (cursor, _) = self.caret();
         let selection = self.selection_range();
         self.editor.with_buffer(|buffer| {
             let Some(run) = buffer.layout_runs().next() else {
-                return (0.0, None);
+                return (0.0, 0.0, None);
             };
             let highlight = selection.and_then(|(start, end)| {
                 run.highlight(
@@ -378,7 +384,7 @@ impl UITextEditState {
                     Cursor::new(end.line, end.index),
                 )
             });
-            (caret_x(&run, cursor), highlight)
+            (caret_x(&run, cursor), run.line_w, highlight)
         })
     }
 
@@ -403,6 +409,17 @@ fn caret_x(run: &LayoutRun, index: usize) -> f32 {
         .map(|glyph| glyph.x)
         .or_else(|| run.glyphs.last().map(|glyph| glyph.x + glyph.w))
         .unwrap_or(0.0)
+}
+
+fn followed_scroll(scroll: f32, caret_x: f32, line_w: f32, visible: f32) -> f32 {
+    let mut scroll = scroll;
+    if caret_x - scroll > visible {
+        scroll = caret_x - visible;
+    }
+    if caret_x - scroll < 0.0 {
+        scroll = caret_x;
+    }
+    scroll.clamp(0.0, (line_w - visible).max(0.0)).round()
 }
 
 fn caret_shown(start: Instant, now: Instant) -> bool {
@@ -465,7 +482,7 @@ fn apply_keys(
     input: &Input,
     clipboard: &mut WindowClipboard,
     pastes: &[String],
-) {
+) -> bool {
     let held = |key| input.is_held(PhysicalKey::Code(key));
     let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
     let command = held(KeyCode::ControlLeft)
@@ -473,9 +490,11 @@ fn apply_keys(
         || held(KeyCode::SuperLeft)
         || held(KeyCode::SuperRight);
     let shift = shift_held(input);
+    let mut acted = false;
 
     if command && pressed(KeyCode::KeyA) {
         state.select_all();
+        acted = true;
     }
     if command
         && pressed(KeyCode::KeyC)
@@ -491,6 +510,7 @@ fn apply_keys(
         state.edit(false, |editor| {
             editor.delete_selection();
         });
+        acted = true;
     }
     if command && pressed(KeyCode::KeyV) {
         clipboard.request_paste();
@@ -501,20 +521,25 @@ fn apply_keys(
         } else {
             state.undo();
         }
+        acted = true;
     }
     if command && pressed(KeyCode::KeyY) {
         state.redo();
+        acted = true;
     }
     for paste in pastes {
         state.edit(false, |editor| editor.insert_string(paste, None));
+        acted = true;
     }
     for &character in input.typed_chars().iter().filter(|_| !command) {
         state.edit(true, |editor| {
             editor.action(font_system, Action::Insert(character))
         });
+        acted = true;
     }
 
     if pressed(KeyCode::Backspace) {
+        acted = true;
         if command {
             state.delete_word(font_system, Motion::PreviousWord);
         } else {
@@ -524,6 +549,7 @@ fn apply_keys(
         }
     }
     if pressed(KeyCode::Delete) {
+        acted = true;
         if command {
             state.delete_word(font_system, Motion::NextWord);
         } else {
@@ -540,8 +566,10 @@ fn apply_keys(
     for (key, motion, word) in moves {
         if pressed(key) {
             state.motion(font_system, if command { word } else { motion }, shift);
+            acted = true;
         }
     }
+    acted
 }
 
 /// Edits the focused [`UITextInput`] through its cosmic-text editor and writes the result back to it.
@@ -609,6 +637,7 @@ pub(crate) fn update_text_inputs(
         let focusing = !state.focused;
         if focusing {
             state.focused = true;
+            state.follow = false;
             state.blink_start = now;
             state.select_all();
         }
@@ -625,7 +654,9 @@ pub(crate) fn update_text_inputs(
                 now,
             );
         }
-        apply_keys(state, font_system, &input, &mut clipboard, &pastes);
+        if apply_keys(state, font_system, &input, &mut clipboard, &pastes) {
+            state.follow = true;
+        }
         if keystroke {
             state.blink_start = now;
         }
@@ -765,22 +796,22 @@ fn project_quad(
     }
 }
 
-/// Shows each text field's value on its label, or its placeholder while the value is empty, and while it has focus places its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret; placement waits for the viewport's first layout.
+/// Shows each text field's value on its label, or its placeholder while the value is empty, and while it has focus scrolls the label in whole pixels to follow the caret once its text overflowed the viewport, placing its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret and hiding it outside the visible text; placement waits for the viewport's first layout, and blur scrolls back to the start.
 pub(crate) fn project_text_inputs(
     fields: Query<(
         &UITextInput,
         &UITextInputParts,
-        Option<&UITextEditState>,
+        Option<&mut UITextEditState>,
         Option<&UILayout>,
     )>,
-    labels: Query<&mut UIText>,
+    labels: Query<(&mut UIText, &mut UINode)>,
     layouts: Query<&UILayout>,
     quads: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
 ) {
     let now = Instant::now();
-    for (input, parts, state, layout) in fields.iter() {
-        let Some(mut text) = labels.get_entity(parts.label) else {
+    for (input, parts, mut state, layout) in fields.iter() {
+        let Some((mut text, mut label_node)) = labels.get_entity(parts.label) else {
             continue;
         };
         let shown = shown_text(input);
@@ -788,23 +819,52 @@ pub(crate) fn project_text_inputs(
             text.text = shown.to_owned();
         }
 
+        if let Some(state) = state
+            .as_mut()
+            .filter(|state| !state.focused && (state.scroll != 0.0 || state.follow))
+        {
+            state.scroll = 0.0;
+            state.follow = false;
+        }
+        let kept = state.as_ref().map_or(0.0, |state| state.scroll);
         let placed = layout
             .zip(layouts.get_entity(parts.viewport))
             .zip(layouts.get_entity(parts.label));
         let focused = state.filter(|state| state.focused).zip(placed);
-        let (caret, selection, blink) = match focused {
-            Some((state, ((field, viewport), label))) => {
-                let (caret_x, highlight) = state.marks();
+        let (caret, selection, blink, scroll) = match focused {
+            Some((mut state, ((field, viewport), label))) => {
+                let (caret_x, line_w, highlight) = state.marks();
+                let visible = viewport.rect.size.x;
+                let scroll = if label.rect.size.x <= visible {
+                    0.0
+                } else if state.follow {
+                    followed_scroll(state.scroll, caret_x, line_w, visible)
+                } else {
+                    state.scroll
+                };
+                if state.scroll != scroll {
+                    state.scroll = scroll;
+                }
                 let label_y = label.content_rect.min.y - viewport.rect.min.y;
                 let viewport_offset = viewport.rect.min - field.rect.min;
+                let caret_x = caret_x - scroll;
                 (
                     Some((viewport_offset + Vec2::new(caret_x, label_y), 1.0)),
-                    highlight.map(|(x, width)| (Vec2::new(x, label_y), width)),
-                    caret_shown(state.blink_start, now),
+                    highlight.map(|(x, width)| (Vec2::new(x - scroll, label_y), width)),
+                    caret_shown(state.blink_start, now) && (0.0..=visible + 1.0).contains(&caret_x),
+                    scroll,
                 )
             }
-            None => (None, None, false),
+            None => (None, None, false, kept),
         };
+        let left = if scroll == 0.0 {
+            UIValue::Auto
+        } else {
+            UIValue::Px(-scroll)
+        };
+        if label_node.inset.left != left {
+            label_node.inset.left = left;
+        }
         project_quad(
             &quads,
             parts.selection,
@@ -826,7 +886,10 @@ mod tests {
     };
     use concerto_window::{
         clipboard::answer_paste_requests,
-        input::{MouseButton, actions::ActionFired},
+        input::{
+            MouseButton,
+            actions::{ActionFired, ActionLabel},
+        },
         plugin::Window,
     };
     use glam::Vec2;
@@ -835,7 +898,7 @@ mod tests {
     use crate::{
         anchor::UIPanelStack,
         elements::prelude::*,
-        focus::{UIFocusGained, UIFocusLost, update_focus},
+        focus::{UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, update_focus},
         interaction::{HoveredNode, Interactable, UIInputState, update_ui_interaction},
         node::{
             AlignItems, FlexDirection, Overflow, UIBox, UILayout, UILayoutDiagnostics,
@@ -870,10 +933,28 @@ mod tests {
             world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
             world.insert_resource(EventChannel::<UITextInputCancelled>::default());
             world.insert_resource(EventChannel::<ClipboardPasted>::default());
+            world.insert_resource(HoveredNode::default());
+            world.insert_resource(EventChannel::<ActionFired>::default());
+            world.insert_resource(EventChannel::<UIFocusGained>::default());
+            world.insert_resource(EventChannel::<UIFocusLost>::default());
             install_layout_listeners(&mut world);
             let mut schedule = Schedule::new();
             schedule.configure_sets(
-                (UiSet::Widgets, UiSet::Setup, UiSet::Project, UiSet::Layout).chain(),
+                (
+                    UiSet::Input,
+                    UiSet::Widgets,
+                    UiSet::Setup,
+                    UiSet::Project,
+                    UiSet::Layout,
+                )
+                    .chain(),
+            );
+            schedule.add_system(
+                (
+                    update_ui_interaction,
+                    update_focus.after(update_ui_interaction),
+                )
+                    .in_set(UiSet::Input),
             );
             schedule.add_system(update_text_inputs.in_set(UiSet::Widgets));
             schedule.add_system(setup_text_inputs.in_set(UiSet::Setup));
@@ -923,8 +1004,84 @@ mod tests {
             input.update_key_input(PhysicalKey::Code(key), false);
         }
 
+        fn keys(&mut self, keys: &[KeyCode]) {
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            for &key in keys {
+                input.update_key_input(PhysicalKey::Code(key), true);
+            }
+            self.frame();
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            for &key in keys {
+                input.update_key_input(PhysicalKey::Code(key), false);
+            }
+        }
+
+        fn tab(&mut self, previous: bool) {
+            let action = if previous {
+                UIFocusPrevious.intern()
+            } else {
+                UIFocusNext.intern()
+            };
+            self.world
+                .get_resource_mut::<EventChannel<ActionFired>>()
+                .unwrap()
+                .push_event(ActionFired { action });
+            if previous {
+                self.keys(&[KeyCode::ShiftLeft, KeyCode::Tab]);
+            } else {
+                self.keys(&[KeyCode::Tab]);
+            }
+        }
+
+        fn press(&mut self, field: Entity) {
+            let at = self.get::<UILayout>(field).rect.min + Vec2::new(12.0, 10.0);
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_mouse_position(at.x as f64, at.y as f64);
+            input.update_mouse_button(MouseButton::Left, true);
+            self.frame();
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_mouse_button(MouseButton::Left, false);
+            self.frame();
+        }
+
         fn viewport(&self, field: Entity) -> Entity {
             self.children(field)[0]
+        }
+
+        fn scroll(&self, field: Entity) -> f32 {
+            match self.get::<UINode>(self.label(field)).inset.left {
+                UIValue::Auto => 0.0,
+                UIValue::Px(left) => -left,
+                other => panic!("the label is inset by {other:?}"),
+            }
+        }
+
+        fn visible(&self, field: Entity) -> f32 {
+            self.get::<UILayout>(self.viewport(field)).rect.size.x
+        }
+
+        fn line_width(&self, field: Entity) -> f32 {
+            self.get::<UITextEditState>(field)
+                .editor
+                .with_buffer(|buffer| buffer.layout_runs().next().map_or(0.0, |run| run.line_w))
+        }
+
+        fn scroll_to_the_end(&self, field: Entity) -> f32 {
+            (self.line_width(field) - self.visible(field)).round()
+        }
+
+        fn caret_is_inside(&self, field: Entity) -> bool {
+            let (_, _, caret) = self.parts(field);
+            let caret = self.get::<UILayout>(caret).rect;
+            let field = self.get::<UILayout>(field).rect;
+            caret.min.x >= field.min.x && caret.max().x <= field.max().x
+        }
+
+        fn long(&mut self, value: &str) -> Entity {
+            let t = UITheme::nocturne();
+            let field = self.spawn(t.text_field("").width(UIValue::Px(80.0)).value(value));
+            self.frame();
+            field
         }
 
         fn parts(&self, field: Entity) -> (Entity, Entity, Entity) {
@@ -1132,11 +1289,17 @@ mod tests {
         fields.focus(Some(field));
         fields.frames(2);
         fields.key(KeyCode::End);
+        assert_eq!(fields.scroll(field), 0.0);
         fields.frame();
 
         let mut last = fields.get::<UILayout>(field).rect.size.x;
         for character in ["d", "e", "W", "W"] {
             fields.type_text(character);
+            assert_eq!(
+                fields.get::<UINode>(fields.label(field)).inset.left,
+                UIValue::Auto,
+                "the field grows instead of scrolling"
+            );
             let field_layout = fields.get::<UILayout>(field);
             let padding = field_layout.rect.size.x - field_layout.content_rect.size.x;
             let viewport = fields.get::<UILayout>(fields.viewport(field)).rect;
@@ -1162,6 +1325,206 @@ mod tests {
         fields.frames(2);
 
         assert!(!fields.get::<UIText>(fields.label(field)).ellipsis);
+    }
+
+    const LONG: &str = "a value much wider than eighty logical pixels";
+
+    #[test]
+    fn typing_past_the_edge_scrolls_so_the_caret_stays_in_the_field() {
+        let mut fields = Fields::new();
+        let field = fields.long("abc");
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+
+        for _ in 0..20 {
+            fields.type_text("w");
+            let (_, _, caret) = fields.parts(field);
+            assert!(
+                fields.alpha(caret) == 0.0 || fields.caret_is_inside(field),
+                "a shown caret is inside the field"
+            );
+        }
+        fields.frame();
+
+        let scroll = fields.scroll(field);
+        assert!(scroll > 0.0, "the text scrolled");
+        assert_eq!(scroll, scroll.round(), "by whole pixels");
+        assert_eq!(scroll, fields.scroll_to_the_end(field));
+        let label = fields.label(field);
+        assert_eq!(fields.get::<UINode>(label).inset.left, UIValue::Px(-scroll));
+        let viewport = fields.get::<UILayout>(fields.viewport(field)).rect;
+        assert_eq!(
+            fields.get::<UILayout>(label).rect.min.x,
+            viewport.min.x - scroll
+        );
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        let (_, _, caret) = fields.parts(field);
+        assert!(fields.alpha(caret) > 0.0);
+        assert!(fields.caret_is_inside(field));
+    }
+
+    #[test]
+    fn home_and_end_scroll_to_either_end_of_the_text() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+
+        fields.key(KeyCode::End);
+        let end = fields.scroll_to_the_end(field);
+        assert!(end > 0.0);
+        assert_eq!(fields.scroll(field), end);
+        fields.key(KeyCode::Home);
+        assert_eq!(
+            fields.get::<UINode>(fields.label(field)).inset.left,
+            UIValue::Auto
+        );
+        fields.key(KeyCode::End);
+        assert_eq!(fields.scroll(field), end);
+    }
+
+    #[test]
+    fn deleting_from_the_end_of_a_scrolled_value_pulls_the_scroll_back() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+        let before = fields.scroll(field);
+
+        fields.key(KeyCode::Backspace);
+        let after = fields.scroll(field);
+        assert!(after < before, "{after} < {before}");
+        assert_eq!(after, fields.scroll_to_the_end(field));
+
+        fields.keys(&[KeyCode::ControlLeft, KeyCode::KeyA]);
+        fields.key(KeyCode::Backspace);
+        assert_eq!(fields.get::<UITextInput>(field).value, "");
+        assert_eq!(
+            fields.get::<UINode>(fields.label(field)).inset.left,
+            UIValue::Auto
+        );
+    }
+
+    #[test]
+    fn blur_shows_the_start_of_the_value_again() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+        assert!(fields.scroll(field) > 0.0);
+
+        fields.focus(None);
+        fields.frame();
+        let label = fields.label(field);
+        assert_eq!(fields.get::<UINode>(label).inset.left, UIValue::Auto);
+        fields.frame();
+        assert_eq!(
+            fields.get::<UILayout>(label).rect.min.x,
+            fields.get::<UILayout>(fields.viewport(field)).rect.min.x
+        );
+
+        fields.focus(Some(field));
+        fields.frames(2);
+        assert_eq!(fields.scroll(field), 0.0, "refocusing keeps the start");
+    }
+
+    #[test]
+    fn focusing_a_long_field_keeps_its_start_in_view() {
+        for how in ["write", "press", "tab", "shift tab"] {
+            let mut fields = Fields::new();
+            let field = fields.long(LONG);
+            fields.frame();
+            match how {
+                "write" => {
+                    fields.focus(Some(field));
+                    fields.frame();
+                }
+                "press" => fields.press(field),
+                "tab" => fields.tab(false),
+                _ => fields.tab(true),
+            }
+            assert_eq!(
+                **fields.world.get_resource::<FocusedWidget>().unwrap(),
+                Some(field),
+                "{how}"
+            );
+            fields.frames(2);
+            let input = fields.get::<UITextInput>(field);
+            assert_eq!(
+                (input.cursor, input.selection_anchor),
+                (LONG.len(), Some(0)),
+                "{how} selects everything"
+            );
+            assert_eq!(
+                fields.get::<UINode>(fields.label(field)).inset.left,
+                UIValue::Auto,
+                "{how} keeps the start in view"
+            );
+        }
+    }
+
+    #[test]
+    fn a_value_narrower_than_the_field_never_scrolls() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("").width(UIValue::Px(300.0)).value("hello"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        let label = fields.label(field);
+
+        fields.key(KeyCode::End);
+        assert_eq!(fields.get::<UINode>(label).inset.left, UIValue::Auto);
+        fields.type_text("abc");
+        assert_eq!(fields.get::<UINode>(label).inset.left, UIValue::Auto);
+        fields.key(KeyCode::Home);
+        assert_eq!(fields.get::<UINode>(label).inset.left, UIValue::Auto);
+        fields.key(KeyCode::End);
+        assert_eq!(fields.get::<UINode>(label).inset.left, UIValue::Auto);
+    }
+
+    #[test]
+    fn the_caret_hides_while_it_lies_outside_the_visible_text() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        let (selection, _, caret) = fields.parts(field);
+        assert!(fields.alpha(selection) > 0.0, "focus selects everything");
+        assert_eq!(fields.alpha(caret), 0.0, "the caret is past the right edge");
+
+        fields.key(KeyCode::End);
+        assert!(fields.alpha(caret) > 0.0, "End brings it into view");
+        assert!(fields.caret_is_inside(field));
+    }
+
+    #[test]
+    fn an_idle_scrolled_field_writes_no_node_and_lays_nothing_out() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+        fields.frames(3);
+        assert!(fields.scroll(field) > 0.0);
+        let passes = fields.layout_passes();
+        fn idle() {}
+        let mut nodes = Watch::new::<UINode, _>(&mut fields.world, idle);
+        nodes.run(&mut fields.world);
+
+        fields.frames(2);
+        fields.show_the_caret_for(field, Duration::from_millis(795));
+        fields.frame();
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        assert_eq!(fields.layout_passes(), passes);
+        assert_eq!(nodes.run(&mut fields.world), 0, "no UINode was written");
     }
 
     #[test]
@@ -1470,6 +1833,7 @@ mod tests {
                     ..UIText::default()
                 },
                 layout(LABEL, Vec2::new(300.0, 18.0)),
+                UINode::default(),
             ));
             let quad = || (UINode::default(), UIMaterial::flat(Color::TRANSPARENT));
             let viewport = self.world.spawn(layout(LABEL, Vec2::new(300.0, 18.0)));
