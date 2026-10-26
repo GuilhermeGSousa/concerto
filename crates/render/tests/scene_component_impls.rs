@@ -12,7 +12,7 @@ use concerto_foundation::{
 use concerto_mesh::mesh::{Mesh, MeshComponent};
 use concerto_reflect::{to_value, Reflect, ReflectedValue};
 use concerto_render::{
-    assets::{material::StandardMaterial, texture::Texture},
+    assets::material::StandardMaterial,
     components::{
         camera::{Camera, RenderTarget},
         camera_environment::{CameraEnvironment, Fog},
@@ -32,9 +32,6 @@ fn world() -> World {
     world.register_type::<CameraEnvironment>();
     world.register_type::<Light>();
     world.register_type::<SyncWithRenderWorld>();
-    world.register_type::<AssetHandle<Mesh>>();
-    world.register_type::<AssetHandle<StandardMaterial>>();
-    world.register_type::<AssetHandle<Texture>>();
     world
 }
 

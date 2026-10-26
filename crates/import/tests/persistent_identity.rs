@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
-    AssetRegistry, ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
+    ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::assets::AssetId;
 use concerto_scene::scene::Scene;
 
@@ -114,7 +115,10 @@ fn reimport_updates_a_moved_output_in_place_and_preserves_its_uuid() {
     let scene: Scene = bincode::deserialize(payload).unwrap();
     assert_eq!(scene.nodes[0].name, "Updated triangle");
     assert_eq!(
-        AssetRegistry::load(&project.0).unwrap().get(id),
+        AssetRegistry::load(&project.0)
+            .unwrap()
+            .get(id)
+            .map(|entry| entry.address.as_str()),
         Some(moved_address)
     );
 }
@@ -153,7 +157,8 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     assert_eq!(
         AssetRegistry::load(&project.0)
             .unwrap()
-            .get(imported.asset_id),
+            .get(imported.asset_id)
+            .map(|entry| entry.address.as_str()),
         Some(scene_address.as_str())
     );
     let metadata: toml::Value =
@@ -339,7 +344,10 @@ fn legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address() {
         legacy_id
     );
     assert_eq!(
-        AssetRegistry::load(&project.0).unwrap().get(legacy_id),
+        AssetRegistry::load(&project.0)
+            .unwrap()
+            .get(legacy_id)
+            .map(|entry| entry.address.as_str()),
         Some(legacy_address)
     );
 }
@@ -388,7 +396,10 @@ fn external_legacy_source_bootstraps_without_changing_its_identity() {
     assert_eq!(read_content_asset_header(&path).unwrap().asset_id, id);
     assert!(sidecar(&source).is_file());
     assert_eq!(
-        AssetRegistry::load(&project.0).unwrap().get(id),
+        AssetRegistry::load(&project.0)
+            .unwrap()
+            .get(id)
+            .map(|entry| entry.address.as_str()),
         Some(address)
     );
 }

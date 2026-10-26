@@ -32,21 +32,32 @@ use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark};
-use crate::project::{AssetEntry, EditorCommand, EditorCommands, ProjectState};
+use crate::project::{EditorCommand, EditorCommands, ProjectState};
 use crate::tree_items::{OrderItems, despawn_outermost, order_items};
-use concerto_foundation::assets::AssetId;
+use concerto_foundation::assets::{
+    AssetId,
+    registry::{AssetEntry, AssetRegistry},
+};
+use concerto_mesh::mesh::Mesh;
+use concerto_render::assets::{material::StandardMaterial, texture::Texture};
+use concerto_scene::scene::Scene;
 
 pub const PANEL_ID: &str = "concerto.curiosities";
 
 const ROW_HEIGHT: f32 = 28.0;
 const SEARCH_HEIGHT: f32 = 30.0;
 
-const KINDS: [(&str, Option<&str>); 5] = [
+type KindFilter = fn(&AssetEntry) -> bool;
+
+const KINDS: [(&str, Option<KindFilter>); 5] = [
     ("all", None),
-    ("scene", Some("Scene")),
-    ("mesh", Some("Mesh")),
-    ("tex", Some("Texture")),
-    ("mat", Some("Material")),
+    ("scene", Some(AssetEntry::is::<Scene> as KindFilter)),
+    ("mesh", Some(AssetEntry::is::<Mesh> as KindFilter)),
+    ("tex", Some(AssetEntry::is::<Texture> as KindFilter)),
+    (
+        "mat",
+        Some(AssetEntry::is::<StandardMaterial> as KindFilter),
+    ),
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -98,7 +109,7 @@ impl Plugin for ContentPlugin {
         app.insert_resource(ContentState::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
-            title: "Curiosities",
+            title: "Asset Browser",
             region: Region::Rail,
         });
         app.add_system(Startup, build_panel)
@@ -122,12 +133,18 @@ impl Plugin for ContentPlugin {
     }
 }
 
-fn visible_assets<'a>(project: &'a ProjectState, state: &ContentState) -> Vec<&'a AssetEntry> {
+fn visible_assets<'a>(registry: &'a AssetRegistry, state: &ContentState) -> Vec<&'a AssetEntry> {
     let kind = KINDS[state.kind].1;
-    project
-        .project
+    let query = state.filter.to_lowercase();
+    registry
         .iter()
-        .flat_map(|project| project.filtered_assets(&state.filter, None, kind))
+        .filter(|asset| kind.is_none_or(|is_kind| is_kind(asset)))
+        .filter(|asset| {
+            query.is_empty()
+                || asset.name().to_lowercase().contains(&query)
+                || asset.address.to_lowercase().contains(&query)
+                || asset.kind.to_lowercase().contains(&query)
+        })
         .collect()
 }
 
@@ -328,13 +345,17 @@ fn open_item(
     }
 }
 
-fn asset_mark(kind: &str) -> Mark {
-    match kind {
-        "Scene" => Mark::Group,
-        "Mesh" => Mark::Mesh,
-        "Texture" => Mark::Texture,
-        "Material" => Mark::Material,
-        _ => Mark::Plain,
+fn asset_mark(asset: &AssetEntry) -> Mark {
+    if asset.is::<Scene>() {
+        Mark::Group
+    } else if asset.is::<Mesh>() {
+        Mark::Mesh
+    } else if asset.is::<Texture>() {
+        Mark::Texture
+    } else if asset.is::<StandardMaterial>() {
+        Mark::Material
+    } else {
+        Mark::Plain
     }
 }
 
@@ -358,11 +379,11 @@ fn inside_root<'a>(folder: &'a str, content_root: &str) -> &'a str {
     }
 }
 
-fn folder_tree<'a>(assets: &'a [AssetEntry], content_root: &str) -> Folder<'a> {
+fn folder_tree<'a>(assets: impl Iterator<Item = &'a AssetEntry>, content_root: &str) -> Folder<'a> {
     let mut root = Folder::default();
     for asset in assets {
         let mut folder = &mut root;
-        for part in inside_root(&asset.folder, content_root)
+        for part in inside_root(asset.folder(), content_root)
             .split('/')
             .filter(|part| !part.is_empty())
         {
@@ -393,25 +414,19 @@ fn list_folder<'a>(folder: &Folder<'a>, path: Option<&str>, listed: &mut Vec<Lis
     }
     let mut assets = folder.assets.clone();
     assets.sort_by(|a, b| {
-        (
-            a.display_name.to_lowercase(),
-            &a.display_name,
-            &a.kind,
-            &a.address,
-        )
-            .cmp(&(
-                b.display_name.to_lowercase(),
-                &b.display_name,
-                &b.kind,
-                &b.address,
-            ))
+        (a.name().to_lowercase(), a.name(), &a.kind, &a.address).cmp(&(
+            b.name().to_lowercase(),
+            b.name(),
+            &b.kind,
+            &b.address,
+        ))
     });
     for asset in assets {
         listed.push(Listed {
             key: ContentKey::Asset(asset.id),
             parent: parent.clone(),
-            name: &asset.display_name,
-            mark: asset_mark(&asset.kind),
+            name: asset.name(),
+            mark: asset_mark(asset),
         });
     }
 }
@@ -450,6 +465,7 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
 
 fn reconcile_content_tree(
     project: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
     mut state: ResMut<ContentState>,
     views: Query<(Entity, &mut UITree), With<ContentView>>,
     items: Query<(&mut ContentItem, Option<&UIHidden>)>,
@@ -459,7 +475,7 @@ fn reconcile_content_tree(
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    if !project.is_changed() && !state.is_changed() {
+    if !project.is_changed() && !registry.is_changed() && !state.is_changed() {
         return;
     }
     let Some((view, mut tree)) = views.iter().next() else {
@@ -469,14 +485,14 @@ fn reconcile_content_tree(
     if tree.filtering != filtering {
         tree.filtering = filtering;
     }
-    let matching: HashSet<AssetId> = visible_assets(&project, &state)
+    let matching: HashSet<AssetId> = visible_assets(&registry, &state)
         .iter()
         .map(|asset| asset.id)
         .collect();
     let mut listed = Vec::new();
     if let Some(project) = project.project.as_ref() {
         list_folder(
-            &folder_tree(&project.assets, &project.content_root),
+            &folder_tree(registry.iter(), &project.content_root),
             None,
             &mut listed,
         );
@@ -603,7 +619,8 @@ mod tests {
         events::event_channel::EventChannel,
         query::filter::{Changed, Or, With},
     };
-    use concerto_foundation::assets::content::AssetRegistry;
+    use concerto_foundation::assets::Asset;
+    use concerto_render::assets::material::StandardMaterial;
     use concerto_ui::{
         focus::FocusedWidget, interaction::UIInteractionStyle, items::UIItem,
         tree::update_trees_system,
@@ -622,7 +639,12 @@ mod tests {
     }
 
     fn entry(address: &str, kind: &str) -> AssetEntry {
-        AssetEntry::from_address(AssetId::new(), address, kind.into(), None)
+        AssetEntry {
+            id: AssetId::new(),
+            address: address.into(),
+            kind: kind.into(),
+            provenance: None,
+        }
     }
 
     struct Fixture {
@@ -646,14 +668,14 @@ mod tests {
         let mut project = ProjectState::default();
         project.project = Some(Project {
             root: Default::default(),
-            assets: assets
-                .iter()
-                .map(|(address, kind)| entry(address, kind))
-                .collect(),
-            registry: AssetRegistry::default(),
             content_root: content_root.into(),
         });
         world.insert_resource(project);
+        let mut registry = AssetRegistry::default();
+        for (address, kind) in assets {
+            registry.insert(entry(address, kind));
+        }
+        world.insert_resource(registry);
         concerto_ui::items::install_listeners(&mut world);
         concerto_ui::tree::install_listeners(&mut world);
         run(&mut world, build);
@@ -700,16 +722,10 @@ mod tests {
 
         fn asset(&self, address: &str) -> AssetId {
             self.world
-                .get_resource::<ProjectState>()
+                .get_resource::<AssetRegistry>()
                 .unwrap()
-                .project
-                .as_ref()
+                .id_for_address(address)
                 .unwrap()
-                .assets
-                .iter()
-                .find(|asset| asset.address == address)
-                .unwrap()
-                .id
         }
 
         fn item(&self, key: &ContentKey) -> Entity {
@@ -945,6 +961,20 @@ mod tests {
     }
 
     #[test]
+    fn the_material_chip_shows_standard_materials() {
+        let mut f = fixture(&[
+            ("content/stone.gasset", StandardMaterial::name()),
+            ("content/rock.gasset", "Mesh"),
+        ]);
+
+        f.world.get_resource_mut::<ContentState>().unwrap().kind = 4;
+        f.refresh();
+
+        assert!(f.shown(f.asset_item("content/stone.gasset")));
+        assert!(!f.shown(f.asset_item("content/rock.gasset")));
+    }
+
+    #[test]
     fn folders_start_collapsed() {
         let f = nested();
 
@@ -961,12 +991,10 @@ mod tests {
         let forest = f.item(&folder("forest"));
         f.expand(forest);
 
-        let mut project = f.world.remove_resource::<ProjectState>().unwrap();
-        let catalogue = project.project.as_mut().unwrap();
+        let catalogue = f.world.get_resource_mut::<AssetRegistry>().unwrap();
         catalogue.insert(entry("content/forest/b.gasset", "Mesh"));
         catalogue.insert(entry("content/forest/_first.gasset", "Mesh"));
         catalogue.insert(entry("content/birch/bark.gasset", "Texture"));
-        f.world.insert_resource(project);
         f.refresh();
 
         assert_eq!(f.item(&folder("forest")), forest);

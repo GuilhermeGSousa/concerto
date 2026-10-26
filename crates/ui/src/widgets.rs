@@ -6,7 +6,10 @@ use concerto_ecs::{
     entity::Entity,
     query::Query,
     resource::Res,
-    signal::{EntitySignal, On, Signal},
+    signal::{
+        EntitySignal, On, Signal,
+        listener::{IntoListener, Listener},
+    },
 };
 use concerto_window::input::MouseButton;
 
@@ -33,12 +36,6 @@ pub struct UITooltip {
 pub struct UICollapsibleSection {
     pub expanded: bool,
     pub content: Entity,
-}
-
-#[derive(Component)]
-pub struct UITab {
-    pub strip: Entity,
-    pub index: usize,
 }
 
 #[derive(Component, Default)]
@@ -94,26 +91,19 @@ pub fn toggle_collapsible(
     });
 }
 
-/// Click listener that selects the [`UITab`] it sits on in its strip.
-pub fn select_tab(
-    on: On<UIClick>,
-    tabs: Query<&UITab>,
-    strips: Query<&mut UITabStrip>,
-    mut cmd: CommandQueue,
-) {
-    if on.signal().button != MouseButton::Left {
-        return;
-    }
-    let Some(tab) = tabs.get_entity(on.entity()) else {
-        return;
-    };
-    let Some(mut strip) = strips.get_entity(tab.strip) else {
-        return;
-    };
-    strip.selected = tab.index;
-    cmd.entity(tab.strip).trigger(UITabChanged {
-        selected: tab.index,
-    });
+/// Click listener for tab `index` of `strip`: selects it there and tells the strip.
+pub fn select_tab(strip: Entity, index: usize) -> Listener<UIClick> {
+    (move |on: On<UIClick>, strips: Query<&mut UITabStrip>, mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let Some(mut tabs) = strips.get_entity(strip) else {
+            return;
+        };
+        tabs.selected = index;
+        cmd.entity(strip).trigger(UITabChanged { selected: index });
+    })
+    .into_listener()
 }
 
 /// Shows the body whose index matches its strip's selection, and hides the rest.

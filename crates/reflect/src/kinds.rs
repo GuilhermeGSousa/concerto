@@ -1,4 +1,4 @@
-use crate::Reflect;
+use crate::{GetTypeRegistration, Reflect, TypeRegistration, TypeRegistry};
 
 /// What kind of value a [`Reflect`] is, for reading.
 pub enum ReflectRef<'a> {
@@ -142,6 +142,16 @@ impl<T: Reflect + Default> Reflect for Option<T> {
     }
 }
 
+impl<T: GetTypeRegistration + Default> GetTypeRegistration for Option<T> {
+    fn get_type_registration() -> TypeRegistration {
+        TypeRegistration::of::<Self>()
+    }
+
+    fn register_dependencies(registry: &mut TypeRegistry) {
+        registry.register::<T>();
+    }
+}
+
 impl<T: Reflect + Default> List for Vec<T> {
     fn len(&self) -> usize {
         Vec::len(self)
@@ -175,5 +185,15 @@ impl<T: Reflect + Default> Reflect for Vec<T> {
 
     fn reflect_mut(&mut self) -> ReflectMut<'_> {
         ReflectMut::List(self)
+    }
+}
+
+impl<T: GetTypeRegistration + Default> GetTypeRegistration for Vec<T> {
+    fn get_type_registration() -> TypeRegistration {
+        TypeRegistration::of::<Self>()
+    }
+
+    fn register_dependencies(registry: &mut TypeRegistry) {
+        registry.register::<T>();
     }
 }

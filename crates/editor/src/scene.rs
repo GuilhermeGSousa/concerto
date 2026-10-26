@@ -16,9 +16,9 @@ use concerto_ecs::{
     system::NonSendMarker,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId, ContentAssetRoot,
-    asset_server::AssetServer,
+    Asset, AssetId,
     content::{read_content_asset, save_content_asset_into},
+    registry::{AssetEntry, AssetRegistry},
 };
 use concerto_render::gpu::Gpu;
 use concerto_scene::scene::Scene;
@@ -32,17 +32,17 @@ use crate::{
     guard::DiscardEdits,
     hierarchy::HierarchyState,
     hosted::{
-        self, HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, ParkedEditApp,
-        PendingApp, PendingPlayApp, PlayFailed, PlayFailure, PlayState, StopPlay,
-        input::ViewportShown, toggle_play,
+        self, HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, PendingApp,
+        PendingPlayApp, PlayFailed, PlayFailure, PlayState, StopPlay, input::ViewportShown,
+        toggle_play,
     },
     inspector::{ComponentEdits, PropertyCommits},
-    project::{AssetEntry, ProjectState},
+    project::ProjectState,
     tools::{
         EditToolsCorePlugin, EditToolsPlugin,
         edits::{ComponentEdited, PropertyCommitted},
         entity_ops::EntityEdited,
-        scene::{OpenScene, PublishContent, RevealEntity, SceneEdited, SceneStatus, write},
+        scene::{OpenScene, RevealEntity, SceneEdited, SceneStatus, write},
     },
 };
 
@@ -180,7 +180,6 @@ impl Plugin for ScenePlugin {
 
 pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(save_scene);
-    world.add_listener(publish_to_hosted);
     world.add_listener(play);
     world.add_listener(forget_discarded_edits);
 }
@@ -306,67 +305,27 @@ fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Re
         .current
         .clone()
         .context("No scene is open")?;
-    let project = world
-        .get_resource_mut::<ProjectState>()
-        .and_then(|state| state.project.as_mut())
-        .context("Open a project before saving")?;
-    let address = source.address;
-    let id = save_content_asset_into(scene, &project.root, &address, &mut project.registry)?;
-    project.registry.save(&project.root)?;
-    let saved = AssetEntry::from_address(id, &address, Scene::name().into(), None);
-    project.insert(saved.clone());
-    let project_root = project.root.clone();
-    let registry = project.registry.clone();
-    if let Some(server) = world.get_resource::<AssetServer>() {
-        server.publish_project_content(&project_root, registry)?;
-    }
-    if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
-        document.title = saved.display_name.clone();
-        document.current = Some(saved.clone());
-    }
-    world.trigger(PublishToHosted);
-    Ok(saved)
-}
-
-pub(crate) struct PublishToHosted;
-impl Signal for PublishToHosted {}
-
-fn publish_to_hosted(_: On<PublishToHosted>, world: &mut World) {
-    let Some((root, registry)) = world
+    let root = world
         .get_resource::<ProjectState>()
         .and_then(|state| state.project.as_ref())
-        .map(|project| (project.root.clone(), project.registry.clone()))
-    else {
-        return;
-    };
-    let documents: Vec<Entity> = world
-        .query::<(Entity, &HostedApp), ()>()
-        .iter(world)
-        .map(|(document, _)| document)
-        .collect();
-    for document in documents {
-        hosted::trigger_on(
-            world,
-            document,
-            PublishContent {
-                root: root.clone(),
-                registry: registry.clone(),
-            },
-        );
+        .context("Open a project before saving")?
+        .root
+        .clone();
+    let registry = world
+        .get_resource_mut::<AssetRegistry>()
+        .context("The editor has no asset registry")?;
+    let address = source.address;
+    let id = save_content_asset_into(scene, &root, &address, registry)?;
+    registry.save(&root)?;
+    let saved = registry
+        .get(id)
+        .cloned()
+        .context("The saved scene was not registered")?;
+    if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
+        document.title = saved.name().to_owned();
+        document.current = Some(saved.clone());
     }
-    let parked: Vec<Entity> = world
-        .query::<(Entity, &ParkedEditApp), ()>()
-        .iter(world)
-        .map(|(document, _)| document)
-        .collect();
-    for document in parked {
-        if let Some(parked) = world.get_component_for_entity_mut::<ParkedEditApp>(document) {
-            parked.0.trigger(PublishContent {
-                root: root.clone(),
-                registry: registry.clone(),
-            });
-        }
-    }
+    Ok(saved)
 }
 
 /// Starts the game in a Scene document's place, saving the document first if it is unsaved.
@@ -477,17 +436,10 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
         .and_then(|doc| doc.current.as_ref())
         .context("No scene is open")?
         .id;
-    let project = world
+    world
         .get_resource::<ProjectState>()
         .and_then(|state| state.project.as_ref())
         .context("Open a project before playing")?;
-    let root = project.root.canonicalize().with_context(|| {
-        format!(
-            "failed to resolve project root '{}'",
-            project.root.display()
-        )
-    })?;
-    let registry = project.registry.clone();
     let recipe = world
         .get_resource::<SceneRecipe>()
         .context("No recipe to build the game from")?;
@@ -506,9 +458,6 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
     Ok(hosted::begin(
         request,
         move |app| {
-            if let Some(server) = app.get_resource::<AssetServer>() {
-                server.publish_content_source(ContentAssetRoot::Directory(root), registry);
-            }
             app.register_plugin(EditToolsCorePlugin);
             app.set_startup_scene(scene);
         },
@@ -717,10 +666,6 @@ pub(crate) fn update_scenes(
                 };
                 match loaded {
                     Ok(scene) => {
-                        let content = project
-                            .project
-                            .as_ref()
-                            .map(|p| (p.root.clone(), p.registry.clone()));
                         let request = HostRequest {
                             gpu: recipe.gpu.as_ref(),
                             recipe: recipe.recipe,
@@ -735,9 +680,6 @@ pub(crate) fn update_scenes(
                                     app.register_plugin(EditToolsPlugin);
                                 },
                                 move |hosted| {
-                                    if let Some((root, registry)) = content {
-                                        hosted.trigger(PublishContent { root, registry });
-                                    }
                                     hosted.trigger(OpenScene(scene));
                                 },
                             ),
@@ -790,7 +732,7 @@ mod tests {
         IntoSystem, System, events::event_channel::EventChannel, world_id::WorldId,
     };
     use concerto_foundation::{
-        assets::content::{AssetRegistry, write_content_asset},
+        assets::{asset_server::AssetServer, content::write_content_asset},
         transform::Transform,
     };
     use concerto_ui::{
@@ -1192,42 +1134,57 @@ mod tests {
     }
 
     #[test]
-    fn a_catalogue_change_reaches_every_hosted_app() {
+    fn an_edit_app_starts_with_the_projects_registry() {
         let mut f = SceneFixture::new();
         let document = f.open();
 
-        f.world.trigger(PublishToHosted);
-
-        assert_eq!(
-            f.published_roots(document),
-            vec![f.project_root.clone(), f.project_root.clone()]
-        );
+        assert!(f.knows(f.scene_world(document), f.scene.id));
+        assert!(f.knows(f.scene_world(document), f.other.id));
     }
 
     #[test]
-    fn a_save_tells_every_hosted_app_of_the_new_catalogue() {
+    fn a_registry_change_reaches_the_hosted_app() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        let added = f.add_scene("added");
+
+        f.frame();
+
+        assert!(f.knows(f.scene_world(document), added.id));
+    }
+
+    #[test]
+    fn a_registry_change_while_an_edit_app_builds_reaches_it() {
+        let mut f = SceneFixture::new();
+        let first = f.scene.clone();
+        f.request(&first);
+        f.frame();
+        let added = f.add_scene("added");
+
+        f.frames_until_idle();
+
+        let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
+        assert!(f.knows(f.scene_world(document), added.id));
+    }
+
+    #[test]
+    fn a_save_records_the_scene_in_the_registry_and_its_file() {
         let mut f = SceneFixture::new();
         let document = f.open();
         f.rename(document, "first", "renamed");
 
         save(&mut f, document);
 
-        assert_eq!(f.published_roots(document).len(), 2);
         assert!(f.status(document).starts_with("Saved"));
-    }
-
-    #[test]
-    fn what_the_scene_says_while_a_save_publishes_its_content_is_shown_after_saved() {
-        let mut f = SceneFixture::new();
-        let document = f.open();
-        f.scene_world_mut(document)
-            .insert_resource(crate::hosted::testing::ReportPublishing);
-        f.rename(document, "first", "renamed");
-
-        save(&mut f, document);
-
-        assert_eq!(f.status(document), "published");
-        assert!(!f.unsaved(document));
+        let saved = AssetRegistry::load(&f.project_root).unwrap();
+        assert!(saved.get(f.scene.id).unwrap().is::<Scene>());
+        assert_eq!(
+            f.world
+                .get_resource::<AssetRegistry>()
+                .unwrap()
+                .get(f.scene.id),
+            saved.get(f.scene.id)
+        );
     }
 
     #[test]
@@ -1399,15 +1356,7 @@ mod tests {
         let document = f.open();
         let before = scene_id(&f, document);
         f.request_other_scene(document);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        while f
-            .world
-            .get_component_for_entity::<PendingApp>(document)
-            .is_none()
-        {
-            f.frame();
-            assert!(std::time::Instant::now() < deadline, "nothing was built");
-        }
+        f.frames_until_building(document);
 
         let same = f.scene.clone();
         f.request(&same);
@@ -1532,15 +1481,15 @@ mod tests {
                 .get_component_for_entity::<SaveRequested>(document)
                 .is_none()
         );
-        let project = f.world.get_resource::<ProjectState>().unwrap();
-        let catalogue = &project.project.as_ref().unwrap().assets;
-        assert_eq!(catalogue.len(), 1);
-        assert_eq!(catalogue[0].id, f.scene.id);
+        let registry = f.world.get_resource::<AssetRegistry>().unwrap();
+        assert_eq!(registry.iter().count(), 2);
+        assert_eq!(registry.get(f.scene.id), Some(&saved));
         assert_eq!(
             AssetRegistry::load(&f.project_root)
                 .unwrap()
-                .get(f.scene.id),
-            Some("first.gasset")
+                .get(f.scene.id)
+                .map(|entry| entry.address.clone()),
+            Some("first.gasset".to_string())
         );
 
         f.rename(document, "second", "again");
@@ -1553,7 +1502,7 @@ mod tests {
     #[test]
     fn a_save_lists_the_assets_the_scene_names_instead_of_the_ones_its_file_listed() {
         use concerto_foundation::assets::handle::AssetHandle;
-        use concerto_mesh::mesh::{Mesh, MeshComponent};
+        use concerto_mesh::mesh::MeshComponent;
 
         let mut f = SceneFixture::new();
         let mut scene = f.saved_scene();
@@ -1571,7 +1520,6 @@ mod tests {
         let mesh = AssetId::new();
         let world = f.scene_world_mut(document);
         world.register_type::<MeshComponent>();
-        world.register_type::<AssetHandle<Mesh>>();
         world.insert(
             MeshComponent {
                 handle: AssetHandle::weak(mesh),
@@ -2250,15 +2198,15 @@ mod tests {
     }
 
     #[test]
-    fn a_catalogue_change_while_playing_reaches_the_parked_edit_app_and_the_game() {
+    fn a_registry_change_while_playing_reaches_the_parked_edit_app_and_the_game() {
         let (mut f, document) = playing();
-        let parked = f.parked_published_roots(document).len();
-        let game = f.published_roots(document).len();
+        assert!(f.knows(f.scene_world(document), f.scene.id));
+        let added = f.add_scene("added");
 
-        f.world.trigger(PublishToHosted);
+        f.frame();
 
-        assert_eq!(f.parked_published_roots(document).len(), parked + 1);
-        assert_eq!(f.published_roots(document).len(), game + 1);
+        assert!(f.knows(f.parked_world(document), added.id));
+        assert!(f.knows(f.scene_world(document), added.id));
     }
 
     #[test]
@@ -2266,15 +2214,9 @@ mod tests {
         use std::sync::atomic::Ordering;
         let _gate = lock_gate();
         let mut f = SceneFixture::new();
-        let project = f.world.get_resource_mut::<ProjectState>().unwrap();
-        let project = project.project.as_mut().unwrap();
-        let gated = save_content_asset_into(
-            &GatedAsset,
-            &project.root,
-            "gated.gasset",
-            &mut project.registry,
-        )
-        .unwrap();
+        let root = f.project_root.clone();
+        let registry = f.world.get_resource_mut::<AssetRegistry>().unwrap();
+        let gated = save_content_asset_into(&GatedAsset, &root, "gated.gasset", registry).unwrap();
         let document = f.open();
         play(&mut f, document);
         f.frames_until_playing(document);

@@ -6,8 +6,8 @@ use concerto_ecs::{
 use concerto_ui::interaction::UIClick;
 use concerto_ui::node::UINode;
 use concerto_ui::widgets::{
-    UICollapsibleChanged, UICollapsibleSection, UITab, UITabBody, UITabChanged, UITabStrip,
-    select_tab, sync_tab_bodies, toggle_collapsible,
+    UICollapsibleChanged, UICollapsibleSection, UITabBody, UITabChanged, UITabStrip, select_tab,
+    sync_tab_bodies, toggle_collapsible,
 };
 use concerto_window::input::MouseButton;
 use glam::Vec2;
@@ -136,7 +136,7 @@ fn clicking_a_tab_selects_it_in_its_strip_and_tells_the_strip() {
         .into_listener(),
     ));
     let tabs: Vec<_> = (0..3)
-        .map(|index| world.spawn((UITab { strip, index }, select_tab.into_listener())))
+        .map(|index| world.spawn(select_tab(strip, index)))
         .collect();
 
     click(&mut world, tabs[2]);

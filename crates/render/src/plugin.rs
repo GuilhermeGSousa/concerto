@@ -1,5 +1,5 @@
 use crate::{
-    assets::{material::StandardMaterial, mesh::Mesh, skeleton::Skeleton, texture::Texture},
+    assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
     capabilities::RenderCapabilities,
     components::{
         camera::{extract_cameras, sync_camera_aspect, Camera},
@@ -41,7 +41,6 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig, World};
-use concerto_foundation::assets::handle::AssetHandle;
 
 fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
     wgpu::SurfaceConfiguration {
@@ -108,11 +107,7 @@ impl Plugin for RenderPlugin {
             .register_type::<SyncWithRenderWorld>()
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
-            .register_type::<concerto_mesh::SkeletonComponent>()
-            .register_type::<AssetHandle<Mesh>>()
-            .register_type::<AssetHandle<Texture>>()
-            .register_type::<AssetHandle<Skeleton>>()
-            .register_type::<AssetHandle<StandardMaterial>>();
+            .register_type::<concerto_mesh::SkeletonComponent>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);

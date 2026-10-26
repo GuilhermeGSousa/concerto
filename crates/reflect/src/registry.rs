@@ -16,6 +16,9 @@ pub trait FromType<T> {
 /// Implemented by the derive; produces `T`'s registration with its declared type data.
 pub trait GetTypeRegistration: Reflect {
     fn get_type_registration() -> TypeRegistration;
+
+    /// Registers the types this one holds.
+    fn register_dependencies(_registry: &mut TypeRegistry) {}
 }
 
 /// One registered type: its names and the type data it was declared to support.
@@ -90,12 +93,13 @@ impl Default for TypeRegistry {
 }
 
 impl TypeRegistry {
-    /// Adds `T` and every type data its derive declared; registering twice changes nothing.
+    /// Adds `T`, every type data its derive declared, and the types it holds; registering twice changes nothing.
     pub fn register<T: GetTypeRegistration>(&mut self) {
         if self.registrations.contains_key(&TypeId::of::<T>()) {
             return;
         }
         self.add(T::get_type_registration());
+        T::register_dependencies(self);
     }
 
     /// Adds a registration built by hand; one for a type already registered is ignored.

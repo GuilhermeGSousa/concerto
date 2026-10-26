@@ -1,111 +1,18 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{Event, ResMut, Resource, events::event_writer::EventWriter};
-use concerto_foundation::assets::{
-    AssetId,
-    asset_server::AssetServer,
-    content::{AssetRegistry, ImportProvenance, read_content_asset_header},
-};
+use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_scene::scene::Scene;
 use std::{
     collections::VecDeque,
     path::{Path, PathBuf},
     thread::JoinHandle,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AssetEntry {
-    pub id: AssetId,
-    pub address: String,
-    pub kind: String,
-    pub display_name: String,
-    pub folder: String,
-    /// `None` for an asset authored in the editor rather than produced by `import`.
-    pub provenance: Option<ImportProvenance>,
-}
-
-impl AssetEntry {
-    /// Builds an entry whose display name and folder come from its project-relative `address`.
-    pub fn from_address(
-        id: AssetId,
-        address: &str,
-        kind: String,
-        provenance: Option<ImportProvenance>,
-    ) -> Self {
-        let path = Path::new(address);
-        let display_name = path
-            .file_stem()
-            .map(|value| value.to_string_lossy().into_owned())
-            .unwrap_or_else(|| address.to_owned());
-        let folder = path
-            .parent()
-            .map(|value| value.to_string_lossy().replace('\\', "/"))
-            .unwrap_or_default();
-        Self {
-            id,
-            address: address.to_owned(),
-            kind,
-            display_name,
-            folder,
-            provenance,
-        }
-    }
-
-    fn sort_key(&self) -> (&String, &String, &String, &String) {
-        (&self.folder, &self.display_name, &self.kind, &self.address)
-    }
-}
-
 #[derive(Debug)]
 pub struct Project {
     pub root: PathBuf,
-    pub assets: Vec<AssetEntry>,
-    pub registry: AssetRegistry,
     /// The project-relative folder the catalogue is read from, `content` unless `content.toml` names another.
     pub content_root: String,
-}
-
-impl Project {
-    pub fn scenes(&self) -> impl Iterator<Item = &AssetEntry> {
-        self.assets.iter().filter(|asset| asset.kind == "Scene")
-    }
-
-    /// Adds `entry` to the catalogue and registry, replacing any entry with the same id.
-    pub fn insert(&mut self, entry: AssetEntry) {
-        self.registry.insert(entry.id, entry.address.clone());
-        self.assets.retain(|asset| asset.id != entry.id);
-        let at = self
-            .assets
-            .partition_point(|asset| asset.sort_key() < entry.sort_key());
-        self.assets.insert(at, entry);
-    }
-
-    pub fn filtered_assets<'a>(
-        &'a self,
-        query: &str,
-        folder: Option<&str>,
-        kind: Option<&str>,
-    ) -> Vec<&'a AssetEntry> {
-        let query = query.to_lowercase();
-        self.assets
-            .iter()
-            .filter(|asset| {
-                folder.is_none_or(|folder| {
-                    folder.is_empty()
-                        || asset.folder == folder
-                        || asset
-                            .folder
-                            .strip_prefix(folder)
-                            .is_some_and(|suffix| suffix.starts_with('/'))
-                })
-            })
-            .filter(|asset| kind.is_none_or(|kind| asset.kind == kind))
-            .filter(|asset| {
-                query.is_empty()
-                    || asset.display_name.to_lowercase().contains(&query)
-                    || asset.address.to_lowercase().contains(&query)
-                    || asset.kind.to_lowercase().contains(&query)
-            })
-            .collect()
-    }
 }
 
 #[derive(serde::Deserialize)]
@@ -124,7 +31,7 @@ impl Default for CatalogueConfig {
 }
 
 /// Read-only catalogue discovery. Never creates or rewrites a project's registry.
-pub fn discover_project(root: &Path) -> anyhow::Result<Project> {
+pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)> {
     let root = root.canonicalize()?;
     anyhow::ensure!(root.is_dir(), "Project must be a directory");
     let config_path = root.join("content.toml");
@@ -145,23 +52,13 @@ pub fn discover_project(root: &Path) -> anyhow::Result<Project> {
         "Invalid content extension"
     );
     let registry = AssetRegistry::from_content_tree(&root, &config.root, &config.extension)?;
-    let mut assets = Vec::new();
-    for (id, address) in registry.iter() {
-        let header = read_content_asset_header(&root.join(address))?;
-        assets.push(AssetEntry::from_address(
-            id,
-            address,
-            header.kind,
-            header.provenance,
-        ));
-    }
-    assets.sort_by(|a, b| a.sort_key().cmp(&b.sort_key()));
-    Ok(Project {
-        root,
-        assets,
+    Ok((
+        Project {
+            root,
+            content_root: config.root,
+        },
         registry,
-        content_root: config.root,
-    })
+    ))
 }
 
 pub enum EditorCommand {
@@ -188,7 +85,7 @@ pub struct ProjectOpenFailed {
 
 struct ProjectJob {
     root: PathBuf,
-    worker: JoinHandle<Result<Option<Project>, String>>,
+    worker: JoinHandle<Result<Option<(Project, AssetRegistry)>, String>>,
 }
 
 #[derive(Resource)]
@@ -237,6 +134,7 @@ impl Plugin for ProjectPlugin {
 fn process_commands(
     mut commands: ResMut<EditorCommands>,
     mut state: ResMut<ProjectState>,
+    mut registry: ResMut<AssetRegistry>,
     mut documents: ResMut<crate::asset_editor::AssetEditorCommands>,
     mut guard: ResMut<crate::guard::UnsavedGuard>,
     open_documents: concerto_ecs::Query<
@@ -259,9 +157,9 @@ fn process_commands(
             .join()
             .unwrap_or_else(|_| Err("Project worker failed".into()));
         match result {
-            Ok(Some(project)) => {
+            Ok(Some((project, discovered))) => {
                 if let Err(error) =
-                    asset_server.publish_project_content(&project.root, project.registry.clone())
+                    asset_server.publish_project_content(&project.root, discovered.clone())
                 {
                     state.status = format!("Could not activate project assets: {error:#}");
                     failed.write(ProjectOpenFailed {
@@ -272,15 +170,15 @@ fn process_commands(
                 }
                 state.status = format!(
                     "{} assets · {} scenes · {}",
-                    project.assets.len(),
-                    project.scenes().count(),
+                    discovered.iter().count(),
+                    discovered.of_type::<Scene>().count(),
                     project.root.display()
                 );
                 opened.write(ProjectOpened {
                     root: project.root.clone(),
                 });
                 state.project = Some(project);
-                cmd.trigger(crate::scene::PublishToHosted);
+                *registry = discovered;
                 documents
                     .0
                     .push_back(crate::asset_editor::AssetEditorCommand::CloseAll);
@@ -307,11 +205,7 @@ fn process_commands(
         }
         match command {
             EditorCommand::OpenAsset(id) => {
-                if let Some(asset) = state
-                    .project
-                    .as_ref()
-                    .and_then(|project| project.assets.iter().find(|asset| asset.id == id))
-                {
+                if let Some(asset) = registry.get(id) {
                     documents
                         .0
                         .push_back(crate::asset_editor::AssetEditorCommand::Open(asset.clone()));
@@ -322,15 +216,9 @@ fn process_commands(
                     continue;
                 };
                 match discover_project(&root) {
-                    Ok(project) => {
-                        if let Err(error) = asset_server
-                            .publish_project_content(&project.root, project.registry.clone())
-                        {
-                            state.status = format!("Could not refresh project assets: {error:#}");
-                            continue;
-                        }
+                    Ok((project, discovered)) => {
                         state.project = Some(project);
-                        cmd.trigger(crate::scene::PublishToHosted);
+                        *registry = discovered;
                     }
                     Err(error) => state.status = format!("Could not refresh catalogue: {error:#}"),
                 }
@@ -364,13 +252,29 @@ fn process_commands(
 mod tests {
     use super::*;
     use concerto_foundation::assets::content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset,
+        CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset,
     };
     #[test]
     fn discovers_imported_and_authored_assets_without_writing_registry() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(discover_project(dir.path()).unwrap().scenes().count(), 0);
-        std::fs::create_dir(dir.path().join("content")).unwrap();
+        let (_, empty) = discover_project(dir.path()).unwrap();
+        assert_eq!(empty.of_type::<Scene>().count(), 0);
+        let id = write_assets(dir.path());
+        let (project, registry) = discover_project(dir.path()).unwrap();
+        assert_eq!(project.content_root, "content");
+        assert_eq!(registry.iter().count(), 3);
+        let scenes: Vec<_> = registry.of_type::<Scene>().collect();
+        assert_eq!(scenes.len(), 2);
+        assert_eq!(scenes[0].name(), "authored");
+        assert!(scenes[0].provenance.is_none());
+        assert_eq!(scenes[1].id, id);
+        assert!(scenes[1].provenance.is_some());
+        assert_eq!(registry.iter().next().unwrap().folder(), "content");
+        assert!(!dir.path().join("content/.registry.toml").exists());
+    }
+
+    fn write_assets(root: &Path) -> AssetId {
+        std::fs::create_dir_all(root.join("content")).unwrap();
         let id = AssetId::new();
         for (name, kind, imported) in [
             ("scene", "Scene", true),
@@ -388,55 +292,38 @@ mod tests {
                 }),
             };
             std::fs::write(
-                dir.path().join(format!("content/{name}.gasset")),
+                root.join(format!("content/{name}.gasset")),
                 write_content_asset(&header, &[]).unwrap(),
             )
             .unwrap();
         }
-        let project = discover_project(dir.path()).unwrap();
-        assert_eq!(project.assets.len(), 3);
-        let scenes: Vec<_> = project.scenes().collect();
-        assert_eq!(scenes.len(), 2);
-        assert_eq!(scenes[0].display_name, "authored");
-        assert!(scenes[0].provenance.is_none());
-        assert_eq!(scenes[1].id, id);
-        assert!(scenes[1].provenance.is_some());
-        assert_eq!(project.assets[0].folder, "content");
-        assert_eq!(project.filtered_assets("mesh", None, None).len(), 1);
-        assert_eq!(project.filtered_assets("", None, Some("Scene")).len(), 2);
-        assert_eq!(project.filtered_assets("", Some("missing"), None).len(), 0);
-        assert!(!dir.path().join("content/.registry.toml").exists());
+        id
     }
 
     #[test]
-    fn inserting_keeps_the_catalogue_sorted_and_replaces_by_id() {
-        let mut project = Project {
-            root: PathBuf::new(),
-            assets: vec![],
-            registry: AssetRegistry::default(),
+    fn refreshing_the_catalogue_replaces_the_registry_resource() {
+        use concerto_ecs::{IntoSystem, System};
+
+        let dir = tempfile::tempdir().unwrap();
+        let id = write_assets(dir.path());
+        let mut world = project_world();
+        world.get_resource_mut::<ProjectState>().unwrap().project = Some(Project {
+            root: dir.path().canonicalize().unwrap(),
             content_root: "content".into(),
-        };
-        let id = AssetId::new();
-        for (id, address) in [
-            (AssetId::new(), "content/b.gasset"),
-            (id, "content/c.gasset"),
-            (AssetId::new(), "content/a.gasset"),
-            (id, "content/a/renamed.gasset"),
-        ] {
-            project.insert(AssetEntry::from_address(id, address, "Scene".into(), None));
-        }
-        let addresses: Vec<_> = project.assets.iter().map(|a| a.address.as_str()).collect();
-        assert_eq!(
-            addresses,
-            [
-                "content/a.gasset",
-                "content/b.gasset",
-                "content/a/renamed.gasset"
-            ]
-        );
-        assert_eq!(project.registry.get(id), Some("content/a/renamed.gasset"));
-        assert_eq!(project.assets[2].display_name, "renamed");
-        assert_eq!(project.assets[2].folder, "content/a");
+        });
+        world
+            .get_resource_mut::<EditorCommands>()
+            .unwrap()
+            .0
+            .push_back(EditorCommand::RefreshCatalogue);
+        let mut system = process_commands.into_system();
+        system.initialize(&mut world);
+
+        system.run_and_apply((), &mut world);
+
+        let registry = world.get_resource::<AssetRegistry>().unwrap();
+        assert_eq!(registry.iter().count(), 3);
+        assert_eq!(registry.get(id).unwrap().name(), "scene");
     }
 
     #[test]
@@ -457,6 +344,7 @@ mod tests {
         world.insert_resource(crate::asset_editor::AssetEditorCommands::default());
         world.insert_resource(crate::guard::UnsavedGuard::default());
         world.insert_resource(AssetServer::new());
+        world.insert_resource(AssetRegistry::default());
         world.insert_resource(EventChannel::<ProjectOpened>::new());
         world.insert_resource(EventChannel::<ProjectOpenFailed>::new());
         world
@@ -500,7 +388,7 @@ mod tests {
     fn finished_job(
         world: &mut concerto_ecs::World,
         root: PathBuf,
-        result: Result<Option<Project>, String>,
+        result: Result<Option<(Project, AssetRegistry)>, String>,
     ) {
         world.get_resource_mut::<ProjectState>().unwrap().job = Some(ProjectJob {
             root,
@@ -578,12 +466,13 @@ mod tests {
         finished_job(
             &mut world,
             gone.clone(),
-            Ok(Some(Project {
-                root: gone.clone(),
-                assets: vec![],
-                registry: AssetRegistry::default(),
-                content_root: "content".into(),
-            })),
+            Ok(Some((
+                Project {
+                    root: gone.clone(),
+                    content_root: "content".into(),
+                },
+                AssetRegistry::default(),
+            ))),
         );
 
         settle(&mut world, None);
@@ -659,6 +548,7 @@ mod tests {
         f.frames_until_playing(document);
         f.world.insert_resource(EditorCommands::default());
         f.world.insert_resource(AssetServer::new());
+        f.world.insert_resource(AssetRegistry::default());
         f.world
             .insert_resource(EventChannel::<ProjectOpened>::new());
         f.world

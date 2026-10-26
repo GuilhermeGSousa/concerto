@@ -478,7 +478,7 @@ impl Default for MaterialUniform {
 /// only declare a higher-numbered group active if all lower-numbered engine
 /// groups are also active (e.g. `needs_skeleton = true` implies
 /// `needs_lighting = true` and `needs_camera = true`).
-pub trait Material: AsBindGroup + Asset + Send + Sync + 'static {
+pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
     /// Whether this material's vertex shader reads the built-in camera uniform
     /// at `@group(1) @binding(0)`.
     ///

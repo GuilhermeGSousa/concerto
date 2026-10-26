@@ -43,7 +43,7 @@ use crate::{
 // Registering `MaterialPlugin::<M>::new()` sets up everything needed to render
 // meshes that use material type `M`:
 //
-// * Registers `M` as an asset type.
+// * Registers `M` as an asset type and `MaterialComponent<M>` for reflection.
 // * Creates a `wgpu::RenderPipeline` whose layout is built from `M`'s own bind
 //   group layout plus whichever engine bind groups `M` declares it needs via
 //   [`Material::needs_camera`], [`Material::needs_lighting`] and
@@ -54,7 +54,7 @@ use crate::{
 // # Using a custom material
 //
 // 1. Derive (or manually implement) [`AsBindGroup`] for your type, then implement
-//    [`Material`] (usually with default methods).
+//    [`Material`] (usually with default methods) and `LoadableAsset`.
 // 2. Register the plugin: `app.register_plugin(MaterialPlugin::<MyMaterial>::new())`.
 // 3. Attach [`MaterialComponent::<MyMaterial>`] + [`MeshComponent`] to an entity.
 //
@@ -376,6 +376,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         }
 
         app.register_asset::<M>();
+        app.register_type::<MaterialComponent<M>>();
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         // extract_materials<M> must be per-material so we know which material handle
@@ -497,5 +498,105 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 
         app.render_mut()
             .insert_resource(MaterialPipeline::<M>::new(pipeline, material_layout));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        assets::material::StandardMaterial, components::render_entity::SyncWithRenderWorld,
+        draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
+    };
+    use concerto_app::{
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
+        App,
+    };
+    use concerto_ecs::Entity;
+    use concerto_foundation::{
+        assets::{handle::AssetHandle, AssetId},
+        transform::Transform,
+    };
+    use concerto_window::plugin::{Window, WindowPlugin};
+
+    fn app(gpu: &Gpu, material: AssetId) -> (App, Entity) {
+        let mut app = App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(DrawTarget::None)
+            .insert_resource(Window::new((64, 48), 1.0));
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(RenderPlugin)
+            .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+        let world = app.main_mut().world_mut();
+        world.register_component::<Transform>();
+        let entity = world.spawn((
+            MaterialComponent::<StandardMaterial> {
+                handle: AssetHandle::weak(material),
+            },
+            Transform::IDENTITY,
+            SyncWithRenderWorld,
+        ));
+        app.finish_plugin_build();
+        (app, entity)
+    }
+
+    fn drawn_with(app: &mut App) -> Vec<AssetId> {
+        let world = app.render_mut().world_mut();
+        world
+            .query::<&RenderMaterialComponent<StandardMaterial>, ()>()
+            .iter(world)
+            .map(|material| material.material_asset_id)
+            .collect()
+    }
+
+    #[test]
+    fn a_material_plugin_registers_its_component_and_the_handle_it_holds() {
+        use concerto_ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneLeaf};
+        use concerto_foundation::assets::handle::ReflectAssetHandle;
+        use std::any::TypeId;
+
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(MaterialPlugin::<StandardMaterial>::new());
+
+        let registry = app.get_resource::<AppTypeRegistry>().unwrap();
+        let component = TypeId::of::<MaterialComponent<StandardMaterial>>();
+        let handle = TypeId::of::<AssetHandle<StandardMaterial>>();
+        assert!(registry
+            .get_type_data::<ReflectComponent>(component)
+            .is_some());
+        assert!(registry.get_type_data::<ReflectSceneLeaf>(handle).is_some());
+        assert_eq!(
+            registry
+                .get_type_data::<ReflectAssetHandle>(handle)
+                .map(ReflectAssetHandle::kind),
+            Some("StandardMaterial")
+        );
+    }
+
+    #[test]
+    fn swapping_a_material_handle_changes_the_material_its_render_entity_draws_with() {
+        let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+            return;
+        };
+        let (first, second) = (AssetId::new(), AssetId::new());
+        let (mut app, entity) = app(&gpu, first);
+        app.update();
+        assert_eq!(drawn_with(&mut app), [first]);
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<MaterialComponent<StandardMaterial>>(entity)
+            .unwrap()
+            .handle = AssetHandle::weak(second);
+        app.update();
+
+        assert_eq!(drawn_with(&mut app), [second]);
     }
 }

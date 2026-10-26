@@ -525,7 +525,10 @@ fn a_type_with_no_codec_and_no_registered_default_cannot_be_built() {
     let registry = nested_registry();
     assert_eq!(
         write_error::<Inner>(&registry, json!({})),
-        "the type is not registered, so JSON cannot build it"
+        format!(
+            "{} has no JSON form and no registered Default, so JSON cannot build it",
+            std::any::type_name::<Inner>()
+        )
     );
 
     let mut registry = TypeRegistry::default();

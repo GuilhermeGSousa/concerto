@@ -166,28 +166,49 @@ future tool index a whole content tree cheaply.
 
 ## The asset registry
 
-`content/.registry.toml`, relative to the project/runtime root, maps every content asset's `AssetId` to its
-address:
+`content/.registry.toml`, relative to the project/runtime root, lists every
+content asset's `AssetId` with its address and kind:
 
 ```toml
 [assets]
-"9f3c…e21a" = "content/UAL1/scene.gasset"
-"b75e…8457" = "content/UAL1/mesh_0.gasset"
+9f3c…e21a = { address = "content/UAL1/scene.gasset", kind = "Scene" }
+b75e…8457 = { address = "content/UAL1/mesh_0.gasset", kind = "Mesh" }
 ```
 
-The runtime retains only the UUID-to-address mapping. A scene's serialized
-`MeshComponent` carries a bare `AssetId` (no path); when the spawner
-upgrades that `Weak` handle to `Strong`, `AssetServer` resolves the id to
-an address through the registry. Code-authored references already contain the
-UUID emitted by `asset_id!`. The full `AssetRegistry` used by import/save tools
-also provides a reverse index; that index is discarded when loading the
-runtime registry.
+`AssetRegistry` (`concerto_foundation::assets::registry`) is that file in
+memory, and a resource in every `App` that has `AssetManagerPlugin`. Each
+`AssetEntry` has the id, the address, the kind, and, when the registry was built
+by scanning headers, the import provenance. List assets by type without loading
+them, as with Unreal's `GetAssetsByClass`:
+
+```rust
+fn list_meshes(registry: Res<AssetRegistry>) {
+    for entry in registry.of_type::<Mesh>() {
+        println!("{} in {} ({:?})", entry.name(), entry.folder(), entry.id);
+    }
+}
+```
+
+Entries come in folder, then name order. `get(id)` and `id_for_address(address)`
+look up one entry. React to catalogue changes with `registry.is_changed()`.
+
+A scene's serialized `MeshComponent` carries a bare `AssetId` (no path); when
+the spawner upgrades that `Weak` handle to `Strong`, `AssetServer` resolves the
+id to an address through the registry. Code-authored references already contain
+the UUID emitted by `asset_id!`. `AssetServer` holds a snapshot of the resource
+that its load tasks resolve against, replaced whenever the resource changes. A
+`load::<T>` whose id the registry lists under another kind fails before reading
+the file.
 
 `import` rebuilds the registry from the current content tree, so moved files
 are indexed at their new locations and deleted files lose their entries.
-`save_content_asset` currently upserts individual entries. The registry path
-is fixed at `content/.registry.toml` even when the import output root is
-customized with `--content-root`.
+`save_content_asset` upserts individual entries. The registry path is fixed at
+`content/.registry.toml` even when the import output root is customized with
+`--content-root`.
+
+A registry written before kinds were recorded (`id = "address"`) is rejected
+with an error. Re-import any source to rebuild the whole file from the content
+tree.
 
 ## How the runtime finds content assets
 
@@ -265,8 +286,9 @@ requires updating the macro's path for the next compilation. An existing binary
 continues to use the same UUID if its runtime registry points to the new path.
 
 `AssetManagerPlugin` initializes the registry during plugin readiness,
-before startup systems run. Configure `ContentAssetRoot` before that phase.
-A malformed registry fails initialization explicitly. Standalone callers can
+before startup systems run, and inserts it as the `AssetRegistry` resource
+unless the `App` already has one. Configure `ContentAssetRoot` before that
+phase. A malformed registry fails initialization explicitly. Standalone callers can
 request `load` before initialization; its task loads the registry lazily.
 Constructing a macro-generated UUID never requires runtime initialization.
 

@@ -6,13 +6,13 @@ use concerto_editor::{
     import::{ImportPicker, ImportPlugin, ImportStaging, RowState, accept_picked},
     project::{EditorCommands, ProjectPlugin, ProjectState, discover_project},
 };
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 use std::path::{Path, PathBuf};
 
 fn state(root: &Path) -> ProjectState {
     std::fs::create_dir_all(root.join("content")).expect("content");
     let mut state = ProjectState::default();
-    state.project = Some(discover_project(root).expect("discover"));
+    state.project = Some(discover_project(root).expect("discover").0);
     state
 }
 
@@ -22,6 +22,7 @@ fn editor(state: ProjectState) -> App {
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(UnsavedGuard::default());
     app.insert_resource(AssetServer::new());
+    app.insert_resource(AssetRegistry::default());
     app.insert_resource(concerto_ui::theme::UITheme::default());
     app.insert_resource(state);
     app.register_plugin(ProjectPlugin);

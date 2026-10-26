@@ -140,7 +140,9 @@ component as it was. A path with no adapter is written from the JSON directly.
 On either route a value that does not decode to the property's type answers
 `invalid_value` and leaves the component as it was, an entity reference is a
 live id such as `42v3`, and an asset handle is an asset id that loads through
-the edit `App`'s `AssetServer`, as a spawned scene's handles do.
+the edit `App`'s `AssetServer`, as a spawned scene's handles do. A handle field
+is edited by the asset picker, so an id that is not one of the project's assets
+of the field's kind answers `refused`.
 A path `inspect` marks `enum` takes the whole enum, its variant's name for a
 variant without fields (`"Point"`) or an object with the variant's name as its
 one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
@@ -296,8 +298,10 @@ An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,
 `scene_target`, `scene_parent`.
 
-Curiosities, the content browser, is a `UITree` that mirrors the project's
-content folder, `content/` unless `content.toml` names another: the folders and
+Curiosities, the content browser, is a `UITree` over the editor world's
+`AssetRegistry`, which opening or refreshing a project fills by scanning the
+content headers and which is empty while no project is open. It mirrors the
+project's content folder, `content/` unless `content.toml` names another: the folders and
 assets directly inside it are the top-level rows, a folder shows a folder mark
 and holds its subfolders and assets, and an asset shows its kind mark and name.
 A folder appears once it holds an asset at any depth; empty directories are not
@@ -308,7 +312,8 @@ expansion and scroll survive. Clicking a row selects it, folder or asset, but
 only an asset becomes the catalogue's selection; activating a folder, by
 double-clicking it or pressing Enter, expands or collapses it. A click while a
 project is opening is ignored and the highlight returns to the selected asset. The search
-field and the kind chips hide every asset that does not match and show the
+field and the kind chips (`Scene`, `Mesh`, `Texture`, `StandardMaterial`)
+hide every asset that does not match and show the
 folders leading to each match, open; clearing them restores the expansion as it
 was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
@@ -550,9 +555,10 @@ Registration is split between the two `App`s. A component states what it
 supports on its derive, `#[derive(Reflect)] #[reflect(Component, Default)]`,
 and is registered in the scene's `App`, by the plugin that owns it or by the
 recipe, with `App::register_type::<T>()`: `TransformPlugin` registers
-`Transform`, and `RenderPlugin` registers `Light` and `Camera`. Registration
-fills the world's `AppTypeRegistry`, which is part of the engine and needs no
-editor. `ReflectComponent` and `ReflectDefault` must be in scope where the
+`Transform`, and `RenderPlugin` registers `Light` and `Camera`. Registering a
+type also registers the types its fields hold, so a component's
+`AssetHandle<A>` fields need no call of their own. Registration fills the
+world's `AppTypeRegistry`, which is part of the engine and needs no editor. `ReflectComponent` and `ReflectDefault` must be in scope where the
 derive names them. The widget is registered on the editor's own
 `App`, through `EditableApp::register_property_editor`, which needs
 `InspectorPlugin` first. A recipe that adds a component of its own looks like
@@ -567,11 +573,35 @@ fn recipe(app: &mut App) {
 
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
 the widget registry and sends it to the scene, where the tools write the value.
+`PropertyEditor::apply` runs there, and its `EditContext` holds the scene
+world's `AssetServer` and `AssetRegistry`, which `AssetManagerPlugin` provides.
+A scene `App` without either refuses every edit with `EditError::MissingAssets`.
+
+### Asset handles
+
+`AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
+with nothing registered on the editor's `App`. The handle's registration
+carries `ReflectAssetHandle`, which names the asset kind and loads an id without
+the editor knowing `A`. Registering the component that holds the handle is
+enough, so a game's own material gets a picker once `MaterialPlugin::<M>::new()`
+registers `MaterialComponent<M>`. An editor registered for the exact handle type
+with `register_property_editor` still takes precedence.
+
+The row names the asset the handle holds, "None" for an empty handle or
+"Missing" for an id the registry does not know, and opens a menu of the
+project's assets of that kind. Picking one writes a handle loaded through the
+scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
+refused if the id is not an asset of that kind, or if the scene `App` never
+registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
+row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
+handle's id, so MCP's `set_property` on a handle field picks that asset through
+the same checks.
 
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
-`value`; it still goes through `apply`, so validation holds. The built-in
-editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` implement it; `Quat` goes
+`value`; it still goes through `apply`, with its `EditContext`, so validation
+holds. The built-in editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` and the
+asset picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field

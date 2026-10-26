@@ -107,6 +107,16 @@ whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
 on every run until the resource exists; take `Option<Res<T>>` when absence is
 normal.
 
+**Listeners carry their own data.** What a listener needs to know about the
+widget it sits on is captured by its closure, not put in a component that the
+listener reads back through `on.entity()`. A function that builds one returns
+`Listener<S>` from an inline closure with its parameter types written out:
+`fn pick_asset<T>(id: AssetId) -> Listener<UIClick> { (move |on: On<UIClick>,
+mut commits: ResMut<PropertyCommits>| { … }).into_listener() }`, attached with
+`.on_click(pick_asset::<T>(id))`. Returning `impl FnMut(…)` instead does not
+compile as a listener. A component stays when something besides its listener
+reads it.
+
 **No revision counters.** Do not add a number that is bumped to say "this
 changed" and compared somewhere else. State that changed is read through change
 detection (`Changed<T>`, `is_changed()`). Something that happened is an event.

@@ -9,23 +9,27 @@ pub(crate) mod testing;
 use std::{
     any::Any,
     panic::{AssertUnwindSafe, catch_unwind},
+    path::Path,
 };
 
 use concerto_app::{App, Plugin, plugins::PluginsState, schedule_groups::First};
 use concerto_ecs::{
-    Component, Entity, Event, IntoSystemConfig, Query, World,
+    Component, Entity, Event, IntoSystemConfig, Query, Res, World,
     command::CommandQueue,
     events::{event_channel::EventChannel, event_writer::EventWriter},
+    query::change_detection::DetectChanges,
     signal::{On, Signal},
     system::NonSendMarker,
 };
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     wgpu,
 };
 use concerto_scene::scene::Scene;
+
+use crate::project::ProjectState;
 use concerto_window::{
     events::WindowEvent,
     plugin::{Window, WindowCommand},
@@ -117,6 +121,22 @@ impl HostedApp {
         if let Some(server) = self.app.get_resource::<AssetServer>() {
             server.cancel_pending();
         }
+    }
+
+    fn serve_project(&mut self, root: &Path, registry: &AssetRegistry) {
+        if let Some(server) = self.app.get_resource::<AssetServer>()
+            && let Err(error) = server.publish_project_content(root, registry.clone())
+        {
+            log::error!("Could not activate project assets: {error:#}");
+        }
+        self.app.insert_resource(registry.clone());
+    }
+
+    fn receive_registry(&mut self, registry: &AssetRegistry) {
+        if let Some(server) = self.app.get_resource::<AssetServer>() {
+            server.publish_registry(registry.clone());
+        }
+        self.app.insert_resource(registry.clone());
     }
 }
 
@@ -260,6 +280,43 @@ impl HostedApp {
 pub fn trigger_on<S: Signal>(world: &mut World, document: Entity, signal: S) {
     if let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) {
         hosted.trigger(signal);
+    }
+}
+
+/// Gives each `App` a document holds the project's root and registry when it is created, and the registry whenever it changes.
+pub(crate) fn forward_registry(
+    _: NonSendMarker,
+    project: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
+    pending: Query<&mut PendingApp>,
+    starting: Query<&mut PendingPlayApp>,
+    hosted: Query<&mut HostedApp>,
+    parked: Query<&mut ParkedEditApp>,
+) {
+    let root = project
+        .project
+        .as_ref()
+        .map(|project| project.root.as_path());
+    let deliver = |app: Option<&mut HostedApp>, created: bool| match (app, root) {
+        (Some(app), Some(root)) if created => app.serve_project(root, &registry),
+        (Some(app), _) if registry.is_changed() => app.receive_registry(&registry),
+        _ => {}
+    };
+    for mut app in pending.iter() {
+        let created = app.is_added();
+        deliver(app.hosted.as_mut(), created);
+    }
+    for mut app in starting.iter() {
+        let created = app.is_added();
+        deliver(app.0.hosted.as_mut(), created);
+    }
+    if registry.is_changed() {
+        for mut app in hosted.iter() {
+            deliver(Some(&mut *app), false);
+        }
+        for mut app in parked.iter() {
+            deliver(Some(&mut app.0), false);
+        }
     }
 }
 
@@ -474,6 +531,7 @@ impl Plugin for HostedPlugin {
                 First,
                 (
                     input::route_play_input.before(concerto_window::FoldInput),
+                    forward_registry,
                     finish_pending,
                     finish_pending_play,
                     input::sync_in_viewport,
@@ -1778,7 +1836,7 @@ mod tests {
     fn stop_drops_a_load_that_is_running_in_the_play_app(playing: bool) {
         let _gate = lock_gate();
         let directory = tempfile::tempdir().unwrap();
-        let mut registry = concerto_foundation::assets::content::AssetRegistry::new();
+        let mut registry = AssetRegistry::new();
         let id = concerto_foundation::assets::content::save_content_asset_into(
             &GatedAsset,
             directory.path(),

@@ -235,7 +235,10 @@ pub trait IntoListener<S: Signal, M> {
     fn into_listener(self) -> Listener<S>;
 }
 
-impl<S: Signal, T, M> IntoListener<S, M> for T
+#[doc(hidden)]
+pub struct IsListenerSystem;
+
+impl<S: Signal, T, M> IntoListener<S, (IsListenerSystem, M)> for T
 where
     T: IntoListenerSystem<S, M>,
 {
@@ -247,6 +250,16 @@ where
             }),
             marker: PhantomData,
         }
+    }
+}
+
+#[doc(hidden)]
+pub struct IsListener;
+
+/// A listener already built, such as one returned by a function whose closure captured data.
+impl<S: Signal> IntoListener<S, IsListener> for Listener<S> {
+    fn into_listener(self) -> Listener<S> {
+        self
     }
 }
 
@@ -302,7 +315,7 @@ impl Listeners {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::World;
+    use crate::{ResMut, Resource, World};
 
     struct First;
     impl Signal for First {}
@@ -361,6 +374,33 @@ mod tests {
         assert_eq!(registered::<Second>(&world), &[entity]);
         world.despawn(entity);
         assert!(world.listeners().entities.is_empty());
+    }
+
+    #[derive(Resource, Default)]
+    struct Heard(Vec<u32>);
+
+    impl crate::signal::EntitySignal for First {}
+
+    fn hear(value: u32) -> Listener<First> {
+        (move |_: On<First>, mut heard: ResMut<Heard>| heard.0.push(value)).into_listener()
+    }
+
+    #[test]
+    fn a_built_listener_is_attached_as_it_is_with_the_data_it_captured() {
+        let mut world = World::new();
+        world.insert_resource(Heard::default());
+        world.register_component::<Listener<First>>();
+        let low = world.spawn(attach(hear(1)));
+        let high = world.spawn(attach(hear(2)));
+
+        world.trigger_on(high, First);
+        world.trigger_on(low, First);
+
+        assert_eq!(world.get_resource::<Heard>().unwrap().0, [2, 1]);
+    }
+
+    fn attach<M>(listener: impl IntoListener<First, M>) -> Listener<First> {
+        listener.into_listener()
     }
 
     #[test]

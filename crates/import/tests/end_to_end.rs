@@ -10,8 +10,9 @@
 use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, save_content_asset, AssetRegistry,
+    read_content_asset, read_content_asset_header, save_content_asset,
 };
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::assets::utils::load_content_asset_bytes;
 use concerto_foundation::assets::{Asset, ContentAssetRoot};
 use concerto_mesh::mesh::Mesh;
@@ -132,7 +133,7 @@ fn a_baked_reference_resolves_to_the_minted_id_of_its_target() {
         .expect("the scene references its mesh");
     let registry = AssetRegistry::load(&root).expect("registry loads");
     assert_eq!(
-        registry.get(referenced),
+        registry.get(referenced).map(|entry| entry.address.as_str()),
         Some(mesh_address.as_str()),
         "a baked reference must resolve through the registry to the file it names"
     );

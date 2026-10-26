@@ -12,15 +12,16 @@ use concerto_editor::{
         AssetEditorRegistry, EditorDocument, asset_request_is_current, finish_asset_request,
         process_editor_commands,
     },
-    project::{AssetEntry, Project, ProjectState},
+    project::{Project, ProjectState},
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
     asset_server::AssetServer,
     content::{
-        AssetRegistry, CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance,
-        read_content_asset, write_content_asset,
+        CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, read_content_asset,
+        write_content_asset,
     },
+    registry::{AssetEntry, AssetRegistry},
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -133,11 +134,10 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     let mut project = ProjectState::default();
     project.project = Some(Project {
         root: root.into(),
-        assets: vec![],
-        registry: AssetRegistry::default(),
         content_root: "content".into(),
     });
     app.insert_resource(project);
+    app.insert_resource(AssetRegistry::default());
     let world = app.main_mut().world_mut();
     world.register_component::<ChildOf>();
     world.register_component::<Children>();
@@ -165,22 +165,16 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
                 &bincode::serialize(&Dialogue { text: text.into() })?,
             )?,
         )?;
-        world
-            .get_resource_mut::<ProjectState>()
-            .unwrap()
-            .project
-            .as_mut()
-            .unwrap()
-            .registry
-            .insert(id, address.clone());
         let asset = AssetEntry {
             id,
             address,
             kind: header.kind,
-            display_name: name.into(),
-            folder: String::new(),
             provenance: Some(provenance),
         };
+        world
+            .get_resource_mut::<AssetRegistry>()
+            .unwrap()
+            .insert(asset.clone());
         world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
@@ -207,7 +201,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             .get_component_for_entity::<EditorDocument>(active)
             .unwrap();
         assert_eq!(
-            doc.current.as_ref().unwrap().display_name,
+            doc.current.as_ref().unwrap().name(),
             if text.is_empty() { "second" } else { name }
         );
         if text.is_empty() {

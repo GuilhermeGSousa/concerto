@@ -5,6 +5,7 @@ use crate::{
 };
 use concerto_ecs::{
     IntoSystem, System, World,
+    command::EntityCommandQueue,
     component::bundle::IntoBundle,
     entity::hierarchy::{ChildOf, Children},
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
@@ -316,6 +317,7 @@ fn structural_changes_rebuild_the_entire_stack_once() {
     assert_eq!(cards(&mut w.f.world).len(), 1);
 }
 
+#[derive(Default)]
 struct WholeTransform;
 impl PropertyEditor<Transform> for WholeTransform {
     type Snapshot = Vec3;
@@ -323,11 +325,10 @@ impl PropertyEditor<Transform> for WholeTransform {
     fn snapshot(&self, value: &Transform) -> Vec3 {
         value.translation
     }
-    fn build(&self, cmd: &mut CommandQueue, row: Entity, _: &Vec3, theme: &UITheme) {
-        let child = cmd.spawn(theme.label("Whole transform")).entity();
-        cmd.add_child(row, child);
+    fn build(&self, row: &mut EntityCommandQueue, _: &Vec3, theme: &UITheme) {
+        row.add_child(theme.label("Whole transform"));
     }
-    fn apply(&self, value: &mut Transform, edit: &Vec3) -> Result<(), EditError> {
+    fn apply(&self, value: &mut Transform, edit: &Vec3, _: &EditContext) -> Result<(), EditError> {
         if !edit.is_finite() {
             return Err(EditError::Rejected);
         }
@@ -384,7 +385,7 @@ fn value_changes_keep_numeric_rows_and_registering_an_adapter_rebuilds_the_stack
             .snapshot::<Vec3, numeric::NumericFields>(),
         Some(numeric::NumericSnapshot::Vec3([8.0, 0.0, 0.0]))
     ));
-    registry_mut(&mut w.f.world).register_property_editor::<Vec3, _>(numeric::NumericFields);
+    registry_mut(&mut w.f.world).register_property_editor::<Vec3, numeric::NumericFields>();
     w.update();
     assert!(!w.f.world.entity_is_valid(original_card));
     assert!(
@@ -394,7 +395,7 @@ fn value_changes_keep_numeric_rows_and_registering_an_adapter_rebuilds_the_stack
     );
     let original_rows = rows(&mut w.f.world);
     let original_card = cards(&mut w.f.world)[0].0;
-    registry_mut(&mut w.f.world).register_property_editor::<Transform, _>(WholeTransform);
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, WholeTransform>();
     w.update();
     assert!(!w.f.world.entity_is_valid(original_card));
     assert!(
@@ -633,64 +634,64 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
 
 #[test]
 fn snapshots_are_released_when_their_card_is_despawned() {
-    use std::sync::Arc;
-    struct Tracked(Arc<()>);
+    use std::sync::{Arc, LazyLock};
+    static OWNER: LazyLock<Arc<()>> = LazyLock::new(|| Arc::new(()));
+    #[derive(Default)]
+    struct Tracked;
     impl PropertyEditor<Transform> for Tracked {
         type Snapshot = Arc<()>;
         type Edit = ();
         fn snapshot(&self, _: &Transform) -> Arc<()> {
-            self.0.clone()
+            OWNER.clone()
         }
-        fn build(&self, _: &mut CommandQueue, _: Entity, _: &Arc<()>, _: &UITheme) {}
-        fn apply(&self, _: &mut Transform, _: &()) -> Result<(), EditError> {
+        fn build(&self, _: &mut EntityCommandQueue, _: &Arc<()>, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &(), _: &EditContext) -> Result<(), EditError> {
             Ok(())
         }
     }
     let (mut w, target, _) = inspecting();
-    let owner = Arc::new(());
     w.f.world
         .get_resource_mut::<InspectorRegistry>()
         .unwrap()
-        .register_property_editor::<Transform, _>(Tracked(owner.clone()));
+        .register_property_editor::<Transform, Tracked>();
     w.update();
     assert_eq!(
-        Arc::strong_count(&owner),
-        3,
-        "test, adapter, and one row-owned snapshot"
+        Arc::strong_count(&OWNER),
+        2,
+        "the static and one row-owned snapshot"
     );
     w.scene().remove_component::<Transform>(target);
     w.update();
     assert!(cards(&mut w.f.world).is_empty());
     assert!(rows(&mut w.f.world).is_empty());
     assert_eq!(
-        Arc::strong_count(&owner),
-        2,
+        Arc::strong_count(&OWNER),
+        1,
         "no resource retained the removed row's snapshot"
     );
 }
 
 #[test]
 fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    struct Counting(Arc<AtomicUsize>);
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    #[derive(Default)]
+    struct Counting;
     impl PropertyEditor<Transform> for Counting {
         type Snapshot = Vec3;
         type Edit = ();
         fn snapshot(&self, value: &Transform) -> Vec3 {
-            self.0.fetch_add(1, Ordering::Relaxed);
+            COUNT.fetch_add(1, Ordering::Relaxed);
             value.translation
         }
-        fn build(&self, _: &mut CommandQueue, _: Entity, _: &Vec3, _: &UITheme) {}
-        fn apply(&self, _: &mut Transform, _: &()) -> Result<(), EditError> {
+        fn build(&self, _: &mut EntityCommandQueue, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &(), _: &EditContext) -> Result<(), EditError> {
             Ok(())
         }
     }
     let (mut w, target, _) = inspecting();
-    let count = Arc::new(AtomicUsize::new(0));
-    registry_mut(&mut w.f.world).register_property_editor::<Transform, _>(Counting(count.clone()));
+    let count = &COUNT;
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, Counting>();
     w.update();
     w.update();
     let settled = count.load(Ordering::Relaxed);
@@ -756,26 +757,25 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
 
 #[test]
 fn a_component_is_read_again_only_when_the_scenes_own_clock_says_it_changed() {
-    use std::sync::{
-        Arc,
-        atomic::{AtomicUsize, Ordering},
-    };
-    struct Counting(Arc<AtomicUsize>);
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static COUNT: AtomicUsize = AtomicUsize::new(0);
+    #[derive(Default)]
+    struct Counting;
     impl PropertyEditor<Transform> for Counting {
         type Snapshot = Vec3;
         type Edit = ();
         fn snapshot(&self, value: &Transform) -> Vec3 {
-            self.0.fetch_add(1, Ordering::Relaxed);
+            COUNT.fetch_add(1, Ordering::Relaxed);
             value.translation
         }
-        fn build(&self, _: &mut CommandQueue, _: Entity, _: &Vec3, _: &UITheme) {}
-        fn apply(&self, _: &mut Transform, _: &()) -> Result<(), EditError> {
+        fn build(&self, _: &mut EntityCommandQueue, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &(), _: &EditContext) -> Result<(), EditError> {
             Ok(())
         }
     }
     let (mut w, _, _) = inspecting();
-    let count = Arc::new(AtomicUsize::new(0));
-    registry_mut(&mut w.f.world).register_property_editor::<Transform, _>(Counting(count.clone()));
+    let count = &COUNT;
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, Counting>();
     w.update();
     w.update();
     let settled = count.load(Ordering::Relaxed);

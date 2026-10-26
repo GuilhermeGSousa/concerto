@@ -1,5 +1,8 @@
-use concerto_foundation::assets::asset_server::{handle_asset_load_events, AssetServer};
+use concerto_foundation::assets::asset_server::{
+    handle_asset_load_events, sync_asset_registry, AssetServer,
+};
 use concerto_foundation::assets::handle::AssetLifetimeEvent;
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::time::{FrameStats, Time};
 
 use concerto_ecs::resource::{Res, ResMut};
@@ -9,7 +12,7 @@ use concerto_foundation::transform::systems::{
 use concerto_foundation::transform::Transform;
 
 use crate::edit_time::AtEditTime;
-use crate::schedule_groups::{LateUpdate, Update};
+use crate::schedule_groups::{First, LateUpdate, Update};
 use crate::App;
 
 /// Describes the current phase of plugin initialisation.
@@ -93,6 +96,7 @@ impl Plugin for AssetManagerPlugin {
         app.insert_resource(AssetServer::new());
         app.register_event::<AssetLifetimeEvent>();
         app.add_system(LateUpdate, handle_asset_load_events.at_edit_time());
+        app.add_system(First, sync_asset_registry.at_edit_time());
     }
 
     fn ready(&self, app: &App) -> bool {
@@ -100,6 +104,18 @@ impl Plugin for AssetManagerPlugin {
             .expect("AssetServer resource missing")
             .poll_initialize()
             .unwrap_or_else(|error| panic!("asset manager initialization failed: {error:#}"))
+    }
+
+    fn finish(&self, app: &mut App) {
+        if app.get_resource::<AssetRegistry>().is_some() {
+            return;
+        }
+        let registry = app
+            .get_resource::<AssetServer>()
+            .and_then(AssetServer::registry)
+            .map(|registry| (*registry).clone())
+            .unwrap_or_default();
+        app.insert_resource(registry);
     }
 }
 
@@ -118,7 +134,10 @@ impl Plugin for TransformPlugin {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-    use concerto_foundation::assets::{content::AssetRegistry, AssetId, ContentAssetRoot};
+    use concerto_foundation::assets::{
+        registry::{AssetEntry, AssetRegistry},
+        AssetId, ContentAssetRoot,
+    };
     use std::time::{Duration, Instant};
 
     fn temp_root() -> std::path::PathBuf {
@@ -155,6 +174,57 @@ mod tests {
         );
         app.finish_plugin_build();
         assert_eq!(app.plugin_state(), PluginsState::Finished);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn the_loaded_registry_becomes_a_resource_once_plugins_finish() {
+        let root = temp_root();
+        let entry = AssetEntry {
+            id: AssetId::new(),
+            address: "content/hero.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        };
+        let mut registry = AssetRegistry::new();
+        registry.insert(entry.clone());
+        registry.save(&root).unwrap();
+        let mut app = App::new();
+        app.register_plugin(AssetManagerPlugin);
+        app.insert_resource(AssetServer::with_content_root(ContentAssetRoot::Directory(
+            root.clone(),
+        )));
+        wait_for_plugins(&mut app);
+        app.finish_plugin_build();
+
+        let registry = app.get_resource::<AssetRegistry>().unwrap();
+        assert_eq!(registry.get(entry.id), Some(&entry));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_registry_the_host_supplied_is_kept_when_plugins_finish() {
+        let root = temp_root();
+        AssetRegistry::new().save(&root).unwrap();
+        let supplied = AssetEntry {
+            id: AssetId::new(),
+            address: "content/supplied.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        };
+        let mut registry = AssetRegistry::new();
+        registry.insert(supplied.clone());
+        let mut app = App::new();
+        app.register_plugin(AssetManagerPlugin);
+        app.insert_resource(AssetServer::with_content_root(ContentAssetRoot::Directory(
+            root.clone(),
+        )));
+        app.insert_resource(registry);
+        wait_for_plugins(&mut app);
+        app.finish_plugin_build();
+
+        let registry = app.get_resource::<AssetRegistry>().unwrap();
+        assert_eq!(registry.get(supplied.id), Some(&supplied));
         std::fs::remove_dir_all(root).unwrap();
     }
 

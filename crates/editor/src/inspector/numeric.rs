@@ -1,6 +1,5 @@
-use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, command::CommandQueue, events::event_reader::EventReader,
-};
+use concerto_ecs::command::EntityCommandQueue;
+use concerto_ecs::{Component, Entity, Query, Res, ResMut, events::event_reader::EventReader};
 use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
@@ -13,10 +12,11 @@ use concerto_ui::{
 use glam::{EulerRot, Quat, Vec3};
 
 use crate::inspector::rows::{
-    EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
+    EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
 /// One text field per number: one for `Number`, three for `Vec3`.
+#[derive(Default)]
 pub(crate) struct NumericFields;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,10 +32,10 @@ pub(crate) enum NumericEdit {
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
-    registry.register_property_editor::<f32, _>(NumericFields);
-    registry.register_property_editor::<f64, _>(NumericFields);
-    registry.register_property_editor::<Vec3, _>(NumericFields);
-    registry.register_property_editor::<Quat, _>(NumericFields);
+    registry.register_property_editor::<f32, NumericFields>();
+    registry.register_property_editor::<f64, NumericFields>();
+    registry.register_property_editor::<Vec3, NumericFields>();
+    registry.register_property_editor::<Quat, NumericFields>();
 }
 
 pub(crate) trait NumericValue: Reflect {
@@ -142,7 +142,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn snapshot(&self, value: &T) -> NumericSnapshot {
         value.numbers()
     }
-    fn apply(&self, value: &mut T, edit: &NumericEdit) -> Result<(), EditError> {
+    fn apply(&self, value: &mut T, edit: &NumericEdit, _: &EditContext) -> Result<(), EditError> {
         value.edit(edit)
     }
     fn edit_to(&self, value: &T) -> Option<NumericEdit> {
@@ -151,10 +151,9 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn follows_snapshot(&self) -> bool {
         true
     }
-    fn build(&self, cmd: &mut CommandQueue, row: Entity, value: &NumericSnapshot, theme: &UITheme) {
-        let mut row_queue = cmd.entity(row);
+    fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
         for slot in 0..slot_count(value) {
-            row_queue.add_child((
+            row.add_child((
                 theme
                     .text_field("")
                     .small()
@@ -165,7 +164,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
                     .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
                     .clipped(),
                 NumericSlot {
-                    row,
+                    row: row.entity(),
                     slot,
                     displayed: String::new(),
                 },
@@ -316,6 +315,9 @@ pub(crate) fn refresh_numeric_fields(
 
 #[cfg(test)]
 mod tests {
+
+    use concerto_ecs::CommandQueue;
+    use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 
     use super::*;
 
@@ -481,7 +483,14 @@ mod tests {
         let mut field = start;
         let edit = <NumericFields as PropertyEditor<T>>::edit_to(&NumericFields, &value)
             .expect("numbers offer a value edit");
-        NumericFields.apply(&mut field, &edit)?;
+        NumericFields.apply(
+            &mut field,
+            &edit,
+            &EditContext {
+                assets: &AssetServer::new(),
+                registry: &AssetRegistry::default(),
+            },
+        )?;
         Ok(field)
     }
 
@@ -553,16 +562,12 @@ mod tests {
             entity: Entity,
         }
         fn build(data: Res<Build>, mut cmd: CommandQueue) {
-            let row = cmd
-                .spawn((
-                    data.property.row(data.entity, TypeId::of::<Transform>()),
-                    data.property.value.clone(),
-                ))
-                .entity();
             <NumericFields as PropertyEditor<Vec3>>::build(
                 &NumericFields,
-                &mut cmd,
-                row,
+                &mut cmd.spawn((
+                    data.property.row(data.entity, TypeId::of::<Transform>()),
+                    data.property.value.clone(),
+                )),
                 data.property
                     .value
                     .snapshot::<Vec3, NumericFields>()

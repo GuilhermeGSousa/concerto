@@ -169,6 +169,22 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         }
     };
 
+    let field_types: Vec<&syn::Type> = if opaque {
+        Vec::new()
+    } else {
+        match &ast.data {
+            Data::Struct(data) => data.fields.iter().map(|field| &field.ty).collect(),
+            Data::Enum(data) => data
+                .variants
+                .iter()
+                .flat_map(|variant| variant.fields.iter().map(|field| &field.ty))
+                .collect(),
+            Data::Union(_) => Vec::new(),
+        }
+    };
+    let dependencies = field_types
+        .iter()
+        .map(|ty| quote_spanned!(ty.span()=> registry.register::<#ty>();));
     let data_types: Vec<_> = declared
         .iter()
         .map(|declared| syn::Ident::new(&format!("Reflect{declared}"), declared.span()))
@@ -183,6 +199,19 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             syn::parse_quote_spanned!(data.span()=> #data: #root::FromType<#name #type_generics>),
         );
     }
+    let type_params: Vec<_> = ast
+        .generics
+        .type_params()
+        .map(|param| param.ident.clone())
+        .collect();
+    for ty in field_types
+        .iter()
+        .filter(|ty| mentions_any(&quote!(#ty), &type_params))
+    {
+        registration_where
+            .predicates
+            .push(syn::parse_quote_spanned!(ty.span()=> #ty: #root::GetTypeRegistration));
+    }
     let registration_where = &registration_generics.where_clause;
     quote! {
         #reflect
@@ -193,9 +222,21 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
                 #(#data)*
                 registration
             }
+
+            fn register_dependencies(registry: &mut #root::TypeRegistry) {
+                #(#dependencies)*
+            }
         }
     }
     .into()
+}
+
+fn mentions_any(tokens: &proc_macro2::TokenStream, idents: &[syn::Ident]) -> bool {
+    tokens.clone().into_iter().any(|token| match token {
+        proc_macro2::TokenTree::Ident(ident) => idents.contains(&ident),
+        proc_macro2::TokenTree::Group(group) => mentions_any(&group.stream(), idents),
+        _ => false,
+    })
 }
 
 fn field_labels(fields: &Fields) -> Vec<(String, Member, proc_macro2::Span)> {

@@ -1,6 +1,6 @@
 use concerto_color::{Color, LinearRgba};
 use concerto_ecs::component::Component;
-use concerto_foundation::assets::{Asset, handle::AssetHandle};
+use concerto_foundation::assets::{Asset, LoadableAsset, handle::AssetHandle};
 use concerto_render::{AsBindGroup, assets::texture::Texture, assets::vertex::VertexBufferLayout};
 
 use crate::vertex::UIVertex;
@@ -46,6 +46,8 @@ pub struct UIMaterial {
     /// Rotation of the drawn shape within its node, in radians.
     pub rotation: f32,
 }
+
+impl LoadableAsset for UIMaterial {}
 
 impl UIMaterial {
     /// A plain filled rectangle with no border.

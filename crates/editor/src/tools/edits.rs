@@ -13,7 +13,9 @@ use concerto_ecs::{
     signal::{On, Signal},
     system::input::ComponentMetadata,
 };
-use concerto_foundation::assets::handle::LiveLeaves;
+use concerto_foundation::assets::{
+    asset_server::AssetServer, handle::LiveLeaves, registry::AssetRegistry,
+};
 use concerto_reflect::{
     PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, ReflectedValue,
     apply_value_with, json_to_value_with, with_property, with_property_mut,
@@ -37,6 +39,7 @@ pub enum EditError {
     StaleEditor,
     MissingTarget,
     UnregisteredComponent,
+    MissingAssets,
 }
 
 impl std::fmt::Display for EditError {
@@ -48,10 +51,17 @@ impl std::fmt::Display for EditError {
             Self::StaleEditor => "its editor changed since it was read",
             Self::MissingTarget => "the entity or its component no longer exists",
             Self::UnregisteredComponent => "the component type is not registered",
+            Self::MissingAssets => "the scene's App has no asset server or asset registry",
         })
     }
 }
 impl std::error::Error for EditError {}
+
+/// What an edit can read from the world it changes.
+pub struct EditContext<'w> {
+    pub assets: &'w AssetServer,
+    pub registry: &'w AssetRegistry,
+}
 
 /// Captured at rebuild, so a queued edit always addresses its original target.
 #[derive(Component, Clone, Debug)]
@@ -131,14 +141,21 @@ impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
         let component = reflected(world, self.row.component)?;
-        apply_through(
-            world,
-            component,
-            self.row.entity,
-            &self.row.path,
-            self.editor.as_ref(),
-            self.edit.as_ref(),
-        )
+        let mut result = Err(EditError::MissingAssets);
+        world.resource_scope::<AssetServer>(|world, assets| {
+            world.resource_scope::<AssetRegistry>(|world, registry| {
+                result = apply_through(
+                    world,
+                    component,
+                    self.row.entity,
+                    &self.row.path,
+                    self.editor.as_ref(),
+                    self.edit.as_ref(),
+                    &EditContext { assets, registry },
+                );
+            });
+        });
+        result
     }
 }
 
@@ -149,11 +166,12 @@ fn apply_through(
     path: &PropertyPath,
     editor: &dyn ErasedEditor,
     edit: &dyn Any,
+    context: &EditContext,
 ) -> Result<(), EditError> {
     let mut result = Err(EditError::NotFound);
     let found = (component.edit)(world, entity, &mut |value| {
         if with_property_mut(value, path, &mut |value| {
-            result = editor.apply(value, edit);
+            result = editor.apply(value, edit, context);
         })
         .is_err()
         {
@@ -445,7 +463,7 @@ mod tests {
         tools::scene::SceneStatus,
     };
     use concerto_color::Color;
-    use concerto_ecs::{command::CommandQueue, component::scene::SceneEntityRef};
+    use concerto_ecs::{command::EntityCommandQueue, component::scene::SceneEntityRef};
     use concerto_foundation::{
         assets::{
             Asset, AssetId, LoadableAsset, asset_server::AssetServer, asset_store::AssetStore,
@@ -476,7 +494,9 @@ mod tests {
         let mut app = tools_app();
         app.register_type::<Transform>()
             .register_type::<Gain>()
-            .register_type::<Lens>();
+            .register_type::<Lens>()
+            .insert_resource(AssetServer::new())
+            .insert_resource(AssetRegistry::default());
         let entity = app.main_mut().world_mut().spawn(Transform::IDENTITY);
         (app, entity)
     }
@@ -579,6 +599,7 @@ mod tests {
         assert!(world.get_component_for_entity::<Lens>(entity).is_none());
     }
 
+    #[derive(Default)]
     struct NonNegative;
 
     impl PropertyEditor<f32> for NonNegative {
@@ -589,9 +610,9 @@ mod tests {
             *value
         }
 
-        fn build(&self, _: &mut CommandQueue, _: Entity, _: &f32, _: &UITheme) {}
+        fn build(&self, _: &mut EntityCommandQueue, _: &f32, _: &UITheme) {}
 
-        fn apply(&self, value: &mut f32, edit: &f32) -> Result<(), EditError> {
+        fn apply(&self, value: &mut f32, edit: &f32, _: &EditContext) -> Result<(), EditError> {
             if *edit < 0.0 {
                 return Err(EditError::Rejected);
             }
@@ -602,8 +623,8 @@ mod tests {
 
     fn gain_to(entity: Entity, amount: f32) -> CommitProperty {
         let mut registry = InspectorRegistry::default();
-        registry.register_property_editor::<f32, _>(NonNegative);
-        let editor = registry.editor(TypeId::of::<f32>()).unwrap();
+        registry.register_property_editor::<f32, NonNegative>();
+        let editor = registry.editor(TypeId::of::<f32>(), None).unwrap();
         CommitProperty {
             row: PropertyRow {
                 entity,

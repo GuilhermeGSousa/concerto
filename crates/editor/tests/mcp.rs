@@ -18,7 +18,7 @@ use concerto_app::{
 };
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, Resource, With, Without,
-    command::CommandQueue,
+    command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
@@ -29,7 +29,7 @@ use concerto_editor::{
     asset_editor::{EditorDocument, Unsaved},
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
-    inspector::{EditError, EditableApp, PropertyEditor},
+    inspector::{EditContext, EditError, EditableApp, PropertyEditor},
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
     tools::{
@@ -3814,6 +3814,7 @@ struct Sealed {
     seal: Seal,
 }
 
+#[derive(Default)]
 struct SealEditor;
 
 impl PropertyEditor<Seal> for SealEditor {
@@ -3824,9 +3825,9 @@ impl PropertyEditor<Seal> for SealEditor {
         value.code
     }
 
-    fn build(&self, _: &mut CommandQueue, _: Entity, _: &u32, _: &UITheme) {}
+    fn build(&self, _: &mut EntityCommandQueue, _: &u32, _: &UITheme) {}
 
-    fn apply(&self, value: &mut Seal, edit: &u32) -> Result<(), EditError> {
+    fn apply(&self, value: &mut Seal, edit: &u32, _: &EditContext) -> Result<(), EditError> {
         value.code = *edit;
         Ok(())
     }
@@ -3846,7 +3847,7 @@ fn set_property_answers_not_editable_for_an_adapter_with_no_value_edit() {
         &log,
         sealed_game,
         |app| {
-            app.register_property_editor::<Seal, _>(SealEditor);
+            app.register_property_editor::<Seal, SealEditor>();
         },
         |client| async move {
             open(&client).await;
@@ -3912,6 +3913,7 @@ struct Voiced {
     voice: Voice,
 }
 
+#[derive(Default)]
 struct VoiceEditor;
 
 impl PropertyEditor<Voice> for VoiceEditor {
@@ -3922,9 +3924,14 @@ impl PropertyEditor<Voice> for VoiceEditor {
         value.level
     }
 
-    fn build(&self, _: &mut CommandQueue, _: Entity, _: &u32, _: &UITheme) {}
+    fn build(&self, _: &mut EntityCommandQueue, _: &u32, _: &UITheme) {}
 
-    fn apply(&self, value: &mut Voice, edit: &Self::Edit) -> Result<(), EditError> {
+    fn apply(
+        &self,
+        value: &mut Voice,
+        edit: &Self::Edit,
+        _: &EditContext,
+    ) -> Result<(), EditError> {
         value.note = edit.0.clone();
         value.target = edit.1;
         value.level = edit.2;
@@ -3978,7 +3985,7 @@ fn set_property_through_an_adapter_loads_asset_handles_and_keeps_live_entity_ref
         &Log::default(),
         voiced_game,
         |app| {
-            app.register_property_editor::<Voice, _>(VoiceEditor)
+            app.register_property_editor::<Voice, VoiceEditor>()
                 .add_tool::<VoiceHeld, _>(
                     McpTool::read_only("voice_held").needs(Needs::Scene),
                     voice_held,
@@ -4018,6 +4025,97 @@ fn set_property_through_an_adapter_loads_asset_handles_and_keeps_live_entity_ref
     let (chime, hero, set, merged) = served.result;
     assert_eq!(set, format!("strong {chime} {hero} 2"));
     assert_eq!(merged, format!("strong {chime} {hero} 3"));
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Chimed {
+    note: AssetHandle<Chime>,
+}
+
+fn chimed_game(app: &mut App) {
+    game(app);
+    app.register_asset::<Chime>().register_type::<Chimed>();
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct ChimeHeld {}
+
+fn chime_held(mut calls: ToolCalls<ChimeHeld>, chimed: EditWorld<Query<&Chimed>>) {
+    for (_, reply) in calls.read() {
+        let held = chimed.iter().next().map(|chimed| {
+            let strength = match chimed.note {
+                AssetHandle::Strong(..) => "strong",
+                _ => "weak",
+            };
+            format!("{strength} {}", chimed.note.id().simple_hex())
+        });
+        reply.ok(held.unwrap_or_default());
+    }
+}
+
+#[test]
+fn set_property_on_an_asset_handle_picks_the_asset_through_the_asset_picker() {
+    let fixture = Fixture::new();
+    let chime = fixture.add("content/chime.gasset", "Chime").simple_hex();
+    let gong = fixture.add("content/gong.gasset", "Gong").simple_hex();
+    let Some(served) = serve_with(
+        &fixture,
+        &Log::default(),
+        chimed_game,
+        |app| {
+            app.add_tool::<ChimeHeld, _>(
+                McpTool::read_only("chime_held").needs(Needs::Scene),
+                chime_held,
+            );
+        },
+        move |client| async move {
+            open(&client).await;
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let rig = scene_id(&ids, "Rig");
+            let added: Value = serde_json::from_str(
+                &ok_with(
+                    &client,
+                    "add_component",
+                    json!({ "entity": rig, "component": "Chimed" }),
+                )
+                .await,
+            )
+            .unwrap();
+            ok_with(
+                &client,
+                "set_property",
+                json!({ "entity": rig, "component": "Chimed", "path": "note", "value": chime }),
+            )
+            .await;
+            let picked = ok(&client, "chime_held").await;
+            let refused = error_with(
+                &client,
+                "set_property",
+                json!({ "entity": rig, "component": "Chimed", "path": "note", "value": gong }),
+            )
+            .await;
+            let kept = ok(&client, "chime_held").await;
+            client.cancel().await.unwrap();
+            (chime, added, picked, refused, kept)
+        },
+    ) else {
+        return;
+    };
+
+    let (chime, added, picked, refused, kept) = served.result;
+    assert_eq!(
+        added["paths"],
+        json!([{ "path": "note", "adapter": true }]),
+        "{added}"
+    );
+    assert_eq!(picked, format!("strong {chime}"));
+    assert_eq!(refused["code"], "refused", "{refused}");
+    assert_eq!(
+        refused["message"],
+        "Set Chimed.note failed: the value was refused"
+    );
+    assert_eq!(kept, format!("strong {chime}"));
 }
 
 #[derive(Resource)]

@@ -1,6 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use concerto_color::LinearRgba;
-use concerto_foundation::assets::Asset;
+use concerto_foundation::assets::{Asset, LoadableAsset};
 use concerto_render::AsBindGroup;
 
 #[repr(C)]
@@ -29,3 +29,5 @@ pub struct WorldGridMaterial {
     #[uniform(0)]
     pub uniform: WorldGridUniform,
 }
+
+impl LoadableAsset for WorldGridMaterial {}

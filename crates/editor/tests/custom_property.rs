@@ -12,15 +12,16 @@ use concerto_ecs::{
 };
 use concerto_editor::hosted::{EditWorld, Hosted, HostedEventsAppExt, trigger_on};
 use concerto_editor::inspector::{
-    ComponentEdit, EditError, EditableApp, InspectorRegistry, PropertyCommit, PropertyCommits,
-    PropertyEditor, PropertyRow, PropertyRowValue,
+    ComponentEdit, EditContext, EditError, EditableApp, InspectorRegistry, PropertyCommit,
+    PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 use concerto_editor::tools::{
     edits::EditComponent,
     scene::SceneEdited,
     selection::{Select, Selection},
 };
-use concerto_reflect::{PropertyPath, Reflect, ReflectDefault};
+use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
+use concerto_reflect::{PropertyPath, Reflect, ReflectDefault, TypeRegistry};
 use concerto_ui::{interaction::UIClick, text::UIText, theme::UITheme};
 use concerto_window::input::MouseButton;
 use example::{Setting, SettingButton, SettingEdit, SettingEditor};
@@ -194,7 +195,7 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
         setting: setting(),
         gain: 1.0,
     };
-    let fallback = registry.collect(&value);
+    let fallback = registry.collect(&value, &TypeRegistry::default());
     assert_eq!(
         fallback.iter().map(|p| p.path.clone()).collect::<Vec<_>>(),
         vec![
@@ -214,8 +215,8 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
     );
 
     let mut registry = registry;
-    registry.register_property_editor::<Setting, SettingEditor>(SettingEditor);
-    let properties = registry.collect(&value);
+    registry.register_property_editor::<Setting, SettingEditor>();
+    let properties = registry.collect(&value, &TypeRegistry::default());
     assert_eq!(properties.len(), 2);
     assert_eq!(properties[0].path, PropertyPath::new(["setting"]));
     assert_eq!(properties[0].type_id, TypeId::of::<Setting>());
@@ -225,10 +226,10 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
         .unwrap();
     assert_eq!(snapshot.title, "Shadows");
     assert!(!snapshot.enabled);
-    assert!(properties[0].value == registry.collect(&value)[0].value);
+    assert!(properties[0].value == registry.collect(&value, &TypeRegistry::default())[0].value);
     let mut changed = value;
     changed.setting.enabled = true;
-    assert!(properties[0].value != registry.collect(&changed)[0].value);
+    assert!(properties[0].value != registry.collect(&changed, &TypeRegistry::default())[0].value);
 }
 
 #[test]
@@ -294,12 +295,18 @@ fn a_value_edit_sets_the_whole_setting_and_is_still_validated() {
             enabled: false,
         })
         .expect("the setting offers a value edit");
+    let context = EditContext {
+        assets: &AssetServer::new(),
+        registry: &AssetRegistry::default(),
+    };
     assert_eq!(
-        SettingEditor.apply(&mut field, &blank),
+        SettingEditor.apply(&mut field, &blank, &context),
         Err(EditError::Rejected)
     );
     assert_eq!((field.title.as_str(), field.enabled), ("Shadows", false));
-    SettingEditor.apply(&mut field, &lighting).unwrap();
+    SettingEditor
+        .apply(&mut field, &lighting, &context)
+        .unwrap();
     assert_eq!((field.title.as_str(), field.enabled), ("Lighting", true));
 
     let mut w = inspecting();
@@ -344,7 +351,7 @@ fn replacing_an_adapter_invalidates_old_edits_even_for_the_same_adapter_type() {
     w.select(w.a);
     let old = w.setting_row().1;
     w.editor
-        .register_property_editor::<Setting, SettingEditor>(SettingEditor);
+        .register_property_editor::<Setting, SettingEditor>();
 
     w.send(commit(&old, SettingEdit::Toggle));
     assert!(!w.enabled(w.a));
@@ -398,13 +405,13 @@ struct BuildRow {
 struct Built(Entity);
 
 fn build_widget(data: Res<BuildRow>, mut cmd: CommandQueue) {
-    let row = cmd.spawn((data.row.clone(), data.shown.clone())).entity();
+    let mut row = cmd.spawn((data.row.clone(), data.shown.clone()));
     SettingEditor.build(
-        &mut cmd,
-        row,
+        &mut row,
         data.shown.snapshot::<Setting, SettingEditor>().unwrap(),
         &UITheme::default(),
     );
+    let row = row.entity();
     cmd.insert_resource(Built(row));
 }
 
@@ -477,7 +484,7 @@ fn registration_splits_between_the_recipe_and_the_editors_app() {
         editor
             .get_resource::<InspectorRegistry>()
             .unwrap()
-            .collect(&setting())
+            .collect(&setting(), &TypeRegistry::default())
             .len(),
         1
     );

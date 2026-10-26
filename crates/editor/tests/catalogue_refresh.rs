@@ -9,6 +9,7 @@ use concerto_foundation::assets::{
     AssetId,
     asset_server::AssetServer,
     content::{CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset},
+    registry::AssetRegistry,
 };
 
 fn asset(root: &std::path::Path, name: &str) {
@@ -40,9 +41,11 @@ fn refreshing_adds_assets_without_bumping_generation_or_closing_documents() {
     app.insert_resource(AssetEditorCommands::default());
     app.insert_resource(UnsavedGuard::default());
     app.insert_resource(AssetServer::new());
+    let (opened, registry) = discover_project(project.path()).expect("discover");
     let mut state = ProjectState::default();
-    state.project = Some(discover_project(project.path()).expect("discover"));
+    state.project = Some(opened);
     app.insert_resource(state);
+    app.insert_resource(registry);
     app.register_plugin(ProjectPlugin);
     app.finish_plugin_build();
 
@@ -53,9 +56,11 @@ fn refreshing_adds_assets_without_bumping_generation_or_closing_documents() {
         .push_back(EditorCommand::RefreshCatalogue);
     app.main_mut().world_mut().run_schedule(Update);
 
-    let state = app.get_resource::<ProjectState>().expect("state");
     assert_eq!(
-        state.project.as_ref().expect("project").assets.len(),
+        app.get_resource::<AssetRegistry>()
+            .expect("registry")
+            .iter()
+            .count(),
         2,
         "the refresh picks up the newly written asset"
     );

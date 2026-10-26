@@ -4,7 +4,7 @@ use super::*;
 use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::registry::InspectionSource;
-use concerto_ecs::query::filter::With;
+use concerto_ecs::{query::filter::With, reflect::AppTypeRegistry};
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -292,12 +292,14 @@ fn body_node(theme: &UITheme) -> UINode {
 pub(super) fn build_property_widgets(
     rows: Query<(Entity, &PropertyRow, &PropertyRowValue), With<BuildPropertyWidget>>,
     registry: Res<InspectorRegistry>,
+    types: EditWorld<Option<Res<AppTypeRegistry>>>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
+    let types = types.as_deref().map(|types| &types.0);
     for (entity, row, value) in rows.iter() {
         if let Some(editor) = registry
-            .editor(row.type_id)
+            .editor(row.type_id, types)
             .filter(|editor| Some(editor.editor_type) == row.editor_type)
         {
             if let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme) {

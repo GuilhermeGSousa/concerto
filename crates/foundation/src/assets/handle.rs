@@ -126,6 +126,16 @@ impl<A: Asset> Default for AssetHandle<A> {
     }
 }
 
+impl<A: Asset> PartialEq for AssetHandle<A> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Strong(l0, l1), Self::Strong(r0, r1)) => l0.id == r0.id && l1 == r1,
+            (Self::Weak(l0, l1), Self::Weak(r0, r1)) => l0 == r0 && l1 == r1,
+            _ => false,
+        }
+    }
+}
+
 impl<A: Asset> Leaf for AssetHandle<A> {
     fn encode(&self) -> Result<Vec<u8>, LeafError> {
         encode_leaf(&self.id())
@@ -181,11 +191,82 @@ impl<A: Asset> JsonLeaf for AssetHandle<A> {
     }
 }
 
+/// Why [`ReflectAssetHandle::set`] left a value unchanged.
+#[derive(Debug, PartialEq, Eq)]
+pub enum SetHandleError {
+    NotThisHandle,
+    AssetNotRegistered,
+}
+
+/// An `AssetHandle<A>` described without naming `A`.
+#[derive(Clone, Copy)]
+pub struct ReflectAssetHandle {
+    kind: &'static str,
+    id: fn(&dyn Reflect) -> Option<AssetId>,
+    set: fn(&mut dyn Reflect, &AssetServer, AssetId) -> Result<(), SetHandleError>,
+}
+
+impl TypeData for ReflectAssetHandle {}
+
+impl ReflectAssetHandle {
+    /// The handled asset's kind, as [`Asset::name`] gives it.
+    pub fn kind(&self) -> &'static str {
+        self.kind
+    }
+
+    /// The id `value` holds, or `None` if it is not this handle type.
+    pub fn id(&self, value: &dyn Reflect) -> Option<AssetId> {
+        (self.id)(value)
+    }
+
+    /// Writes into `value` a handle to `id` loaded through `server`.
+    pub fn set(
+        &self,
+        value: &mut dyn Reflect,
+        server: &AssetServer,
+        id: AssetId,
+    ) -> Result<(), SetHandleError> {
+        (self.set)(value, server, id)
+    }
+}
+
+impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
+    fn from_type() -> Self {
+        Self {
+            kind: A::name(),
+            id: |value| {
+                (value as &dyn std::any::Any)
+                    .downcast_ref::<AssetHandle<A>>()
+                    .map(AssetHandle::id)
+            },
+            set: |value, server, id| {
+                let handle = (value as &mut dyn std::any::Any)
+                    .downcast_mut::<AssetHandle<A>>()
+                    .ok_or(SetHandleError::NotThisHandle)?;
+                if !server.is_registered::<A>() {
+                    return Err(SetHandleError::AssetNotRegistered);
+                }
+                *handle = server.load(id);
+                Ok(())
+            },
+        }
+    }
+}
+
 impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
     fn from_type() -> Self {
         Self {
             spawn: |leaf, bytes, spawn| {
-                load_handle::<A>(leaf, bytes, spawn.world.get_resource::<AssetServer>())
+                let handle = (leaf as &mut dyn std::any::Any)
+                    .downcast_mut::<AssetHandle<A>>()
+                    .ok_or_else(|| LeafError("not this asset's handle".into()))?;
+                let mut id = AssetId::nil();
+                decode_leaf(&mut id, bytes)?;
+                *handle = match spawn.world.get_resource::<AssetServer>() {
+                    Some(server) if !id.is_nil() => server.load::<A>(id),
+                    _ => AssetHandle::weak(id),
+                };
+                Ok(())
             },
             capture: |leaf, capture| {
                 let handle = (leaf as &dyn std::any::Any)
@@ -196,39 +277,6 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
             },
         }
     }
-}
-
-/// Sets a handle leaf from its stored id, loading the asset through the server when there is one.
-#[derive(Clone, Copy)]
-pub struct ReflectAssetHandle {
-    pub load: fn(&mut dyn Reflect, &[u8], Option<&AssetServer>) -> Result<(), LeafError>,
-}
-
-impl TypeData for ReflectAssetHandle {}
-
-impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectAssetHandle {
-    fn from_type() -> Self {
-        Self {
-            load: load_handle::<A>,
-        }
-    }
-}
-
-fn load_handle<A: LoadableAsset>(
-    leaf: &mut dyn Reflect,
-    bytes: &[u8],
-    server: Option<&AssetServer>,
-) -> Result<(), LeafError> {
-    let handle = (leaf as &mut dyn Any)
-        .downcast_mut::<AssetHandle<A>>()
-        .ok_or_else(|| LeafError("not this asset's handle".into()))?;
-    let mut id = AssetId::nil();
-    decode_leaf(&mut id, bytes)?;
-    *handle = match server {
-        Some(server) if !id.is_nil() => server.load::<A>(id),
-        _ => AssetHandle::weak(id),
-    };
-    Ok(())
 }
 
 /// Writes values into a live world: entity references as [`LiveEntityRefs`] stores them, and asset handles loaded through the world's [`AssetServer`] as a scene spawns them.
@@ -278,7 +326,21 @@ impl LeafHook for LiveLeaves {
             return Some(decoded);
         }
         let handle = self.handles.get(&(&*leaf as &dyn Any).type_id())?;
-        Some((handle.load)(leaf, bytes, self.server.as_ref()))
+        let server = self.server.as_ref()?;
+        let mut id = AssetId::nil();
+        if let Err(error) = decode_leaf(&mut id, bytes) {
+            return Some(Err(error));
+        }
+        if id.is_nil() {
+            return None;
+        }
+        Some(handle.set(leaf, server, id).map_err(|error| match error {
+            SetHandleError::NotThisHandle => LeafError("not this asset's handle".into()),
+            SetHandleError::AssetNotRegistered => LeafError(format!(
+                "{} assets are not registered with the asset server",
+                handle.kind()
+            )),
+        }))
     }
 }
 

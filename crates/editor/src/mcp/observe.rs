@@ -9,7 +9,10 @@ use concerto_ecs::{
     signal::listener::GlobalListener,
     system::input::{ComponentMetadata, StaticSystemInput, SystemInputData},
 };
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::{
+    asset_server::AssetServer,
+    registry::{AssetEntry, AssetRegistry},
+};
 use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
@@ -28,7 +31,7 @@ use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
     inspector::{InspectionSource, InspectorRegistry, Property},
-    project::{Project, ProjectState},
+    project::ProjectState,
     tools::{
         camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
     },
@@ -287,10 +290,14 @@ fn describe_document(
     line
 }
 
-fn list_assets(mut calls: ToolCalls<ListAssets>, state: Res<ProjectState>) {
+fn list_assets(
+    mut calls: ToolCalls<ListAssets>,
+    state: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
+) {
     for (arguments, reply) in calls.read() {
-        if let Some(project) = &state.project {
-            reply.ok(list(project, &arguments));
+        if state.project.is_some() {
+            reply.ok(list(&registry, &arguments));
         }
     }
 }
@@ -303,16 +310,38 @@ fn counted(count: usize) -> String {
     }
 }
 
-fn list(project: &Project, arguments: &ListAssets) -> String {
-    let matches = project.filtered_assets(
-        arguments.query.as_deref().unwrap_or(""),
-        arguments.folder.as_deref(),
-        arguments.kind.as_deref(),
-    );
+fn filtered<'a>(registry: &'a AssetRegistry, arguments: &ListAssets) -> Vec<&'a AssetEntry> {
+    let query = arguments.query.as_deref().unwrap_or("").to_lowercase();
+    let folder = arguments.folder.as_deref();
+    let kind = arguments.kind.as_deref();
+    registry
+        .iter()
+        .filter(|asset| {
+            folder.is_none_or(|folder| {
+                folder.is_empty()
+                    || asset.folder() == folder
+                    || asset
+                        .folder()
+                        .strip_prefix(folder)
+                        .is_some_and(|suffix| suffix.starts_with('/'))
+            })
+        })
+        .filter(|asset| kind.is_none_or(|kind| asset.kind == kind))
+        .filter(|asset| {
+            query.is_empty()
+                || asset.name().to_lowercase().contains(&query)
+                || asset.address.to_lowercase().contains(&query)
+                || asset.kind.to_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+fn list(registry: &AssetRegistry, arguments: &ListAssets) -> String {
+    let matches = filtered(registry, arguments);
     if matches.is_empty() {
         return format!(
             "No assets match. The project has {}.",
-            counted(project.assets.len())
+            counted(registry.iter().count())
         );
     }
     let found = if matches.len() == 1 {
@@ -828,7 +857,7 @@ pub(super) fn component_json(
     match source.read(entity, id) {
         Some(value) => {
             component.insert("value".into(), bounded(to_json(value, source.types())));
-            let rows = registry.collect(value);
+            let rows = registry.collect(value, source.types());
             let paths: Vec<Value> = listed_paths(value, &rows)
                 .iter()
                 .map(|listed| {

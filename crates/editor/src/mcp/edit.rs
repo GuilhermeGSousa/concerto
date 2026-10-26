@@ -591,7 +591,7 @@ fn property_write(
         }));
     };
     let row = property.row(entity, component);
-    let editor = current_editor(registry, changed, &row)
+    let editor = current_editor(registry, Some(source.types()), changed, &row)
         .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
     let mut edit = Err(unknown_path(short, &arguments.path, &[]));
     let mut hook = LiveLeaves::from_parts(source.types(), server);

@@ -436,6 +436,21 @@ impl World {
             .map(ResourceData::into_inner)
     }
 
+    /// Takes `T` out of the world while `f` runs, then puts it back with its change ticks as they were.
+    pub fn resource_scope<T: Resource + 'static>(&mut self, f: impl FnOnce(&mut World, &T)) {
+        let id = TypeId::of::<T>();
+        let Some(data) = self.resources.remove(&id) else {
+            return;
+        };
+        f(self, data.get::<T>());
+        assert!(
+            !self.resources.contains_key(&id),
+            "{} was inserted during its own resource_scope",
+            T::name()
+        );
+        self.resources.insert(id, data);
+    }
+
     /// Returns a shared reference to the resource of type `T`, or `None` if not present.
     pub fn get_resource<T: Resource + 'static>(&self) -> Option<&T> {
         self.get_resource_data::<T>().map(ResourceData::get)

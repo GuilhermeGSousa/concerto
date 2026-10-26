@@ -22,14 +22,16 @@ use concerto_ecs::{
     },
     world::UnsafeWorldCell,
 };
+use concerto_foundation::assets::handle::ReflectAssetHandle;
 use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault, TypeRegistry};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
-    EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
     PropertyRowValue,
 };
-use crate::hosted::EditWorldSignals;
+use crate::asset_picker::AssetPicker;
+use crate::hosted::{EditWorld, EditWorldSignals};
 use crate::tools::edits::CommitProperty;
 
 /// A registered property editor with its value and edit types erased.
@@ -42,7 +44,12 @@ pub trait ErasedEditor: Send + Sync {
         snapshot: &PropertyRowValue,
         theme: &UITheme,
     ) -> Result<(), EditError>;
-    fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError>;
+    fn apply(
+        &self,
+        value: &mut dyn Reflect,
+        edit: &dyn Any,
+        context: &EditContext,
+    ) -> Result<(), EditError>;
     /// The erased edit that [`Self::apply`] takes to set the field to `value`, or `None` when the editor offers no value edit.
     fn edit_to(&self, value: &dyn Reflect)
     -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError>;
@@ -69,17 +76,22 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
         theme: &UITheme,
     ) -> Result<(), EditError> {
         let snapshot = snapshot.snapshot::<T, E>().ok_or(EditError::TypeMismatch)?;
-        self.editor.build(cmd, row, snapshot, theme);
+        self.editor.build(&mut cmd.entity(row), snapshot, theme);
         Ok(())
     }
-    fn apply(&self, value: &mut dyn Reflect, edit: &dyn Any) -> Result<(), EditError> {
+    fn apply(
+        &self,
+        value: &mut dyn Reflect,
+        edit: &dyn Any,
+        context: &EditContext,
+    ) -> Result<(), EditError> {
         let value = (value as &mut dyn Any)
             .downcast_mut::<T>()
             .ok_or(EditError::TypeMismatch)?;
         let edit = edit
             .downcast_ref::<E::Edit>()
             .ok_or(EditError::TypeMismatch)?;
-        self.editor.apply(value, edit)
+        self.editor.apply(value, edit, context)
     }
     fn edit_to(
         &self,
@@ -98,6 +110,7 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct RegisteredEditor {
     pub editor_type: TypeId,
     pub adapter: Arc<dyn ErasedEditor>,
@@ -121,27 +134,40 @@ impl Default for InspectorRegistry {
 }
 
 impl InspectorRegistry {
-    pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self, editor: E) {
+    pub fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) {
         self.editors.insert(
             TypeId::of::<T>(),
             RegisteredEditor {
                 editor_type: TypeId::of::<E>(),
                 adapter: Arc::new(Adapter::<T, E> {
-                    editor,
+                    editor: E::default(),
                     marker: PhantomData,
                 }),
             },
         );
     }
 
-    pub(crate) fn editor(&self, id: TypeId) -> Option<&RegisteredEditor> {
-        self.editors.get(&id)
+    /// The editor registered for `id`, or else the asset picker if `types` describes `id` as an asset handle.
+    pub(crate) fn editor(
+        &self,
+        id: TypeId,
+        types: Option<&TypeRegistry>,
+    ) -> Option<RegisteredEditor> {
+        if let Some(editor) = self.editors.get(&id) {
+            return Some(editor.clone());
+        }
+        let handle = types?.get_type_data::<ReflectAssetHandle>(id)?;
+        Some(RegisteredEditor {
+            editor_type: TypeId::of::<AssetPicker>(),
+            adapter: Arc::new(AssetPicker::new(*handle)),
+        })
     }
 
     /// Collect fresh owned snapshots, preferring an editor for each node over its children.
-    pub fn collect(&self, root: &dyn Reflect) -> Vec<Property> {
+    pub fn collect(&self, root: &dyn Reflect, types: &TypeRegistry) -> Vec<Property> {
         let mut collector = Collect {
             registry: self,
+            types,
             path: Vec::new(),
             properties: Vec::new(),
         };
@@ -157,15 +183,19 @@ impl InspectorRegistry {
         entity: Entity,
         component: TypeId,
     ) -> Option<Vec<Property>> {
-        let entry = scene
-            .get_resource::<AppTypeRegistry>()?
-            .get_type_data::<ReflectComponent>(component)?;
+        let types = scene.get_resource::<AppTypeRegistry>()?;
+        let entry = types.get_type_data::<ReflectComponent>(component)?;
         let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
-        Some(self.collect_at(registry_tick, value))
+        Some(self.collect_at(registry_tick, value, types))
     }
 
-    fn collect_at(&self, registry_tick: Tick, root: &dyn Reflect) -> Vec<Property> {
-        let mut properties = self.collect(root);
+    fn collect_at(
+        &self,
+        registry_tick: Tick,
+        root: &dyn Reflect,
+        types: &TypeRegistry,
+    ) -> Vec<Property> {
+        let mut properties = self.collect(root, types);
         for property in &mut properties {
             property.registry_tick = registry_tick;
         }
@@ -175,6 +205,7 @@ impl InspectorRegistry {
 
 struct Collect<'a> {
     registry: &'a InspectorRegistry,
+    types: &'a TypeRegistry,
     path: Vec<&'static str>,
     properties: Vec<Property>,
 }
@@ -182,7 +213,7 @@ struct Collect<'a> {
 impl Collect<'_> {
     fn node(&mut self, value: &dyn Reflect) {
         let type_id = (value as &dyn Any).type_id();
-        if let Some(editor) = self.registry.editor(type_id) {
+        if let Some(editor) = self.registry.editor(type_id, Some(self.types)) {
             match editor.adapter.snapshot(value) {
                 Ok(snapshot) => self.properties.push(Property {
                     path: PropertyPath::new(self.path.iter().copied()),
@@ -236,9 +267,12 @@ impl InspectionSource<'_> {
         self.table.get_type_data::<ReflectComponent>(id).is_some()
     }
     pub fn follows_snapshot(&self, registry: &InspectorRegistry, property: &Property) -> bool {
-        registry.editor(property.type_id).is_some_and(|editor| {
-            Some(editor.editor_type) == property.editor_type && editor.adapter.follows_snapshot()
-        })
+        registry
+            .editor(property.type_id, Some(&self.table))
+            .is_some_and(|editor| {
+                Some(editor.editor_type) == property.editor_type
+                    && editor.adapter.follows_snapshot()
+            })
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {
@@ -277,7 +311,7 @@ impl InspectionSource<'_> {
         entity: Entity,
         id: TypeId,
     ) -> Option<Vec<Property>> {
-        Some(registry.collect_at(registry_tick, self.read(entity, id)?))
+        Some(registry.collect_at(registry_tick, self.read(entity, id)?, &self.table))
     }
 }
 
@@ -304,18 +338,12 @@ impl SystemInput for InspectionSource<'_> {
 impl ReadOnlySystemInput for InspectionSource<'_> {}
 
 pub trait EditableApp {
-    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(
-        &mut self,
-        editor: E,
-    ) -> &mut Self;
+    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) -> &mut Self;
 }
 
 impl EditableApp for App {
-    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(
-        &mut self,
-        editor: E,
-    ) -> &mut Self {
-        registry(self).register_property_editor::<T, E>(editor);
+    fn register_property_editor<T: Reflect, E: PropertyEditor<T>>(&mut self) -> &mut Self {
+        registry(self).register_property_editor::<T, E>();
         self
     }
 }
@@ -328,13 +356,14 @@ fn registry(app: &mut App) -> ResMut<'_, InspectorRegistry> {
         .expect("InspectorPlugin must be registered first")
 }
 
-pub(crate) fn current_editor<'a>(
-    registry: &'a InspectorRegistry,
+pub(crate) fn current_editor(
+    registry: &InspectorRegistry,
+    types: Option<&TypeRegistry>,
     changed: Tick,
     row: &PropertyRow,
-) -> Result<&'a RegisteredEditor, EditError> {
+) -> Result<RegisteredEditor, EditError> {
     registry
-        .editor(row.type_id)
+        .editor(row.type_id, types)
         .filter(|editor| {
             row.editor_type == Some(editor.editor_type) && row.registry_tick == changed
         })
@@ -343,13 +372,14 @@ pub(crate) fn current_editor<'a>(
 
 fn checked(
     registry: &InspectorRegistry,
+    types: Option<&TypeRegistry>,
     changed: Tick,
     commit: PropertyCommit,
 ) -> Result<CommitProperty, EditError> {
     let row = commit.row;
-    let editor = current_editor(registry, changed, &row)?;
+    let editor = current_editor(registry, types, changed, &row)?;
     Ok(CommitProperty {
-        editor: Arc::clone(&editor.adapter),
+        editor: editor.adapter,
         row,
         edit: commit.edit,
     })
@@ -358,13 +388,15 @@ fn checked(
 pub(super) fn send_property_commits(
     mut commits: ResMut<PropertyCommits>,
     registry: Res<InspectorRegistry>,
+    types: EditWorld<Option<Res<AppTypeRegistry>>>,
     mut scene: EditWorldSignals,
 ) {
     if commits.0.is_empty() {
         return;
     }
+    let types = types.as_deref().map(|types| &types.0);
     for commit in std::mem::take(&mut commits.0) {
-        match checked(&registry, registry.changed_tick(), commit) {
+        match checked(&registry, types, registry.changed_tick(), commit) {
             Ok(commit) => scene.trigger(commit),
             Err(error) => log::warn!("Property commit dropped: {error}"),
         }
@@ -379,8 +411,13 @@ mod tests {
     };
     use super::*;
     use crate::{hosted::testing::SceneFixture, tools::scene::SceneEdited};
-    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
-    use concerto_foundation::transform::Transform;
+    use concerto_ecs::{
+        IntoSystem, System, command::EntityCommandQueue, events::event_channel::EventChannel,
+    };
+    use concerto_foundation::{
+        assets::{asset_server::AssetServer, registry::AssetRegistry},
+        transform::Transform,
+    };
     use glam::Vec3;
 
     struct Sending {
@@ -448,6 +485,8 @@ mod tests {
         let mut world = World::default();
         world.register_component::<Transform>();
         world.register_type::<Transform>();
+        world.insert_resource(AssetServer::new());
+        world.insert_resource(AssetRegistry::default());
         let entity = world.spawn(Transform::IDENTITY);
         world.tick();
         (world, entity)
@@ -465,20 +504,29 @@ mod tests {
         changed: Tick,
         commit: PropertyCommit,
     ) -> Option<EditError> {
-        checked(registry, changed, commit).err()
+        checked(registry, None, changed, commit).err()
     }
 
     #[test]
     fn an_erased_value_edit_applies_through_its_adapter() {
         let registry = InspectorRegistry::default();
-        let adapter = &registry.editor(TypeId::of::<Vec3>()).unwrap().adapter;
+        let adapter = &registry.editor(TypeId::of::<Vec3>(), None).unwrap().adapter;
         let target = Vec3::new(1.0, -2.0, 3.5);
         let edit = adapter
             .edit_to(&target)
             .unwrap()
             .expect("vectors offer a value edit");
         let mut value = Vec3::ZERO;
-        adapter.apply(&mut value, edit.as_ref()).unwrap();
+        adapter
+            .apply(
+                &mut value,
+                edit.as_ref(),
+                &EditContext {
+                    assets: &AssetServer::new(),
+                    registry: &AssetRegistry::default(),
+                },
+            )
+            .unwrap();
         assert_eq!(value, target);
         assert_eq!(
             adapter.edit_to(&1.0_f32).err(),
@@ -488,6 +536,7 @@ mod tests {
 
     #[test]
     fn an_adapter_without_a_value_edit_offers_none() {
+        #[derive(Default)]
         struct Label;
         impl PropertyEditor<f32> for Label {
             type Snapshot = f32;
@@ -495,15 +544,15 @@ mod tests {
             fn snapshot(&self, value: &f32) -> f32 {
                 *value
             }
-            fn build(&self, _: &mut CommandQueue, _: Entity, _: &f32, _: &UITheme) {}
-            fn apply(&self, value: &mut f32, edit: &f32) -> Result<(), EditError> {
+            fn build(&self, _: &mut EntityCommandQueue, _: &f32, _: &UITheme) {}
+            fn apply(&self, value: &mut f32, edit: &f32, _: &EditContext) -> Result<(), EditError> {
                 *value = *edit;
                 Ok(())
             }
         }
         let mut registry = InspectorRegistry::default();
-        registry.register_property_editor::<f32, _>(Label);
-        let adapter = &registry.editor(TypeId::of::<f32>()).unwrap().adapter;
+        registry.register_property_editor::<f32, Label>();
+        let adapter = &registry.editor(TypeId::of::<f32>(), None).unwrap().adapter;
         assert!(adapter.edit_to(&2.0_f32).unwrap().is_none());
     }
 
@@ -515,7 +564,7 @@ mod tests {
             s.f.world
                 .get_resource::<InspectorRegistry>()
                 .unwrap()
-                .editor(TypeId::of::<Vec3>())
+                .editor(TypeId::of::<Vec3>(), None)
                 .unwrap()
                 .adapter
                 .edit_to(&Vec3::new(4.0, 5.0, 6.0))
@@ -604,7 +653,7 @@ mod tests {
         // SAFETY: the exclusive borrow of the world covers any access.
         unsafe { ResMut::<InspectorRegistry>::new(s.f.world.as_unsafe_world_cell_mut(), ticks) }
             .unwrap()
-            .register_property_editor::<Vec3, _>(NumericFields);
+            .register_property_editor::<Vec3, NumericFields>();
         s.commits()
             .push::<Vec3, NumericFields>(
                 &row,
@@ -655,7 +704,7 @@ mod tests {
             row,
             edit: Arc::new("wrong payload"),
         };
-        let commit = checked(&registry, Tick::default(), malformed)
+        let commit = checked(&registry, None, Tick::default(), malformed)
             .expect("the row still names the registered editor");
         assert_eq!(commit.apply(&mut scene), Err(EditError::TypeMismatch));
         assert_eq!(
@@ -720,7 +769,7 @@ mod tests {
         )
         .unwrap();
         scene.insert_resource(AppTypeRegistry::default());
-        let commit = checked(&registry, Tick::default(), edit).unwrap();
+        let commit = checked(&registry, None, Tick::default(), edit).unwrap();
         assert_eq!(
             commit.apply(&mut scene),
             Err(EditError::UnregisteredComponent)
@@ -736,7 +785,7 @@ mod tests {
             row,
             edit: Arc::new(NumericEdit::Slot { slot: 0, number }),
         };
-        checked(registry, Tick::default(), commit).unwrap()
+        checked(registry, None, Tick::default(), commit).unwrap()
     }
 
     #[test]
@@ -786,6 +835,28 @@ mod tests {
     }
 
     #[test]
+    fn a_scene_without_its_asset_resources_refuses_every_edit_and_keeps_them() {
+        let (mut scene, entity) = scene();
+        let registry = InspectorRegistry::default();
+        let row = row_in(&registry, &scene, entity);
+        scene.remove_resource::<AssetRegistry>();
+
+        assert_eq!(
+            numeric(&registry, row, 4.0).apply(&mut scene),
+            Err(EditError::MissingAssets)
+        );
+
+        assert_eq!(
+            scene
+                .get_component_for_entity::<Transform>(entity)
+                .unwrap()
+                .translation,
+            Vec3::ZERO
+        );
+        assert!(scene.get_resource::<AssetServer>().is_some());
+    }
+
+    #[test]
     fn missing_targets_and_incompatible_paths_return_errors() {
         let (mut scene, a) = scene();
         let b = scene.spawn(Transform::IDENTITY);
@@ -830,7 +901,7 @@ mod tests {
             },
         )
         .unwrap();
-        checked(&registry, Tick::default(), edit)
+        checked(&registry, None, Tick::default(), edit)
             .unwrap()
             .apply(&mut scene)
             .unwrap();

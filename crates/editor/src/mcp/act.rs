@@ -9,7 +9,10 @@ use concerto_ecs::{
     query::filter::{With, Without},
 };
 use concerto_foundation::{
-    assets::{Asset, AssetId},
+    assets::{
+        Asset, AssetId,
+        registry::{AssetEntry, AssetRegistry},
+    },
     transform::{GlobalTransform, Transform},
 };
 use concerto_mcp::{
@@ -25,10 +28,7 @@ use crate::{
     asset_editor::{AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditTarget, EditWorld, EditWorldSignals, PlayState},
-    project::{
-        AssetEntry, EditorCommand, EditorCommands, Project, ProjectOpenFailed, ProjectOpened,
-        ProjectState,
-    },
+    project::{EditorCommand, EditorCommands, ProjectOpenFailed, ProjectOpened, ProjectState},
     scene::{SaveFailed, SceneOpenFailed, SceneOpened},
     tools::{
         camera::{
@@ -226,6 +226,7 @@ fn answer_project_opens(
     mut opened: EventReader<ProjectOpened>,
     mut failed: EventReader<ProjectOpenFailed>,
     state: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
     waiting: Query<(Entity, &PendingCall, &OpeningProject), Without<CancelledPrompt>>,
     mut cmd: CommandQueue,
 ) {
@@ -238,11 +239,11 @@ fn answer_project_opens(
                 .project
                 .as_ref()
                 .filter(|project| project.root == event.root)
-                .map(|project| {
+                .map(|_| {
                     format!(
                         ": {}, {}",
-                        counted(project.assets.len(), "asset"),
-                        counted(project.scenes().count(), "scene")
+                        counted(registry.iter().count(), "asset"),
+                        counted(registry.of_type::<Scene>().count(), "scene")
                     )
                 })
                 .unwrap_or_default();
@@ -264,12 +265,11 @@ fn answer_project_opens(
     }
 }
 
-fn find_asset<'a>(project: &'a Project, asset: &str) -> Result<&'a AssetEntry, ToolError> {
-    let id = AssetId::from_simple_hex(asset).ok();
-    project
-        .assets
-        .iter()
-        .find(|entry| entry.address == asset || Some(entry.id) == id)
+fn find_asset<'a>(registry: &'a AssetRegistry, asset: &str) -> Result<&'a AssetEntry, ToolError> {
+    registry
+        .id_for_address(asset)
+        .or_else(|| AssetId::from_simple_hex(asset).ok())
+        .and_then(|id| registry.get(id))
         .ok_or_else(|| {
             ToolError::new(
                 "unknown_asset",
@@ -289,6 +289,7 @@ fn opened(asset: &AssetEntry, document: Entity) -> String {
 fn open_asset(
     mut calls: ToolCalls<OpenAsset>,
     state: Res<ProjectState>,
+    registry: Res<AssetRegistry>,
     editors: Res<AssetEditorRegistry>,
     documents: Query<(Entity, &EditorDocument)>,
     mut commands: ResMut<EditorCommands>,
@@ -299,10 +300,10 @@ fn open_asset(
             reply.err(busy());
             continue;
         }
-        let Some(project) = &state.project else {
+        if state.project.is_none() {
             continue;
-        };
-        let asset = match find_asset(project, &arguments.asset) {
+        }
+        let asset = match find_asset(&registry, &arguments.asset) {
             Ok(asset) => asset.clone(),
             Err(error) => {
                 reply.err(error);

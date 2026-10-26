@@ -617,7 +617,7 @@ mod tests {
 
     #[test]
     fn an_import_records_its_asset_ids_in_the_registry_file() {
-        use concerto_foundation::assets::content::{AssetRegistry, REGISTRY_FILE_NAME};
+        use concerto_foundation::assets::registry::{AssetRegistry, REGISTRY_FILE_NAME};
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
         let imported = import_source_into(
@@ -630,7 +630,9 @@ mod tests {
         let registry = AssetRegistry::load(project.path()).expect("registry");
         assert!(!imported.assets.is_empty());
         for asset in &imported.assets {
-            assert_eq!(registry.get(asset.asset_id), Some(asset.address.as_str()));
+            let entry = registry.get(asset.asset_id).expect("registered");
+            assert_eq!(entry.address, asset.address);
+            assert_eq!(entry.kind, asset.kind);
         }
     }
 
