@@ -43,7 +43,7 @@ fix the entry in the same commit as the change that made it false.
   `Extracted` decline as `Missing`, which logs a warning on every skipped run;
   `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
   flood in the log names the system and the missing type. Use `Option<Res<T>>`
-  where absence is normal.
+  or `Option<ResMut<T>>` where absence is normal.
 - **`Added<T>` and `Changed<T>` read `T`.** A query filtered by them conflicts
   with any system writing `T`, so the two never run in parallel. `With<T>` and
   `Without<T>` read only archetypes and do not conflict.
@@ -101,6 +101,25 @@ fix the entry in the same commit as the change that made it false.
   keep that guard in any new pose path.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
+
+## UI
+
+- **`UILayout` is written only when it differs,** so `Changed<UILayout>` means
+  the rectangle, clip or paint order moved. It is inserted, with
+  `SyncWithRenderWorld`, the first time a node is laid out, so a node spawned
+  this frame has none until the layout set runs.
+- **A scroll area's offset is applied in the layout walk,** not in Taffy. Every
+  child of a node with `UIScrollArea` except its `UIWidgetPart`s is moved up by
+  the offset, so a scrolled child's `UINode` says where it sits in unscrolled
+  content and its `UILayout` says where it is drawn.
+- **A write to `UIScrollArea` causes a walk of the whole tree,** so compare
+  before writing it.
+- **Changing a label's text lays it out again unless its size cannot depend on
+  the text.** That holds when its width and height are `Px` and it cannot
+  shrink below them: `flex_shrink` is 0, or each axis has a minimum size or a
+  clipping overflow (`single_line` counts as a minimum on the width). A
+  readout that changes every frame, such as a counter, should be sized that
+  way, or it lays itself out on every refresh and counts its own passes.
 
 ## Scenes and assets
 

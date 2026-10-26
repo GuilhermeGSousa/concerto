@@ -428,8 +428,12 @@ pub fn track_panel_stack(
         .collect();
     ordered.sort_by_key(|(depth, entity)| (*depth, entity.index(), entity.generation()));
 
-    let previously_open = std::mem::take(&mut stack.open);
-    stack.open = ordered.into_iter().map(|(_, entity)| entity).collect();
+    let open: Vec<Entity> = ordered.into_iter().map(|(_, entity)| entity).collect();
+    let previously_open = if stack.open() != open.as_slice() {
+        std::mem::replace(&mut stack.open, open)
+    } else {
+        open
+    };
 
     let mut focus_target = None;
     for (entity, mut panel, mut node) in panels.iter() {

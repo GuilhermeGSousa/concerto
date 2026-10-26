@@ -45,3 +45,46 @@ pub use resources::UIRenderDiagnostics;
 
 #[cfg(test)]
 mod tests {}
+
+#[cfg(test)]
+pub(crate) mod testing {
+    use concerto_ecs::{
+        Changed, Component, Entity, IntoSystem, Query, ResMut, Resource, System, World,
+        system::BoxedSystem,
+    };
+
+    #[derive(Resource, Default)]
+    struct Changes(Vec<usize>);
+
+    fn count_changed<T: Component>(
+        changed: Query<Entity, Changed<T>>,
+        mut changes: ResMut<Changes>,
+    ) {
+        changes.0.push(changed.iter().count());
+    }
+
+    pub(crate) struct Watch {
+        writer: BoxedSystem,
+        watcher: BoxedSystem,
+    }
+
+    impl Watch {
+        pub(crate) fn new<T: Component, M>(
+            world: &mut World,
+            writer: impl IntoSystem<(), M>,
+        ) -> Self {
+            world.insert_resource(Changes::default());
+            let mut writer = writer.into_boxed_system();
+            let mut watcher = count_changed::<T>.into_boxed_system();
+            writer.initialize(world);
+            watcher.initialize(world);
+            Self { writer, watcher }
+        }
+
+        pub(crate) fn run(&mut self, world: &mut World) -> usize {
+            self.writer.run_and_apply((), world);
+            self.watcher.run_and_apply((), world);
+            *world.get_resource::<Changes>().unwrap().0.last().unwrap()
+        }
+    }
+}

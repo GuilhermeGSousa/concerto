@@ -26,6 +26,7 @@ cargo build --profile profiling -p render-test
 | Rendering (Sponza) | `cargo run --profile profiling -p render-test` | draw submission, materials, wgpu |
 | Gameplay / animation | `cargo run --profile profiling -p tech-demo` | full stack: ECS, animation, physics, render |
 | Physics | `cargo run --profile profiling -p physics-test` | Jolt step, transform write-back |
+| UI | `cargo run --profile profiling -p ui-showcase`, then select the Stress tab | layout, text measurement, UI extraction |
 
 For comparable captures: keep the window size fixed, don't move the camera,
 let the scene warm up ~10 s, then capture ~30 s.

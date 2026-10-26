@@ -274,6 +274,29 @@ where
     }
 }
 
+impl<T> SystemInput for Option<ResMut<'_, T>>
+where
+    T: Resource,
+{
+    type State = ();
+    type Data<'world, 'state> = Option<ResMut<'world, T>>;
+
+    fn init_state(_world: &mut World) -> Self::State {}
+
+    unsafe fn get_data<'world, 'state>(
+        _state: &'state mut Self::State,
+        world: crate::world::UnsafeWorldCell<'world>,
+        ticks: SystemTicks,
+    ) -> Result<Self::Data<'world, 'state>, ValidationError> {
+        // SAFETY: `fill_access` declares write access to `T`.
+        Ok(unsafe { ResMut::new(world, ticks) }.ok())
+    }
+
+    fn fill_access(_meta: &mut SystemMetadata, access: &mut crate::system::access::SystemAccess) {
+        access.write_resource::<T>();
+    }
+}
+
 impl<T> Deref for ResMut<'_, T>
 where
     T: Resource,
@@ -355,6 +378,39 @@ mod tests {
     fn plain_reader(_: Res<Counter>) {}
 
     fn writer(_: ResMut<Counter>) {}
+
+    fn optional_writer(_: Option<ResMut<Counter>>) {}
+
+    fn bump(counter: Option<ResMut<Counter>>, mut seen: ResMut<Seen>) {
+        seen.0 = counter.map(|mut counter| {
+            counter.0 += 1;
+            counter.0
+        });
+    }
+
+    #[test]
+    fn an_optional_mutable_resource_is_none_while_absent_and_writable_once_inserted() {
+        let mut world = World::new();
+        world.insert_resource(Seen::default());
+        let mut system = bump.into_system();
+        system.initialize(&mut world);
+
+        system.run_and_apply((), &mut world);
+        assert_eq!(world.get_resource::<Seen>().unwrap().0, None);
+
+        world.insert_resource(Counter(7));
+        system.run_and_apply((), &mut world);
+        assert_eq!(world.get_resource::<Seen>().unwrap().0, Some(8));
+        assert_eq!(world.get_resource::<Counter>().unwrap().0, 8);
+    }
+
+    #[test]
+    fn an_optional_mutable_resource_declares_the_access_of_a_plain_one() {
+        let optional = access_of(optional_writer);
+        let reader = access_of(plain_reader);
+        assert!(!SystemAccess::are_disjoint(&optional, &reader));
+        assert!(!SystemAccess::are_disjoint(&reader, &optional));
+    }
 
     #[test]
     fn an_optional_resource_is_none_while_absent_and_some_once_inserted() {
