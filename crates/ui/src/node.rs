@@ -491,6 +491,10 @@ impl UITextMeasure {
         }
     }
 
+    pub(crate) fn font_system(&mut self) -> &mut glyphon::FontSystem {
+        &mut self.font_system
+    }
+
     fn measure(&mut self, measure: &TextMeasure, width: Option<f32>) -> Vec2 {
         #[cfg(test)]
         self.measured.push(measure.text.clone());
@@ -550,6 +554,21 @@ pub(crate) fn text_attrs(
         } else {
             glyphon::Style::Normal
         })
+}
+
+pub(crate) fn ui_text_attrs(text: &crate::text::UIText) -> glyphon::Attrs<'static> {
+    text_attrs(
+        text.font_family.clone(),
+        text.font_weight,
+        text.font_style == crate::text::FontStyle::Italic,
+    )
+}
+
+pub(crate) fn ui_text_metrics(text: &crate::text::UIText) -> glyphon::Metrics {
+    glyphon::Metrics {
+        font_size: text.font_size,
+        line_height: text.line_height,
+    }
 }
 
 fn intern_family(name: &str) -> &'static str {
