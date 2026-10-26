@@ -8,10 +8,11 @@ use concerto::{
         schedule_groups::{Startup, Update},
     },
     ecs::{
-        CommandQueue, Component, Query, Res, ResMut,
+        CommandQueue, Component, Query, Res, ResMut, Resource, With,
         command::EntityCommandQueue,
         signal::{On, listener::IntoListener},
     },
+    foundation::time::Time,
     ui::{
         UIRenderDiagnostics,
         anchor::{
@@ -19,7 +20,7 @@ use concerto::{
         },
         elements::{Label, Pressable, Text, prelude::*},
         focus::FocusedWidget,
-        interaction::{Interactable, UIInputState},
+        interaction::{Interactable, UIInputState, UIInteractionStyle},
         items::{UIItem, UIItemContextMenu},
         list::UIList,
         node::{
@@ -27,9 +28,10 @@ use concerto::{
         },
         scroll::{UISplitAxis, UISplitHandle, UISplitPane, drag_split_handle},
         text::UIText,
-        theme::UITheme,
+        theme::{ButtonVariant, UITheme},
         transform::UIValue,
         tree::{UITree, UITreeElement},
+        widgets::{UITab, UITabBody, UITabChanged, UITabStrip, select_tab},
     },
     window::{
         input::MouseButton,
@@ -43,6 +45,30 @@ struct Diagnostics;
 
 #[derive(Component)]
 struct ContextMenu;
+
+#[derive(Component)]
+struct ShowcaseTabs;
+
+#[derive(Component)]
+struct StressLabel(usize);
+
+const STRESS_TAB: usize = 1;
+const STRESS_ROWS: usize = 5_000;
+const STRESS_COLUMNS: usize = 15;
+const STRESS_LABELS: usize = 300;
+const STRESS_TICK: f32 = 0.1;
+const DIAGNOSTICS_REFRESH: f32 = 0.25;
+
+#[derive(Resource, Default)]
+struct StressTicker {
+    elapsed: f32,
+    tick: usize,
+}
+
+#[derive(Resource, Default)]
+struct DiagnosticsTimer {
+    elapsed: f32,
+}
 
 fn menu_row(theme: &UITheme, name: &str) -> (Pressable, Text) {
     (
@@ -86,14 +112,40 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
             .fixed(),
     );
 
-    let mut body = root.spawn_child(
+    let mut tabs = root.spawn_child((
+        theme
+            .row()
+            .height(UIValue::Px(theme.control_height))
+            .fixed()
+            .gap(0.0),
+        UITabStrip::default(),
+        ShowcaseTabs,
+        restyle_tabs.into_listener(),
+    ));
+    let strip = tabs.entity();
+    for (index, name) in ["SHOWCASE", "STRESS"].into_iter().enumerate() {
+        tabs.add_child((
+            theme
+                .button(name)
+                .tab()
+                .selected(index == 0)
+                .radius(0.0)
+                .width(UIValue::Px(120.0))
+                .font_size(12.0)
+                .on_click(select_tab),
+            UITab { strip, index },
+        ));
+    }
+
+    let mut body = root.spawn_child((
         theme
             .row()
             .grow()
             .min_height(UIValue::Px(320.0))
             .gap(theme.spacing_md)
             .align_items(AlignItems::Stretch),
-    );
+        UITabBody { strip, index: 0 },
+    ));
     body.add_child_with(
         theme
             .panel()
@@ -334,6 +386,78 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         |mut tree| tree_items(&mut tree, theme, SHOWCASE_TREE),
     );
 
+    root.add_child_with(
+        (
+            theme
+                .row()
+                .grow()
+                .min_height(UIValue::Px(320.0))
+                .gap(theme.spacing_md)
+                .align_items(AlignItems::Stretch)
+                .hidden(),
+            UITabBody { strip, index: 1 },
+        ),
+        |mut stress| {
+            stress.add_child_with(
+                (
+                    theme
+                        .card()
+                        .radius(0.0)
+                        .size(UIValue::Px(280.0), UIValue::Percent(100.0))
+                        .fixed()
+                        .column()
+                        .gap(0.0)
+                        .padding(theme.spacing_sm),
+                    UIList {
+                        row_height: Some(22.0),
+                        ..Default::default()
+                    },
+                ),
+                |mut list| {
+                    for index in 0..STRESS_ROWS {
+                        list.add_child(
+                            theme
+                                .label(format!("Stress row {index:04}"))
+                                .single_line()
+                                .font_size(12.0),
+                        );
+                    }
+                },
+            );
+            stress.add_child_with(
+                theme
+                    .panel()
+                    .radius(0.0)
+                    .bordered()
+                    .size(UIValue::Auto, UIValue::Percent(100.0))
+                    .grow()
+                    .column()
+                    .gap(2.0)
+                    .padding(12.0),
+                |mut grid| {
+                    for first in (0..STRESS_LABELS).step_by(STRESS_COLUMNS) {
+                        grid.add_child_with(
+                            theme.row().grow().gap(2.0).align_items(AlignItems::Stretch),
+                            |mut cells| {
+                                for index in first..first + STRESS_COLUMNS {
+                                    cells.add_child((
+                                        theme
+                                            .label(format!("{index:04}"))
+                                            .single_line()
+                                            .mono()
+                                            .font_size(11.0)
+                                            .grow(),
+                                        StressLabel(index),
+                                    ));
+                                }
+                            },
+                        );
+                    }
+                },
+            );
+        },
+    );
+
     root.add_child((
         theme
             .card()
@@ -515,53 +639,101 @@ fn open_context_menu(
     }
 }
 
+fn restyle_tabs(
+    on: On<UITabChanged>,
+    theme: Res<UITheme>,
+    tabs: Query<(&UITab, &mut UIInteractionStyle)>,
+) {
+    for (tab, mut style) in tabs.iter() {
+        if tab.strip != on.entity() {
+            continue;
+        }
+        let wanted = theme.interaction(ButtonVariant::Tab, tab.index == on.signal().selected);
+        if style.normal != wanted.normal {
+            **style = wanted;
+        }
+    }
+}
+
+fn tick_stress_labels(
+    time: Res<Time>,
+    mut ticker: ResMut<StressTicker>,
+    strips: Query<&UITabStrip, With<ShowcaseTabs>>,
+    labels: Query<(&StressLabel, &mut UIText)>,
+) {
+    if !strips.iter().any(|strip| strip.selected == STRESS_TAB) {
+        return;
+    }
+    ticker.elapsed += time.delta().as_secs_f32();
+    if ticker.elapsed < STRESS_TICK {
+        return;
+    }
+    ticker.elapsed = 0.0;
+    ticker.tick += 1;
+    for (label, mut text) in labels.iter() {
+        text.text = format!("{:04}", (ticker.tick + label.0) % 10_000);
+    }
+}
+
 fn update_diagnostics(
     window: Res<Window>,
     diagnostics: Res<UILayoutDiagnostics>,
-    text: Query<&mut UIText, concerto::ecs::With<Diagnostics>>,
+    text: Query<&mut UIText, With<Diagnostics>>,
     input: Res<UIInputState>,
     focus: Res<FocusedWidget>,
     render_diagnostics: Res<UIRenderDiagnostics>,
     stack: Res<UIPanelStack>,
     panels: Query<(&UIAnchoredPanel, &UILayout)>,
+    time: Res<Time>,
+    mut timer: ResMut<DiagnosticsTimer>,
 ) {
+    timer.elapsed += time.delta().as_secs_f32();
+    if timer.elapsed < DIAGNOSTICS_REFRESH {
+        return;
+    }
+    timer.elapsed = 0.0;
     let physical = window.physical_size();
     let logical = window.logical_size();
+    let value = format!(
+        "logical {:.0}×{:.0}  physical {}×{}  DPI {:.2}  layout {}  tree {}  quads {}  text {}  bindings {}  hovered {:?}  focused {:?}  captured {:?}  panels {}  top {:?}  side {:?}",
+        logical.x,
+        logical.y,
+        physical.0,
+        physical.1,
+        window.scale_factor(),
+        diagnostics.layout_passes,
+        diagnostics.tree_rebuilds,
+        render_diagnostics.geometry_rebuilds(),
+        render_diagnostics.text_reshapes(),
+        render_diagnostics.binding_rebuilds(),
+        input.hovered(),
+        **focus,
+        input.captured(MouseButton::Left),
+        stack.open().len(),
+        stack
+            .open()
+            .last()
+            .and_then(|entity| panels.get_entity(*entity))
+            .map(|(_, layout)| layout.rect.min),
+        stack
+            .open()
+            .last()
+            .and_then(|entity| panels.get_entity(*entity))
+            .map(|(panel, _)| panel.resolved_side()),
+    );
     for mut text in text.iter() {
-        text.text = format!(
-            "logical {:.0}×{:.0}  physical {}×{}  DPI {:.2}  layout {}  tree {}  quads {}  text {}  bindings {}  hovered {:?}  focused {:?}  captured {:?}  panels {}  top {:?}  side {:?}",
-            logical.x,
-            logical.y,
-            physical.0,
-            physical.1,
-            window.scale_factor(),
-            diagnostics.layout_passes,
-            diagnostics.tree_rebuilds,
-            render_diagnostics.geometry_rebuilds(),
-            render_diagnostics.text_reshapes(),
-            render_diagnostics.binding_rebuilds(),
-            input.hovered(),
-            **focus,
-            input.captured(MouseButton::Left),
-            stack.open().len(),
-            stack
-                .open()
-                .last()
-                .and_then(|entity| panels.get_entity(*entity))
-                .map(|(_, layout)| layout.rect.min),
-            stack
-                .open()
-                .last()
-                .and_then(|entity| panels.get_entity(*entity))
-                .map(|(panel, _)| panel.resolved_side()),
-        );
+        if text.text != value {
+            text.text = value.clone();
+        }
     }
 }
 
 fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins::default())
+        .insert_resource(StressTicker::default())
+        .insert_resource(DiagnosticsTimer::default())
         .add_system(Startup, spawn_showcase)
-        .add_system(Update, update_diagnostics);
+        .add_system(Update, (tick_stress_labels, update_diagnostics));
 }
 
 fn main() {
