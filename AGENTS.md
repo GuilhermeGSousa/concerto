@@ -88,7 +88,7 @@ goes in your reply or in the spec. Leave existing comments alone unless the
 code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
-`Option<Res<T>>`, `ResMut`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
+`Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
 an extract system, `Extracted`. In the editor crate a system may also take
 `EditWorld<T>`, which reads the world of the scene being edited, or of the running
 game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
@@ -104,8 +104,8 @@ run the main and render schedules; they are not a pattern to copy. To react
 when a component appears or disappears, listen for its lifecycle signals,
 `On<Add<T>>`, `On<Replace<T>>`, `On<Remove<T>>` and `On<Despawn<T>>`. A system
 whose `Res<T>` or `ResMut<T>` names a missing resource is skipped with a warning
-on every run until the resource exists; take `Option<Res<T>>` when absence is
-normal.
+on every run until the resource exists; take `Option<Res<T>>` or
+`Option<ResMut<T>>` when absence is normal.
 
 **Listeners carry their own data.** What a listener needs to know about the
 widget it sits on is captured by its closure, not put in a component that the

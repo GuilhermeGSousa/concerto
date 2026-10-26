@@ -1,10 +1,16 @@
 use concerto_app::extractor::Extracted;
 use concerto_color::Color;
 use concerto_ecs::{
+    World,
     command::CommandQueue,
     component::Component,
-    query::Query,
+    query::{
+        Query,
+        filter::{Added, Changed, Or},
+    },
     resource::{Res, ResMut},
+    system::input::SystemLocal,
+    world::FromWorld,
 };
 use concerto_render::components::render_entity::RenderEntity;
 use concerto_window::plugin::Window;
@@ -156,109 +162,167 @@ pub(crate) struct RenderTextComponent {
     pub(crate) color: glyphon::Color,
     /// Explicit z-layer, recovered from the node's paint order.
     pub(crate) layer: i32,
-    signature: u64,
+    shaping: u64,
+}
+
+pub(crate) struct ExtractedScale {
+    scale: Option<u32>,
+}
+
+impl FromWorld for ExtractedScale {
+    fn from_world(_: &World) -> Self {
+        Self { scale: None }
+    }
 }
 
 pub(crate) fn extract_text_nodes(
-    text_nodes: Extracted<Query<(&UIText, &UILayout, &RenderEntity)>>,
+    changed_text_nodes: Extracted<
+        Query<
+            (&UIText, &UILayout, &RenderEntity),
+            Or<(Changed<UIText>, Changed<UILayout>, Added<RenderEntity>)>,
+        >,
+    >,
+    all_text_nodes: Extracted<Query<(&UIText, &UILayout, &RenderEntity)>>,
     window: Extracted<Res<Window>>,
     mut font_system: ResMut<TextFontSystem>,
-    render_text_nodes: Query<&RenderTextComponent>,
+    render_text_nodes: Query<&mut RenderTextComponent>,
     diagnostics: Res<UIRenderDiagnostics>,
+    mut extracted: SystemLocal<ExtractedScale>,
     mut cmd: CommandQueue,
 ) {
-    for (text_component, layout, render_entity) in text_nodes.iter() {
+    let scale = window.scale_factor() as f32;
+    let rescaled = extracted.scale.replace(scale.to_bits()) != Some(scale.to_bits());
+
+    let mut extract = |text_component: &UIText, layout: &UILayout, render_entity: &RenderEntity| {
         let clip = layout.clip_rect.intersection(layout.content_rect);
         if !layout.is_shown() || !clip.has_area() {
             if render_text_nodes.contains_entity(**render_entity) {
                 cmd.remove::<RenderTextComponent>(**render_entity);
             }
-            continue;
+            return;
         }
-        let scale = window.scale_factor() as f32;
-        let content_size = layout.content_rect.size * scale;
-        let signature = text_signature(text_component, layout, scale);
-        if render_text_nodes
-            .get_entity(**render_entity)
-            .is_some_and(|render_text| render_text.signature == signature)
-        {
-            continue;
-        }
-        diagnostics.record_text_reshape();
-        let mut text_buffer = Buffer::new(
-            &mut font_system,
-            physical_metrics(text_component.font_size, text_component.line_height, scale),
-        );
-
-        text_buffer.set_size(
-            &mut font_system,
-            Some(content_size.x.max(0.0)),
-            Some(content_size.y.max(0.0)),
-        );
-        text_buffer.set_wrap(
-            &mut font_system,
-            if text_component.wrap {
-                Wrap::Word
-            } else {
-                Wrap::None
-            },
-        );
-
-        let family = match &text_component.font_family {
-            FontFamily::SansSerif => Family::SansSerif,
-            FontFamily::Serif => Family::Serif,
-            FontFamily::Monospace => Family::Monospace,
-            FontFamily::Name(name) => Family::Name(name.as_str()),
-        };
-
-        let style = match text_component.font_style {
-            FontStyle::Normal => Style::Normal,
-            FontStyle::Italic => Style::Italic,
-        };
-
-        let attrs = Attrs::new()
-            .family(family)
-            .weight(Weight(text_component.font_weight))
-            .style(style);
-
-        let display = if text_component.ellipsis && !text_component.wrap {
-            truncate_to_width(
-                &mut font_system,
-                physical_metrics(text_component.font_size, text_component.line_height, scale),
-                attrs,
-                &text_component.text,
-                content_size.x.max(0.0),
-            )
-        } else {
-            None
-        };
-        text_buffer.set_text(
-            &mut font_system,
-            display.as_deref().unwrap_or(&text_component.text),
-            attrs,
-            Shaping::Advanced,
-        );
-        text_buffer.shape_until_scroll(&mut font_system, false);
-
+        let location = layout.content_rect.min * scale;
+        let clip_min = clip.min * scale;
+        let clip_max = clip.max() * scale;
         let rgba = text_component.color.to_srgba();
+        let color = glyphon::Color::rgba(
+            (rgba.r * 255.0).round() as u8,
+            (rgba.g * 255.0).round() as u8,
+            (rgba.b * 255.0).round() as u8,
+            (rgba.a * 255.0).round() as u8,
+        );
+        let layer = text_layer(layout);
+        let shaping = shaping_signature(text_component, layout, scale);
+
+        if let Some(mut render_text) = render_text_nodes.get_entity(**render_entity)
+            && render_text.shaping == shaping
+        {
+            if render_text.location != location
+                || render_text.clip_min != clip_min
+                || render_text.clip_max != clip_max
+                || render_text.color != color
+                || render_text.layer != layer
+            {
+                render_text.location = location;
+                render_text.clip_min = clip_min;
+                render_text.clip_max = clip_max;
+                render_text.color = color;
+                render_text.layer = layer;
+            }
+            return;
+        }
+
+        diagnostics.record_text_reshape();
+        let buffer = shape_text(
+            &mut font_system,
+            text_component,
+            layout.content_rect.size * scale,
+            scale,
+        );
         cmd.insert(
             RenderTextComponent {
-                buffer: text_buffer,
-                location: layout.content_rect.min * scale,
-                clip_min: clip.min * scale,
-                clip_max: clip.max() * scale,
-                color: glyphon::Color::rgba(
-                    (rgba.r * 255.0).round() as u8,
-                    (rgba.g * 255.0).round() as u8,
-                    (rgba.b * 255.0).round() as u8,
-                    (rgba.a * 255.0).round() as u8,
-                ),
-                layer: text_layer(layout),
-                signature,
+                buffer,
+                location,
+                clip_min,
+                clip_max,
+                color,
+                layer,
+                shaping,
             },
             **render_entity,
         );
+    };
+
+    if rescaled {
+        for (text_component, layout, render_entity) in all_text_nodes.iter() {
+            extract(text_component, layout, render_entity);
+        }
+    } else {
+        for (text_component, layout, render_entity) in changed_text_nodes.iter() {
+            extract(text_component, layout, render_entity);
+        }
     }
+}
+
+fn shape_text(
+    font_system: &mut FontSystem,
+    text_component: &UIText,
+    content_size: glam::Vec2,
+    scale: f32,
+) -> Buffer {
+    let metrics = physical_metrics(text_component.font_size, text_component.line_height, scale);
+    let mut text_buffer = Buffer::new(font_system, metrics);
+
+    text_buffer.set_size(
+        font_system,
+        Some(content_size.x.max(0.0)),
+        Some(content_size.y.max(0.0)),
+    );
+    text_buffer.set_wrap(
+        font_system,
+        if text_component.wrap {
+            Wrap::Word
+        } else {
+            Wrap::None
+        },
+    );
+
+    let family = match &text_component.font_family {
+        FontFamily::SansSerif => Family::SansSerif,
+        FontFamily::Serif => Family::Serif,
+        FontFamily::Monospace => Family::Monospace,
+        FontFamily::Name(name) => Family::Name(name.as_str()),
+    };
+
+    let style = match text_component.font_style {
+        FontStyle::Normal => Style::Normal,
+        FontStyle::Italic => Style::Italic,
+    };
+
+    let attrs = Attrs::new()
+        .family(family)
+        .weight(Weight(text_component.font_weight))
+        .style(style);
+
+    let display = if text_component.ellipsis && !text_component.wrap {
+        truncate_to_width(
+            font_system,
+            metrics,
+            attrs,
+            &text_component.text,
+            content_size.x.max(0.0),
+        )
+    } else {
+        None
+    };
+    text_buffer.set_text(
+        font_system,
+        display.as_deref().unwrap_or(&text_component.text),
+        attrs,
+        Shaping::Advanced,
+    );
+    text_buffer.shape_until_scroll(font_system, false);
+    text_buffer
 }
 
 /// The explicit `z_index` a node was given, recovered from its paint order.
@@ -266,7 +330,7 @@ pub(crate) fn text_layer(layout: &UILayout) -> i32 {
     (layout.paint_order >> 32) as i32
 }
 
-fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
+fn shaping_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.text.hash(&mut hasher);
     text.font_size.to_bits().hash(&mut hasher);
@@ -275,7 +339,6 @@ fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
     (text.font_style as u8).hash(&mut hasher);
     text.wrap.hash(&mut hasher);
     text.ellipsis.hash(&mut hasher);
-    text_layer(layout).hash(&mut hasher);
     match &text.font_family {
         FontFamily::SansSerif => 0_u8.hash(&mut hasher),
         FontFamily::Serif => 1_u8.hash(&mut hasher),
@@ -286,19 +349,10 @@ fn text_signature(text: &UIText, layout: &UILayout, scale: f32) -> u64 {
         }
     }
     for value in [
-        layout.content_rect.min.x,
-        layout.content_rect.min.y,
         layout.content_rect.size.x,
         layout.content_rect.size.y,
-        layout.clip_rect.min.x,
-        layout.clip_rect.min.y,
-        layout.clip_rect.size.x,
-        layout.clip_rect.size.y,
         scale,
     ] {
-        value.to_bits().hash(&mut hasher);
-    }
-    for value in text.color.to_srgba().to_array() {
         value.to_bits().hash(&mut hasher);
     }
     hasher.finish()
@@ -424,6 +478,120 @@ mod tests {
                 .is_none(),
             "an empty clip must leave nothing to draw"
         );
+    }
+
+    fn text_worlds(
+        labels: &[&str],
+    ) -> (
+        concerto_ecs::World,
+        concerto_ecs::World,
+        Vec<(concerto_ecs::entity::Entity, concerto_ecs::entity::Entity)>,
+    ) {
+        let mut main = concerto_ecs::World::new();
+        main.insert_resource(Window::new((800, 600), 1.0));
+        let mut render = concerto_ecs::World::new();
+        render.insert_resource(TextFontSystem(fonts::build_font_system(
+            &fonts::UIFonts::default(),
+        )));
+        render.insert_resource(UIRenderDiagnostics::default());
+        let nodes = labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| {
+                let target = render.spawn(());
+                let rect = crate::node::UIBox {
+                    min: glam::Vec2::new(10.0, 20.0 + index as f32 * 30.0),
+                    size: glam::Vec2::new(100.0, 20.0),
+                };
+                let node = main.spawn((
+                    UIText {
+                        text: (*label).into(),
+                        ..Default::default()
+                    },
+                    UILayout {
+                        rect,
+                        content_rect: rect,
+                        clip_rect: rect,
+                        paint_order: 0,
+                    },
+                    RenderEntity::new(target),
+                ));
+                (node, target)
+            })
+            .collect();
+        (main, render, nodes)
+    }
+
+    fn text_reshapes(render: &concerto_ecs::World) -> u64 {
+        render
+            .get_resource::<UIRenderDiagnostics>()
+            .unwrap()
+            .text_reshapes()
+    }
+
+    #[test]
+    fn idle_text_extractions_reshape_nothing() {
+        let (mut main, mut render, _) = text_worlds(&["One", "Two"]);
+        extract_text(&mut main, &mut render);
+        assert_eq!(text_reshapes(&render), 2);
+
+        extract_text(&mut main, &mut render);
+        extract_text(&mut main, &mut render);
+        assert_eq!(text_reshapes(&render), 2);
+    }
+
+    #[test]
+    fn writing_identical_text_reshapes_nothing() {
+        let (mut main, mut render, nodes) = text_worlds(&["Same"]);
+        extract_text(&mut main, &mut render);
+        let before = text_reshapes(&render);
+
+        main.get_component_for_entity_mut::<UIText>(nodes[0].0)
+            .unwrap()
+            .text = "Same".into();
+        extract_text(&mut main, &mut render);
+        assert_eq!(text_reshapes(&render), before);
+    }
+
+    #[test]
+    fn changing_the_scale_factor_reshapes_every_text_node() {
+        let (mut main, mut render, nodes) = text_worlds(&["One", "Two", "Three"]);
+        extract_text(&mut main, &mut render);
+        let before = text_reshapes(&render);
+
+        main.insert_resource(Window::new((800, 600), 2.0));
+        extract_text(&mut main, &mut render);
+        assert_eq!(text_reshapes(&render), before + nodes.len() as u64);
+        for (_, target) in nodes {
+            let text = render
+                .get_component_for_entity::<RenderTextComponent>(target)
+                .unwrap();
+            assert_eq!(text.buffer.metrics().font_size, 28.0);
+        }
+    }
+
+    #[test]
+    fn moving_a_text_node_without_resizing_it_keeps_its_shaping() {
+        let (mut main, mut render, nodes) = text_worlds(&["Scrolled"]);
+        let (node, target) = nodes[0];
+        extract_text(&mut main, &mut render);
+        let before = text_reshapes(&render);
+
+        {
+            let layout = main.get_component_for_entity_mut::<UILayout>(node).unwrap();
+            let offset = glam::Vec2::new(0.0, -15.0);
+            layout.rect.min += offset;
+            layout.content_rect.min += offset;
+            layout.clip_rect.min += offset;
+        }
+        extract_text(&mut main, &mut render);
+        assert_eq!(text_reshapes(&render), before);
+        let text = render
+            .get_component_for_entity::<RenderTextComponent>(target)
+            .unwrap();
+        assert_eq!(text.location, glam::Vec2::new(10.0, 5.0));
+        assert_eq!(text.clip_min, glam::Vec2::new(10.0, 5.0));
+        assert_eq!(text.clip_max, glam::Vec2::new(110.0, 25.0));
     }
 
     #[test]

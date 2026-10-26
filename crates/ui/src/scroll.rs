@@ -96,9 +96,9 @@ pub(crate) fn update_scroll_areas(
     while let Some(entity) = candidate {
         if let Some((_, mut area, layout)) = areas.get_entity(entity) {
             let max = (area.content_extent - layout.content_rect.size.y).max(0.0);
-            let previous = area.offset;
-            area.offset = (area.offset + delta).clamp(0.0, max);
-            if area.offset != previous {
+            let offset = (area.offset + delta).clamp(0.0, max);
+            if offset != area.offset {
+                area.offset = offset;
                 break;
             }
         }
@@ -111,11 +111,20 @@ pub(crate) fn sync_scroll_content(areas: Query<&UIScrollArea>, nodes: Query<&mut
         let Some(content) = area.content else {
             continue;
         };
-        if let Some(mut node) = nodes.get_entity(content) {
+        let Some(mut node) = nodes.get_entity(content) else {
+            continue;
+        };
+        if node.position != Position::Absolute {
             node.position = Position::Absolute;
-            node.inset.left = UIValue::Px(0.0);
-            node.inset.right = UIValue::Px(0.0);
-            node.inset.top = UIValue::Px(-area.offset);
+        }
+        let inset = UIInset {
+            top: UIValue::Px(0.0),
+            left: UIValue::Px(0.0),
+            right: UIValue::Px(0.0),
+            ..node.inset
+        };
+        if node.inset != inset {
+            node.inset = inset;
         }
     }
 }
@@ -168,12 +177,16 @@ pub(crate) fn sync_split_panes(
             let Some(mut first_node) = nodes.get_entity(first) else {
                 continue;
             };
-            apply_first_split(pane, available, &mut first_node);
+            let mut next = UINode::clone(&first_node);
+            apply_first_split(pane, available, &mut next);
+            first_node.set_if_neq(next);
         }
         let Some(mut second_node) = nodes.get_entity(second) else {
             continue;
         };
-        apply_second_split(pane, &mut second_node);
+        let mut next = UINode::clone(&second_node);
+        apply_second_split(pane, &mut next);
+        second_node.set_if_neq(next);
     }
 }
 
@@ -256,24 +269,81 @@ pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, m
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::{IntoSystem, System, World};
+    use crate::list::tests::Harness;
+    use concerto_ecs::{World, events::event_channel::EventChannel};
+
+    fn plain_area(harness: &mut Harness, offset: f32) -> (Entity, Entity) {
+        let root = harness.root();
+        let area = harness.node(
+            UINode::default()
+                .with_height(UIValue::Px(100.0))
+                .with_flex_shrink(0.0),
+            root,
+        );
+        let content = harness.node(UINode::default().with_height(UIValue::Px(900.0)), area);
+        harness.world.insert(
+            UIScrollArea {
+                offset,
+                content_extent: 900.0,
+                content: Some(content),
+            },
+            area,
+        );
+        harness.settle();
+        (area, content)
+    }
 
     #[test]
     fn a_plain_scroll_area_moves_its_content_by_the_whole_offset() {
-        let mut world = World::new();
-        let content = world.spawn(UINode::default());
-        world.spawn(UIScrollArea {
-            offset: 140.0,
-            content_extent: 900.0,
-            content: Some(content),
-        });
+        let mut harness = Harness::new();
+        let (area, content) = plain_area(&mut harness, 140.0);
 
-        let mut system = sync_scroll_content.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
+        assert_eq!(
+            harness.layout(content).rect.min.y,
+            harness.layout(area).rect.min.y - 140.0
+        );
+    }
 
-        let node = world.get_component_for_entity::<UINode>(content).unwrap();
-        assert_eq!(node.inset.top, UIValue::Px(-140.0));
+    #[test]
+    fn a_wheel_that_cannot_scroll_leaves_the_area_unchanged() {
+        let mut harness = Harness::new();
+        let (_, content) = plain_area(&mut harness, 0.0);
+        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(content);
+        harness
+            .world
+            .insert_resource(EventChannel::<WindowEvent>::default());
+        let mut watch =
+            crate::testing::Watch::new::<UIScrollArea, _>(&mut harness.world, update_scroll_areas);
+        watch.run(&mut harness.world);
+
+        harness
+            .world
+            .get_resource_mut::<EventChannel<WindowEvent>>()
+            .unwrap()
+            .push_event(WindowEvent::MouseWheel {
+                delta: ScrollDelta::Pixels(glam::Vec2::new(0.0, 30.0)),
+            });
+
+        assert_eq!(watch.run(&mut harness.world), 0);
+    }
+
+    #[test]
+    fn scrolling_a_plain_area_moves_its_content_but_not_its_scrollbar_without_a_layout_pass() {
+        let mut harness = Harness::new();
+        let (area, content) = plain_area(&mut harness, 0.0);
+        let track = harness.track(area);
+        let content_top = harness.layout(content).rect.min.y;
+        let track_rect = harness.layout(track).rect;
+        let track_clip = harness.layout(track).clip_rect;
+        let passes = harness.layout_passes();
+
+        harness.set_offset(area, 140.0);
+        harness.frame();
+
+        assert_eq!(harness.layout_passes(), passes);
+        assert_eq!(harness.layout(content).rect.min.y, content_top - 140.0);
+        assert_eq!(harness.layout(track).rect, track_rect);
+        assert_eq!(harness.layout(track).clip_rect, track_clip);
     }
 
     fn pane(ratio: f32) -> UISplitPane {
@@ -334,6 +404,35 @@ mod tests {
         assert_eq!(second.width, UIValue::Auto);
         assert_eq!(first.flex_grow, 0.0);
         assert_eq!(second.flex_grow, 1.0);
+    }
+
+    #[test]
+    fn a_resting_split_pane_leaves_its_children_unchanged() {
+        let mut world = World::new();
+        let first = world.spawn(UINode::default());
+        let second = world.spawn(UINode::default());
+        let rect = crate::node::UIBox {
+            min: glam::Vec2::ZERO,
+            size: glam::Vec2::new(600.0, 400.0),
+        };
+        let pane = world.spawn((
+            UISplitPane::new(UISplitAxis::Horizontal, first, second),
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+        ));
+        let mut watch = crate::testing::Watch::new::<UINode, _>(&mut world, sync_split_panes);
+        watch.run(&mut world);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
+
+        world
+            .get_component_for_entity_mut::<UISplitPane>(pane)
+            .unwrap()
+            .ratio = 0.25;
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [1, 0]);
     }
 
     #[test]
@@ -509,5 +608,8 @@ fn drag_scrollbar_thumb(
     }
     let scrollable = area.content_extent - viewport;
     let max = scrollable.max(0.0);
-    area.offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
+    let offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
+    if offset != area.offset {
+        area.offset = offset;
+    }
 }

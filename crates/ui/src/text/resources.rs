@@ -4,10 +4,12 @@ use derive_more::{Deref, DerefMut};
 /// One [`glyphon::TextRenderer`] per z-layer that carries text this frame.
 #[derive(Resource, Default)]
 pub(crate) struct TextRenderers {
-    /// Renderers are pooled across frames; only some hold this frame's text.
+    /// The renderer of the z-layer at the same index of `layers`.
     pub(crate) renderers: Vec<glyphon::TextRenderer>,
-    /// The z-layer each prepared renderer belongs to, in ascending order.
+    /// The z-layers that carry text, in ascending order.
     pub(crate) layers: Vec<i32>,
+    /// Renderers whose z-layer no longer carries text, kept for reuse.
+    pub(crate) spare: Vec<glyphon::TextRenderer>,
 }
 
 #[derive(Resource, Deref)]

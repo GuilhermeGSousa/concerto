@@ -124,6 +124,30 @@ pub(crate) fn update_tooltips(
     tooltips: Query<(&UITooltip, &mut UINode)>,
 ) {
     for (tooltip, mut node) in tooltips.iter() {
-        node.visible = **hovered == Some(tooltip.target);
+        let visible = **hovered == Some(tooltip.target);
+        if node.visible != visible {
+            node.visible = visible;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Watch;
+    use concerto_ecs::World;
+
+    #[test]
+    fn a_tooltip_is_written_only_when_its_target_gains_or_loses_the_pointer() {
+        let mut world = World::new();
+        world.insert_resource(HoveredNode::default());
+        let target = world.spawn(UINode::default());
+        world.spawn((UITooltip { target }, UINode::default()));
+        let mut watch = Watch::new::<UINode, _>(&mut world, update_tooltips);
+        watch.run(&mut world);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
+
+        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(target);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [1, 0]);
     }
 }

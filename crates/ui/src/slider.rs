@@ -129,7 +129,37 @@ pub(crate) fn sync_slider_fill(
 ) {
     for (mut node, child_of) in fills.iter() {
         if let Some(slider) = sliders.get_entity(**child_of) {
-            node.width = UIValue::Percent(slider.normalized() * 100.0);
+            let width = UIValue::Percent(slider.normalized() * 100.0);
+            if node.width != width {
+                node.width = width;
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Watch;
+    use concerto_ecs::World;
+
+    #[test]
+    fn a_resting_slider_leaves_its_fill_unchanged() {
+        let mut world = World::new();
+        let slider = world.spawn(UISlider::new(0.25, 0.0, 1.0));
+        world.spawn((
+            UISliderFill,
+            UINode::default().with_size(UIValue::Percent(25.0), UIValue::Percent(100.0)),
+            ChildOf::new(slider),
+        ));
+        let mut watch = Watch::new::<UINode, _>(&mut world, sync_slider_fill);
+        watch.run(&mut world);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
+
+        world
+            .get_component_for_entity_mut::<UISlider>(slider)
+            .unwrap()
+            .value = 0.5;
+        assert_eq!(watch.run(&mut world), 1);
     }
 }
