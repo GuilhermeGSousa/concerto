@@ -105,6 +105,7 @@ impl Written {
 
 struct PointerPress {
     origin: Vec2,
+    at: Vec2,
     focusing: bool,
     dragging: bool,
 }
@@ -319,7 +320,7 @@ impl UITextEditState {
     fn press(
         &mut self,
         font_system: &mut FontSystem,
-        at: Vec2,
+        (screen, at): (Vec2, Vec2),
         extend: bool,
         focusing: bool,
         now: Instant,
@@ -330,7 +331,8 @@ impl UITextEditState {
         self.press_time = Some(now);
         self.press_count = count;
         self.pointer = Some(PointerPress {
-            origin: at,
+            origin: screen,
+            at,
             focusing,
             dragging: false,
         });
@@ -350,20 +352,20 @@ impl UITextEditState {
         self.collapse_empty_selection();
     }
 
-    fn drag(&mut self, font_system: &mut FontSystem, at: Vec2) {
+    fn drag(&mut self, font_system: &mut FontSystem, screen: Vec2, at: Vec2) {
         let Some(press) = self.pointer.as_mut() else {
             return;
         };
-        if !press.dragging && press.origin.distance(at) < DRAG_THRESHOLD {
+        if !press.dragging && press.origin.distance(screen) < DRAG_THRESHOLD {
             return;
         }
         let restart = press.focusing && !press.dragging;
         press.dragging = true;
-        let origin = press.origin;
+        let pressed_at = press.at;
         self.follow = true;
         self.editor.shape_as_needed(font_system, false);
         if restart {
-            let (x, y) = self.hit_point(origin);
+            let (x, y) = self.hit_point(pressed_at);
             self.editor.action(font_system, Action::Click { x, y });
         }
         let (x, y) = self.hit_point(at);
@@ -461,16 +463,16 @@ fn apply_pointer(
     input: &Input,
     pointer: &UIInputState,
     entity: Entity,
-    at: Vec2,
+    (screen, at): (Vec2, Vec2),
     focusing: bool,
     now: Instant,
 ) {
     match input.get_mouse_button_state(MouseButton::Left) {
         InputState::Pressed if pointer.pressed(MouseButton::Left) == Some(entity) => {
-            state.press(font_system, at, shift_held(input), focusing, now);
+            state.press(font_system, (screen, at), shift_held(input), focusing, now);
         }
         InputState::Down if pointer.captured(MouseButton::Left) == Some(entity) => {
-            state.drag(font_system, at);
+            state.drag(font_system, screen, at);
         }
         _ => {}
     }
@@ -642,14 +644,15 @@ pub(crate) fn update_text_inputs(
             state.select_all();
         }
         if let Some(layout) = layouts.get_entity(viewport) {
-            let at = window.logical_pointer_position(&input) - layout.rect.min;
+            let screen = window.logical_pointer_position(&input);
+            let at = screen - layout.rect.min + Vec2::new(state.scroll, 0.0);
             apply_pointer(
                 state,
                 font_system,
                 &input,
                 &pointer,
                 entity,
-                at,
+                (screen, at),
                 focusing,
                 now,
             );
@@ -1138,6 +1141,74 @@ mod tests {
                 .unwrap()
                 .value = value.into();
         }
+
+        fn point(&mut self, at: Vec2) {
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_mouse_position(at.x as f64, at.y as f64);
+        }
+
+        fn hold(&mut self, at: Vec2) {
+            self.point(at);
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_mouse_button(MouseButton::Left, true);
+            self.frame();
+        }
+
+        fn drag(&mut self, at: Vec2) {
+            self.point(at);
+            self.frame();
+        }
+
+        fn release(&mut self) {
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_mouse_button(MouseButton::Left, false);
+            self.frame();
+        }
+
+        fn caret(&self, field: Entity) -> (usize, Option<usize>) {
+            let input = self.get::<UITextInput>(field);
+            (input.cursor, input.selection_anchor)
+        }
+
+        fn glyph(&self, field: Entity, index: usize) -> (f32, f32) {
+            self.get::<UITextEditState>(field)
+                .editor
+                .with_buffer(|buffer| {
+                    let run = buffer.layout_runs().next().unwrap();
+                    let glyph = run
+                        .glyphs
+                        .iter()
+                        .find(|glyph| glyph.start == index)
+                        .unwrap();
+                    (glyph.x, glyph.w)
+                })
+        }
+
+        fn widest_glyph(&self, field: Entity) -> f32 {
+            self.get::<UITextEditState>(field)
+                .editor
+                .with_buffer(|buffer| {
+                    let run = buffer.layout_runs().next().unwrap();
+                    run.glyphs.iter().map(|glyph| glyph.w).fold(0.0, f32::max)
+                })
+        }
+
+        fn over_glyph(&self, field: Entity, index: usize) -> Vec2 {
+            let (x, w) = self.glyph(field, index);
+            let viewport = self.get::<UILayout>(self.viewport(field)).rect;
+            viewport.min + Vec2::new(x + w * 0.25 - self.scroll(field), viewport.size.y / 2.0)
+        }
+
+        fn beside(&self, field: Entity, right: bool) -> Vec2 {
+            let rect = self.get::<UILayout>(field).rect;
+            let past = self.widest_glyph(field);
+            let x = if right {
+                rect.max().x + past
+            } else {
+                rect.min.x - past
+            };
+            Vec2::new(x, rect.min.y + rect.size.y / 2.0)
+        }
     }
 
     #[test]
@@ -1525,6 +1596,127 @@ mod tests {
         fields.frame();
         assert_eq!(fields.layout_passes(), passes);
         assert_eq!(nodes.run(&mut fields.world), 0, "no UINode was written");
+    }
+
+    #[test]
+    fn a_press_on_a_scrolled_field_places_the_caret_on_the_glyph_under_the_pointer() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+        let scroll = fields.scroll(field);
+        assert!(scroll > 0.0);
+
+        let index = LONG.len() - 4;
+        let at = fields.over_glyph(field, index);
+        fields.hold(at);
+        fields.release();
+        assert_eq!(fields.caret(field), (index, None));
+        assert_eq!(fields.scroll(field), scroll);
+    }
+
+    #[test]
+    fn a_press_and_drag_on_an_unfocused_long_field_selects_from_the_pressed_glyph() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.focus(None);
+        fields.frames(2);
+        let (from, to) = (fields.over_glyph(field, 2), fields.over_glyph(field, 8));
+
+        fields.hold(from);
+        fields.drag(to);
+        assert_eq!(fields.caret(field), (8, Some(2)));
+        assert_eq!(fields.scroll(field), 0.0);
+        let right = fields.beside(field, true);
+        fields.drag(right);
+        fields.frames(3);
+        let (cursor, anchor) = fields.caret(field);
+        assert_eq!(anchor, Some(2), "the selection starts at the pressed glyph");
+        assert!(cursor > 8);
+        assert!(fields.scroll(field) > 0.0);
+        fields.release();
+    }
+
+    #[test]
+    fn a_press_in_the_right_padding_stays_a_click_and_does_not_keep_scrolling() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        let rect = fields.get::<UILayout>(field).rect;
+        let viewport = fields.get::<UILayout>(fields.viewport(field)).rect;
+        let at = Vec2::new(rect.max().x - 1.0, viewport.min.y + viewport.size.y / 2.0);
+        assert!(at.x > viewport.max().x, "the press is in the padding");
+
+        fields.hold(at);
+        let scroll = fields.scroll(field);
+        assert!(
+            scroll >= DRAG_THRESHOLD,
+            "the press scrolls the text by {scroll}, at least the drag threshold"
+        );
+        let (cursor, anchor) = fields.caret(field);
+        assert_eq!(anchor, None);
+        for _ in 0..4 {
+            fields.frame();
+            assert_eq!(
+                fields.caret(field),
+                (cursor, None),
+                "the press stays a click"
+            );
+            assert_eq!(
+                fields.scroll(field),
+                scroll,
+                "the still pointer scrolls no further"
+            );
+        }
+        fields.release();
+        assert_eq!(fields.caret(field), (cursor, None));
+        assert_eq!(fields.scroll(field), scroll);
+    }
+
+    #[test]
+    fn holding_a_drag_past_an_edge_scrolls_further_each_frame() {
+        let mut fields = Fields::new();
+        let field = fields.long(LONG);
+        fields.focus(Some(field));
+        fields.frames(2);
+        let end = fields.scroll_to_the_end(field);
+        let from = fields.over_glyph(field, 2);
+        fields.hold(from);
+
+        let right = fields.beside(field, true);
+        fields.drag(right);
+        let mut scroll = fields.scroll(field);
+        let mut frames = 1;
+        while scroll < end {
+            fields.frame();
+            let next = fields.scroll(field);
+            assert!(next > scroll, "{next} > {scroll} past the right edge");
+            scroll = next;
+            frames += 1;
+            assert!(frames < 100);
+        }
+        assert!(frames > 2, "it scrolls a little on each frame");
+        assert_eq!(fields.caret(field), (LONG.len(), Some(2)));
+
+        let left = fields.beside(field, false);
+        fields.drag(left);
+        let mut scroll = fields.scroll(field);
+        let mut frames = 1;
+        while scroll > 0.0 {
+            fields.frame();
+            let next = fields.scroll(field);
+            assert!(next < scroll, "{next} < {scroll} past the left edge");
+            scroll = next;
+            frames += 1;
+            assert!(frames < 100);
+        }
+        assert!(frames > 2, "it scrolls back a little on each frame");
+        assert_eq!(fields.caret(field), (0, Some(2)));
+        fields.release();
     }
 
     #[test]
