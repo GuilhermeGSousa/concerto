@@ -96,9 +96,9 @@ pub(crate) fn update_scroll_areas(
     while let Some(entity) = candidate {
         if let Some((_, mut area, layout)) = areas.get_entity(entity) {
             let max = (area.content_extent - layout.content_rect.size.y).max(0.0);
-            let previous = area.offset;
-            area.offset = (area.offset + delta).clamp(0.0, max);
-            if area.offset != previous {
+            let offset = (area.offset + delta).clamp(0.0, max);
+            if offset != area.offset {
+                area.offset = offset;
                 break;
             }
         }
@@ -270,7 +270,7 @@ pub fn scroll_to_rect(area: &mut UIScrollArea, viewport_extent: f32, min: f32, m
 mod tests {
     use super::*;
     use crate::list::tests::Harness;
-    use concerto_ecs::World;
+    use concerto_ecs::{World, events::event_channel::EventChannel};
 
     fn plain_area(harness: &mut Harness, offset: f32) -> (Entity, Entity) {
         let root = harness.root();
@@ -302,6 +302,29 @@ mod tests {
             harness.layout(content).rect.min.y,
             harness.layout(area).rect.min.y - 140.0
         );
+    }
+
+    #[test]
+    fn a_wheel_that_cannot_scroll_leaves_the_area_unchanged() {
+        let mut harness = Harness::new();
+        let (_, content) = plain_area(&mut harness, 0.0);
+        **harness.world.get_resource_mut::<HoveredNode>().unwrap() = Some(content);
+        harness
+            .world
+            .insert_resource(EventChannel::<WindowEvent>::default());
+        let mut watch =
+            crate::testing::Watch::new::<UIScrollArea, _>(&mut harness.world, update_scroll_areas);
+        watch.run(&mut harness.world);
+
+        harness
+            .world
+            .get_resource_mut::<EventChannel<WindowEvent>>()
+            .unwrap()
+            .push_event(WindowEvent::MouseWheel {
+                delta: ScrollDelta::Pixels(glam::Vec2::new(0.0, 30.0)),
+            });
+
+        assert_eq!(watch.run(&mut harness.world), 0);
     }
 
     #[test]
@@ -585,5 +608,8 @@ fn drag_scrollbar_thumb(
     }
     let scrollable = area.content_extent - viewport;
     let max = scrollable.max(0.0);
-    area.offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
+    let offset = (area.offset + drag.delta.y / travel * scrollable).clamp(0.0, max);
+    if offset != area.offset {
+        area.offset = offset;
+    }
 }
