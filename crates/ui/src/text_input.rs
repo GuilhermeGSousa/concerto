@@ -28,7 +28,7 @@ use crate::{
     focus::FocusedWidget,
     interaction::{DOUBLE_CLICK, DRAG_THRESHOLD, UIInputState},
     material::UIMaterial,
-    node::{Position, UILayout, UINode, UITextMeasure, ui_text_attrs, ui_text_metrics},
+    node::{Overflow, Position, UILayout, UINode, UITextMeasure, ui_text_attrs, ui_text_metrics},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -36,7 +36,7 @@ use crate::{
 
 const BLINK: Duration = Duration::from_millis(530);
 
-/// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label child that holds that text.
+/// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label inside it that holds that text.
 #[derive(Component)]
 pub struct UITextInput {
     /// Current string value of the field.
@@ -81,6 +81,7 @@ pub struct UITextInputCancelled {
 
 #[derive(Component)]
 pub(crate) struct UITextInputParts {
+    pub(crate) viewport: Entity,
     pub(crate) selection: Entity,
     pub(crate) label: Entity,
     pub(crate) caret: Entity,
@@ -589,6 +590,7 @@ pub(crate) fn update_text_inputs(
 
         let font_system = measure.font_system();
         let label = parts.map_or(entity, |parts| parts.label);
+        let viewport = parts.map_or(entity, |parts| parts.viewport);
         let mut created = None;
         let state: &mut UITextEditState = match existing.as_mut() {
             Some(state) => state,
@@ -610,8 +612,8 @@ pub(crate) fn update_text_inputs(
             state.blink_start = now;
             state.select_all();
         }
-        if let Some(layout) = layouts.get_entity(label) {
-            let at = window.logical_pointer_position(&input) - layout.content_rect.min;
+        if let Some(layout) = layouts.get_entity(viewport) {
+            let at = window.logical_pointer_position(&input) - layout.rect.min;
             apply_pointer(
                 state,
                 font_system,
@@ -689,7 +691,7 @@ fn quad_color(color: Color, shown: bool) -> LinearRgba {
     color
 }
 
-/// Moves each new text field's text onto a label child between a selection quad and a caret quad, both hidden until it has focus.
+/// Moves each new text field's text onto a label in a viewport child that clips to the field's content box; the viewport holds a selection quad under the label and the field a caret quad, both hidden until it has focus.
 pub(crate) fn setup_text_inputs(
     fields: Query<(Entity, &UITextInput, &UIText), (Added<UITextInput>, With<UINode>)>,
     theme: Res<UITheme>,
@@ -709,18 +711,27 @@ pub(crate) fn setup_text_inputs(
         };
         let label_text = UIText {
             text: shown_text(input).to_owned(),
+            ellipsis: false,
             ..text.clone()
         };
         let mut field = cmd.entity(entity);
-        let selection = field.spawn_child(quad(0.0, theme.text_selection)).entity();
-        let label = field
-            .spawn_child((
-                UINode::default().with_min_width(UIValue::Px(0.0)),
-                label_text,
-            ))
+        let mut viewport = field.spawn_child(
+            UINode::default()
+                .with_flex_grow(1.0)
+                .with_flex_shrink(1.0)
+                .with_min_width(UIValue::Px(0.0))
+                .with_overflow_x(Overflow::Hidden),
+        );
+        let selection = viewport
+            .spawn_child(quad(0.0, theme.text_selection))
             .entity();
+        let label = viewport
+            .spawn_child((UINode::default().with_flex_shrink(0.0), label_text))
+            .entity();
+        let viewport = viewport.entity();
         let caret = field.spawn_child(quad(1.0, theme.caret)).entity();
         field.insert(UITextInputParts {
+            viewport,
             selection,
             label,
             caret,
@@ -754,7 +765,7 @@ fn project_quad(
     }
 }
 
-/// Shows each text field's value on its label, or its placeholder while the value is empty, and places its caret and selection quads over the label while it has focus, blinking the caret.
+/// Shows each text field's value on its label, or its placeholder while the value is empty, and while it has focus places its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret; placement waits for the viewport's first layout.
 pub(crate) fn project_text_inputs(
     fields: Query<(
         &UITextInput,
@@ -762,13 +773,14 @@ pub(crate) fn project_text_inputs(
         Option<&UITextEditState>,
         Option<&UILayout>,
     )>,
-    labels: Query<(&mut UIText, Option<&UILayout>)>,
+    labels: Query<&mut UIText>,
+    layouts: Query<&UILayout>,
     quads: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
 ) {
     let now = Instant::now();
     for (input, parts, state, layout) in fields.iter() {
-        let Some((mut text, label)) = labels.get_entity(parts.label) else {
+        let Some(mut text) = labels.get_entity(parts.label) else {
             continue;
         };
         let shown = shown_text(input);
@@ -776,16 +788,18 @@ pub(crate) fn project_text_inputs(
             text.text = shown.to_owned();
         }
 
-        let offset = layout
-            .zip(label)
-            .map(|(field, label)| label.content_rect.min - field.rect.min);
-        let focused = state.filter(|state| state.focused).zip(offset);
+        let placed = layout
+            .zip(layouts.get_entity(parts.viewport))
+            .zip(layouts.get_entity(parts.label));
+        let focused = state.filter(|state| state.focused).zip(placed);
         let (caret, selection, blink) = match focused {
-            Some((state, offset)) => {
+            Some((state, ((field, viewport), label))) => {
                 let (caret_x, highlight) = state.marks();
+                let label_y = label.content_rect.min.y - viewport.rect.min.y;
+                let viewport_offset = viewport.rect.min - field.rect.min;
                 (
-                    Some((offset + Vec2::new(caret_x, 0.0), 1.0)),
-                    highlight.map(|(x, width)| (offset + Vec2::new(x, 0.0), width)),
+                    Some((viewport_offset + Vec2::new(caret_x, label_y), 1.0)),
+                    highlight.map(|(x, width)| (Vec2::new(x, label_y), width)),
                     caret_shown(state.blink_start, now),
                 )
             }
@@ -824,8 +838,8 @@ mod tests {
         focus::{UIFocusGained, UIFocusLost, update_focus},
         interaction::{HoveredNode, Interactable, UIInputState, update_ui_interaction},
         node::{
-            AlignItems, FlexDirection, UIBox, UILayout, UILayoutDiagnostics, UILayoutEngine,
-            UITextMeasure, compute_ui_nodes, install_layout_listeners,
+            AlignItems, FlexDirection, Overflow, UIBox, UILayout, UILayoutDiagnostics,
+            UILayoutEngine, UIRect, UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         sets::UiSet,
         testing::Watch,
@@ -909,9 +923,13 @@ mod tests {
             input.update_key_input(PhysicalKey::Code(key), false);
         }
 
+        fn viewport(&self, field: Entity) -> Entity {
+            self.children(field)[0]
+        }
+
         fn parts(&self, field: Entity) -> (Entity, Entity, Entity) {
-            let children = self.children(field);
-            (children[0], children[1], children[2])
+            let viewport = self.children(self.viewport(field));
+            (viewport[0], viewport[1], self.children(field)[1])
         }
 
         fn alpha(&self, quad: Entity) -> f32 {
@@ -946,7 +964,15 @@ mod tests {
         }
 
         fn label(&self, field: Entity) -> Entity {
-            self.children(field)[1]
+            self.children(self.viewport(field))[1]
+        }
+
+        fn type_text(&mut self, text: &str) {
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            for character in text.chars() {
+                input.push_typed_char(character);
+            }
+            self.frame();
         }
 
         fn set_value(&mut self, field: Entity, value: &str) {
@@ -958,7 +984,7 @@ mod tests {
     }
 
     #[test]
-    fn a_text_field_gets_a_selection_a_label_and_a_caret() {
+    fn a_text_field_gets_a_viewport_holding_a_selection_and_a_label_and_a_caret() {
         let t = UITheme::nocturne();
         let mut fields = Fields::new();
         let field = fields.spawn(t.text_field("Name").small().value("Alice"));
@@ -972,15 +998,39 @@ mod tests {
             "the text moves to the label"
         );
         let children = fields.children(field);
-        assert_eq!(children.len(), 3);
-        let (selection, label, caret) = (children[0], children[1], children[2]);
+        assert_eq!(children.len(), 2);
+        let (viewport, caret) = (children[0], children[1]);
+        let inside = fields.children(viewport);
+        assert_eq!(inside.len(), 2);
+        let (selection, label) = (inside[0], inside[1]);
+        assert_eq!(
+            fields.get::<UITextInputParts>(field).viewport,
+            viewport,
+            "the parts name the viewport"
+        );
+
+        let node = fields.get::<UINode>(viewport);
+        assert_eq!(node.position, Position::Relative);
+        assert_eq!(node.flex_grow, 1.0);
+        assert_eq!(node.flex_shrink, 1.0);
+        assert_eq!(node.min_width, UIValue::Px(0.0));
+        assert_eq!(node.overflow_x, Overflow::Hidden);
+        assert_eq!(node.padding, UIRect::default());
+        assert!(
+            fields
+                .world
+                .get_component_for_entity::<UIText>(viewport)
+                .is_none()
+        );
 
         let text = fields.get::<UIText>(label);
         assert_eq!(text.text, "Alice");
         assert_eq!(text.font_size, t.font_size_sm);
         assert_eq!(text.color, t.text);
         assert!(!text.wrap);
-        assert_eq!(fields.get::<UINode>(label).min_width, UIValue::Px(0.0));
+        assert!(!text.ellipsis);
+        assert_eq!(fields.get::<UINode>(label).min_width, UIValue::Auto);
+        assert_eq!(fields.get::<UINode>(label).flex_shrink, 0.0);
         assert_eq!(fields.get::<UINode>(label).position, Position::Relative);
 
         for quad in [selection, caret] {
@@ -1028,7 +1078,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_wider_than_the_field_is_clipped_to_the_field() {
+    fn a_long_value_and_its_selection_are_clipped_to_the_content_box() {
         let t = UITheme::nocturne();
         let mut fields = Fields::new();
         let field = fields.spawn(
@@ -1037,20 +1087,81 @@ mod tests {
                 .value("a value much wider than eighty logical pixels"),
         );
         fields.frame();
+        fields.focus(Some(field));
+        fields.frames(3);
+
+        let field_layout = fields.get::<UILayout>(field);
+        let content = field_layout.content_rect;
+        assert!(
+            content.size.x < field_layout.rect.size.x,
+            "the field has padding"
+        );
+        let (selection, label, _) = fields.parts(field);
+        let label = fields.get::<UILayout>(label);
+        let selection = fields.get::<UILayout>(selection);
+        assert!(
+            label.content_rect.size.x > content.size.x,
+            "the label keeps the width of its text"
+        );
+        assert!(
+            selection.rect.size.x > content.size.x,
+            "focus selects the whole value"
+        );
+        for clip in [
+            label.clip_rect.intersection(label.content_rect),
+            selection.clip_rect.intersection(selection.rect),
+        ] {
+            assert!(clip.has_area(), "{clip:?}");
+            assert!(
+                clip.min.x >= content.min.x && clip.min.y >= content.min.y,
+                "{clip:?} in {content:?}"
+            );
+            assert!(
+                clip.max().x <= content.max().x && clip.max().y <= content.max().y,
+                "{clip:?} in {content:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_content_sized_field_follows_its_text_while_typing_at_the_end() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("").value("abc"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
         fields.frame();
 
-        let rect = fields.get::<UILayout>(field).rect;
-        let label = fields.get::<UILayout>(fields.label(field));
-        let clip = label.clip_rect.intersection(label.content_rect);
-        assert!(clip.has_area(), "{clip:?}");
-        assert!(
-            clip.min.x >= rect.min.x && clip.min.y >= rect.min.y,
-            "{clip:?} in {rect:?}"
+        let mut last = fields.get::<UILayout>(field).rect.size.x;
+        for character in ["d", "e", "W", "W"] {
+            fields.type_text(character);
+            let field_layout = fields.get::<UILayout>(field);
+            let padding = field_layout.rect.size.x - field_layout.content_rect.size.x;
+            let viewport = fields.get::<UILayout>(fields.viewport(field)).rect;
+            let label = fields.get::<UILayout>(fields.label(field)).rect;
+            assert!(field_layout.rect.size.x > last, "the field grows");
+            assert_eq!(viewport.size.x, label.size.x);
+            assert_eq!(field_layout.rect.size.x, label.size.x + padding);
+            last = field_layout.rect.size.x;
+        }
+        assert_eq!(fields.get::<UITextInput>(field).value, "abcdeWW");
+    }
+
+    #[test]
+    fn a_single_line_field_draws_no_ellipsis() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(
+            t.text_field("")
+                .single_line()
+                .width(UIValue::Px(80.0))
+                .value("a value much wider than eighty logical pixels"),
         );
-        assert!(
-            clip.max().x <= rect.max().x && clip.max().y <= rect.max().y,
-            "{clip:?} in {rect:?}"
-        );
+        fields.frames(2);
+
+        assert!(!fields.get::<UIText>(fields.label(field)).ellipsis);
     }
 
     #[test]
@@ -1080,6 +1191,8 @@ mod tests {
         let offset =
             fields.get::<UILayout>(label).content_rect.min - fields.get::<UILayout>(field).rect.min;
         assert!(offset.x > 0.0 && offset.y > 0.0, "{offset:?}");
+        let in_viewport = fields.get::<UILayout>(label).content_rect.min
+            - fields.get::<UILayout>(fields.viewport(field)).rect.min;
         let (highlight, glyph_x) =
             fields
                 .get::<UITextEditState>(field)
@@ -1092,8 +1205,8 @@ mod tests {
                 });
 
         let node = fields.get::<UINode>(selection);
-        assert_eq!(node.inset.left, UIValue::Px(offset.x + highlight.0));
-        assert_eq!(node.inset.top, UIValue::Px(offset.y));
+        assert_eq!(node.inset.left, UIValue::Px(in_viewport.x + highlight.0));
+        assert_eq!(node.inset.top, UIValue::Px(in_viewport.y));
         assert_eq!(node.width, UIValue::Px(highlight.1));
         let node = fields.get::<UINode>(caret);
         assert_eq!(node.inset.left, UIValue::Px(offset.x + glyph_x));
@@ -1359,6 +1472,7 @@ mod tests {
                 layout(LABEL, Vec2::new(300.0, 18.0)),
             ));
             let quad = || (UINode::default(), UIMaterial::flat(Color::TRANSPARENT));
+            let viewport = self.world.spawn(layout(LABEL, Vec2::new(300.0, 18.0)));
             let selection = self.world.spawn(quad());
             let caret = self.world.spawn(quad());
             let mut input = UITextInput::new("");
@@ -1366,6 +1480,7 @@ mod tests {
             self.world.spawn((
                 input,
                 UITextInputParts {
+                    viewport,
                     selection,
                     label,
                     caret,
@@ -1409,16 +1524,16 @@ mod tests {
         }
 
         fn caret_inset_at(&self, field: Entity, index: usize) -> UIValue {
-            let label = self
+            let viewport = self
                 .world
                 .get_component_for_entity::<UITextInputParts>(field)
                 .unwrap()
-                .label;
+                .viewport;
             let offset = self
                 .world
-                .get_component_for_entity::<UILayout>(label)
+                .get_component_for_entity::<UILayout>(viewport)
                 .unwrap()
-                .content_rect
+                .rect
                 .min
                 - self
                     .world

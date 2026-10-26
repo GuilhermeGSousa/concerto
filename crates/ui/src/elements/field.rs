@@ -13,7 +13,7 @@ use crate::{
     transform::UIValue,
 };
 
-/// An editable, focusable, one-line text field whose text is drawn by a label child, clipped to the field.
+/// An editable, focusable, one-line text field whose text is drawn by a label in a viewport child that clips it to the field's content box.
 pub struct TextField {
     theme: UITheme,
     node: UINode,
