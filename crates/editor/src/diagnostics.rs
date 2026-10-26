@@ -11,6 +11,7 @@ use concerto_ui::{
     node::{UILayoutDiagnostics, UINode},
     text::UIText,
     theme::UITheme,
+    transform::UIValue,
 };
 use taffy::FlexDirection;
 
@@ -22,6 +23,7 @@ pub const PANEL_ID: &str = "concerto.stats";
 struct Readout;
 
 const REFRESH: f32 = 0.25;
+const READOUT_WIDTH: f32 = 440.0;
 
 #[derive(Resource, Default)]
 struct Sampler {
@@ -54,7 +56,18 @@ fn build_panel(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<U
             .with_flex_direction(FlexDirection::Column)
             .clipped(),
         |mut panel| {
-            panel.add_child((theme.label("").small().muted().mono().grow(), Readout));
+            let height = theme.line_height(theme.font_size_sm);
+            panel.add_child((
+                theme
+                    .label("")
+                    .small()
+                    .muted()
+                    .mono()
+                    .single_line()
+                    .size(UIValue::Px(READOUT_WIDTH), UIValue::Px(height))
+                    .fixed(),
+                Readout,
+            ));
         },
     );
 }

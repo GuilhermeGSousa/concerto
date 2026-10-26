@@ -840,6 +840,7 @@ pub(crate) fn compute_ui_nodes(
         };
         let measure_key = match (extent, text) {
             (Some(extent), _) => Some(extent_measure_signature(extent)),
+            (None, Some(text)) if sized_by_style(node, text) => Some(FIXED_TEXT_MEASURE),
             (None, Some(text)) => Some(text_measure_signature(text)),
             (None, None) => None,
         };
@@ -1182,6 +1183,20 @@ fn text_measure_signature(text: &crate::text::UIText) -> u64 {
         }
     }
     hasher.finish()
+}
+
+const FIXED_TEXT_MEASURE: u64 = u64::MAX;
+
+fn sized_by_style(node: &UINode, text: &crate::text::UIText) -> bool {
+    let px = |value: UIValue| matches!(value, UIValue::Px(_));
+    let floored = |min: UIValue, overflow: Overflow| {
+        !matches!(min, UIValue::Auto) || matches!(overflow, Overflow::Hidden | Overflow::Scroll)
+    };
+    px(node.width)
+        && px(node.height)
+        && (node.flex_shrink == 0.0
+            || ((floored(node.min_width, node.overflow_x) || (text.ellipsis && !text.wrap))
+                && floored(node.min_height, node.overflow_y)))
 }
 
 fn extent_measure_signature(extent: f32) -> u64 {
@@ -2599,6 +2614,88 @@ mod tests {
         assert!(!measured.is_empty());
         assert!(measured.iter().all(|text| text == "Warren and Curiosities"));
         assert!(rect_of(&world, label).size.x > short);
+    }
+
+    fn fixed_label(world: &mut concerto_ecs::World, parent: Entity, label: &str) -> Entity {
+        world.spawn((
+            UINode::default()
+                .with_size(UIValue::Px(200.0), UIValue::Px(20.0))
+                .with_flex_shrink(0.0),
+            ui_text(label),
+            ChildOf::new(parent),
+        ))
+    }
+
+    #[test]
+    fn a_fixed_size_label_that_changes_its_text_adds_no_layout_pass() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let label = fixed_label(&mut world, root, "66 fps");
+        lay_out(&mut world);
+        let rect = rect_of(&world, label);
+        let passes = layout_passes(&world);
+
+        for text in ["67 fps", "68 fps · a much longer readout than before"] {
+            world
+                .get_component_for_entity_mut::<crate::text::UIText>(label)
+                .unwrap()
+                .text = text.into();
+            lay_out(&mut world);
+        }
+
+        assert_eq!(layout_passes(&world), passes);
+        assert_eq!(nodes_updated(&world), 0);
+        assert_eq!(rect_of(&world, label), rect);
+    }
+
+    #[test]
+    fn a_fixed_size_label_that_can_shrink_is_laid_out_again() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let label = fixed_label(&mut world, root, "66 fps");
+        world
+            .get_component_for_entity_mut::<UINode>(label)
+            .unwrap()
+            .flex_shrink = 1.0;
+        lay_out(&mut world);
+        let passes = layout_passes(&world);
+
+        world
+            .get_component_for_entity_mut::<crate::text::UIText>(label)
+            .unwrap()
+            .text = "67 fps".into();
+        lay_out(&mut world);
+
+        assert_eq!(layout_passes(&world), passes + 1);
+    }
+
+    #[test]
+    fn a_label_that_stops_being_fixed_is_measured_with_its_current_text() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let label = fixed_label(&mut world, root, "short");
+        lay_out(&mut world);
+        world
+            .get_component_for_entity_mut::<crate::text::UIText>(label)
+            .unwrap()
+            .text = "a label much longer than the one it started with".into();
+        lay_out(&mut world);
+        measured(&mut world);
+
+        let node = world.get_component_for_entity_mut::<UINode>(label).unwrap();
+        node.width = UIValue::Auto;
+        node.align_self = Some(AlignItems::FlexStart);
+        lay_out(&mut world);
+
+        let measured = measured(&mut world);
+        assert!(!measured.is_empty());
+        assert!(
+            measured
+                .iter()
+                .all(|text| text == "a label much longer than the one it started with"),
+            "{measured:?}"
+        );
+        assert!(rect_of(&world, label).size.x > 200.0);
     }
 
     #[test]

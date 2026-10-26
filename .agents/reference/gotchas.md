@@ -114,6 +114,12 @@ fix the entry in the same commit as the change that made it false.
   content and its `UILayout` says where it is drawn.
 - **A write to `UIScrollArea` causes a walk of the whole tree,** so compare
   before writing it.
+- **Changing a label's text lays it out again unless its size cannot depend on
+  the text.** That holds when its width and height are `Px` and it cannot
+  shrink below them: `flex_shrink` is 0, or each axis has a minimum size or a
+  clipping overflow (`single_line` counts as a minimum on the width). A
+  readout that changes every frame, such as a counter, should be sized that
+  way, or it lays itself out on every refresh and counts its own passes.
 
 ## Scenes and assets
 
