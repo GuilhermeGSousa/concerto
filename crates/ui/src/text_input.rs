@@ -35,6 +35,7 @@ use crate::{
 };
 
 const BLINK: Duration = Duration::from_millis(530);
+const CARET: f32 = 1.0;
 
 /// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label inside it that holds that text, and scrolls horizontally to keep the caret visible.
 #[derive(Component)]
@@ -415,13 +416,13 @@ fn caret_x(run: &LayoutRun, index: usize) -> f32 {
 
 fn followed_scroll(scroll: f32, caret_x: f32, line_w: f32, visible: f32) -> f32 {
     let mut scroll = scroll;
-    if caret_x - scroll > visible {
-        scroll = caret_x - visible;
+    if caret_x + CARET - scroll > visible {
+        scroll = (caret_x + CARET - visible).ceil();
     }
     if caret_x - scroll < 0.0 {
-        scroll = caret_x;
+        scroll = caret_x.floor();
     }
-    scroll.clamp(0.0, (line_w - visible).max(0.0)).round()
+    scroll.clamp(0.0, (line_w + CARET - visible).ceil().max(0.0))
 }
 
 fn caret_shown(start: Instant, now: Instant) -> bool {
@@ -763,7 +764,7 @@ pub(crate) fn setup_text_inputs(
             .spawn_child((UINode::default().with_flex_shrink(0.0), label_text))
             .entity();
         let viewport = viewport.entity();
-        let caret = field.spawn_child(quad(1.0, theme.caret)).entity();
+        let caret = field.spawn_child(quad(CARET, theme.caret)).entity();
         field.insert(UITextInputParts {
             viewport,
             selection,
@@ -838,7 +839,8 @@ pub(crate) fn project_text_inputs(
             Some((mut state, ((field, viewport), label))) => {
                 let (caret_x, line_w, highlight) = state.marks();
                 let visible = viewport.rect.size.x;
-                let scroll = if label.rect.size.x <= visible {
+                let overflowed = label.rect.size.x > visible;
+                let scroll = if !overflowed {
                     0.0
                 } else if state.follow {
                     followed_scroll(state.scroll, caret_x, line_w, visible)
@@ -852,9 +854,10 @@ pub(crate) fn project_text_inputs(
                 let viewport_offset = viewport.rect.min - field.rect.min;
                 let caret_x = caret_x - scroll;
                 (
-                    Some((viewport_offset + Vec2::new(caret_x, label_y), 1.0)),
+                    Some((viewport_offset + Vec2::new(caret_x, label_y), CARET)),
                     highlight.map(|(x, width)| (Vec2::new(x - scroll, label_y), width)),
-                    caret_shown(state.blink_start, now) && (0.0..=visible + 1.0).contains(&caret_x),
+                    caret_shown(state.blink_start, now)
+                        && (!overflowed || (-CARET..=visible + CARET).contains(&caret_x)),
                     scroll,
                 )
             }
@@ -1070,7 +1073,7 @@ mod tests {
         }
 
         fn scroll_to_the_end(&self, field: Entity) -> f32 {
-            (self.line_width(field) - self.visible(field)).round()
+            (self.line_width(field) + CARET - self.visible(field)).ceil()
         }
 
         fn caret_is_inside(&self, field: Entity) -> bool {
@@ -1411,9 +1414,12 @@ mod tests {
         for _ in 0..20 {
             fields.type_text("w");
             let (_, _, caret) = fields.parts(field);
+            let drawn = fields.get::<UILayout>(caret);
             assert!(
-                fields.alpha(caret) == 0.0 || fields.caret_is_inside(field),
-                "a shown caret is inside the field"
+                fields.alpha(caret) == 0.0
+                    || !drawn.clip_rect.intersection(drawn.rect).has_area()
+                    || fields.caret_is_inside(field),
+                "a drawn caret is inside the field"
             );
         }
         fields.frame();
@@ -1573,6 +1579,99 @@ mod tests {
         fields.key(KeyCode::End);
         assert!(fields.alpha(caret) > 0.0, "End brings it into view");
         assert!(fields.caret_is_inside(field));
+    }
+
+    #[test]
+    fn the_caret_stays_visible_while_stepping_left_across_the_left_edge() {
+        for step in [vec![KeyCode::ArrowLeft], vec![COMMAND, KeyCode::ArrowLeft]] {
+            let mut fields = Fields::new();
+            let field = fields.long(LONG);
+            fields.focus(Some(field));
+            fields.frames(2);
+            fields.key(KeyCode::End);
+            let end = fields.scroll(field);
+            let fractional = fields
+                .get::<UITextEditState>(field)
+                .editor
+                .with_buffer(|buffer| {
+                    let run = buffer.layout_runs().next().unwrap();
+                    run.glyphs
+                        .iter()
+                        .any(|glyph| glyph.x < end && glyph.x.fract() >= 0.5)
+                });
+            assert!(fractional, "some glyph past the left edge has x.5 or more");
+
+            let (_, _, caret) = fields.parts(field);
+            while fields.caret(field).0 > 0 {
+                fields.keys(&step);
+                let at = fields.caret(field).0;
+                assert!(
+                    fields.alpha(caret) > 0.0,
+                    "{step:?} to {at}: the caret shows"
+                );
+                let caret = fields.get::<UILayout>(caret).rect;
+                let viewport = fields.get::<UILayout>(fields.viewport(field)).rect;
+                assert!(
+                    caret.min.x >= viewport.min.x && caret.max().x <= viewport.max().x,
+                    "{step:?} to {at}: {caret:?} in {viewport:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_field_without_padding_keeps_its_caret_inside_while_typing_at_the_end() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(
+            t.text_field("")
+                .bare()
+                .height(UIValue::Auto)
+                .padding(0.0)
+                .single_line()
+                .width(UIValue::Px(80.0))
+                .value(LONG),
+        );
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+        assert_eq!(
+            fields.visible(field),
+            fields.get::<UILayout>(field).rect.size.x,
+            "the field has no padding"
+        );
+
+        let (_, _, caret) = fields.parts(field);
+        for _ in 0..10 {
+            fields.type_text("w");
+            assert!(fields.alpha(caret) > 0.0, "the caret shows");
+            assert!(
+                fields.caret_is_inside(field),
+                "the caret is inside the field"
+            );
+        }
+    }
+
+    #[test]
+    fn typing_at_the_end_of_a_content_sized_field_never_hides_the_caret() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("").value("abc"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.key(KeyCode::End);
+        fields.frame();
+
+        let (_, _, caret) = fields.parts(field);
+        for character in ["d", "e", "W", "W", "m"] {
+            fields.type_text(character);
+            assert!(
+                fields.alpha(caret) > 0.0,
+                "typing {character} shows the caret"
+            );
+        }
     }
 
     #[test]
