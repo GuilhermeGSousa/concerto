@@ -54,11 +54,36 @@ pub fn toggle_checkbox(on: On<UIClick>, checkboxes: Query<&mut UICheckbox>, mut 
 /// Drives `UIMaterial::color` from `UICheckbox::checked` each frame.
 pub(crate) fn sync_checkbox_material(checkboxes: Query<(&UICheckbox, &mut UIMaterial)>) {
     for (checkbox, mut material) in checkboxes.iter() {
-        material.color = if checkbox.checked {
+        let color = if checkbox.checked {
             checkbox.checked_color
         } else {
             checkbox.unchecked_color
         }
         .to_linear();
+        if material.color != color {
+            material.color = color;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::Watch;
+    use concerto_ecs::World;
+
+    #[test]
+    fn a_checkbox_left_alone_leaves_its_material_unchanged() {
+        let mut world = World::new();
+        let checkbox = world.spawn((UICheckbox::new(false), UIMaterial::default()));
+        let mut watch = Watch::new::<UIMaterial, _>(&mut world, sync_checkbox_material);
+        watch.run(&mut world);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
+
+        world
+            .get_component_for_entity_mut::<UICheckbox>(checkbox)
+            .unwrap()
+            .checked = true;
+        assert_eq!(watch.run(&mut world), 1);
     }
 }

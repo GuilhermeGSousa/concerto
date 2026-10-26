@@ -3,7 +3,9 @@ use std::collections::HashMap;
 
 use concerto_ecs::entity::hierarchy::ChildOf;
 use concerto_ecs::events::event_channel::EventChannel;
+use concerto_ecs::query::change_detection::DetectChanges;
 use concerto_ecs::{IntoSystem, System, World, entity::Entity};
+use concerto_ecs::{Res, ResMut, Resource};
 use concerto_ui::anchor::{
     PanelRects, UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack,
     panels_to_close, place, track_panel_stack,
@@ -781,5 +783,37 @@ fn opening_a_panel_focuses_its_focus_on_open_widget_once() {
         **world.get_resource::<FocusedWidget>().unwrap(),
         Some(trigger),
         "focus moves only on the frame the panel opens, not every frame it stays open"
+    );
+}
+
+#[derive(Resource, Default)]
+struct StackChanges(Vec<bool>);
+
+fn watch_stack(stack: Res<UIPanelStack>, mut changes: ResMut<StackChanges>) {
+    changes.0.push(stack.is_changed());
+}
+
+#[test]
+fn a_stack_that_stays_the_same_is_not_changed() {
+    let mut world = stack_world();
+    world.insert_resource(StackChanges::default());
+    let trigger = node(&mut world);
+    open_panel(
+        &mut world,
+        trigger,
+        UIAnchorTarget::Node { entity: trigger },
+    );
+    let mut track = track_panel_stack.into_system();
+    let mut watch = watch_stack.into_system();
+    track.initialize(&mut world);
+    watch.initialize(&mut world);
+    for _ in 0..3 {
+        track.run_and_apply((), &mut world);
+        watch.run_and_apply((), &mut world);
+    }
+
+    assert_eq!(
+        world.get_resource::<StackChanges>().unwrap().0,
+        [true, false, false]
     );
 }

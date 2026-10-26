@@ -820,7 +820,9 @@ pub(crate) fn compute_ui_nodes(
         };
 
         let placement = crate::anchor::place(anchor, size, logical_size, &panel);
-        panel.resolved_side = placement.side;
+        if panel.resolved_side != placement.side {
+            panel.resolved_side = placement.side;
+        }
         let rect = UIBox {
             min: placement.origin,
             size,
@@ -2103,6 +2105,42 @@ mod tests {
         lay_out(&mut world);
 
         assert_eq!(layout_passes(&world), passes);
+    }
+
+    #[test]
+    fn a_panel_that_keeps_its_place_keeps_its_resolved_side_unchanged() {
+        use crate::{
+            anchor::{UIAnchorTarget, track_panel_stack},
+            focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+            testing::Watch,
+        };
+        use concerto_ecs::events::event_channel::EventChannel;
+
+        let mut world = layout_world();
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(EventChannel::<UIFocusLost>::default());
+        world.insert_resource(EventChannel::<UIFocusGained>::default());
+        let root = column(&mut world);
+        let button = row(&mut world, root);
+        let below = row(&mut world, root);
+        world.spawn((
+            UINode::default().with_size(UIValue::Px(80.0), UIValue::Px(40.0)),
+            UIAnchoredPanel::new(UIAnchorTarget::from_node(button)).with_open(true),
+        ));
+        let mut track = concerto_ecs::IntoSystem::into_system(track_panel_stack);
+        concerto_ecs::System::initialize(&mut track, &mut world);
+        concerto_ecs::System::run_and_apply(&mut track, (), &mut world);
+
+        let mut watch = Watch::new::<UIAnchoredPanel, _>(&mut world, compute_ui_nodes);
+        watch.run(&mut world);
+        let passes = layout_passes(&world);
+        world
+            .get_component_for_entity_mut::<UINode>(below)
+            .unwrap()
+            .height = UIValue::Px(60.0);
+
+        assert_eq!(watch.run(&mut world), 0);
+        assert_eq!(layout_passes(&world), passes + 1);
     }
 
     #[test]

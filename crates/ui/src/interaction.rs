@@ -355,7 +355,10 @@ pub(crate) fn apply_interaction_styles(
         } else {
             style.normal
         };
-        material.color = color.to_linear();
+        let color = color.to_linear();
+        if material.color != color {
+            material.color = color;
+        }
     }
 }
 
@@ -690,5 +693,29 @@ mod tests {
         };
         assert!(layout.rect.contains(Vec2::new(75.0, 25.0)));
         assert!(!layout.clip_rect.contains(Vec2::new(75.0, 25.0)));
+    }
+
+    #[test]
+    fn a_styled_node_left_alone_keeps_its_material_unchanged() {
+        use super::{UIInteractionStyle, apply_interaction_styles};
+        use crate::{material::UIMaterial, testing::Watch};
+        use concerto_color::Color;
+
+        let mut world = pointer_world();
+        let button = world.spawn((
+            UIInteractionStyle {
+                normal: Color::rgba(0.1, 0.1, 0.1, 1.0),
+                hovered: Color::rgba(0.2, 0.2, 0.2, 1.0),
+                pressed: Color::rgba(0.3, 0.3, 0.3, 1.0),
+                disabled: Color::rgba(0.4, 0.4, 0.4, 1.0),
+            },
+            UIMaterial::default(),
+        ));
+        let mut watch = Watch::new::<UIMaterial, _>(&mut world, apply_interaction_styles);
+        watch.run(&mut world);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
+
+        **world.get_resource_mut::<HoveredNode>().unwrap() = Some(button);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [1, 0]);
     }
 }

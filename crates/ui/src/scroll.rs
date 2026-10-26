@@ -168,12 +168,16 @@ pub(crate) fn sync_split_panes(
             let Some(mut first_node) = nodes.get_entity(first) else {
                 continue;
             };
-            apply_first_split(pane, available, &mut first_node);
+            let mut next = UINode::clone(&first_node);
+            apply_first_split(pane, available, &mut next);
+            first_node.set_if_neq(next);
         }
         let Some(mut second_node) = nodes.get_entity(second) else {
             continue;
         };
-        apply_second_split(pane, &mut second_node);
+        let mut next = UINode::clone(&second_node);
+        apply_second_split(pane, &mut next);
+        second_node.set_if_neq(next);
     }
 }
 
@@ -334,6 +338,35 @@ mod tests {
         assert_eq!(second.width, UIValue::Auto);
         assert_eq!(first.flex_grow, 0.0);
         assert_eq!(second.flex_grow, 1.0);
+    }
+
+    #[test]
+    fn a_resting_split_pane_leaves_its_children_unchanged() {
+        let mut world = World::new();
+        let first = world.spawn(UINode::default());
+        let second = world.spawn(UINode::default());
+        let rect = crate::node::UIBox {
+            min: glam::Vec2::ZERO,
+            size: glam::Vec2::new(600.0, 400.0),
+        };
+        let pane = world.spawn((
+            UISplitPane::new(UISplitAxis::Horizontal, first, second),
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+        ));
+        let mut watch = crate::testing::Watch::new::<UINode, _>(&mut world, sync_split_panes);
+        watch.run(&mut world);
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [0, 0]);
+
+        world
+            .get_component_for_entity_mut::<UISplitPane>(pane)
+            .unwrap()
+            .ratio = 0.25;
+        assert_eq!([watch.run(&mut world), watch.run(&mut world)], [1, 0]);
     }
 
     #[test]

@@ -219,6 +219,47 @@ fn a_scrolled_inspector_keeps_its_offset_across_runs() {
     scroll_and_hold(&mut w, &mut frame);
 }
 
+#[derive(Resource, Default)]
+struct ScrollChanges(Vec<usize>);
+
+fn count_scroll_changes(
+    areas: Query<Entity, concerto_ecs::Changed<UIScrollArea>>,
+    mut changes: ResMut<ScrollChanges>,
+) {
+    changes.0.push(areas.iter().count());
+}
+
+#[test]
+fn a_settled_inspector_leaves_its_scroll_area_unchanged() {
+    let (mut w, _, stack) = inspecting();
+    w.f.world.insert(layout(1000.0), stack);
+    w.f.world.spawn((
+        DetailsView,
+        UIScrollArea {
+            content: Some(stack),
+            offset: 300.0,
+            ..Default::default()
+        },
+        layout(100.0),
+    ));
+    w.f.world.insert_resource(ScrollChanges::default());
+    let mut collect = collect_inspector_data.into_system();
+    let mut scroll = sync_inspector_scroll.into_system();
+    let mut watch = count_scroll_changes.into_system();
+    collect.initialize(&mut w.f.world);
+    scroll.initialize(&mut w.f.world);
+    watch.initialize(&mut w.f.world);
+    for _ in 0..4 {
+        collect.run_and_apply((), &mut w.f.world);
+        scroll.run_and_apply((), &mut w.f.world);
+        watch.run_and_apply((), &mut w.f.world);
+        w.tick();
+    }
+
+    let changes = &w.f.world.get_resource::<ScrollChanges>().unwrap().0;
+    assert_eq!(changes[2..], [0, 0]);
+}
+
 fn cards(world: &mut World) -> Vec<(Entity, InspectedComponent)> {
     let mut query = world.query::<(Entity, &InspectedComponent), ()>();
     query

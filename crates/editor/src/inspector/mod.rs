@@ -220,7 +220,7 @@ fn sync_inspector_scroll(
         return;
     };
 
-    if data.is_changed() {
+    if data.is_changed() && area.offset != 0.0 {
         area.offset = 0.0;
     }
     let Some((_, stack)) = stacks.iter().next() else {
@@ -228,10 +228,15 @@ fn sync_inspector_scroll(
     };
 
     let extent = stack.rect.size.y;
-    area.content_extent = extent;
-    area.offset = area
+    if area.content_extent != extent {
+        area.content_extent = extent;
+    }
+    let offset = area
         .offset
         .clamp(0.0, (extent - view.content_rect.size.y).max(0.0));
+    if area.offset != offset {
+        area.offset = offset;
+    }
 }
 
 /// The systems that build the inspector's rows from the selection and send their edits.
