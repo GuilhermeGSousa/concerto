@@ -4,7 +4,7 @@ use super::*;
 use crate::tools::entity_ops::EntityEdit;
 use concerto_ecs::{component::name::Name, events::event_reader::EventReader};
 use concerto_ui::{
-    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+    focus::{FocusedWidget, UIFocusLost},
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
 };
 
@@ -46,7 +46,6 @@ pub(super) fn update_name_field(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     mut cancelled: EventReader<UITextInputCancelled>,
-    mut gained: EventReader<UIFocusGained>,
     data: Res<InspectorData>,
     names: EditWorld<Query<&Name>>,
     fields: Query<(Entity, &mut NameField, &mut UITextInput, &mut UINode)>,
@@ -66,9 +65,6 @@ pub(super) fn update_name_field(
     let cancelled = cancelled
         .read()
         .fold(false, |hit, event| hit | (event.entity == entity));
-    let mut select = gained
-        .read()
-        .fold(false, |hit, event| hit | (event.0 == entity));
     let name_of = |target: Entity| {
         names
             .get_entity(target)
@@ -110,11 +106,6 @@ pub(super) fn update_name_field(
         focus_request.0 = false;
         if node.visible {
             **focused = Some(entity);
-            select = true;
         }
-    }
-    if select {
-        input.selection_anchor = Some(0);
-        input.cursor = input.value.len();
     }
 }

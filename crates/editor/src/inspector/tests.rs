@@ -1485,17 +1485,11 @@ mod name_field {
     }
 
     #[test]
-    fn a_focus_request_focuses_the_visible_field_with_its_text_selected() {
+    fn a_focus_request_focuses_the_visible_field() {
         let mut f = fixture();
         f.world().get_resource_mut::<FocusNameField>().unwrap().0 = true;
         f.step();
         assert_eq!(f.focused(), Some(f.field));
-        let input =
-            f.w.f
-                .world
-                .get_component_for_entity::<UITextInput>(f.field)
-                .unwrap();
-        assert_eq!((input.selection_anchor, input.cursor), (Some(0), 5));
 
         **f.world().get_resource_mut::<FocusedWidget>().unwrap() = None;
         f.select(f.root);
