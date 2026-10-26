@@ -14,13 +14,15 @@ use concerto_ecs::{
     query::{
         Query,
         change_detection::DetectChanges,
-        filter::{Changed, Or, With, Without},
+        filter::{Added, Changed, Or, With, Without},
     },
     resource::{Res, ResMut, Resource},
     signal::{
         On,
         lifecycle::{Add, Remove, Replace},
     },
+    system::input::SystemLocal,
+    world::FromWorld,
 };
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_render::{
@@ -28,6 +30,7 @@ use concerto_render::{
     components::render_entity::{RenderEntity, SyncWithRenderWorld},
     device::RenderDevice,
     draw_target::SharedTexture,
+    queue::RenderQueue,
     render_asset::{
         RenderAssets,
         render_texture::{DummyRenderTexture, RenderTexture},
@@ -728,13 +731,35 @@ impl UILayout {
 
 #[derive(Component)]
 pub(crate) struct RenderUINode {
-    pub(crate) index_buffer: Buffer,
-    pub(crate) index_count: u32,
     pub(crate) vertex_buffer: Buffer,
     source_rect: UIBox,
     clip_rect: UIBox,
-    surface: (u32, u32, u64),
     pub(crate) z_index: i64,
+}
+
+#[derive(Resource)]
+pub(crate) struct UIQuadIndices(pub(crate) Buffer);
+
+impl UIQuadIndices {
+    pub(crate) fn new(device: &RenderDevice) -> Self {
+        Self(
+            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("UI Index Buffer"),
+                contents: bytemuck::cast_slice(&QUAD_INDICES),
+                usage: wgpu::BufferUsages::INDEX,
+            }),
+        )
+    }
+}
+
+pub(crate) struct ExtractedSurface {
+    surface: Option<(u32, u32, u32)>,
+}
+
+impl FromWorld for ExtractedSurface {
+    fn from_world(_: &World) -> Self {
+        Self { surface: None }
+    }
 }
 
 #[derive(Component)]
@@ -1309,98 +1334,108 @@ fn paint_order(z_index: i32, sequence: i64) -> i64 {
 }
 
 pub(crate) fn extract_ui_nodes(
-    computed_nodes: Extracted<Query<(&UILayout, &RenderEntity)>>,
+    changed_nodes: Extracted<
+        Query<(&UILayout, &RenderEntity), Or<(Changed<UILayout>, Added<RenderEntity>)>>,
+    >,
+    all_nodes: Extracted<Query<(&UILayout, &RenderEntity)>>,
     render_ui_nodes: Query<&mut RenderUINode>,
     device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
     window: Extracted<Res<Window>>,
     diagnostics: Res<UIRenderDiagnostics>,
+    mut extracted: SystemLocal<ExtractedSurface>,
     mut cmd: CommandQueue,
 ) {
-    let win_w = window.width() as f32;
-    let win_h = window.height() as f32;
     let scale = window.scale_factor() as f32;
-    let surface = (window.width(), window.height(), scale.to_bits() as u64);
+    let surface = (window.width(), window.height(), scale.to_bits());
+    let resized = extracted.surface.replace(surface) != Some(surface);
+    let window_size = Vec2::new(window.width() as f32, window.height() as f32);
 
-    let to_ndc =
-        |px: f32, py: f32| -> [f32; 2] { [(px / win_w) * 2.0 - 1.0, 1.0 - (py / win_h) * 2.0] };
-
-    for (computed_node, render_entity) in computed_nodes.iter() {
+    let mut extract = |computed_node: &UILayout, render_entity: &RenderEntity| {
         let draw_rect = computed_node.rect.intersection(computed_node.clip_rect);
         if !computed_node.is_shown() || !draw_rect.has_area() {
             if render_ui_nodes.contains_entity(**render_entity) {
                 cmd.remove::<RenderUINode>(**render_entity);
             }
-            continue;
+            return;
         }
-        let location = draw_rect.min * scale;
-        let size = draw_rect.size * scale;
-        if render_ui_nodes
-            .get_entity(**render_entity)
-            .is_some_and(|node| {
-                node.source_rect == computed_node.rect
-                    && node.clip_rect == computed_node.clip_rect
-                    && node.surface == surface
-                    && node.z_index == computed_node.paint_order
-            })
-        {
-            continue;
+        if let Some(mut node) = render_ui_nodes.get_entity(**render_entity) {
+            if resized
+                || node.source_rect != computed_node.rect
+                || node.clip_rect != computed_node.clip_rect
+            {
+                diagnostics.record_geometry_rebuild();
+                let vertices = quad_vertices(computed_node.rect, draw_rect, window_size, scale);
+                queue.write_buffer(&node.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
+                node.source_rect = computed_node.rect;
+                node.clip_rect = computed_node.clip_rect;
+            }
+            if node.z_index != computed_node.paint_order {
+                node.z_index = computed_node.paint_order;
+            }
+            return;
         }
         diagnostics.record_geometry_rebuild();
-        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("UI Index Buffer"),
-            contents: bytemuck::cast_slice(&QUAD_INDICES),
-            usage: wgpu::BufferUsages::INDEX,
-        });
-
-        let x = location.x;
-        let y = location.y;
-        let w = size.x;
-        let h = size.y;
-        let source_size = computed_node.rect.size.max(Vec2::splat(f32::EPSILON));
-        let relative_min = (draw_rect.min - computed_node.rect.min) / source_size;
-        let relative_max = (draw_rect.max() - computed_node.rect.min) / source_size;
-
-        let vertices = [
-            UIVertex {
-                pos_coords: to_ndc(x, y),
-                uv: relative_min.into(),
-            },
-            UIVertex {
-                pos_coords: to_ndc(x, y + h),
-                uv: [relative_min.x, relative_max.y],
-            },
-            UIVertex {
-                pos_coords: to_ndc(x + w, y + h),
-                uv: relative_max.into(),
-            },
-            UIVertex {
-                pos_coords: to_ndc(x + w, y),
-                uv: [relative_max.x, relative_min.y],
-            },
-        ];
-
+        let vertices = quad_vertices(computed_node.rect, draw_rect, window_size, scale);
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("UI Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
+        cmd.insert(
+            RenderUINode {
+                vertex_buffer,
+                source_rect: computed_node.rect,
+                clip_rect: computed_node.clip_rect,
+                z_index: computed_node.paint_order,
+            },
+            **render_entity,
+        );
+    };
 
-        let render_ui_node = RenderUINode {
-            index_buffer,
-            index_count: QUAD_INDICES.len() as u32,
-            vertex_buffer,
-            source_rect: computed_node.rect,
-            clip_rect: computed_node.clip_rect,
-            surface,
-            z_index: computed_node.paint_order,
-        };
-
-        if let Some(mut node) = render_ui_nodes.get_entity(**render_entity) {
-            **node = render_ui_node;
-        } else {
-            cmd.insert(render_ui_node, **render_entity);
+    if resized {
+        for (computed_node, render_entity) in all_nodes.iter() {
+            extract(computed_node, render_entity);
+        }
+    } else {
+        for (computed_node, render_entity) in changed_nodes.iter() {
+            extract(computed_node, render_entity);
         }
     }
+}
+
+fn quad_vertices(source: UIBox, draw_rect: UIBox, window: Vec2, scale: f32) -> [UIVertex; 4] {
+    let to_ndc = |px: f32, py: f32| -> [f32; 2] {
+        [(px / window.x) * 2.0 - 1.0, 1.0 - (py / window.y) * 2.0]
+    };
+    let location = draw_rect.min * scale;
+    let size = draw_rect.size * scale;
+    let x = location.x;
+    let y = location.y;
+    let w = size.x;
+    let h = size.y;
+    let source_size = source.size.max(Vec2::splat(f32::EPSILON));
+    let relative_min = (draw_rect.min - source.min) / source_size;
+    let relative_max = (draw_rect.max() - source.min) / source_size;
+
+    [
+        UIVertex {
+            pos_coords: to_ndc(x, y),
+            uv: relative_min.into(),
+        },
+        UIVertex {
+            pos_coords: to_ndc(x, y + h),
+            uv: [relative_min.x, relative_max.y],
+        },
+        UIVertex {
+            pos_coords: to_ndc(x + w, y + h),
+            uv: relative_max.into(),
+        },
+        UIVertex {
+            pos_coords: to_ndc(x + w, y),
+            uv: [relative_max.x, relative_min.y],
+        },
+    ]
 }
 
 /// Syncs the user-facing material fields into the GPU-side uniforms each frame.
@@ -3020,6 +3055,128 @@ mod tests {
             .remove_component::<UICulled>(node);
         app.update();
         assert!(drawn_quad(&app, node), "an unculled quad is drawn again");
+    }
+
+    fn gpu() -> Option<concerto_render::gpu::Gpu> {
+        pollster::block_on(concerto_render::gpu::Gpu::request(
+            &concerto_render::gpu::Gpu::instance(),
+            None,
+        ))
+    }
+
+    fn quad(app: &mut concerto_app::App, size: f32) -> Entity {
+        app.main_mut().world_mut().spawn((
+            UINode::default().with_size(UIValue::Px(size), UIValue::Px(size)),
+            UIMaterial::flat(concerto_color::Color::WHITE),
+        ))
+    }
+
+    fn render_node(app: &concerto_app::App, node: Entity) -> &RenderUINode {
+        let render_entity = **app
+            .main()
+            .world()
+            .get_component_for_entity::<RenderEntity>(node)
+            .unwrap();
+        app.render()
+            .world()
+            .get_component_for_entity::<RenderUINode>(render_entity)
+            .unwrap()
+    }
+
+    fn geometry_rebuilds(app: &concerto_app::App) -> u64 {
+        app.get_resource::<UIRenderDiagnostics>()
+            .unwrap()
+            .geometry_rebuilds()
+    }
+
+    #[test]
+    fn idle_frames_rebuild_no_quad() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        quad(&mut app, 32.0);
+        quad(&mut app, 16.0);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let rebuilds = geometry_rebuilds(&app);
+
+        app.update();
+        app.update();
+
+        assert_eq!(geometry_rebuilds(&app), rebuilds);
+    }
+
+    #[test]
+    fn a_new_paint_order_alone_updates_the_quad_without_a_rebuild() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let node = quad(&mut app, 32.0);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let rebuilds = geometry_rebuilds(&app);
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<UINode>(node)
+            .unwrap()
+            .z_index = 7;
+        app.update();
+
+        assert_eq!(render_node(&app, node).z_index >> 32, 7);
+        assert_eq!(geometry_rebuilds(&app), rebuilds);
+    }
+
+    #[test]
+    fn moving_one_quad_rewrites_only_its_vertices_in_place() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let moved = quad(&mut app, 32.0);
+        quad(&mut app, 16.0);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let rebuilds = geometry_rebuilds(&app);
+        let vertex_buffer = render_node(&app, moved).vertex_buffer.clone();
+
+        *app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<UINode>(moved)
+            .unwrap() = UINode::default().with_size(UIValue::Px(48.0), UIValue::Px(48.0));
+        app.update();
+
+        assert_eq!(geometry_rebuilds(&app), rebuilds + 1);
+        assert!(drawn_quad(&app, moved), "the moved quad is still drawn");
+        assert!(
+            render_node(&app, moved).vertex_buffer == vertex_buffer,
+            "the moved quad keeps its vertex buffer"
+        );
+    }
+
+    #[test]
+    fn a_window_resize_re_extracts_every_quad() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        for size in [8.0, 16.0, 32.0] {
+            quad(&mut app, size);
+        }
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let rebuilds = geometry_rebuilds(&app);
+
+        app.insert_resource(Window::new((128, 96), 1.0));
+        app.update();
+
+        assert_eq!(geometry_rebuilds(&app), rebuilds + 3);
     }
 
     #[test]

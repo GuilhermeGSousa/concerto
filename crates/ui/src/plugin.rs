@@ -28,7 +28,7 @@ use crate::{
     list::update_lists,
     material::UIMaterial,
     node::{
-        UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
+        UILayoutDiagnostics, UILayoutEngine, UIQuadIndices, UITextMeasure, compute_ui_nodes,
         extract_shared_viewports, extract_ui_materials, extract_ui_nodes, install_layout_listeners,
         sync_material_params, sync_shared_viewport_textures, sync_viewport_textures,
     },
@@ -220,6 +220,7 @@ impl Plugin for UIPlugin {
         let viewport = Viewport::new(device, &cache);
 
         let atlas = glyphon::TextAtlas::new(device, queue, &cache, context.surface_config.format);
+        let quad_indices = UIQuadIndices::new(device);
 
         app.insert_resource(UITextMeasure::new(measure));
         app.render_mut()
@@ -228,7 +229,8 @@ impl Plugin for UIPlugin {
             .insert_resource(TextSwashCache(swash_cache))
             .insert_resource(TextViewport(viewport))
             .insert_resource(TextFontSystem(font_system))
-            .insert_resource(TextAtlas(atlas));
+            .insert_resource(TextAtlas(atlas))
+            .insert_resource(quad_indices);
     }
 }
 

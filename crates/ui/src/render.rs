@@ -13,11 +13,12 @@ use wgpu::MultisampleState;
 
 use crate::{
     material::UIMaterial,
-    node::{RenderUIMaterial, RenderUINode},
+    node::{RenderUIMaterial, RenderUINode, UIQuadIndices},
     text::{
         RenderTextComponent,
         resources::{TextAtlas, TextFontSystem, TextRenderers, TextSwashCache, TextViewport},
     },
+    vertex::QUAD_INDICES,
 };
 
 pub(crate) fn update_text_viewport(
@@ -131,6 +132,7 @@ pub(crate) fn ui_renderpass(
     mut device: ResMut<RenderDevice>,
     render_window: Res<RenderWindow>,
     ui_nodes: Query<(&RenderUINode, Option<&RenderUIMaterial>)>,
+    quad_indices: Res<UIQuadIndices>,
     text_renderers: Res<TextRenderers>,
     text_viewport: Res<TextViewport>,
     text_atlas: Res<TextAtlas>,
@@ -168,10 +170,7 @@ pub(crate) fn ui_renderpass(
                 batch += 1;
             }
 
-            render_pass.set_index_buffer(
-                render_node.index_buffer.slice(..),
-                wgpu::IndexFormat::Uint16,
-            );
+            render_pass.set_index_buffer(quad_indices.0.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.set_vertex_buffer(0, render_node.vertex_buffer.slice(..));
 
             let Some(material) = render_material else {
@@ -180,7 +179,7 @@ pub(crate) fn ui_renderpass(
             render_pass.set_pipeline(&pipeline.pipeline);
             render_pass.set_bind_group(0, &material.material_bind_group, &[]);
 
-            render_pass.draw_indexed(0..render_node.index_count, 0, 0..1);
+            render_pass.draw_indexed(0..QUAD_INDICES.len() as u32, 0, 0..1);
         }
 
         while batch < layers.len() {
