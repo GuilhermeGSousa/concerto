@@ -1,4 +1,6 @@
-use concerto_color::Color;
+use std::time::Duration;
+
+use concerto_color::{Color, LinearRgba};
 use concerto_ecs::{
     command::CommandQueue,
     component::Component,
@@ -18,7 +20,7 @@ use concerto_window::{
 };
 use glam::Vec2;
 use glyphon::{
-    Action, Attrs, Buffer, Cursor, Edit, Editor, FontSystem, Shaping, Wrap,
+    Action, Attrs, Buffer, Cursor, Edit, Editor, FontSystem, LayoutRun, Shaping, Wrap,
     cosmic_text::{Change, Motion, Selection},
 };
 
@@ -28,8 +30,11 @@ use crate::{
     material::UIMaterial,
     node::{Position, UILayout, UINode, UITextMeasure, ui_text_attrs, ui_text_metrics},
     text::UIText,
+    theme::UITheme,
     transform::UIValue,
 };
+
+const BLINK: Duration = Duration::from_millis(530);
 
 /// A single-line text input, edited through cosmic-text while focused and selected whole when it gains focus; with a `UIText` and a `UINode` it is drawn by a label child that holds that text.
 #[derive(Component)]
@@ -76,10 +81,8 @@ pub struct UITextInputCancelled {
 
 #[derive(Component)]
 pub(crate) struct UITextInputParts {
-    #[expect(dead_code)]
     pub(crate) selection: Entity,
     pub(crate) label: Entity,
-    #[expect(dead_code)]
     pub(crate) caret: Entity,
 }
 
@@ -114,7 +117,6 @@ pub(crate) struct UITextEditState {
     undo: Vec<Change>,
     redo: Vec<Change>,
     typing: bool,
-    #[expect(dead_code)]
     blink_start: Instant,
     press_time: Option<Instant>,
     press_count: u32,
@@ -305,6 +307,7 @@ impl UITextEditState {
         now: Instant,
     ) {
         self.typing = false;
+        self.blink_start = now;
         let count = count_press(self.press_time, self.press_count, now);
         self.press_time = Some(now);
         self.press_count = count;
@@ -348,6 +351,23 @@ impl UITextEditState {
         self.collapse_empty_selection();
     }
 
+    fn marks(&self) -> (f32, Option<(f32, f32)>) {
+        let cursor = self.editor.cursor().index;
+        let selection = self.selection_range();
+        self.editor.with_buffer(|buffer| {
+            let Some(run) = buffer.layout_runs().next() else {
+                return (0.0, None);
+            };
+            let highlight = selection.and_then(|(start, end)| {
+                run.highlight(
+                    Cursor::new(start.line, start.index),
+                    Cursor::new(end.line, end.index),
+                )
+            });
+            (caret_x(&run, cursor), highlight)
+        })
+    }
+
     fn forget_history(&mut self) {
         self.undo.clear();
         self.redo.clear();
@@ -360,6 +380,19 @@ fn count_press(last: Option<Instant>, count: u32, now: Instant) -> u32 {
         Some(at) if now.duration_since(at) < DOUBLE_CLICK => (count + 1).min(3),
         _ => 1,
     }
+}
+
+fn caret_x(run: &LayoutRun, index: usize) -> f32 {
+    run.glyphs
+        .iter()
+        .find(|glyph| glyph.start >= index)
+        .map(|glyph| glyph.x)
+        .or_else(|| run.glyphs.last().map(|glyph| glyph.x + glyph.w))
+        .unwrap_or(0.0)
+}
+
+fn caret_shown(start: Instant, now: Instant) -> bool {
+    (now.duration_since(start).as_millis() / BLINK.as_millis()).is_multiple_of(2)
 }
 
 fn char_floor(text: &str, index: usize) -> usize {
@@ -399,10 +432,11 @@ fn apply_pointer(
     entity: Entity,
     at: Vec2,
     focusing: bool,
+    now: Instant,
 ) {
     match input.get_mouse_button_state(MouseButton::Left) {
         InputState::Pressed if pointer.pressed(MouseButton::Left) == Some(entity) => {
-            state.press(font_system, at, shift_held(input), focusing, Instant::now());
+            state.press(font_system, at, shift_held(input), focusing, now);
         }
         InputState::Down if pointer.captured(MouseButton::Left) == Some(entity) => {
             state.drag(font_system, at);
@@ -523,6 +557,10 @@ pub(crate) fn update_text_inputs(
         .filter(|paste| !paste.0.is_empty())
         .map(|paste| single_line(&paste.0))
         .collect();
+    let now = Instant::now();
+    let keystroke = input.just_pressed_keys().next().is_some()
+        || !input.typed_chars().is_empty()
+        || !pastes.is_empty();
     for (entity, mut text_input, mut existing, parts) in fields.iter() {
         if **focused != Some(entity) {
             if let Some(state) = existing.as_mut()
@@ -556,13 +594,27 @@ pub(crate) fn update_text_inputs(
         let focusing = !state.focused;
         if focusing {
             state.focused = true;
+            state.blink_start = now;
             state.select_all();
         }
         if let Some(layout) = layouts.get_entity(label) {
             let at = window.logical_pointer_position(&input) - layout.content_rect.min;
-            apply_pointer(state, font_system, &input, &pointer, entity, at, focusing);
+            apply_pointer(
+                state,
+                font_system,
+                &input,
+                &pointer,
+                entity,
+                at,
+                focusing,
+                now,
+            );
         }
         apply_keys(state, font_system, &input, &mut clipboard, &pastes);
+        if keystroke {
+            state.blink_start = now;
+        }
+        state.editor.shape_as_needed(font_system, false);
 
         let value = state.value();
         let (cursor, selection_anchor) = state.caret();
@@ -616,19 +668,30 @@ fn shown_text(input: &UITextInput) -> &str {
     }
 }
 
-/// Moves each new text field's text onto a label child between a selection quad and a caret quad.
+fn quad_color(color: Color, shown: bool) -> LinearRgba {
+    let mut color = color.to_linear();
+    if !shown {
+        color.a = 0.0;
+    }
+    color
+}
+
+/// Moves each new text field's text onto a label child between a selection quad and a caret quad, both hidden until it has focus.
 pub(crate) fn setup_text_inputs(
     fields: Query<(Entity, &UITextInput, &UIText), (Added<UITextInput>, With<UINode>)>,
+    theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
     for (entity, input, text) in fields.iter() {
         let line_height = UIValue::Px(text.line_height);
-        let quad = |width: f32| {
+        let quad = |width: f32, color: Color| {
+            let mut material = UIMaterial::flat(color);
+            material.color = quad_color(color, false);
             (
                 UINode::default()
                     .with_position(Position::Absolute)
                     .with_size(UIValue::Px(width), line_height),
-                UIMaterial::flat(Color::TRANSPARENT),
+                material,
             )
         };
         let label_text = UIText {
@@ -636,14 +699,14 @@ pub(crate) fn setup_text_inputs(
             ..text.clone()
         };
         let mut field = cmd.entity(entity);
-        let selection = field.spawn_child(quad(0.0)).entity();
+        let selection = field.spawn_child(quad(0.0, theme.text_selection)).entity();
         let label = field
             .spawn_child((
                 UINode::default().with_min_width(UIValue::Px(0.0)),
                 label_text,
             ))
             .entity();
-        let caret = field.spawn_child(quad(1.0)).entity();
+        let caret = field.spawn_child(quad(1.0, theme.caret)).entity();
         field.insert(UITextInputParts {
             selection,
             label,
@@ -653,19 +716,76 @@ pub(crate) fn setup_text_inputs(
     }
 }
 
-/// Shows each text field's value on its label, or its placeholder while the value is empty.
-pub(crate) fn project_text_inputs(
-    fields: Query<(&UITextInput, &UITextInputParts)>,
-    labels: Query<&mut UIText>,
+fn project_quad(
+    quads: &Query<(&mut UINode, &mut UIMaterial)>,
+    quad: Entity,
+    place: Option<(Vec2, f32)>,
+    color: Color,
+    shown: bool,
 ) {
-    for (input, parts) in fields.iter() {
-        let Some(mut text) = labels.get_entity(parts.label) else {
+    let Some((mut node, mut material)) = quads.get_entity(quad) else {
+        return;
+    };
+    let color = quad_color(color, shown);
+    if material.color != color {
+        material.color = color;
+    }
+    let Some((at, width)) = place else {
+        return;
+    };
+    let (left, top, width) = (UIValue::Px(at.x), UIValue::Px(at.y), UIValue::Px(width));
+    if node.inset.left != left || node.inset.top != top || node.width != width {
+        node.inset.left = left;
+        node.inset.top = top;
+        node.width = width;
+    }
+}
+
+/// Shows each text field's value on its label, or its placeholder while the value is empty, and places its caret and selection quads over the label while it has focus, blinking the caret.
+pub(crate) fn project_text_inputs(
+    fields: Query<(
+        &UITextInput,
+        &UITextInputParts,
+        Option<&UITextEditState>,
+        Option<&UILayout>,
+    )>,
+    labels: Query<(&mut UIText, Option<&UILayout>)>,
+    quads: Query<(&mut UINode, &mut UIMaterial)>,
+    theme: Res<UITheme>,
+) {
+    let now = Instant::now();
+    for (input, parts, state, layout) in fields.iter() {
+        let Some((mut text, label)) = labels.get_entity(parts.label) else {
             continue;
         };
         let shown = shown_text(input);
         if text.text != shown {
             text.text = shown.to_owned();
         }
+
+        let offset = layout
+            .zip(label)
+            .map(|(field, label)| label.content_rect.min - field.rect.min);
+        let focused = state.filter(|state| state.focused).zip(offset);
+        let (caret, selection, blink) = match focused {
+            Some((state, offset)) => {
+                let (caret_x, highlight) = state.marks();
+                (
+                    Some((offset + Vec2::new(caret_x, 0.0), 1.0)),
+                    highlight.map(|(x, width)| (offset + Vec2::new(x, 0.0), width)),
+                    caret_shown(state.blink_start, now),
+                )
+            }
+            None => (None, None, false),
+        };
+        project_quad(
+            &quads,
+            parts.selection,
+            selection,
+            theme.text_selection,
+            selection.is_some(),
+        );
+        project_quad(&quads, parts.caret, caret, theme.caret, blink);
     }
 }
 
@@ -713,9 +833,21 @@ mod tests {
             world.insert_resource(UILayoutDiagnostics::default());
             world.insert_resource(UIPanelStack::default());
             world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITheme::nocturne());
+            world.insert_resource(Input::new());
+            world.insert_resource(FocusedWidget::default());
+            world.insert_resource(UIInputState::default());
+            world.insert_resource(WindowClipboard::default());
+            world.insert_resource(EventChannel::<UITextInputChanged>::default());
+            world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
+            world.insert_resource(EventChannel::<UITextInputCancelled>::default());
+            world.insert_resource(EventChannel::<ClipboardPasted>::default());
             install_layout_listeners(&mut world);
             let mut schedule = Schedule::new();
-            schedule.configure_sets((UiSet::Setup, UiSet::Project, UiSet::Layout).chain());
+            schedule.configure_sets(
+                (UiSet::Widgets, UiSet::Setup, UiSet::Project, UiSet::Layout).chain(),
+            );
+            schedule.add_system(update_text_inputs.in_set(UiSet::Widgets));
             schedule.add_system(setup_text_inputs.in_set(UiSet::Setup));
             schedule.add_system(project_text_inputs.in_set(UiSet::Project));
             schedule.add_system(compute_ui_nodes.in_set(UiSet::Layout));
@@ -742,6 +874,48 @@ mod tests {
         fn frame(&mut self) {
             self.schedule.run(&mut self.world);
             self.world.tick();
+            self.world.get_resource_mut::<Input>().unwrap().update();
+        }
+
+        fn frames(&mut self, count: usize) {
+            for _ in 0..count {
+                self.frame();
+            }
+        }
+
+        fn focus(&mut self, field: Option<Entity>) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = field;
+        }
+
+        fn key(&mut self, key: KeyCode) {
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_key_input(PhysicalKey::Code(key), true);
+            self.frame();
+            let input = self.world.get_resource_mut::<Input>().unwrap();
+            input.update_key_input(PhysicalKey::Code(key), false);
+        }
+
+        fn parts(&self, field: Entity) -> (Entity, Entity, Entity) {
+            let children = self.children(field);
+            (children[0], children[1], children[2])
+        }
+
+        fn alpha(&self, quad: Entity) -> f32 {
+            self.get::<UIMaterial>(quad).color.a
+        }
+
+        fn show_the_caret_for(&mut self, field: Entity, since: Duration) {
+            self.world
+                .get_component_for_entity_mut::<UITextEditState>(field)
+                .unwrap()
+                .blink_start = Instant::now() - since;
+        }
+
+        fn layout_passes(&self) -> u64 {
+            self.world
+                .get_resource::<UILayoutDiagnostics>()
+                .unwrap()
+                .layout_passes
         }
 
         fn children(&self, entity: Entity) -> Vec<Entity> {
@@ -863,6 +1037,145 @@ mod tests {
             clip.max().x <= rect.max().x && clip.max().y <= rect.max().y,
             "{clip:?} in {rect:?}"
         );
+    }
+
+    #[test]
+    fn the_caret_and_selection_sit_on_the_glyphs_they_mark() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        fields.spawn(t.text_field("above"));
+        let field = fields.spawn(
+            t.text_field("")
+                .width(UIValue::Px(300.0))
+                .value("hello world"),
+        );
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        {
+            let input = fields
+                .world
+                .get_component_for_entity_mut::<UITextInput>(field)
+                .unwrap();
+            input.cursor = 7;
+            input.selection_anchor = Some(2);
+        }
+        fields.frames(3);
+
+        let (selection, label, caret) = fields.parts(field);
+        let offset =
+            fields.get::<UILayout>(label).content_rect.min - fields.get::<UILayout>(field).rect.min;
+        assert!(offset.x > 0.0 && offset.y > 0.0, "{offset:?}");
+        let (highlight, glyph_x) =
+            fields
+                .get::<UITextEditState>(field)
+                .editor
+                .with_buffer(|buffer| {
+                    let run = buffer.layout_runs().next().unwrap();
+                    let highlight = run.highlight(Cursor::new(0, 2), Cursor::new(0, 7)).unwrap();
+                    let glyph = run.glyphs.iter().find(|glyph| glyph.start == 7).unwrap();
+                    (highlight, glyph.x)
+                });
+
+        let node = fields.get::<UINode>(selection);
+        assert_eq!(node.inset.left, UIValue::Px(offset.x + highlight.0));
+        assert_eq!(node.inset.top, UIValue::Px(offset.y));
+        assert_eq!(node.width, UIValue::Px(highlight.1));
+        let node = fields.get::<UINode>(caret);
+        assert_eq!(node.inset.left, UIValue::Px(offset.x + glyph_x));
+        assert_eq!(node.inset.top, UIValue::Px(offset.y));
+
+        let text_min = fields.get::<UILayout>(label).content_rect.min;
+        let drawn = fields.get::<UILayout>(caret).rect.min;
+        assert_eq!(
+            drawn,
+            Vec2::new((text_min.x + glyph_x).round(), text_min.y),
+            "Taffy rounds the insets to whole logical pixels"
+        );
+        let drawn = fields.get::<UILayout>(selection).rect;
+        assert_eq!(drawn.min.x, (text_min.x + highlight.0).round());
+        assert!((drawn.size.x - highlight.1).abs() <= 1.0, "{drawn:?}");
+
+        assert_eq!(
+            fields.get::<UIMaterial>(selection).color,
+            t.text_selection.to_linear()
+        );
+    }
+
+    #[test]
+    fn the_caret_shows_for_530_ms_then_hides_for_530_ms() {
+        let start = Instant::now();
+        let at = |ms| start + Duration::from_millis(ms);
+        assert!(caret_shown(start, start));
+        assert!(caret_shown(start, at(529)));
+        assert!(!caret_shown(start, at(530)));
+        assert!(!caret_shown(start, at(1059)));
+        assert!(caret_shown(start, at(1060)));
+        assert!(!caret_shown(start, at(1590)));
+    }
+
+    #[test]
+    fn the_caret_blinks_by_alpha_and_a_keystroke_shows_it_again() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("").value("abc"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        let (_, _, caret) = fields.parts(field);
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        assert_eq!(fields.get::<UIMaterial>(caret).color, t.caret.to_linear());
+        let visible = fields.get::<UINode>(caret).visible;
+
+        fields.show_the_caret_for(field, Duration::from_millis(795));
+        fields.frame();
+        assert_eq!(fields.alpha(caret), 0.0);
+        assert_eq!(fields.get::<UINode>(caret).visible, visible);
+
+        fields.key(KeyCode::ArrowLeft);
+        assert_eq!(fields.get::<UIMaterial>(caret).color, t.caret.to_linear());
+    }
+
+    #[test]
+    fn an_idle_focused_field_writes_no_node_and_lays_nothing_out() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("").value("hello"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(4);
+        let passes = fields.layout_passes();
+
+        fields.frames(2);
+        fields.show_the_caret_for(field, Duration::from_millis(795));
+        fields.frame();
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        assert_eq!(fields.layout_passes(), passes);
+    }
+
+    #[test]
+    fn an_unfocused_field_hides_its_caret_and_selection() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("").value("abc"));
+        fields.frames(2);
+        let (selection, _, caret) = fields.parts(field);
+        assert_eq!(fields.alpha(selection), 0.0);
+        assert_eq!(fields.alpha(caret), 0.0);
+
+        fields.focus(Some(field));
+        fields.frames(2);
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        assert!(fields.alpha(selection) > 0.0, "focus selects everything");
+        assert!(fields.alpha(caret) > 0.0);
+
+        fields.focus(None);
+        fields.frame();
+        assert_eq!(fields.alpha(selection), 0.0);
+        assert_eq!(fields.alpha(caret), 0.0);
     }
 
     const COMMAND: KeyCode = KeyCode::ControlLeft;
@@ -1452,6 +1765,27 @@ mod tests {
         let x = editing.x_of(field, 9);
         editing.shift_click(x);
         assert_eq!(editing.caret(field), (9, Some(6)));
+    }
+
+    #[test]
+    fn a_press_restarts_the_blink() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+        let before = Instant::now();
+        editing
+            .world
+            .get_component_for_entity_mut::<UITextEditState>(field)
+            .unwrap()
+            .blink_start = before - Duration::from_secs(2);
+
+        editing.click(5.0);
+        let state = editing
+            .world
+            .get_component_for_entity::<UITextEditState>(field)
+            .unwrap();
+        assert!(state.blink_start >= before);
     }
 
     #[test]
