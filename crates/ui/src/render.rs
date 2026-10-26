@@ -1,19 +1,24 @@
 #![allow(clippy::items_after_test_module, clippy::too_many_arguments)]
 
 use concerto_ecs::{
-    query::Query,
+    Entity, Ref, World,
+    query::{Query, change_detection::DetectChanges},
     resource::{Res, ResMut},
+    system::input::SystemLocal,
+    world::FromWorld,
 };
 use concerto_render::{
     MaterialPipeline, device::RenderDevice, queue::RenderQueue,
     render_asset::render_window::RenderWindow,
 };
 use glyphon::{Resolution, TextArea, TextBounds};
+use std::collections::HashMap;
 use wgpu::MultisampleState;
 
 use crate::{
     material::UIMaterial,
     node::{RenderUIMaterial, RenderUINode, UIQuadIndices},
+    resources::UIRenderDiagnostics,
     text::{
         RenderTextComponent,
         resources::{TextAtlas, TextFontSystem, TextRenderers, TextSwashCache, TextViewport},
@@ -40,6 +45,20 @@ fn node_text_bounds(location: glam::Vec2, size: glam::Vec2) -> TextBounds {
     }
 }
 
+pub(crate) struct PreparedText {
+    resolution: Option<Resolution>,
+    layers: HashMap<i32, Vec<Entity>>,
+}
+
+impl FromWorld for PreparedText {
+    fn from_world(_: &World) -> Self {
+        Self {
+            resolution: None,
+            layers: HashMap::new(),
+        }
+    }
+}
+
 pub(crate) fn prepare_text_renderer(
     mut text_renderers: ResMut<TextRenderers>,
     mut font_system: ResMut<TextFontSystem>,
@@ -48,48 +67,80 @@ pub(crate) fn prepare_text_renderer(
     text_viewport: Res<TextViewport>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
-    text_nodes: Query<&RenderTextComponent>,
+    diagnostics: Res<UIRenderDiagnostics>,
+    text_nodes: Query<(Entity, Ref<RenderTextComponent>)>,
+    mut prepared: SystemLocal<PreparedText>,
 ) {
-    let mut batched = text_nodes.iter().collect::<Vec<_>>();
-    batched.sort_by_key(|render_text| render_text.layer);
+    let resolution = text_viewport.resolution();
+    let resized = prepared.resolution.replace(resolution) != Some(resolution);
 
+    let mut batched = text_nodes.iter().collect::<Vec<_>>();
+    batched.sort_by_key(|(entity, render_text)| {
+        (render_text.layer, entity.index(), entity.generation())
+    });
+
+    let mut previous = std::mem::take(&mut prepared.layers);
     let renderers = &mut *text_renderers;
-    renderers.layers.clear();
-    for group in batched.chunk_by(|a, b| a.layer == b.layer) {
-        let index = renderers.layers.len();
-        if index == renderers.renderers.len() {
-            renderers.renderers.push(glyphon::TextRenderer::new(
-                &mut text_atlas,
-                &device,
-                MultisampleState::default(),
-                None,
-            ));
+    let mut slot = 0;
+    for group in batched.chunk_by(|a, b| a.1.layer == b.1.layer) {
+        let layer = group[0].1.layer;
+        while slot < renderers.layers.len() && renderers.layers[slot] < layer {
+            renderers.layers.remove(slot);
+            let renderer = renderers.renderers.remove(slot);
+            renderers.spare.push(renderer);
         }
-        renderers.renderers[index]
-            .prepare(
-                &device,
-                &queue,
-                &mut font_system,
-                &mut text_atlas,
-                &text_viewport,
-                group.iter().map(|render_text| TextArea {
-                    buffer: &render_text.buffer,
-                    left: render_text.location.x,
-                    top: render_text.location.y,
-                    scale: 1.0,
-                    bounds: TextBounds {
-                        left: render_text.clip_min.x.floor() as i32,
-                        top: render_text.clip_min.y.floor() as i32,
-                        right: render_text.clip_max.x.ceil() as i32,
-                        bottom: render_text.clip_max.y.ceil() as i32,
-                    },
-                    default_color: render_text.color,
-                    custom_glyphs: &[],
-                }),
-                &mut text_swash_cache,
-            )
-            .expect("Failed preparing for rendering text");
-        renderers.layers.push(group[0].layer);
+        if renderers.layers.get(slot) != Some(&layer) {
+            let renderer = renderers.spare.pop().unwrap_or_else(|| {
+                glyphon::TextRenderer::new(
+                    &mut text_atlas,
+                    &device,
+                    MultisampleState::default(),
+                    None,
+                )
+            });
+            renderers.layers.insert(slot, layer);
+            renderers.renderers.insert(slot, renderer);
+        }
+
+        let entities = group.iter().map(|(entity, _)| *entity).collect::<Vec<_>>();
+        let regrouped = previous.remove(&layer).as_ref() != Some(&entities);
+        let changed = group
+            .iter()
+            .any(|(_, render_text)| render_text.is_changed());
+        if resized || regrouped || changed {
+            renderers.renderers[slot]
+                .prepare(
+                    &device,
+                    &queue,
+                    &mut font_system,
+                    &mut text_atlas,
+                    &text_viewport,
+                    group.iter().map(|(_, render_text)| TextArea {
+                        buffer: &render_text.buffer,
+                        left: render_text.location.x,
+                        top: render_text.location.y,
+                        scale: 1.0,
+                        bounds: TextBounds {
+                            left: render_text.clip_min.x.floor() as i32,
+                            top: render_text.clip_min.y.floor() as i32,
+                            right: render_text.clip_max.x.ceil() as i32,
+                            bottom: render_text.clip_max.y.ceil() as i32,
+                        },
+                        default_color: render_text.color,
+                        custom_glyphs: &[],
+                    }),
+                    &mut text_swash_cache,
+                )
+                .expect("Failed preparing for rendering text");
+            diagnostics.record_text_prepare();
+        }
+        prepared.layers.insert(layer, entities);
+        slot += 1;
+    }
+    while slot < renderers.layers.len() {
+        renderers.layers.remove(slot);
+        let renderer = renderers.renderers.remove(slot);
+        renderers.spare.push(renderer);
     }
 }
 

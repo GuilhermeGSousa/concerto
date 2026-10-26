@@ -3360,6 +3360,137 @@ mod tests {
         assert_eq!(binding_rebuilds(&app), rebuilds + 1);
     }
 
+    fn drawn_label(app: &mut concerto_app::App, text: &str, z_index: i32) -> Entity {
+        app.main_mut().world_mut().spawn((
+            UINode::default()
+                .with_size(UIValue::Px(48.0), UIValue::Px(16.0))
+                .with_z_index(z_index),
+            crate::text::UIText {
+                text: text.into(),
+                ..Default::default()
+            },
+        ))
+    }
+
+    fn text_prepares(app: &concerto_app::App) -> u64 {
+        app.get_resource::<UIRenderDiagnostics>()
+            .unwrap()
+            .text_prepares()
+    }
+
+    fn text_layers(app: &concerto_app::App) -> Vec<i32> {
+        app.render()
+            .get_resource::<crate::text::resources::TextRenderers>()
+            .unwrap()
+            .layers
+            .clone()
+    }
+
+    #[test]
+    fn idle_frames_prepare_no_text_layer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        drawn_label(&mut app, "Low", 0);
+        drawn_label(&mut app, "High", 3);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        assert_eq!(text_layers(&app), vec![0, 3]);
+        let prepares = text_prepares(&app);
+
+        app.update();
+        app.update();
+
+        assert_eq!(text_prepares(&app), prepares);
+    }
+
+    #[test]
+    fn changing_one_labels_text_prepares_only_its_layer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        let low = drawn_label(&mut app, "Low", 0);
+        drawn_label(&mut app, "High", 3);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let prepares = text_prepares(&app);
+
+        app.main_mut()
+            .world_mut()
+            .get_component_for_entity_mut::<crate::text::UIText>(low)
+            .unwrap()
+            .text = "Lower".into();
+        app.update();
+
+        assert_eq!(text_prepares(&app), prepares + 1);
+    }
+
+    #[test]
+    fn a_new_text_layer_below_the_others_prepares_only_itself() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        drawn_label(&mut app, "Middle", 2);
+        drawn_label(&mut app, "Top", 4);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let prepares = text_prepares(&app);
+
+        drawn_label(&mut app, "Bottom", 0);
+        app.update();
+        app.update();
+
+        assert_eq!(text_layers(&app), vec![0, 2, 4]);
+        assert_eq!(text_prepares(&app), prepares + 1);
+    }
+
+    #[test]
+    fn a_despawned_label_prepares_its_layer_again() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        drawn_label(&mut app, "Stays", 0);
+        let leaves = drawn_label(&mut app, "Leaves", 0);
+        drawn_label(&mut app, "Above", 5);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let prepares = text_prepares(&app);
+
+        app.main_mut().world_mut().despawn(leaves);
+        app.update();
+        app.update();
+
+        assert_eq!(text_prepares(&app), prepares + 1);
+    }
+
+    #[test]
+    fn a_window_resize_prepares_every_text_layer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = drawing_app(&gpu);
+        drawn_label(&mut app, "Low", 0);
+        drawn_label(&mut app, "High", 3);
+        app.finish_plugin_build();
+        app.update();
+        app.update();
+        let prepares = text_prepares(&app);
+
+        app.insert_resource(Window::new((128, 96), 1.0));
+        app.update();
+        app.update();
+
+        assert_eq!(text_prepares(&app), prepares + 2);
+    }
+
     #[test]
     fn explicit_z_index_dominates_tree_sequence() {
         assert!(paint_order(1, 0) > paint_order(0, i32::MAX as i64));

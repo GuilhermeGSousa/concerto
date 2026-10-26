@@ -10,6 +10,7 @@ pub struct UIRenderDiagnostics {
     geometry_rebuilds: Arc<AtomicU64>,
     text_reshapes: Arc<AtomicU64>,
     binding_rebuilds: Arc<AtomicU64>,
+    text_prepares: Arc<AtomicU64>,
 }
 
 impl UIRenderDiagnostics {
@@ -25,6 +26,10 @@ impl UIRenderDiagnostics {
         self.binding_rebuilds.load(Ordering::Relaxed)
     }
 
+    pub fn text_prepares(&self) -> u64 {
+        self.text_prepares.load(Ordering::Relaxed)
+    }
+
     pub(crate) fn record_geometry_rebuild(&self) {
         self.geometry_rebuilds.fetch_add(1, Ordering::Relaxed);
     }
@@ -35,5 +40,9 @@ impl UIRenderDiagnostics {
 
     pub(crate) fn record_binding_rebuild(&self) {
         self.binding_rebuilds.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub(crate) fn record_text_prepare(&self) {
+        self.text_prepares.fetch_add(1, Ordering::Relaxed);
     }
 }
