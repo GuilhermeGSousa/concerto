@@ -90,8 +90,9 @@ app.register_type::<Door>();
 ```
 
 `bool`, `f32`, `f64`, `Vec3`, `Quat` and asset handles get editors out of the
-box; a field of any other type shows as unsupported until a property editor is
-registered for it. A type that needs its own widget gets a `PropertyEditor`;
+box. A field whose type has no editor shows its own fields when it is a
+reflected struct, and otherwise shows as unsupported until a property editor
+is registered for it. A type that needs its own widget gets a `PropertyEditor`;
 see
 [Custom property editors](../../crates/editor/README.md#custom-property-editors)
 in the editor's README, and `cargo run -p concerto-editor --example custom_property`.

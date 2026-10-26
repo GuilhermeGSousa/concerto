@@ -20,7 +20,8 @@ anything itself. Whoever calls it, the **host**, decides when frames happen:
 - The editor calls `game` for every scene it opens, and again when you press
   Play. The scenes you edit therefore run your own components and systems.
 - `concerto::headless(game)` builds an `App` with a GPU and no window, which is
-  handy in tests.
+  handy in tests. It exists only on native targets and returns `None` when
+  there is no GPU.
 
 Keep the recipe the only place that sets the game up. Code that runs before
 `concerto::run`, in `main`, is invisible to the editor.

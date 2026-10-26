@@ -8,8 +8,8 @@ components; you do not call draw functions.
 
 The renderer reads a copy of the scene kept in the render world (chapter 2).
 An entity gets a copy only if it has `SyncWithRenderWorld`, from
-`concerto::render::components::render_entity`. Entities spawned by an imported
-scene, UI nodes and the live camera already have it. When you spawn a light, a
+`concerto::render::components::render_entity`. UI nodes, the live camera,
+and the mesh and light nodes of an imported scene already have it. When you spawn a light, a
 mesh or a grid in code, add it:
 
 ```rust
