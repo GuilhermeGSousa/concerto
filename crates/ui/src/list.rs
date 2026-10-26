@@ -173,7 +173,7 @@ pub(crate) mod tests {
         material::UIMaterial,
         node::{
             FlexDirection, UICulled, UILayout, UILayoutDiagnostics, UILayoutEngine, UINode,
-            UITextMeasure, compute_ui_nodes,
+            UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         scroll::{
             UIScrollArea, UIScrollBar, UIScrollThumb, setup_scrollbars, sync_scrollbar_thumbs,
@@ -222,6 +222,7 @@ pub(crate) mod tests {
             world.add_listener(set_up_list);
             world.add_listener(set_up_tree);
             install_listeners(&mut world);
+            install_layout_listeners(&mut world);
             let mut schedule = Schedule::new();
             schedule.configure_sets(
                 (

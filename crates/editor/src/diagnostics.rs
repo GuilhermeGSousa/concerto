@@ -76,8 +76,9 @@ fn refresh_panel(
     sampler.frames = 0;
 
     let value = format!(
-        "{fps:.0} fps · {} layouts · {} quads · {} shapes",
+        "{fps:.0} fps · {} layouts · {} nodes · {} quads · {} shapes",
         layout.layout_passes,
+        layout.nodes_updated,
         render.geometry_rebuilds(),
         render.text_reshapes(),
     );

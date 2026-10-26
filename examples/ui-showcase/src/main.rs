@@ -695,14 +695,14 @@ fn update_diagnostics(
     let physical = window.physical_size();
     let logical = window.logical_size();
     let value = format!(
-        "logical {:.0}×{:.0}  physical {}×{}  DPI {:.2}  layout {}  tree {}  quads {}  text {}  bindings {}  hovered {:?}  focused {:?}  captured {:?}  panels {}  top {:?}  side {:?}",
+        "logical {:.0}×{:.0}  physical {}×{}  DPI {:.2}  layout {}  nodes {}  quads {}  text {}  bindings {}  hovered {:?}  focused {:?}  captured {:?}  panels {}  top {:?}  side {:?}",
         logical.x,
         logical.y,
         physical.0,
         physical.1,
         window.scale_factor(),
         diagnostics.layout_passes,
-        diagnostics.tree_rebuilds,
+        diagnostics.nodes_updated,
         render_diagnostics.geometry_rebuilds(),
         render_diagnostics.text_reshapes(),
         render_diagnostics.binding_rebuilds(),

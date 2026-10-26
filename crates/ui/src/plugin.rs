@@ -29,8 +29,8 @@ use crate::{
     material::UIMaterial,
     node::{
         UILayoutDiagnostics, UILayoutEngine, UITextMeasure, compute_ui_nodes,
-        extract_shared_viewports, extract_ui_materials, extract_ui_nodes, sync_material_params,
-        sync_shared_viewport_textures, sync_viewport_textures,
+        extract_shared_viewports, extract_ui_materials, extract_ui_nodes, install_layout_listeners,
+        sync_material_params, sync_shared_viewport_textures, sync_viewport_textures,
     },
     render::{prepare_text_renderer, ui_renderpass, update_text_viewport},
     resources::UIRenderDiagnostics,
@@ -94,6 +94,7 @@ impl Plugin for UIPlugin {
         crate::list::install_listeners(app.main_mut().world_mut());
         crate::tree::install_listeners(app.main_mut().world_mut());
         install_listeners(app.main_mut().world_mut());
+        install_layout_listeners(app.main_mut().world_mut());
         let render_diagnostics = UIRenderDiagnostics::default();
         app.insert_resource(render_diagnostics.clone());
         app.render_mut().insert_resource(render_diagnostics);
