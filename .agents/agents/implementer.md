@@ -13,9 +13,11 @@ change detection, rendering, skinning, animation, or the editor.
 Work in this order:
 
 1. Write the test the task calls for. Run it and watch it fail for the reason
-   you expect.
+   you expect. In a cloud pipeline session, write it without running it.
 2. Write the least code that makes it pass.
-3. Run the done gate from `AGENTS.md`, all six commands.
+3. Run the done gate from `AGENTS.md`, all six commands. In a cloud pipeline
+   session run only `cargo fmt --all -- --check` and report the other five as
+   `not run (CI)`.
 4. Stage the paths you changed by name and commit with an imperative subject
    that says what changed. Never push.
 
@@ -30,6 +32,7 @@ The rules you are most likely to break:
 - No system that takes `&World` or `&mut World`. Use `CommandQueue` or trigger
   a signal.
 - No `git add -A`. The owner may be editing other files while you work.
+- Never open an issue. Report work outside the task under `CONCERNS:`.
 - Re-read a file immediately before you edit it.
 
 Your reply is the report and nothing else:
