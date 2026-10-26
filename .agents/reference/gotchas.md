@@ -43,7 +43,7 @@ fix the entry in the same commit as the change that made it false.
   `Extracted` decline as `Missing`, which logs a warning on every skipped run;
   `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
   flood in the log names the system and the missing type. Use `Option<Res<T>>`
-  where absence is normal.
+  or `Option<ResMut<T>>` where absence is normal.
 - **`Added<T>` and `Changed<T>` read `T`.** A query filtered by them conflicts
   with any system writing `T`, so the two never run in parallel. `With<T>` and
   `Without<T>` read only archetypes and do not conflict.
