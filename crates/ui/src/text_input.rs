@@ -175,6 +175,10 @@ impl UITextEditState {
         let anchor = input
             .selection_anchor
             .map(|anchor| char_floor(&line, anchor));
+        self.set_caret(cursor, anchor);
+    }
+
+    fn set_caret(&mut self, cursor: usize, anchor: Option<usize>) {
         self.editor.set_cursor(Cursor::new(0, cursor));
         self.editor.set_selection(match anchor {
             Some(anchor) if anchor != cursor => Selection::Normal(Cursor::new(0, anchor)),
@@ -201,10 +205,17 @@ impl UITextEditState {
 
     fn caret(&self) -> (usize, Option<usize>) {
         let cursor = self.editor.cursor().index;
-        match self.selection_range() {
-            Some((start, end)) if start.index == cursor => (cursor, Some(end.index)),
-            Some((start, end)) => (end.index, Some(start.index)),
-            None => (cursor, None),
+        let Some((start, end)) = self.selection_range() else {
+            return (cursor, None);
+        };
+        let at_start = match self.editor.selection() {
+            Selection::Word(press) | Selection::Line(press) => cursor < press.index,
+            _ => start.index == cursor,
+        };
+        if at_start {
+            (start.index, Some(end.index))
+        } else {
+            (end.index, Some(start.index))
         }
     }
 
@@ -225,6 +236,8 @@ impl UITextEditState {
 
     fn motion(&mut self, font_system: &mut FontSystem, motion: Motion, extend: bool) {
         self.typing = false;
+        let (cursor, anchor) = self.caret();
+        self.set_caret(cursor, anchor);
         if !extend {
             self.editor.set_selection(Selection::None);
         } else if self.editor.selection() == Selection::None {
@@ -352,7 +365,7 @@ impl UITextEditState {
     }
 
     fn marks(&self) -> (f32, Option<(f32, f32)>) {
-        let cursor = self.editor.cursor().index;
+        let (cursor, _) = self.caret();
         let selection = self.selection_range();
         self.editor.with_buffer(|buffer| {
             let Some(run) = buffer.layout_runs().next() else {
@@ -815,6 +828,7 @@ mod tests {
             UITextMeasure, compute_ui_nodes, install_layout_listeners,
         },
         sets::UiSet,
+        testing::Watch,
         text::fonts::{UIFonts, build_font_system},
         theme::UITheme,
     };
@@ -1146,6 +1160,9 @@ mod tests {
         fields.focus(Some(field));
         fields.frames(4);
         let passes = fields.layout_passes();
+        fn idle() {}
+        let mut nodes = Watch::new::<UINode, _>(&mut fields.world, idle);
+        nodes.run(&mut fields.world);
 
         fields.frames(2);
         fields.show_the_caret_for(field, Duration::from_millis(795));
@@ -1153,6 +1170,31 @@ mod tests {
         fields.show_the_caret_for(field, Duration::ZERO);
         fields.frame();
         assert_eq!(fields.layout_passes(), passes);
+        assert_eq!(nodes.run(&mut fields.world), 0, "no UINode was written");
+    }
+
+    #[test]
+    fn gaining_focus_restarts_the_blink() {
+        let mut editing = Editing::new();
+        let field = editing.field("abc", 0, None);
+        editing.focus(Some(field));
+        editing.frame();
+        editing.focus(None);
+        editing.frame();
+        let before = Instant::now();
+        editing
+            .world
+            .get_component_for_entity_mut::<UITextEditState>(field)
+            .unwrap()
+            .blink_start = before - Duration::from_secs(2);
+
+        editing.focus(Some(field));
+        editing.frame();
+        let state = editing
+            .world
+            .get_component_for_entity::<UITextEditState>(field)
+            .unwrap();
+        assert!(state.blink_start >= before);
     }
 
     #[test]
@@ -1208,6 +1250,7 @@ mod tests {
             world.insert_resource(Input::new());
             world.insert_resource(WindowClipboard::default());
             world.insert_resource(UITextMeasure::new(build_font_system(&UIFonts::default())));
+            world.insert_resource(UITheme::nocturne());
             world.insert_resource(EventChannel::<UITextInputChanged>::default());
             world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
             world.insert_resource(EventChannel::<UITextInputCancelled>::default());
@@ -1220,6 +1263,7 @@ mod tests {
                 Box::new(answer_paste_requests.into_system()),
                 Box::new(update_focus.into_system()),
                 Box::new(update_text_inputs.into_system()),
+                Box::new(project_text_inputs.into_system()),
             ];
             for system in &mut systems {
                 system.initialize(&mut world);
@@ -1314,8 +1358,9 @@ mod tests {
                 },
                 layout(LABEL, Vec2::new(300.0, 18.0)),
             ));
-            let selection = self.world.spawn(UIMaterial::flat(Color::TRANSPARENT));
-            let caret = self.world.spawn(UIMaterial::flat(Color::TRANSPARENT));
+            let quad = || (UINode::default(), UIMaterial::flat(Color::TRANSPARENT));
+            let selection = self.world.spawn(quad());
+            let caret = self.world.spawn(quad());
             let mut input = UITextInput::new("");
             input.value = value.into();
             self.world.spawn((
@@ -1330,7 +1375,7 @@ mod tests {
             ))
         }
 
-        fn x_of(&self, field: Entity, index: usize) -> f32 {
+        fn glyph(&self, field: Entity, index: usize) -> (f32, f32) {
             self.world
                 .get_component_for_entity::<UITextEditState>(field)
                 .expect("the field has been focused")
@@ -1342,8 +1387,46 @@ mod tests {
                         .iter()
                         .find(|glyph| glyph.start == index)
                         .unwrap();
-                    glyph.x + glyph.w * 0.25
+                    (glyph.x, glyph.w)
                 })
+        }
+
+        fn x_of(&self, field: Entity, index: usize) -> f32 {
+            let (x, w) = self.glyph(field, index);
+            x + w * 0.25
+        }
+
+        fn caret_inset(&self, field: Entity) -> UIValue {
+            let parts = self
+                .world
+                .get_component_for_entity::<UITextInputParts>(field)
+                .unwrap();
+            self.world
+                .get_component_for_entity::<UINode>(parts.caret)
+                .unwrap()
+                .inset
+                .left
+        }
+
+        fn caret_inset_at(&self, field: Entity, index: usize) -> UIValue {
+            let label = self
+                .world
+                .get_component_for_entity::<UITextInputParts>(field)
+                .unwrap()
+                .label;
+            let offset = self
+                .world
+                .get_component_for_entity::<UILayout>(label)
+                .unwrap()
+                .content_rect
+                .min
+                - self
+                    .world
+                    .get_component_for_entity::<UILayout>(field)
+                    .unwrap()
+                    .rect
+                    .min;
+            UIValue::Px(offset.x + self.glyph(field, index).0)
         }
 
         fn point(&mut self, x: f32) {
@@ -1867,6 +1950,49 @@ mod tests {
 
         editing.type_text("small");
         assert_eq!(editing.value(field), "hello small world");
+    }
+
+    #[test]
+    fn a_double_press_puts_the_caret_at_the_word_end_and_shift_right_extends_from_it() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+        let x = editing.x_of(field, 7);
+
+        editing.click(x);
+        editing.click(x);
+        assert_eq!(editing.caret(field), (9, Some(6)));
+        assert_eq!(editing.caret_inset(field), editing.caret_inset_at(field, 9));
+
+        editing.keys(&[SHIFT, KeyCode::ArrowRight]);
+        assert_eq!(editing.caret(field), (10, Some(6)));
+        assert_eq!(
+            editing.caret_inset(field),
+            editing.caret_inset_at(field, 10)
+        );
+    }
+
+    #[test]
+    fn a_triple_press_puts_the_caret_at_the_line_end() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        editing.let_the_last_press_age(field);
+        let x = editing.x_of(field, 7);
+
+        editing.click(x);
+        editing.click(x);
+        editing.click(x);
+        assert_eq!(editing.caret(field), (15, Some(0)));
+        let UIValue::Px(last) = editing.caret_inset_at(field, 14) else {
+            unreachable!()
+        };
+        let (_, width) = editing.glyph(field, 14);
+        assert_eq!(editing.caret_inset(field), UIValue::Px(last + width));
+
+        editing.keys(&[SHIFT, KeyCode::ArrowLeft]);
+        assert_eq!(editing.caret(field), (14, Some(0)));
     }
 
     #[test]
