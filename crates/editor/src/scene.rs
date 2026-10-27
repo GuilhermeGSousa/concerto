@@ -99,7 +99,7 @@ fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Sce
     let (header, payload) = read_content_asset(&bytes)?;
     anyhow::ensure!(
         header.asset_id == id,
-        "Asset identity changed; refresh the project catalogue"
+        "Asset identity changed; reopen the project"
     );
     anyhow::ensure!(
         header.kind == Scene::name(),
@@ -1006,6 +1006,7 @@ mod tests {
         save(&mut f, document);
 
         assert!(f.status(document).starts_with("Saved"));
+        assert!(!f.project_root.join("content/.registry.toml").exists());
         let saved = AssetRegistry::from_content_tree(&f.project_root, "", "gasset").unwrap();
         assert!(saved.get(f.scene.id).unwrap().is::<Scene>());
         assert_eq!(

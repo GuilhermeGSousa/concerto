@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, ImportProvenance,
+    read_content_asset, read_content_asset_header, save_content_asset_into, ImportProvenance,
 };
-use concerto_foundation::assets::registry::AssetRegistry;
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
 use concerto_scene::scene::Scene;
@@ -84,32 +84,58 @@ fn writes_content_assets_with_content_path_cross_references() {
 }
 
 #[test]
-fn import_upserts_the_registry_for_every_written_asset() {
+fn an_imports_returned_entries_bring_a_scanned_registry_up_to_date() {
     let project_root =
         std::env::temp_dir().join(format!("import-gltf-registry-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&project_root);
     std::fs::create_dir_all(&project_root).unwrap();
+    save_content_asset_into(
+        &Scene {
+            nodes: Vec::new(),
+            referenced_assets: Vec::new(),
+        },
+        &project_root,
+        "content/authored.gasset",
+        &mut AssetRegistry::new(),
+    )
+    .unwrap();
+    let mut registry =
+        AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("scan");
 
     let written =
         concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("import succeeds");
-
-    let registry =
-        AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("scan");
-    for asset in &written {
-        let id = read_content_asset_header(&project_root.join(&asset.address))
-            .expect("header")
-            .asset_id;
-        assert_eq!(asset.asset_id, id);
-        assert_eq!(
-            registry
-                .get(id)
-                .map(|entry| (entry.address.as_str(), entry.kind.as_str())),
-            Some((asset.address.as_str(), asset.kind.as_str())),
-            "import must write every content asset it reports, with its kind"
-        );
+    for entry in &written {
+        registry.insert(entry.clone());
     }
 
+    assert!(!written.is_empty());
+    for entry in &written {
+        let provenance = entry
+            .provenance
+            .as_ref()
+            .expect("an import records provenance");
+        assert_eq!(provenance.source, "assets/triangle.gltf");
+        assert_eq!(
+            read_content_asset_header(&project_root.join(&entry.address))
+                .unwrap()
+                .provenance
+                .as_ref(),
+            Some(provenance)
+        );
+    }
+    assert!(!project_root.join("content/.registry.toml").exists());
+    let rescanned =
+        AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("rescan");
+    assert_eq!(sorted(&registry), sorted(&rescanned));
+
     std::fs::remove_dir_all(&project_root).ok();
+}
+
+fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
+    let mut entries: Vec<_> = registry.iter().cloned().collect();
+    entries.sort_by(|a, b| a.address.cmp(&b.address));
+    entries
 }
 
 #[test]
@@ -122,12 +148,12 @@ fn re_importing_reuses_the_ids_already_on_disk() {
     let first =
         concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("first import");
-    let ids_before: Vec<AssetId> = first.iter().map(|asset| asset.asset_id).collect();
+    let ids_before: Vec<AssetId> = first.iter().map(|asset| asset.id).collect();
 
     let second =
         concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("second import");
-    let ids_after: Vec<AssetId> = second.iter().map(|asset| asset.asset_id).collect();
+    let ids_after: Vec<AssetId> = second.iter().map(|asset| asset.id).collect();
 
     assert_eq!(
         ids_before, ids_after,

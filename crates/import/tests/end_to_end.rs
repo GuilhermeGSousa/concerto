@@ -106,12 +106,18 @@ fn a_baked_reference_resolves_to_the_minted_id_of_its_target() {
 
     let scene_address = &written
         .iter()
-        .find(|a| a.sub_asset_name == "scene")
+        .find(|a| a.provenance.as_ref().unwrap().sub_asset == "scene")
         .expect("the fixture emits a scene")
         .address;
     let mesh_address = &written
         .iter()
-        .find(|a| a.sub_asset_name.starts_with("mesh/"))
+        .find(|a| {
+            a.provenance
+                .as_ref()
+                .unwrap()
+                .sub_asset
+                .starts_with("mesh/")
+        })
         .expect("the fixture emits a mesh")
         .address;
 

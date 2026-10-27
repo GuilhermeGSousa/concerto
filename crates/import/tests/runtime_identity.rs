@@ -66,7 +66,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
         concerto_import::import_source(&source, &project.0, &Default::default()).unwrap();
     let address = &imported
         .iter()
-        .find(|a| a.sub_asset_name == "mesh/0")
+        .find(|a| a.provenance.as_ref().unwrap().sub_asset == "mesh/0")
         .unwrap()
         .address;
     let id = read_content_asset_header(&project.0.join(address))
