@@ -902,7 +902,7 @@ fn project_quad(
     }
 }
 
-/// Shows each text field's value on its label in the field's text colour, or its placeholder dimmed to half that alpha while the value is empty, and while it has focus scrolls the label in whole pixels to follow the caret once its text overflowed the viewport, placing its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret and hiding it outside the visible text; placement waits for the viewport's first layout, and blur scrolls back to the start.
+/// Shows each text field's value on its label in the field's text colour, or its placeholder dimmed to half that alpha while the value is empty, and while it has focus scrolls the label in whole pixels to follow the caret once its text overflowed the viewport, placing its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret and hiding it outside the visible text only while the text overflowed on the previous frame's layout; placement waits for the viewport's first layout, and blur scrolls back to the start.
 pub(crate) fn project_text_inputs(
     fields: Query<(
         &UITextInput,
