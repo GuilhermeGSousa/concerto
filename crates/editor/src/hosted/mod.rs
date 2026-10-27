@@ -31,6 +31,7 @@ use concerto_scene::scene::Scene;
 
 use crate::project::ProjectState;
 use concerto_window::{
+    clipboard::WindowClipboard,
     events::WindowEvent,
     plugin::{Window, WindowCommand},
 };
@@ -55,6 +56,7 @@ pub struct HostRequest<'a> {
     pub size: (u32, u32),
     pub scale_factor: f64,
     pub role: HostRole,
+    pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 
 /// An `App` held on a document. Dropping the component drops the `App`.
@@ -221,6 +223,11 @@ pub fn begin(
     let built = catch_unwind(AssertUnwindSafe(|| {
         (request.recipe)(&mut app);
         extra(&mut app);
+        if let Some(open) = request.clipboard
+            && let Some(clipboard) = app.get_resource_mut::<WindowClipboard>()
+        {
+            open(clipboard);
+        }
     }));
     let (hosted, failure) = match built {
         Ok(()) => (Some(HostedApp { app, picture }), None),
@@ -501,12 +508,13 @@ mod tests {
     use concerto_app::{edit_time::AtEditTime, schedule_groups::Update};
     use concerto_ecs::{Res, ResMut, Resource, events::event_writer::EventWriter, signal::On};
     use concerto_window::{
+        clipboard::{ClipboardBackend, ClipboardRead, WindowClipboard},
         input::{Input, KeyCode, MouseButton, PhysicalKey},
         plugin::WindowCommand,
     };
     use glam::Vec2;
     use std::sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     };
 
@@ -1544,6 +1552,84 @@ mod tests {
 
         assert!(!game.app.is_editing());
         assert!(edit.app.is_editing());
+    }
+
+    struct Recorder(Arc<Mutex<Vec<String>>>);
+
+    impl ClipboardBackend for Recorder {
+        fn write(&mut self, text: &str) {
+            self.0.lock().unwrap().push(text.to_owned());
+        }
+
+        fn request_read(&mut self) {}
+
+        fn poll_read(&mut self) -> Option<ClipboardRead> {
+            None
+        }
+    }
+
+    fn mark_opened(clipboard: &mut WindowClipboard) {
+        clipboard.write("opened");
+    }
+
+    fn written_while_building(
+        request: HostRequest<'static>,
+        opener: Option<fn(&mut WindowClipboard)>,
+    ) -> Vec<String> {
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&written);
+        let pending = begin(
+            HostRequest {
+                clipboard: opener,
+                ..request
+            },
+            move |app| {
+                let mut clipboard = WindowClipboard::with_backend(Recorder(log));
+                clipboard.write("built");
+                app.insert_resource(clipboard);
+            },
+            |_| {},
+        );
+        assert!(pending.finish_now().is_some());
+        written.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn the_clipboard_opener_is_applied_once_after_the_recipe_for_edit_and_play() {
+        for request in [request(plain_recipe), play_request(plain_recipe)] {
+            assert_eq!(
+                written_while_building(request, Some(mark_opened)),
+                ["built", "opened"]
+            );
+        }
+    }
+
+    #[test]
+    fn without_a_clipboard_opener_the_clipboard_is_untouched() {
+        for request in [request(plain_recipe), play_request(plain_recipe)] {
+            assert_eq!(written_while_building(request, None), ["built"]);
+        }
+    }
+
+    fn windowless_recipe(app: &mut App) {
+        app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
+            .register_plugin(concerto_app::plugins::TimePlugin);
+    }
+
+    #[test]
+    fn a_clipboard_opener_on_an_app_without_a_window_plugin_inserts_no_clipboard() {
+        let pending = begin(
+            HostRequest {
+                clipboard: Some(mark_opened),
+                ..request(windowless_recipe)
+            },
+            |_| {},
+            |_| {},
+        );
+
+        assert_eq!(pending.failure(), None);
+        let hosted = pending.finish_now().unwrap();
+        assert!(hosted.app.get_resource::<WindowClipboard>().is_none());
     }
 
     #[test]

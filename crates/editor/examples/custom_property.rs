@@ -208,6 +208,7 @@ pub fn headless_editor(
             size: (0, 0),
             scale_factor: 1.0,
             role: HostRole::Edit,
+            clipboard: None,
         },
         |app| {
             app.register_plugin(EditToolsPlugin);
