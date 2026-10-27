@@ -1,8 +1,8 @@
 //! Shared persistent asset identity and binary framing, independent of the engine.
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -208,65 +208,95 @@ pub struct ScannedEntry {
     pub provenance: Option<ImportProvenance>,
 }
 
+fn normalise_lexically(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => match out.components().next_back() {
+                Some(Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(Component::RootDir | Component::Prefix(_)) => {}
+                _ => out.push(".."),
+            },
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 /// Lists every `*.<extension>` file under `dir` by its header, addressed relative to `base`.
 pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<Vec<ScannedEntry>> {
-    let dir = match dir.canonicalize() {
-        Ok(dir) => dir,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => {
-            return Err(err).with_context(|| format!("failed to resolve '{}'", dir.display()))
-        }
-    };
-    let base = base
-        .canonicalize()
-        .with_context(|| format!("failed to resolve '{}'", base.display()))?;
+    let base = normalise_lexically(base);
+    let dir = normalise_lexically(dir);
 
     let mut entries = Vec::new();
     let mut index_by_id: HashMap<AssetId, usize> = HashMap::new();
+    let mut visited: HashSet<PathBuf> = HashSet::new();
     let mut stack = vec![dir];
-    while let Some(dir) = stack.pop() {
-        let listing = match std::fs::read_dir(&dir) {
-            Ok(listing) => listing,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => {
-                return Err(err).with_context(|| format!("failed to read '{}'", dir.display()))
-            }
-        };
-        for entry in listing {
-            let path = entry
-                .with_context(|| format!("failed to read an entry of '{}'", dir.display()))?
-                .path();
-            if path.is_dir() {
-                stack.push(path);
+    while let Some(path) = stack.pop() {
+        if path.is_dir() {
+            let canonical = match path.canonicalize() {
+                Ok(canonical) => canonical,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    return Err(err)
+                        .with_context(|| format!("failed to resolve '{}'", path.display()))
+                }
+            };
+            if !visited.insert(canonical) {
                 continue;
             }
-            if path.extension().and_then(|e| e.to_str()) != Some(extension) {
-                continue;
-            }
-
-            let header = read_content_asset_header(&path)?;
-            let address = path
-                .strip_prefix(&base)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .replace('\\', "/");
-
-            if let Some(&previous) = index_by_id.get(&header.asset_id) {
-                let previous: &ScannedEntry = &entries[previous];
-                bail!(
-                    "content tree is malformed: '{}' and '{address}' both carry asset id {}",
-                    previous.address,
-                    header.asset_id.simple_hex()
+            let listing = match std::fs::read_dir(&path) {
+                Ok(listing) => listing,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    return Err(err).with_context(|| format!("failed to read '{}'", path.display()))
+                }
+            };
+            let mut children = Vec::new();
+            for entry in listing {
+                children.push(
+                    entry
+                        .with_context(|| {
+                            format!("failed to read an entry of '{}'", path.display())
+                        })?
+                        .path(),
                 );
             }
-            index_by_id.insert(header.asset_id, entries.len());
-            entries.push(ScannedEntry {
-                id: header.asset_id,
-                address,
-                kind: header.kind,
-                provenance: header.provenance,
-            });
+            children.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+            stack.extend(children.into_iter().rev());
+            continue;
         }
+        if path.extension().and_then(|e| e.to_str()) != Some(extension) {
+            continue;
+        }
+
+        let header = read_content_asset_header(&path)?;
+        let address = path
+            .strip_prefix(&base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+
+        if let Some(&previous) = index_by_id.get(&header.asset_id) {
+            let previous: &ScannedEntry = &entries[previous];
+            bail!(
+                "content tree is malformed: '{}' and '{address}' both carry asset id {}",
+                previous.address,
+                header.asset_id.simple_hex()
+            );
+        }
+        index_by_id.insert(header.asset_id, entries.len());
+        entries.push(ScannedEntry {
+            id: header.asset_id,
+            address,
+            kind: header.kind,
+            provenance: header.provenance,
+        });
     }
 
     Ok(entries)
