@@ -22,7 +22,7 @@ use concerto_foundation::assets::{
 };
 use concerto_render::gpu::Gpu;
 use concerto_scene::scene::Scene;
-use concerto_window::{input::actions::ActionFired, plugin::Window};
+use concerto_window::{clipboard::WindowClipboard, input::actions::ActionFired, plugin::Window};
 
 use crate::{
     asset_editor::{
@@ -93,6 +93,7 @@ pub struct SaveFailed {
 pub struct SceneRecipe {
     pub recipe: fn(&mut App),
     pub gpu: Option<Gpu>,
+    pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 
 #[derive(Component, Default)]
@@ -143,6 +144,7 @@ fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Sce
 /// Opens, hosts, and saves scenes; `recipe` is what each scene's edit `App` is built from.
 pub struct ScenePlugin {
     pub recipe: fn(&mut App),
+    pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 
 impl Plugin for ScenePlugin {
@@ -152,6 +154,7 @@ impl Plugin for ScenePlugin {
         app.insert_resource(SceneRecipe {
             recipe: self.recipe,
             gpu,
+            clipboard: self.clipboard,
         });
         app.register_asset_editor::<Scene>(SceneEditor)
             .expect("ScenePlugin requires the asset-editor registry")
@@ -454,6 +457,7 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
             .get_resource::<Window>()
             .map_or(1.0, Window::scale_factor),
         role: HostRole::Game,
+        clipboard: recipe.clipboard,
     };
     Ok(hosted::begin(
         request,
@@ -672,6 +676,7 @@ pub(crate) fn update_scenes(
                             size: shown.0.map_or((0, 0), |view| view.size),
                             scale_factor: window.scale_factor(),
                             role: HostRole::Edit,
+                            clipboard: recipe.clipboard,
                         };
                         commands.insert(
                             hosted::begin(
@@ -729,7 +734,9 @@ mod tests {
     };
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_ecs::{
-        IntoSystem, System, events::event_channel::EventChannel, world_id::WorldId,
+        IntoSystem, System,
+        events::{event_channel::EventChannel, event_cursor::EventCursor},
+        world_id::WorldId,
     };
     use concerto_foundation::{
         assets::{asset_server::AssetServer, content::write_content_asset},
@@ -740,6 +747,7 @@ mod tests {
         node::UICulled,
         tree::UITreeElement,
     };
+    use concerto_window::clipboard::{ClipboardPasted, answer_paste_requests};
 
     #[derive(Resource)]
     struct RenameTarget(Entity);
@@ -1014,6 +1022,7 @@ mod tests {
             .register_plugin(hosted::HostedPlugin)
             .register_plugin(ScenePlugin {
                 recipe: plain_recipe,
+                clipboard: None,
             });
         let old = hosted_now(plain_recipe, |_| {});
         let before = old.world_for_test().id();
@@ -1875,6 +1884,40 @@ mod tests {
         let mut system = scene_actions.into_system();
         system.initialize(&mut f.world);
         system.run_and_apply((), &mut f.world);
+    }
+
+    fn mark_clipboard(clipboard: &mut WindowClipboard) {
+        clipboard.write("marked");
+    }
+
+    fn pasted(world: &mut World) -> Vec<String> {
+        world
+            .get_resource_mut::<WindowClipboard>()
+            .unwrap()
+            .request_paste();
+        let mut answer = answer_paste_requests.into_system();
+        answer.initialize(world);
+        answer.run_and_apply((), world);
+        world
+            .get_resource::<EventChannel<ClipboardPasted>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .map(|pasted| pasted.0.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_recipes_clipboard_opener_reaches_the_edit_app_and_the_play_app() {
+        let mut f = SceneFixture::new();
+        f.world.get_resource_mut::<SceneRecipe>().unwrap().clipboard = Some(mark_clipboard);
+        let document = f.open();
+
+        assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
+
+        play(&mut f, document);
+        f.frames_until_playing(document);
+        assert!(!f.hosted_is_editing(document));
+        assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
     }
 
     #[test]

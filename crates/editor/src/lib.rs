@@ -71,6 +71,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(hosted::HostedPlugin);
         app.register_plugin(scene::ScenePlugin {
             recipe: self.recipe,
+            clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
         app.add_system(
             concerto_app::schedule_groups::Update,

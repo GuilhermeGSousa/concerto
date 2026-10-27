@@ -101,6 +101,7 @@ pub(crate) fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
         size: (320, 240),
         scale_factor: 1.0,
         role: HostRole::Edit,
+        clipboard: None,
     }
 }
 
@@ -280,6 +281,7 @@ impl SceneFixture {
         world.insert_resource(SceneRecipe {
             recipe: fixture_recipe,
             gpu: None,
+            clipboard: None,
         });
         world.insert_resource(HierarchyState::default());
         world.insert_resource(InspectorData::default());

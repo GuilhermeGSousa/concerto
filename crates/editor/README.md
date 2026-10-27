@@ -384,7 +384,8 @@ inspector change nothing. Once it is ready it takes the scene's place: the
 viewport shows the game, and the hierarchy and inspector act on the running
 game. The scene's own `App` waits, untouched, and is not stepped. If the game
 cannot be built, the tab shows "Could not start the game: <message>" and the
-scene stays as it was.
+scene stays as it was. The game uses the OS clipboard, so copy and paste work
+between it, the editor and other programs.
 
 While playing, the hierarchy lists every top-level entity of the game's world
 with its children nested: the scene's root and whatever the game spawned, such
