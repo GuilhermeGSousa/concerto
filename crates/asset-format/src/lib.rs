@@ -56,7 +56,7 @@ impl AssetId {
 
     /// Inverse of `simple_hex()` — parses an AssetId back from its
     /// 32-lowercase-hex-digit form. Used by `AssetRegistry` to reconstruct
-    /// ids read back from `.registry.toml`.
+    /// ids read back from registry TOML.
     pub fn from_simple_hex(hex: &str) -> Result<Self, uuid::Error> {
         Uuid::parse_str(hex).map(AssetId)
     }
@@ -339,9 +339,7 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
     Ok(entries)
 }
 
-/// `content.toml` at a project root. Only the `import` side reads this —
-/// the runtime gets the extension from the asset path and the root from
-/// `ContentAssetRoot`.
+/// `content.toml` at a project root, read by the import, the editor's scan and `track_assets`, never at runtime.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct ContentConfig {

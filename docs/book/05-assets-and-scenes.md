@@ -12,26 +12,10 @@ assets/hero.glb  ──import──▶  content/hero/scene.gasset
                               content/hero/material_0.gasset
                               content/hero/skeleton_0.gasset
                               content/hero/animation_0.gasset
-                              content/.registry.toml
 assets/hero.glb.import.toml
 ```
 
-Import with **Import…** in the editor, or with the `concerto-import`
-command, run from the directory that owns `content/`. Install it once from the
-Concerto checkout:
-
-```sh
-cargo install --path crates/import
-```
-
-then, in your game's directory:
-
-```sh
-concerto-import assets/hero.glb
-```
-
-Inside the Concerto repository itself, `cargo run -p concerto-import -- <source>`
-does the same.
+Import with **Import…** in the editor. There is no import command line.
 
 A glTF yields meshes, materials, textures, skeletons, animations and one
 scene; an OBJ yields meshes, a material and a scene; an image yields a
@@ -54,6 +38,12 @@ A missing or broken file is a compile error at that line. The path is relative
 to the package. For the macro to see content changes, the game's `build.rs`
 calls `concerto_asset_build::track_assets("content")`; projects made by
 `cargo concerto new` already do.
+
+The same call scans `content/` and writes the asset registry, which maps each
+id to its file. `concerto::content_registry!()` embeds it in the game, and
+`main` passes it to `concerto::run`. No registry file is committed, so moving
+or adding a `.gasset` in a file explorer or through git is picked up at the
+next build.
 
 ## Loading
 
@@ -130,7 +120,7 @@ and entity references as positions in the scene's tree.
 ## More
 
 [docs/asset-importing.md](../asset-importing.md) covers the registry, the
-`.gasset` format, import flags, how the runtime finds files, and writing an
+`.gasset` format, `content.toml`, how the runtime finds files, and writing an
 importer of your own.
 
 Next: [Rendering](06-rendering.md).

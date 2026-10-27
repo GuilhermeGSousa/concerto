@@ -1,4 +1,4 @@
-//! Offline import of source files into persistent UUID-addressed content assets.
+//! The editor's import engine: source files into persistent UUID-addressed content assets.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};

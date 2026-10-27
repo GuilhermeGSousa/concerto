@@ -19,6 +19,9 @@ const REGISTRY_FILE: &str = "concerto_registry.toml";
 /// Re-running this build script recompiles the package and re-expands its asset
 /// macros. This reads no asset payloads and works on stable Rust. Register one
 /// common directory containing all assets referenced by the package's macros.
+/// It also writes the registry of the content tree `content.toml` names through
+/// [`write_registry_into`], which `concerto::content_registry!()` embeds; a
+/// duplicate id or an unreadable header fails the build.
 pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     let manifest = std::env::var_os("CARGO_MANIFEST_DIR")
         .ok_or_else(|| io::Error::other("track_assets must be called from a Cargo build script"))?;

@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 pub use concerto_asset_format::ContentConfig;
 
@@ -26,14 +26,6 @@ pub fn content_address(config: &ContentConfig, source: &Path, sub_name: &str) ->
         .join(format!("{sanitized}.{}", config.extension))
         .to_string_lossy()
         .replace('\\', "/")
-}
-
-/// The project root a config path implies (its containing directory).
-pub fn project_root_of(config_path: &Path) -> PathBuf {
-    config_path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 #[cfg(test)]

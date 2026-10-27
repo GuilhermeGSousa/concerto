@@ -44,7 +44,8 @@ pub enum ContentAssetRoot {
 }
 
 impl ContentAssetRoot {
-    /// Native: an executable-specific content directory when one exists,
+    /// Native: [`content_root_for_exe`] of the running executable, an
+    /// executable-specific content directory when it holds `content/`,
     /// otherwise the directory containing the executable. Cargo workspace
     /// binaries can therefore coexist in one target directory by placing
     /// content under `<exe-dir>/<exe-name>-content/`; packaged applications
