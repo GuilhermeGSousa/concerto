@@ -251,7 +251,7 @@ pub(crate) fn cancel_numeric_fields(
         let Some((slot, mut input)) = fields.get_entity(event.entity) else {
             continue;
         };
-        revert(&slot, &mut input);
+        revert(slot, &mut input);
         if **focused == Some(event.entity) {
             **focused = None;
         }

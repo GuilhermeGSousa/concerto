@@ -199,7 +199,7 @@ pub fn process_editor_commands(
                 {
                     let is_unsaved =
                         !created.contains(entity) && unsaved.get_entity(*entity).is_some();
-                    if is_unsaved && !doc.current.as_ref().is_some_and(|a| a.id == asset.id) {
+                    if is_unsaved && doc.current.as_ref().is_none_or(|a| a.id != asset.id) {
                         stop_game(*entity, &mut commands);
                         guard.hold(
                             crate::guard::GuardedIntent::Editor(AssetEditorCommand::Open(asset)),
@@ -207,7 +207,7 @@ pub fn process_editor_commands(
                         );
                         continue;
                     }
-                    if !doc.pending.as_ref().is_some_and(|a| a.id == asset.id) {
+                    if doc.pending.as_ref().is_none_or(|a| a.id != asset.id) {
                         if doc.current.as_ref().is_some_and(|a| a.id == asset.id) {
                             doc.pending = None;
                             doc.status.clear();
@@ -275,10 +275,10 @@ pub fn process_editor_commands(
         commands.trigger(crate::hosted::SetEditTarget(next_active));
     }
     for (entity, doc) in staged {
-        if created.contains(&entity) {
-            if let Some(editor) = registry.editors.get(doc.asset_type) {
-                editor.build(&mut commands.entity(entity));
-            }
+        if created.contains(&entity)
+            && let Some(editor) = registry.editors.get(doc.asset_type)
+        {
+            editor.build(&mut commands.entity(entity));
         }
         if changed.contains(&entity) {
             commands.insert(doc, entity);
@@ -312,7 +312,7 @@ mod tests {
     ) -> bool {
         world
             .get_component_for_entity_mut::<EditorDocument>(editor)
-            .is_some_and(|mut doc| super::finish_asset_request(&mut doc, asset, result))
+            .is_some_and(|doc| super::finish_asset_request(doc, asset, result))
     }
     use concerto_foundation::assets::AssetId;
 

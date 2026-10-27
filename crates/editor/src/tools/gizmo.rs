@@ -254,11 +254,10 @@ fn update_gizmo(
         .drag
         .as_ref()
         .is_some_and(|drag| !pointer.held || Some(drag.entity) != target)
+        && state.drag.take().is_some_and(|drag| drag.moved)
     {
-        if state.drag.take().is_some_and(|drag| drag.moved) {
-            dirty.0 = true;
-            edited.write(SceneEdited);
-        }
+        dirty.0 = true;
+        edited.write(SceneEdited);
     }
 
     let camera = cameras.iter().next().and_then(|(entity, _, camera)| {
