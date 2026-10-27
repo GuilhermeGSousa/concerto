@@ -50,7 +50,7 @@ impl Plugin for TerminalRendererPlugin {
                 .size()
                 .unwrap();
             TerminalRenderState::new(
-                &*device,
+                device,
                 terminal_size.width as u32,
                 terminal_size.height as u32,
             )

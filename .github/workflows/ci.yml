@@ -123,7 +123,7 @@ jobs:
       - name: Install Dependencies
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
       - name: Run clippy
-        run: cargo clippy -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+        run: cargo clippy --workspace -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
       - name: Run clippy on the Rapier physics backend
         run: cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
         

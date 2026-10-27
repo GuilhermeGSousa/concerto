@@ -94,7 +94,7 @@ fn game(app: &mut App) {
     {
         use concerto::ui::frame_stats_overlay::FrameStatsOverlayPlugin;
 
-        app.register_plugin(DefaultPlugins::default())
+        app.register_plugin(DefaultPlugins)
             .register_plugin(FrameStatsOverlayPlugin)
             .add_system(Startup, spawn_camera_windowed)
             .add_system(Startup, spawn_scene)

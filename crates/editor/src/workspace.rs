@@ -102,26 +102,22 @@ pub(crate) fn sync_workspace(
             set_visible(&nodes, host, active.0 == Some(entity));
         }
     }
-    if hosts_changed || registry.is_changed() {
-        if let Some(base) = bases[1] {
-            if let Some(mut siblings) = parents
-                .get_entity(base)
-                .and_then(|parent| children.get_entity(parent.parent()))
-            {
-                let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
-                siblings.sort_by_key(|entity| {
-                    usize::from(entity != base && !contextual.contains(&entity))
-                });
-            }
-        }
+    if (hosts_changed || registry.is_changed())
+        && let Some(base) = bases[1]
+        && let Some(mut siblings) = parents
+            .get_entity(base)
+            .and_then(|parent| children.get_entity(parent.parent()))
+    {
+        let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
+        siblings.sort_by_key(|entity| usize::from(entity != base && !contextual.contains(&entity)));
     }
 }
 
 fn set_visible(nodes: &Query<&mut UINode>, entity: Entity, visible: bool) {
-    if let Some(mut node) = nodes.get_entity(entity) {
-        if node.visible != visible {
-            node.visible = visible;
-        }
+    if let Some(mut node) = nodes.get_entity(entity)
+        && node.visible != visible
+    {
+        node.visible = visible;
     }
 }
 
