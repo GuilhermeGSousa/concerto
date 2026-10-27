@@ -375,16 +375,14 @@ mod tests {
     #[test]
     fn the_character_waits_for_the_ground_collider() {
         let (mut world, spawn_point) = world_with_spawner();
-        let ground = world
-            .spawn((MeshCollider, MeshComponent::default()))
-            .entity();
+        let ground = world.spawn((MeshCollider, MeshComponent::default()));
 
         let mut system = spawn_character.into_system();
         system.initialize(&mut world);
         system.run_and_apply((), &mut world);
         assert!(characters(&mut world).is_empty());
 
-        world.insert(ground, Collider::capsule(2.0, 1.0));
+        world.insert(Collider::capsule(2.0, 1.0), ground);
         system.run_and_apply((), &mut world);
         assert_eq!(characters(&mut world), vec![spawn_point]);
     }
