@@ -23,6 +23,7 @@ use glyphon::{
     Action, Attrs, Buffer, Cursor, Edit, Editor, FontSystem, LayoutRun, Shaping, Wrap,
     cosmic_text::{Change, Motion, Selection},
 };
+use unicode_segmentation::UnicodeSegmentation;
 
 use crate::{
     focus::FocusedWidget,
@@ -374,6 +375,17 @@ impl UITextEditState {
         self.collapse_empty_selection();
     }
 
+    #[allow(dead_code)]
+    fn glyph_at(&self, at: Vec2) -> Option<usize> {
+        self.editor.with_buffer(|buffer| {
+            let run = buffer.layout_runs().next()?;
+            run.glyphs
+                .iter()
+                .find(|glyph| glyph.x <= at.x && at.x <= glyph.x + glyph.w)
+                .map(|glyph| glyph.start)
+        })
+    }
+
     fn marks(&self) -> (f32, f32, Option<(f32, f32)>) {
         let (cursor, _) = self.caret();
         let selection = self.selection_range();
@@ -396,6 +408,18 @@ impl UITextEditState {
         self.redo.clear();
         self.typing = false;
     }
+}
+
+#[allow(dead_code)]
+fn word_at(line: &str, index: usize) -> (usize, usize) {
+    let mut last = (0, 0);
+    for (start, segment) in line.split_word_bound_indices() {
+        last = (start, start + segment.len());
+        if index < last.1 {
+            return last;
+        }
+    }
+    last
 }
 
 fn count_press(last: Option<Instant>, count: u32, now: Instant) -> u32 {
@@ -2586,6 +2610,40 @@ mod tests {
 
         editing.type_text("x");
         assert_eq!(editing.value(field), "x");
+    }
+
+    #[test]
+    fn word_at_finds_the_segment_under_an_index() {
+        assert_eq!(word_at("hello big world", 0), (0, 5));
+        assert_eq!(word_at("hello big world", 4), (0, 5));
+        assert_eq!(word_at("hello big world", 6), (6, 9));
+        assert_eq!(word_at("hello big world", 8), (6, 9));
+        assert_eq!(word_at("hello big world", 5), (5, 6));
+        assert_eq!(word_at("hello, world", 5), (5, 6));
+        assert_eq!(word_at("is a test", 3), (3, 4));
+        assert_eq!(word_at("hello big world", 15), (10, 15));
+        assert_eq!(word_at("hello big world", 40), (10, 15));
+        assert_eq!(word_at("", 0), (0, 0));
+    }
+
+    #[test]
+    fn glyph_at_tells_the_last_letter_of_a_word_from_the_space_after_it() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        let (o_x, o_w) = editing.glyph(field, 4);
+        let (space_x, space_w) = editing.glyph(field, 5);
+        let state = editing
+            .world
+            .get_component_for_entity::<UITextEditState>(field)
+            .unwrap();
+
+        assert_eq!(state.glyph_at(Vec2::new(o_x + o_w * 0.75, 9.0)), Some(4));
+        assert_eq!(
+            state.glyph_at(Vec2::new(space_x + space_w * 0.25, 9.0)),
+            Some(5)
+        );
+        assert_eq!(state.glyph_at(Vec2::new(-50.0, 9.0)), None);
     }
 
     #[test]
