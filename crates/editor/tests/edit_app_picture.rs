@@ -63,6 +63,7 @@ fn an_edit_app_draws_into_its_picture_and_follows_a_resize() {
             size: (64, 48),
             scale_factor: 1.0,
             role: HostRole::Edit,
+            clipboard: None,
         },
         |app| {
             app.register_plugin(EditToolsPlugin);

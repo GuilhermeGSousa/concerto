@@ -22,7 +22,7 @@ use concerto_foundation::assets::{
 };
 use concerto_render::gpu::Gpu;
 use concerto_scene::scene::Scene;
-use concerto_window::{input::actions::ActionFired, plugin::Window};
+use concerto_window::{clipboard::WindowClipboard, input::actions::ActionFired, plugin::Window};
 
 use crate::{
     asset_editor::{
@@ -60,6 +60,7 @@ impl SceneState {
 pub struct SceneRecipe {
     pub recipe: fn(&mut App),
     pub gpu: Option<Gpu>,
+    pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 
 #[derive(Component, Default)]
@@ -110,6 +111,7 @@ fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Sce
 /// Opens, hosts, and saves scenes; `recipe` is what each scene's edit `App` is built from.
 pub struct ScenePlugin {
     pub recipe: fn(&mut App),
+    pub clipboard: Option<fn(&mut WindowClipboard)>,
 }
 
 impl Plugin for ScenePlugin {
@@ -119,6 +121,7 @@ impl Plugin for ScenePlugin {
         app.insert_resource(SceneRecipe {
             recipe: self.recipe,
             gpu,
+            clipboard: self.clipboard,
         });
         app.register_asset_editor::<Scene>(SceneEditor)
             .expect("ScenePlugin requires the asset-editor registry");
@@ -368,6 +371,7 @@ fn begin_play(world: &World, document: Entity) -> anyhow::Result<PendingApp> {
             .get_resource::<Window>()
             .map_or(1.0, Window::scale_factor),
         role: HostRole::Game,
+        clipboard: recipe.clipboard,
     };
     Ok(hosted::begin(
         request,
@@ -554,6 +558,7 @@ pub(crate) fn update_scenes(
                             size: shown.0.map_or((0, 0), |view| view.size),
                             scale_factor: window.scale_factor(),
                             role: HostRole::Edit,
+                            clipboard: recipe.clipboard,
                         };
                         commands.insert(
                             hosted::begin(
@@ -839,6 +844,7 @@ mod tests {
             .register_plugin(hosted::HostedPlugin)
             .register_plugin(ScenePlugin {
                 recipe: plain_recipe,
+                clipboard: None,
             });
         let old = hosted_now(plain_recipe, |_| {});
         let before = old.world_for_test().id();
