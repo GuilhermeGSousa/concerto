@@ -117,10 +117,10 @@ fn main() {
     }
 
     #[cfg(feature = "terminal")]
-    concerto_terminal_renderer::run(game);
+    concerto_terminal_renderer::run(game, concerto::content_registry!());
 
     #[cfg(not(feature = "terminal"))]
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }
 
 #[cfg(feature = "terminal")]

@@ -1,6 +1,11 @@
-//! Cargo dependency tracking for compile-time `asset_id!` references.
+//! Cargo dependency tracking for compile-time `asset_id!` references, and the registry a game embeds.
 use std::io;
 use std::path::Path;
+
+use anyhow::Context;
+use concerto_asset_format::{scan_content, write_registry, ContentConfig};
+
+const REGISTRY_FILE: &str = "concerto_registry.toml";
 
 /// Register the package's content directory from its `build.rs`:
 ///
@@ -31,5 +36,27 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     }
     println!("cargo:rerun-if-changed={directory}");
     println!("cargo:rustc-env=CONCERTO_ASSET_ROOT={directory}");
+
+    let config = Path::new(&manifest).join("content.toml");
+    if let Some(config) = config.is_file().then(|| config.to_str()).flatten() {
+        println!("cargo:rerun-if-changed={config}");
+    }
+
+    let out_dir = std::env::var_os("OUT_DIR")
+        .ok_or_else(|| io::Error::other("track_assets must be called from a Cargo build script"))?;
+    if let Err(error) = write_registry_into(Path::new(&manifest), Path::new(&out_dir)) {
+        let message = format!("{error:#}");
+        println!("cargo:warning={}", message.replace(['\n', '\r'], " "));
+        return Err(io::Error::other(message));
+    }
     Ok(())
+}
+
+/// Writes the registry of the content tree `<manifest>/content.toml` names to `<out_dir>/concerto_registry.toml`.
+pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()> {
+    let config = ContentConfig::load_or_default(manifest)?;
+    let entries = scan_content(manifest, &manifest.join(&config.root), &config.extension)?;
+    let path = out_dir.join(REGISTRY_FILE);
+    std::fs::write(&path, write_registry(&entries))
+        .with_context(|| format!("failed to write '{}'", path.display()))
 }
