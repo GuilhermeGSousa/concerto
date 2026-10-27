@@ -614,7 +614,9 @@ mod tests {
     };
     use concerto_app::{main_schedule::MainSchedulePlugin, plugins::TimePlugin};
     use concerto_ecs::{
-        IntoSystem, System, events::event_channel::EventChannel, world_id::WorldId,
+        IntoSystem, System,
+        events::{event_channel::EventChannel, event_cursor::EventCursor},
+        world_id::WorldId,
     };
     use concerto_foundation::{
         assets::{asset_server::AssetServer, content::write_content_asset},
@@ -625,6 +627,7 @@ mod tests {
         node::UICulled,
         tree::UITreeElement,
     };
+    use concerto_window::clipboard::{ClipboardPasted, answer_paste_requests};
 
     #[derive(Resource)]
     struct RenameTarget(Entity);
@@ -1691,6 +1694,40 @@ mod tests {
         let mut system = scene_actions.into_system();
         system.initialize(&mut f.world);
         system.run_and_apply((), &mut f.world);
+    }
+
+    fn mark_clipboard(clipboard: &mut WindowClipboard) {
+        clipboard.write("marked");
+    }
+
+    fn pasted(world: &mut World) -> Vec<String> {
+        world
+            .get_resource_mut::<WindowClipboard>()
+            .unwrap()
+            .request_paste();
+        let mut answer = answer_paste_requests.into_system();
+        answer.initialize(world);
+        answer.run_and_apply((), world);
+        world
+            .get_resource::<EventChannel<ClipboardPasted>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .map(|pasted| pasted.0.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_recipes_clipboard_opener_reaches_the_edit_app_and_the_play_app() {
+        let mut f = SceneFixture::new();
+        f.world.get_resource_mut::<SceneRecipe>().unwrap().clipboard = Some(mark_clipboard);
+        let document = f.open();
+
+        assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
+
+        play(&mut f, document);
+        f.frames_until_playing(document);
+        assert!(!f.hosted_is_editing(document));
+        assert_eq!(pasted(f.scene_world_mut(document)), ["marked"]);
     }
 
     #[test]
