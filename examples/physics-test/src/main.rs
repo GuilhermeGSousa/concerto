@@ -45,7 +45,7 @@ const SPHERE_RADIUS: f32 = 1.0;
 struct BallColor(Color);
 
 fn game(app: &mut App) {
-    app.register_plugin(DefaultPlugins::default())
+    app.register_plugin(DefaultPlugins)
         .add_system(Startup, spawn_scene)
         .add_system(Update, click_ball);
 }

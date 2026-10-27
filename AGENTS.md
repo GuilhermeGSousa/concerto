@@ -61,7 +61,7 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo clippy --workspace -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --workspace
 cargo test -p concerto-physics --no-default-features --features force-rapier

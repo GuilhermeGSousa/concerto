@@ -262,7 +262,7 @@ pub(super) fn populate_add_component_menu(
             None => (Vec::new(), 0),
         };
         addable.retain(|(_, name)| name.to_lowercase().contains(&contents.query));
-        addable.sort_by(|(_, a), (_, b)| a.cmp(b));
+        addable.sort_by_key(|(_, a)| *a);
 
         let count = if contents.query.is_empty() {
             String::new()

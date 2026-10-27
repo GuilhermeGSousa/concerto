@@ -21,7 +21,7 @@ mod demo_overlay;
 mod movement_animation;
 
 fn game(app: &mut App) {
-    app.register_plugin(DefaultPlugins::default());
+    app.register_plugin(DefaultPlugins);
     app.register_plugin(DebugGizmosPlugin);
 
     // Startup: camera + light, the animated character, and the debug overlay.
