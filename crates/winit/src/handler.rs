@@ -238,6 +238,9 @@ impl ApplicationHandler for Handler {
                 }
             }
             WinitWindowEvent::RedrawRequested => {
+                if app.plugin_state() == PluginsState::Ready {
+                    app.finish_plugin_build();
+                }
                 let actual = self.handle.inner_size();
                 if let Some(resized) = apply::size_correction(
                     app.get_resource::<Window>(),
@@ -266,26 +269,6 @@ impl ApplicationHandler for Handler {
                 self.start_window_gesture();
             }
             _ => (),
-        }
-    }
-
-    fn new_events(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        cause: winit::event::StartCause,
-    ) {
-        let _ = cause;
-
-        let slot = Rc::clone(&self.app);
-        let mut slot = slot.borrow_mut();
-        let Some(app) = slot.as_mut() else {
-            return;
-        };
-
-        if app.plugin_state() == PluginsState::Ready {
-            app.finish_plugin_build();
-            drop(slot);
-            self.apply_requests(event_loop);
         }
     }
 
