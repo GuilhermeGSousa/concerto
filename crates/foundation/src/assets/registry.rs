@@ -1,17 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::Context;
 use concerto_asset_format::{parse_registry, scan_content, write_registry, ScannedEntry};
 use concerto_ecs::resource::Resource;
 
 use super::content::ImportProvenance;
 use super::{Asset, AssetId};
-
-/// Where `AssetRegistry` lives, relative to the same root content-asset
-/// addresses resolve against (a project root at import/save time, the
-/// runtime `ContentAssetRoot` at load time).
-pub const REGISTRY_FILE_NAME: &str = "content/.registry.toml";
 
 /// One content asset on disk: its id, where it is, and what kind of asset it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,18 +70,6 @@ impl AssetRegistry {
         Self::default()
     }
 
-    /// Loads `<project_root>/content/.registry.toml`, or an empty registry
-    /// if it does not exist yet (a content tree with nothing imported or
-    /// saved into it has no registry file).
-    pub fn load(project_root: &Path) -> anyhow::Result<Self> {
-        let path = project_root.join(REGISTRY_FILE_NAME);
-        match std::fs::read_to_string(&path) {
-            Ok(text) => Self::parse(&text).with_context(|| format!("in '{}'", path.display())),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
-            Err(err) => Err(err).with_context(|| format!("failed to read '{}'", path.display())),
-        }
-    }
-
     pub fn parse(text: &str) -> anyhow::Result<Self> {
         Ok(Self::from_entries(parse_registry(text)?))
     }
@@ -133,16 +115,6 @@ impl AssetRegistry {
             })
             .collect();
         write_registry(&entries)
-    }
-
-    pub fn save(&self, project_root: &Path) -> anyhow::Result<()> {
-        let path = project_root.join(REGISTRY_FILE_NAME);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("failed to create '{}'", parent.display()))?;
-        }
-        std::fs::write(&path, self.to_toml())
-            .with_context(|| format!("failed to write '{}'", path.display()))
     }
 
     pub fn get(&self, id: AssetId) -> Option<&AssetEntry> {

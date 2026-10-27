@@ -99,13 +99,6 @@ impl Plugin for AssetManagerPlugin {
         app.add_system(First, sync_asset_registry.at_edit_time());
     }
 
-    fn ready(&self, app: &App) -> bool {
-        app.get_resource::<AssetServer>()
-            .expect("AssetServer resource missing")
-            .poll_initialize()
-            .unwrap_or_else(|error| panic!("asset manager initialization failed: {error:#}"))
-    }
-
     fn finish(&self, app: &mut App) {
         if app.get_resource::<AssetRegistry>().is_some() {
             return;
@@ -166,29 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn initialization_uses_the_servers_content_root() {
-        let root = temp_root();
-        AssetRegistry::new().save(&root).unwrap();
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.clone()));
-        app.insert_resource(server.clone());
-        wait_for_plugins(&mut app);
-        assert!(server.poll_initialize().unwrap());
-        // Startup can immediately resolve addresses against the initialized registry.
-        app.add_system(
-            crate::schedule_groups::Startup,
-            |server: Res<AssetServer>| {
-                assert!(server.poll_initialize().unwrap());
-            },
-        );
-        app.finish_plugin_build();
-        assert_eq!(app.plugin_state(), PluginsState::Finished);
-        std::fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn the_loaded_registry_becomes_a_resource_once_plugins_finish() {
+    fn the_published_registry_becomes_a_resource_once_plugins_finish() {
         let root = temp_root();
         let entry = AssetEntry {
             id: AssetId::new(),
@@ -198,12 +169,11 @@ mod tests {
         };
         let mut registry = AssetRegistry::new();
         registry.insert(entry.clone());
-        registry.save(&root).unwrap();
         let mut app = App::new();
         app.register_plugin(AssetManagerPlugin);
-        app.insert_resource(AssetServer::with_content_root(ContentAssetRoot::Directory(
-            root.clone(),
-        )));
+        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.clone()));
+        server.publish_registry(registry);
+        app.insert_resource(server);
         wait_for_plugins(&mut app);
         app.finish_plugin_build();
 
@@ -215,7 +185,6 @@ mod tests {
     #[test]
     fn a_registry_the_host_supplied_is_kept_when_plugins_finish() {
         let root = temp_root();
-        AssetRegistry::new().save(&root).unwrap();
         let supplied = AssetEntry {
             id: AssetId::new(),
             address: "content/supplied.gasset".into(),
@@ -327,25 +296,5 @@ mod tests {
             app.get_resource::<AssetRegistry>().unwrap().get(entry.id),
             Some(&entry)
         );
-    }
-
-    #[test]
-    fn malformed_registry_stops_plugin_initialization_with_an_error() {
-        let root = temp_root();
-        std::fs::write(root.join("content/.registry.toml"), "broken = [").unwrap();
-        let mut app = App::new();
-        app.register_plugin(AssetManagerPlugin);
-        app.insert_resource(AssetServer::with_content_root(ContentAssetRoot::Directory(
-            root.clone(),
-        )));
-        let result =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wait_for_plugins(&mut app)));
-        let panic = result.expect_err("invalid registry should fail instead of polling forever");
-        let message = panic.downcast_ref::<String>().unwrap();
-        assert!(
-            message.contains("asset manager initialization failed"),
-            "{message}"
-        );
-        std::fs::remove_dir_all(root).unwrap();
     }
 }

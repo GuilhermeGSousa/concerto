@@ -7,6 +7,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     content::read_content_asset_header,
     handle::AssetHandle,
+    registry::AssetRegistry,
     AssetId, ContentAssetRoot,
 };
 use concerto_mesh::mesh::Mesh;
@@ -23,7 +24,9 @@ fn runtime(root: &Project) -> (AssetServer, World) {
     let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.0.clone()));
     let store = AssetStore::<Mesh>::new();
     server.register_asset(&store);
-    pollster::block_on(server.initialize()).expect("initialize registry");
+    server.publish_registry(
+        AssetRegistry::from_content_tree(&root.0, "content", "gasset").expect("scan"),
+    );
     let mut world = World::new();
     world.insert_resource(store);
     world.insert_resource(server.clone());

@@ -6,7 +6,7 @@ use concerto_ecs::component::Component;
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, ImportProvenance,
 };
-use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::assets::{Asset, AssetId};
 use concerto_mesh::mesh::MeshComponent;
 use concerto_scene::scene::Scene;
@@ -93,21 +93,19 @@ fn import_upserts_the_registry_for_every_written_asset() {
         concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
             .expect("import succeeds");
 
-    let registry = AssetRegistry::load(&project_root).expect("registry loads");
+    let registry =
+        AssetRegistry::from_content_tree(&project_root, "content", "gasset").expect("scan");
     for asset in &written {
         let id = read_content_asset_header(&project_root.join(&asset.address))
             .expect("header")
             .asset_id;
         assert_eq!(asset.asset_id, id);
         assert_eq!(
-            registry.get(id),
-            Some(&AssetEntry {
-                id,
-                address: asset.address.clone(),
-                kind: asset.kind.clone(),
-                provenance: None,
-            }),
-            "import must register every content asset it writes, with its kind"
+            registry
+                .get(id)
+                .map(|entry| (entry.address.as_str(), entry.kind.as_str())),
+            Some((asset.address.as_str(), asset.kind.as_str())),
+            "import must write every content asset it reports, with its kind"
         );
     }
 
@@ -135,48 +133,6 @@ fn re_importing_reuses_the_ids_already_on_disk() {
         ids_before, ids_after,
         "a re-import must keep every id, or every baked cross-reference breaks"
     );
-
-    std::fs::remove_dir_all(&project_root).ok();
-}
-
-#[test]
-fn import_writes_a_registry_rebuilt_from_the_tree() {
-    let project_root =
-        std::env::temp_dir().join(format!("import-gltf-rebuild-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&project_root);
-    std::fs::create_dir_all(&project_root).unwrap();
-
-    // A stale entry that no file backs. A merge would keep it; a rebuild
-    // from the tree must drop it.
-    let mut stale = AssetRegistry::new();
-    stale.insert(AssetEntry {
-        id: AssetId::new(),
-        address: "content/gone/removed.gasset".into(),
-        kind: "Mesh".into(),
-        provenance: None,
-    });
-    stale.save(&project_root).unwrap();
-
-    let written =
-        concerto_import::import_source(&fixture(&project_root), &project_root, &Default::default())
-            .expect("import");
-
-    let registry = AssetRegistry::load(&project_root).expect("registry loads");
-    assert_eq!(
-        registry.iter().count(),
-        written.len(),
-        "the registry is exactly the tree, with no stale entries left over"
-    );
-    for asset in &written {
-        let id = read_content_asset_header(&project_root.join(&asset.address))
-            .unwrap()
-            .asset_id;
-        assert_eq!(
-            registry.get(id).map(|entry| entry.address.as_str()),
-            Some(asset.address.as_str())
-        );
-        assert_eq!(registry.id_for_address(&asset.address), Some(id));
-    }
 
     std::fs::remove_dir_all(&project_root).ok();
 }

@@ -616,8 +616,8 @@ mod tests {
     }
 
     #[test]
-    fn an_import_records_its_asset_ids_in_the_registry_file() {
-        use concerto_foundation::assets::registry::{AssetRegistry, REGISTRY_FILE_NAME};
+    fn an_import_records_its_asset_ids_in_the_content_tree() {
+        use concerto_foundation::assets::registry::AssetRegistry;
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
         let imported = import_source_into(
@@ -626,8 +626,9 @@ mod tests {
             project.path(),
         )
         .expect("import");
-        assert!(project.path().join(REGISTRY_FILE_NAME).is_file());
-        let registry = AssetRegistry::load(project.path()).expect("registry");
+        assert!(!project.path().join("content/.registry.toml").exists());
+        let registry =
+            AssetRegistry::from_content_tree(project.path(), "content", "gasset").expect("scan");
         assert!(!imported.assets.is_empty());
         for asset in &imported.assets {
             let entry = registry.get(asset.asset_id).expect("registered");

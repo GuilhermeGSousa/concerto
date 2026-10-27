@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub use concerto_foundation_macros::Asset;
 
@@ -56,20 +56,23 @@ impl ContentAssetRoot {
                 ContentAssetRoot::UrlBase(web_content_base())
             } else {
                 let root = std::env::current_exe()
-                    .ok()
-                    .and_then(|exe| {
-                        let exe_dir = exe.parent()?.to_path_buf();
-                        let isolated_root = exe.file_stem()
-                            .map(|name| exe_dir.join(format!("{}-content", name.to_string_lossy())));
-                        Some(isolated_root
-                            .filter(|root| root.join(registry::REGISTRY_FILE_NAME).is_file())
-                            .unwrap_or(exe_dir))
-                    })
-                    .unwrap_or_else(|| PathBuf::from("."));
+                    .map(|exe| content_root_for_exe(&exe))
+                    .unwrap_or_else(|_| PathBuf::from("."));
                 ContentAssetRoot::Directory(root)
             }
         }
     }
+}
+
+/// The native content root for the executable at `exe`: `<exe-dir>/<exe>-content/` when it holds a `content/` directory, otherwise `<exe-dir>`.
+pub fn content_root_for_exe(exe: &Path) -> PathBuf {
+    let Some(exe_dir) = exe.parent() else {
+        return PathBuf::from(".");
+    };
+    exe.file_stem()
+        .map(|name| exe_dir.join(format!("{}-content", name.to_string_lossy())))
+        .filter(|root| root.join("content").is_dir())
+        .unwrap_or_else(|| exe_dir.to_path_buf())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -130,7 +133,20 @@ pub trait LoadableAsset: Asset {
 
 #[cfg(test)]
 mod content_root_tests {
-    use super::directory_of;
+    use super::{content_root_for_exe, directory_of, AssetId};
+
+    #[test]
+    fn content_root_for_exe_picks_the_isolated_directory_by_its_content_folder() {
+        let dir =
+            std::env::temp_dir().join(format!("content-root-{}", AssetId::new().simple_hex()));
+        let exe = dir.join("game");
+        std::fs::create_dir_all(dir.join("game-content")).unwrap();
+        assert_eq!(content_root_for_exe(&exe), dir);
+
+        std::fs::create_dir_all(dir.join("game-content/content")).unwrap();
+        assert_eq!(content_root_for_exe(&exe), dir.join("game-content"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn directory_of_strips_the_page_and_query() {

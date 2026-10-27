@@ -257,7 +257,6 @@ fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Re
         .context("The editor has no asset registry")?;
     let address = source.address;
     let id = save_content_asset_into(scene, &root, &address, registry)?;
-    registry.save(&root)?;
     let saved = registry
         .get(id)
         .cloned()
@@ -1007,7 +1006,7 @@ mod tests {
         save(&mut f, document);
 
         assert!(f.status(document).starts_with("Saved"));
-        let saved = AssetRegistry::load(&f.project_root).unwrap();
+        let saved = AssetRegistry::from_content_tree(&f.project_root, "", "gasset").unwrap();
         assert!(saved.get(f.scene.id).unwrap().is::<Scene>());
         assert_eq!(
             f.world
@@ -1312,7 +1311,7 @@ mod tests {
         assert_eq!(registry.iter().count(), 2);
         assert_eq!(registry.get(f.scene.id), Some(&saved));
         assert_eq!(
-            AssetRegistry::load(&f.project_root)
+            AssetRegistry::from_content_tree(&f.project_root, "", "gasset")
                 .unwrap()
                 .get(f.scene.id)
                 .map(|entry| entry.address.clone()),

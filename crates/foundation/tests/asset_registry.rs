@@ -1,7 +1,7 @@
-//! `AssetRegistry` load/save/get/insert/remove/iter, and `save_content_asset`
-//! upserting it.
+//! `AssetRegistry` get/insert/remove/iter and scanning, and `save_content_asset_into`
+//! minting and reusing ids.
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, save_content_asset, write_content_asset,
+    read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
     ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
@@ -47,62 +47,6 @@ fn insert_get_remove_round_trip_in_memory() {
     assert_eq!(registry.id_for_address("content/hero/scene.gasset"), None);
 }
 
-#[test]
-fn save_then_load_round_trips_every_entry() {
-    let dir = temp_root("save-load");
-    let mut registry = AssetRegistry::new();
-    let a = AssetId::from_path("content/a.gasset");
-    let b = AssetId::from_path("content/b.gasset");
-    registry.insert(entry(a, "content/a.gasset", "Mesh"));
-    registry.insert(AssetEntry {
-        provenance: Some(ImportProvenance {
-            source: "assets/b.glb".into(),
-            sub_asset: "b".into(),
-        }),
-        ..entry(b, "content/b.gasset", "Scene")
-    });
-    registry.save(&dir).expect("save");
-
-    let loaded = AssetRegistry::load(&dir).expect("load");
-    assert_eq!(loaded.get(a), Some(&entry(a, "content/a.gasset", "Mesh")));
-    assert_eq!(
-        loaded.get(b),
-        Some(&entry(b, "content/b.gasset", "Scene")),
-        "provenance is read from headers, not stored in the registry file"
-    );
-    assert_eq!(loaded.iter().count(), 2);
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn loading_a_registry_that_was_never_saved_is_empty_not_an_error() {
-    let dir = temp_root("never-saved");
-    let registry = AssetRegistry::load(&dir).expect("an absent registry file is not an error");
-    assert_eq!(registry.iter().count(), 0);
-    std::fs::remove_dir_all(&dir).ok();
-}
-
-#[test]
-fn registry_file_lands_under_content_and_is_keyed_by_simple_hex() {
-    let dir = temp_root("on-disk-shape");
-    let mut registry = AssetRegistry::new();
-    let id = AssetId::from_path("content/hero/scene.gasset");
-    registry.insert(entry(id, "content/hero/scene.gasset", "Scene"));
-    registry.save(&dir).expect("save");
-
-    let text = std::fs::read_to_string(dir.join("content/.registry.toml")).expect("file exists");
-    assert_eq!(
-        text,
-        format!(
-            "[assets]\n{} = {{ address = \"content/hero/scene.gasset\", kind = \"Scene\" }}\n",
-            id.simple_hex()
-        )
-    );
-
-    std::fs::remove_dir_all(&dir).ok();
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 struct Thing;
 
@@ -110,31 +54,6 @@ impl Asset for Thing {
     fn name() -> &'static str {
         "Thing"
     }
-}
-
-#[test]
-fn save_content_asset_upserts_the_registry() {
-    let dir = temp_root("save-upserts");
-    let address = "content/things/one.gasset";
-
-    save_content_asset(&Thing, &dir, address).expect("save");
-
-    let raw = std::fs::read(dir.join(address)).unwrap();
-    let (header, _) = read_content_asset(&raw).expect("readable");
-
-    let registry = AssetRegistry::load(&dir).expect("load");
-    assert_eq!(
-        registry.get(header.asset_id),
-        Some(&entry(header.asset_id, address, "Thing")),
-        "save_content_asset must register the asset it just wrote, with its kind"
-    );
-
-    assert_eq!(
-        header.provenance, None,
-        "an editor save is not import-derived"
-    );
-
-    std::fs::remove_dir_all(&dir).ok();
 }
 
 #[test]
@@ -314,11 +233,12 @@ fn from_content_tree_of_an_absent_tree_is_empty() {
 }
 
 #[test]
-fn save_content_asset_mints_an_id_not_derived_from_the_address() {
+fn save_content_asset_into_mints_an_id_not_derived_from_the_address() {
     let dir = temp_root("save-mints");
     let address = "content/things/one.gasset";
+    let mut registry = AssetRegistry::new();
 
-    save_content_asset(&Thing, &dir, address).expect("save");
+    save_content_asset_into(&Thing, &dir, address, &mut registry).expect("save");
 
     let raw = std::fs::read(dir.join(address)).unwrap();
     let (header, _) = read_content_asset(&raw).expect("readable");
@@ -328,7 +248,7 @@ fn save_content_asset_mints_an_id_not_derived_from_the_address() {
         "identity must be minted, not derived from where the file happens to sit"
     );
     assert_eq!(
-        address_of(&AssetRegistry::load(&dir).unwrap(), header.asset_id),
+        address_of(&registry, header.asset_id),
         Some(address),
         "the registry points at the minted id"
     );
@@ -341,12 +261,13 @@ fn saving_over_an_existing_asset_reuses_its_id() {
     let dir = temp_root("save-reuses");
     let address = "content/things/two.gasset";
 
-    save_content_asset(&Thing, &dir, address).expect("first save");
+    let mut registry = AssetRegistry::new();
+    save_content_asset_into(&Thing, &dir, address, &mut registry).expect("first save");
     let first = read_content_asset_header(&dir.join(address))
         .unwrap()
         .asset_id;
 
-    save_content_asset(&Thing, &dir, address).expect("second save");
+    save_content_asset_into(&Thing, &dir, address, &mut registry).expect("second save");
     let second = read_content_asset_header(&dir.join(address))
         .unwrap()
         .asset_id;

@@ -115,7 +115,7 @@ fn reimport_updates_a_moved_output_in_place_and_preserves_its_uuid() {
     let scene: Scene = bincode::deserialize(payload).unwrap();
     assert_eq!(scene.nodes[0].name, "Updated triangle");
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(id)
             .map(|entry| entry.address.as_str()),
@@ -134,9 +134,13 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     let (imported, payload) = read_content_asset(&raw).unwrap();
     let mut scene: Scene = bincode::deserialize(payload).unwrap();
     scene.nodes[0].name = "Edited in the editor".into();
-    let mut registry = AssetRegistry::load(&project.0).unwrap();
-    save_content_asset_into(&scene, &project.0, &scene_address, &mut registry).unwrap();
-    registry.save(&project.0).unwrap();
+    save_content_asset_into(
+        &scene,
+        &project.0,
+        &scene_address,
+        &mut AssetRegistry::new(),
+    )
+    .unwrap();
     let saved = std::fs::read(&scene_path).unwrap();
     let other = first
         .iter()
@@ -155,7 +159,7 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     assert_eq!(second.len(), first.len() - 1);
     assert!(second.iter().all(|asset| asset.sub_asset_name != "scene"));
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(imported.asset_id)
             .map(|entry| entry.address.as_str()),
@@ -250,7 +254,10 @@ fn same_stem_sources_in_different_directories_have_independent_outputs() {
         );
     }
     assert_eq!(
-        AssetRegistry::load(&project.0).unwrap().iter().count(),
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
+            .unwrap()
+            .iter()
+            .count(),
         first.len() + second.len()
     );
 }
@@ -344,7 +351,7 @@ fn legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address() {
         legacy_id
     );
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(legacy_id)
             .map(|entry| entry.address.as_str()),
@@ -396,7 +403,7 @@ fn external_legacy_source_bootstraps_without_changing_its_identity() {
     assert_eq!(read_content_asset_header(&path).unwrap().asset_id, id);
     assert!(sidecar(&source).is_file());
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(id)
             .map(|entry| entry.address.as_str()),

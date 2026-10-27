@@ -10,7 +10,7 @@ use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, ContentAssetHeader, ImportProvenance,
     CONTENT_FORMAT_VERSION,
 };
-use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, REGISTRY_FILE_NAME};
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
 
 pub mod config;
@@ -337,9 +337,6 @@ fn import_placed(
         .iter()
         .map(|(path, bytes)| stage(path, bytes).map(|file| (path, file)))
         .collect::<anyhow::Result<_>>()?;
-    let registry_text = registry.to_toml();
-    let registry_path = project_root.join(REGISTRY_FILE_NAME);
-    let registry_file = stage(&registry_path, registry_text.as_bytes())?;
     for (path, file) in copied {
         replace(file, path)?;
     }
@@ -347,7 +344,6 @@ fn import_placed(
     for (path, file) in staged {
         replace(file, path)?;
     }
-    replace(registry_file, &registry_path)?;
     let siblings = copies
         .iter()
         .skip(1)
