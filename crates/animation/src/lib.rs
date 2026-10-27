@@ -340,7 +340,7 @@ mod tests {
             instance.update(&fsm, FRAME, &context);
         };
 
-        let sample_x = |instance: &Box<dyn AnimationNodeInstance>| -> f32 {
+        let sample_x = |instance: &dyn AnimationNodeInstance| -> f32 {
             let context = AnimationGraphContext {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
@@ -354,7 +354,7 @@ mod tests {
 
         // One frame into the 0.1s fade: a genuine blend between the two poses, not a hard cut.
         step(&mut instance);
-        let mid = sample_x(&instance);
+        let mid = sample_x(&*instance);
         assert!(
             mid > 0.0 && mid < 10.0,
             "expected a cross-fade, got x={mid}"
@@ -364,7 +364,7 @@ mod tests {
         for _ in 0..30 {
             step(&mut instance);
         }
-        let settled = sample_x(&instance);
+        let settled = sample_x(&*instance);
         assert!(
             (settled - 10.0).abs() < 1e-4,
             "expected to settle on the target pose, got x={settled}"

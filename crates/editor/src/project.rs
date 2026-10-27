@@ -261,11 +261,13 @@ mod tests {
         let id = write_assets(dir.path());
         let mut world = World::new();
         world.insert_resource(EditorCommands::default());
-        let mut state = ProjectState::default();
-        state.project = Some(Project {
-            root: dir.path().canonicalize().unwrap(),
-            content_root: "content".into(),
-        });
+        let state = ProjectState {
+            project: Some(Project {
+                root: dir.path().canonicalize().unwrap(),
+                content_root: "content".into(),
+            }),
+            ..Default::default()
+        };
         world.insert_resource(state);
         world.insert_resource(AssetRegistry::default());
         world.insert_resource(crate::asset_editor::AssetEditorCommands::default());

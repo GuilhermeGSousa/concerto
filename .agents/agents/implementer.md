@@ -15,7 +15,7 @@ Work in this order:
 1. Write the test the task calls for. Run it and watch it fail for the reason
    you expect. In a cloud pipeline session, write it without running it.
 2. Write the least code that makes it pass.
-3. Run the done gate from `AGENTS.md`, all six commands. In a cloud pipeline
+3. Run the done gate from `AGENTS.md`, every command. In a cloud pipeline
    session run only `cargo fmt --all -- --check` and report the other five as
    `not run (CI)`.
 4. Stage the paths you changed by name and commit with an imperative subject
@@ -39,7 +39,7 @@ Your reply is the report and nothing else:
 
 - `STATUS:` one of `DONE`, `BLOCKED`, `DONE WITH CONCERNS`.
 - `COMMIT:` the hash and subject, or `none`.
-- `GATE:` each of the six commands with `pass`, `fail`, or `not run`. Paste the
+- `GATE:` each command with `pass`, `fail`, or `not run`. Paste the
   failing output for any failure.
 - `CHANGED:` the files, one line each on what changed.
 - `NOT VERIFIED:` anything that needs eyes on the running program, since you

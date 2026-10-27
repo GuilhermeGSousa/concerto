@@ -131,7 +131,7 @@ owner next comments or reviews.
 
 - Cloud: `cargo fmt --all -- --check` when Rust changed. Clippy, tests and the
   wasm build are CI's.
-- Local: the done gate from `AGENTS.md`, all six commands, and
+- Local: the done gate from `AGENTS.md`, every command, and
   `visual-verification` where `AGENTS.md` asks for a look at the running
   program.
 
