@@ -131,6 +131,7 @@ fix the entry in the same commit as the change that made it false.
   Write `UITextInput::value`; the label follows it. The label's colour follows
   too: the field's text colour, captured at setup, or half its alpha while the
   placeholder shows, so a colour written on the label directly is overwritten.
+  The label carries 1 px (`CARET`) of right padding.
 
 ## Scenes and assets
 
