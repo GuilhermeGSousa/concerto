@@ -35,6 +35,7 @@ mod numeric;
 mod registry;
 mod rows;
 mod sync;
+mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
 pub(crate) use add_component::MENU_FILL;
@@ -48,6 +49,7 @@ use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
 use numeric::{cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields};
+use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
 use registry::send_property_commits;
@@ -71,7 +73,14 @@ pub struct InspectorData {
 const PROPERTY_LABEL_WIDTH: f32 = 72.0;
 
 fn label_for(path: &PropertyPath) -> String {
-    let mut chars = path.name().chars();
+    let name = path
+        .segments()
+        .iter()
+        .rev()
+        .find(|segment| segment.parse::<usize>().is_err())
+        .copied()
+        .unwrap_or(path.name());
+    let mut chars = name.chars();
     chars
         .next()
         .map(|first| first.to_uppercase().chain(chars).collect())
@@ -117,6 +126,8 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)
             .add_system(LateUpdate, refresh_bool_fields)
+            .add_system(LateUpdate, refresh_variant_labels)
+            .add_system(LateUpdate, refresh_option_fields)
             .add_system(LateUpdate, sync_inspector_scroll);
     }
 }
@@ -127,6 +138,7 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(name_field::forget_scene);
     world.add_listener(add_component::forget_scene);
     world.add_listener(component_menu::forget_scene);
+    world.add_listener(variants::forget_scene);
 }
 
 fn forget_scene(

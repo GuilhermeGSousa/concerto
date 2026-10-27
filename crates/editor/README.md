@@ -321,6 +321,23 @@ the widget registry and sends it to the scene, where the tools write the value.
 world's `AssetServer` and `AssetRegistry`, which `AssetManagerPlugin` provides.
 A scene `App` without either refuses every edit with `EditError::MissingAssets`.
 
+### Enums and options
+
+A reflected enum is edited with nothing registered on the editor's `App`.
+`#[derive(Reflect)]` on an enum registers its variant names as
+`ReflectEnumInfo`, and the row shows a button naming the active variant that
+opens a menu of all of them, the active one selected. Picking another switches
+to it, built from defaults;
+picking the active variant changes nothing and leaves the scene saved. An
+`Option<T>` field is a checkbox instead: checking it sets `Some(T::default())`
+and unchecking it sets `None`. The active variant's fields, or the value's when
+an `Option` is `Some`, follow as rows of their own, so a switch that changes
+them rebuilds the card. A row under a tuple field such as `Some`'s `0` takes
+the label of the nearest named field above it, so `CameraEnvironment.ambient`
+shows an "Ambient" checkbox followed by an "Ambient" value row. An editor
+registered for the exact enum or `Option` type with `register_property_editor`
+still takes precedence, and its fields are not shown.
+
 ### Asset handles
 
 `AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
