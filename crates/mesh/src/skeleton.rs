@@ -22,6 +22,7 @@ impl From<Vec<Mat4>> for Skeleton {
 
 impl LoadableAsset for Skeleton {}
 
+/// Runtime data built by the importer; scene-only, so the inspector does not edit it.
 #[derive(Component, Clone, Reflect, Default)]
 #[reflect(SceneComponent)]
 pub struct SkeletonComponent {
