@@ -158,8 +158,11 @@ impl InspectorRegistry {
         let (editor_type, adapter): (TypeId, Arc<dyn ErasedEditor>) =
             if types.get_type_data::<ReflectOption>(id).is_some() {
                 (TypeId::of::<OptionToggle>(), Arc::new(OptionToggle))
-            } else if types.get_type_data::<ReflectEnumInfo>(id).is_some() {
-                (TypeId::of::<VariantPicker>(), Arc::new(VariantPicker))
+            } else if let Some(info) = types.get_type_data::<ReflectEnumInfo>(id) {
+                (
+                    TypeId::of::<VariantPicker>(),
+                    Arc::new(VariantPicker::new(info.variants)),
+                )
             } else {
                 return None;
             };
