@@ -23,13 +23,17 @@ use concerto_ecs::{
     world::UnsafeWorldCell,
 };
 use concerto_foundation::assets::handle::ReflectAssetHandle;
-use concerto_reflect::{PropertyPath, PropertyVisitor, Reflect, ReflectDefault, TypeRegistry};
+use concerto_reflect::{
+    PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectOption,
+    TypeRegistry,
+};
 use concerto_ui::theme::UITheme;
 
 use super::rows::{
     EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyRowValue,
 };
+use super::variants::{OptionToggle, VariantPicker};
 use crate::asset_picker::AssetPicker;
 use crate::hosted::{EditWorld, EditWorldSignals};
 use crate::tools::edits::CommitProperty;
@@ -99,6 +103,7 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
 pub(crate) struct RegisteredEditor {
     pub editor_type: TypeId,
     pub adapter: Arc<dyn ErasedEditor>,
+    pub walks_children: bool,
 }
 
 /// Typed property editors available to the inspector.
@@ -128,11 +133,12 @@ impl InspectorRegistry {
                     editor: E::default(),
                     marker: PhantomData,
                 }),
+                walks_children: false,
             },
         );
     }
 
-    /// The editor registered for `id`, or else the asset picker if `types` describes `id` as an asset handle.
+    /// The editor registered for `id`, or else the one its type data in `types` calls for: the asset picker, an option toggle or a variant picker.
     pub(crate) fn editor(
         &self,
         id: TypeId,
@@ -141,14 +147,30 @@ impl InspectorRegistry {
         if let Some(editor) = self.editors.get(&id) {
             return Some(editor.clone());
         }
-        let handle = types?.get_type_data::<ReflectAssetHandle>(id)?;
+        let types = types?;
+        if let Some(handle) = types.get_type_data::<ReflectAssetHandle>(id) {
+            return Some(RegisteredEditor {
+                editor_type: TypeId::of::<AssetPicker>(),
+                adapter: Arc::new(AssetPicker::new(*handle)),
+                walks_children: false,
+            });
+        }
+        let (editor_type, adapter): (TypeId, Arc<dyn ErasedEditor>) =
+            if types.get_type_data::<ReflectOption>(id).is_some() {
+                (TypeId::of::<OptionToggle>(), Arc::new(OptionToggle))
+            } else if types.get_type_data::<ReflectEnumInfo>(id).is_some() {
+                (TypeId::of::<VariantPicker>(), Arc::new(VariantPicker))
+            } else {
+                return None;
+            };
         Some(RegisteredEditor {
-            editor_type: TypeId::of::<AssetPicker>(),
-            adapter: Arc::new(AssetPicker::new(*handle)),
+            editor_type,
+            adapter,
+            walks_children: true,
         })
     }
 
-    /// Collect fresh owned snapshots, preferring an editor for each node over its children.
+    /// Collect fresh owned snapshots, preferring an editor for each node over its children unless that editor walks them.
     pub fn collect(&self, root: &dyn Reflect, types: &TypeRegistry) -> Vec<Property> {
         let mut collector = Collect {
             registry: self,
@@ -208,6 +230,9 @@ impl Collect<'_> {
                     registry_tick: Tick::default(),
                 }),
                 Err(error) => log::warn!("Unable to snapshot {:?}: {error}", self.path),
+            }
+            if editor.walks_children {
+                value.visit(self);
             }
             return;
         }
@@ -784,6 +809,168 @@ mod tests {
         assert_eq!(
             numeric(&registry, despawned, 1.0).apply(&mut scene),
             Err(EditError::MissingTarget)
+        );
+    }
+
+    #[derive(concerto_reflect::Reflect, Default)]
+    enum Shape {
+        #[default]
+        Dot,
+        Circle(f32),
+        Square {
+            side: f32,
+            round: bool,
+        },
+    }
+
+    #[derive(concerto_reflect::Reflect, Default)]
+    enum Maybe {
+        #[default]
+        None,
+        Some(f32),
+    }
+
+    #[derive(concerto_reflect::Reflect, Default)]
+    struct Fog {
+        density: f32,
+    }
+
+    #[derive(concerto_reflect::Reflect, Default)]
+    struct Holder {
+        shape: Shape,
+        fog: Option<Fog>,
+    }
+
+    fn types() -> TypeRegistry {
+        let mut types = TypeRegistry::default();
+        types.register::<Holder>();
+        types.register::<Maybe>();
+        types
+    }
+
+    fn chosen<T: 'static>(registry: &InspectorRegistry) -> Option<(TypeId, bool)> {
+        registry
+            .editor(TypeId::of::<T>(), Some(&types()))
+            .map(|editor| (editor.editor_type, editor.walks_children))
+    }
+
+    fn collected(
+        registry: &InspectorRegistry,
+        holder: &Holder,
+    ) -> Vec<(Vec<&'static str>, TypeId)> {
+        registry
+            .collect(holder, &types())
+            .into_iter()
+            .map(|property| {
+                (
+                    property.path.segments().to_vec(),
+                    property.editor_type.expect("every row has an editor"),
+                )
+            })
+            .collect()
+    }
+
+    fn picker() -> TypeId {
+        TypeId::of::<VariantPicker>()
+    }
+
+    fn toggle() -> TypeId {
+        TypeId::of::<OptionToggle>()
+    }
+
+    fn of<T: 'static>() -> TypeId {
+        InspectorRegistry::default()
+            .editor(TypeId::of::<T>(), None)
+            .unwrap()
+            .editor_type
+    }
+
+    #[test]
+    fn enums_and_options_choose_a_walking_editor_from_their_type_alone() {
+        let registry = InspectorRegistry::default();
+        assert_eq!(chosen::<Option<Fog>>(&registry), Some((toggle(), true)));
+        assert_eq!(chosen::<Shape>(&registry), Some((picker(), true)));
+        assert_eq!(chosen::<Maybe>(&registry), Some((picker(), true)));
+        assert_eq!(chosen::<f32>(&registry), Some((of::<f32>(), false)));
+    }
+
+    #[test]
+    fn a_unit_variant_and_none_yield_only_their_own_rows() {
+        let rows = collected(&InspectorRegistry::default(), &Holder::default());
+        assert_eq!(rows, [(vec!["shape"], picker()), (vec!["fog"], toggle())]);
+    }
+
+    #[test]
+    fn the_active_variants_fields_follow_its_picker_row() {
+        let registry = InspectorRegistry::default();
+        let square = Holder {
+            shape: Shape::Square {
+                side: 2.0,
+                round: true,
+            },
+            ..Default::default()
+        };
+        assert_eq!(
+            collected(&registry, &square),
+            [
+                (vec!["shape"], picker()),
+                (vec!["shape", "side"], of::<f32>()),
+                (vec!["shape", "round"], of::<bool>()),
+                (vec!["fog"], toggle()),
+            ]
+        );
+        let circle = Holder {
+            shape: Shape::Circle(1.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            collected(&registry, &circle)[..2],
+            [(vec!["shape"], picker()), (vec!["shape", "0"], of::<f32>())]
+        );
+    }
+
+    #[test]
+    fn some_is_followed_by_the_values_rows() {
+        let holder = Holder {
+            fog: Some(Fog { density: 0.5 }),
+            ..Default::default()
+        };
+        assert_eq!(
+            collected(&InspectorRegistry::default(), &holder),
+            [
+                (vec!["shape"], picker()),
+                (vec!["fog"], toggle()),
+                (vec!["fog", "0", "density"], of::<f32>()),
+            ]
+        );
+    }
+
+    #[derive(Default)]
+    struct Whole;
+
+    impl<T: Reflect> PropertyEditor<T> for Whole {
+        type Snapshot = ();
+        type Edit = ();
+        fn snapshot(&self, _: &T) {}
+        fn build(&self, _: &mut concerto_ecs::command::EntityCommandQueue, _: &(), _: &UITheme) {}
+        fn apply(&self, _: &mut T, _: &(), _: &EditContext) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_editor_registered_for_the_exact_type_wins_and_hides_the_fields() {
+        let mut registry = InspectorRegistry::default();
+        registry.register_property_editor::<Shape, Whole>();
+        registry.register_property_editor::<Option<Fog>, Whole>();
+        let holder = Holder {
+            shape: Shape::Circle(1.0),
+            fog: Some(Fog::default()),
+        };
+        let whole = TypeId::of::<Whole>();
+        assert_eq!(
+            collected(&registry, &holder),
+            [(vec!["shape"], whole), (vec!["fog"], whole)]
         );
     }
 

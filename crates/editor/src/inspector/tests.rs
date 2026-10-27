@@ -536,6 +536,16 @@ fn labels_capitalise_the_field_name() {
 }
 
 #[test]
+fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
+    assert_eq!(label_for(&PropertyPath::new(["ambient", "0"])), "Ambient");
+    assert_eq!(label_for(&PropertyPath::new(["pair", "0", "1"])), "Pair");
+    assert_eq!(
+        label_for(&PropertyPath::new(["fog", "0", "density"])),
+        "Density"
+    );
+}
+
+#[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
     use concerto_reflect::{
         Fields, FromType, PropertyVisitor, PropertyVisitorMut, Reflect, ReflectMut, ReflectRef,

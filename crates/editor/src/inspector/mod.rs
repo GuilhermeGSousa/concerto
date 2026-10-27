@@ -35,6 +35,7 @@ mod numeric;
 mod registry;
 mod rows;
 mod sync;
+mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
 pub(crate) use add_component::MENU_FILL;
@@ -71,7 +72,14 @@ pub struct InspectorData {
 const PROPERTY_LABEL_WIDTH: f32 = 72.0;
 
 fn label_for(path: &PropertyPath) -> String {
-    let mut chars = path.name().chars();
+    let name = path
+        .segments()
+        .iter()
+        .rev()
+        .find(|segment| segment.parse::<usize>().is_err())
+        .copied()
+        .unwrap_or(path.name());
+    let mut chars = name.chars();
     chars
         .next()
         .map(|first| first.to_uppercase().chain(chars).collect())
