@@ -141,9 +141,12 @@ impl AssetRegistry {
         self.iter().filter(move |entry| entry.kind == kind)
     }
 
-    /// Adds `entry`, replacing any entry with the same id.
+    /// Adds `entry`, replacing any entry with the same id or at the same address.
     pub fn insert(&mut self, entry: AssetEntry) {
         self.remove(entry.id);
+        if let Some(held) = self.id_for_address(&entry.address) {
+            self.remove(held);
+        }
         let at = self
             .order
             .partition_point(|id| self.entries[id].sort_key() < entry.sort_key());

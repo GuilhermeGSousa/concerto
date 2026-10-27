@@ -350,6 +350,27 @@ fn inserting_an_existing_id_moves_it_and_frees_its_old_address() {
 }
 
 #[test]
+fn inserting_a_new_id_at_a_held_address_replaces_the_entry_there() {
+    let mut registry = AssetRegistry::new();
+    let old = AssetId::new();
+    let new = AssetId::new();
+    let other = AssetId::new();
+    registry.insert(entry(old, "content/a.gasset", "Mesh"));
+    registry.insert(entry(other, "content/b.gasset", "Mesh"));
+    registry.insert(entry(new, "content/a.gasset", "Mesh"));
+
+    assert_eq!(registry.get(old), None);
+    assert_eq!(registry.id_for_address("content/a.gasset"), Some(new));
+    let order: Vec<_> = registry.iter().map(|entry| entry.id).collect();
+    assert_eq!(order, [new, other]);
+
+    registry.remove(new);
+    assert_eq!(registry.id_for_address("content/a.gasset"), None);
+    let order: Vec<_> = registry.iter().map(|entry| entry.id).collect();
+    assert_eq!(order, [other]);
+}
+
+#[test]
 fn an_entry_names_itself_and_its_folder_from_its_address() {
     let nested = entry(AssetId::new(), "content/hero/body.mesh.gasset", "Mesh");
     assert_eq!(nested.name(), "body.mesh");
