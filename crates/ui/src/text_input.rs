@@ -2989,7 +2989,8 @@ mod tests {
         assert_eq!(editing.caret(field), (15, Some(0)));
         editing.let_the_last_press_age(field);
         editing.shift_click(editing.x_of(field, 1));
-        assert_eq!(editing.caret(field), (1, Some(0)));
+        assert_eq!(editing.word(field), None);
+        assert_eq!(editing.caret(field), (0, Some(15)));
     }
 
     #[test]
