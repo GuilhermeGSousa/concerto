@@ -318,7 +318,7 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
         let record = match record {
             StoredRecord::Record(record) => record,
             StoredRecord::Legacy(address) => bail!(
-                "asset registry predates asset kinds ('{address}' has none); rebuild it by importing a source or saving any asset from the editor"
+                "asset registry predates asset kinds ('{address}' has none); rebuild the game so its build script writes a new one"
             ),
         };
         if let Some(existing) = id_by_address.insert(record.address.clone(), id) {

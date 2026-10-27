@@ -16,7 +16,7 @@ pub struct AssetEntry {
     /// The `Asset::name()` of the type stored in the file.
     pub kind: String,
     /// Where an imported asset came from; `None` for an authored asset, and for
-    /// every entry read from the registry file rather than from content headers.
+    /// every entry parsed from registry text rather than from content headers.
     pub provenance: Option<ImportProvenance>,
 }
 
@@ -102,7 +102,7 @@ impl AssetRegistry {
         registry
     }
 
-    /// The registry file's text: one `id = { address, kind }` line per asset, ordered by id.
+    /// The registry's text: one `id = { address, kind }` line per asset, ordered by id.
     pub fn to_toml(&self) -> String {
         let entries: Vec<ScannedEntry> = self
             .entries
