@@ -127,6 +127,8 @@ pub(crate) struct UITextEditState {
     pointer: Option<PointerPress>,
     scroll: f32,
     follow: bool,
+    #[allow(dead_code)]
+    word: Option<(usize, usize)>,
 }
 
 impl UITextEditState {
@@ -147,6 +149,7 @@ impl UITextEditState {
             pointer: None,
             scroll: 0.0,
             follow: false,
+            word: None,
         };
         state.load(font_system, input);
         state
@@ -217,7 +220,7 @@ impl UITextEditState {
             return (cursor, None);
         };
         let at_start = match self.editor.selection() {
-            Selection::Word(press) | Selection::Line(press) => cursor < press.index,
+            Selection::Line(press) => cursor < press.index,
             _ => start.index == cursor,
         };
         if at_start {
@@ -343,13 +346,17 @@ impl UITextEditState {
         }
         self.follow = true;
         let (x, y) = self.hit_point(at);
+        self.editor.shape_as_needed(font_system, false);
+        if count == 2 {
+            self.select_word_at(at);
+            self.collapse_empty_selection();
+            return;
+        }
         let action = match count {
             1 if extend => Action::Drag { x, y },
             1 => Action::Click { x, y },
-            2 => Action::DoubleClick { x, y },
             _ => Action::TripleClick { x, y },
         };
-        self.editor.shape_as_needed(font_system, false);
         self.editor.action(font_system, action);
         self.collapse_empty_selection();
     }
@@ -375,7 +382,17 @@ impl UITextEditState {
         self.collapse_empty_selection();
     }
 
-    #[allow(dead_code)]
+    fn select_word_at(&mut self, at: Vec2) {
+        let Some(index) = self.glyph_at(at) else {
+            return;
+        };
+        let (start, end) = word_at(&self.line_text(), index);
+        self.word = Some((start, end));
+        self.editor.set_cursor(Cursor::new(0, end));
+        self.editor
+            .set_selection(Selection::Normal(Cursor::new(0, start)));
+    }
+
     fn glyph_at(&self, at: Vec2) -> Option<usize> {
         self.editor.with_buffer(|buffer| {
             let run = buffer.layout_runs().next()?;
@@ -410,7 +427,6 @@ impl UITextEditState {
     }
 }
 
-#[allow(dead_code)]
 fn word_at(line: &str, index: usize) -> (usize, usize) {
     let mut last = (0, 0);
     for (start, segment) in line.split_word_bound_indices() {
@@ -2778,6 +2794,46 @@ mod tests {
 
         editing.type_text("small");
         assert_eq!(editing.value(field), "hello small world");
+    }
+
+    #[test]
+    fn a_double_press_at_a_word_edge_selects_only_that_word() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.click(0.0);
+        let cases = [
+            (6, 0.1, (6, 9)),
+            (4, 0.9, (0, 5)),
+            (5, 0.1, (5, 6)),
+            (5, 0.9, (5, 6)),
+            (0, 0.1, (0, 5)),
+            (14, 0.9, (10, 15)),
+        ];
+        for (index, along, expected) in cases {
+            let (glyph_x, glyph_w) = editing.glyph(field, index);
+            let x = glyph_x + glyph_w * along;
+            editing.let_the_last_press_age(field);
+            editing.click(x);
+            editing.click(x);
+            assert_eq!(editing.selection(field), Some(expected), "{index} {along}");
+            editing.let_the_last_press_age(field);
+        }
+    }
+
+    #[test]
+    fn a_double_press_on_a_one_letter_word_selects_it_alone() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("is a test");
+        editing.click(0.0);
+        for along in [0.1, 0.9] {
+            let (glyph_x, glyph_w) = editing.glyph(field, 3);
+            let x = glyph_x + glyph_w * along;
+            editing.let_the_last_press_age(field);
+            editing.click(x);
+            editing.click(x);
+            assert_eq!(editing.selection(field), Some((3, 4)), "{along}");
+            assert_eq!(editing.caret(field), (4, Some(3)));
+        }
     }
 
     #[test]
