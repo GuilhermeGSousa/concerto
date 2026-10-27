@@ -1439,9 +1439,9 @@ mod tests {
         let unculled = harness.unculled(&top);
         assert_eq!(unculled, (43..50).collect::<Vec<_>>());
         let content = harness.layout(tree).content_rect;
-        for index in 45..50 {
-            let rect = harness.layout(top[index]).rect;
-            assert!(harness.layout(top[index]).is_shown());
+        for &row in &top[45..50] {
+            let rect = harness.layout(row).rect;
+            assert!(harness.layout(row).is_shown());
             assert!(rect.min.y >= content.min.y, "{rect:?} in {content:?}");
             assert!(
                 rect.min.y + rect.size.y <= content.min.y + content.size.y,
