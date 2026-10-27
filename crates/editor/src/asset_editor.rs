@@ -312,7 +312,7 @@ mod tests {
     ) -> bool {
         world
             .get_component_for_entity_mut::<EditorDocument>(editor)
-            .is_some_and(|mut doc| super::finish_asset_request(&mut doc, asset, result))
+            .is_some_and(|doc| super::finish_asset_request(doc, asset, result))
     }
     use concerto_foundation::assets::AssetId;
 

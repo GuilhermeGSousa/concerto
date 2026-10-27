@@ -19,12 +19,11 @@ use glam::{Quat, Vec3};
 #[cfg(feature = "terminal")]
 use concerto_app::schedule_groups::LateRender;
 #[cfg(feature = "terminal")]
-use concerto_ecs::{resource::ResMut, IntoSystemConfig};
+use concerto_ecs::resource::ResMut;
 #[cfg(feature = "terminal")]
 use concerto_render::{
     assets::texture::Texture,
     components::camera::{Camera, RenderTarget},
-    wgpu,
 };
 #[cfg(feature = "terminal")]
 use concerto_terminal_renderer::{
@@ -81,7 +80,7 @@ struct Projectile(Vec3);
 fn game(app: &mut App) {
     #[cfg(feature = "terminal")]
     {
-        app.register_plugin(DefaultPlugins::default())
+        app.register_plugin(DefaultPlugins)
             .register_plugin(TerminalRendererPlugin)
             .add_system(Startup, spawn_camera_terminal)
             .add_system(Startup, spawn_scene)
@@ -316,10 +315,10 @@ fn move_camera(
             transform.rotation = Quat::from_rotation_y(-rot_speed) * transform.rotation;
         }
         if input.is_key_active(KeyCode::Up) {
-            transform.rotation = transform.rotation * Quat::from_rotation_x(-rot_speed);
+            transform.rotation *= Quat::from_rotation_x(-rot_speed);
         }
         if input.is_key_active(KeyCode::Down) {
-            transform.rotation = transform.rotation * Quat::from_rotation_x(rot_speed);
+            transform.rotation *= Quat::from_rotation_x(rot_speed);
         }
     }
 }
