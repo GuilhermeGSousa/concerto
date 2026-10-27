@@ -415,6 +415,7 @@ impl UITextEditState {
     }
 
     fn select_word_at(&mut self, at: Vec2) {
+        self.word = None;
         let Some(index) = self.glyph_at(at) else {
             return;
         };
@@ -2882,6 +2883,22 @@ mod tests {
             assert_eq!(editing.selection(field), Some((3, 4)), "{along}");
             assert_eq!(editing.caret(field), (4, Some(3)));
         }
+    }
+
+    #[test]
+    fn a_double_press_past_the_text_changes_nothing_and_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.let_the_last_press_age(field);
+        editing.shift_click(editing.x_of(field, 13));
+        assert!(editing.word(field).is_some());
+        let before = editing.caret(field);
+
+        let (last_x, last_w) = editing.glyph(field, 14);
+        editing.click(last_x + last_w + 20.0);
+        assert_eq!(editing.word(field), None);
+        assert_eq!(editing.caret(field), before);
     }
 
     #[test]
