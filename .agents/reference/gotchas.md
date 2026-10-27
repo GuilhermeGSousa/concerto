@@ -128,7 +128,9 @@ fix the entry in the same commit as the change that made it false.
   children: a viewport, which clips to the field's content box and holds the
   selection quad and then the label, and the caret quad. Its `UIText` moves to
   the label, so a query for `UIText` on the field entity no longer matches it.
-  Write `UITextInput::value`; the label follows it.
+  Write `UITextInput::value`; the label follows it. The label's colour follows
+  too: the field's text colour, captured at setup, or half its alpha while the
+  placeholder shows, so a colour written on the label directly is overwritten.
 
 ## Scenes and assets
 
