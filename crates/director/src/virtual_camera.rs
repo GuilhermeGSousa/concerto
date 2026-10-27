@@ -97,6 +97,7 @@ impl VirtualCamera {
         self.priority
     }
 
+    /// Whether this camera is eligible for control.
     pub fn is_enabled(&self) -> bool {
         self.enabled
     }

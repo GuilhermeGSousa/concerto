@@ -105,9 +105,6 @@ impl CameraDirector {
         self.hand_over_from(outgoing);
     }
 
-    /// Brings a camera's entry in line with its component: inserts it when
-    /// missing, re-slots it when the priority differs, flips the flag in place
-    /// when only `enabled` differs, and does nothing when both match.
     pub(crate) fn stack_sync(&mut self, camera: Entity, priority: i32, enabled: bool) {
         let Some(entry) = self.entry(camera) else {
             self.stack_insert(camera, priority, enabled);
@@ -195,10 +192,6 @@ impl CameraDirector {
 }
 
 /// Re-syncs the stack from every [`VirtualCamera`] whose component changed.
-///
-/// An edit through reflection fires no lifecycle signal, so this is the only
-/// thing that sees a new `priority` or `enabled`. A change with no difference
-/// leaves the stack alone.
 pub fn sync_virtual_cameras(
     mut director: ResMut<CameraDirector>,
     vcams: Query<(Entity, &VirtualCamera), Changed<VirtualCamera>>,
@@ -636,27 +629,33 @@ mod tests {
     }
 
     #[test]
-    fn editing_the_lens_moves_the_main_camera() {
+    fn editing_priority_and_enabled_together_takes_control() {
         let mut fixture = Fixture::new();
-        let vcam = fixture.spawn_vcam(VirtualCamera::default(), Vec3::ZERO);
-        fixture.step();
+        let base = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let shot = fixture.spawn_vcam(VirtualCamera::new(5).disabled(), Vec3::Y * 5.0);
+        assert_eq!(fixture.step(), Vec3::X);
 
-        fixture.edit_vcam(
-            vcam,
-            &VirtualCamera::default().with_lens(Lens {
-                fovy: 1.0,
-                znear: 0.5,
-                zfar: 500.0,
-            }),
-        );
-        fixture.step();
+        fixture.edit_vcam(shot, &VirtualCamera::new(20));
 
-        let camera = fixture
-            .world
-            .get_component_for_entity::<Camera>(fixture.main_camera)
-            .unwrap();
-        assert_eq!(camera.fovy, 1.0);
-        assert_eq!(camera.zfar, 500.0);
+        assert_eq!(fixture.step(), Vec3::Y * 5.0);
+        assert_eq!(fixture.director().live(), Some(shot));
+        assert_eq!(fixture.stacked_cameras(), vec![base, shot]);
+    }
+
+    #[test]
+    fn editing_the_priority_of_a_disabled_camera_does_not_make_it_live() {
+        let mut fixture = Fixture::new();
+        let base = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let shot = fixture.spawn_vcam(VirtualCamera::new(5).disabled(), Vec3::Y * 5.0);
+        let mid = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Z);
+        assert_eq!(fixture.step(), Vec3::Z);
+
+        fixture.edit_vcam(shot, &VirtualCamera::new(50).disabled());
+
+        assert_eq!(fixture.step(), Vec3::Z);
+        assert_eq!(fixture.director().live(), Some(mid));
+        assert!(!fixture.director().is_enabled(shot));
+        assert_eq!(fixture.stacked_cameras(), vec![base, mid, shot]);
     }
 
     #[test]
