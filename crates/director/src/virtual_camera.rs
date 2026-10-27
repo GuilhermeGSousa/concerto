@@ -1,6 +1,6 @@
 use concerto_ecs::component::{Component, ComponentLifecycleCallback};
-use concerto_ecs::reflect::ReflectSceneComponent;
-use concerto_reflect::Reflect;
+use concerto_ecs::reflect::{ReflectComponent, ReflectSceneComponent};
+use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::camera::Camera;
 use glam::{Quat, Vec3};
 
@@ -16,18 +16,17 @@ use crate::director::CameraDirector;
 /// Having the component *is* being in the [`CameraDirector`](crate::CameraDirector)'s
 /// stack, sorted by [`priority`](Self::priority); the top of that stack is live.
 /// Leave the stack by removing the component or despawning the entity.
+///
+/// `priority` and `enabled` are edited in place, through reflection or
+/// [`set_enabled`](Self::set_enabled); the director re-sorts its stack on its
+/// next run.
 #[derive(Reflect)]
-#[reflect(SceneComponent)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct VirtualCamera {
-    /// Read-only: the director sorts the stack when the component is added, so
-    /// an in-place edit would leave the stack out of order. Re-add the component
-    /// to change it.
+    /// Editable in place: the director re-sorts the stack on its next run.
     priority: i32,
-    /// Whether the camera is eligible to be live *when it joins the stack*. From
-    /// then on the director's [`StackEntry`](crate::director::StackEntry) holds
-    /// the flag — toggle it with
-    /// [`CameraDirector::set_enabled`](crate::CameraDirector::set_enabled), not
-    /// here, since an edit to this field is invisible to the director.
+    /// Whether the camera is eligible to be live. Editable in place: the
+    /// director picks the change up on its next run.
     ///
     /// Omitted from a stored scene means "eligible", the default: a camera
     /// that never mentions `enabled` still works.
@@ -87,8 +86,7 @@ impl VirtualCamera {
     }
 
     /// Joins the stack in its slot but passed over for control until
-    /// [`CameraDirector::set_enabled`](crate::CameraDirector::set_enabled) turns
-    /// it on — how a scene ships cutscene cameras that must not hijack the view
+    /// [`set_enabled`](Self::set_enabled) turns it on — how a scene ships cutscene cameras that must not hijack the view
     /// the moment they load.
     pub fn disabled(mut self) -> Self {
         self.enabled = false;
@@ -97,6 +95,17 @@ impl VirtualCamera {
 
     pub fn priority(&self) -> i32 {
         self.priority
+    }
+
+    /// Whether this camera is eligible for control.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
+
+    /// Takes the camera in or out of contention without disturbing its slot.
+    /// The director applies it on its next run.
+    pub fn set_enabled(&mut self, enabled: bool) {
+        self.enabled = enabled;
     }
 }
 

@@ -197,7 +197,7 @@ pub trait Typography: Themed + Sized {
         self
     }
 
-    /// One line, cut short with an ellipsis when it does not fit.
+    /// One line, cut short with an ellipsis when it does not fit; a text field's label never shows an ellipsis.
     fn single_line(mut self) -> Self {
         let text = self.text_mut();
         text.wrap = false;

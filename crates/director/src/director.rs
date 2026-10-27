@@ -1,4 +1,4 @@
-use concerto_ecs::{Entity, Query, Res, ResMut, Resource, With};
+use concerto_ecs::{Changed, Entity, Query, Res, ResMut, Resource, With};
 use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform},
@@ -15,16 +15,17 @@ use crate::{
 /// from whichever one is on top.
 ///
 /// A camera joins the stack when the component is added and leaves when it is
-/// removed or the entity is despawned — the component's lifecycle is the whole
-/// mechanism, so nothing has to be polled. Position in the stack is `priority`,
-/// with later arrivals stacked on top of earlier ones at the same priority, so a
+/// removed or the entity is despawned. Position in the stack is `priority`, with
+/// later arrivals stacked on top of earlier ones at the same priority, so a
 /// cutscene camera takes over by existing with a higher priority and hands
 /// control back by going away.
 ///
 /// A camera can also sit in the stack without being eligible for control; the
-/// live camera is the highest [`enabled`](StackEntry::enabled) entry. That flag
-/// lives on the entry rather than the component precisely so that toggling it
-/// goes through the director and needs no change detection.
+/// live camera is the highest [`enabled`](StackEntry::enabled) entry. The
+/// [`VirtualCamera`] component is the source of truth for `priority` and
+/// `enabled`: the entry mirrors them, and [`sync_virtual_cameras`] re-sorts the
+/// stack on the next run after either is edited, so [`live`](Self::live) and
+/// [`is_live`](Self::is_live) follow an edit one frame later.
 #[derive(Resource, Default)]
 pub struct CameraDirector {
     main_camera: Option<Entity>,
@@ -33,7 +34,7 @@ pub struct CameraDirector {
     blend: BlendIn,
 }
 
-/// A virtual camera's place in the stack.
+/// A virtual camera's place in the stack, mirrored from its component.
 pub struct StackEntry {
     pub camera: Entity,
     pub priority: i32,
@@ -85,19 +86,6 @@ impl CameraDirector {
         self.entry(vcam).is_some_and(|entry| entry.enabled)
     }
 
-    /// Takes a camera in or out of contention without disturbing its slot.
-    /// A no-op for a camera that is not in the stack.
-    pub fn set_enabled(&mut self, vcam: Entity, enabled: bool) {
-        let outgoing = self.live();
-
-        let Some(index) = self.index_of(vcam) else {
-            return;
-        };
-        self.stack[index].enabled = enabled;
-
-        self.hand_over_from(outgoing);
-    }
-
     /// Slots a camera in above everything of the same priority, so equal
     /// priorities run in arrival order. Called from [`VirtualCamera`]'s `on_add`.
     pub(crate) fn stack_insert(&mut self, camera: Entity, priority: i32, enabled: bool) {
@@ -114,6 +102,26 @@ impl CameraDirector {
                 enabled,
             },
         );
+        self.hand_over_from(outgoing);
+    }
+
+    pub(crate) fn stack_sync(&mut self, camera: Entity, priority: i32, enabled: bool) {
+        let Some(entry) = self.entry(camera) else {
+            self.stack_insert(camera, priority, enabled);
+            return;
+        };
+        if entry.priority != priority {
+            self.stack_insert(camera, priority, enabled);
+            return;
+        }
+        if entry.enabled == enabled {
+            return;
+        }
+
+        let outgoing = self.live();
+        if let Some(index) = self.index_of(camera) {
+            self.stack[index].enabled = enabled;
+        }
         self.hand_over_from(outgoing);
     }
 
@@ -180,6 +188,16 @@ impl CameraDirector {
 
     pub(crate) fn set_main_camera(&mut self, entity: Entity) {
         self.main_camera = Some(entity);
+    }
+}
+
+/// Re-syncs the stack from every [`VirtualCamera`] whose component changed.
+pub fn sync_virtual_cameras(
+    mut director: ResMut<CameraDirector>,
+    vcams: Query<(Entity, &VirtualCamera), Changed<VirtualCamera>>,
+) {
+    for (entity, vcam) in vcams.iter() {
+        director.stack_sync(entity, vcam.priority(), vcam.is_enabled());
     }
 }
 
@@ -273,14 +291,19 @@ fn normalize(rotation: Quat) -> Quat {
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
+
+    use concerto_ecs::IntoSystemConfig;
+    use concerto_ecs::reflect::{AppTypeRegistry, ReflectComponent};
     use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
     use concerto_foundation::{time::Time, transform::Transform};
+    use concerto_reflect::{apply_value, to_value};
     use concerto_render::components::camera::Camera;
     use glam::Vec3;
 
-    use super::{CameraDirector, drive_main_camera};
+    use super::{CameraDirector, drive_main_camera, sync_virtual_cameras};
     use crate::{
         main_camera::MainCamera,
         virtual_camera::{BlendIn, Lens, VirtualCamera},
@@ -299,6 +322,7 @@ mod tests {
             world.register_component::<Transform>();
             // Joins/leaves the stack on spawn and despawn.
             world.register_component::<VirtualCamera>();
+            world.register_type::<VirtualCamera>();
             world.insert_resource(Time::new());
             world.insert_resource(CameraDirector::default());
 
@@ -310,6 +334,7 @@ mod tests {
 
             let mut schedule = Schedule::new();
             schedule.add_system(drive_main_camera);
+            schedule.add_system(sync_virtual_cameras.before(drive_main_camera));
             let schedule = schedule.compile::<SingleThreadedExecutor>(&mut world);
 
             Self {
@@ -332,10 +357,31 @@ mod tests {
             // Advances `Time::delta` off the wall clock, so blends make progress.
             self.world.get_resource_mut::<Time>().unwrap().update();
             self.schedule.run(&mut self.world);
+            self.world.tick();
             self.world
                 .get_component_for_entity::<Transform>(self.main_camera)
                 .unwrap()
                 .translation
+        }
+
+        fn set_enabled(&mut self, vcam: concerto_ecs::Entity, enabled: bool) {
+            self.world
+                .get_component_for_entity_mut::<VirtualCamera>(vcam)
+                .unwrap()
+                .set_enabled(enabled);
+        }
+
+        fn edit_vcam(&mut self, vcam: concerto_ecs::Entity, replacement: &VirtualCamera) {
+            let stored = to_value(replacement).unwrap();
+            let reflect = *self
+                .world
+                .get_resource::<AppTypeRegistry>()
+                .unwrap()
+                .get_type_data::<ReflectComponent>(TypeId::of::<VirtualCamera>())
+                .expect("a virtual camera is an editable component");
+            assert!((reflect.edit)(&mut self.world, vcam, &mut |value| {
+                apply_value(value, &stored);
+            }));
         }
 
         fn director(&mut self) -> &mut CameraDirector {
@@ -380,7 +426,7 @@ mod tests {
 
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
 
-        fixture.director().set_enabled(high, false);
+        fixture.set_enabled(high, false);
         assert_eq!(fixture.step(), Vec3::X);
         assert_eq!(fixture.director().live(), Some(low));
         // Disabled, but still holding its slot.
@@ -393,10 +439,10 @@ mod tests {
         fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
         let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
 
-        fixture.director().set_enabled(high, false);
+        fixture.set_enabled(high, false);
         assert_eq!(fixture.step(), Vec3::X);
 
-        fixture.director().set_enabled(high, true);
+        fixture.set_enabled(high, true);
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
     }
 
@@ -423,7 +469,7 @@ mod tests {
 
         // The outgoing camera still exists here, so a blend towards nothing
         // would never advance and never finish.
-        fixture.director().set_enabled(only, false);
+        fixture.set_enabled(only, false);
         for _ in 0..64 {
             fixture.step();
         }
@@ -458,7 +504,6 @@ mod tests {
 
         assert_eq!(fixture.step(), Vec3::Y * 5.0);
 
-        // Priority is fixed at insertion, so changing it means re-adding.
         fixture.remove_vcam(low);
         fixture.world.insert(VirtualCamera::new(20), low);
 
@@ -551,5 +596,97 @@ mod tests {
             .unwrap();
         assert_eq!(camera.fovy, 1.0);
         assert_eq!(camera.zfar, 500.0);
+    }
+
+    #[test]
+    fn editing_the_priority_re_sorts_the_stack_and_the_live_camera() {
+        let mut fixture = Fixture::new();
+        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
+        assert_eq!(fixture.step(), Vec3::Y * 5.0);
+
+        fixture.edit_vcam(low, &VirtualCamera::new(20));
+
+        assert_eq!(fixture.step(), Vec3::X);
+        assert_eq!(fixture.director().live(), Some(low));
+        assert_eq!(fixture.stacked_cameras(), vec![high, low]);
+    }
+
+    #[test]
+    fn editing_enabled_hands_control_over_on_the_next_run() {
+        let mut fixture = Fixture::new();
+        let low = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let high = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Y * 5.0);
+        assert_eq!(fixture.step(), Vec3::Y * 5.0);
+
+        fixture.edit_vcam(high, &VirtualCamera::new(10).disabled());
+        assert!(fixture.director().is_live(high));
+
+        assert_eq!(fixture.step(), Vec3::X);
+        assert!(!fixture.director().is_live(high));
+        assert_eq!(fixture.director().live(), Some(low));
+        assert_eq!(fixture.stacked_cameras(), vec![low, high]);
+    }
+
+    #[test]
+    fn editing_priority_and_enabled_together_takes_control() {
+        let mut fixture = Fixture::new();
+        let base = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let shot = fixture.spawn_vcam(VirtualCamera::new(5).disabled(), Vec3::Y * 5.0);
+        assert_eq!(fixture.step(), Vec3::X);
+
+        fixture.edit_vcam(shot, &VirtualCamera::new(20));
+
+        assert_eq!(fixture.step(), Vec3::Y * 5.0);
+        assert_eq!(fixture.director().live(), Some(shot));
+        assert_eq!(fixture.stacked_cameras(), vec![base, shot]);
+    }
+
+    #[test]
+    fn editing_the_priority_of_a_disabled_camera_does_not_make_it_live() {
+        let mut fixture = Fixture::new();
+        let base = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let shot = fixture.spawn_vcam(VirtualCamera::new(5).disabled(), Vec3::Y * 5.0);
+        let mid = fixture.spawn_vcam(VirtualCamera::new(10), Vec3::Z);
+        assert_eq!(fixture.step(), Vec3::Z);
+
+        fixture.edit_vcam(shot, &VirtualCamera::new(50).disabled());
+
+        assert_eq!(fixture.step(), Vec3::Z);
+        assert_eq!(fixture.director().live(), Some(mid));
+        assert!(!fixture.director().is_enabled(shot));
+        assert_eq!(fixture.stacked_cameras(), vec![base, mid, shot]);
+    }
+
+    #[test]
+    fn a_change_stamp_with_no_difference_keeps_the_arrival_order() {
+        let mut fixture = Fixture::new();
+        let first = fixture.spawn_vcam(VirtualCamera::default(), Vec3::X);
+        let second = fixture.spawn_vcam(VirtualCamera::default(), Vec3::Z);
+        assert_eq!(fixture.step(), Vec3::Z);
+
+        fixture.set_enabled(first, true);
+
+        assert_eq!(fixture.step(), Vec3::Z);
+        assert_eq!(fixture.stacked_cameras(), vec![first, second]);
+        assert_eq!(fixture.director().live(), Some(second));
+    }
+
+    #[test]
+    fn a_camera_added_before_the_director_exists_still_joins_the_stack() {
+        let mut world = World::new();
+        world.register_component::<VirtualCamera>();
+        let early = world.spawn(VirtualCamera::new(3));
+        world.insert_resource(CameraDirector::default());
+
+        let mut schedule = Schedule::new();
+        schedule.add_system(sync_virtual_cameras);
+        schedule
+            .compile::<SingleThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        let director = world.get_resource::<CameraDirector>().unwrap();
+        assert_eq!(director.live(), Some(early));
+        assert_eq!(director.stack()[0].priority, 3);
     }
 }

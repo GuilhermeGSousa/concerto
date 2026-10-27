@@ -64,6 +64,9 @@ fix the entry in the same commit as the change that made it false.
   `&mut World`, and registering one registers `T`, so its signals fire even if
   nothing queries it. An overwrite fires `Replace`, then `Add`, but stamps `T`
   changed only: `Added<T>` and `is_added()` stay false, as in Bevy.
+- **An edit through `ReflectComponent::edit` fires no lifecycle signal.** It
+  mutates the component in place and stamps `T` changed, so `On<Replace<T>>`
+  and the hooks never see it. React to an edit with `Changed<T>`.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that
@@ -120,11 +123,12 @@ fix the entry in the same commit as the change that made it false.
   clipping overflow (`single_line` counts as a minimum on the width). A
   readout that changes every frame, such as a counter, should be sized that
   way, or it lays itself out on every refresh and counts its own passes.
-- **A text field's `UIText` is on its label child.** In the frame a node with
-  `UITextInput`, `UIText` and `UINode` appears, its `UIText` moves to the
-  second of three children, between the selection and caret quads, so a query
-  for `UIText` on the field entity no longer matches it. Write
-  `UITextInput::value`; the label follows it.
+- **A text field's `UIText` is on its label, inside a viewport child.** In the
+  frame a node with `UITextInput`, `UIText` and `UINode` appears, it gets two
+  children: a viewport, which clips to the field's content box and holds the
+  selection quad and then the label, and the caret quad. Its `UIText` moves to
+  the label, so a query for `UIText` on the field entity no longer matches it.
+  Write `UITextInput::value`; the label follows it.
 
 ## Scenes and assets
 
