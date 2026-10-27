@@ -24,7 +24,8 @@ cargo run -p my-game-editor -- --project <another project directory>
 ```
 
 `--project` opens another project's `content/` tree; `--decorated` uses the
-window manager's title bar.
+window manager's title bar; `--mcp` runs the editor with no window and serves
+it to an AI agent (below).
 
 ## What you can do
 
@@ -96,6 +97,22 @@ is registered for it. A type that needs its own widget gets a `PropertyEditor`;
 see
 [Custom property editors](../../crates/editor/README.md#custom-property-editors)
 in the editor's README, and `cargo run -p concerto-editor --example custom_property`.
+
+## Agents
+
+`--mcp` runs the whole editor with no window and serves it over
+[MCP](https://modelcontextprotocol.io) on stdin and stdout, so an AI agent can
+open scenes, look at them, edit them, save, and play the game. The repository's
+`.mcp.json` registers `tech-demo-editor -- --mcp` with Claude Code; build the
+editor first, since a client gives up if starting it takes too long:
+
+```sh
+cargo build -p my-game-editor
+cargo run -p my-game-editor -- --mcp --project <a copy of the project>
+```
+
+The tools, their arguments and their errors are listed under
+[Agents (MCP)](../../crates/editor/README.md#agents-mcp) in the editor's README.
 
 ## More
 

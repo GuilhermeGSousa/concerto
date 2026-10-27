@@ -35,6 +35,7 @@ game adds itself when it needs them.
 | | `ui` | the UI: layout, text, theme, widgets | `ui` |
 | Tooling | `editor` | the editor, as a library | add `concerto-editor` in the `editor/` crate |
 | | `project` | `cargo concerto` | install with `cargo install --path crates/project` |
+| | `mcp` | an MCP server over any `App`, whose tools are systems; the editor's `--mcp` uses it | |
 
 The `concerto` crate itself, in `src/`, adds `DefaultPlugins`,
 `concerto::run` and `concerto::headless`.
