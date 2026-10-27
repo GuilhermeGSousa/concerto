@@ -7,6 +7,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     content::read_content_asset_header,
     handle::AssetHandle,
+    registry::AssetRegistry,
     AssetId, ContentAssetRoot,
 };
 use concerto_mesh::mesh::Mesh;
@@ -23,7 +24,9 @@ fn runtime(root: &Project) -> (AssetServer, World) {
     let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(root.0.clone()));
     let store = AssetStore::<Mesh>::new();
     server.register_asset(&store);
-    pollster::block_on(server.initialize()).expect("initialize registry");
+    server.publish_registry(
+        AssetRegistry::from_content_tree(&root.0, "content", "gasset").expect("scan"),
+    );
     let mut world = World::new();
     world.insert_resource(store);
     world.insert_resource(server.clone());
@@ -63,7 +66,7 @@ fn imported_uuid_handle_resolves_after_serialization_and_content_move() {
         concerto_import::import_source(&source, &project.0, &Default::default()).unwrap();
     let address = &imported
         .iter()
-        .find(|a| a.sub_asset_name == "mesh/0")
+        .find(|a| a.provenance.as_ref().unwrap().sub_asset == "mesh/0")
         .unwrap()
         .address;
     let id = read_content_asset_header(&project.0.join(address))

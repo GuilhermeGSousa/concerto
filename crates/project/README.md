@@ -25,11 +25,13 @@ It writes:
   a `[[bin]]` named after the package.
 - `src/lib.rs`: the recipe, `pub fn game(app: &mut App)`, which registers
   `DefaultPlugins`.
-- `src/main.rs`: `concerto::run(<crate>::game)`.
-- `build.rs`: tracks `content/` and copies it next to the binary.
-- `content/.registry.toml`: an empty `[assets]` table, so `content/` exists.
+- `src/main.rs`: `concerto::run(<crate>::game, concerto::content_registry!())`.
+- `build.rs`: tracks `content/`, writes the asset registry the binary embeds,
+  and copies `content/` next to the binary.
+- `content/.gitkeep`, so `content/` exists.
 - `index.html` and `Trunk.toml`, so `trunk serve` runs the game in a browser.
-- `.gitignore`: `/target` and `/dist`.
+- `.gitignore`: `/target`, `/dist` and `content/.registry.toml`, so a registry
+  file from an older engine is never committed.
 
 There is no scene and no startup scene.
 

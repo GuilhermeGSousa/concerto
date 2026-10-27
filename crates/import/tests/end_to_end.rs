@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
-    read_content_asset, read_content_asset_header, save_content_asset,
+    read_content_asset, read_content_asset_header, save_content_asset_into,
 };
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_foundation::assets::utils::load_content_asset_bytes;
@@ -74,7 +74,7 @@ fn an_editor_saved_scene_round_trips() {
         }],
         referenced_assets: Vec::new(),
     };
-    save_content_asset(&scene, &root, address).expect("save");
+    save_content_asset_into(&scene, &root, address, &mut AssetRegistry::new()).expect("save");
 
     let bytes = pollster::block_on(load_content_asset_bytes(
         &ContentAssetRoot::Directory(root.clone()),
@@ -106,12 +106,18 @@ fn a_baked_reference_resolves_to_the_minted_id_of_its_target() {
 
     let scene_address = &written
         .iter()
-        .find(|a| a.sub_asset_name == "scene")
+        .find(|a| a.provenance.as_ref().unwrap().sub_asset == "scene")
         .expect("the fixture emits a scene")
         .address;
     let mesh_address = &written
         .iter()
-        .find(|a| a.sub_asset_name.starts_with("mesh/"))
+        .find(|a| {
+            a.provenance
+                .as_ref()
+                .unwrap()
+                .sub_asset
+                .starts_with("mesh/")
+        })
         .expect("the fixture emits a mesh")
         .address;
 
@@ -131,7 +137,7 @@ fn a_baked_reference_resolves_to_the_minted_id_of_its_target() {
         .first()
         .copied()
         .expect("the scene references its mesh");
-    let registry = AssetRegistry::load(&root).expect("registry loads");
+    let registry = AssetRegistry::from_content_tree(&root, "content", "gasset").expect("scan");
     assert_eq!(
         registry.get(referenced).map(|entry| entry.address.as_str()),
         Some(mesh_address.as_str()),

@@ -120,3 +120,127 @@ fn main() { println!("{}", ID.simple_hex()); }
     std::fs::write(root.join("build.rs"), "fn main() {}").unwrap();
     assert_error(cargo(root), "requires Cargo dependency tracking");
 }
+
+fn write_registry_fixture(project: &Path) {
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::create_dir_all(project.join("content")).unwrap();
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "asset-registry-fixture"
+version = "0.0.0"
+edition = "2021"
+[workspace]
+[build-dependencies]
+concerto-asset-build = {{ path = {:?} }}
+"#,
+            crates.join("asset-build"),
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("build.rs"),
+        "fn main() { concerto_asset_build::track_assets(\"content\").unwrap(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/main.rs"),
+        r#"fn main() { print!("{}", include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml"))); }"#,
+    )
+    .unwrap();
+}
+
+fn write_asset_at(project: &Path, address: &str, id: AssetId) {
+    let header = ContentAssetHeader {
+        format_version: CONTENT_FORMAT_VERSION,
+        asset_id: id,
+        references: vec![],
+        kind: "Fixture".into(),
+        provenance: None,
+    };
+    let path = project.join(address);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
+}
+
+fn registry(output: Output) -> Vec<(AssetId, String)> {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut entries: Vec<_> =
+        concerto_asset_format::parse_registry(&String::from_utf8(output.stdout).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.id, entry.address))
+            .collect();
+    entries.sort();
+    entries
+}
+
+fn rebuilds(project: &Path) -> bool {
+    let output = Command::new(env!("CARGO"))
+        .args(["build", "--offline"])
+        .current_dir(project)
+        .env("CARGO_TARGET_DIR", project.join("target"))
+        .env_remove("CONCERTO_ASSET_ROOT")
+        .output()
+        .expect("build Cargo fixture");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).contains("Compiling asset-registry-fixture")
+}
+
+fn sorted(mut entries: Vec<(AssetId, String)>) -> Vec<(AssetId, String)> {
+    entries.sort();
+    entries
+}
+
+#[test]
+fn cargo_rebuilds_the_registry_from_the_root_content_toml_names() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    write_registry_fixture(root);
+    std::fs::write(root.join("content.toml"), "root = \"data\"\n").unwrap();
+    let first = AssetId::new();
+    let other = AssetId::new();
+    let fallback = AssetId::new();
+    write_asset_at(root, "data/first.gasset", first);
+    write_asset_at(root, "other/other.gasset", other);
+    write_asset_at(root, "content/fallback.gasset", fallback);
+
+    assert_eq!(
+        registry(cargo(root)),
+        vec![(first, "data/first.gasset".to_string())]
+    );
+    assert!(!rebuilds(root));
+
+    let second = AssetId::new();
+    write_asset_at(root, "data/second.gasset", second);
+    assert_eq!(
+        registry(cargo(root)),
+        sorted(vec![
+            (first, "data/first.gasset".to_string()),
+            (second, "data/second.gasset".to_string()),
+        ])
+    );
+
+    std::fs::write(root.join("content.toml"), "root = \"other\"\n").unwrap();
+    assert_eq!(
+        registry(cargo(root)),
+        vec![(other, "other/other.gasset".to_string())]
+    );
+
+    std::fs::remove_file(root.join("content.toml")).unwrap();
+    assert_eq!(
+        registry(cargo(root)),
+        vec![(fallback, "content/fallback.gasset".to_string())]
+    );
+    assert!(!rebuilds(root));
+}

@@ -8,10 +8,11 @@ use std::thread::JoinHandle;
 
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{IntoSystemConfig, ResMut, Resource};
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_import::ImportedSource;
 use concerto_import::config::ContentConfig;
 
-use crate::project::{EditorCommand, EditorCommands, ProjectState};
+use crate::project::ProjectState;
 
 /// Imports a source into the project at `destination`, bringing the files it refers to along.
 pub fn import_source_into(
@@ -150,7 +151,7 @@ pub struct ImportStaging {
 #[derive(Resource, Default)]
 pub struct ImportQueue {
     pending: VecDeque<QueuedImport>,
-    job: Option<JoinHandle<Result<ImportedSource, String>>>,
+    job: Option<JoinHandle<(PathBuf, Result<ImportedSource, String>)>>,
     current: Option<String>,
     failures: Vec<(String, String)>,
     done: usize,
@@ -283,7 +284,7 @@ fn drive_picker(
     }));
 }
 
-/// Runs queued imports one at a time and refreshes the catalogue after each.
+/// Runs queued imports one at a time and adds each one's assets to the open project's registry.
 pub struct ImportPlugin;
 
 impl Plugin for ImportPlugin {
@@ -333,7 +334,7 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
     state.status = format!("Importing {name} ({} of {})…", queue.done + 1, queue.total);
     queue.current = Some(name);
     queue.job = Some(std::thread::spawn(move || {
-        import_source_into(&row.source, &row.destination, &root).map_err(|error| {
+        let result = import_source_into(&row.source, &row.destination, &root).map_err(|error| {
             let error = format!("{error:#}");
             log::error!(
                 "importing '{}' to '{}' in '{}' failed: {error}",
@@ -342,32 +343,45 @@ fn drive_imports(mut queue: ResMut<ImportQueue>, mut state: ResMut<ProjectState>
                 root.display()
             );
             failure_summary(&error, &root)
-        })
+        });
+        (root, result)
     }));
 }
 
 fn finish_import(
     mut queue: ResMut<ImportQueue>,
     mut state: ResMut<ProjectState>,
-    mut commands: ResMut<EditorCommands>,
+    mut registry: ResMut<AssetRegistry>,
 ) {
     if !queue.job.as_ref().is_some_and(|job| job.is_finished()) {
         return;
     }
     let name = queue.current.take().unwrap_or_default();
-    let result = queue
+    let (root, result) = match queue
         .job
         .take()
         .expect("the job was just observed as finished")
         .join()
-        .unwrap_or_else(|_| {
+    {
+        Ok((root, result)) => (Some(root), result),
+        Err(_) => {
             log::error!("the import worker panicked while importing '{name}'");
-            Err("the import worker panicked".into())
-        });
+            (None, Err("the import worker panicked".into()))
+        }
+    };
     queue.done += 1;
     let imported = match result {
         Ok(imported) => {
-            commands.0.push_back(EditorCommand::RefreshCatalogue);
+            if let Some(root) = &root
+                && state
+                    .project
+                    .as_ref()
+                    .is_some_and(|project| &project.root == root)
+            {
+                for entry in &imported.assets {
+                    registry.insert(entry.clone());
+                }
+            }
             let siblings = match imported.siblings.len() {
                 0 => String::new(),
                 1 => " · 1 sibling file".into(),
@@ -608,16 +622,16 @@ mod tests {
             moved,
             "the destination holds the new bytes"
         );
-        let ids = |assets: &[concerto_import::ImportedAsset]| {
-            assets.iter().map(|a| a.asset_id).collect::<Vec<_>>()
+        let ids = |assets: &[concerto_foundation::assets::registry::AssetEntry]| {
+            assets.iter().map(|a| a.id).collect::<Vec<_>>()
         };
         assert!(!first.assets.is_empty());
         assert_eq!(ids(&first.assets), ids(&second.assets));
     }
 
     #[test]
-    fn an_import_records_its_asset_ids_in_the_registry_file() {
-        use concerto_foundation::assets::registry::{AssetRegistry, REGISTRY_FILE_NAME};
+    fn an_import_records_its_asset_ids_in_the_content_tree() {
+        use concerto_foundation::assets::registry::AssetRegistry;
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
         let imported = import_source_into(
@@ -626,13 +640,13 @@ mod tests {
             project.path(),
         )
         .expect("import");
-        assert!(project.path().join(REGISTRY_FILE_NAME).is_file());
-        let registry = AssetRegistry::load(project.path()).expect("registry");
+        assert!(!project.path().join("content/.registry.toml").exists());
+        let registry =
+            AssetRegistry::from_content_tree(project.path(), "content", "gasset").expect("scan");
         assert!(!imported.assets.is_empty());
         for asset in &imported.assets {
-            let entry = registry.get(asset.asset_id).expect("registered");
-            assert_eq!(entry.address, asset.address);
-            assert_eq!(entry.kind, asset.kind);
+            assert!(asset.provenance.is_some());
+            assert_eq!(registry.get(asset.id), Some(asset));
         }
     }
 

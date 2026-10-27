@@ -1,4 +1,4 @@
-//! Offline import of source files into persistent UUID-addressed content assets.
+//! The editor's import engine: source files into persistent UUID-addressed content assets.
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -10,7 +10,7 @@ use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, ContentAssetHeader, ImportProvenance,
     CONTENT_FORMAT_VERSION,
 };
-use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, REGISTRY_FILE_NAME};
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
 
 pub mod config;
@@ -37,31 +37,21 @@ pub fn supported_extension(extension: &str) -> bool {
     })
 }
 
-/// One content asset written by [`import_source`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ImportedAsset {
-    /// The persistent UUID written into the content asset header.
-    pub asset_id: AssetId,
-    /// The sub-asset name within the source, e.g. `"mesh/0"`.
-    pub sub_asset_name: String,
-    /// The project-relative content-tree address it was written to.
-    pub address: String,
-    /// The asset type tag (`Asset::name()`), e.g. `"Mesh"`.
-    pub kind: String,
-}
-
 /// What [`import_source_into`] wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedSource {
-    pub assets: Vec<ImportedAsset>,
+    /// Every content asset written, with its import provenance.
+    pub assets: Vec<AssetEntry>,
     /// Project-relative paths of the files copied along with the source.
     pub siblings: Vec<String>,
 }
 
-/// Import a source and rebuild its project's registry. The source's committed
-/// `.import.toml` sidecar owns output UUIDs; scanning content headers finds their
-/// current locations, including files moved since the previous import. An output
-/// that has lost its import provenance belongs to the editor and is not rewritten.
+/// Import a source and return an entry, with provenance, for every content asset
+/// written; no registry file is written. The source's committed `.import.toml`
+/// sidecar owns output UUIDs; scanning content headers finds their current
+/// locations, including files moved since the previous import. An output that has
+/// lost its import provenance belongs to the editor, is not rewritten, and is not
+/// returned.
 ///
 /// The complete plan is validated before writing. Files are staged and replaced
 /// individually; this is not a multi-file transaction or a concurrent writer API.
@@ -69,7 +59,7 @@ pub fn import_source(
     source: &Path,
     project_root: &Path,
     config: &ContentConfig,
-) -> anyhow::Result<Vec<ImportedAsset>> {
+) -> anyhow::Result<Vec<AssetEntry>> {
     validate_config(config)?;
     let source = source
         .canonicalize()
@@ -298,24 +288,20 @@ fn import_placed(
             project_root.join(&address),
             write_content_asset(&header, &sub_asset.bytes)?,
         ));
-        registry.insert(AssetEntry {
+        let entry = AssetEntry {
             id: sub_asset.asset_id,
-            address: address.clone(),
-            kind: header.kind.clone(),
-            provenance: header.provenance.clone(),
-        });
+            address,
+            kind: header.kind,
+            provenance: header.provenance,
+        };
+        registry.insert(entry.clone());
         metadata.outputs.insert(
             sub_asset.name.clone(),
             OutputMetadata {
                 asset_id: sub_asset.asset_id,
             },
         );
-        written.push(ImportedAsset {
-            asset_id: sub_asset.asset_id,
-            sub_asset_name: sub_asset.name.clone(),
-            address,
-            kind: header.kind,
-        });
+        written.push(entry);
     }
     drop(resolved);
     let copies = if read == source {
@@ -337,9 +323,6 @@ fn import_placed(
         .iter()
         .map(|(path, bytes)| stage(path, bytes).map(|file| (path, file)))
         .collect::<anyhow::Result<_>>()?;
-    let registry_text = registry.to_toml();
-    let registry_path = project_root.join(REGISTRY_FILE_NAME);
-    let registry_file = stage(&registry_path, registry_text.as_bytes())?;
     for (path, file) in copied {
         replace(file, path)?;
     }
@@ -347,7 +330,6 @@ fn import_placed(
     for (path, file) in staged {
         replace(file, path)?;
     }
-    replace(registry_file, &registry_path)?;
     let siblings = copies
         .iter()
         .skip(1)

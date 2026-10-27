@@ -16,8 +16,8 @@ const GAME_FILES: &[(&str, &str)] = &[
     ("src/main.rs", include_str!("../templates/game/src/main.rs")),
     ("build.rs", include_str!("../templates/game/build.rs")),
     (
-        "content/.registry.toml",
-        include_str!("../templates/game/content/.registry.toml"),
+        "content/.gitkeep",
+        include_str!("../templates/game/content/.gitkeep"),
     ),
     ("index.html", include_str!("../templates/game/index.html")),
     ("Trunk.toml", include_str!("../templates/game/Trunk.toml")),
@@ -693,7 +693,7 @@ mod tests {
             "src/lib.rs",
             "src/main.rs",
             "build.rs",
-            "content/.registry.toml",
+            "content/.gitkeep",
             "index.html",
             "Trunk.toml",
             ".gitignore",
@@ -710,7 +710,12 @@ mod tests {
         assert!(!manifest.contains("crate-type"));
         assert!(manifest.contains("[workspace]\nmembers = [\".\", \"editor\"]\n"));
         assert!(manifest.contains("[profile.dev.package.concerto-jolt-ffi]\nopt-level = 3\n"));
-        assert!(read(dir.join("src/main.rs")).contains("concerto::run(my_game::game);"));
+        assert!(read(dir.join("src/main.rs"))
+            .contains("concerto::run(my_game::game, concerto::content_registry!());"));
+        assert!(!dir.join("content/.registry.toml").exists());
+        assert!(read(dir.join(".gitignore"))
+            .lines()
+            .any(|line| line == "content/.registry.toml"));
         assert!(read(dir.join("index.html")).contains("<title>my-game</title>"));
         let editor = read(dir.join("editor/Cargo.toml"));
         assert!(editor.contains("name = \"my-game-editor\""));
@@ -1120,8 +1125,7 @@ mod tests {
 
         assert!(dir.is_dir());
         assert!(dir.join("content").is_dir());
-        let registry: toml_edit::DocumentMut =
-            read(dir.join("content/.registry.toml")).parse().unwrap();
-        assert!(registry.get("assets").is_some_and(|item| item.is_table()));
+        assert!(dir.join("content/.gitkeep").is_file());
+        assert!(!dir.join("content/.registry.toml").exists());
     }
 }

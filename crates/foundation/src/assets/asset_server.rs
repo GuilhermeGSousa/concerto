@@ -100,9 +100,7 @@ pub(crate) struct AssetServerData {
 
 struct ContentState {
     root: ContentAssetRoot,
-    registry: Option<Arc<AssetRegistry>>,
-    initialization: Option<Task<()>>,
-    error: Option<String>,
+    registry: Arc<AssetRegistry>,
 }
 
 #[derive(Resource, Clone)]
@@ -126,9 +124,7 @@ impl AssetServer {
             asset_load_event_receiver,
             content: RwLock::new(ContentState {
                 root,
-                registry: None,
-                initialization: None,
-                error: None,
+                registry: Arc::default(),
             }),
         };
 
@@ -163,79 +159,19 @@ impl AssetServer {
         {
             let mut content = self.data.content.write().unwrap();
             content.root = root;
-            content.registry = Some(Arc::new(registry));
-            content.initialization = None;
-            content.error = None;
+            content.registry = Arc::new(registry);
         };
         pending.clear();
     }
 
     /// Replaces the registry subsequent loads resolve through, keeping the root and pending loads.
     pub fn publish_registry(&self, registry: AssetRegistry) {
-        let mut content = self.data.content.write().unwrap();
-        content.registry = Some(Arc::new(registry));
-        content.error = None;
+        self.data.content.write().unwrap().registry = Arc::new(registry);
     }
 
-    /// The registry loads resolve through, once it has been loaded or published.
+    /// The registry loads resolve through, empty until one is published.
     pub fn registry(&self) -> Option<Arc<AssetRegistry>> {
-        self.data.content.read().unwrap().registry.clone()
-    }
-
-    /// Eagerly loads the UUID-to-path registry.
-    /// The asset-manager plugin calls this through its readiness lifecycle;
-    /// standalone callers may await it to report errors before requesting loads.
-    /// Otherwise, load tasks initialize the registry lazily.
-    pub async fn initialize(&self) -> anyhow::Result<()> {
-        let root = {
-            let content = self.data.content.read().unwrap();
-            if content.registry.is_some() {
-                return Ok(());
-            }
-            content.root.clone()
-        };
-        self.initialize_root(root).await
-    }
-
-    async fn initialize_root(&self, root: ContentAssetRoot) -> anyhow::Result<()> {
-        let result = crate::assets::utils::load_registry(&root)
-            .await
-            .with_context(|| format!("failed to initialize asset registry at {root:?}"));
-        let mut content = self.data.content.write().unwrap();
-        match result {
-            Ok(registry) => {
-                content.registry.get_or_insert_with(|| Arc::new(registry));
-                content.error = None;
-                Ok(())
-            }
-            Err(error) => {
-                content.error = Some(format!("{error:#}"));
-                Err(error)
-            }
-        }
-    }
-
-    /// Starts registry initialization on first poll, then reports readiness or
-    /// the initialization error. Does not block the native or browser runner.
-    pub fn poll_initialize(&self) -> anyhow::Result<bool> {
-        let mut content = self.data.content.write().unwrap();
-        if content.registry.is_some() {
-            return Ok(true);
-        }
-        if let Some(error) = &content.error {
-            anyhow::bail!("{error}");
-        }
-        if content.initialization.is_none() {
-            let root = content.root.clone();
-            let server = self.clone();
-            content.initialization = Some(
-                LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
-                    // initialize_root publishes errors for the next poll.
-                    let _ = server.initialize_root(root).await;
-                }),
-            );
-        }
-        Ok(false)
+        Some(Arc::clone(&self.data.content.read().unwrap().registry))
     }
 
     /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
@@ -279,7 +215,6 @@ impl AssetServer {
 
     /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
     /// or a serialized asset reference. Repeated requests share handles and loads.
-    /// Registry initialization happens lazily if it has not already completed.
     pub fn load<A: LoadableAsset + 'static>(&self, id: AssetId) -> AssetHandle<A> {
         // Hold this lock through task insertion so concurrent requests cannot
         // spawn duplicate loads for the same persistent UUID.
@@ -303,17 +238,13 @@ impl AssetServer {
     }
 
     #[cfg(test)]
-    async fn resolve_by_id(&self, id: AssetId) -> Option<String> {
-        self.resolve_asset(id).await.map(|(_, entry)| entry.address)
+    fn resolve_by_id(&self, id: AssetId) -> Option<String> {
+        self.resolve_asset(id).map(|(_, entry)| entry.address)
     }
 
-    async fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
-        if let Err(error) = self.initialize().await {
-            log::error!("{error:#}");
-            return None;
-        }
+    fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
         let content = self.data.content.read().unwrap();
-        let entry = content.registry.as_ref()?.get(id)?.clone();
+        let entry = content.registry.get(id)?.clone();
         Some((content.root.clone(), entry))
     }
 
@@ -333,7 +264,7 @@ impl AssetServer {
         // held across .await (tasks can migrate between worker threads).
         // Load costs show up on the named "asset-load-N" threads instead.
         LoadTaskPool::get_or_init(|| TaskPool::with_name("asset-load")).spawn(async move {
-            let (content_root, entry) = match server.resolve_asset(id).await {
+            let (content_root, entry) = match server.resolve_asset(id) {
                 Some(resolved) => resolved,
                 None => {
                     log::error!(
@@ -506,7 +437,7 @@ mod tests {
     use crate::assets::handle::ReflectAssetHandle;
     use crate::assets::{
         asset_store::AssetStore,
-        content::{read_content_asset_header, save_content_asset},
+        content::save_content_asset_into,
         registry::{AssetEntry, AssetRegistry},
     };
     use concerto_ecs::{component::Component, reflect::ReflectSceneComponent, world::World};
@@ -517,7 +448,7 @@ mod tests {
         dir
     }
 
-    /// A minimal real asset: written to disk by `save_content_asset` and read
+    /// A minimal real asset: written to disk by `save_content_asset_into` and read
     /// back through the cooked-asset path, so UUID loading is exercised end to
     /// end rather than against a mock.
     #[derive(serde::Serialize, serde::Deserialize)]
@@ -573,10 +504,10 @@ mod tests {
         let id = AssetId::from_path("content/hero/scene.gasset");
         let mut registry = AssetRegistry::new();
         registry.insert(scene_entry(id));
-        registry.save(&dir).expect("save registry");
 
         let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        let resolved = pollster::block_on(server.resolve_by_id(id));
+        server.publish_registry(registry);
+        let resolved = server.resolve_by_id(id);
 
         assert_eq!(resolved.as_deref(), Some("content/hero/scene.gasset"));
         std::fs::remove_dir_all(&dir).ok();
@@ -586,32 +517,8 @@ mod tests {
     fn resolve_by_id_returns_none_for_an_unregistered_id() {
         let dir = temp_root("resolve-miss");
         let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        let resolved = pollster::block_on(server.resolve_by_id(AssetId::new()));
+        let resolved = server.resolve_by_id(AssetId::new());
         assert_eq!(resolved, None);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn resolve_by_id_caches_the_registry_after_first_load() {
-        let dir = temp_root("resolve-cache");
-        let id = AssetId::from_path("content/hero/scene.gasset");
-        let mut registry = AssetRegistry::new();
-        registry.insert(scene_entry(id));
-        registry.save(&dir).expect("save registry");
-
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        let first = pollster::block_on(server.resolve_by_id(id));
-        assert_eq!(first.as_deref(), Some("content/hero/scene.gasset"));
-
-        // Removing the on-disk registry must not affect a cached lookup.
-        std::fs::remove_file(dir.join("content/.registry.toml")).unwrap();
-        let second = pollster::block_on(server.resolve_by_id(id));
-        assert_eq!(
-            second.as_deref(),
-            Some("content/hero/scene.gasset"),
-            "the registry is cached after first use, so a since-deleted file must not affect the second lookup"
-        );
-
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -619,25 +526,23 @@ mod tests {
     fn load_reads_a_registered_content_asset() {
         let dir = temp_root("load-by-id-hit");
         let address = "content/fixture/value.gasset";
-        // Writes both the .gasset file and its registry entry, exactly as
-        // `import` and an editor save do.
-        save_content_asset(
+        let mut registry = AssetRegistry::new();
+        let id = save_content_asset_into(
             &FixtureAsset {
                 value: 7,
                 initialized: false,
             },
             &dir,
             address,
+            &mut registry,
         )
         .expect("save content asset");
-        let id = read_content_asset_header(&dir.join(address))
-            .expect("read header")
-            .asset_id;
 
         let mut world = World::new();
         let store = AssetStore::<FixtureAsset>::new();
         let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
         server.register_asset::<FixtureAsset>(&store);
+        server.publish_registry(registry);
         world.insert_resource(store);
         world.insert_resource(server.clone());
 
@@ -771,12 +676,12 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).ok();
     }
-    fn fixture_server(dir: &std::path::Path) -> (AssetServer, World) {
+    fn fixture_server(dir: &std::path::Path, registry: AssetRegistry) -> (AssetServer, World) {
         let mut server =
             AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
         let store = AssetStore::<FixtureAsset>::new();
         server.register_asset(&store);
-        pollster::block_on(server.initialize()).unwrap();
+        server.publish_registry(registry);
         let mut world = World::new();
         world.insert_resource(store);
         world.insert_resource(server.clone());
@@ -786,21 +691,9 @@ mod tests {
     #[test]
     fn uuid_requests_share_pending_and_loaded_assets() {
         let dir = temp_root("shared-uuid");
-        let address = "content/fixture/value.gasset";
-        save_content_asset(
-            &FixtureAsset {
-                value: 42,
-                initialized: false,
-            },
-            &dir,
-            address,
-        )
-        .unwrap();
-        let id = read_content_asset_header(&dir.join(address))
-            .unwrap()
-            .asset_id;
-        assert_ne!(id, AssetId::from_path(address));
-        let (server, mut world) = fixture_server(&dir);
+        let (id, registry) = saved_fixture(&dir, 42);
+        assert_ne!(id, AssetId::from_path("content/fixture/value.gasset"));
+        let (server, mut world) = fixture_server(&dir, registry);
         let first = server.load::<FixtureAsset>(id);
         let second = server.load::<FixtureAsset>(id);
         assert_eq!(first.id(), id);
@@ -824,28 +717,16 @@ mod tests {
     #[test]
     fn serialized_uuid_handle_resolves_on_a_fresh_server() {
         let dir = temp_root("serialized-uuid");
-        let address = "content/fixture/value.gasset";
-        save_content_asset(
-            &FixtureAsset {
-                value: 99,
-                initialized: false,
-            },
-            &dir,
-            address,
-        )
-        .unwrap();
-        let id = read_content_asset_header(&dir.join(address))
-            .unwrap()
-            .asset_id;
+        let (id, registry) = saved_fixture(&dir, 99);
         let serialized = {
-            let (server, mut world) = fixture_server(&dir);
+            let (server, mut world) = fixture_server(&dir, registry.clone());
             let handle = server.load::<FixtureAsset>(id);
             drive_pending_load(&server, handle.id());
             handle_asset_load_events(&mut world);
             bincode::serialize(&handle).unwrap()
         };
         let weak: AssetHandle<FixtureAsset> = bincode::deserialize(&serialized).unwrap();
-        let (server, mut world) = fixture_server(&dir);
+        let (server, mut world) = fixture_server(&dir, registry);
         let handle = server.load::<FixtureAsset>(weak.id());
         drive_pending_load(&server, handle.id());
         handle_asset_load_events(&mut world);
@@ -854,41 +735,26 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
-    #[test]
-    fn initialization_error_is_reported_and_can_be_retried() {
-        let dir = temp_root("init-error");
-        std::fs::write(dir.join("content/.registry.toml"), "invalid = [").unwrap();
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        assert!(pollster::block_on(server.initialize()).is_err());
-        assert!(server.poll_initialize().is_err());
-        AssetRegistry::new().save(&dir).unwrap();
-        pollster::block_on(server.initialize()).unwrap();
-        assert!(server.poll_initialize().unwrap());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    fn saved_fixture(dir: &std::path::Path, value: u32) -> AssetId {
-        let address = "content/fixture/value.gasset";
-        save_content_asset(
+    fn saved_fixture(dir: &std::path::Path, value: u32) -> (AssetId, AssetRegistry) {
+        let mut registry = AssetRegistry::new();
+        let id = save_content_asset_into(
             &FixtureAsset {
                 value,
                 initialized: false,
             },
             dir,
-            address,
+            "content/fixture/value.gasset",
+            &mut registry,
         )
         .unwrap();
-        read_content_asset_header(&dir.join(address))
-            .unwrap()
-            .asset_id
+        (id, registry)
     }
 
     #[test]
     fn load_fails_without_reading_when_the_registry_names_another_kind() {
         let dir = temp_root("kind-mismatch");
-        let id = saved_fixture(&dir, 5);
-        let (server, mut world) = fixture_server(&dir);
-        let mut registry = AssetRegistry::load(&dir).unwrap();
+        let (id, mut registry) = saved_fixture(&dir, 5);
+        let (server, mut world) = fixture_server(&dir, registry.clone());
         let entry = registry.get(id).unwrap().clone();
         registry.insert(AssetEntry {
             kind: "Mesh".into(),
@@ -913,13 +779,13 @@ mod tests {
         use concerto_ecs::{IntoSystem, System};
 
         let dir = temp_root("sync-registry");
-        let (server, mut world) = fixture_server(&dir);
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
         let id = AssetId::new();
         let mut system = sync_asset_registry.into_system();
         system.initialize(&mut world);
         world.insert_resource(AssetRegistry::new());
         system.run_and_apply((), &mut world);
-        assert_eq!(pollster::block_on(server.resolve_by_id(id)), None);
+        assert_eq!(server.resolve_by_id(id), None);
 
         world
             .get_resource_mut::<AssetRegistry>()
@@ -928,27 +794,7 @@ mod tests {
         system.run_and_apply((), &mut world);
 
         assert_eq!(
-            pollster::block_on(server.resolve_by_id(id)).as_deref(),
-            Some("content/hero/scene.gasset")
-        );
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_late_registry_read_does_not_replace_a_published_snapshot() {
-        let dir = temp_root("late-read");
-        AssetRegistry::new().save(&dir).unwrap();
-        let server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
-        let id = AssetId::new();
-        let mut published = AssetRegistry::new();
-        published.insert(scene_entry(id));
-        server.publish_registry(published);
-
-        pollster::block_on(server.initialize_root(ContentAssetRoot::Directory(dir.clone())))
-            .unwrap();
-
-        assert_eq!(
-            pollster::block_on(server.resolve_by_id(id)).as_deref(),
+            server.resolve_by_id(id).as_deref(),
             Some("content/hero/scene.gasset")
         );
         std::fs::remove_dir_all(dir).unwrap();
@@ -968,8 +814,8 @@ mod tests {
     #[test]
     fn a_load_that_finished_but_was_not_yet_handled_is_not_inserted_once_cancelled() {
         let dir = temp_root("cancel-finished");
-        let id = saved_fixture(&dir, 5);
-        let (server, mut world) = fixture_server(&dir);
+        let (id, registry) = saved_fixture(&dir, 5);
+        let (server, mut world) = fixture_server(&dir, registry);
         let handle = server.load::<FixtureAsset>(id);
         wait_until("the load", || {
             !server.data.asset_load_event_receiver.is_empty()
@@ -1012,15 +858,18 @@ mod tests {
     #[test]
     fn a_load_cancelled_while_it_runs_never_inserts_its_asset() {
         let dir = temp_root("cancel-running");
-        let address = "content/fixture/gated.gasset";
-        save_content_asset(&GatedAsset(3), &dir, address).unwrap();
-        let id = read_content_asset_header(&dir.join(address))
-            .unwrap()
-            .asset_id;
+        let mut registry = AssetRegistry::new();
+        let id = save_content_asset_into(
+            &GatedAsset(3),
+            &dir,
+            "content/fixture/gated.gasset",
+            &mut registry,
+        )
+        .unwrap();
         let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
         let store = AssetStore::<GatedAsset>::new();
         server.register_asset(&store);
-        pollster::block_on(server.initialize()).unwrap();
+        server.publish_registry(registry);
         let mut world = World::new();
         world.insert_resource(store);
         world.insert_resource(server.clone());
@@ -1044,7 +893,7 @@ mod tests {
     #[test]
     fn cancelling_keeps_an_added_asset() {
         let dir = temp_root("cancel-added");
-        let (server, mut world) = fixture_server(&dir);
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
         let handle = server.add(FixtureAsset {
             value: 8,
             initialized: false,

@@ -54,7 +54,7 @@ fn game(app: &mut App) {
 fn main() {
     env_logger::init();
 
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }
 
 fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {

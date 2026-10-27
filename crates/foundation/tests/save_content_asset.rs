@@ -1,6 +1,9 @@
-//! save_content_asset writes a content asset into a project tree, minting
+//! save_content_asset_into writes a content asset into a project tree, minting
 //! its id on first save and reusing it on re-save.
-use concerto_foundation::assets::content::{read_content_asset, save_content_asset};
+use concerto_foundation::assets::content::{
+    read_content_asset, read_content_asset_header, save_content_asset_into,
+};
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
 
 #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
@@ -23,7 +26,8 @@ fn writes_a_readable_content_asset_under_the_project_root() {
     let address = "content/widgets/wheel.gasset";
     let widget = Widget { spokes: 32 };
 
-    save_content_asset(&widget, &project_root, address).expect("save");
+    save_content_asset_into(&widget, &project_root, address, &mut AssetRegistry::new())
+        .expect("save");
 
     let written = std::fs::read(project_root.join(address)).expect("file exists at the address");
     let (header, payload) = read_content_asset(&written).expect("readable");
@@ -47,10 +51,11 @@ fn writes_a_readable_content_asset_under_the_project_root() {
 fn creates_missing_parent_directories() {
     let project_root =
         std::env::temp_dir().join(format!("save-content-deep-{}", std::process::id()));
-    save_content_asset(
+    save_content_asset_into(
         &Widget { spokes: 8 },
         &project_root,
         "content/a/b/c/deep.gasset",
+        &mut AssetRegistry::new(),
     )
     .expect("save creates a/b/c");
     assert!(project_root.join("content/a/b/c/deep.gasset").exists());
@@ -58,11 +63,7 @@ fn creates_missing_parent_directories() {
 }
 
 #[test]
-fn saving_into_a_registry_returns_the_id_and_leaves_the_registry_file_alone() {
-    use concerto_foundation::assets::content::{
-        read_content_asset_header, save_content_asset_into,
-    };
-    use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry, REGISTRY_FILE_NAME};
+fn saving_into_a_registry_returns_the_id_and_records_it() {
     let project_root =
         std::env::temp_dir().join(format!("save-content-into-{}", std::process::id()));
     let address = "content/widgets/wheel.gasset";
@@ -91,10 +92,6 @@ fn saving_into_a_registry_returns_the_id_and_leaves_the_registry_file_alone() {
     assert_eq!(
         registry.get(existing).map(|entry| entry.address.as_str()),
         Some("content/other.gasset")
-    );
-    assert!(
-        !project_root.join(REGISTRY_FILE_NAME).exists(),
-        "the caller decides when its registry is persisted"
     );
     assert_eq!(
         save_content_asset_into(&Widget { spokes: 4 }, &project_root, address, &mut registry)

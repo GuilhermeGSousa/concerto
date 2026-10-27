@@ -11,3 +11,4 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
 uuid = { version = "1.18.1", features = ["v4", "v5", "js", "serde"] }
+toml = "0.8"
