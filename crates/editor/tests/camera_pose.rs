@@ -61,6 +61,7 @@ fn a_camera_pose_places_the_editor_camera_on_the_next_step() {
             size: (64, 48),
             scale_factor: 1.0,
             role: HostRole::Edit,
+            clipboard: None,
         },
         move |app| {
             app.register_plugin(EditToolsPlugin)
