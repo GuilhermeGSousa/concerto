@@ -205,6 +205,16 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             .push(syn::parse_quote_spanned!(ty.span()=> #ty: #root::GetTypeRegistration));
     }
     let registration_where = &registration_generics.where_clause;
+    let enum_info = match &ast.data {
+        Data::Enum(data) if !opaque => {
+            let variants = data
+                .variants
+                .iter()
+                .map(|variant| variant.ident.to_string());
+            quote!(registration.insert(#root::ReflectEnumInfo { variants: &[#(#variants),*] });)
+        }
+        _ => quote!(),
+    };
     quote! {
         #reflect
 
@@ -212,6 +222,7 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
             fn get_type_registration() -> #root::TypeRegistration {
                 let mut registration = #root::TypeRegistration::of::<Self>();
                 #(#data)*
+                #enum_info
                 registration
             }
 

@@ -156,3 +156,15 @@ impl<T: Reflect + Default> FromType<T> for ReflectDefault {
         }
     }
 }
+
+/// An enum's variant names, in declaration order; the derive registers it for every non-opaque enum.
+pub struct ReflectEnumInfo {
+    pub variants: &'static [&'static str],
+}
+
+impl TypeData for ReflectEnumInfo {}
+
+/// Marks `Option<T>`, which also carries a [`ReflectEnumInfo`] of `None` and `Some`.
+pub struct ReflectOption;
+
+impl TypeData for ReflectOption {}

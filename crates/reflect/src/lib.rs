@@ -23,7 +23,8 @@ pub use kinds::{
 };
 pub use property::{PathError, PropertyPath, with_property, with_property_mut};
 pub use registry::{
-    FromType, GetTypeRegistration, ReflectDefault, TypeData, TypeRegistration, TypeRegistry,
+    FromType, GetTypeRegistration, ReflectDefault, ReflectEnumInfo, ReflectOption, TypeData,
+    TypeRegistration, TypeRegistry,
 };
 pub use value::{
     EncodeError, LeafHook, ReflectedValue, ValueWarning, apply_value, apply_value_with, to_value,
