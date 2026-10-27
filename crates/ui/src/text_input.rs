@@ -180,6 +180,7 @@ impl UITextEditState {
     }
 
     fn place(&mut self, input: &UITextInput) {
+        self.word = None;
         let line = self.line_text();
         let cursor = char_floor(&line, input.cursor);
         let anchor = input
@@ -237,6 +238,7 @@ impl UITextEditState {
 
     fn select_all(&mut self) {
         self.typing = false;
+        self.word = None;
         let end = self.line_text().len();
         self.editor.set_cursor(Cursor::new(0, end));
         self.editor
@@ -246,6 +248,7 @@ impl UITextEditState {
 
     fn motion(&mut self, font_system: &mut FontSystem, motion: Motion, extend: bool) {
         self.typing = false;
+        self.word = None;
         let (cursor, anchor) = self.caret();
         self.set_caret(cursor, anchor);
         if !extend {
@@ -259,6 +262,7 @@ impl UITextEditState {
     }
 
     fn edit(&mut self, typed: bool, apply: impl FnOnce(&mut Editor<'static>)) {
+        self.word = None;
         self.editor.start_change();
         apply(&mut self.editor);
         let Some(change) = self
@@ -277,6 +281,7 @@ impl UITextEditState {
     }
 
     fn delete_word(&mut self, font_system: &mut FontSystem, motion: Motion) {
+        self.word = None;
         if self.selection_range().is_none() {
             self.editor
                 .set_selection(Selection::Normal(self.editor.cursor()));
@@ -295,6 +300,7 @@ impl UITextEditState {
 
     fn undo(&mut self) {
         self.typing = false;
+        self.word = None;
         if let Some(change) = self.undo.pop() {
             let mut reverse = change.clone();
             reverse.reverse();
@@ -306,6 +312,7 @@ impl UITextEditState {
 
     fn redo(&mut self) {
         self.typing = false;
+        self.word = None;
         if let Some(change) = self.redo.pop() {
             self.editor.set_selection(Selection::None);
             self.editor.apply_change(&change);
@@ -356,6 +363,7 @@ impl UITextEditState {
             self.collapse_empty_selection();
             return;
         }
+        self.word = None;
         let action = match count {
             1 if extend => Action::Drag { x, y },
             1 => Action::Click { x, y },
@@ -378,6 +386,7 @@ impl UITextEditState {
         self.follow = true;
         self.editor.shape_as_needed(font_system, false);
         if restart {
+            self.word = None;
             let (x, y) = self.hit_point(pressed_at);
             self.editor.action(font_system, Action::Click { x, y });
         }
@@ -2296,6 +2305,22 @@ mod tests {
                 .update_key_input(PhysicalKey::Code(SHIFT), false);
         }
 
+        fn double_click_big(&mut self, field: Entity) {
+            self.click(0.0);
+            self.let_the_last_press_age(field);
+            let x = self.x_of(field, 7);
+            self.click(x);
+            self.click(x);
+            assert_eq!(self.word(field), Some((6, 9)));
+        }
+
+        fn word(&self, field: Entity) -> Option<(usize, usize)> {
+            self.world
+                .get_component_for_entity::<UITextEditState>(field)
+                .unwrap()
+                .word
+        }
+
         fn let_the_last_press_age(&mut self, field: Entity) {
             let state = self
                 .world
@@ -2922,6 +2947,127 @@ mod tests {
         editing.let_the_last_press_age(field);
         editing.shift_click(editing.x_of(field, 8));
         assert_eq!(editing.caret(field), (9, Some(6)));
+    }
+
+    #[test]
+    fn an_arrow_key_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+
+        editing.keys(&[KeyCode::ArrowRight]);
+        assert_eq!(editing.word(field), None);
+        assert_eq!(editing.caret(field), (10, None));
+        editing.let_the_last_press_age(field);
+        editing.shift_click(editing.x_of(field, 13));
+        assert_eq!(editing.caret(field), (13, Some(10)));
+    }
+
+    #[test]
+    fn a_single_press_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+
+        editing.let_the_last_press_age(field);
+        editing.click(editing.x_of(field, 1));
+        assert_eq!(editing.word(field), None);
+        assert_eq!(editing.caret(field), (1, None));
+        editing.let_the_last_press_age(field);
+        editing.shift_click(editing.x_of(field, 13));
+        assert_eq!(editing.caret(field), (13, Some(1)));
+    }
+
+    #[test]
+    fn a_triple_press_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+
+        editing.click(editing.x_of(field, 7));
+        assert_eq!(editing.word(field), None);
+        assert_eq!(editing.caret(field), (15, Some(0)));
+        editing.let_the_last_press_age(field);
+        editing.shift_click(editing.x_of(field, 1));
+        assert_eq!(editing.caret(field), (1, Some(0)));
+    }
+
+    #[test]
+    fn select_all_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+
+        editing.keys(&[COMMAND, KeyCode::KeyA]);
+        assert_eq!(editing.word(field), None);
+        editing.let_the_last_press_age(field);
+        editing.shift_click(editing.x_of(field, 1));
+        assert_eq!(editing.caret(field), (1, Some(0)));
+    }
+
+    #[test]
+    fn typing_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.type_text("x");
+        assert_eq!(editing.word(field), None);
+    }
+
+    #[test]
+    fn backspace_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.keys(&[KeyCode::Backspace]);
+        assert_eq!(editing.word(field), None);
+    }
+
+    #[test]
+    fn command_backspace_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.keys(&[COMMAND, KeyCode::Backspace]);
+        assert_eq!(editing.word(field), None);
+    }
+
+    #[test]
+    fn undo_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.keys(&[COMMAND, KeyCode::KeyZ]);
+        assert_eq!(editing.word(field), None);
+    }
+
+    #[test]
+    fn redo_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.keys(&[COMMAND, KeyCode::KeyY]);
+        assert_eq!(editing.word(field), None);
+    }
+
+    #[test]
+    fn an_outside_caret_write_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.set_caret(field, 2, None);
+        editing.frame();
+        assert_eq!(editing.word(field), None);
+    }
+
+    #[test]
+    fn an_outside_value_write_ends_word_wise_extension() {
+        let mut editing = Editing::new();
+        let field = editing.laid_out("hello big world");
+        editing.double_click_big(field);
+        editing.set_value(field, "other text");
+        editing.frame();
+        assert_eq!(editing.word(field), None);
     }
 
     #[test]
