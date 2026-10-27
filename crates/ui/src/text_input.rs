@@ -29,7 +29,9 @@ use crate::{
     focus::FocusedWidget,
     interaction::{DOUBLE_CLICK, DRAG_THRESHOLD, UIInputState},
     material::UIMaterial,
-    node::{Overflow, Position, UILayout, UINode, UITextMeasure, ui_text_attrs, ui_text_metrics},
+    node::{
+        Overflow, Position, UILayout, UINode, UIRect, UITextMeasure, ui_text_attrs, ui_text_metrics,
+    },
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -852,7 +854,15 @@ pub(crate) fn setup_text_inputs(
             .spawn_child(quad(0.0, theme.text_selection))
             .entity();
         let label = viewport
-            .spawn_child((UINode::default().with_flex_shrink(0.0), label_text))
+            .spawn_child((
+                UINode::default()
+                    .with_flex_shrink(0.0)
+                    .with_padding(UIRect {
+                        right: CARET,
+                        ..UIRect::default()
+                    }),
+                label_text,
+            ))
             .entity();
         let viewport = viewport.entity();
         let caret = field.spawn_child(quad(CARET, theme.caret)).entity();
@@ -1186,6 +1196,21 @@ mod tests {
         fn long(&mut self, value: &str) -> Entity {
             let t = UITheme::nocturne();
             let field = self.spawn(t.text_field("").width(UIValue::Px(80.0)).value(value));
+            self.frame();
+            field
+        }
+
+        fn unpadded(&mut self, width: f32, value: &str) -> Entity {
+            let t = UITheme::nocturne();
+            let field = self.spawn(
+                t.text_field("")
+                    .bare()
+                    .height(UIValue::Auto)
+                    .padding(0.0)
+                    .single_line()
+                    .width(UIValue::Px(width))
+                    .value(value),
+            );
             self.frame();
             field
         }
@@ -1570,6 +1595,7 @@ mod tests {
             assert!(field_layout.rect.size.x > last, "the field grows");
             assert_eq!(viewport.size.x, label.size.x);
             assert_eq!(field_layout.rect.size.x, label.size.x + padding);
+            assert_eq!(label.size.x, fields.line_width(field).ceil() + CARET);
             last = field_layout.rect.size.x;
         }
         assert_eq!(fields.get::<UITextInput>(field).value, "abcdeWW");
@@ -1810,18 +1836,8 @@ mod tests {
 
     #[test]
     fn a_field_without_padding_keeps_its_caret_inside_while_typing_at_the_end() {
-        let t = UITheme::nocturne();
         let mut fields = Fields::new();
-        let field = fields.spawn(
-            t.text_field("")
-                .bare()
-                .height(UIValue::Auto)
-                .padding(0.0)
-                .single_line()
-                .width(UIValue::Px(80.0))
-                .value(LONG),
-        );
-        fields.frame();
+        let field = fields.unpadded(80.0, LONG);
         fields.focus(Some(field));
         fields.frames(2);
         fields.key(KeyCode::End);
@@ -1840,6 +1856,41 @@ mod tests {
                 "the caret is inside the field"
             );
         }
+    }
+
+    #[test]
+    fn text_ending_at_the_right_edge_scrolls_so_the_caret_stays_in_the_field() {
+        let mut reached = 0;
+        for width in 80..90 {
+            let mut fields = Fields::new();
+            let field = fields.unpadded(width as f32, "abc");
+            fields.focus(Some(field));
+            fields.frames(2);
+            fields.key(KeyCode::End);
+
+            let visible = fields.visible(field);
+            while fields.line_width(field).ceil() < visible {
+                fields.type_text("w");
+            }
+            if fields.line_width(field).ceil() != visible {
+                continue;
+            }
+            reached += 1;
+            fields.frame();
+
+            let label = fields.get::<UILayout>(fields.label(field)).rect;
+            assert!(label.size.x > visible, "{width}: the label overflows");
+            assert!(fields.scroll(field) > 0.0, "{width}: the field scrolled");
+            let (_, _, caret) = fields.parts(field);
+            fields.show_the_caret_for(field, Duration::ZERO);
+            fields.frame();
+            assert!(fields.alpha(caret) > 0.0, "{width}: the caret shows");
+            assert!(
+                fields.caret_is_inside(field),
+                "{width}: the caret is inside the field"
+            );
+        }
+        assert!(reached > 0, "some width puts the text at the edge");
     }
 
     #[test]
