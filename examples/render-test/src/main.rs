@@ -10,7 +10,10 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_ecs::{command::CommandQueue, query::Query, resource::Res, Component, With};
 use concerto_foundation::{assets::asset_server::AssetServer, time::Time, transform::Transform};
-use concerto_render::components::light::{Light, LightType};
+use concerto_render::components::{
+    light::{Light, LightType},
+    render_entity::SyncWithRenderWorld,
+};
 use glam::{Quat, Vec3};
 
 #[cfg(feature = "terminal")]
@@ -152,6 +155,7 @@ fn spawn_camera_terminal(
         },
         TerminalOutput,
         Transform::from_translation_rotation(Vec3::ZERO, Quat::IDENTITY),
+        SyncWithRenderWorld,
     ));
 }
 
@@ -160,13 +164,16 @@ fn spawn_camera_windowed(mut cmd: CommandQueue) {
     spawn_first_person_player(
         &mut cmd,
         Vec3::new(0.0, 2.0, 0.0),
-        Light {
-            color: Color::WHITE,
-            intensity: 10.0,
-            light_type: LightType::Point,
-            range: 0.0,
-            shadowmaps_enabled: false,
-        },
+        (
+            Light {
+                color: Color::WHITE,
+                intensity: 10.0,
+                light_type: LightType::Point,
+                range: 0.0,
+                shadowmaps_enabled: false,
+            },
+            SyncWithRenderWorld,
+        ),
     );
 }
 
