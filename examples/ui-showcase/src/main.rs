@@ -757,5 +757,5 @@ fn game(app: &mut App) {
 
 fn main() {
     env_logger::init();
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }

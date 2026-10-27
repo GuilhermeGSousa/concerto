@@ -51,7 +51,7 @@ fn main() {
         }
     }
 
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }
 
 fn spawn_camera(mut cmd: CommandQueue) {

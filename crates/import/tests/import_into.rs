@@ -102,7 +102,7 @@ fn an_external_obj_brings_its_material_library_along() {
         imported
             .assets
             .iter()
-            .any(|asset| asset.sub_asset_name == "material/square"),
+            .any(|asset| asset.provenance.as_ref().unwrap().sub_asset == "material/square"),
         "the material library was read, got {:?}",
         imported.assets
     );

@@ -42,17 +42,17 @@ cargo build --workspace
 cargo run -p tech-demo
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo run -p concerto-editor --example custom_property
-cd examples/tech-demo && cargo run -p concerto-import -- assets/forest.glb
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 ```
 
 Examples are `animation-test`, `physics-test`, `render-test`, `tech-demo`, and
-`ui-showcase`. `import` runs from the directory that owns the `content/` tree.
-An example may have an `editor/` crate, named `<game>-editor`, that runs the
-editor over the game's library; an editor exists only for a game that has one.
-Today that is `tech-demo`.
+`ui-showcase`. Sources are imported through the editor's Import…, over a
+scratch copy of the project; there is no import command line. An example may
+have an `editor/` crate, named `<game>-editor`, that runs the editor over the
+game's library; an editor exists only for a game that has one. Today that is
+`tech-demo`.
 
 ## Done gate
 
