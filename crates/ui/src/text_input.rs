@@ -1626,17 +1626,20 @@ mod tests {
         fields.frames(2);
         fields.key(KeyCode::End);
 
+        let (_, _, caret) = fields.parts(field);
+        let mut overflowed = false;
         for _ in 0..20 {
             fields.type_text("w");
-            let (_, _, caret) = fields.parts(field);
-            let drawn = fields.get::<UILayout>(caret);
-            assert!(
-                fields.alpha(caret) == 0.0
-                    || !drawn.clip_rect.intersection(drawn.rect).has_area()
-                    || fields.caret_is_inside(field),
-                "a drawn caret is inside the field"
-            );
+            assert!(fields.alpha(caret) > 0.0, "the caret stays drawn");
+            if overflowed {
+                assert!(
+                    fields.caret_is_inside(field),
+                    "the caret is inside the field"
+                );
+            }
+            overflowed |= fields.scroll(field) > 0.0;
         }
+        assert!(overflowed);
         fields.frame();
 
         let scroll = fields.scroll(field);
