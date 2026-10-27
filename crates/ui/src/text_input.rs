@@ -42,7 +42,7 @@ const CARET: f32 = 1.0;
 pub struct UITextInput {
     /// Current string value of the field.
     pub value: String,
-    /// Shown when the field is empty.
+    /// Shown when the field is empty, drawn at half the alpha of the field's text colour, which is fixed when the field is set up.
     pub placeholder: String,
     /// Byte offset of the insert cursor within `value`.
     pub cursor: usize,
@@ -86,6 +86,7 @@ pub(crate) struct UITextInputParts {
     pub(crate) selection: Entity,
     pub(crate) label: Entity,
     pub(crate) caret: Entity,
+    pub(crate) text_color: Color,
 }
 
 struct Written {
@@ -718,6 +719,23 @@ fn shown_text(input: &UITextInput) -> &str {
     }
 }
 
+fn dimmed(color: Color) -> Color {
+    match color {
+        Color::LinearRgba(mut color) => {
+            color.a *= 0.5;
+            Color::LinearRgba(color)
+        }
+        Color::Srgba(mut color) => {
+            color.a *= 0.5;
+            Color::Srgba(color)
+        }
+        Color::Hsla(mut color) => {
+            color.a *= 0.5;
+            Color::Hsla(color)
+        }
+    }
+}
+
 fn quad_color(color: Color, shown: bool) -> LinearRgba {
     let mut color = color.to_linear();
     if !shown {
@@ -770,6 +788,7 @@ pub(crate) fn setup_text_inputs(
             selection,
             label,
             caret,
+            text_color: text.color,
         });
         cmd.remove::<UIText>(entity);
     }
@@ -800,7 +819,7 @@ fn project_quad(
     }
 }
 
-/// Shows each text field's value on its label, or its placeholder while the value is empty, and while it has focus scrolls the label in whole pixels to follow the caret once its text overflowed the viewport, placing its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret and hiding it outside the visible text; placement waits for the viewport's first layout, and blur scrolls back to the start.
+/// Shows each text field's value on its label in the field's text colour, or its placeholder dimmed to half that alpha while the value is empty, and while it has focus scrolls the label in whole pixels to follow the caret once its text overflowed the viewport, placing its selection quad in the viewport and its caret quad on the field over the glyphs they mark, blinking the caret and hiding it outside the visible text; placement waits for the viewport's first layout, and blur scrolls back to the start.
 pub(crate) fn project_text_inputs(
     fields: Query<(
         &UITextInput,
@@ -821,6 +840,14 @@ pub(crate) fn project_text_inputs(
         let shown = shown_text(input);
         if text.text != shown {
             text.text = shown.to_owned();
+        }
+        let color = if input.value.is_empty() {
+            dimmed(parts.text_color)
+        } else {
+            parts.text_color
+        };
+        if text.color != color {
+            text.color = color;
         }
 
         if let Some(state) = state
@@ -1306,6 +1333,95 @@ mod tests {
         fields.set_value(field, "");
         fields.frame();
         assert_eq!(fields.get::<UIText>(label).text, "Search…");
+    }
+
+    #[test]
+    fn the_placeholder_is_drawn_at_half_the_text_alpha() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("Search…"));
+        fields.frames(2);
+
+        let text = fields.get::<UIText>(fields.label(field));
+        assert_eq!(text.text, "Search…");
+        assert_eq!(text.color, dimmed(t.text));
+        let (full, half) = (t.text.to_srgba(), text.color.to_srgba());
+        assert_eq!(half.a, full.a * 0.5);
+        assert_eq!((half.r, half.g, half.b), (full.r, full.g, full.b));
+    }
+
+    #[test]
+    fn typing_shows_the_full_text_colour_and_emptying_dims_it_again() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("Search…"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(2);
+        let label = fields.label(field);
+
+        fields.type_text("b");
+        fields.frame();
+        assert_eq!(fields.get::<UIText>(label).text, "b");
+        assert_eq!(fields.get::<UIText>(label).color, t.text);
+
+        fields.key(KeyCode::Backspace);
+        fields.frame();
+        assert_eq!(fields.get::<UIText>(label).text, "Search…");
+        assert_eq!(fields.get::<UIText>(label).color, dimmed(t.text));
+    }
+
+    #[test]
+    fn a_custom_text_colour_is_dimmed_for_the_placeholder() {
+        let t = UITheme::nocturne();
+        let custom = Color::hsl(200.0, 0.5, 0.6, 0.8);
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("Rename…").color(custom));
+        fields.frames(2);
+
+        let color = fields.get::<UIText>(fields.label(field)).color;
+        assert_eq!(color, dimmed(custom));
+        assert_eq!(color, Color::hsl(200.0, 0.5, 0.6, 0.4));
+
+        fields.set_value(field, "bunny");
+        fields.frame();
+        assert_eq!(fields.get::<UIText>(fields.label(field)).color, custom);
+    }
+
+    #[test]
+    fn a_focused_empty_field_keeps_the_dimmed_placeholder() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("Search…"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(3);
+
+        let text = fields.get::<UIText>(fields.label(field));
+        assert_eq!(text.text, "Search…");
+        assert_eq!(text.color, dimmed(t.text));
+    }
+
+    #[test]
+    fn an_idle_focused_empty_field_writes_no_text_and_lays_nothing_out() {
+        let t = UITheme::nocturne();
+        let mut fields = Fields::new();
+        let field = fields.spawn(t.text_field("Search…"));
+        fields.frame();
+        fields.focus(Some(field));
+        fields.frames(4);
+        let passes = fields.layout_passes();
+        fn idle() {}
+        let mut texts = Watch::new::<UIText, _>(&mut fields.world, idle);
+        texts.run(&mut fields.world);
+
+        fields.frames(2);
+        fields.show_the_caret_for(field, Duration::from_millis(795));
+        fields.frame();
+        fields.show_the_caret_for(field, Duration::ZERO);
+        fields.frame();
+        assert_eq!(fields.layout_passes(), passes);
+        assert_eq!(texts.run(&mut fields.world), 0, "no UIText was written");
     }
 
     #[test]
@@ -2139,6 +2255,7 @@ mod tests {
                     selection,
                     label,
                     caret,
+                    text_color: UIText::default().color,
                 },
                 layout(LABEL - Vec2::new(6.0, 4.0), Vec2::new(312.0, 26.0)),
                 Interactable,
