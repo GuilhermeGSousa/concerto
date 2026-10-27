@@ -12,6 +12,7 @@ use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, ResMut, With, Without};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraPivot, EntityFollow};
+use concerto::mesh::MeshComponent;
 use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
@@ -19,6 +20,7 @@ use concerto::physics::movement::CharacterMovement;
 use concerto::physics::physics_state::PhysicsState;
 use concerto::physics::rigid_body::MotionType::Dynamic;
 use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
+use concerto::physics::shape::MeshCollider;
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
@@ -58,9 +60,14 @@ pub(crate) struct PlayerSpawner {
 
 pub(crate) fn spawn_character(
     spawners: Query<(&Transform, &mut PlayerSpawner)>,
+    pending_ground: Query<Entity, (With<MeshCollider>, With<MeshComponent>, Without<Collider>)>,
     asset_server: Res<AssetServer>,
     mut cmd: CommandQueue,
 ) {
+    if pending_ground.iter().next().is_some() {
+        return;
+    }
+
     for (spawn_point, mut spawner) in spawners.iter() {
         if !spawner.should_spawn {
             return;
@@ -310,7 +317,9 @@ mod tests {
         assets::{asset_server::AssetServer, asset_store::AssetStore},
         transform::Transform,
     };
+    use concerto::mesh::MeshComponent;
     use concerto::physics::physics_state::PhysicsState;
+    use concerto::physics::{collider::Collider, shape::MeshCollider};
     use concerto::scene::scene::Scene;
     use glam::{Quat, Vec3};
 
@@ -339,5 +348,56 @@ mod tests {
             .map(|transform| transform.translation)
             .collect();
         assert_eq!(characters, vec![spawn_point]);
+    }
+
+    fn world_with_spawner() -> (World, Vec3) {
+        let mut world = World::new();
+        world.insert_resource(PhysicsState::new());
+        let mut server = AssetServer::new();
+        server.register_asset(&AssetStore::<Scene>::new());
+        world.insert_resource(server);
+        let spawn_point = Vec3::new(3.0, 1.5, -7.0);
+        world.spawn((
+            Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),
+            PlayerSpawner { should_spawn: true },
+        ));
+        (world, spawn_point)
+    }
+
+    fn characters(world: &mut World) -> Vec<Vec3> {
+        world
+            .query::<&Transform, With<Player>>()
+            .iter(world)
+            .map(|transform| transform.translation)
+            .collect()
+    }
+
+    #[test]
+    fn the_character_waits_for_the_ground_collider() {
+        let (mut world, spawn_point) = world_with_spawner();
+        let ground = world
+            .spawn((MeshCollider, MeshComponent::default()))
+            .entity();
+
+        let mut system = spawn_character.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        assert!(characters(&mut world).is_empty());
+
+        world.insert(ground, Collider::capsule(2.0, 1.0));
+        system.run_and_apply((), &mut world);
+        assert_eq!(characters(&mut world), vec![spawn_point]);
+    }
+
+    #[test]
+    fn a_mesh_collider_without_a_mesh_does_not_hold_the_character() {
+        let (mut world, spawn_point) = world_with_spawner();
+        world.spawn(MeshCollider);
+
+        let mut system = spawn_character.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(characters(&mut world), vec![spawn_point]);
     }
 }
