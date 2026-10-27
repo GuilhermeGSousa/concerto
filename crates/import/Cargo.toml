@@ -7,6 +7,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+concerto-asset-format.workspace = true
 concerto-asset-import.workspace = true
 concerto-foundation.workspace = true
 concerto-gltf.workspace = true

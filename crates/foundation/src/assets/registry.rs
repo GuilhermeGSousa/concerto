@@ -1,11 +1,11 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::path::Path;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
+use concerto_asset_format::{parse_registry, scan_content, write_registry, ScannedEntry};
 use concerto_ecs::resource::Resource;
-use serde::{Deserialize, Serialize};
 
-use super::content::{read_content_asset_header, ImportProvenance};
+use super::content::ImportProvenance;
 use super::{Asset, AssetId};
 
 /// Where `AssetRegistry` lives, relative to the same root content-asset
@@ -52,23 +52,15 @@ impl AssetEntry {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-struct RegistryRecord {
-    address: String,
-    kind: String,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredRecord {
-    Record(RegistryRecord),
-    Legacy(String),
-}
-
-#[derive(Deserialize)]
-struct RegistryFile {
-    #[serde(default)]
-    assets: BTreeMap<String, StoredRecord>,
+impl From<ScannedEntry> for AssetEntry {
+    fn from(entry: ScannedEntry) -> Self {
+        Self {
+            id: entry.id,
+            address: entry.address,
+            kind: entry.kind,
+            provenance: entry.provenance,
+        }
+    }
 }
 
 /// Every content asset of a project or a shipped game: id, address, and kind.
@@ -97,33 +89,7 @@ impl AssetRegistry {
     }
 
     pub fn parse(text: &str) -> anyhow::Result<Self> {
-        let file: RegistryFile = toml::from_str(text).context("failed to parse asset registry")?;
-        let mut registry = Self::default();
-        for (hex, record) in file.assets {
-            let id = AssetId::from_simple_hex(&hex)
-                .map_err(|err| anyhow::anyhow!("invalid asset id '{hex}' in registry: {err}"))?;
-            let record = match record {
-                StoredRecord::Record(record) => record,
-                StoredRecord::Legacy(address) => bail!(
-                    "asset registry predates asset kinds ('{address}' has none); rebuild it by importing a source or saving any asset from the editor"
-                ),
-            };
-            if let Some(existing) = registry.id_by_address.get(&record.address) {
-                bail!(
-                    "asset registry maps two ids ({} and {}) to the same address '{}'",
-                    existing.simple_hex(),
-                    id.simple_hex(),
-                    record.address
-                );
-            }
-            registry.insert(AssetEntry {
-                id,
-                address: record.address,
-                kind: record.kind,
-                provenance: None,
-            });
-        }
-        Ok(registry)
+        Ok(Self::from_entries(parse_registry(text)?))
     }
 
     /// Builds a registry by scanning `<project_root>/<content_root>` for
@@ -139,71 +105,34 @@ impl AssetRegistry {
         content_root: &str,
         extension: &str,
     ) -> anyhow::Result<Self> {
-        let root = project_root.join(content_root);
+        Ok(Self::from_entries(scan_content(
+            project_root,
+            &project_root.join(content_root),
+            extension,
+        )?))
+    }
+
+    fn from_entries(entries: Vec<ScannedEntry>) -> Self {
         let mut registry = Self::default();
-
-        let mut stack = vec![root.clone()];
-        while let Some(dir) = stack.pop() {
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(err) => {
-                    return Err(err).with_context(|| format!("failed to read '{}'", dir.display()))
-                }
-            };
-            for entry in entries {
-                let path = entry
-                    .with_context(|| format!("failed to read an entry of '{}'", dir.display()))?
-                    .path();
-                if path.is_dir() {
-                    stack.push(path);
-                    continue;
-                }
-                if path.extension().and_then(|e| e.to_str()) != Some(extension) {
-                    continue;
-                }
-
-                let header = read_content_asset_header(&path)?;
-                let address = path
-                    .strip_prefix(project_root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-
-                if let Some(previous) = registry.get(header.asset_id) {
-                    bail!(
-                        "content tree is malformed: '{}' and '{address}' both carry asset id {}",
-                        previous.address,
-                        header.asset_id.simple_hex()
-                    );
-                }
-                registry.insert(AssetEntry {
-                    id: header.asset_id,
-                    address,
-                    kind: header.kind,
-                    provenance: header.provenance,
-                });
-            }
+        for entry in entries {
+            registry.insert(entry.into());
         }
-
-        Ok(registry)
+        registry
     }
 
     /// The registry file's text: one `id = { address, kind }` line per asset, ordered by id.
     pub fn to_toml(&self) -> String {
-        let mut ids: Vec<_> = self.entries.keys().copied().collect();
-        ids.sort();
-        let mut text = String::from("[assets]\n");
-        for id in ids {
-            let entry = &self.entries[&id];
-            text.push_str(&format!(
-                "{} = {{ address = {}, kind = {} }}\n",
-                id.simple_hex(),
-                toml::Value::String(entry.address.clone()),
-                toml::Value::String(entry.kind.clone()),
-            ));
-        }
-        text
+        let entries: Vec<ScannedEntry> = self
+            .entries
+            .values()
+            .map(|entry| ScannedEntry {
+                id: entry.id,
+                address: entry.address.clone(),
+                kind: entry.kind.clone(),
+                provenance: None,
+            })
+            .collect();
+        write_registry(&entries)
     }
 
     pub fn save(&self, project_root: &Path) -> anyhow::Result<()> {
