@@ -520,11 +520,18 @@ fn text_fields(
     mut calls: ToolCalls<TextFields>,
     fields: Query<Entity, With<UITextInput>>,
     labels: Query<(&UIText, &ChildOf)>,
+    parents: Query<&ChildOf>,
 ) {
+    let in_field = |child_of: &ChildOf| {
+        std::iter::successors(Some(child_of.parent()), |&entity| {
+            parents.get_entity(entity).map(ChildOf::parent)
+        })
+        .any(|entity| fields.get_entity(entity).is_some())
+    };
     for (_, reply) in calls.read() {
         let mut values: Vec<&str> = labels
             .iter()
-            .filter(|(_, child_of)| fields.get_entity(child_of.parent()).is_some())
+            .filter(|(_, child_of)| in_field(child_of))
             .map(|(label, _)| label.text.as_str())
             .collect();
         values.sort_unstable();
