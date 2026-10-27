@@ -1,6 +1,9 @@
 use concerto_color::{Color, LinearRgba};
-use concerto_ecs::{component::Component, reflect::ReflectSceneComponent};
-use concerto_reflect::Reflect;
+use concerto_ecs::{
+    component::Component,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+};
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec4;
 
 use super::camera::CameraUniform;
@@ -13,7 +16,7 @@ pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 /// material. Goes on the same entity as the [`Camera`](super::camera::Camera);
 /// a camera without one gets no fog and the default ambient light.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect)]
-#[reflect(SceneComponent)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct CameraEnvironment {
     pub fog: Option<Fog>,
     /// Ambient light, as a colour multiplied by each surface's albedo;
