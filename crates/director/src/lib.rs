@@ -5,11 +5,10 @@
 //! a pose with a priority — and the [`CameraDirector`] stacks them by priority.
 //! Whatever is on top drives the main camera, blending on takeover.
 //!
-//! Having the component is being in the stack, and there is no way to
-//! re-prioritise in place: a camera enters and leaves by the component being
-//! added and removed. Whether an entry is *eligible* for control is the one
-//! runtime toggle, and it lives on the director's stack entry rather than the
-//! component, so flipping it takes effect immediately.
+//! Having the component is being in the stack: a camera enters and leaves by
+//! the component being added and removed. `priority` and `enabled` are read from
+//! the component, so editing either in place, through reflection or
+//! [`VirtualCamera::set_enabled`], re-sorts the stack on the director's next run.
 //!
 //! ```ignore
 //! // A player rig: the pivot follows the character, the child is the pose.
@@ -24,8 +23,8 @@
 //!     .spawn((VirtualCamera::new(100).disabled(), Transform::default()))
 //!     .entity();
 //!
-//! director.set_enabled(shot, true);   // takes over
-//! director.set_enabled(shot, false);  // hands control back
+//! cameras.get_entity(shot).unwrap().set_enabled(true);   // takes over
+//! cameras.get_entity(shot).unwrap().set_enabled(false);  // hands control back
 //! ```
 
 pub mod director;
@@ -34,8 +33,10 @@ pub mod virtual_camera;
 
 use concerto_app::{
     App, Plugin,
+    edit_time::AtEditTime,
     schedule_groups::{Startup, Update},
 };
+use concerto_ecs::IntoSystemConfig;
 
 pub use director::CameraDirector;
 pub use main_camera::MainCamera;
@@ -44,7 +45,8 @@ pub use virtual_camera::{BlendIn, CameraPose, Ease, Lens, VirtualCamera};
 /// Registers the main camera and the virtual-camera director.
 ///
 /// The director runs in `Update`, so nothing about the pose pipeline depends on
-/// where this plugin sits in the registration order.
+/// where this plugin sits in the registration order. The stack sync runs before
+/// the pose is driven, in an edit `App` as well.
 pub struct CameraDirectorPlugin;
 
 impl Plugin for CameraDirectorPlugin {
@@ -55,5 +57,11 @@ impl Plugin for CameraDirectorPlugin {
         app.add_system(Startup, main_camera::spawn_main_camera);
 
         app.add_system(Update, director::drive_main_camera);
+        app.add_system(
+            Update,
+            director::sync_virtual_cameras
+                .before(director::drive_main_camera)
+                .at_edit_time(),
+        );
     }
 }

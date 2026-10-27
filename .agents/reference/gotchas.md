@@ -64,6 +64,9 @@ fix the entry in the same commit as the change that made it false.
   `&mut World`, and registering one registers `T`, so its signals fire even if
   nothing queries it. An overwrite fires `Replace`, then `Add`, but stamps `T`
   changed only: `Added<T>` and `is_added()` stay false, as in Bevy.
+- **An edit through `ReflectComponent::edit` fires no lifecycle signal.** It
+  mutates the component in place and stamps `T` changed, so `On<Replace<T>>`
+  and the hooks never see it. React to an edit with `Changed<T>`.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that

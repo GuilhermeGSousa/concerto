@@ -1,6 +1,9 @@
 use concerto_color::{Color, LinearRgba};
-use concerto_ecs::{component::Component, reflect::ReflectSceneComponent};
-use concerto_reflect::Reflect;
+use concerto_ecs::{
+    component::Component,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+};
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::Vec4;
 
 use super::camera::CameraUniform;
@@ -13,7 +16,7 @@ pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 /// material. Goes on the same entity as the [`Camera`](super::camera::Camera);
 /// a camera without one gets no fog and the default ambient light.
 #[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect)]
-#[reflect(SceneComponent)]
+#[reflect(Component, Default, SceneComponent)]
 pub struct CameraEnvironment {
     pub fog: Option<Fog>,
     /// Ambient light, as a colour multiplied by each surface's albedo;
@@ -89,6 +92,11 @@ impl Fog {
 
 #[cfg(test)]
 mod tests {
+    use std::any::TypeId;
+
+    use concerto_ecs::{reflect::AppTypeRegistry, world::World};
+    use concerto_reflect::{apply_value, to_value};
+
     use super::*;
 
     #[test]
@@ -131,5 +139,48 @@ mod tests {
         assert_eq!(fog.amount(2.0), 0.0);
         assert!(fog.amount(4.0) > 0.5);
         assert!(fog.amount(20.0) > 0.999);
+    }
+
+    #[test]
+    fn editing_a_camera_environment_changes_the_filled_uniform() {
+        let mut world = World::new();
+        world.register_component::<CameraEnvironment>();
+        world.register_type::<CameraEnvironment>();
+        let camera = world.spawn(CameraEnvironment::default());
+
+        let mut before = CameraUniform::new();
+        world
+            .get_component_for_entity::<CameraEnvironment>(camera)
+            .unwrap()
+            .fill(&mut before);
+        assert_eq!(before.fog_color.w, 0.0);
+        assert_eq!(before.ambient.w, 0.0);
+
+        let replacement = CameraEnvironment::default()
+            .with_fog(Fog {
+                color: Color::BLUE,
+                density: 0.2,
+                start: 4.0,
+            })
+            .with_ambient(Color::WHITE);
+        let stored = to_value(&replacement).unwrap();
+        let reflect = *world
+            .get_resource::<AppTypeRegistry>()
+            .unwrap()
+            .get_type_data::<ReflectComponent>(TypeId::of::<CameraEnvironment>())
+            .expect("a camera environment is an editable component");
+        assert!((reflect.edit)(&mut world, camera, &mut |value| {
+            apply_value(value, &stored);
+        }));
+
+        let mut after = CameraUniform::new();
+        world
+            .get_component_for_entity::<CameraEnvironment>(camera)
+            .unwrap()
+            .fill(&mut after);
+        assert_eq!(after.fog_color.w, 1.0);
+        assert_eq!(after.fog_params.x, 0.2);
+        assert_eq!(after.fog_params.y, 4.0);
+        assert_eq!(after.ambient, Vec4::ONE);
     }
 }
