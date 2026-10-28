@@ -1723,6 +1723,24 @@ mod variant_rows {
     }
 
     #[test]
+    fn the_variant_buttons_caret_is_a_node_so_it_is_laid_out_and_drawn() {
+        let (mut w, _) = fixture(Light::point_light());
+        let button = widget(&mut w.f.world, &["light_type"]);
+        let caret = children(&w.f.world, button)[1];
+
+        assert_eq!(
+            text(&w.f.world, caret),
+            crate::fonts::glyph::CARET_DOWN.to_string()
+        );
+        assert!(
+            w.f.world
+                .get_component_for_entity::<UINode>(caret)
+                .is_some(),
+            "a text without a node never reaches layout or the draw lists"
+        );
+    }
+
+    #[test]
     fn picking_spot_switches_the_light_and_adds_its_cone_angle_row() {
         let (mut w, entity) = fixture(Light::point_light());
 

@@ -20,7 +20,7 @@ use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
     interaction::UIClick,
-    node::UIRect,
+    node::{UINode, UIRect},
     scroll::UIScrollArea,
     text::UIText,
     theme::UITheme,
@@ -118,7 +118,10 @@ impl ErasedEditor for AssetPicker {
                             .min_width(UIValue::Px(0.0)),
                         AssetPickerLabel { row: entity },
                     ))
-                    .add_child(icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted());
+                    .add_child((
+                        UINode::default().with_flex_shrink(0.0),
+                        icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted(),
+                    ));
             },
         );
         Ok(())
