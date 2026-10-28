@@ -4,7 +4,7 @@ use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusLost},
-    node::{FlexWrap, UIRect},
+    node::{FlexWrap, UINode, UIRect},
     text::UIText,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
@@ -169,6 +169,13 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     fn follows_snapshot(&self) -> bool {
         true
     }
+    fn row_node(&self, value: &NumericSnapshot, theme: &UITheme) -> UINode {
+        let node = super::sync::standard_row_node(theme);
+        match value {
+            NumericSnapshot::Color(_) => node.with_flex_wrap(FlexWrap::Wrap),
+            NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => node,
+        }
+    }
     fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
         let entity = row.entity();
         let NumericSnapshot::Color(color) = value else {
@@ -178,7 +185,6 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
             return;
         };
         color::spawn_swatch(row, *color, theme);
-        row.insert(super::sync::standard_row_node(theme).with_flex_wrap(FlexWrap::Wrap));
         let mut line = row.spawn_child(theme.row().width(UIValue::Percent(100.0)));
         for slot in 0..slot_count(value) {
             spawn_slot(&mut line, entity, value, slot, theme);
