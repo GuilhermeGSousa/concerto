@@ -67,4 +67,45 @@ impl Gpu {
             adapter,
         })
     }
+
+    /// Requests a `Gpu` for a test; with no adapter it prints a skip line and returns `None`, or panics when `CONCERTO_REQUIRE_GPU` is set.
+    pub fn request_for_test() -> Option<Gpu> {
+        let found = pollster::block_on(Gpu::request(&Gpu::instance(), None));
+        skip_without_adapter(
+            found,
+            std::env::var_os("CONCERTO_REQUIRE_GPU").is_some_and(|value| !value.is_empty()),
+        )
+    }
+}
+
+fn skip_without_adapter<T>(found: Option<T>, require: bool) -> Option<T> {
+    if found.is_none() {
+        assert!(
+            !require,
+            "CONCERTO_REQUIRE_GPU is set but no GPU adapter is available"
+        );
+        eprintln!("SKIPPED: no GPU adapter is available");
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::skip_without_adapter;
+
+    #[test]
+    fn a_found_adapter_is_returned() {
+        assert_eq!(skip_without_adapter(Some(1), true), Some(1));
+    }
+
+    #[test]
+    fn a_missing_adapter_skips_when_not_required() {
+        assert_eq!(skip_without_adapter::<u8>(None, false), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "CONCERTO_REQUIRE_GPU")]
+    fn a_missing_adapter_panics_when_required() {
+        skip_without_adapter::<u8>(None, true);
+    }
 }

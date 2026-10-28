@@ -12,7 +12,7 @@ fn game(app: &mut App) {
 }
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn first_pixel(gpu: &Gpu, texture: &wgpu::Texture) -> [u8; 4] {
