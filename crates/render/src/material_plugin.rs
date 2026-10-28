@@ -582,7 +582,7 @@ mod tests {
 
     #[test]
     fn swapping_a_material_handle_changes_the_material_its_render_entity_draws_with() {
-        let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+        let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
         let (first, second) = (AssetId::new(), AssetId::new());
