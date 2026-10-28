@@ -201,7 +201,7 @@ impl App {
         self
     }
 
-    /// Registers an event type; without this its buffers are never swapped and grow forever.
+    /// Registers an event type; without this its `EventChannel` resource never exists, so systems taking `EventWriter` or `EventReader` for it are skipped.
     pub fn register_event<T: Event + 'static>(&mut self) -> &mut Self {
         let event_channel = EventChannel::<T>::new();
 

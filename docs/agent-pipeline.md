@@ -1,8 +1,9 @@
 # The agent pipeline
 
 Claude Code sessions take issues labelled `agent`, open one pull request per
-issue, and carry it through spec, plan, implementation and review. You approve
-each stage in the PR and merge. The procedure the agents follow is
+issue, and carry it through implementation and review. An issue labelled
+`agent:spec` goes through questions, spec and plan first, and you approve each
+in the PR. You merge. The procedure the agents follow is
 [.agents/skills/issue-pipeline/SKILL.md](../.agents/skills/issue-pipeline/SKILL.md).
 
 ## Handing over an issue
@@ -11,12 +12,19 @@ Add `agent` to an issue you opened. Add as well:
 
 | Label | Effect |
 |---|---|
-| `documentation` or `lint` | No spec, no plan: the agent goes straight to an implementation PR. |
+| `agent:spec` | Questions, spec and plan, each approved by you in the PR. Without it, the agent goes straight to an implementation PR. |
 | `agent:local` | Only the runner on your machine takes it. Use it for rendering, UI and editor work, which needs a look at the running program. |
+| `documentation` or `lint` | Sorting only; no effect on the path. |
+
+An agent that meets a design decision on an issue without `agent:spec` adds
+the label itself and says why in the PR. Remove the label to send the issue
+back to the short path. A cloud agent sees a label change only at its next
+wake, so comment on the PR after changing one.
 
 Agents also file issues for work they find outside their task, and for
-follow-ups agreed in a session, without asking. Those carry `agent:filed` and
-enter the queue like yours. Remove `agent` from one to keep agents off it.
+follow-ups agreed in a session, without asking. Those carry `agent:filed`, and
+`agent:spec` when they need design, and enter the queue like yours. Remove
+`agent` from one to keep agents off it.
 
 The pipeline sets `agent:claimed-cloud` or `agent:claimed-local` on an issue it
 has taken, and `agent:needs-owner` on a PR that waits on you.
@@ -29,7 +37,14 @@ author. Every one starts with a hidden `<!-- concerto-agent -->` line. An
 discussion you get a push notification in the Claude app, and every PR that
 waits on you carries `agent:needs-owner`.
 
-An issue without `documentation` or `lint` goes through:
+An issue without `agent:spec` goes through:
+
+1. **Implementation**, test-first where code changes. The issue is the spec.
+   If the agent meets a design decision, it adds `agent:spec` and switches to
+   the path below.
+2. **Review**, as below.
+
+An issue with `agent:spec` goes through:
 
 1. **Questions**, one comment with every open decision. Answer in comments.
 2. **Spec**, written into the PR description. Comment `/approve`, alone on its

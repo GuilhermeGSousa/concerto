@@ -53,6 +53,31 @@ impl Handler {
         }
     }
 
+    fn redraw(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let slot = Rc::clone(&self.app);
+        let mut slot = slot.borrow_mut();
+        let Some(app) = slot.as_mut() else {
+            return;
+        };
+
+        let actual = self.handle.inner_size();
+        if let Some(resized) =
+            apply::size_correction(app.get_resource::<Window>(), (actual.width, actual.height))
+        {
+            self.pending.push(resized);
+        }
+        apply::deliver(app, &mut self.pending);
+
+        if app.plugin_state() == PluginsState::Finished {
+            app.update();
+            profiling::finish_frame!();
+        }
+
+        drop(slot);
+        self.apply_requests(event_loop);
+        self.handle.request_redraw();
+    }
+
     fn apply_requests(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
         let slot = Rc::clone(&self.app);
         let mut slot = slot.borrow_mut();
@@ -238,23 +263,15 @@ impl ApplicationHandler for Handler {
                 }
             }
             WinitWindowEvent::RedrawRequested => {
-                let actual = self.handle.inner_size();
-                if let Some(resized) = apply::size_correction(
-                    app.get_resource::<Window>(),
-                    (actual.width, actual.height),
-                ) {
-                    self.pending.push(resized);
+                let finishing = app.plugin_state() == PluginsState::Ready;
+                if finishing {
+                    app.finish_plugin_build();
                 }
-                apply::deliver(app, &mut self.pending);
-
-                if app.plugin_state() == PluginsState::Finished {
-                    app.update();
-                    profiling::finish_frame!();
-                }
-
                 drop(slot);
-                self.apply_requests(event_loop);
-                self.handle.request_redraw();
+                if finishing {
+                    self.apply_requests(event_loop);
+                }
+                self.redraw(event_loop);
             }
             #[cfg(not(target_arch = "wasm32"))]
             WinitWindowEvent::MouseInput {
@@ -266,26 +283,6 @@ impl ApplicationHandler for Handler {
                 self.start_window_gesture();
             }
             _ => (),
-        }
-    }
-
-    fn new_events(
-        &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
-        cause: winit::event::StartCause,
-    ) {
-        let _ = cause;
-
-        let slot = Rc::clone(&self.app);
-        let mut slot = slot.borrow_mut();
-        let Some(app) = slot.as_mut() else {
-            return;
-        };
-
-        if app.plugin_state() == PluginsState::Ready {
-            app.finish_plugin_build();
-            drop(slot);
-            self.apply_requests(event_loop);
         }
     }
 

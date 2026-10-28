@@ -298,16 +298,18 @@ An `Entity` of the edit `App`'s world is not an entity of the editor's. A field
 in the editor's world that holds one is named for it: `scene_entity`,
 `scene_target`, `scene_parent`.
 
-Curiosities, the content browser, is a `UITree` over the editor world's
-`AssetRegistry`, which opening or refreshing a project fills by scanning the
-content headers and which is empty while no project is open. It mirrors the
-project's content folder, `content/` unless `content.toml` names another: the folders and
+The Asset Browser, the content browser, is a `UITree` over the editor world's
+`AssetRegistry`, which opening a project fills by scanning the content headers
+and which is empty while no project is open. The editor scans only then; content
+that git or a file explorer changes while the project is open shows after it is
+reopened. The tree mirrors the
+project's `content/` folder: the folders and
 assets directly inside it are the top-level rows, a folder shows a folder mark
 and holds its subfolders and assets, and an asset shows its kind mark and name.
 A folder appears once it holds an asset at any depth; empty directories are not
 shown. In each folder, subfolders come first, then assets, each alphabetically
-ignoring case, and folders start collapsed. After an import or a catalogue
-refresh the tree keeps the rows of folders and assets that still exist, so
+ignoring case, and folders start collapsed. When the registry changes, after an
+import or a save, the tree keeps the rows of folders and assets that still exist, so
 expansion and scroll survive. Clicking a row selects it, folder or asset, but
 only an asset becomes the catalogue's selection; activating a folder, by
 double-clicking it or pressing Enter, expands or collapses it. A click while a
@@ -318,7 +320,7 @@ folders leading to each match, open; clearing them restores the expansion as it
 was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
 
-Activating a supported asset in Curiosities, by double-clicking it or pressing
+Activating a supported asset in the Asset Browser, by double-clicking it or pressing
 Enter on its row, opens its editor tab. Each asset type
 has one editor: another Scene reuses the Scene tab. The old preview, camera,
 selection, and edits remain until its replacement loads successfully.
@@ -346,11 +348,13 @@ revealed.
 
 ## Importing
 
-**Import…** beside the Curiosities search opens a file picker for glTF, OBJ, and
+**Import…** beside the Asset Browser search opens a file picker for glTF, OBJ, and
 image sources; several files can be picked at once. A dialog then lists each
 file with the project-relative destination it will be copied to, which you can
 edit before confirming. Enter confirms and Escape cancels. Files are imported
-one at a time, and the catalogue refreshes after each without closing open tabs.
+one at a time. Each import's assets are added to the registry in memory as it
+finishes, without a rescan and without closing open tabs. No registry file is
+written.
 
 Importing over an existing destination replaces it and keeps its asset IDs, so
 everything that refers to those assets stays wired. A file that is already
@@ -362,9 +366,6 @@ position relative to the source, and replaces a file already there. If one would
 land outside the project, the import fails and nothing is copied; pick a
 destination deeper inside the project. Chatter names the first failure of a
 batch; the log has every one in full.
-
-The `import` CLI does the same work from a terminal; `--to <destination>` brings
-in a source from outside the project.
 
 ## Playing
 
@@ -439,8 +440,9 @@ from code.
 An edited document is dirty until it is saved, and its tab shows a dot. Ctrl+S
 saves the active document over the scene it was opened from, imported or not.
 A saved scene belongs to the editor from then on: re-importing its source
-leaves it alone and re-imports the source's other outputs. A failed save
-reports why in Chatter and leaves the document dirty.
+leaves it alone and re-imports the source's other outputs. A save updates the
+scene's entry in the registry in memory and writes no registry file. A failed
+save reports why in Chatter and leaves the document dirty.
 
 Each save, whether asked for with `SaveRequested` or made by Play, ends in an
 event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
@@ -577,6 +579,23 @@ the widget registry and sends it to the scene, where the tools write the value.
 `PropertyEditor::apply` runs there, and its `EditContext` holds the scene
 world's `AssetServer` and `AssetRegistry`, which `AssetManagerPlugin` provides.
 A scene `App` without either refuses every edit with `EditError::MissingAssets`.
+
+### Enums and options
+
+A reflected enum is edited with nothing registered on the editor's `App`.
+`#[derive(Reflect)]` on an enum registers its variant names as
+`ReflectEnumInfo`, and the row shows a button naming the active variant that
+opens a menu of all of them, the active one selected. Picking another switches
+to it, built from defaults;
+picking the active variant changes nothing and leaves the scene saved. An
+`Option<T>` field is a checkbox instead: checking it sets `Some(T::default())`
+and unchecking it sets `None`. The active variant's fields, or the value's when
+an `Option` is `Some`, follow as rows of their own, so a switch that changes
+them rebuilds the card. A row under a tuple field such as `Some`'s `0` takes
+the label of the nearest named field above it, so `CameraEnvironment.ambient`
+shows an "Ambient" checkbox followed by an "Ambient" value row. An editor
+registered for the exact enum or `Option` type with `register_property_editor`
+still takes precedence, and its fields are not shown.
 
 ### Asset handles
 

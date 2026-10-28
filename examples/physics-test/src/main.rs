@@ -27,6 +27,7 @@ use concerto::{
         components::{
             camera::Camera,
             light::{Light, LightType},
+            render_entity::SyncWithRenderWorld,
         },
         resources::RenderContext,
         MaterialComponent,
@@ -45,7 +46,7 @@ const SPHERE_RADIUS: f32 = 1.0;
 struct BallColor(Color);
 
 fn game(app: &mut App) {
-    app.register_plugin(DefaultPlugins::default())
+    app.register_plugin(DefaultPlugins)
         .add_system(Startup, spawn_scene)
         .add_system(Update, click_ball);
 }
@@ -53,7 +54,7 @@ fn game(app: &mut App) {
 fn main() {
     env_logger::init();
 
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }
 
 fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
@@ -76,6 +77,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             shadowmaps_enabled: false,
         },
         Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::IDENTITY),
+        SyncWithRenderWorld,
     ));
 
     // Static floor: collider top surface sits at y = 0, with a matching plane mesh.
@@ -94,6 +96,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             handle: floor_material,
         },
         floor_transform,
+        SyncWithRenderWorld,
     ));
 
     // Low walls fence the balls into a 16 x 16 arena: rolling spheres never
@@ -118,6 +121,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
                 handle: wall_material.clone(),
             },
             wall_transform,
+            SyncWithRenderWorld,
         ));
     }
 
@@ -167,10 +171,11 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             },
             MaterialComponent { handle: material },
             transform,
+            SyncWithRenderWorld,
         ));
     }
 
-    cmd.spawn(WorldGrid::default());
+    cmd.spawn((WorldGrid::default(), SyncWithRenderWorld));
 }
 
 /// On left click, casts a ray through the clicked pixel and prints the color

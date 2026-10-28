@@ -10,18 +10,20 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_ecs::{command::CommandQueue, query::Query, resource::Res, Component, With};
 use concerto_foundation::{assets::asset_server::AssetServer, time::Time, transform::Transform};
-use concerto_render::components::light::{Light, LightType};
+use concerto_render::components::{
+    light::{Light, LightType},
+    render_entity::SyncWithRenderWorld,
+};
 use glam::{Quat, Vec3};
 
 #[cfg(feature = "terminal")]
 use concerto_app::schedule_groups::LateRender;
 #[cfg(feature = "terminal")]
-use concerto_ecs::{resource::ResMut, IntoSystemConfig};
+use concerto_ecs::resource::ResMut;
 #[cfg(feature = "terminal")]
 use concerto_render::{
     assets::texture::Texture,
     components::camera::{Camera, RenderTarget},
-    wgpu,
 };
 #[cfg(feature = "terminal")]
 use concerto_terminal_renderer::{
@@ -78,7 +80,7 @@ struct Projectile(Vec3);
 fn game(app: &mut App) {
     #[cfg(feature = "terminal")]
     {
-        app.register_plugin(DefaultPlugins::default())
+        app.register_plugin(DefaultPlugins)
             .register_plugin(TerminalRendererPlugin)
             .add_system(Startup, spawn_camera_terminal)
             .add_system(Startup, spawn_scene)
@@ -91,7 +93,7 @@ fn game(app: &mut App) {
     {
         use concerto::ui::frame_stats_overlay::FrameStatsOverlayPlugin;
 
-        app.register_plugin(DefaultPlugins::default())
+        app.register_plugin(DefaultPlugins)
             .register_plugin(FrameStatsOverlayPlugin)
             .add_system(Startup, spawn_camera_windowed)
             .add_system(Startup, spawn_scene)
@@ -115,10 +117,10 @@ fn main() {
     }
 
     #[cfg(feature = "terminal")]
-    concerto_terminal_renderer::run(game);
+    concerto_terminal_renderer::run(game, concerto::content_registry!());
 
     #[cfg(not(feature = "terminal"))]
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }
 
 #[cfg(feature = "terminal")]
@@ -152,6 +154,7 @@ fn spawn_camera_terminal(
         },
         TerminalOutput,
         Transform::from_translation_rotation(Vec3::ZERO, Quat::IDENTITY),
+        SyncWithRenderWorld,
     ));
 }
 
@@ -160,13 +163,16 @@ fn spawn_camera_windowed(mut cmd: CommandQueue) {
     spawn_first_person_player(
         &mut cmd,
         Vec3::new(0.0, 2.0, 0.0),
-        Light {
-            color: Color::WHITE,
-            intensity: 10.0,
-            light_type: LightType::Point,
-            range: 0.0,
-            shadowmaps_enabled: false,
-        },
+        (
+            Light {
+                color: Color::WHITE,
+                intensity: 10.0,
+                light_type: LightType::Point,
+                range: 0.0,
+                shadowmaps_enabled: false,
+            },
+            SyncWithRenderWorld,
+        ),
     );
 }
 
@@ -309,10 +315,10 @@ fn move_camera(
             transform.rotation = Quat::from_rotation_y(-rot_speed) * transform.rotation;
         }
         if input.is_key_active(KeyCode::Up) {
-            transform.rotation = transform.rotation * Quat::from_rotation_x(-rot_speed);
+            transform.rotation *= Quat::from_rotation_x(-rot_speed);
         }
         if input.is_key_active(KeyCode::Down) {
-            transform.rotation = transform.rotation * Quat::from_rotation_x(rot_speed);
+            transform.rotation *= Quat::from_rotation_x(rot_speed);
         }
     }
 }

@@ -6,7 +6,7 @@ use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
     ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
 };
-use concerto_foundation::assets::registry::AssetRegistry;
+use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
 use concerto_scene::scene::Scene;
 
@@ -34,7 +34,7 @@ impl Project {
         source
     }
 
-    fn import(&self, source: &Path) -> Vec<concerto_import::ImportedAsset> {
+    fn import(&self, source: &Path) -> Vec<AssetEntry> {
         concerto_import::import_source(source, &self.0, &Default::default())
             .expect("import succeeds")
     }
@@ -74,12 +74,26 @@ fn sidecar(source: &Path) -> PathBuf {
     ))
 }
 
-fn output<'a>(assets: &'a [concerto_import::ImportedAsset], sub_asset: &str) -> &'a str {
+fn output<'a>(assets: &'a [AssetEntry], sub_asset: &str) -> &'a str {
     &assets
         .iter()
-        .find(|a| a.sub_asset_name == sub_asset)
+        .find(|a| sub_asset_of(a) == sub_asset)
         .unwrap()
         .address
+}
+
+fn sub_asset_of(entry: &AssetEntry) -> &str {
+    &entry
+        .provenance
+        .as_ref()
+        .expect("an imported entry carries provenance")
+        .sub_asset
+}
+
+fn sorted(registry: &AssetRegistry) -> Vec<AssetEntry> {
+    let mut entries: Vec<_> = registry.iter().cloned().collect();
+    entries.sort_by(|a, b| a.address.cmp(&b.address));
+    entries
 }
 
 fn rename_node(source: &Path, name: &str) {
@@ -115,7 +129,7 @@ fn reimport_updates_a_moved_output_in_place_and_preserves_its_uuid() {
     let scene: Scene = bincode::deserialize(payload).unwrap();
     assert_eq!(scene.nodes[0].name, "Updated triangle");
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(id)
             .map(|entry| entry.address.as_str()),
@@ -134,32 +148,42 @@ fn reimport_leaves_an_output_saved_from_the_editor_and_updates_the_rest() {
     let (imported, payload) = read_content_asset(&raw).unwrap();
     let mut scene: Scene = bincode::deserialize(payload).unwrap();
     scene.nodes[0].name = "Edited in the editor".into();
-    let mut registry = AssetRegistry::load(&project.0).unwrap();
-    save_content_asset_into(&scene, &project.0, &scene_address, &mut registry).unwrap();
-    registry.save(&project.0).unwrap();
+    save_content_asset_into(
+        &scene,
+        &project.0,
+        &scene_address,
+        &mut AssetRegistry::new(),
+    )
+    .unwrap();
     let saved = std::fs::read(&scene_path).unwrap();
     let other = first
         .iter()
-        .find(|asset| asset.sub_asset_name != "scene")
+        .find(|asset| sub_asset_of(asset) != "scene")
         .unwrap();
     let other_path = project.path(&other.address);
     let fresh = std::fs::read(&other_path).unwrap();
     let (header, _) = read_content_asset(&fresh).unwrap();
     std::fs::write(&other_path, write_content_asset(&header, b"stale").unwrap()).unwrap();
     rename_node(&source, "Changed in the source");
+    let mut registry = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
 
     let second = project.import(&source);
 
     assert_eq!(std::fs::read(&scene_path).unwrap(), saved);
     assert_eq!(std::fs::read(&other_path).unwrap(), fresh);
     assert_eq!(second.len(), first.len() - 1);
-    assert!(second.iter().all(|asset| asset.sub_asset_name != "scene"));
+    assert!(second.iter().all(|asset| asset.id != imported.asset_id));
+    assert!(second.iter().all(|asset| sub_asset_of(asset) != "scene"));
+    for entry in &second {
+        registry.insert(entry.clone());
+    }
+    let rescanned = AssetRegistry::from_content_tree(&project.0, "content", "gasset").unwrap();
+    assert_eq!(sorted(&registry), sorted(&rescanned));
     assert_eq!(
-        AssetRegistry::load(&project.0)
-            .unwrap()
+        rescanned
             .get(imported.asset_id)
-            .map(|entry| entry.address.as_str()),
-        Some(scene_address.as_str())
+            .map(|entry| (entry.address.as_str(), entry.provenance.is_none())),
+        Some((scene_address.as_str(), true))
     );
     let metadata: toml::Value =
         toml::from_str(&std::fs::read_to_string(sidecar(&source)).unwrap()).unwrap();
@@ -195,8 +219,15 @@ fn moving_a_source_with_its_sidecar_preserves_existing_outputs() {
 
     let second = project.import(&moved);
 
+    let outputs = |assets: &[AssetEntry]| {
+        assets
+            .iter()
+            .map(|a| (a.id, a.address.clone(), sub_asset_of(a).to_owned()))
+            .collect::<Vec<_>>()
+    };
     assert_eq!(
-        first, second,
+        outputs(&first),
+        outputs(&second),
         "output addresses and importer keys survive source moves"
     );
     assert_eq!(std::fs::read(sidecar(&moved)).unwrap(), metadata);
@@ -237,7 +268,7 @@ fn same_stem_sources_in_different_directories_have_independent_outputs() {
         assert_eq!(std::fs::read(project.path(&asset.address)).unwrap(), before);
         let counterpart = second
             .iter()
-            .find(|a| a.sub_asset_name == asset.sub_asset_name)
+            .find(|a| sub_asset_of(a) == sub_asset_of(asset))
             .unwrap();
         assert!(counterpart.address.starts_with("content/enemies/hero/"));
         assert_ne!(
@@ -250,7 +281,10 @@ fn same_stem_sources_in_different_directories_have_independent_outputs() {
         );
     }
     assert_eq!(
-        AssetRegistry::load(&project.0).unwrap().iter().count(),
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
+            .unwrap()
+            .iter()
+            .count(),
         first.len() + second.len()
     );
 }
@@ -344,7 +378,7 @@ fn legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address() {
         legacy_id
     );
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(legacy_id)
             .map(|entry| entry.address.as_str()),
@@ -396,7 +430,7 @@ fn external_legacy_source_bootstraps_without_changing_its_identity() {
     assert_eq!(read_content_asset_header(&path).unwrap().asset_id, id);
     assert!(sidecar(&source).is_file());
     assert_eq!(
-        AssetRegistry::load(&project.0)
+        AssetRegistry::from_content_tree(&project.0, "content", "gasset")
             .unwrap()
             .get(id)
             .map(|entry| entry.address.as_str()),

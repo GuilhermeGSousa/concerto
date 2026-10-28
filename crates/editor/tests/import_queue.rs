@@ -1,12 +1,17 @@
 //! The queue runs imports one at a time and survives a failing row.
 use concerto_app::{App, schedule_groups::Update};
 use concerto_editor::{
-    asset_editor::AssetEditorCommands,
+    asset_editor::{AssetEditorCommand, AssetEditorCommands},
     guard::UnsavedGuard,
     import::{ImportPlugin, ImportQueue, stage_sources},
     project::{EditorCommands, ProjectPlugin, ProjectState, discover_project},
 };
-use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
+use concerto_foundation::assets::{
+    AssetId,
+    asset_server::AssetServer,
+    content::{CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset},
+    registry::AssetRegistry,
+};
 use std::path::{Path, PathBuf};
 
 fn scratch_source() -> (tempfile::TempDir, PathBuf) {
@@ -353,4 +358,90 @@ fn rows_queued_with_no_project_open_are_dropped() {
         status.contains("1 queued import:") && status.contains("no project"),
         "got: {status}"
     );
+}
+
+fn authored_asset(root: &Path, name: &str) -> AssetId {
+    let header = ContentAssetHeader {
+        format_version: CONTENT_FORMAT_VERSION,
+        asset_id: AssetId::new(),
+        references: vec![],
+        kind: "Scene".into(),
+        provenance: None,
+    };
+    std::fs::create_dir_all(root.join("content")).expect("content");
+    std::fs::write(
+        root.join(format!("content/{name}.gasset")),
+        write_content_asset(&header, &[]).expect("encode"),
+    )
+    .expect("write");
+    header.asset_id
+}
+
+#[test]
+fn an_import_finishing_adds_its_entries_without_a_rescan_or_closing_documents() {
+    let (_source, path) = scratch_source();
+    let project = tempfile::tempdir().expect("tempdir");
+    let mut app = editor(project.path());
+    let unseen = authored_asset(project.path(), "pulled");
+    app.get_resource_mut::<ImportQueue>()
+        .expect("queue")
+        .enqueue(stage_sources(vec![path]));
+    drain(&mut app);
+
+    let registry = app.get_resource::<AssetRegistry>().expect("registry");
+    let rescanned = discover_project(project.path()).expect("rescan").1;
+    assert_eq!(registry.iter().count(), 3, "a mesh, a material and a scene");
+    for entry in registry.iter() {
+        assert_eq!(
+            entry
+                .provenance
+                .as_ref()
+                .map(|provenance| provenance.source.as_str()),
+            Some("assets/square.obj")
+        );
+        assert_eq!(rescanned.get(entry.id), Some(entry));
+    }
+    assert!(
+        registry.get(unseen).is_none(),
+        "the catalogue is not rescanned after an import"
+    );
+    assert!(!project.path().join("content/.registry.toml").exists());
+    assert!(
+        !app.get_resource::<AssetEditorCommands>()
+            .expect("documents")
+            .0
+            .iter()
+            .any(|command| matches!(command, AssetEditorCommand::CloseAll)),
+        "an import must not close open documents"
+    );
+}
+
+#[test]
+fn an_import_whose_project_was_replaced_while_it_ran_adds_nothing_to_the_new_registry() {
+    let (_source, path) = scratch_source();
+    let project = tempfile::tempdir().expect("tempdir");
+    let other = tempfile::tempdir().expect("tempdir");
+    authored_asset(other.path(), "level");
+    let mut app = editor(project.path());
+    app.get_resource_mut::<ImportQueue>()
+        .expect("queue")
+        .enqueue(stage_sources(vec![path]));
+    frame(&mut app);
+    assert!(
+        app.get_resource::<ImportQueue>()
+            .expect("queue")
+            .is_running()
+    );
+
+    let (opened, registry) = discover_project(other.path()).expect("discover");
+    let expected: Vec<_> = registry.iter().cloned().collect();
+    app.get_resource_mut::<ProjectState>()
+        .expect("state")
+        .project = Some(opened);
+    app.insert_resource(registry);
+    drain(&mut app);
+
+    assert!(project.path().join("assets/square.obj").is_file());
+    let registry = app.get_resource::<AssetRegistry>().expect("registry");
+    assert_eq!(registry.iter().cloned().collect::<Vec<_>>(), expected);
 }

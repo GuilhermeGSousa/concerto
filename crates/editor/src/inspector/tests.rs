@@ -543,6 +543,16 @@ fn labels_capitalise_the_field_name() {
 }
 
 #[test]
+fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
+    assert_eq!(label_for(&PropertyPath::new(["ambient", "0"])), "Ambient");
+    assert_eq!(label_for(&PropertyPath::new(["pair", "0", "1"])), "Pair");
+    assert_eq!(
+        label_for(&PropertyPath::new(["fog", "0", "density"])),
+        "Density"
+    );
+}
+
+#[test]
 fn changed_property_layout_recreates_rows_in_visitor_order() {
     use concerto_reflect::{
         Fields, FromType, PropertyVisitor, PropertyVisitorMut, Reflect, ReflectMut, ReflectRef,
@@ -1599,5 +1609,222 @@ mod bool_field {
 
         assert_eq!(only::<UICheckbox>(&mut w.f.world), checkbox);
         assert!(checked(&w.f.world, checkbox));
+    }
+}
+
+mod variant_rows {
+    use super::*;
+    use concerto_render::components::{
+        CameraEnvironment, Light, camera_environment::Fog, light::LightType,
+    };
+    use concerto_ui::{anchor::UIAnchoredPanel, checkbox::UICheckbox};
+
+    fn fixture(component: impl Component) -> (Inspecting, Entity) {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Light>();
+        w.register::<CameraEnvironment>();
+        w.scene().insert(component, entity);
+        w.update();
+        w.update();
+        (w, entity)
+    }
+
+    fn row(world: &mut World, path: &[&str]) -> Option<Entity> {
+        rows(world)
+            .into_iter()
+            .find(|(_, row)| row.path.segments() == path)
+            .map(|(entity, _)| entity)
+    }
+
+    fn children(world: &World, entity: Entity) -> Vec<Entity> {
+        world
+            .get_component_for_entity::<Children>(entity)
+            .map(|children| children.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn widget(world: &mut World, path: &[&str]) -> Entity {
+        let row = row(world, path).expect("the row exists");
+        children(world, row)[1]
+    }
+
+    fn text(world: &World, entity: Entity) -> String {
+        world
+            .get_component_for_entity::<UIText>(entity)
+            .unwrap()
+            .text
+            .clone()
+    }
+
+    fn button_text(world: &mut World) -> String {
+        let button = widget(world, &["light_type"]);
+        text(world, children(world, button)[0])
+    }
+
+    fn menu(world: &mut World, button: Entity) -> Option<Entity> {
+        let mut query = world.query::<(Entity, &UIAnchoredPanel), ()>();
+        query
+            .iter(world)
+            .find(|(_, panel)| panel.open && panel.owner == Some(button))
+            .map(|(entity, _)| entity)
+    }
+
+    fn items(world: &mut World, button: Entity) -> Vec<(Entity, String)> {
+        let menu = menu(world, button).expect("the menu is open");
+        children(world, menu)
+            .into_iter()
+            .map(|item| (item, text(world, children(world, item)[0])))
+            .collect()
+    }
+
+    fn pick(w: &mut Inspecting, name: &str) {
+        let button = widget(&mut w.f.world, &["light_type"]);
+        click(&mut w.f.world, button);
+        let (item, _) = items(&mut w.f.world, button)
+            .into_iter()
+            .find(|(_, text)| text == name)
+            .expect("the menu lists the variant");
+        click(&mut w.f.world, item);
+        assert!(menu(&mut w.f.world, button).is_none());
+    }
+
+    fn queued(world: &World) -> usize {
+        world.get_resource::<PropertyCommits>().unwrap().0.len()
+    }
+
+    fn checked(world: &mut World, path: &[&str]) -> bool {
+        let checkbox = widget(world, path);
+        world
+            .get_component_for_entity::<UICheckbox>(checkbox)
+            .unwrap()
+            .checked
+    }
+
+    fn fog(w: &Inspecting, entity: Entity) -> Option<Fog> {
+        w.get::<CameraEnvironment>(entity).unwrap().fog
+    }
+
+    #[test]
+    fn the_variant_menu_lists_the_variants_and_the_button_names_the_active_one() {
+        let (mut w, _) = fixture(Light::point_light());
+        assert_eq!(button_text(&mut w.f.world), "Point");
+        let button = widget(&mut w.f.world, &["light_type"]);
+
+        click(&mut w.f.world, button);
+
+        let names: Vec<_> = items(&mut w.f.world, button)
+            .into_iter()
+            .map(|(_, name)| name)
+            .collect();
+        assert_eq!(names, ["Point", "Spot", "Directional"]);
+    }
+
+    #[test]
+    fn picking_spot_switches_the_light_and_adds_its_cone_angle_row() {
+        let (mut w, entity) = fixture(Light::point_light());
+
+        pick(&mut w, "Spot");
+        run(&mut w.f.world, send_property_commits);
+
+        assert!(matches!(
+            w.get::<Light>(entity).unwrap().light_type,
+            LightType::Spot { cone_angle } if cone_angle == 0.0
+        ));
+        assert!(w.f.unsaved(w.document));
+        w.update();
+        w.update();
+        assert!(row(&mut w.f.world, &["light_type", "cone_angle"]).is_some());
+        assert_eq!(button_text(&mut w.f.world), "Spot");
+    }
+
+    #[test]
+    fn a_switch_that_keeps_the_rows_keeps_the_button_and_renames_it() {
+        let (mut w, entity) = fixture(Light::point_light());
+        let button = widget(&mut w.f.world, &["light_type"]);
+
+        pick(&mut w, "Directional");
+        run(&mut w.f.world, send_property_commits);
+        w.update();
+        w.update();
+        run(&mut w.f.world, variants::refresh_variant_labels);
+
+        assert!(matches!(
+            w.get::<Light>(entity).unwrap().light_type,
+            LightType::Directional
+        ));
+        assert_eq!(widget(&mut w.f.world, &["light_type"]), button);
+        assert_eq!(button_text(&mut w.f.world), "Directional");
+    }
+
+    #[test]
+    fn closing_the_tab_closes_the_variant_menu() {
+        let (mut w, _) = fixture(Light::point_light());
+        let button = widget(&mut w.f.world, &["light_type"]);
+        click(&mut w.f.world, button);
+        let menu = menu(&mut w.f.world, button).unwrap();
+
+        w.close();
+
+        assert!(!is_open(&w.f.world, menu));
+    }
+
+    #[test]
+    fn picking_the_active_variant_queues_nothing_and_leaves_the_scene_saved() {
+        let (mut w, entity) = fixture(Light::spot_light(0.5));
+
+        pick(&mut w, "Spot");
+
+        assert_eq!(queued(&w.f.world), 0);
+        run(&mut w.f.world, send_property_commits);
+        assert!(matches!(
+            w.get::<Light>(entity).unwrap().light_type,
+            LightType::Spot { cone_angle } if cone_angle == 0.5
+        ));
+        assert!(!w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn toggling_fog_on_adds_a_default_fog_and_its_rows_and_off_removes_them() {
+        let (mut w, entity) = fixture(CameraEnvironment::default());
+        assert!(!checked(&mut w.f.world, &["fog"]));
+        assert!(row(&mut w.f.world, &["fog", "0", "density"]).is_none());
+
+        let checkbox = widget(&mut w.f.world, &["fog"]);
+        click(&mut w.f.world, checkbox);
+        run(&mut w.f.world, send_property_commits);
+        assert_eq!(fog(&w, entity), Some(Fog::default()));
+        assert!(w.f.unsaved(w.document));
+        w.update();
+        w.update();
+        assert!(checked(&mut w.f.world, &["fog"]));
+        assert!(row(&mut w.f.world, &["fog", "0", "density"]).is_some());
+
+        let checkbox = widget(&mut w.f.world, &["fog"]);
+        click(&mut w.f.world, checkbox);
+        run(&mut w.f.world, send_property_commits);
+        assert_eq!(fog(&w, entity), None);
+        w.update();
+        w.update();
+        assert!(!checked(&mut w.f.world, &["fog"]));
+        assert!(row(&mut w.f.world, &["fog", "0", "density"]).is_none());
+    }
+
+    #[test]
+    fn a_refused_toggle_commit_leaves_the_checkbox_showing_the_value() {
+        let (mut w, entity) = fixture(CameraEnvironment::default());
+        let checkbox = widget(&mut w.f.world, &["fog"]);
+        w.scene()
+            .remove_resource::<concerto_foundation::assets::registry::AssetRegistry>();
+
+        click(&mut w.f.world, checkbox);
+        assert!(checked(&mut w.f.world, &["fog"]));
+        run(&mut w.f.world, send_property_commits);
+        w.update();
+        w.update();
+        run(&mut w.f.world, variants::refresh_option_fields);
+
+        assert_eq!(fog(&w, entity), None);
+        assert_eq!(widget(&mut w.f.world, &["fog"]), checkbox);
+        assert!(!checked(&mut w.f.world, &["fog"]));
     }
 }

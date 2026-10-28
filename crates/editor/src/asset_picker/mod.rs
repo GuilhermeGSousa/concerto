@@ -228,7 +228,7 @@ fn fill_menu(
     if entries.is_empty() {
         menu.add_child(
             theme
-                .label(&format!("No {kind} assets"))
+                .label(format!("No {kind} assets"))
                 .muted()
                 .font_size(12.0)
                 .no_wrap()

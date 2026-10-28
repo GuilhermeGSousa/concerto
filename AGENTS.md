@@ -44,19 +44,19 @@ cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
 cargo run -p concerto-editor --example custom_property
-cd examples/tech-demo && cargo run -p concerto-import -- assets/forest.glb
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 ```
 
 Examples are `animation-test`, `physics-test`, `render-test`, `tech-demo`, and
-`ui-showcase`. `import` runs from the directory that owns the `content/` tree.
-An example may have an `editor/` crate, named `<game>-editor`, that runs the
-editor over the game's library; an editor exists only for a game that has one.
-Today that is `tech-demo`. Build `tech-demo-editor` before an MCP client starts
-it through `.mcp.json`: that entry runs `cargo run`, which compiles first and
-can outlast the client's connect timeout.
+`ui-showcase`. Sources are imported through the editor's Import…, over a
+scratch copy of the project; there is no import command line. An example may
+have an `editor/` crate, named `<game>-editor`, that runs the editor over the
+game's library; an editor exists only for a game that has one. Today that is
+`tech-demo`. Build `tech-demo-editor` before an MCP client starts it through
+`.mcp.json`: that entry runs `cargo run`, which compiles first and can outlast
+the client's connect timeout.
 
 ## Done gate
 
@@ -65,7 +65,8 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo clippy --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo clippy -p render-test --features terminal -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --workspace
 cargo test -p concerto-physics --no-default-features --features force-rapier
@@ -176,9 +177,10 @@ is not observed.
    - a plan at `.agents/plans/YYYY-MM-DD-<topic>.md`, one `implementer` per
      task, and a `branch-reviewer` pass over the whole branch at the end.
 
-An issue labelled `agent` follows the issue pipeline instead: questions, spec
-and plan happen in its PR, and the owner approves each with a `/approve`
-comment. See [docs/agent-pipeline.md](docs/agent-pipeline.md).
+An issue labelled `agent` follows the issue pipeline instead. With
+`agent:spec`, questions, spec and plan happen in its PR and the owner approves
+each with a `/approve` comment; without it, the agent goes straight to an
+implementation PR. See [docs/agent-pipeline.md](docs/agent-pipeline.md).
 
 When a design question has a known answer in Bevy, say how Bevy does it and
 what differs here.
@@ -201,8 +203,9 @@ work in the current task.
   wrong or missing, where (`path:line`), the evidence, a size estimate, and
   where it was found (the PR, or the session link).
 - Label it `agent` and `agent:filed`, plus `documentation` or `lint` when the
-  change is only that, and `agent:local` when it needs a look at the running
-  program.
+  change is only that, `agent:local` when it needs a look at the running
+  program, and `agent:spec` when it needs design: an open decision for the
+  owner, or a size of medium or more.
 - Only the top-level session files. The `implementer`, `spec-reviewer` and
   `branch-reviewer` roles report such findings to their caller.
 

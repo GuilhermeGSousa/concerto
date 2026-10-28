@@ -35,10 +35,21 @@ use concerto_ui::plugin::UIPlugin;
 use concerto_window::plugin::WindowPlugin;
 use concerto_world_grid::plugin::WorldGridPlugin;
 
-/// Sets up logging for the platform, opens a window, and runs the `App` that `build` makes.
-pub fn run(build: impl FnOnce(&mut app::App) + 'static) {
+/// Sets up logging, opens a window, and runs the `App` that `build` makes with `registry`, from [`content_registry!`], installed.
+pub fn run(build: impl FnOnce(&mut app::App) + 'static, registry: &'static str) {
     init_logging();
-    concerto_winit::run(build);
+    concerto_winit::run(move |app| {
+        build(app);
+        concerto_app::plugins::install_content_registry(app, registry);
+    });
+}
+
+/// The asset registry the package's `build.rs` wrote through `concerto_asset_build::track_assets`.
+#[macro_export]
+macro_rules! content_registry {
+    () => {
+        include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml"))
+    };
 }
 
 #[doc(hidden)]

@@ -43,3 +43,4 @@ __pycache__/
 .agents/plans/
 specs/
 
+**/content/.registry.toml

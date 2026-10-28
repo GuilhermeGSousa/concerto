@@ -1,4 +1,4 @@
-use crate::LinearRgba;
+use crate::{Hsla, LinearRgba};
 
 /// sRGB + linear alpha color.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -63,6 +63,11 @@ impl Srgba {
     #[inline]
     pub fn to_linear(self) -> LinearRgba {
         LinearRgba::from(self)
+    }
+
+    #[inline]
+    pub fn to_hsl(self) -> Hsla {
+        Hsla::from(self)
     }
 }
 

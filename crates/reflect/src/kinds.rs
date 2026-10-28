@@ -1,4 +1,6 @@
-use crate::{GetTypeRegistration, Reflect, TypeRegistration, TypeRegistry};
+use crate::{
+    GetTypeRegistration, Reflect, ReflectEnumInfo, ReflectOption, TypeRegistration, TypeRegistry,
+};
 
 /// What kind of value a [`Reflect`] is, for reading.
 pub enum ReflectRef<'a> {
@@ -37,7 +39,7 @@ pub trait Fields {
     }
 }
 
-/// An enum: its active variant's name, and that variant's fields.
+/// An enum: its active variant's name, and that variant's fields; its variant names are its [`ReflectEnumInfo`].
 pub trait Enum: Fields {
     fn variant_name(&self) -> &'static str;
     /// Every variant's name, in declaration order.
@@ -144,7 +146,12 @@ impl<T: Reflect + Default> Reflect for Option<T> {
 
 impl<T: GetTypeRegistration + Default> GetTypeRegistration for Option<T> {
     fn get_type_registration() -> TypeRegistration {
-        TypeRegistration::of::<Self>()
+        let mut registration = TypeRegistration::of::<Self>();
+        registration.insert(ReflectEnumInfo {
+            variants: &["None", "Some"],
+        });
+        registration.insert(ReflectOption);
+        registration
     }
 
     fn register_dependencies(registry: &mut TypeRegistry) {

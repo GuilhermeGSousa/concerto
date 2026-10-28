@@ -748,7 +748,7 @@ fn update_diagnostics(
 }
 
 fn game(app: &mut App) {
-    app.register_plugin(DefaultPlugins::default())
+    app.register_plugin(DefaultPlugins)
         .insert_resource(StressTicker::default())
         .insert_resource(DiagnosticsTimer::default())
         .add_system(Startup, spawn_showcase)
@@ -757,5 +757,5 @@ fn game(app: &mut App) {
 
 fn main() {
     env_logger::init();
-    concerto::run(game);
+    concerto::run(game, concerto::content_registry!());
 }

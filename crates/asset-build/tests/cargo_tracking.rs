@@ -120,3 +120,144 @@ fn main() { println!("{}", ID.simple_hex()); }
     std::fs::write(root.join("build.rs"), "fn main() {}").unwrap();
     assert_error(cargo(root), "requires Cargo dependency tracking");
 }
+
+fn write_registry_fixture(project: &Path) {
+    std::fs::create_dir_all(project.join("src")).unwrap();
+    std::fs::create_dir_all(project.join("content")).unwrap();
+    let crates = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    std::fs::write(
+        project.join("Cargo.toml"),
+        format!(
+            r#"[package]
+name = "asset-registry-fixture"
+version = "0.0.0"
+edition = "2021"
+[workspace]
+[build-dependencies]
+concerto-asset-build = {{ path = {:?} }}
+"#,
+            crates.join("asset-build"),
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("build.rs"),
+        "fn main() { concerto_asset_build::track_assets(\"content\").unwrap(); }",
+    )
+    .unwrap();
+    std::fs::write(
+        project.join("src/main.rs"),
+        r#"fn main() { print!("{}", include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml"))); }"#,
+    )
+    .unwrap();
+}
+
+fn write_asset_at(project: &Path, address: &str, id: AssetId) {
+    let header = ContentAssetHeader {
+        format_version: CONTENT_FORMAT_VERSION,
+        asset_id: id,
+        references: vec![],
+        kind: "Fixture".into(),
+        provenance: None,
+    };
+    let path = project.join(address);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, write_content_asset(&header, b"payload").unwrap()).unwrap();
+}
+
+fn registry(output: Output) -> Vec<(AssetId, String)> {
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut entries: Vec<_> =
+        concerto_asset_format::parse_registry(&String::from_utf8(output.stdout).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|entry| (entry.id, entry.address))
+            .collect();
+    entries.sort();
+    entries
+}
+
+fn rebuilds(project: &Path) -> bool {
+    let output = Command::new(env!("CARGO"))
+        .args(["build", "--offline"])
+        .current_dir(project)
+        .env("CARGO_TARGET_DIR", project.join("target"))
+        .env_remove("CONCERTO_ASSET_ROOT")
+        .output()
+        .expect("build Cargo fixture");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stderr).contains("Compiling asset-registry-fixture")
+}
+
+fn sorted(mut entries: Vec<(AssetId, String)>) -> Vec<(AssetId, String)> {
+    entries.sort();
+    entries
+}
+
+#[test]
+fn cargo_rebuilds_the_registry_from_the_root_content_toml_names() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    write_registry_fixture(root);
+    std::fs::write(root.join("content.toml"), "extension = \"blob\"\n").unwrap();
+    let first = AssetId::new();
+    let other = AssetId::new();
+    let third = AssetId::new();
+    write_asset_at(root, "content/first.blob", first);
+    write_asset_at(root, "content/other.gasset", other);
+    write_asset_at(root, "content/third.bin", third);
+
+    assert_eq!(
+        registry(cargo(root)),
+        vec![(first, "content/first.blob".to_string())]
+    );
+    assert!(!rebuilds(root));
+
+    let second = AssetId::new();
+    write_asset_at(root, "content/second.blob", second);
+    assert_eq!(
+        registry(cargo(root)),
+        sorted(vec![
+            (first, "content/first.blob".to_string()),
+            (second, "content/second.blob".to_string()),
+        ])
+    );
+
+    std::fs::write(root.join("content.toml"), "extension = \"bin\"\n").unwrap();
+    assert_eq!(
+        registry(cargo(root)),
+        vec![(third, "content/third.bin".to_string())]
+    );
+
+    std::fs::remove_file(root.join("content.toml")).unwrap();
+    assert_eq!(
+        registry(cargo(root)),
+        vec![(other, "content/other.gasset".to_string())]
+    );
+    assert!(!rebuilds(root));
+}
+
+#[test]
+fn cargo_fails_the_build_on_an_invalid_content_toml() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    write_registry_fixture(root);
+    write_asset_at(root, "content/first.gasset", AssetId::new());
+    std::fs::write(root.join("content.toml"), "root = \"data\"\n").unwrap();
+
+    assert_error(cargo(root), "content root must be 'content'");
+
+    std::fs::write(root.join("content.toml"), "extension = \"a.b\"\n").unwrap();
+    assert_error(
+        cargo(root),
+        "content extension must be a nonempty extension",
+    );
+}

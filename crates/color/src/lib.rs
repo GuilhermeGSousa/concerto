@@ -42,6 +42,7 @@ impl Color {
         Self::Srgba(Srgba::new(r, g, b, a))
     }
 
+    /// Construct from sRGB-encoded HSL with hue in degrees.
     #[inline]
     pub const fn hsl(h: f32, s: f32, l: f32, a: f32) -> Self {
         Self::Hsla(Hsla::new(h, s, l, a))

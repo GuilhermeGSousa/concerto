@@ -1,7 +1,8 @@
 use std::{any::TypeId, sync::Mutex};
 
 use concerto_reflect::{
-    FromType, PropertyVisitor, Reflect, ReflectDefault, ReflectRef, TypeData, TypeRegistry,
+    FromType, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectOption, ReflectRef,
+    TypeData, TypeRegistry,
 };
 
 static WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -301,4 +302,75 @@ fn an_opaque_type_registers_none_of_its_fields() {
         .filter(|id| !built_in.contains(id))
         .collect();
     assert_eq!(added, [TypeId::of::<Handle>()]);
+}
+
+#[derive(Reflect, Default)]
+enum Mood {
+    #[default]
+    Calm,
+    Angry,
+    Sleepy,
+}
+
+#[derive(Reflect, serde::Serialize, serde::Deserialize, Default)]
+#[reflect(opaque)]
+enum Sealed {
+    #[default]
+    Open,
+    Shut,
+}
+
+#[test]
+fn a_unit_only_enum_registers_its_variant_names_in_order() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Mood>();
+
+    let info = registry
+        .get_type_data::<ReflectEnumInfo>(TypeId::of::<Mood>())
+        .unwrap();
+    assert_eq!(info.variants, ["Calm", "Angry", "Sleepy"]);
+    assert!(
+        registry
+            .get_type_data::<ReflectOption>(TypeId::of::<Mood>())
+            .is_none()
+    );
+}
+
+#[test]
+fn an_enum_with_tuple_and_named_variants_registers_its_variant_names_in_order() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Shape>();
+
+    let info = registry
+        .get_type_data::<ReflectEnumInfo>(TypeId::of::<Shape>())
+        .unwrap();
+    assert_eq!(info.variants, ["Empty", "Round", "Pair"]);
+}
+
+#[test]
+fn an_option_registers_none_and_some_and_the_option_marker() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Option<Leafy>>();
+
+    let id = TypeId::of::<Option<Leafy>>();
+    assert_eq!(
+        registry
+            .get_type_data::<ReflectEnumInfo>(id)
+            .unwrap()
+            .variants,
+        ["None", "Some"]
+    );
+    assert!(registry.get_type_data::<ReflectOption>(id).is_some());
+}
+
+#[test]
+fn a_struct_and_an_opaque_enum_register_no_variant_names() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Gain>();
+    registry.register::<Sealed>();
+
+    for id in [TypeId::of::<Gain>(), TypeId::of::<Sealed>()] {
+        assert!(registry.get_type_data::<ReflectEnumInfo>(id).is_none());
+        assert!(registry.get_type_data::<ReflectOption>(id).is_none());
+    }
 }

@@ -1,6 +1,7 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{Event, ResMut, Resource, events::event_writer::EventWriter};
 use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
     collections::VecDeque,
@@ -11,46 +12,15 @@ use std::{
 #[derive(Debug)]
 pub struct Project {
     pub root: PathBuf,
-    /// The project-relative folder the catalogue is read from, `content` unless `content.toml` names another.
+    /// The project-relative folder the catalogue is read from.
     pub content_root: String,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(default)]
-struct CatalogueConfig {
-    root: String,
-    extension: String,
-}
-impl Default for CatalogueConfig {
-    fn default() -> Self {
-        Self {
-            root: "content".into(),
-            extension: "gasset".into(),
-        }
-    }
 }
 
 /// Read-only catalogue discovery. Never creates or rewrites a project's registry.
 pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)> {
     let root = root.canonicalize()?;
     anyhow::ensure!(root.is_dir(), "Project must be a directory");
-    let config_path = root.join("content.toml");
-    let config: CatalogueConfig = if config_path.try_exists()? {
-        toml::from_str(&std::fs::read_to_string(config_path)?)?
-    } else {
-        CatalogueConfig::default()
-    };
-    anyhow::ensure!(
-        !config.root.is_empty()
-            && Path::new(&config.root)
-                .components()
-                .all(|c| matches!(c, std::path::Component::Normal(_))),
-        "Content root must be project-relative without parent traversal"
-    );
-    anyhow::ensure!(
-        !config.extension.is_empty() && !config.extension.contains(['/', '\\', '.']),
-        "Invalid content extension"
-    );
+    let config = ContentConfig::load_or_default(&root)?;
     let registry = AssetRegistry::from_content_tree(&root, &config.root, &config.extension)?;
     Ok((
         Project {
@@ -64,7 +34,6 @@ pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)>
 pub enum EditorCommand {
     OpenProject(PathBuf),
     OpenAsset(AssetId),
-    RefreshCatalogue,
 }
 
 #[derive(Resource, Default)]
@@ -211,18 +180,6 @@ fn process_commands(
                         .push_back(crate::asset_editor::AssetEditorCommand::Open(asset.clone()));
                 }
             }
-            EditorCommand::RefreshCatalogue => {
-                let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
-                    continue;
-                };
-                match discover_project(&root) {
-                    Ok((project, discovered)) => {
-                        state.project = Some(project);
-                        *registry = discovered;
-                    }
-                    Err(error) => state.status = format!("Could not refresh catalogue: {error:#}"),
-                }
-            }
             EditorCommand::OpenProject(path) => {
                 crate::guard::stop_every_game(&states, &mut cmd);
                 let dirty = crate::guard::dirty_documents(&open_documents);
@@ -301,29 +258,16 @@ mod tests {
     }
 
     #[test]
-    fn refreshing_the_catalogue_replaces_the_registry_resource() {
-        use concerto_ecs::{IntoSystem, System};
-
-        let dir = tempfile::tempdir().unwrap();
-        let id = write_assets(dir.path());
-        let mut world = project_world();
-        world.get_resource_mut::<ProjectState>().unwrap().project = Some(Project {
-            root: dir.path().canonicalize().unwrap(),
-            content_root: "content".into(),
-        });
-        world
-            .get_resource_mut::<EditorCommands>()
-            .unwrap()
-            .0
-            .push_back(EditorCommand::RefreshCatalogue);
-        let mut system = process_commands.into_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-
-        let registry = world.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.iter().count(), 3);
-        assert_eq!(registry.get(id).unwrap().name(), "scene");
+    fn rejects_a_content_toml_with_a_custom_root() {
+        for root in ["../x", "data"] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("content.toml"),
+                format!("root = \"{root}\"\n"),
+            )
+            .unwrap();
+            assert!(discover_project(dir.path()).is_err(), "{root}");
+        }
     }
 
     #[test]

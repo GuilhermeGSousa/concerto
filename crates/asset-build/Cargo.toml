@@ -6,6 +6,9 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
-[dev-dependencies]
+[dependencies]
+anyhow = "1"
 concerto-asset-format.workspace = true
+
+[dev-dependencies]
 tempfile = "3"
