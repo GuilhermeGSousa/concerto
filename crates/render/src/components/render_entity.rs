@@ -6,6 +6,7 @@ use concerto_reflect::Reflect;
 use derive_more::Deref;
 
 /// Marks a main-world entity as needing a mirror entity in the render world.
+#[doc(hidden)]
 #[derive(Component, Reflect, Default)]
 #[reflect(SceneComponent)]
 pub struct SyncWithRenderWorld;

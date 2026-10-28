@@ -15,6 +15,7 @@ use crate::vertex::UIVertex;
     blend = "alpha",
     vertex_layouts = vec![UIVertex::describe()],
 )]
+#[require(concerto_render::components::render_entity::SyncWithRenderWorld)]
 pub struct UIMaterial {
     /// Background fill colour (RGBA, values in `[0.0, 1.0]`).
     #[uniform(0)]
