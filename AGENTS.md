@@ -73,6 +73,8 @@ cargo test -p concerto-physics --no-default-features --features force-rapier
 cargo build --target wasm32-unknown-unknown
 ```
 
+A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure, and CI sets it on Linux.
+
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
 alone needs none of them. A cloud pipeline session runs only the first and

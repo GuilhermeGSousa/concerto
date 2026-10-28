@@ -659,7 +659,7 @@ mod tests {
     }
 
     fn gpu() -> Option<Gpu> {
-        pollster::block_on(Gpu::request(&Gpu::instance(), None))
+        Gpu::request_for_test()
     }
 
     fn app(gpu: &Gpu) -> App {

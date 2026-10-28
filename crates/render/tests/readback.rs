@@ -1,7 +1,7 @@
 use concerto_render::{gpu::Gpu, readback::read_texture, wgpu};
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn pattern(width: u32, height: u32) -> Vec<u8> {

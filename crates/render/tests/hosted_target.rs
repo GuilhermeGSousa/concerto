@@ -21,7 +21,7 @@ use concerto_window::{
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn hosted(gpu: &Gpu, target: DrawTarget, size: (u32, u32)) -> App {

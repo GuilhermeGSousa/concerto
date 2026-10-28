@@ -3238,10 +3238,7 @@ mod tests {
 
     #[test]
     fn a_quad_whose_clip_is_empty_is_not_drawn() {
-        let Some(gpu) = pollster::block_on(concerto_render::gpu::Gpu::request(
-            &concerto_render::gpu::Gpu::instance(),
-            None,
-        )) else {
+        let Some(gpu) = concerto_render::gpu::Gpu::request_for_test() else {
             return;
         };
         let mut app = drawing_app(&gpu);
@@ -3266,10 +3263,7 @@ mod tests {
     }
 
     fn gpu() -> Option<concerto_render::gpu::Gpu> {
-        pollster::block_on(concerto_render::gpu::Gpu::request(
-            &concerto_render::gpu::Gpu::instance(),
-            None,
-        ))
+        concerto_render::gpu::Gpu::request_for_test()
     }
 
     fn quad(app: &mut concerto_app::App, size: f32) -> Entity {
