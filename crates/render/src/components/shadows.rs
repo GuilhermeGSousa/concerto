@@ -227,9 +227,7 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
 
 fn pool_max_capacity(is_array: bool, views_per_caster: u32, max_texture_array_layers: u32) -> u32 {
     if is_array {
-        MAX_SHADOW_CASTERS
-            .min(max_texture_array_layers / views_per_caster)
-            .max(1)
+        MAX_SHADOW_CASTERS.min(max_texture_array_layers / views_per_caster)
     } else {
         1
     }
@@ -657,7 +655,6 @@ mod tests {
         assert_eq!(pool_max_capacity(true, 6, 256), 42);
         assert_eq!(pool_max_capacity(true, 1, 256), 128);
         assert_eq!(pool_max_capacity(true, 6, 8192), MAX_SHADOW_CASTERS);
-        assert_eq!(pool_max_capacity(true, 6, 3), 1);
         assert_eq!(pool_max_capacity(false, 6, 256), 1);
     }
 
