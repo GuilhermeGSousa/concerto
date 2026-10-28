@@ -321,3 +321,41 @@ fn copies_keep_the_permissions_of_their_sources() {
         assert_eq!(mode & 0o777, 0o644, "{name}");
     }
 }
+
+fn bad_configs() -> [ContentConfig; 2] {
+    [
+        ContentConfig {
+            root: "data".to_string(),
+            ..ContentConfig::default()
+        },
+        ContentConfig {
+            extension: "a.b".to_string(),
+            ..ContentConfig::default()
+        },
+    ]
+}
+
+#[test]
+fn import_source_rejects_an_invalid_config() {
+    for bad in bad_configs() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let result = import_source(&external_gltf(), project.path(), &bad);
+        assert!(result.is_err());
+        assert!(files_under(project.path()).is_empty());
+    }
+}
+
+#[test]
+fn import_source_into_rejects_an_invalid_config() {
+    for bad in bad_configs() {
+        let project = tempfile::tempdir().expect("tempdir");
+        let result = import_source_into(
+            &external_gltf(),
+            "assets/models/tri.gltf",
+            project.path(),
+            &bad,
+        );
+        assert!(result.is_err());
+        assert!(files_under(project.path()).is_empty());
+    }
+}

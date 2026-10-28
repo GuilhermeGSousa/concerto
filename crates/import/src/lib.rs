@@ -60,7 +60,7 @@ pub fn import_source(
     project_root: &Path,
     config: &ContentConfig,
 ) -> anyhow::Result<Vec<AssetEntry>> {
-    validate_config(config)?;
+    config.validate()?;
     let source = source
         .canonicalize()
         .with_context(|| format!("resolving source '{}'", source.display()))?;
@@ -76,7 +76,7 @@ pub fn import_source_into(
     project_root: &Path,
     config: &ContentConfig,
 ) -> anyhow::Result<ImportedSource> {
-    validate_config(config)?;
+    config.validate()?;
     let source = source
         .canonicalize()
         .with_context(|| format!("resolving source '{}'", source.display()))?;
@@ -401,22 +401,6 @@ fn relative_to(path: &Path, base: &Path) -> Option<PathBuf> {
         .collect();
     relative.extend(&path[shared..]);
     Some(relative)
-}
-
-fn validate_config(config: &ContentConfig) -> anyhow::Result<()> {
-    let root = Path::new(&config.root);
-    if root.as_os_str().is_empty()
-        || root.is_absolute()
-        || root
-            .components()
-            .any(|part| !matches!(part, Component::Normal(_)))
-    {
-        bail!("content root must be a nonempty project-relative directory without '.' or '..'");
-    }
-    if config.extension.is_empty() || config.extension.contains(['/', '\\', '.']) {
-        bail!("content extension must be a nonempty extension without dots or path separators");
-    }
-    Ok(())
 }
 
 fn validate_ownership(
