@@ -428,3 +428,78 @@ fn a_base_with_parent_after_a_symlink_is_normalised_lexically() {
     std::fs::remove_dir_all(&base).ok();
     std::fs::remove_dir_all(&elsewhere).ok();
 }
+
+#[cfg(unix)]
+#[test]
+fn a_dangling_directory_symlink_is_skipped() {
+    let base = temp_root("scan-dangling");
+    let id = AssetId::new();
+    write_asset(&base.join("content/a.gasset"), id, "Mesh", None);
+    std::os::unix::fs::symlink(base.join("missing"), base.join("content/dangling")).unwrap();
+
+    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: "content/a.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn an_unreadable_directory_is_an_error_naming_its_path() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let base = temp_root("scan-denied");
+    let denied = base.join("content/denied");
+    std::fs::create_dir_all(&denied).unwrap();
+    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    if std::fs::read_dir(&denied).is_ok() {
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&base).ok();
+        return;
+    }
+
+    let result = scan_content(&base, &base.join("content"), "gasset");
+    std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let message = format!("{:#}", result.expect_err("unreadable directory"));
+    assert!(message.contains("content/denied"), "got: {message}");
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn two_symlinks_to_one_directory_list_it_once_under_the_first_name() {
+    let base = temp_root("scan-two-links");
+    let target = temp_root("scan-two-links-target");
+    let id = AssetId::new();
+    write_asset(&target.join("a.gasset"), id, "Mesh", None);
+    std::fs::create_dir_all(base.join("content")).unwrap();
+    std::os::unix::fs::symlink(&target, base.join("content/alias_a")).unwrap();
+    std::os::unix::fs::symlink(&target, base.join("content/alias_b")).unwrap();
+
+    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: "content/alias_a/a.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+    std::fs::remove_dir_all(&target).ok();
+}
