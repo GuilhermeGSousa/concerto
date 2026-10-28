@@ -173,9 +173,10 @@ is not observed.
    - a plan at `.agents/plans/YYYY-MM-DD-<topic>.md`, one `implementer` per
      task, and a `branch-reviewer` pass over the whole branch at the end.
 
-An issue labelled `agent` follows the issue pipeline instead: questions, spec
-and plan happen in its PR, and the owner approves each with a `/approve`
-comment. See [docs/agent-pipeline.md](docs/agent-pipeline.md).
+An issue labelled `agent` follows the issue pipeline instead. With
+`agent:spec`, questions, spec and plan happen in its PR and the owner approves
+each with a `/approve` comment; without it, the agent goes straight to an
+implementation PR. See [docs/agent-pipeline.md](docs/agent-pipeline.md).
 
 When a design question has a known answer in Bevy, say how Bevy does it and
 what differs here.
@@ -198,8 +199,9 @@ work in the current task.
   wrong or missing, where (`path:line`), the evidence, a size estimate, and
   where it was found (the PR, or the session link).
 - Label it `agent` and `agent:filed`, plus `documentation` or `lint` when the
-  change is only that, and `agent:local` when it needs a look at the running
-  program.
+  change is only that, `agent:local` when it needs a look at the running
+  program, and `agent:spec` when it needs design: an open decision for the
+  owner, or a size of medium or more.
 - Only the top-level session files. The `implementer`, `spec-reviewer` and
   `branch-reviewer` roles report such findings to their caller.
 
