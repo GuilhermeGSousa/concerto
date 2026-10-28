@@ -27,7 +27,7 @@ use concerto_reflect::{
     PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectOption,
     TypeRegistry,
 };
-use concerto_ui::theme::UITheme;
+use concerto_ui::{node::UINode, theme::UITheme};
 
 use super::rows::{
     EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
@@ -41,6 +41,10 @@ use crate::tools::edits::CommitProperty;
 /// A registered property editor with its value and edit types erased.
 pub trait ErasedEditor: Send + Sync {
     fn snapshot(&self, value: &dyn Reflect) -> Result<PropertyRowValue, EditError>;
+    /// The layout node of the row, read once when the row is spawned.
+    fn row_node(&self, _snapshot: &PropertyRowValue, theme: &UITheme) -> Result<UINode, EditError> {
+        Ok(super::sync::standard_row_node(theme))
+    }
     fn build(
         &self,
         cmd: &mut CommandQueue,
@@ -71,6 +75,10 @@ impl<T: Reflect, E: PropertyEditor<T>> ErasedEditor for Adapter<T, E> {
             .downcast_ref::<T>()
             .ok_or(EditError::TypeMismatch)?;
         Ok(PropertyRowValue::new::<T, E>(self.editor.snapshot(value)))
+    }
+    fn row_node(&self, snapshot: &PropertyRowValue, theme: &UITheme) -> Result<UINode, EditError> {
+        let snapshot = snapshot.snapshot::<T, E>().ok_or(EditError::TypeMismatch)?;
+        Ok(self.editor.row_node(snapshot, theme))
     }
     fn build(
         &self,
@@ -301,6 +309,19 @@ impl InspectionSource<'_> {
                 Some(editor.editor_type) == property.editor_type
                     && editor.adapter.follows_snapshot()
             })
+    }
+    /// The layout node for `property`'s row, the standard one when no editor claims it.
+    pub fn row_node(
+        &self,
+        registry: &InspectorRegistry,
+        property: &Property,
+        theme: &UITheme,
+    ) -> UINode {
+        registry
+            .editor(property.type_id, Some(&self.table))
+            .filter(|editor| Some(editor.editor_type) == property.editor_type)
+            .and_then(|editor| editor.adapter.row_node(&property.value, theme).ok())
+            .unwrap_or_else(|| super::sync::standard_row_node(theme))
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {

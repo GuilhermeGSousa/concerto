@@ -1881,6 +1881,30 @@ mod color_rows {
         run(&mut w.f.world, color::refresh_color_swatches);
     }
 
+    fn collected(w: &mut Inspecting) {
+        for _ in 0..2 {
+            for system in &mut w.systems[0..2] {
+                system.run_and_apply((), &mut w.f.world);
+            }
+            w.tick();
+        }
+    }
+
+    #[test]
+    fn a_color_row_has_its_wrapping_node_before_its_widgets_are_built() {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Light>();
+        w.scene().insert(Light::point_light(), entity);
+        collected(&mut w);
+        let theme = UITheme::default();
+        let row = row(&mut w.f.world, &["color"]).expect("the row exists");
+
+        assert_eq!(
+            node(&w.f.world, row),
+            &standard_row_node(&theme).with_flex_wrap(FlexWrap::Wrap)
+        );
+    }
+
     fn color_row(world: &mut World, path: &[&str]) -> ColorRow {
         let row = row(world, path).expect("the row exists");
         let mut swatches = world.query::<(Entity, &color::ColorSwatch), ()>();
@@ -2205,4 +2229,104 @@ mod color_rows {
             Color::srgba(0.5, 0.5, 0.25, 1.0)
         );
     }
+}
+
+#[test]
+fn a_non_color_numeric_row_keeps_the_standard_node() {
+    let (mut w, _, _) = inspecting();
+    w.update();
+    w.update();
+    let theme = UITheme::default();
+    let (translation, _) = rows(&mut w.f.world)
+        .into_iter()
+        .find(|(_, row)| row.path.name() == "translation")
+        .unwrap();
+
+    assert_eq!(
+        w.f.world
+            .get_component_for_entity::<UINode>(translation)
+            .unwrap(),
+        &standard_row_node(&theme)
+    );
+}
+
+#[test]
+fn a_row_is_spawned_with_the_node_its_editor_chooses() {
+    #[derive(Default)]
+    struct Spaced;
+    impl PropertyEditor<Transform> for Spaced {
+        type Snapshot = Vec3;
+        type Edit = ();
+        fn snapshot(&self, value: &Transform) -> Vec3 {
+            value.translation
+        }
+        fn row_node(&self, _: &Vec3, theme: &UITheme) -> UINode {
+            standard_row_node(theme).with_gap(Vec2::new(31.0, 0.0))
+        }
+        fn build(&self, _: &mut EntityCommandQueue, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &(), _: &EditContext) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+    let (mut w, _, _) = inspecting();
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, Spaced>();
+    w.update();
+    w.update();
+    let theme = UITheme::default();
+    let row = rows(&mut w.f.world)[0].0;
+
+    assert_eq!(
+        w.f.world.get_component_for_entity::<UINode>(row).unwrap(),
+        &standard_row_node(&theme).with_gap(Vec2::new(31.0, 0.0))
+    );
+}
+
+#[test]
+fn a_row_whose_editor_does_not_follow_its_snapshot_is_respawned_with_the_new_node() {
+    #[derive(Default)]
+    struct Growing;
+    impl PropertyEditor<Transform> for Growing {
+        type Snapshot = Vec3;
+        type Edit = ();
+        fn snapshot(&self, value: &Transform) -> Vec3 {
+            value.translation
+        }
+        fn follows_snapshot(&self) -> bool {
+            false
+        }
+        fn row_node(&self, snapshot: &Vec3, theme: &UITheme) -> UINode {
+            standard_row_node(theme).with_gap(Vec2::new(snapshot.x, 0.0))
+        }
+        fn build(&self, _: &mut EntityCommandQueue, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &(), _: &EditContext) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+    let (mut w, entity, _) = inspecting();
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, Growing>();
+    w.update();
+    w.update();
+    let theme = UITheme::default();
+    let before = rows(&mut w.f.world)[0].0;
+    assert_eq!(
+        w.f.world
+            .get_component_for_entity::<UINode>(before)
+            .unwrap(),
+        &standard_row_node(&theme).with_gap(Vec2::new(0.0, 0.0))
+    );
+
+    w.scene()
+        .get_component_for_entity_mut::<Transform>(entity)
+        .unwrap()
+        .translation
+        .x = 12.0;
+    w.update();
+    w.update();
+    let after = rows(&mut w.f.world)[0].0;
+
+    assert!(!w.f.world.entity_is_valid(before));
+    assert_eq!(
+        w.f.world.get_component_for_entity::<UINode>(after).unwrap(),
+        &standard_row_node(&theme).with_gap(Vec2::new(12.0, 0.0))
+    );
 }

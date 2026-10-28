@@ -5,7 +5,7 @@ use std::{
 
 use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, component::Tick};
 use concerto_reflect::{PropertyPath, Reflect};
-use concerto_ui::theme::UITheme;
+use concerto_ui::{node::UINode, theme::UITheme};
 
 pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
@@ -15,6 +15,10 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
     type Edit: Send + Sync + 'static;
 
     fn snapshot(&self, value: &T) -> Self::Snapshot;
+    /// The layout node of the row that holds this editor's widgets. It is read once, when the row is spawned, so an editor whose node depends on the snapshot must return `false` from [`Self::follows_snapshot`].
+    fn row_node(&self, _snapshot: &Self::Snapshot, theme: &UITheme) -> UINode {
+        super::sync::standard_row_node(theme)
+    }
     fn build(&self, row: &mut EntityCommandQueue, snapshot: &Self::Snapshot, theme: &UITheme);
     /// Validate before mutating. On error the target must remain unchanged.
     fn apply(
