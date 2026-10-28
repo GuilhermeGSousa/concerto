@@ -63,7 +63,7 @@ the root from `ContentAssetRoot` (below).
 
 ```toml
 extension = "gasset"   # default
-root = "content"       # default
+root = "content"       # default, and the only accepted value
 ```
 
 `root` must be `content`. Custom roots are not supported yet, because the

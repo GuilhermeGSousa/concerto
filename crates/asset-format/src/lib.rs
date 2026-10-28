@@ -345,7 +345,7 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
 pub struct ContentConfig {
     /// Uniform extension for every content asset, without the dot.
     pub extension: String,
-    /// Content tree root, relative to the project root.
+    /// Content tree root, relative to the project root; must be `content` for now.
     pub root: String,
 }
 
