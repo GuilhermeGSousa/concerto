@@ -1,5 +1,6 @@
 extern crate self as concerto_reflect;
 
+mod json;
 mod kinds;
 mod leaves;
 mod property;
@@ -18,6 +19,7 @@ use std::any::Any;
 /// struct HasOpaque { inner: Opaque }
 /// ```
 pub use concerto_reflect_macros::Reflect;
+pub use json::{JsonLeaf, ReflectJson, json_to_value, json_to_value_with, to_json};
 pub use kinds::{
     Enum, Fields, Leaf, LeafError, List, ReflectMut, ReflectRef, decode_leaf, encode_leaf,
 };
@@ -37,6 +39,11 @@ pub trait Reflect: Any + Send + Sync {
     fn reflect_ref(&self) -> ReflectRef<'_>;
 
     fn reflect_mut(&mut self) -> ReflectMut<'_>;
+
+    /// The concrete type's name, as [`std::any::type_name`] writes it.
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<Self>()
+    }
 
     /// Visits a struct's fields, or an enum's active variant's fields; lists and leaves have none.
     fn visit(&self, visitor: &mut dyn PropertyVisitor) {

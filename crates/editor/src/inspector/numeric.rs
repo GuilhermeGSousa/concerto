@@ -21,7 +21,7 @@ use crate::inspector::rows::{
 #[derive(Default)]
 pub(crate) struct NumericFields;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum NumericSnapshot {
     Number(f64),
     Vec3([f64; 3]),
@@ -29,10 +29,13 @@ pub(crate) enum NumericSnapshot {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct NumericEdit {
-    pub slot: usize,
-    pub number: f64,
-    pub space: Option<ColorSpace>,
+pub(crate) enum NumericEdit {
+    Slot {
+        slot: usize,
+        number: f64,
+        space: Option<ColorSpace>,
+    },
+    Whole(NumericSnapshot),
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
@@ -54,8 +57,14 @@ macro_rules! scalar {
                 NumericSnapshot::Number(*self as f64)
             }
             fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError> {
-                let number = edit.number as $ty;
-                if edit.slot != 0 || !number.is_finite() {
+                let number = match *edit {
+                    NumericEdit::Slot {
+                        slot: 0, number, ..
+                    }
+                    | NumericEdit::Whole(NumericSnapshot::Number(number)) => number as $ty,
+                    _ => return Err(EditError::Rejected),
+                };
+                if !number.is_finite() {
                     return Err(EditError::Rejected);
                 }
                 *self = number;
@@ -72,12 +81,14 @@ impl NumericValue for Vec3 {
         NumericSnapshot::Vec3([self.x as f64, self.y as f64, self.z as f64])
     }
     fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError> {
-        let number = edit.number as f32;
-        if edit.slot >= 3 || !number.is_finite() {
-            return Err(EditError::Rejected);
-        }
         let mut next = *self;
-        next[edit.slot] = number;
+        match *edit {
+            NumericEdit::Slot { slot, number, .. } if slot < 3 => next[slot] = number as f32,
+            NumericEdit::Whole(NumericSnapshot::Vec3(numbers)) => {
+                next = Vec3::from_array(numbers.map(|number| number as f32))
+            }
+            _ => return Err(EditError::Rejected),
+        }
         if !next.is_finite() {
             return Err(EditError::Rejected);
         }
@@ -151,6 +162,9 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     }
     fn apply(&self, value: &mut T, edit: &NumericEdit, _: &EditContext) -> Result<(), EditError> {
         value.edit(edit)
+    }
+    fn edit_to(&self, value: &T) -> Option<NumericEdit> {
+        Some(NumericEdit::Whole(value.numbers()))
     }
     fn follows_snapshot(&self) -> bool {
         true
@@ -271,7 +285,7 @@ fn numeric_commit(
         NumericSnapshot::Color(value) => Some(ColorSpace::of(value)),
         NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => None,
     };
-    Some(NumericEdit {
+    Some(NumericEdit::Slot {
         slot,
         number,
         space,
@@ -387,6 +401,7 @@ pub(crate) fn refresh_numeric_labels(
 mod tests {
 
     use concerto_ecs::CommandQueue;
+    use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
 
     use super::*;
 
@@ -414,7 +429,7 @@ mod tests {
         let value = NumericSnapshot::Vec3([1.0, 2.0, 3.0]);
         assert_eq!(
             numeric_commit(&value, 1, " -4.5 ", "2.000"),
-            Some(NumericEdit {
+            Some(NumericEdit::Slot {
                 slot: 1,
                 number: -4.5,
                 space: None
@@ -446,7 +461,7 @@ mod tests {
         let value = NumericSnapshot::Number(1.0);
         assert_eq!(
             numeric_commit(&value, 0, "7", "1.000"),
-            Some(NumericEdit {
+            Some(NumericEdit::Slot {
                 slot: 0,
                 number: 7.0,
                 space: None
@@ -463,7 +478,7 @@ mod tests {
         let mut vector = Vec3::ONE;
         let mut rotation = Quat::IDENTITY;
         for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let edit = NumericEdit {
+            let edit = NumericEdit::Slot {
                 slot: 0,
                 number,
                 space: None,
@@ -473,7 +488,7 @@ mod tests {
             assert_eq!(vector.edit(&edit), Err(EditError::Rejected));
             assert_eq!(rotation.edit(&edit), Err(EditError::Rejected));
         }
-        let overflow = NumericEdit {
+        let overflow = NumericEdit::Slot {
             slot: 0,
             number: 1e300,
             space: None,
@@ -481,7 +496,7 @@ mod tests {
         assert_eq!(small.edit(&overflow), Err(EditError::Rejected));
         assert_eq!(vector.edit(&overflow), Err(EditError::Rejected));
         assert_eq!(rotation.edit(&overflow), Err(EditError::Rejected));
-        let bad_slot = NumericEdit {
+        let bad_slot = NumericEdit::Slot {
             slot: 3,
             number: 0.0,
             space: None,
@@ -495,14 +510,14 @@ mod tests {
         assert_eq!(vector, Vec3::ONE);
         assert_eq!(rotation, Quat::IDENTITY);
         small
-            .edit(&NumericEdit {
+            .edit(&NumericEdit::Slot {
                 slot: 0,
                 number: 2.5,
                 space: None,
             })
             .unwrap();
         large
-            .edit(&NumericEdit {
+            .edit(&NumericEdit::Slot {
                 slot: 0,
                 number: -7.25,
                 space: None,
@@ -519,7 +534,7 @@ mod tests {
             panic!("expected degrees");
         };
         let mut copy = original;
-        copy.edit(&NumericEdit {
+        copy.edit(&NumericEdit::Slot {
             slot: 0,
             number: degrees[0],
             space: None,
@@ -529,7 +544,7 @@ mod tests {
         assert!((copy.length() - 1.0).abs() < 1e-6);
         let mut quarter_turn = Quat::IDENTITY;
         quarter_turn
-            .edit(&NumericEdit {
+            .edit(&NumericEdit::Slot {
                 slot: 1,
                 number: 90.0,
                 space: None,
@@ -547,13 +562,66 @@ mod tests {
         assert!(x.abs() < 1e-3 && (y - 90.0).abs() < 1e-3 && z.abs() < 1e-3);
     }
 
+    fn set_to<T: NumericValue>(start: T, value: T) -> Result<T, EditError> {
+        let mut field = start;
+        let edit = <NumericFields as PropertyEditor<T>>::edit_to(&NumericFields, &value)
+            .expect("numbers offer a value edit");
+        NumericFields.apply(
+            &mut field,
+            &edit,
+            &EditContext {
+                assets: &AssetServer::new(),
+                registry: &AssetRegistry::default(),
+            },
+        )?;
+        Ok(field)
+    }
+
+    #[test]
+    fn edit_to_sets_each_numeric_type_to_the_value() {
+        assert_eq!(set_to(1.0_f32, -2.75), Ok(-2.75));
+        assert_eq!(set_to(1.0_f32, 0.1), Ok(0.1));
+        assert_eq!(set_to(1.0_f64, 1e-9), Ok(1e-9));
+        let vector = Vec3::new(-4.0, 0.1, 1e6);
+        assert_eq!(set_to(Vec3::ONE, vector), Ok(vector));
+        let rotation = Quat::from_euler(EulerRot::XYZ, 0.3, -1.1, 2.0);
+        let set = set_to(Quat::IDENTITY, rotation).unwrap();
+        assert!(rotation.dot(set).abs() > 1.0 - 1e-5);
+        assert!((set.length() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn edit_to_a_non_finite_value_is_refused_by_apply() {
+        assert_eq!(set_to(1.0_f32, f32::NAN), Err(EditError::Rejected));
+        assert_eq!(set_to(1.0_f64, f64::INFINITY), Err(EditError::Rejected));
+        assert_eq!(
+            set_to(Vec3::ONE, Vec3::new(0.0, 0.0, f32::NEG_INFINITY)),
+            Err(EditError::Rejected)
+        );
+        assert_eq!(
+            set_to(Quat::IDENTITY, Quat::from_xyzw(f32::NAN, 0.0, 0.0, 1.0)),
+            Err(EditError::Rejected)
+        );
+        let mut vector = Vec3::ONE;
+        assert_eq!(
+            vector.edit(&NumericEdit::Whole(NumericSnapshot::Number(2.0))),
+            Err(EditError::Rejected)
+        );
+        let mut number = 1.0_f32;
+        assert_eq!(
+            number.edit(&NumericEdit::Whole(NumericSnapshot::Vec3([2.0; 3]))),
+            Err(EditError::Rejected)
+        );
+        assert_eq!((vector, number), (Vec3::ONE, 1.0));
+    }
+
     #[test]
     fn a_color_has_four_slots_and_refuses_out_of_range_text() {
         let srgb = NumericSnapshot::Color(concerto_color::Color::srgba(0.5, 0.5, 0.5, 1.0));
         assert_eq!(slot_count(&srgb), 4);
         assert_eq!(
             numeric_commit(&srgb, 3, "0.5", "1.000"),
-            Some(NumericEdit {
+            Some(NumericEdit::Slot {
                 slot: 3,
                 number: 0.5,
                 space: Some(ColorSpace::Srgb),
@@ -565,15 +633,19 @@ mod tests {
         let linear = NumericSnapshot::Color(concerto_color::Color::rgba(0.5, 0.5, 0.5, 1.0));
         assert_eq!(
             numeric_commit(&linear, 0, "4", "0.500"),
-            Some(NumericEdit {
+            Some(NumericEdit::Slot {
                 slot: 0,
                 number: 4.0,
                 space: Some(ColorSpace::Linear),
             })
         );
         assert_eq!(
-            numeric_commit(&NumericSnapshot::Number(1.0), 0, "4", "1.000").map(|edit| edit.space),
-            Some(None)
+            numeric_commit(&NumericSnapshot::Number(1.0), 0, "4", "1.000"),
+            Some(NumericEdit::Slot {
+                slot: 0,
+                number: 4.0,
+                space: None,
+            })
         );
     }
 

@@ -24,6 +24,7 @@ concerto-foundation.workspace = true
 concerto-render.workspace = true
 concerto-window.workspace = true
 concerto-winit.workspace = true
+concerto-mcp.workspace = true
 concerto-ui.workspace = true
 concerto-color.workspace = true
 taffy = "0.9.2"
@@ -32,13 +33,18 @@ rfd = "0.15"
 concerto-import.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+schemars = "1"
 toml = "0.8"
 env_logger = "0.11"
 log = "0.4"
 derive_more = { version = "2", features = ["full"] }
+image = "0.25.5"
 
 [dev-dependencies]
+base64 = "0.22"
 concerto = { path = "../.." }
 tempfile = "3"
 glyphon = "0.8.0"
 pollster = "0.4.0"
+rmcp = { version = "3.5", features = ["client", "transport-io"] }
+tokio = { version = "1", features = ["rt", "io-util", "macros", "time"] }

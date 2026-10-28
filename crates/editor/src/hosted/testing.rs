@@ -15,7 +15,7 @@ use concerto_ecs::{
     command::CommandQueue,
     component::name::Name,
     entity::hierarchy::{ChildOf, Children},
-    events::{event_channel::EventChannel, event_writer::EventWriter},
+    events::{event_channel::EventChannel, event_cursor::EventCursor, event_writer::EventWriter},
     signal::{On, Signal},
     system::BoxedSystem,
     world_id::WorldId,
@@ -40,7 +40,8 @@ use concerto_window::{
 };
 
 use super::{
-    HostRequest, HostRole, Hosted, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp, PlayState,
+    HostRequest, HostRole, Hosted, HostedApp, ParkedEditApp, PendingApp, PendingPlayApp,
+    PlayFailed, PlayStarted, PlayState, PlayStopped,
     events::forward_events,
     input::{HostCursor, Routing, ViewportShown, ViewportView},
     seam::EditWorldSignals,
@@ -55,7 +56,10 @@ use crate::{
     hierarchy::HierarchyState,
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
     project::{Project, ProjectState},
-    scene::{SceneEditor, SceneEditorState, SceneRecipe, SceneState},
+    scene::{
+        SaveFailed, SceneEditor, SceneEditorState, SceneOpenFailed, SceneOpened, SceneRecipe,
+        SceneSaved, SceneState,
+    },
     tools::{
         entity_ops::EntityEdit,
         scene::{RevealEntity, SceneEdited, SceneRoot, SceneStatus},
@@ -148,10 +152,17 @@ pub(crate) fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> 
         .expect("a recipe without asynchronous plugins is ready at once")
 }
 
+fn insert_play_outcomes(world: &mut World) {
+    world.insert_resource(EventChannel::<PlayStarted>::new());
+    world.insert_resource(EventChannel::<PlayFailed>::new());
+    world.insert_resource(EventChannel::<PlayStopped>::new());
+}
+
 pub(crate) fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
     world.insert_resource(Routing::default());
+    insert_play_outcomes(&mut world);
     super::install_listeners(&mut world);
     let document = world.spawn(hosted_now(recipe, |_| {}));
     world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(document);
@@ -304,6 +315,11 @@ impl SceneFixture {
         world.insert_resource(Window::new((1280, 720), 1.0));
         world.insert_resource(EventChannel::<WindowEvent>::new());
         world.insert_resource(concerto_window::input::Input::new());
+        world.insert_resource(EventChannel::<SceneOpened>::new());
+        world.insert_resource(EventChannel::<SceneOpenFailed>::new());
+        world.insert_resource(EventChannel::<SceneSaved>::new());
+        world.insert_resource(EventChannel::<SaveFailed>::new());
+        insert_play_outcomes(&mut world);
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
         world.insert_resource(UITheme::default());
@@ -601,6 +617,23 @@ impl SceneFixture {
         self.world
             .get_component_for_entity::<Unsaved>(document)
             .is_some()
+    }
+
+    pub(crate) fn opened(&self) -> Vec<SceneOpened> {
+        self.written()
+    }
+
+    pub(crate) fn open_failures(&self) -> Vec<SceneOpenFailed> {
+        self.written()
+    }
+
+    pub(crate) fn written<E: Event + Clone + 'static>(&self) -> Vec<E> {
+        self.world
+            .get_resource::<EventChannel<E>>()
+            .unwrap()
+            .read_from(&mut EventCursor::default())
+            .cloned()
+            .collect()
     }
 
     pub(crate) fn status(&self, document: Entity) -> String {

@@ -314,6 +314,10 @@ Loads return immediately with a handle; the bytes load on a background task
 pool. A registry miss on `load` fails the load and logs the id — it
 does not fall back to anything.
 
+`AssetServer::is_loading` reports whether an asset requested with `load` or
+`add` has yet to reach the world. A load counts until the frame that inserts
+its asset, or handles its failure; cancelled loads do not count.
+
 Stored assets can only be requested by UUID. Use `asset_id!` for references
 written in code and `load` for both those IDs and serialized references.
 There is no runtime path-loading API or path-to-UUID lookup. Paths are resolved

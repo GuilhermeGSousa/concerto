@@ -96,8 +96,12 @@ impl FlyCamera {
         Quat::from_rotation_y(self.yaw) * Quat::from_rotation_x(self.pitch)
     }
 
-    fn forward(&self) -> Vec3 {
+    pub(crate) fn forward(&self) -> Vec3 {
         self.rotation() * -Vec3::Z
+    }
+
+    pub(crate) fn placed(&self, transform: &Transform) -> bool {
+        transform.translation == self.position && transform.rotation == self.rotation()
     }
 }
 
@@ -134,7 +138,8 @@ pub(crate) fn build(app: &mut App) {
         .add_system(LateUpdate, frame_requested_bounds.at_edit_time())
         .add_system(LateUpdate, zoom.at_edit_time())
         .add_listener(frame_selection.at_edit_time())
-        .add_listener(frame_all.at_edit_time());
+        .add_listener(frame_all.at_edit_time())
+        .add_listener(set_camera_pose.at_edit_time());
     if app.is_plugin_added::<WorldGridPlugin>() {
         app.add_system(Startup, spawn_camera_and_grid.at_edit_time());
     } else {
@@ -173,6 +178,43 @@ impl Signal for FrameSelection {}
 pub struct FrameAll;
 
 impl Signal for FrameAll {}
+
+/// Places the camera at `position`, turned by `yaw` and `pitch` as [`FlyCamera`] holds them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SetCameraPose {
+    /// Where the camera goes.
+    pub position: Vec3,
+    /// Radians around world up; 0 faces -Z and a positive yaw turns left.
+    pub yaw: f32,
+    /// Radians up from level, kept within what a look can reach.
+    pub pitch: f32,
+}
+
+impl Signal for SetCameraPose {}
+
+impl SetCameraPose {
+    /// The pose at `position` that faces `target`, or `None` when they are the same point.
+    pub fn looking_at(position: Vec3, target: Vec3) -> Option<Self> {
+        let direction = (target - position).try_normalize()?;
+        let yaw = if Vec2::new(direction.x, direction.z).length() > 1e-6 {
+            (-direction.x).atan2(-direction.z)
+        } else {
+            0.0
+        };
+        Some(Self {
+            position,
+            yaw,
+            pitch: direction.y.clamp(-1.0, 1.0).asin(),
+        })
+    }
+}
+
+fn set_camera_pose(on: On<SetCameraPose>, mut fly: ResMut<FlyCamera>) {
+    let pose = on.signal();
+    fly.position = pose.position;
+    fly.yaw = pose.yaw;
+    fly.pitch = pose.pitch.clamp(-MAX_PITCH, MAX_PITCH);
+}
 
 fn frame_selection(_: On<FrameSelection>, mut commands: ResMut<ViewportCommands>) {
     commands.frame_selection = true;
@@ -318,7 +360,7 @@ pub(crate) fn subtree(root: Entity, children: &Query<&Children>) -> HashSet<Enti
 fn frame_requested_bounds(
     bounded: Query<(Entity, &Aabb, &GlobalTransform)>,
     children: Query<&Children>,
-    cameras: Query<(&EditorCamera, &Camera, &mut Transform)>,
+    cameras: Query<(&EditorCamera, &mut Camera, &mut Transform)>,
     selection: Res<Selection>,
     mut commands: ResMut<ViewportCommands>,
     mut fly: ResMut<FlyCamera>,
@@ -347,8 +389,12 @@ fn frame_requested_bounds(
         .unwrap_or(0.78);
     let distance = (radius / (fovy * 0.5).tan() * 1.25).clamp(0.02, 100_000.0);
     fly.position = bounds.center() - fly.forward() * distance;
-    for (_, _, mut transform) in cameras.iter() {
+    for (_, mut camera, mut transform) in cameras.iter() {
         apply_fly_transform(&fly, &mut transform);
+        let far = distance + radius * 2.0;
+        if camera.zfar < far {
+            camera.zfar = far;
+        }
     }
 }
 
@@ -521,6 +567,48 @@ mod tests {
         assert!(f.looks_at(Vec3::ZERO));
         let commands = f.world.get_resource::<ViewportCommands>().unwrap();
         assert!(!commands.frame_all && !commands.frame_selection);
+    }
+
+    fn far_plane(f: &mut Framing) -> f32 {
+        f.world
+            .query::<&Camera, ()>()
+            .iter(&mut f.world)
+            .next()
+            .unwrap()
+            .zfar
+    }
+
+    #[test]
+    fn framing_keeps_everything_it_frames_inside_the_far_plane() {
+        let mut f = framing();
+        f.world.trigger(FrameAll);
+        f.run();
+        let farthest = [Vec3::new(41.0, 1.0, 1.0), Vec3::new(-41.0, 1.0, 1.0)]
+            .map(|corner| (corner - f.fly().position).length())
+            .into_iter()
+            .fold(0.0, f32::max);
+        let all = far_plane(&mut f);
+        assert!(farthest < all, "{farthest} lies beyond the far plane {all}");
+
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .set(Some(f.near));
+        f.world.trigger(FrameSelection);
+        f.run();
+        assert_eq!(far_plane(&mut f), all, "framing less never clips the rest");
+    }
+
+    #[test]
+    fn framing_a_small_scene_keeps_the_default_far_plane() {
+        let mut f = framing();
+        f.world
+            .get_resource_mut::<Selection>()
+            .unwrap()
+            .set(Some(f.near));
+        f.world.trigger(FrameSelection);
+        f.run();
+        assert_eq!(far_plane(&mut f), Camera::default().zfar);
     }
 
     fn pointing(over: bool) -> World {
@@ -747,6 +835,87 @@ mod tests {
         apply_fly_transform(&fly, &mut transform);
         assert_eq!(transform.translation, fly.position);
         assert!((fly.forward() - Vec3::NEG_X).length() < 0.001);
+    }
+
+    fn posed(pose: SetCameraPose) -> FlyCamera {
+        let mut world = World::new();
+        world.insert_resource(FlyCamera::default());
+        world.add_listener(set_camera_pose);
+        world.trigger(pose);
+        world.remove_resource::<FlyCamera>().unwrap()
+    }
+
+    #[test]
+    fn a_pose_looking_at_a_point_faces_it() {
+        let position = Vec3::new(1.0, 2.0, 3.0);
+        for direction in [Vec3::NEG_Z, Vec3::Z, Vec3::new(1.0, -1.0, 0.5)] {
+            let pose = SetCameraPose::looking_at(position, position + direction * 4.0).unwrap();
+            let fly = posed(pose);
+            assert_eq!(fly.position, position);
+            assert!(
+                (fly.forward() - direction.normalize()).length() < 1e-4,
+                "{direction} gives {}",
+                fly.forward()
+            );
+        }
+        let ahead = SetCameraPose::looking_at(position, position + Vec3::NEG_Z).unwrap();
+        assert_eq!((ahead.yaw, ahead.pitch), (0.0, 0.0));
+        let behind = SetCameraPose::looking_at(position, position + Vec3::Z).unwrap();
+        assert!((behind.yaw.abs() - std::f32::consts::PI).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_pose_looking_straight_up_keeps_the_pitch_a_look_can_reach() {
+        let pose = SetCameraPose::looking_at(Vec3::ZERO, Vec3::Y * 3.0).unwrap();
+        assert_eq!(pose.yaw, 0.0);
+        let fly = posed(pose);
+        assert_eq!(fly.pitch, MAX_PITCH);
+        assert!(fly.forward().y > 0.99);
+        assert_eq!(
+            posed(SetCameraPose {
+                pitch: -9.0,
+                ..pose
+            })
+            .pitch,
+            -MAX_PITCH
+        );
+    }
+
+    #[test]
+    fn a_pose_is_placed_only_once_the_camera_has_been_moved_to_it() {
+        let mut world = pointing(false);
+        world.add_listener(set_camera_pose);
+        let placed = |world: &mut World| {
+            let transform = world
+                .query::<(&EditorCamera, &Transform), ()>()
+                .iter(world)
+                .next()
+                .unwrap()
+                .1
+                .clone();
+            world
+                .get_resource::<FlyCamera>()
+                .unwrap()
+                .placed(&transform)
+        };
+        let mut system = navigate.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        assert!(placed(&mut world));
+
+        world.trigger(SetCameraPose {
+            position: Vec3::new(4.0, 5.0, 6.0),
+            yaw: 1.0,
+            pitch: 0.5,
+        });
+        assert!(!placed(&mut world));
+        system.run_and_apply((), &mut world);
+        assert!(placed(&mut world));
+    }
+
+    #[test]
+    fn a_pose_cannot_look_at_its_own_position() {
+        assert!(SetCameraPose::looking_at(Vec3::ONE, Vec3::ONE).is_none());
     }
 
     #[test]

@@ -174,6 +174,12 @@ impl AssetServer {
         Some(Arc::clone(&self.data.content.read().unwrap().registry))
     }
 
+    /// Whether an asset requested with `load` or `add` has yet to reach the world; a failed load counts until its failure is handled.
+    pub fn is_loading(&self) -> bool {
+        !self.data.pending_tasks.read().unwrap().is_empty()
+            || !self.data.asset_load_event_receiver.is_empty()
+    }
+
     /// Cancels the loads pending at the call; none of them delivers its asset afterwards.
     pub fn cancel_pending(&self) {
         let mut pending = self.data.pending_tasks.write().unwrap();
@@ -655,6 +661,77 @@ mod tests {
     }
 
     #[test]
+    fn a_handle_written_through_live_leaves_loads_through_the_server() {
+        use crate::assets::handle::LiveLeaves;
+        use concerto_ecs::reflect::AppTypeRegistry;
+        use std::any::TypeId;
+
+        let dir = temp_root("live-handle");
+        let store = AssetStore::<FixtureAsset>::new();
+        let mut server = AssetServer::with_content_root(ContentAssetRoot::Directory(dir.clone()));
+        server.register_asset::<FixtureAsset>(&store);
+        let mut world = World::new();
+        world.insert_resource(server.clone());
+        world.register_type::<AssetHandle<FixtureAsset>>();
+        let id = AssetId::new();
+        let mut hook = LiveLeaves::new(&world);
+        let stored = concerto_reflect::json_to_value_with(
+            &serde_json::Value::String(id.simple_hex()),
+            TypeId::of::<AssetHandle<FixtureAsset>>(),
+            world.get_resource::<AppTypeRegistry>().unwrap(),
+            &mut hook,
+        )
+        .unwrap();
+
+        let mut handle = AssetHandle::<FixtureAsset>::default();
+        let warnings = concerto_reflect::apply_value_with(&mut handle, &stored, &mut hook);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert!(matches!(handle, AssetHandle::Strong(..)));
+        assert_eq!(handle.id(), id);
+        assert!(server.data.pending_tasks.read().unwrap().contains_key(&id));
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn live_leaves_keep_entity_references_live_and_handles_weak_without_a_server() {
+        use crate::assets::handle::LiveLeaves;
+        use concerto_ecs::{component::scene::SceneEntityRef, reflect::AppTypeRegistry};
+        use std::any::TypeId;
+
+        let mut world = World::new();
+        world.register_type::<AssetHandle<FixtureAsset>>();
+        let entity = world.spawn(());
+        let id = AssetId::new();
+        let mut hook = LiveLeaves::new(&world);
+        let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+        let reference = concerto_reflect::json_to_value_with(
+            &serde_json::Value::String(entity.to_id_string()),
+            TypeId::of::<SceneEntityRef>(),
+            registry,
+            &mut hook,
+        )
+        .unwrap();
+        let asset = concerto_reflect::json_to_value_with(
+            &serde_json::Value::String(id.simple_hex()),
+            TypeId::of::<AssetHandle<FixtureAsset>>(),
+            registry,
+            &mut hook,
+        )
+        .unwrap();
+
+        let mut written = SceneEntityRef::default();
+        let mut handle = AssetHandle::<FixtureAsset>::default();
+        assert!(concerto_reflect::apply_value_with(&mut written, &reference, &mut hook).is_empty());
+        assert!(concerto_reflect::apply_value_with(&mut handle, &asset, &mut hook).is_empty());
+
+        assert_eq!(written, SceneEntityRef::Entity(entity));
+        assert!(matches!(handle, AssetHandle::Weak(..)));
+        assert_eq!(handle.id(), id);
+    }
+
+    #[test]
     fn load_fails_for_an_unregistered_id() {
         let dir = temp_root("load-by-id-miss");
         let store = AssetStore::<FixtureAsset>::new();
@@ -827,6 +904,72 @@ mod tests {
         let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
         assert!(store.get(&handle).is_none());
         assert!(server.data.pending_tasks.read().unwrap().is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_load_is_in_flight_until_its_asset_reaches_the_world() {
+        let dir = temp_root("in-flight-load");
+        let (id, registry) = saved_fixture(&dir, 6);
+        let (server, mut world) = fixture_server(&dir, registry);
+        assert!(!server.is_loading());
+
+        let handle = server.load::<FixtureAsset>(id);
+        assert!(server.is_loading());
+        wait_until("the load", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+        assert!(server.is_loading());
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading());
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        assert_eq!(store.get(&handle).map(|asset| asset.value), Some(6));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_load_is_in_flight_until_its_failure_is_handled() {
+        let dir = temp_root("in-flight-failure");
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+
+        let _handle = server.load::<FixtureAsset>(AssetId::new());
+        wait_until("the failure", || {
+            !server.data.asset_load_event_receiver.is_empty()
+        });
+        assert!(server.is_loading());
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_added_asset_is_in_flight_until_it_reaches_the_world() {
+        let dir = temp_root("in-flight-added");
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+
+        let _handle = server.add(FixtureAsset {
+            value: 9,
+            initialized: false,
+        });
+        assert!(server.is_loading());
+
+        handle_asset_load_events(&mut world);
+        assert!(!server.is_loading());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn cancelled_loads_are_no_longer_in_flight() {
+        let dir = temp_root("in-flight-cancelled");
+        let (id, registry) = saved_fixture(&dir, 4);
+        let (server, _world) = fixture_server(&dir, registry);
+        let _handle = server.load::<FixtureAsset>(id);
+
+        server.cancel_pending();
+
+        assert!(!server.is_loading());
         std::fs::remove_dir_all(dir).unwrap();
     }
 

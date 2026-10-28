@@ -1,10 +1,20 @@
-use std::{fmt::Debug, marker::PhantomData, sync::Arc};
+use std::{
+    any::{Any, TypeId},
+    collections::HashMap,
+    fmt::Debug,
+    marker::PhantomData,
+    sync::Arc,
+};
 
 use super::{asset_server::AssetServer, Asset, AssetId, LoadableAsset};
-use concerto_ecs::{reflect::ReflectSceneLeaf, Event};
+use concerto_ecs::{
+    component::scene::LiveEntityRefs,
+    reflect::{AppTypeRegistry, ReflectSceneLeaf},
+    Event, World,
+};
 use concerto_reflect::{
-    decode_leaf, encode_leaf, FromType, GetTypeRegistration, Leaf, LeafError, Reflect, ReflectMut,
-    ReflectRef, TypeData, TypeRegistration,
+    decode_leaf, encode_leaf, FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, LeafHook,
+    Reflect, ReflectJson, ReflectMut, ReflectRef, TypeData, TypeRegistration, TypeRegistry,
 };
 use crossbeam_channel::Sender;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -160,8 +170,24 @@ impl<A: LoadableAsset> GetTypeRegistration for AssetHandle<A> {
     fn get_type_registration() -> TypeRegistration {
         let mut registration = TypeRegistration::of::<Self>();
         registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
+        registration.insert(<ReflectJson as FromType<Self>>::from_type());
         registration.insert(<ReflectAssetHandle as FromType<Self>>::from_type());
         registration
+    }
+}
+
+impl<A: Asset> JsonLeaf for AssetHandle<A> {
+    /// The asset's id as 32 hex digits; reading one back gives a weak handle.
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::Value::String(self.id().simple_hex())
+    }
+
+    fn from_json(value: &serde_json::Value) -> Result<Self, String> {
+        value
+            .as_str()
+            .and_then(|id| AssetId::from_simple_hex(id).ok())
+            .map(Self::weak)
+            .ok_or_else(|| "expected an asset id of 32 hex digits".to_owned())
     }
 }
 
@@ -253,6 +279,71 @@ impl<A: LoadableAsset> FromType<AssetHandle<A>> for ReflectSceneLeaf {
     }
 }
 
+/// Writes values into a live world: entity references as [`LiveEntityRefs`] stores them, and asset handles loaded through the world's [`AssetServer`] as a scene spawns them.
+pub struct LiveLeaves {
+    server: Option<AssetServer>,
+    handles: HashMap<TypeId, ReflectAssetHandle>,
+}
+
+impl LiveLeaves {
+    /// Takes the handle types registered in `world` and its asset server, if it has one.
+    pub fn new(world: &World) -> Self {
+        let server = world.get_resource::<AssetServer>();
+        match world.get_resource::<AppTypeRegistry>() {
+            Some(registry) => Self::from_parts(registry, server),
+            None => Self {
+                server: server.cloned(),
+                handles: HashMap::new(),
+            },
+        }
+    }
+
+    /// Takes the handle types registered in `registry` and the asset server to load them through, for a caller that reads a world's resources without holding the world.
+    pub fn from_parts(registry: &TypeRegistry, server: Option<&AssetServer>) -> Self {
+        let handles = registry
+            .iter()
+            .filter_map(|registration| {
+                Some((
+                    registration.type_id(),
+                    *registration.data::<ReflectAssetHandle>()?,
+                ))
+            })
+            .collect();
+        Self {
+            server: server.cloned(),
+            handles,
+        }
+    }
+}
+
+impl LeafHook for LiveLeaves {
+    fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
+        LiveEntityRefs.encode(leaf)
+    }
+
+    fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>> {
+        if let Some(decoded) = LiveEntityRefs.decode(leaf, bytes) {
+            return Some(decoded);
+        }
+        let handle = self.handles.get(&(&*leaf as &dyn Any).type_id())?;
+        let server = self.server.as_ref()?;
+        let mut id = AssetId::nil();
+        if let Err(error) = decode_leaf(&mut id, bytes) {
+            return Some(Err(error));
+        }
+        if id.is_nil() {
+            return None;
+        }
+        Some(handle.set(leaf, server, id).map_err(|error| match error {
+            SetHandleError::NotThisHandle => LeafError("not this asset's handle".into()),
+            SetHandleError::AssetNotRegistered => LeafError(format!(
+                "{} assets are not registered with the asset server",
+                handle.kind()
+            )),
+        }))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,5 +364,87 @@ mod tests {
         let AssetLifetimeEvent::Dropped(dropped_id) = receiver.try_recv().unwrap();
         assert_eq!(dropped_id, id);
         assert!(receiver.is_empty());
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Note;
+
+    impl Asset for Note {
+        fn name() -> &'static str {
+            "Note"
+        }
+    }
+
+    impl LoadableAsset for Note {}
+
+    fn json_codec() -> concerto_reflect::ReflectJson {
+        let mut registry = concerto_reflect::TypeRegistry::default();
+        registry.register::<AssetHandle<Note>>();
+        *registry
+            .get_type_data::<concerto_reflect::ReflectJson>(
+                std::any::TypeId::of::<AssetHandle<Note>>(),
+            )
+            .unwrap()
+    }
+
+    fn handle_from_json(value: &serde_json::Value) -> Result<AssetId, String> {
+        let decoded = (json_codec().from_json)(value)?;
+        let handle = (decoded.as_ref() as &dyn std::any::Any)
+            .downcast_ref::<AssetHandle<Note>>()
+            .unwrap();
+        assert!(matches!(handle, AssetHandle::Weak(..)));
+        Ok(handle.id())
+    }
+
+    #[test]
+    fn a_handle_is_its_asset_id_as_32_hex_digits_in_json() {
+        let id = AssetId::new();
+        let handle = AssetHandle::<Note>::weak(id);
+        let json = serde_json::Value::String(id.simple_hex());
+
+        assert_eq!((json_codec().to_json)(&handle), json);
+        assert_eq!(handle_from_json(&json), Ok(id));
+    }
+
+    #[test]
+    fn a_handle_does_not_decode_from_anything_but_an_asset_id() {
+        for value in [serde_json::json!("not an id"), serde_json::json!(7)] {
+            assert!(handle_from_json(&value).is_err(), "{value} must not decode");
+        }
+    }
+
+    fn handle_registry() -> concerto_reflect::TypeRegistry {
+        let mut registry = concerto_reflect::TypeRegistry::default();
+        registry.register::<AssetHandle<Note>>();
+        registry
+    }
+
+    #[test]
+    fn a_handle_written_back_from_its_json_names_the_same_asset() {
+        let registry = handle_registry();
+        let id = AssetId::new();
+        let json = concerto_reflect::to_json(&AssetHandle::<Note>::weak(id), &registry);
+
+        let stored = concerto_reflect::json_to_value(
+            &json,
+            std::any::TypeId::of::<AssetHandle<Note>>(),
+            &registry,
+        )
+        .unwrap();
+        let mut loaded = AssetHandle::<Note>::default();
+        assert!(concerto_reflect::apply_value(&mut loaded, &stored).is_empty());
+        assert_eq!(loaded.id(), id);
+    }
+
+    #[test]
+    fn a_handle_written_from_anything_but_an_asset_id_says_what_it_expected() {
+        assert_eq!(
+            concerto_reflect::json_to_value(
+                &serde_json::json!(7),
+                std::any::TypeId::of::<AssetHandle<Note>>(),
+                &handle_registry(),
+            ),
+            Err("expected an asset id of 32 hex digits".to_owned())
+        );
     }
 }

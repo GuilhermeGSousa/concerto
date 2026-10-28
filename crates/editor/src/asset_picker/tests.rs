@@ -56,6 +56,7 @@ fn picking() -> Picking {
     f.add_to_project(&cube);
     f.add_to_project(&sphere);
     let document = f.open();
+    let root = f.scene_root(document);
 
     let scene = f.scene_world_mut(document);
     scene.register_type::<MeshComponent>();
@@ -66,6 +67,7 @@ fn picking() -> Picking {
         .register_asset(&store);
     scene.insert_resource(store);
     let entity = scene.spawn(MeshComponent::default());
+    scene.entity_mut(root).add_child(entity);
     scene.trigger(Select(Some(entity)));
 
     let mut panel = build_inspector.into_system();
@@ -294,6 +296,33 @@ fn an_asset_type_the_scenes_server_never_registered_is_rejected() {
 
     assert_eq!(result, Err(EditError::Rejected));
     assert!(handle.id().is_nil());
+}
+
+#[test]
+fn a_value_edit_to_a_handle_picks_the_asset_it_names() {
+    let p = picking();
+    let picker = p.picker();
+    let sphere = p.sphere.id;
+    let mut handle = AssetHandle::<Mesh>::default();
+
+    let edit = picker
+        .edit_to(&AssetHandle::<Mesh>::weak(sphere))
+        .unwrap()
+        .expect("a picker offers a value edit");
+    picker
+        .apply(
+            &mut handle,
+            edit.as_ref(),
+            &EditContext {
+                assets: p.scene().get_resource().unwrap(),
+                registry: p.scene().get_resource().unwrap(),
+            },
+        )
+        .unwrap();
+
+    assert_eq!(handle.id(), sphere);
+    assert!(matches!(handle, AssetHandle::Strong(..)));
+    assert_eq!(picker.edit_to(&7u32).err(), Some(EditError::TypeMismatch));
 }
 
 #[derive(Default)]

@@ -56,6 +56,7 @@ pub struct SettingSnapshot {
 pub enum SettingEdit {
     Toggle,
     Rename(String),
+    Set { title: String, enabled: bool },
 }
 
 #[derive(Default)]
@@ -96,14 +97,31 @@ impl PropertyEditor<Setting> for SettingEditor {
         match edit {
             SettingEdit::Toggle => value.enabled = !value.enabled,
             SettingEdit::Rename(title) => {
-                if title.trim().is_empty() {
-                    return Err(EditError::Rejected);
-                }
+                check_title(title)?;
                 value.title = title.clone();
+            }
+            SettingEdit::Set { title, enabled } => {
+                check_title(title)?;
+                value.title = title.clone();
+                value.enabled = *enabled;
             }
         }
         Ok(())
     }
+
+    fn edit_to(&self, value: &Setting) -> Option<SettingEdit> {
+        Some(SettingEdit::Set {
+            title: value.title.clone(),
+            enabled: value.enabled,
+        })
+    }
+}
+
+fn check_title(title: &str) -> Result<(), EditError> {
+    if title.trim().is_empty() {
+        return Err(EditError::Rejected);
+    }
+    Ok(())
 }
 
 fn label(snapshot: &SettingSnapshot) -> String {

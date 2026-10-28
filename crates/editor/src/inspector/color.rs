@@ -91,15 +91,30 @@ impl NumericValue for Color {
         NumericSnapshot::Color(*self)
     }
     fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError> {
-        if edit.space != Some(ColorSpace::of(self)) {
-            return Err(EditError::Rejected);
-        }
-        let number = channel(self, edit.slot, edit.number)?;
         let mut next = *self;
-        *channels_mut(&mut next)
-            .into_iter()
-            .nth(edit.slot)
-            .ok_or(EditError::Rejected)? = number;
+        match *edit {
+            NumericEdit::Slot {
+                slot,
+                number,
+                space,
+            } => {
+                if space != Some(ColorSpace::of(self)) {
+                    return Err(EditError::Rejected);
+                }
+                let number = channel(self, slot, number)?;
+                *channels_mut(&mut next)
+                    .into_iter()
+                    .nth(slot)
+                    .ok_or(EditError::Rejected)? = number;
+            }
+            NumericEdit::Whole(NumericSnapshot::Color(color)) => {
+                next = color;
+                for (slot, number) in channels_mut(&mut next).into_iter().enumerate() {
+                    *number = channel(&color, slot, *number as f64)?;
+                }
+            }
+            NumericEdit::Whole(_) => return Err(EditError::Rejected),
+        }
         *self = next;
         Ok(())
     }
@@ -160,7 +175,7 @@ mod tests {
 
     fn edit(color: &mut Color, slot: usize, number: f64) -> Result<(), EditError> {
         let space = Some(ColorSpace::of(color));
-        color.edit(&NumericEdit {
+        color.edit(&NumericEdit::Slot {
             slot,
             number,
             space,
@@ -323,12 +338,41 @@ mod tests {
     }
 
     #[test]
+    fn a_whole_color_edit_sets_the_color_and_its_space() {
+        let mut copy = Color::srgba(0.5, 0.5, 0.5, 1.0);
+        let linear = Color::rgba(2.0, 0.25, 0.0, 0.5);
+        assert_eq!(
+            copy.edit(&NumericEdit::Whole(NumericSnapshot::Color(linear))),
+            Ok(())
+        );
+        assert_eq!(copy, linear);
+    }
+
+    #[test]
+    fn a_whole_color_edit_out_of_range_is_refused() {
+        let color = Color::srgba(0.5, 0.5, 0.5, 1.0);
+        for bad in [
+            Color::srgba(1.5, 0.5, 0.5, 1.0),
+            Color::rgba(0.5, 0.5, 0.5, 2.0),
+            Color::rgba(f32::NAN, 0.5, 0.5, 1.0),
+        ] {
+            let mut copy = color;
+            assert_eq!(
+                copy.edit(&NumericEdit::Whole(NumericSnapshot::Color(bad))),
+                Err(EditError::Rejected),
+                "{bad:?}"
+            );
+            assert_eq!(copy, color);
+        }
+    }
+
+    #[test]
     fn an_edit_made_against_another_space_is_refused() {
         let color = Color::srgba(0.5, 0.5, 0.5, 1.0);
         for space in [Some(ColorSpace::Hsl), None] {
             let mut copy = color;
             assert_eq!(
-                copy.edit(&NumericEdit {
+                copy.edit(&NumericEdit::Slot {
                     slot: 0,
                     number: 0.25,
                     space,
@@ -338,7 +382,7 @@ mod tests {
             assert_eq!(copy, color);
         }
         let mut copy = color;
-        copy.edit(&NumericEdit {
+        copy.edit(&NumericEdit::Slot {
             slot: 0,
             number: 0.25,
             space: Some(ColorSpace::Srgb),

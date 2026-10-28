@@ -1,7 +1,11 @@
+use std::{any::Any, num::NonZero};
+
 use concerto_reflect::{
-    FromType, GetTypeRegistration, Leaf, LeafError, Reflect, ReflectMut, ReflectRef,
-    TypeRegistration, decode_leaf, encode_leaf,
+    FromType, GetTypeRegistration, JsonLeaf, Leaf, LeafError, LeafHook, Reflect, ReflectJson,
+    ReflectMut, ReflectRef, TypeRegistration, decode_leaf, encode_leaf,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{entity::Entity, reflect::ReflectSceneLeaf};
 
@@ -61,7 +65,67 @@ impl GetTypeRegistration for SceneEntityRef {
     fn get_type_registration() -> TypeRegistration {
         let mut registration = TypeRegistration::of::<Self>();
         registration.insert(<ReflectSceneLeaf as FromType<Self>>::from_type());
+        registration.insert(<ReflectJson as FromType<Self>>::from_type());
         registration
+    }
+}
+
+impl JsonLeaf for SceneEntityRef {
+    /// A resolved reference is its entity's id string, an unresolved one its node index.
+    fn to_json(&self) -> Value {
+        match self {
+            Self::Index(index) => Value::from(*index),
+            Self::Entity(entity) => Value::String(entity.to_id_string()),
+        }
+    }
+
+    fn from_json(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::String(id) => Entity::parse_id(id).map(Self::Entity),
+            Value::Number(index) => index
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .map(Self::Index),
+            _ => None,
+        }
+        .ok_or_else(|| "expected an entity id such as \"42v3\", or a scene node index".to_owned())
+    }
+}
+
+/// Stores [`SceneEntityRef`]s as the entities they name, to write a value from JSON into a live world.
+pub struct LiveEntityRefs;
+
+#[derive(Serialize, Deserialize)]
+enum LiveRef {
+    Index(u64),
+    Entity(u32, u32),
+}
+
+impl LeafHook for LiveEntityRefs {
+    fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
+        let live = match *(leaf as &dyn Any).downcast_ref::<SceneEntityRef>()? {
+            SceneEntityRef::Index(index) => LiveRef::Index(index as u64),
+            SceneEntityRef::Entity(entity) => {
+                LiveRef::Entity(entity.index(), entity.generation().get())
+            }
+        };
+        Some(encode_leaf(&live))
+    }
+
+    fn decode(&mut self, leaf: &mut dyn Reflect, bytes: &[u8]) -> Option<Result<(), LeafError>> {
+        let reference = (leaf as &mut dyn Any).downcast_mut::<SceneEntityRef>()?;
+        let mut live = LiveRef::Index(0);
+        Some(decode_leaf(&mut live, bytes).and_then(|()| {
+            *reference = match live {
+                LiveRef::Index(index) => SceneEntityRef::Index(index as usize),
+                LiveRef::Entity(index, generation) => SceneEntityRef::Entity(Entity::new(
+                    index,
+                    NonZero::new(generation)
+                        .ok_or_else(|| LeafError("an entity's generation is never 0".into()))?,
+                )),
+            };
+            Ok(())
+        }))
     }
 }
 

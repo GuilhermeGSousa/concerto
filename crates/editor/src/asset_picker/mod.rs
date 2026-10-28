@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use concerto_app::{App, Plugin, schedule_groups::LateUpdate};
 use concerto_ecs::{
@@ -146,6 +146,14 @@ impl ErasedEditor for AssetPicker {
                 SetHandleError::NotThisHandle => EditError::TypeMismatch,
                 SetHandleError::AssetNotRegistered => EditError::Rejected,
             })
+    }
+
+    fn edit_to(
+        &self,
+        value: &dyn Reflect,
+    ) -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError> {
+        let id = self.handle.id(value).ok_or(EditError::TypeMismatch)?;
+        Ok(Some(Arc::new(id)))
     }
 }
 

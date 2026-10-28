@@ -6,6 +6,7 @@ use crate::{
 use concerto_ecs::{
     IntoSystem, System, World,
     command::EntityCommandQueue,
+    component::bundle::IntoBundle,
     entity::hierarchy::{ChildOf, Children},
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
     system::BoxedSystem,
@@ -24,6 +25,12 @@ struct Inspecting {
 impl Inspecting {
     fn scene(&mut self) -> &mut World {
         self.f.scene_world_mut(self.document)
+    }
+    fn spawn_in_scene(&mut self, bundle: impl IntoBundle) -> Entity {
+        let root = self.f.scene_root(self.document);
+        let entity = self.scene().spawn(bundle);
+        self.scene().entity_mut(root).add_child(entity);
+        entity
     }
     fn register<T: GetTypeRegistration>(&mut self) {
         self.scene().register_type::<T>();
@@ -76,7 +83,7 @@ fn inspecting() -> (Inspecting, Entity, Entity) {
         document,
         systems,
     };
-    let entity = w.scene().spawn(Transform::IDENTITY);
+    let entity = w.spawn_in_scene(Transform::IDENTITY);
     w.select(Some(entity));
     let stack =
         w.f.world
@@ -135,7 +142,7 @@ fn deferred_row_creation_makes_new_bodies_visible() {
 #[test]
 fn alternating_selections_keep_showing_their_properties() {
     let (mut w, a, _) = inspecting();
-    let b = w.scene().spawn(Transform::IDENTITY);
+    let b = w.spawn_in_scene(Transform::IDENTITY);
     for target in [a, b, a, b, a, b] {
         w.select(Some(target));
         w.update();
@@ -176,7 +183,7 @@ fn layout(height: f32) -> UILayout {
 #[test]
 fn a_scrolled_inspector_keeps_its_offset_across_runs() {
     let (mut w, _, stack) = inspecting();
-    let other = w.scene().spawn(Transform::IDENTITY);
+    let other = w.spawn_in_scene(Transform::IDENTITY);
     w.f.world.insert(layout(1000.0), stack);
     let view = w.f.world.spawn((
         DetailsView,
@@ -461,14 +468,14 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
         .1;
     let commit = PropertyCommit::new::<Vec3, numeric::NumericFields>(
         row,
-        numeric::NumericEdit {
+        numeric::NumericEdit::Slot {
             slot: 0,
             number: 5.0,
             space: None,
         },
     )
     .unwrap();
-    let b = w.scene().spawn(Transform::IDENTITY);
+    let b = w.spawn_in_scene(Transform::IDENTITY);
     w.select(Some(b));
     w.update();
     assert!(
@@ -511,7 +518,7 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     }
     let (mut w, _, _) = inspecting();
     w.register::<Unsupported>();
-    let entity = w.scene().spawn(Unsupported {
+    let entity = w.spawn_in_scene(Unsupported {
         title: "Example".into(),
     });
     w.select(Some(entity));
@@ -614,7 +621,7 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
     }
     let (mut w, _, _) = inspecting();
     w.register::<Dynamic>();
-    let target = w.scene().spawn(Dynamic {
+    let target = w.spawn_in_scene(Dynamic {
         reverse: false,
         show_b: true,
         a: 1.0,
@@ -795,7 +802,7 @@ fn snapshots_follow_change_ticks_including_late_writes_and_skipped_runs() {
 
     w.update();
     let before = count.load(Ordering::Relaxed);
-    w.scene().spawn(Transform::IDENTITY);
+    w.spawn_in_scene(Transform::IDENTITY);
     w.update();
     assert_eq!(count.load(Ordering::Relaxed), before);
 }
@@ -841,7 +848,7 @@ fn a_component_is_read_again_only_when_the_scenes_own_clock_says_it_changed() {
 #[test]
 fn a_card_built_for_a_component_unchanged_since_the_last_run_reads_it_in_full() {
     let (mut w, _, _) = inspecting();
-    let other = w.scene().spawn(Transform::IDENTITY);
+    let other = w.spawn_in_scene(Transform::IDENTITY);
     w.update();
     w.update();
     w.update();
@@ -1223,7 +1230,7 @@ fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
         .unwrap()
         .push::<Vec3, numeric::NumericFields>(
             &row,
-            numeric::NumericEdit {
+            numeric::NumericEdit::Slot {
                 slot: 0,
                 number: 5.0,
                 space: None,
@@ -1277,7 +1284,7 @@ fn a_commit_still_queued_when_a_replacement_is_ready_refuses_it_and_is_sent() {
         .unwrap()
         .push::<Vec3, numeric::NumericFields>(
             &row,
-            numeric::NumericEdit {
+            numeric::NumericEdit::Slot {
                 slot: 0,
                 number: 5.0,
                 space: None,

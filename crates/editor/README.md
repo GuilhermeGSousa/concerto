@@ -23,6 +23,215 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+## Agents (MCP)
+
+`--mcp` runs the editor for an agent: the whole editor, panels included, with
+no window, served over [MCP](https://modelcontextprotocol.io) on stdin and
+stdout. Logs stay on stderr.
+
+```sh
+cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
+```
+
+`.mcp.json` at the repository root registers it as the `concerto` server, so an
+agent working in the repository can start its own editor. That entry opens the
+game's own project; an agent that will change anything opens a scratch copy
+with `open_project` first. The entry runs `cargo run`, which compiles the editor
+before it starts and can outlast an MCP client's connect timeout, so build it
+first with `cargo build -p tech-demo-editor`.
+
+The editor draws into a 1600×900 picture unless `--mcp-size <width>x<height>`
+names another size. `--decorated` is ignored there, and `--mcp-size` without
+`--mcp` is a bad argument. Without a GPU adapter it exits with status 1 and a
+message naming lavapipe.
+
+Frames run on demand, only while a call needs one or the editor is busy: a
+project or scene opening, the edited scene's assets still loading, a game
+starting or playing, a save under way, or text in the panels changed in the
+last frame and may not be drawn yet. An idle editor runs none, so once
+`status` reports `busy: no` the viewport shows the scene with everything it
+loads and the panels show what they hold. The tools that look answer between frames, without running one; the
+tools that act run in frames, one at a time, and a second one waits until the
+first has answered.
+
+When the client disconnects, the editor quits and discards unsaved edits,
+answering its own unsaved-changes prompt with Discard. An agent that wants its
+edits keeps them by saving first, with `save`.
+
+### Tools
+
+`status` reports the project and its status line, the open documents, the
+active one, the selection in the edited scene, the viewport's size, and whether
+the editor is busy. `list_assets` lists the project's assets as
+`address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
+time unless `limit` says otherwise, from `offset`; a longer list ends with the
+call that shows the rest. `scene_tree` shows the edited scene, or while a game
+plays its top-level entities as the hierarchy does, one `id name [components]`
+line per entity, indented, from `root` if given, `depth` levels deep (3) and at
+most `limit` entities (200); a cut subtree or a cut list ends with the call that
+continues it. `find_entities` lists the entities whose name contains `name`,
+ignoring case, and that carry `component`, by short name or full path, each with
+its path of names from the top, 50 unless `limit` says otherwise. `inspect`
+answers `entity` as JSON: its id, its name, and each component the inspector
+lists, or only those `components` names by short name, ignoring case, or full
+path. Each component has its short `name`, its full `type`, its `value`, and
+its `paths`: every property path, dot-separated, with `adapter` saying whether
+an inspector widget edits it. A path that names an enum or an `Option`, such
+as `light_type` above `light_type.cone_angle`, has `"enum": true` and no
+adapter, even where the inspector shows a variant picker for it, because
+`set_property` writes it whole (below). A component without reflection data has
+`"value": null, "unavailable": true` and no paths. A list longer than 16
+elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
+cut list is not a value to write back. Ids are scene entities written as
+`42v3`. `screenshot` answers a PNG: with `target` `viewport`, the picture the
+viewport draws, the edited scene or the game while it plays, followed by the
+camera's pose while editing; with `editor`, the whole editor, panels included,
+at its window size. A picture longer than `max_edge` pixels (1024) on either
+side is scaled down to it, keeping its shape; a smaller one keeps its size. It
+is the last frame drawn: the viewport's picture changes only when the edit
+`App` steps. `scene_tree`, `find_entities`, `inspect` and `screenshot`'s
+viewport need an open scene. These six look.
+
+`open_project` opens `path` and answers once the catalogue is read.
+`open_asset` opens `asset`, an address or an id from `list_assets`, in its
+editor: a scene answers once it has loaded, and at once if it is already shown;
+another kind answers once its document exists, and a kind with no editor
+answers `open_failed`. `close_document` closes the document `status` lists as
+`document`. When one of these three would raise the unsaved-changes prompt,
+the call cancels the prompt and answers `unsaved_changes`, naming the
+documents, once the prompt has closed, unless it says `unsaved`: `"discard"`
+drops those changes and `"save"` saves them first, and the call carries on as
+if nothing had been unsaved. A save that fails answers `save_failed` with the
+editor's message, and the documents keep their changes. A call that would lose
+nothing ignores `unsaved`.
+`select` selects `entity`, or clears the selection without one. `frame` selects
+`entity` and frames it, or frames the whole scene without one. `set_camera`
+places the camera at `position`, `[x, y, z]`, facing the point `look_at`, or
+turned by `yaw` and `pitch` given together: radians, where yaw 0 faces -Z and a
+positive yaw turns left, and pitch is up from level, kept within ±1.55. Giving
+both forms, neither, a `look_at` at the position, or a number that is not
+finite in an `f32` (beyond about ±3.4e38) answers `invalid_arguments`. `frame` and `set_camera` answer the camera's pose, its
+position, yaw, pitch and the direction it looks along, once the edit `App` has
+stepped and the camera shows it; the edit `App` steps only while the viewport
+shows the scene. While a game plays both answer `refused`, since the game has
+no editor camera. All three need an open scene.
+
+The edit tools change the edited scene, or the running game while it plays, by
+triggering the signal the panels trigger, and answer once the edit `App`
+reports the outcome; an edit the tools refuse answers `refused` with their
+status text, the same text the scene's status line shows. `create_entity` adds
+an entity named Entity as the last child of `parent`, or of the scene's top
+level without one, and answers `Created <id> Entity in <parent>.`.
+`delete_entity` deletes `entity` and its descendants and answers what is
+selected afterwards. `duplicate_entity` copies `entity` beside it and answers
+the copy's id. `rename_entity` renames `entity` to `name`, trimmed; an empty
+name is refused. `add_component` adds `component` at its default value and
+answers it in `inspect`'s form; `remove_component` removes it. A component is
+named by its short name, ignoring case, or by its full path when the short name
+is ambiguous; `add_component` looks among the components registered in the
+scene's `App`, the others among those the entity carries. `set_property` writes
+`value`, JSON in `inspect`'s form, into the property at `path`, one of the
+paths `inspect` lists for `component`, and answers the component in `inspect`'s
+form. A struct value may leave fields out to keep them. Where `inspect` says an
+adapter edits the path, the value goes through the adapter's
+`PropertyEditor::edit_to` and `apply`, as an edit in the inspector does, so the
+adapter's validation holds: a value it refuses answers `refused` and leaves the
+component as it was. A path with no adapter is written from the JSON directly.
+On either route a value that does not decode to the property's type answers
+`invalid_value` and leaves the component as it was, an entity reference is a
+live id such as `42v3`, and an asset handle is an asset id that loads through
+the edit `App`'s `AssetServer`, as a spawned scene's handles do. A handle field
+is edited by the asset picker, so an id that is not one of the project's assets
+of the field's kind answers `refused`.
+A path `inspect` marks `enum` takes the whole enum, its variant's name for a
+variant without fields (`"Point"`) or an object with the variant's name as its
+one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
+left out of the new variant takes its default, and an unknown variant answers
+`invalid_value`, naming the variants. A path that names a struct above a property is
+not one `set_property` takes, so an adapter's validation holds for the fields
+it edits.
+A component that `inspect` lists as one value, a marker or an opaque type, has
+the path `""`. The scene root is the editor's wrapper and none of these change
+it. All seven need an open scene.
+
+`save` writes `document`, or the active document without one, to its file as
+Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
+no unsaved changes answers `Nothing to save in document <id> <address>.`, which
+is not an error. A save that fails answers `save_failed` with the editor's
+message, as does a save while the game plays (`Stop to save`), and a scene still
+loading answers `busy`. `play` starts the active scene's game in the viewport,
+as the play button does, and answers once the game has built, plays, has
+spawned every scene it loaded, and has no asset loads in flight: `Playing
+<address> in document <id>; it loaded in <seconds> s.` Like the play button it first saves the scene's unsaved changes,
+and the answer then says so. If the game is still loading when the call's 30
+second wait runs out, `play` answers anyway, not as an error, saying `it is
+still loading`; `scene_tree` and `screenshot` then show the game as it arrives.
+A game that has not started by then answers `timeout`. A game that does not
+start, a save before it that fails, or a `play` while the game is on answers
+`play_failed` with the editor's message. `stop` stops the game, starting or
+playing, and answers once the edited scene is back as it was before play;
+edits made to the running game are gone. `save` and `play` need an open scene,
+and `stop` a game starting or playing.
+
+`send_input` sends `events` to the game playing in the viewport as the editor
+window passes on a person's input, one window event per frame in order, and
+answers once the game has had the last: `Sent <n> window events to the game in
+document <id>.`, naming the keys still held in the game and those held in the
+editor, which a later call should release. An event is
+`{ "key", "pressed", "text"? }`, a key named as the window crate's `KeyCode`
+names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`), ignoring case, with
+the text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
+`right`, `middle`, `back` and `forward`, moving the pointer to `at` first;
+`{ "move": [x, y] }`, which moves the pointer there and, as a mouse does, adds
+the mouse motion that takes it there, a second window event; or
+`{ "wheel": [x, y] }`, in lines. Points are pixels of the viewport's picture
+from its top-left corner at its full size, the `viewport` size `status`
+reports; on a screenshot scaled down by `max_edge`, multiply a point by the
+full size over the PNG's size. A point off the picture, or a key name
+`KeyCode` lacks, answers `invalid_arguments`, the latter with close names, and
+sends nothing. The events then take the path real input takes: Ctrl+P stops
+the game, and Shift+F1 or a press off the viewport's picture gives input to the
+editor. A key left pressed stays held in the game, across calls, until a later
+call releases it. `send_input` needs a game playing. While the editor has
+input, a list that starts with a press `at` a point on the picture goes
+through: that press gives the game input back, as a person's click on the
+viewport does, without reaching the game as a click, and the rest of the list
+follows. In any other list only key and button releases go through, to the
+editor, so a key pressed before the editor took input is not left held; a list
+that holds anything else answers `input_released` once its releases are sent.
+After an event that gives the editor input, or stops the game, the same holds
+for the rest of the list: its releases are sent, and if anything else was left
+out the call answers `input_released` or `not_playing`, saying how many were
+sent; a call whose events all went through says so in its answer.
+
+### Errors
+
+A failed call is a tool result marked `isError` whose text is
+`{"code": …, "message": …}`. The message says what to do next.
+
+| Code | Meaning |
+| --- | --- |
+| `invalid_arguments` | The arguments do not match the tool's input schema |
+| `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
+| `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
+| `unknown_entity`, `stale_entity` | The id names no live entity of the open scene, such as the editor's camera, or of the game while it plays; or a slot that now holds a newer one |
+| `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
+| `ambiguous_component` | The short name names several components; the message lists their full paths |
+| `unknown_path` | The component has no such property path; the message lists those `inspect` shows |
+| `invalid_value` | The JSON does not decode to the property's type, whether an adapter edits the path or not; the message says why |
+| `not_editable` | The adapter that edits the path offers no value edit |
+| `unknown_asset` | The asset is not in the catalogue |
+| `open_failed` | The project or asset did not open; the message is the editor's status |
+| `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
+| `save_failed` | `save`, or a save asked for by `unsaved: "save"`, failed; the message is the editor's status |
+| `play_failed` | The game did not start; the message is the editor's status |
+| `input_released` | `send_input` while the editor, not the game, has input, with a list that does not start with a click on the picture and holds more than key and button releases; the releases were sent |
+| `refused` | The call cannot act in the current state, or the editor refused the edit; the message says why |
+| `timeout` | What the call waited for did not happen within 30 seconds |
+| `internal` | No system answered the call: a bug |
+
+A tool system that panics takes the editor down, as any system does.
+
 ## How the crate is laid out
 
 The editor is one `App`, the one the window host drives. It holds the window,
@@ -118,6 +327,16 @@ selection, and edits remain until its replacement loads successfully.
 A failed replacement preserves them. Opening the displayed asset cancels a
 pending replacement. Unsupported assets remain selectable without opening a tab.
 
+Code learns how an open ended from events in the editor's world, written in the
+frame the status text changes. Opening a project ends in `ProjectOpened { root }`
+or `ProjectOpenFailed { root, message }`; a cancelled folder pick and a project
+whose content cannot be activated are failures. A Scene document's request ends
+in `SceneOpened { document, asset }` or `SceneOpenFailed { document, asset,
+message }`: a scene that cannot be read, a build that panics, a replacement
+refused over unsaved changes, and a scene asked for with no project open each
+fail, and `message` is the status the tab shows. A request that is cancelled or
+superseded writes neither, and neither does selecting the scene already shown.
+
 With no tabs open, the editor shows an empty viewport. Switching projects
 closes all editors. There is only one Scene tab, from the first scene opened
 until the project changes or the editor quits; it has a Play button where other
@@ -181,8 +400,20 @@ Stop drops the game and returns to the scene exactly as it was before Play.
 Changes made while playing are lost and never mark the scene unsaved. Saving is
 refused while the game starts or plays, with "Stop to save". Opening another
 scene, opening another project, and quitting stop the game first, before any
-question about unsaved changes. Play does nothing while that question is open.
+question about unsaved changes. Play is refused while that question is open.
 A game that asks to quit is stopped.
+
+Code learns how a Play ended from events in the editor's world. It ends in
+`PlayStarted { document }` once the game plays, or in `PlayFailed { document,
+message }`. Where the tab shows a status, `message` is that status: "Wait for
+the scene to load", "No scene is open", the failed save's "Save failed: …", or
+"Could not start the game: …". A Play the tab says nothing about fails too:
+"The game is already playing", "Answer the question about unsaved changes
+first", "Wait for the project to open", a Play on an entity that is not a
+document ("No scene is open"), and "The game was stopped before it started"
+when the game is stopped while it builds. Every stop of a starting or playing
+game writes `PlayStopped { document }`, so a stop while the game builds writes
+both `PlayFailed` and `PlayStopped`; a stop with no game on writes nothing.
 
 ### Who has input
 
@@ -213,9 +444,18 @@ leaves it alone and re-imports the source's other outputs. A save updates the
 scene's entry in the registry in memory and writes no registry file. A failed
 save reports why in Chatter and leaves the document dirty.
 
+Each save, whether asked for with `SaveRequested` or made by Play, ends in an
+event in the editor's world: `SceneSaved { document, asset }`, where `asset` is
+the scene the document now shows, or `SaveFailed { document, message }`, where
+`message` is the status the tab shows, "Stop to save" included. Ctrl+S asks for
+a save only when the document has unsaved changes; otherwise it writes neither,
+even while it shows "Stop to save".
+
 Replacing the open scene, closing a dirty tab, switching project, and closing
 the window all ask first when there are unsaved changes: Save, Discard, or
-Cancel. Escape cancels.
+Cancel. Escape cancels. Discard marks the scene clean, so its replacement
+loads; if the replacement then fails to load, the old scene stays on screen
+with the discarded edits, marked clean.
 
 The scene root shown in the hierarchy is the editor's wrapper around the scene,
 not part of it, so the inspector shows nothing for it.
@@ -249,7 +489,24 @@ know nothing about documents or panels. They report back through events that
 the editor re-writes in its own world as `Hosted<E>` events carrying the
 document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
 scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
-and `RevealEntity`, which the hierarchy scrolls to. `HostedAppEvents<E>` is the
+`RevealEntity`, which the hierarchy scrolls to; and one outcome per applied
+edit signal: `EntityEdited { edit, result }`, whose result is the entity a
+create or duplicate made; `PropertyCommitted { row, result }`, whose refusal
+is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
+`Refused` for any other reason; and
+`ComponentEdited { edit, result }`. A refused edit's result is the text its
+`SceneStatus` carries, so a refused property or component edit also shows in
+Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
+the shape `inspect` reports, into the field at `path` of a component, or into
+the whole component when `path` is empty, with no inspector adapter involved,
+and reports `PropertyCommitted` (its row has no editor) and `SceneEdited` as a
+property commit does. Fields the JSON leaves out keep their values. Entity
+references are live entity ids such as `42v3`, asset handles are asset ids and
+load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors
+are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
+value that does not decode, and an entity or component that is not there, and
+a refused set leaves the component as it was. An outcome written by a signal reaches the editor a frame later, as
+any forwarded event does. `HostedAppEvents<E>` is the
 system input that reads `E` from every hosted `App`, keeping one cursor per
 hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
 Whether the scene has unsaved edits is state kept in the edit `App`
@@ -371,11 +628,33 @@ project's assets of that kind. Picking one writes a handle loaded through the
 scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
 refused if the id is not an asset of that kind, or if the scene `App` never
 registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
-row's text current; `EditorPlugin` adds it.
+row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
+handle's id, so MCP's `set_property` on a handle field picks that asset through
+the same checks.
+
+An edit is the widget's own type, so a value alone cannot pass through it.
+`PropertyEditor::edit_to(&value)` returns the edit that sets the field to
+`value`; it still goes through `apply`, with its `EditContext`, so validation
+holds. The built-in editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` and the
+asset picker implement it; `Quat` goes
+through the widget's XYZ degrees, so it comes back normalized and equal up to
+rounding. It defaults to `None`, which says the editor offers no value edit. A
+custom editor opts in by implementing it; MCP's `set_property` writes a field
+an adapter claims only through it, and answers `not_editable` for an adapter
+that returns `None`:
+
+```rust,ignore
+fn edit_to(&self, value: &Setting) -> Option<SettingEdit> {
+    Some(SettingEdit::Set {
+        title: value.title.clone(),
+        enabled: value.enabled,
+    })
+}
+```
 
 See the [complete custom widget example](examples/custom_property.rs). It
 includes both registrations, a non-Clone domain type, click handling, snapshot
-refresh, and validation. Run its headless demonstration with:
+refresh, validation, and `edit_to`. Run its headless demonstration with:
 
 ```sh
 cargo run -p concerto-editor --example custom_property

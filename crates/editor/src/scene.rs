@@ -8,9 +8,9 @@ use concerto_app::{
     schedule_groups::{First, Update},
 };
 use concerto_ecs::{
-    Changed, Component, Entity, IntoSystemConfig, Query, Resource, World,
+    Changed, Component, Entity, Event, IntoSystemConfig, Query, Resource, World,
     command::{CommandQueue, EntityCommandQueue},
-    events::event_reader::EventReader,
+    events::{event_reader::EventReader, event_writer::EventWriter},
     resource::{Res, ResMut},
     signal::{On, Signal},
     system::NonSendMarker,
@@ -29,16 +29,20 @@ use crate::{
         ActiveEditor, AssetEditor, AssetEditorAppExt, EditorDocument, SaveRequested, Unsaved,
         asset_request_is_current, finish_asset_request,
     },
+    guard::DiscardEdits,
     hierarchy::HierarchyState,
     hosted::{
         self, HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, PendingApp,
-        PendingPlayApp, PlayFailure, PlayState, StopPlay, input::ViewportShown, toggle_play,
+        PendingPlayApp, PlayFailed, PlayFailure, PlayState, StopPlay, input::ViewportShown,
+        toggle_play,
     },
     inspector::{ComponentEdits, PropertyCommits},
     project::ProjectState,
     tools::{
         EditToolsCorePlugin, EditToolsPlugin,
-        scene::{OpenScene, RevealEntity, SceneEdited, SceneStatus},
+        edits::{ComponentEdited, PropertyCommitted},
+        entity_ops::EntityEdited,
+        scene::{OpenScene, RevealEntity, SceneEdited, SceneStatus, write},
     },
 };
 
@@ -53,6 +57,35 @@ impl SceneState {
     pub fn loading(&self) -> bool {
         self.loading
     }
+}
+
+/// A Scene document finished opening `asset`, which it now shows.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SceneOpened {
+    pub document: Entity,
+    pub asset: AssetEntry,
+}
+
+/// A Scene document could not open `asset`; `message` is the status it shows.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SceneOpenFailed {
+    pub document: Entity,
+    pub asset: AssetEntry,
+    pub message: String,
+}
+
+/// A Scene document saved its scene over `asset`, which it now shows.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SceneSaved {
+    pub document: Entity,
+    pub asset: AssetEntry,
+}
+
+/// A Scene document could not save; `message` is the status it shows.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct SaveFailed {
+    pub document: Entity,
+    pub message: String,
 }
 
 /// What every edit `App` is built from.
@@ -124,11 +157,18 @@ impl Plugin for ScenePlugin {
             clipboard: self.clipboard,
         });
         app.register_asset_editor::<Scene>(SceneEditor)
-            .expect("ScenePlugin requires the asset-editor registry");
+            .expect("ScenePlugin requires the asset-editor registry")
+            .register_event::<SceneOpened>()
+            .register_event::<SceneOpenFailed>()
+            .register_event::<SceneSaved>()
+            .register_event::<SaveFailed>();
         install_listeners(app.main_mut().world_mut());
         app.forward_hosted_event::<SceneEdited>()
             .forward_hosted_event::<SceneStatus>()
-            .forward_hosted_event::<RevealEntity>();
+            .forward_hosted_event::<RevealEntity>()
+            .forward_hosted_event::<EntityEdited>()
+            .forward_hosted_event::<PropertyCommitted>()
+            .forward_hosted_event::<ComponentEdited>();
         app.add_system(
             First,
             refuse_edited_replacements.before(hosted::finish_pending),
@@ -144,6 +184,13 @@ impl Plugin for ScenePlugin {
 pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(save_scene);
     world.add_listener(play);
+    world.add_listener(forget_discarded_edits);
+}
+
+fn forget_discarded_edits(on: On<DiscardEdits>, documents: Query<&mut HostedApp>) {
+    if let Some(mut hosted) = documents.get_entity(on.signal().0) {
+        hosted.mark_saved();
+    }
 }
 
 /// Keeps a Scene document's `Unsaved` in step with its edit `App`'s `SceneDirty`.
@@ -211,35 +258,50 @@ pub(crate) fn request_scene_saves(
 }
 
 fn save_scene(on: On<SaveScene>, world: &mut World) {
-    let document = on.signal().document;
-    if game_is_on(world, document) {
-        set_status(world, document, STOP_TO_SAVE);
-        return;
-    }
-    let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) else {
-        set_status(world, document, "Save failed: No scene is open");
-        return;
-    };
-    let written = hosted
-        .capture_scene()
-        .map_err(anyhow::Error::msg)
-        .and_then(|scene| write_scene(world, document, &scene));
-    let status = match written {
-        Ok(address) => {
-            if let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) {
-                hosted.mark_saved();
-            }
-            world.remove_component::<Unsaved>(document);
-            format!("Saved {address}")
+    let _ = save(world, on.signal().document);
+}
+
+fn save(world: &mut World, document: Entity) -> Result<(), String> {
+    match save_document(world, document) {
+        Ok(asset) => {
+            set_status(world, document, format!("Saved {}", asset.address));
+            write(world, SceneSaved { document, asset });
+            Ok(())
         }
-        Err(error) => format!("Save failed: {error:#}"),
-    };
-    if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
-        document.status = status;
+        Err(message) => {
+            set_status(world, document, message.clone());
+            write(
+                world,
+                SaveFailed {
+                    document,
+                    message: message.clone(),
+                },
+            );
+            Err(message)
+        }
     }
 }
 
-fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Result<String> {
+fn save_document(world: &mut World, document: Entity) -> Result<AssetEntry, String> {
+    if game_is_on(world, document) {
+        return Err(STOP_TO_SAVE.into());
+    }
+    let hosted = world
+        .get_component_for_entity_mut::<HostedApp>(document)
+        .ok_or("Save failed: No scene is open")?;
+    let saved = hosted
+        .capture_scene()
+        .map_err(anyhow::Error::msg)
+        .and_then(|scene| write_scene(world, document, &scene))
+        .map_err(|error| format!("Save failed: {error:#}"))?;
+    if let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) {
+        hosted.mark_saved();
+    }
+    world.remove_component::<Unsaved>(document);
+    Ok(saved)
+}
+
+fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Result<AssetEntry> {
     let source = world
         .get_component_for_entity::<EditorDocument>(document)
         .context("The document was closed")?
@@ -263,9 +325,9 @@ fn write_scene(world: &mut World, document: Entity, scene: &Scene) -> anyhow::Re
         .context("The saved scene was not registered")?;
     if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
         document.title = saved.name().to_owned();
-        document.current = Some(saved);
+        document.current = Some(saved.clone());
     }
-    Ok(address)
+    Ok(saved)
 }
 
 /// Starts the game in a Scene document's place, saving the document first if it is unsaved.
@@ -286,22 +348,46 @@ fn set_status(world: &mut World, document: Entity, status: impl Into<String>) {
     }
 }
 
+fn refuse_play(world: &mut World, document: Entity, message: impl Into<String>) {
+    let message = message.into();
+    write(world, PlayFailed { document, message });
+}
+
+fn refuse_play_with_status(world: &mut World, document: Entity, message: impl Into<String>) {
+    let message = message.into();
+    set_status(world, document, message.clone());
+    refuse_play(world, document, message);
+}
+
 fn play(on: On<Play>, world: &mut World) {
     let document = on.signal().0;
-    if game_is_on(world, document)
-        || world
-            .get_resource::<crate::guard::UnsavedGuard>()
-            .is_some_and(crate::guard::UnsavedGuard::asking)
-        || world
-            .get_resource::<ProjectState>()
-            .is_some_and(ProjectState::busy)
+    if game_is_on(world, document) {
+        refuse_play(world, document, "The game is already playing");
+        return;
+    }
+    if world
+        .get_resource::<crate::guard::UnsavedGuard>()
+        .is_some_and(crate::guard::UnsavedGuard::asking)
     {
+        refuse_play(
+            world,
+            document,
+            "Answer the question about unsaved changes first",
+        );
+        return;
+    }
+    if world
+        .get_resource::<ProjectState>()
+        .is_some_and(ProjectState::busy)
+    {
+        refuse_play(world, document, "Wait for the project to open");
         return;
     }
     let Some(loading) = world
         .get_component_for_entity::<EditorDocument>(document)
         .map(|doc| doc.pending.is_some())
     else {
+        refuse_play(world, document, "No scene is open");
         return;
     };
     if loading
@@ -309,21 +395,21 @@ fn play(on: On<Play>, world: &mut World) {
             .get_component_for_entity::<PendingApp>(document)
             .is_some()
     {
-        set_status(world, document, "Wait for the scene to load");
+        refuse_play_with_status(world, document, "Wait for the scene to load");
         return;
     }
     if world
         .get_component_for_entity::<HostedApp>(document)
         .is_none()
     {
-        set_status(world, document, "No scene is open");
+        refuse_play_with_status(world, document, "No scene is open");
         return;
     }
-    if has_unsaved_edits(world, document) {
-        world.trigger(SaveScene { document });
-        if has_unsaved_edits(world, document) {
-            return;
-        }
+    if has_unsaved_edits(world, document)
+        && let Err(message) = save(world, document)
+    {
+        refuse_play(world, document, message);
+        return;
     }
     match begin_play(world, document) {
         Ok(pending) => {
@@ -338,7 +424,7 @@ fn play(on: On<Play>, world: &mut World) {
                 world.trigger(hosted::SetEditTarget(None));
             }
         }
-        Err(error) => set_status(
+        Err(error) => refuse_play_with_status(
             world,
             document,
             format!("Could not start the game: {error:#}"),
@@ -415,7 +501,34 @@ pub(crate) fn show_play_failures(
     failures: Query<(&PlayFailure, &mut EditorDocument), Changed<PlayFailure>>,
 ) {
     for (failure, mut document) in failures.iter() {
-        document.status = format!("Could not start the game: {}", failure.0);
+        document.status = failure.status();
+    }
+}
+
+type OpenOutcomes<'w> = (
+    EventWriter<'w, SceneOpened>,
+    EventWriter<'w, SceneOpenFailed>,
+);
+
+fn finish_scene_request(
+    outcomes: &mut OpenOutcomes,
+    document: Entity,
+    doc: &mut EditorDocument,
+    request: &AssetEntry,
+    result: Result<(), String>,
+) {
+    let outcome = result.clone();
+    if !finish_asset_request(doc, request, result.map_err(anyhow::Error::msg)) {
+        return;
+    }
+    let asset = request.clone();
+    match outcome {
+        Ok(()) => outcomes.0.write(SceneOpened { document, asset }),
+        Err(message) => outcomes.1.write(SceneOpenFailed {
+            document,
+            asset,
+            message,
+        }),
     }
 }
 
@@ -431,6 +544,7 @@ pub(crate) fn refuse_edited_replacements(
     commits: Res<PropertyCommits>,
     edits: Res<ComponentEdits>,
     mut commands: CommandQueue,
+    mut outcomes: OpenOutcomes,
 ) {
     let queued = !commits.0.is_empty() || !edits.0.is_empty();
     for (editor, mut doc, mut state, mut pending) in building.iter() {
@@ -444,12 +558,12 @@ pub(crate) fn refuse_edited_replacements(
         pending.cancel();
         state.building = None;
         commands.remove::<PendingApp>(editor);
-        finish_asset_request(
+        finish_scene_request(
+            &mut outcomes,
+            editor,
             &mut doc,
             &request,
-            Err(anyhow::anyhow!(
-                "Could not open scene: unsaved changes were made while it loaded"
-            )),
+            Err("Could not open scene: unsaved changes were made while it loaded".into()),
         );
     }
 }
@@ -464,10 +578,10 @@ pub(crate) fn update_scenes(
     states: Query<&PlayState>,
     project: Res<ProjectState>,
     recipe: Res<SceneRecipe>,
-    shown: Res<ViewportShown>,
-    window: Res<Window>,
+    (shown, window): (Res<ViewportShown>, Res<Window>),
     mut summary: ResMut<SceneState>,
     mut commands: CommandQueue,
+    mut outcomes: OpenOutcomes,
 ) {
     let mut present = false;
     for (editor, mut doc, mut state) in editors.iter() {
@@ -498,14 +612,16 @@ pub(crate) fn update_scenes(
             } else if let Some(failure) = failure {
                 state.building = None;
                 commands.remove::<PendingApp>(editor);
-                finish_asset_request(
+                finish_scene_request(
+                    &mut outcomes,
+                    editor,
                     &mut doc,
                     &request,
-                    Err(anyhow::anyhow!("Could not open scene: {failure}")),
+                    Err(format!("Could not open scene: {failure}")),
                 );
             } else if !still_building && hosted_apps.get_entity(editor).is_some() {
                 state.building = None;
-                finish_asset_request(&mut doc, &request, Ok(()));
+                finish_scene_request(&mut outcomes, editor, &mut doc, &request, Ok(()));
             }
         }
 
@@ -525,10 +641,12 @@ pub(crate) fn update_scenes(
                     }),
                 });
             } else {
-                finish_asset_request(
+                finish_scene_request(
+                    &mut outcomes,
+                    editor,
                     &mut doc,
                     &asset,
-                    Err(anyhow::anyhow!("Open a project before opening a scene")),
+                    Err("Open a project before opening a scene".into()),
                 );
             }
         }
@@ -574,10 +692,12 @@ pub(crate) fn update_scenes(
                         state.building = Some(job.asset);
                     }
                     Err(error) => {
-                        finish_asset_request(
+                        finish_scene_request(
+                            &mut outcomes,
+                            editor,
                             &mut doc,
                             &job.asset,
-                            Err(anyhow::anyhow!("Could not open scene: {error}")),
+                            Err(format!("Could not open scene: {error}")),
                         );
                     }
                 }
@@ -605,7 +725,7 @@ mod tests {
     use crate::{
         asset_editor::{AssetEditorCommand, AssetEditorCommands},
         hosted::{
-            EditWorldSignals, PlayState,
+            EditWorldSignals, PlayStarted, PlayState, PlayStopped,
             testing::{SceneFixture, scene_entry, write_scene_file},
         },
         inspector::InspectorData,
@@ -667,6 +787,20 @@ mod tests {
         f.frame();
     }
 
+    fn save_failed(f: &SceneFixture, document: Entity) -> SaveFailed {
+        SaveFailed {
+            document,
+            message: f.status(document),
+        }
+    }
+
+    fn play_failed(document: Entity, message: &str) -> PlayFailed {
+        PlayFailed {
+            document,
+            message: message.into(),
+        }
+    }
+
     #[test]
     fn opening_a_scene_builds_an_edit_app_holding_its_nodes() {
         let mut f = SceneFixture::new();
@@ -675,6 +809,39 @@ mod tests {
         let names = f.scene_names(document);
         assert!(names.contains(&"first".to_string()) && names.contains(&"second".to_string()));
         assert!(!f.unsaved(document));
+    }
+
+    fn opened(document: Entity, asset: &AssetEntry) -> SceneOpened {
+        SceneOpened {
+            document,
+            asset: asset.clone(),
+        }
+    }
+
+    fn failed(f: &SceneFixture, document: Entity, asset: &AssetEntry) -> SceneOpenFailed {
+        SceneOpenFailed {
+            document,
+            asset: asset.clone(),
+            message: f.status(document),
+        }
+    }
+
+    #[test]
+    fn an_opened_scene_and_its_replacement_are_each_reported_once() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        f.frame();
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
+
+        f.request_other_scene(document);
+        f.frames_until_idle();
+        f.frame();
+
+        assert_eq!(
+            f.opened(),
+            [opened(document, &f.scene), opened(document, &f.other)]
+        );
+        assert!(f.open_failures().is_empty());
     }
 
     #[test]
@@ -720,6 +887,9 @@ mod tests {
         assert!(!f.unsaved(document));
         assert!(f.status(document).starts_with("Saved"));
         assert!(f.saved_scene_names().contains(&"renamed".to_string()));
+        let asset = f.document(document).current.clone().unwrap();
+        assert_eq!(f.written::<SceneSaved>(), [SceneSaved { document, asset }]);
+        assert!(f.written::<SaveFailed>().is_empty());
     }
 
     #[test]
@@ -759,6 +929,8 @@ mod tests {
                 .get_component_for_entity::<SaveRequested>(document)
                 .is_none()
         );
+        assert_eq!(f.written::<SaveFailed>(), [save_failed(&f, document)]);
+        assert!(f.written::<SceneSaved>().is_empty());
     }
 
     #[test]
@@ -797,8 +969,11 @@ mod tests {
             );
             assert!(std::time::Instant::now() < deadline, "the load never ended");
         }
+        f.frame();
 
         assert!(f.status(document).contains("unsaved changes"));
+        assert_eq!(f.open_failures(), [failed(&f, document, &f.other)]);
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
     }
 
     #[test]
@@ -922,6 +1097,7 @@ mod tests {
         f.world.insert(Unsaved, document);
 
         f.frames_until_idle();
+        f.frame();
 
         assert_eq!(scene_id(&f, document), before);
         assert!(
@@ -930,6 +1106,8 @@ mod tests {
                 .is_none()
         );
         assert!(f.status(document).contains("unsaved changes"));
+        assert_eq!(f.open_failures(), [failed(&f, document, &f.other)]);
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
     }
 
     #[test]
@@ -1068,6 +1246,7 @@ mod tests {
                 .get_component_for_entity::<SaveRequested>(document)
                 .is_none()
         );
+        assert_eq!(f.written::<SaveFailed>(), [save_failed(&f, document)]);
     }
 
     #[test]
@@ -1118,6 +1297,9 @@ mod tests {
         f.add_to_project(&missing);
         f.request(&missing);
         f.frames_until_idle();
+        f.frame();
+        assert_eq!(f.open_failures(), [failed(&f, document, &missing)]);
+        assert_eq!(f.opened(), [opened(document, &f.scene)]);
 
         assert_eq!(scene_id(&f, document), before);
         assert_eq!(
@@ -1576,10 +1758,14 @@ mod tests {
                 .is_none()
         );
         f.frame();
+        assert_eq!(f.open_failures(), [failed(&f, document, &scene)]);
+        assert!(f.opened().is_empty());
 
         f.world.get_resource_mut::<SceneRecipe>().unwrap().recipe = working;
         let reopened = f.open();
         assert!(f.scene_names(reopened).contains(&"first".to_string()));
+        assert_eq!(f.opened(), [opened(reopened, &scene)]);
+        assert_eq!(f.open_failures().len(), 1);
     }
 
     #[test]
@@ -1632,6 +1818,8 @@ mod tests {
 
         f.frames_until_idle();
 
+        f.frame();
+
         let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         assert_eq!(f.status(document), "Open a project before opening a scene");
         assert!(
@@ -1639,6 +1827,8 @@ mod tests {
                 .get_component_for_entity::<HostedApp>(document)
                 .is_none()
         );
+        assert_eq!(f.open_failures(), [failed(&f, document, &scene)]);
+        assert!(f.opened().is_empty());
     }
 
     #[test]
@@ -1741,7 +1931,10 @@ mod tests {
         assert_eq!(f.play_state(document), Some(PlayState::Starting));
         assert!(f.starting_world(document).is_some());
         assert_eq!(scene_id(&f, document), edit);
+        assert!(f.written::<PlayStarted>().is_empty());
         f.frames_until_playing(document);
+        assert_eq!(f.written::<PlayStarted>(), [PlayStarted { document }]);
+        assert!(f.written::<PlayFailed>().is_empty());
         assert!(!f.hosted_is_editing(document));
         assert_eq!(f.parked_world(document).id(), edit);
         f.frames_until("the game never spawned the scene", |f| {
@@ -1761,6 +1954,7 @@ mod tests {
 
         assert!(!f.unsaved(document));
         assert!(f.saved_scene_names().contains(&"renamed".to_string()));
+        assert_eq!(f.written::<SceneSaved>().len(), 1);
         assert_eq!(f.play_state(document), Some(PlayState::Starting));
         f.frames_until_playing(document);
         f.frames_until("the game never spawned the saved scene", |f| {
@@ -1806,6 +2000,11 @@ mod tests {
         );
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.starting_world(document).is_none());
+        assert_eq!(f.written::<SaveFailed>(), [save_failed(&f, document)]);
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [play_failed(document, &f.status(document))]
+        );
     }
 
     #[test]
@@ -1819,6 +2018,48 @@ mod tests {
         assert_eq!(f.status(document), "Wait for the scene to load");
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.starting_world(document).is_none());
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [play_failed(document, "Wait for the scene to load")]
+        );
+    }
+
+    #[test]
+    fn play_with_no_scene_open_is_reported_as_failed() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        f.world.remove_component::<HostedApp>(document);
+        let not_a_document = f.world.spawn(());
+
+        play(&mut f, document);
+        play(&mut f, not_a_document);
+
+        assert_eq!(f.status(document), "No scene is open");
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [
+                play_failed(document, "No scene is open"),
+                play_failed(not_a_document, "No scene is open")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_game_that_cannot_be_begun_is_reported_as_failed() {
+        let mut f = SceneFixture::new();
+        let document = f.open();
+        f.world.remove_resource::<SceneRecipe>();
+
+        play(&mut f, document);
+
+        assert_eq!(
+            f.status(document),
+            "Could not start the game: No recipe to build the game from"
+        );
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [play_failed(document, &f.status(document))]
+        );
     }
 
     #[test]
@@ -1863,6 +2104,14 @@ mod tests {
 
         f.world.trigger(SaveScene { document });
         assert_eq!(f.status(document), "Stop to save");
+        let stop_to_save = SaveFailed {
+            document,
+            message: STOP_TO_SAVE.into(),
+        };
+        assert_eq!(
+            f.written::<SaveFailed>(),
+            std::slice::from_ref(&stop_to_save)
+        );
 
         f.frames_until_playing(document);
         save(&mut f, document);
@@ -1881,6 +2130,11 @@ mod tests {
         fire(&mut f, crate::actions::Save);
         assert_eq!(f.status(document), "Stop to save");
         assert_eq!(saved_bytes(&f), before);
+        assert_eq!(
+            f.written::<SaveFailed>(),
+            [stop_to_save.clone(), stop_to_save]
+        );
+        assert!(f.written::<SceneSaved>().is_empty());
     }
 
     #[test]
@@ -1897,6 +2151,7 @@ mod tests {
                 .is_none()
         );
         assert!(f.hosted_is_editing(document));
+        assert_eq!(f.written::<PlayStopped>(), [PlayStopped { document }]);
         assert_eq!(f.scene_names(document), ["third"]);
         assert_eq!(
             f.document(document).current.as_ref().unwrap().id,
@@ -1920,6 +2175,14 @@ mod tests {
             "Could not start the game: the recipe broke"
         );
         assert_eq!(scene_id(&f, document), edit);
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [play_failed(
+                document,
+                "Could not start the game: the recipe broke"
+            )]
+        );
+        assert!(f.written::<PlayStarted>().is_empty());
     }
 
     #[test]
@@ -1927,12 +2190,22 @@ mod tests {
         let mut f = SceneFixture::new();
         let document = f.open();
         let edit = scene_id(&f, document);
+        stop(&mut f, document);
+        assert!(f.written::<PlayStopped>().is_empty());
 
         fire(&mut f, crate::actions::TogglePlay);
         assert_eq!(f.play_state(document), Some(PlayState::Starting));
         fire(&mut f, crate::actions::TogglePlay);
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.starting_world(document).is_none());
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [play_failed(
+                document,
+                "The game was stopped before it started"
+            )]
+        );
+        assert_eq!(f.written::<PlayStopped>(), [PlayStopped { document }]);
 
         fire(&mut f, crate::actions::TogglePlay);
         f.frames_until_playing(document);
@@ -1940,6 +2213,12 @@ mod tests {
 
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert_eq!(scene_id(&f, document), edit);
+        assert_eq!(f.written::<PlayStarted>(), [PlayStarted { document }]);
+        assert_eq!(
+            f.written::<PlayStopped>(),
+            [PlayStopped { document }, PlayStopped { document }]
+        );
+        assert_eq!(f.written::<PlayFailed>().len(), 1);
     }
 
     #[test]
@@ -1959,6 +2238,9 @@ mod tests {
         assert_eq!(f.play_state(document), Some(PlayState::Playing));
         assert_eq!(scene_id(&f, document), game);
         assert!(f.starting_world(document).is_none());
+        let refused = play_failed(document, "The game is already playing");
+        assert_eq!(f.written::<PlayFailed>(), [refused.clone(), refused]);
+        assert_eq!(f.written::<PlayStarted>(), [PlayStarted { document }]);
     }
 
     #[test]
@@ -2053,6 +2335,8 @@ mod tests {
         fire(&mut f, crate::actions::TogglePlay);
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.starting_world(document).is_none());
+        let refused = play_failed(document, "Answer the question about unsaved changes first");
+        assert_eq!(f.written::<PlayFailed>(), [refused.clone(), refused]);
     }
 
     #[test]
@@ -2072,6 +2356,8 @@ mod tests {
         fire(&mut f, crate::actions::TogglePlay);
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.starting_world(document).is_none());
+        let refused = play_failed(document, "Wait for the project to open");
+        assert_eq!(f.written::<PlayFailed>(), [refused.clone(), refused]);
         drop(release);
     }
 }

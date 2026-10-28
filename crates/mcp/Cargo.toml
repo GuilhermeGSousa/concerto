@@ -1,0 +1,27 @@
+[package]
+name = "concerto-mcp"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+base64 = "0.22"
+concerto-app.workspace = true
+concerto-ecs.workspace = true
+concerto-render.workspace = true
+concerto-window.workspace = true
+crossbeam-channel = "0.5"
+log = "0.4"
+pollster = "0.4.0"
+rmcp = { version = "3.5", features = ["transport-io"] }
+schemars = "1"
+serde = "1"
+serde_json = "1"
+tokio = { version = "1", features = ["rt", "sync", "io-util", "io-std"] }
+
+[dev-dependencies]
+rmcp = { version = "3.5", features = ["client", "transport-io"] }
+serde = { version = "1", features = ["derive"] }
+tokio = { version = "1", features = ["rt", "io-util", "macros"] }

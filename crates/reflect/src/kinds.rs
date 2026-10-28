@@ -42,6 +42,8 @@ pub trait Fields {
 /// An enum: its active variant's name, and that variant's fields; its variant names are its [`ReflectEnumInfo`].
 pub trait Enum: Fields {
     fn variant_name(&self) -> &'static str;
+    /// Every variant's name, in declaration order.
+    fn variant_names(&self) -> &'static [&'static str];
     /// Switches to the variant `name` built from defaults; false when there is no such variant.
     fn set_variant(&mut self, name: &str) -> bool;
 }
@@ -116,6 +118,10 @@ impl<T: Reflect + Default> Fields for Option<T> {
 impl<T: Reflect + Default> Enum for Option<T> {
     fn variant_name(&self) -> &'static str {
         if self.is_some() { "Some" } else { "None" }
+    }
+
+    fn variant_names(&self) -> &'static [&'static str] {
+        &["None", "Some"]
     }
 
     fn set_variant(&mut self, name: &str) -> bool {

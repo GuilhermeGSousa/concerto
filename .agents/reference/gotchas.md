@@ -176,7 +176,9 @@ fix the entry in the same commit as the change that made it false.
 - **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
   `follow_unsaved_edits` inserts or removes it each frame while the document is
   `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
-  through `HostedApp::mark_saved` after a successful write.
+  through `HostedApp::mark_saved` after a successful write. The guard's
+  Discard does the same through the `DiscardEdits` signal, whose scene
+  listener calls `mark_saved`.
 - **`forward_hosted_event::<E>()` adds a system,** so call it before the editor
   `App` finishes building.
 - **Change detection crosses the seam in the target's ticks.** `EditWorld<T>`
@@ -219,7 +221,10 @@ fix the entry in the same commit as the change that made it false.
 - **Entity edits pick their rules from whether the world has a `SceneRoot`.**
   With one, only that scene's entities other than the root can be changed;
   without one, as in a play world, any entity can, and `Create` with no parent
-  adds a top-level entity. Only the edit `App`'s `open_scene` may spawn a
+  adds a top-level entity. Property and component edits (`SetValue`,
+  `CommitProperty`, `EditComponent`) and the MCP tools' entity ids follow the
+  same rule through `entity_ops::in_open_scene` and `scene_member_by`, so the
+  editor camera and other helpers are out of reach while a scene is edited. Only the edit `App`'s `open_scene` may spawn a
   `SceneRoot`, and an edit world always has exactly one.
 - **The viewport tools learn about the pointer from one resource.** The fly
   camera, the wheel, picking, and the gizmo read `ViewportPointer`, which

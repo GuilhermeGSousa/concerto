@@ -39,6 +39,26 @@ impl Entity {
     pub fn generation(&self) -> NonZero<u32> {
         self.generation
     }
+
+    /// Writes this entity as a text id, index then generation, such as `42v3`.
+    pub fn to_id_string(&self) -> String {
+        format!("{}v{}", self.index, self.generation)
+    }
+
+    /// Reads an id written by [`to_id_string`](Self::to_id_string), or `None` if it is malformed.
+    pub fn parse_id(id: &str) -> Option<Entity> {
+        fn digits(text: &str) -> Option<u32> {
+            if text.is_empty() || !text.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            text.parse().ok()
+        }
+        let (index, generation) = id.split_once('v')?;
+        Some(Entity::new(
+            digits(index)?,
+            NonZero::new(digits(generation)?)?,
+        ))
+    }
 }
 
 impl Debug for Entity {
@@ -143,5 +163,40 @@ mod structural_version_tests {
         let wrapped = EntityStructuralVersion(u16::MAX).next();
         assert_eq!(wrapped, EntityStructuralVersion(0));
         assert_eq!(wrapped.next(), EntityStructuralVersion(1));
+    }
+}
+
+#[cfg(test)]
+mod id_string_tests {
+    use std::num::NonZero;
+
+    use super::Entity;
+    use crate::world::World;
+
+    #[test]
+    fn id_strings_round_trip() {
+        let mut world = World::new();
+        world.spawn(());
+        let entity = world.spawn(());
+        let id = entity.to_id_string();
+        assert_eq!(id, format!("{}v{}", entity.index(), entity.generation()));
+        assert_eq!(Entity::parse_id(&id), Some(entity));
+    }
+
+    #[test]
+    fn id_string_is_index_then_generation() {
+        let entity = Entity::new(42, NonZero::new(3).unwrap());
+        assert_eq!(entity.to_id_string(), "42v3");
+        assert_eq!(Entity::parse_id("42v3"), Some(entity));
+    }
+
+    #[test]
+    fn malformed_ids_do_not_parse() {
+        for id in [
+            "", "42", "v3", "42v", "42v0", "42v3x", "-1v1", "+1v1", "1v+1", "42x3", "42v3v1",
+            " 42v3", "42v3 ",
+        ] {
+            assert_eq!(Entity::parse_id(id), None, "{id:?} must not parse");
+        }
     }
 }

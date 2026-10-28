@@ -5,6 +5,7 @@ use concerto_ecs::{
     Entity, World,
     component::name::Name,
     entity::hierarchy::ChildOf,
+    events::Event,
     signal::{On, Signal},
 };
 use concerto_foundation::transform::Transform;
@@ -17,6 +18,7 @@ use crate::tools::{
 };
 
 /// A structural change to an open scene, or to a game's world, which has no scene root. Trigger it; one listener applies it.
+#[derive(Clone, Debug, PartialEq)]
 pub enum EntityEdit {
     /// Adds an empty entity as the last child of `parent`, or at the top level of a world without a scene root.
     Create {
@@ -34,8 +36,16 @@ pub enum EntityEdit {
 
 impl Signal for EntityEdit {}
 
+/// What one `EntityEdit` did: the entity it created or duplicated, or the status text saying why it was refused.
+#[derive(Event, Clone)]
+pub struct EntityEdited {
+    pub edit: EntityEdit,
+    pub result: Result<Option<Entity>, String>,
+}
+
 pub(crate) fn build(app: &mut App) {
-    app.add_listener(apply_entity_edit.at_edit_time());
+    app.register_event::<EntityEdited>()
+        .add_listener(apply_entity_edit.at_edit_time());
 }
 
 enum Applied {
@@ -51,13 +61,14 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
         EntityEdit::Duplicate(_) => "Duplicate",
         EntityEdit::Rename { .. } => "Rename",
     };
-    match apply(world, on.signal()) {
+    let result = match apply(world, on.signal()) {
         Ok(Applied::Changed(selected)) => {
             if let Some(selected) = selected {
                 world.trigger(Select(Some(selected)));
                 write(world, RevealEntity(selected));
             }
             report_edit(world);
+            Ok(selected)
         }
         Ok(Applied::Removed(parent)) => {
             world.trigger(Select(parent));
@@ -65,10 +76,22 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
                 write(world, RevealEntity(parent));
             }
             report_edit(world);
+            Ok(None)
         }
-        Ok(Applied::Unchanged) => {}
-        Err(error) => write(world, SceneStatus(format!("{operation} failed: {error:#}"))),
-    }
+        Ok(Applied::Unchanged) => Ok(None),
+        Err(error) => {
+            let status = format!("{operation} failed: {error:#}");
+            write(world, SceneStatus(status.clone()));
+            Err(status)
+        }
+    };
+    write(
+        world,
+        EntityEdited {
+            edit: on.signal().clone(),
+            result,
+        },
+    );
 }
 
 fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
@@ -156,21 +179,45 @@ fn spawn_beside(world: &mut World, scene: &Scene, parent: Option<Entity>) -> Opt
     spawned.node_entities.first().copied()
 }
 
+/// Refuses a live entity outside the open scene; in a world without a scene root, as a running game's, every entity passes.
+pub(crate) fn in_open_scene(world: &mut World, entity: Entity) -> anyhow::Result<()> {
+    if world.entity_is_valid(entity) && has_scene_root(world) {
+        scene_member(world, entity)?;
+    }
+    Ok(())
+}
+
 /// Whether `entity` is the scene root; an error if it is not part of an open scene at all.
 fn scene_member(world: &World, entity: Entity) -> anyhow::Result<bool> {
+    scene_member_by(entity, |entity| {
+        world.entity_is_valid(entity).then(|| {
+            (
+                world
+                    .get_component_for_entity::<SceneRoot>(entity)
+                    .is_some(),
+                world
+                    .get_component_for_entity::<ChildOf>(entity)
+                    .map(ChildOf::parent),
+            )
+        })
+    })
+}
+
+/// `scene_member` over `node`, which gives a live entity's root mark and parent, and `None` for a dead one.
+pub(crate) fn scene_member_by(
+    entity: Entity,
+    node: impl Fn(Entity) -> Option<(bool, Option<Entity>)>,
+) -> anyhow::Result<bool> {
     let mut current = entity;
     let mut is_root = true;
-    while world.entity_is_valid(current) {
-        if world
-            .get_component_for_entity::<SceneRoot>(current)
-            .is_some()
-        {
+    while let Some((root, parent)) = node(current) {
+        if root {
             return Ok(is_root);
         }
-        let Some(parent) = world.get_component_for_entity::<ChildOf>(current) else {
+        let Some(parent) = parent else {
             break;
         };
-        current = parent.parent();
+        current = parent;
         is_root = false;
     }
     bail!("the entity is not part of an open scene")
@@ -246,6 +293,12 @@ mod tests {
                 .map(|status| status.0)
                 .collect()
         }
+        fn outcomes(&self) -> Vec<(EntityEdit, Result<Option<Entity>, String>)> {
+            written::<EntityEdited>(&self.app)
+                .into_iter()
+                .map(|outcome| (outcome.edit, outcome.result))
+                .collect()
+        }
         fn selected(&self) -> Option<Entity> {
             self.app.get_resource::<Selection>().unwrap().entity()
         }
@@ -291,6 +344,48 @@ mod tests {
         let status = f.statuses();
         assert_eq!(status.len(), 1);
         assert!(status[0].starts_with("Delete failed"));
+    }
+
+    #[test]
+    fn every_applied_entity_edit_writes_its_outcome_with_the_entity_it_made() {
+        let mut f = fixture();
+        let (root, node) = (f.root, f.node);
+
+        f.trigger(EntityEdit::Create { parent: Some(root) });
+        let created = f.selected().unwrap();
+        f.trigger(EntityEdit::Duplicate(node));
+        let copy = f.selected().unwrap();
+        let rename = EntityEdit::Rename {
+            entity: node,
+            name: "lamp".into(),
+        };
+        f.trigger(rename.clone());
+        f.trigger(rename.clone());
+        f.trigger(EntityEdit::Delete(copy));
+
+        assert_eq!(
+            f.outcomes(),
+            vec![
+                (EntityEdit::Create { parent: Some(root) }, Ok(Some(created))),
+                (EntityEdit::Duplicate(node), Ok(Some(copy))),
+                (rename.clone(), Ok(None)),
+                (rename, Ok(None)),
+                (EntityEdit::Delete(copy), Ok(None)),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_refused_entity_edit_writes_its_outcome_with_the_status_text() {
+        let mut f = fixture();
+
+        f.trigger(EntityEdit::Delete(f.root));
+
+        let status = f.statuses().remove(0);
+        assert_eq!(
+            f.outcomes(),
+            vec![(EntityEdit::Delete(f.root), Err(status))]
+        );
     }
 
     #[test]

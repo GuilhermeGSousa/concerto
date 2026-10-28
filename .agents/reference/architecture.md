@@ -11,7 +11,7 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data, bounds, ray tests; extra passes; a renderer that draws to a terminal |
 | Simulation | `physics`, `jolt-ffi`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
-| Tooling | `editor`, `reflect`, `project` | the editor; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry` and the inspector and scenes read; `cargo concerto`, which creates game projects and their editor crates |
+| Tooling | `editor`, `reflect`, `project`, `mcp` | the editor; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry` and the inspector and scenes read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
 
 `ecs`, `foundation`, `render`, and `reflect` each have a `macros` sub-crate.
 `jolt-ffi` builds Jolt from the submodule at `crates/jolt-ffi/vendor/JoltPhysics`.
@@ -55,13 +55,21 @@ An `App` does not run itself. A host builds it, feeds it, and steps it:
    read `Window` for what the game asked for.
 
 A host may also trigger signals on an `App` it holds, and read back the events
-that `App` wrote. It never borrows the `App`'s world to change it.
+that `App` wrote. It never borrows the `App`'s world to change it. Between
+frames it may call `serve(label)`, which runs one main-world schedule without
+marking a frame boundary for change detection, extracting, or touching the
+render world.
 
 `concerto::run` is the winit host: it owns the event loop, the OS window, the
 surface, and the device. `concerto::headless` builds an `App` with a device and
 no window, for tests. `concerto_terminal_renderer::run` drives one from a
-terminal. A `DrawTarget::Texture` makes an `App` draw its window into a texture
-the host can sample.
+terminal. `concerto_mcp::host::run` serves one over MCP on stdin and stdout
+with no window: it runs one frame before it starts the server, so no call is
+served before that frame ends, then runs frames only while a call or the `App`
+asks for them,
+answers read-only calls between frames with `serve(McpRead)`, and quits when
+stdin closes or the `App` closes its window; the editor's `--mcp` uses it. A `DrawTarget::Texture` makes an
+`App` draw its window into a texture the host can sample.
 
 A host never touches the render world once frames are running.
 
@@ -140,8 +148,9 @@ own.
 The editor is a host as well as a hosted program. Three kinds of `App` exist
 while it runs:
 
-- **The editor `App`,** driven by the winit host. It owns the window, the UI,
-  the panels, and the documents. It draws no 3D and holds no scene entity.
+- **The editor `App`,** driven by the winit host, or by the MCP host under
+  `--mcp`. It owns the window, the UI, the panels, and the documents. It
+  draws no 3D and holds no scene entity.
 - **An edit `App`,** one per open scene, owned by the editor. It is created
   with the edit role, `App::for_editing()`, and built from the recipe passed to
   `EditorPlugin` plus `EditToolsPlugin`; the recipe is the game's, so the

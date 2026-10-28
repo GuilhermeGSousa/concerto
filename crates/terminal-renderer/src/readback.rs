@@ -2,12 +2,12 @@ use concerto_ecs::{
     resource::{Res, Resource},
     Component, Query, ResMut,
 };
-use concerto_render::{components::camera::RenderCamera, device::RenderDevice, queue::RenderQueue};
-
-use crate::{
-    ascii::{padded_bytes_per_row, pixels_to_ascii_into},
-    frame::TerminalFrame,
+use concerto_render::{
+    components::camera::RenderCamera, device::RenderDevice, queue::RenderQueue,
+    readback::padded_bytes_per_row,
 };
+
+use crate::{ascii::pixels_to_ascii_into, frame::TerminalFrame};
 
 #[derive(Resource)]
 pub struct TerminalRenderState {
@@ -100,7 +100,8 @@ pub fn readback_terminal_frame(
 
 #[cfg(test)]
 mod tests {
-    use crate::ascii::{padded_bytes_per_row, pixels_to_ascii_into};
+    use crate::ascii::pixels_to_ascii_into;
+    use concerto_render::readback::padded_bytes_per_row;
 
     #[test]
     fn test_headless_gpu_render_produces_output() {

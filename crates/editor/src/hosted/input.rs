@@ -48,6 +48,13 @@ pub struct Routing {
     playing: bool,
 }
 
+impl Routing {
+    /// The keys the editor window holds down, as the host has seen them pressed and not released.
+    pub fn held_keys(&self) -> impl Iterator<Item = KeyCode> + '_ {
+        self.keys.iter().copied()
+    }
+}
+
 /// Marks the edit-target document while the viewport shows its picture.
 #[derive(Component)]
 pub struct InViewport;

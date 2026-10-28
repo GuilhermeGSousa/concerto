@@ -1,4 +1,4 @@
-use std::any::Any;
+use std::{any::Any, sync::Arc};
 
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut,
@@ -144,6 +144,10 @@ impl ErasedEditor for VariantPicker {
         switch_variant(value, edit)
     }
 
+    fn edit_to(&self, _: &dyn Reflect) -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError> {
+        Ok(None)
+    }
+
     fn follows_snapshot(&self) -> bool {
         true
     }
@@ -187,6 +191,10 @@ impl ErasedEditor for OptionToggle {
         _: &EditContext,
     ) -> Result<(), EditError> {
         switch_variant(value, edit)
+    }
+
+    fn edit_to(&self, _: &dyn Reflect) -> Result<Option<Arc<dyn Any + Send + Sync>>, EditError> {
+        Ok(None)
     }
 
     fn follows_snapshot(&self) -> bool {

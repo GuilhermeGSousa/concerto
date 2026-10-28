@@ -23,6 +23,10 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
         edit: &Self::Edit,
         context: &EditContext,
     ) -> Result<(), EditError>;
+    /// The edit that sets the field to `value` when applied, or `None` when this editor offers no value edit.
+    fn edit_to(&self, _value: &T) -> Option<Self::Edit> {
+        None
+    }
     /// Whether the widgets `build` spawns keep themselves current from the row's [`PropertyRowValue`], so a value change leaves the row in place.
     fn follows_snapshot(&self) -> bool {
         false

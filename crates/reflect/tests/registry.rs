@@ -279,20 +279,29 @@ struct Node {
 #[test]
 fn a_type_that_holds_itself_registers_once() {
     let mut registry = TypeRegistry::default();
+    let built_in = registry.iter().count();
     registry.register::<Node>();
 
     assert!(registry.get(TypeId::of::<Node>()).is_some());
     assert!(registry.get(TypeId::of::<Vec<Node>>()).is_some());
-    assert_eq!(registry.iter().count(), 2);
+    assert_eq!(registry.iter().count(), built_in + 2);
 }
 
 #[test]
 fn an_opaque_type_registers_none_of_its_fields() {
     let mut registry = TypeRegistry::default();
+    let built_in: Vec<_> = registry
+        .iter()
+        .map(|registration| registration.type_id())
+        .collect();
     registry.register::<Handle>();
 
-    assert_eq!(registry.iter().count(), 1);
-    assert!(registry.get(TypeId::of::<u32>()).is_none());
+    let added: Vec<_> = registry
+        .iter()
+        .map(|registration| registration.type_id())
+        .filter(|id| !built_in.contains(id))
+        .collect();
+    assert_eq!(added, [TypeId::of::<Handle>()]);
 }
 
 #[derive(Reflect, Default)]
