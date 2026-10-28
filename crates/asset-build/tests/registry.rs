@@ -62,23 +62,18 @@ fn writes_the_registry_of_the_content_tree() {
 }
 
 #[test]
-fn honours_the_root_and_extension_in_content_toml() {
+fn honours_the_extension_in_content_toml() {
     let project = tempfile::tempdir().unwrap();
     let out = tempfile::tempdir().unwrap();
     std::fs::write(
         project.path().join("content.toml"),
-        "root = \"data\"\nextension = \"blob\"\n",
+        "extension = \"blob\"\n",
     )
     .unwrap();
     let kept = AssetId::new();
-    write_asset(&project.path().join("data/hero.blob"), kept, "Mesh");
+    write_asset(&project.path().join("content/hero.blob"), kept, "Mesh");
     write_asset(
-        &project.path().join("data/other.gasset"),
-        AssetId::new(),
-        "Mesh",
-    );
-    write_asset(
-        &project.path().join("content/hero.gasset"),
+        &project.path().join("content/other.gasset"),
         AssetId::new(),
         "Mesh",
     );
@@ -87,8 +82,23 @@ fn honours_the_root_and_extension_in_content_toml() {
 
     assert_eq!(
         written(out.path()),
-        vec![(kept, "data/hero.blob".to_string(), "Mesh".to_string())]
+        vec![(kept, "content/hero.blob".to_string(), "Mesh".to_string())]
     );
+}
+
+#[test]
+fn rejects_a_root_outside_the_project_and_writes_no_registry() {
+    let project = tempfile::tempdir().unwrap();
+    let out = tempfile::tempdir().unwrap();
+    std::fs::write(project.path().join("content.toml"), "root = \"../x\"\n").unwrap();
+
+    let error = format!(
+        "{:#}",
+        write_registry_into(project.path(), out.path()).unwrap_err()
+    );
+
+    assert!(error.contains("content root must be 'content'"), "{error}");
+    assert!(!out.path().join("concerto_registry.toml").exists());
 }
 
 #[test]
