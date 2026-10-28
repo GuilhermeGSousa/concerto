@@ -7,9 +7,10 @@ description: Use when running the Concerto issue pipeline, as the hourly cloud s
 
 Issues labelled `agent` are taken by a runner, in the cloud or on the owner's
 machine. The runner's session becomes the issue's driver: it opens one PR and
-carries it through spec, plan, implementation and review. The owner approves
-each stage in the PR and merges. `docs/agent-pipeline.md` is the owner's view
-of the same procedure.
+carries it through implementation and review, and first through questions,
+spec and plan when the issue is labelled `agent:spec`. The owner approves those
+stages in the PR and merges. `docs/agent-pipeline.md` is the owner's view of
+the same procedure.
 
 Use the GitHub tools you have: the GitHub MCP server in the cloud, the GitHub
 MCP server or `gh` on the owner's machine. The repository is
@@ -35,7 +36,8 @@ is `master`.
 |---|---|
 | `agent` | Agents may take this issue. |
 | `agent:local` | Only the local runner takes it: the change needs a look at the running program. |
-| `documentation`, `lint` | Path A: no spec, no plan. |
+| `agent:spec` | Questions, spec and plan, each approved by the owner. |
+| `documentation`, `lint` | Sorting only; no effect on the path. |
 | `agent:filed` | An agent opened this issue. |
 | `agent:claimed-cloud`, `agent:claimed-local` | Which runner owns the issue. |
 | `agent:needs-owner` | The PR waits on the owner. |
@@ -135,13 +137,38 @@ owner next comments or reviews.
   `visual-verification` where `AGENTS.md` asks for a look at the running
   program.
 
-### Path A: `documentation` or `lint`
+### Which path an issue is on
 
-1. Make the change and run the checks.
-2. Commit and push.
-3. Review. The issue body stands in for the spec.
+An issue labelled `agent:spec` takes the path "With `agent:spec`"; every other
+issue takes "Without `agent:spec`".
 
-### Path B: everything else
+- Every driver, local or cloud, reads this skill from `origin/master` at each
+  start, wake or tick, and reads the issue's labels then.
+- An issue whose PR already has a questions comment or a `## Spec` from before
+  `agent:spec` existed stays on the full path: add `agent:spec` to it.
+- An issue that gains `agent:spec` on the short path, from the owner or from
+  you, switches to the full path from its step 1. If the PR was marked ready,
+  turn it back into a draft and remove `agent:needs-owner`. Commits already
+  pushed stay; the spec accounts for them.
+- An issue that loses `agent:spec` before its spec is approved takes the short
+  path. A draft `## Spec` stays in the description as notes, and
+  `branch-reviewer` reviews against the issue body. After the spec is approved,
+  the issue finishes the full path, plan approval included.
+- A label change takes effect at your next wake or tick. A cloud driver does
+  not wake on one; the owner comments after changing a label.
+
+### Without `agent:spec`
+
+1. Read the issue, `AGENTS.md` and the code. If the change needs design (an
+   open decision only the owner can make, or more than a small fix, size medium
+   or more), add `agent:spec` to the issue, comment on the PR why, and continue
+   on the other path from its step 1.
+2. Make the change yourself, test-first where code changes, and run the
+   checks. No `implementer` runs: that role works from an approved plan.
+3. Commit and push.
+4. Review. The issue body stands in for the spec.
+
+### With `agent:spec`
 
 1. **Questions.** Read the issue, `AGENTS.md`, and the code. Post every open
    decision as one comment, and wait on the owner. Repeat until none is left.
@@ -162,7 +189,7 @@ owner next comments or reviews.
 1. Wait for CI to finish on the head commit.
 2. CI red: fix it, as under After review. Do not review a red head.
 3. CI green: run `branch-reviewer` with the branch and the spec copy, or the
-   issue body on Path A, telling it whether it runs in a cloud or local
+   issue body without `agent:spec`, telling it whether it runs in a cloud or local
    session. Fix what it finds, push, and return to step 1. After 2 rounds that
    still leave findings, post them and wait on the owner.
 4. Post the report as a comment. In the cloud, when the change touches
