@@ -207,6 +207,21 @@ fn the_label_names_no_asset_for_an_empty_handle() {
 }
 
 #[test]
+fn the_buttons_caret_is_a_node_so_it_is_laid_out_and_drawn() {
+    let mut p = picking();
+    let button = p.button();
+    let caret = p.children(button)[1];
+
+    assert_eq!(p.text(caret), glyph::CARET_DOWN.to_string());
+    assert!(
+        p.f.world
+            .get_component_for_entity::<UINode>(caret)
+            .is_some(),
+        "a text without a node never reaches layout or the draw lists"
+    );
+}
+
+#[test]
 fn the_menu_lists_only_assets_of_the_pickers_type() {
     let mut p = picking();
     assert!(!p.menu_open());

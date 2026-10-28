@@ -15,7 +15,7 @@ use concerto_ui::{
     anchor::{UIAnchorTarget, UIAnchoredPanel},
     checkbox::{UICheckbox, UICheckboxChanged},
     interaction::UIClick,
-    node::UIRect,
+    node::{UINode, UIRect},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -129,7 +129,10 @@ impl ErasedEditor for VariantPicker {
                             .min_width(UIValue::Px(0.0)),
                         VariantPickerLabel { row },
                     ))
-                    .add_child(icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted());
+                    .add_child((
+                        UINode::default().with_flex_shrink(0.0),
+                        icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted(),
+                    ));
             },
         );
         Ok(())
