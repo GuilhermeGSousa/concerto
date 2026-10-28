@@ -178,7 +178,7 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
             return;
         };
         color::spawn_swatch(row, *color, theme);
-        row.insert(super::sync::row_node(theme).with_flex_wrap(FlexWrap::Wrap));
+        row.insert(super::sync::standard_row_node(theme).with_flex_wrap(FlexWrap::Wrap));
         let mut line = row.spawn_child(theme.row().width(UIValue::Percent(100.0)));
         for slot in 0..slot_count(value) {
             spawn_slot(&mut line, entity, value, slot, theme);

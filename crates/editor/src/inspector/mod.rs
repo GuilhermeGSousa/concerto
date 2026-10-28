@@ -45,7 +45,7 @@ use add_component::{
 };
 pub use name_field::{FocusNameField, NameField};
 use name_field::{name_field, update_name_field};
-pub use sync::InspectedComponent;
+pub use sync::{InspectedComponent, standard_row_node};
 use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;

@@ -149,7 +149,8 @@ fn refresh_card(
             body.visible = !properties.is_empty();
             cmd.insert(body, card.body);
             for property in properties {
-                spawn_row(cmd, &card, property, theme);
+                let node = source.row_node(registry, &property, theme);
+                spawn_row(cmd, &card, property, node, theme);
             }
         }
     }
@@ -249,6 +250,7 @@ fn spawn_row(
     cmd: &mut CommandQueue,
     card: &InspectedComponent,
     property: Property,
+    row_node: UINode,
     theme: &UITheme,
 ) -> Entity {
     let target = property.row(card.scene_entity, card.type_id);
@@ -259,7 +261,7 @@ fn spawn_row(
     };
     let mut body_queue = cmd.entity(card.body);
     let mut row_queue =
-        body_queue.spawn_child((row_node(theme), target, property.value, BuildPropertyWidget));
+        body_queue.spawn_child((row_node, target, property.value, BuildPropertyWidget));
     let row = row_queue.entity();
     row_queue.add_child(
         theme
@@ -273,7 +275,8 @@ fn spawn_row(
     row
 }
 
-pub(super) fn row_node(theme: &UITheme) -> UINode {
+/// The layout node every property row starts from.
+pub fn standard_row_node(theme: &UITheme) -> UINode {
     theme.row().fixed().gap(theme.spacing_xs).into_bundle()
 }
 

@@ -2206,3 +2206,53 @@ mod color_rows {
         );
     }
 }
+
+#[test]
+fn a_non_color_numeric_row_keeps_the_standard_node() {
+    let (mut w, _, _) = inspecting();
+    w.update();
+    w.update();
+    let theme = UITheme::default();
+    let (translation, _) = rows(&mut w.f.world)
+        .into_iter()
+        .find(|(_, row)| row.path.name() == "translation")
+        .unwrap();
+
+    assert_eq!(
+        w.f.world
+            .get_component_for_entity::<UINode>(translation)
+            .unwrap(),
+        &standard_row_node(&theme)
+    );
+}
+
+#[test]
+fn a_row_is_spawned_with_the_node_its_editor_chooses() {
+    #[derive(Default)]
+    struct Spaced;
+    impl PropertyEditor<Transform> for Spaced {
+        type Snapshot = Vec3;
+        type Edit = ();
+        fn snapshot(&self, value: &Transform) -> Vec3 {
+            value.translation
+        }
+        fn row_node(&self, _: &Vec3, theme: &UITheme) -> UINode {
+            standard_row_node(theme).with_gap(Vec2::new(31.0, 0.0))
+        }
+        fn build(&self, _: &mut EntityCommandQueue, _: &Vec3, _: &UITheme) {}
+        fn apply(&self, _: &mut Transform, _: &(), _: &EditContext) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+    let (mut w, _, _) = inspecting();
+    registry_mut(&mut w.f.world).register_property_editor::<Transform, Spaced>();
+    w.update();
+    w.update();
+    let theme = UITheme::default();
+    let row = rows(&mut w.f.world)[0].0;
+
+    assert_eq!(
+        w.f.world.get_component_for_entity::<UINode>(row).unwrap(),
+        &standard_row_node(&theme).with_gap(Vec2::new(31.0, 0.0))
+    );
+}
