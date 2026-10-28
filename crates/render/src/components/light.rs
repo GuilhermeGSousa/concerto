@@ -20,14 +20,9 @@ use wgpu::{util::DeviceExt, Buffer};
 use crate::{
     components::{
         render_entity::RenderEntity,
-        shadows::{
-            RenderPointShadowMaps, RenderShadowCasterSlot, RenderShadowCasterViewProj,
-            RenderSpotDirectionalShadowMaps,
-        },
+        shadows::{RenderPointShadowMaps, RenderShadowCasterSlot, RenderSpotDirectionalShadowMaps},
     },
-    device::RenderDevice,
     queue::RenderQueue,
-    shadow_pipeline::ShadowPipeline,
 };
 
 const MAX_LIGHTS: usize = 128;
@@ -263,17 +258,6 @@ impl Component for RenderLight {
                             world.get_component_for_entity_mut::<RenderLight>(context.entity)
                         {
                             render_light.shadow_layer = shadow_slot as i32;
-                        }
-
-                        if let (Some(device), Some(shadow_pipeline)) = (
-                            world.get_resource::<RenderDevice>(),
-                            world.get_resource::<ShadowPipeline>(),
-                        ) {
-                            let view_proj = RenderShadowCasterViewProj::new(
-                                device,
-                                &shadow_pipeline.bind_group_layout,
-                            );
-                            world.insert(view_proj, context.entity);
                         }
                     }
                     // Shadow-caster pool exhausted; fall back to unshadowed.

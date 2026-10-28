@@ -4,7 +4,7 @@ use concerto_ecs::{
     component::Component,
     entity::Entity,
     resource::{Res, ResMut, Resource},
-    Changed, Query,
+    Query,
 };
 use derive_more::Deref;
 use encase::{ShaderSize, UniformBuffer};
@@ -320,14 +320,6 @@ pub(crate) type RenderPointShadowMaps = ShadowMapPool<PointShadowKind>;
 // only, indexed by `RenderLight::shadow_layer` — read at `@group(2)
 // @binding(5)` by the main lighting shader to project a fragment's world
 // position into light-clip-space for shadow sampling.
-//
-// Deliberately separate from `RenderShadowCasterViewProj` below, which the
-// shadow *depth* pass uses instead: that's a dedicated single-matrix buffer
-// per light, chosen specifically so the depth pass never has to pass an
-// index anywhere. This one exists only because the main pass already knows
-// `shadow_layer` for the light it's iterating, so plain WGSL array indexing
-// (the same pattern already used for `lights.lights[i]`) is all that's
-// needed here — no per-light buffer, no indexing mechanism to invent.
 #[derive(Resource)]
 pub(crate) struct RenderShadowViewProjs {
     buffer: wgpu::Buffer,
@@ -513,7 +505,6 @@ fn shadow_up_vector(direction: Vec3) -> Vec3 {
     }
 }
 
-#[derive(Component)]
 pub(crate) struct RenderShadowCasterViewProj {
     buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,
@@ -549,23 +540,18 @@ impl RenderShadowCasterViewProj {
     }
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct RenderShadowCasterViewProjs(Vec<RenderShadowCasterViewProj>);
+
 pub(crate) fn update_shadow_view_proj(
-    lights: Query<(&RenderLight, &RenderShadowCasterViewProj), Changed<RenderLight>>,
+    lights: Query<&RenderLight>,
+    spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
     shadow_view_projs: Res<RenderShadowViewProjs>,
     queue: Res<RenderQueue>,
 ) {
-    for (light, view_proj) in lights.iter() {
-        let matrix = shadow_view_proj(light);
-        view_proj.write(&queue, matrix);
-
-        // `shadow_layer` for a point light indexes into the *point* shadow
-        // pool, not the spot/directional one this array covers — writing it
-        // here regardless would clobber an unrelated spot/directional
-        // light's entry sharing that same slot number.
-        if light.light_type != LightType::Point.index() {
-            if let Ok(slot) = u32::try_from(light.shadow_layer) {
-                shadow_view_projs.write(&queue, slot, matrix);
-            }
+    for (layer, &entity) in spot_directional_shadow_maps.slots.iter().enumerate() {
+        if let Some(light) = lights.get_entity(entity) {
+            shadow_view_projs.write(&queue, layer as u32, shadow_view_proj(light));
         }
     }
 }
@@ -603,24 +589,30 @@ pub(crate) fn render_shadow_maps(
     mut device: ResMut<RenderDevice>,
     spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
     _point_shadow_maps: Res<RenderPointShadowMaps>,
-    lights: Query<(&RenderLight, &RenderShadowCasterViewProj)>,
+    mut caster_view_projs: ResMut<RenderShadowCasterViewProjs>,
+    queue: Res<RenderQueue>,
+    lights: Query<&RenderLight>,
     render_mesh_query: Query<(&RenderMeshInstance, Option<&RenderSkeletonComponent>)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     skins: Res<SkinUniforms>,
 ) {
-    for (light, view_proj) in lights.iter() {
-        if light.light_type == LightType::Point.index() {
-            // TODO: point-light (cube) shadows.
-            continue;
-        }
-
-        let Ok(layer) = usize::try_from(light.shadow_layer) else {
+    for (layer, &entity) in spot_directional_shadow_maps.slots.iter().enumerate() {
+        let Some(light) = lights.get_entity(entity) else {
             continue;
         };
 
         let Some(view) = spot_directional_shadow_maps.get_view(layer) else {
             continue;
         };
+
+        while caster_view_projs.0.len() <= layer {
+            caster_view_projs.0.push(RenderShadowCasterViewProj::new(
+                &device,
+                &pipeline.bind_group_layout,
+            ));
+        }
+        let view_proj = &caster_view_projs.0[layer];
+        view_proj.write(&queue, shadow_view_proj(light));
 
         let encoder = device.command_encoder();
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -652,5 +644,71 @@ pub(crate) fn render_shadow_maps(
                 render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        components::{light::Light, render_entity::SyncWithRenderWorld},
+        draw_target::DrawTarget,
+        gpu::Gpu,
+        plugin::RenderPlugin,
+        shadow_pipeline::ShadowPipelinePlugin,
+    };
+    use concerto_app::{
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
+        App,
+    };
+    use concerto_foundation::transform::Transform;
+    use concerto_window::plugin::{Window, WindowPlugin};
+
+    fn gpu() -> Option<Gpu> {
+        pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    }
+
+    fn app(gpu: &Gpu) -> App {
+        let mut app = App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(DrawTarget::None)
+            .insert_resource(Window::new((64, 48), 1.0));
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(RenderPlugin)
+            .register_plugin(ShadowPipelinePlugin);
+        app.main_mut().world_mut().register_component::<Transform>();
+        app.finish_plugin_build();
+        app
+    }
+
+    fn spawn(app: &mut App, light: Light) -> Entity {
+        app.main_mut()
+            .world_mut()
+            .spawn((light, Transform::IDENTITY, SyncWithRenderWorld))
+    }
+
+    #[test]
+    fn each_layer_keeps_one_view_proj_buffer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = app(&gpu);
+        spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        spawn(&mut app, Light::spot_light(0.6).with_shadows());
+
+        for _ in 0..3 {
+            app.update();
+        }
+
+        let buffers = app
+            .render()
+            .get_resource::<RenderShadowCasterViewProjs>()
+            .unwrap();
+        assert_eq!(buffers.0.len(), 2);
     }
 }
