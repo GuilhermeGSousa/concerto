@@ -22,7 +22,10 @@ use crate::world_id::WorldId;
 use crate::{
     archetype::Archetype,
     common::generate_type_id,
-    component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
+    component::{
+        Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext,
+        RequiredComponents,
+    },
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
     system::input::{SystemInput, ValidationError},
@@ -59,6 +62,7 @@ pub struct World {
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
+    required_components: TypeIdMap<RequiredComponents>,
     listeners: Listeners,
     change_tick: AtomicU32,
     last_change_tick: Tick,
@@ -76,6 +80,7 @@ impl Default for World {
             entity_store: EntityStore::default(),
             archetype_index: HashMap::new(),
             component_lifetimes: TypeIdMap::default(),
+            required_components: TypeIdMap::default(),
             listeners: Listeners::default(),
             change_tick: AtomicU32::new(1),
             last_change_tick: Tick::new(0),
@@ -626,8 +631,48 @@ impl World {
         EntityWorldMut::new(self, entity)
     }
 
+    /// Registers `T`'s lifecycle callbacks and its flattened required components.
+    ///
+    /// # Panics
+    /// Panics if `T`'s requirements form a cycle.
     pub fn register_component<T: Component>(&mut self) {
         self.register_component_lifetimes::<T>();
+        self.register_required_components::<T>();
+    }
+
+    /// The flattened required components of `id`, deepest first, or `None` if it is not registered.
+    pub fn required_components(&self, id: ComponentId) -> Option<&RequiredComponents> {
+        self.required_components.get(&id)
+    }
+
+    pub(crate) fn register_required_components<T: Component>(&mut self) {
+        self.register_required_in::<T>(&mut Vec::new());
+    }
+
+    pub(crate) fn register_required_in<T: Component>(
+        &mut self,
+        stack: &mut Vec<(ComponentId, &'static str)>,
+    ) {
+        let id = ComponentId::of::<T>();
+        if self.required_components.contains_key(&id) {
+            return;
+        }
+        if let Some(start) = stack.iter().position(|(seen, _)| *seen == id) {
+            let path = stack[start..]
+                .iter()
+                .map(|(_, name)| *name)
+                .chain([T::name()])
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            panic!("required components form a cycle: {path}");
+        }
+        let mut direct = RequiredComponents::default();
+        T::register_required(&mut direct);
+        stack.push((id, T::name()));
+        direct.register_all(self, stack);
+        stack.pop();
+        let flattened = direct.flatten(&self.required_components);
+        self.required_components.insert(id, flattened);
     }
 
     /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
