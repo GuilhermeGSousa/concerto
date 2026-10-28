@@ -345,7 +345,7 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
 pub struct ContentConfig {
     /// Uniform extension for every content asset, without the dot.
     pub extension: String,
-    /// Content tree root, relative to the project root.
+    /// Content tree root, relative to the project root; must be `content` for now.
     pub root: String,
 }
 
@@ -362,13 +362,31 @@ impl ContentConfig {
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read '{}'", path.display()))?;
-        toml::from_str(&text).with_context(|| format!("failed to parse '{}'", path.display()))
+        let config: Self = toml::from_str(&text)
+            .with_context(|| format!("failed to parse '{}'", path.display()))?;
+        config
+            .validate()
+            .with_context(|| format!("invalid '{}'", path.display()))?;
+        Ok(config)
+    }
+
+    /// Rejects a root other than `content` and an extension that is empty or holds a dot or path separator.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.root == "content",
+            "content root must be 'content'; a custom root is not supported yet"
+        );
+        anyhow::ensure!(
+            !self.extension.is_empty() && !self.extension.contains(['.', '/', '\\']),
+            "content extension must be a nonempty extension without dots or path separators"
+        );
+        Ok(())
     }
 
     /// Loads `content.toml` from `dir` if present, else the defaults.
     pub fn load_or_default(dir: &Path) -> anyhow::Result<Self> {
         let path = dir.join("content.toml");
-        if path.exists() {
+        if path.try_exists()? {
             Self::load(&path)
         } else {
             Ok(Self::default())

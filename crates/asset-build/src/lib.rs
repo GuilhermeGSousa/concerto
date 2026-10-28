@@ -49,7 +49,7 @@ pub fn track_assets(directory: impl AsRef<Path>) -> io::Result<()> {
     Ok(())
 }
 
-/// Writes the registry of the content tree `<manifest>/content.toml` names to `<out_dir>/concerto_registry.toml`.
+/// Writes the registry of the `content` tree under `<manifest>`, validating `content.toml`, to `<out_dir>/concerto_registry.toml`.
 pub fn write_registry_into(manifest: &Path, out_dir: &Path) -> anyhow::Result<()> {
     let config = ContentConfig::load_or_default(manifest)?;
     let entries = scan_content(manifest, &manifest.join(&config.root), &config.extension)?;

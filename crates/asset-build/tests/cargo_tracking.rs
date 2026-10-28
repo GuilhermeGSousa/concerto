@@ -207,40 +207,57 @@ fn cargo_rebuilds_the_registry_from_the_root_content_toml_names() {
     let project = tempfile::tempdir().unwrap();
     let root = project.path();
     write_registry_fixture(root);
-    std::fs::write(root.join("content.toml"), "root = \"data\"\n").unwrap();
+    std::fs::write(root.join("content.toml"), "extension = \"blob\"\n").unwrap();
     let first = AssetId::new();
     let other = AssetId::new();
-    let fallback = AssetId::new();
-    write_asset_at(root, "data/first.gasset", first);
-    write_asset_at(root, "other/other.gasset", other);
-    write_asset_at(root, "content/fallback.gasset", fallback);
+    let third = AssetId::new();
+    write_asset_at(root, "content/first.blob", first);
+    write_asset_at(root, "content/other.gasset", other);
+    write_asset_at(root, "content/third.bin", third);
 
     assert_eq!(
         registry(cargo(root)),
-        vec![(first, "data/first.gasset".to_string())]
+        vec![(first, "content/first.blob".to_string())]
     );
     assert!(!rebuilds(root));
 
     let second = AssetId::new();
-    write_asset_at(root, "data/second.gasset", second);
+    write_asset_at(root, "content/second.blob", second);
     assert_eq!(
         registry(cargo(root)),
         sorted(vec![
-            (first, "data/first.gasset".to_string()),
-            (second, "data/second.gasset".to_string()),
+            (first, "content/first.blob".to_string()),
+            (second, "content/second.blob".to_string()),
         ])
     );
 
-    std::fs::write(root.join("content.toml"), "root = \"other\"\n").unwrap();
+    std::fs::write(root.join("content.toml"), "extension = \"bin\"\n").unwrap();
     assert_eq!(
         registry(cargo(root)),
-        vec![(other, "other/other.gasset".to_string())]
+        vec![(third, "content/third.bin".to_string())]
     );
 
     std::fs::remove_file(root.join("content.toml")).unwrap();
     assert_eq!(
         registry(cargo(root)),
-        vec![(fallback, "content/fallback.gasset".to_string())]
+        vec![(other, "content/other.gasset".to_string())]
     );
     assert!(!rebuilds(root));
+}
+
+#[test]
+fn cargo_fails_the_build_on_an_invalid_content_toml() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    write_registry_fixture(root);
+    write_asset_at(root, "content/first.gasset", AssetId::new());
+    std::fs::write(root.join("content.toml"), "root = \"data\"\n").unwrap();
+
+    assert_error(cargo(root), "content root must be 'content'");
+
+    std::fs::write(root.join("content.toml"), "extension = \"a.b\"\n").unwrap();
+    assert_error(
+        cargo(root),
+        "content extension must be a nonempty extension",
+    );
 }

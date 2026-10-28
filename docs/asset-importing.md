@@ -63,8 +63,14 @@ the root from `ContentAssetRoot` (below).
 
 ```toml
 extension = "gasset"   # default
-root = "content"       # default
+root = "content"       # default, and the only accepted value
 ```
+
+`root` must be `content`. Custom roots are not supported yet, because the
+runtime's content discovery and every `build.rs` assume `content`; they are
+tracked in issue #140. A `content.toml` that cannot be parsed, or that sets any
+other `root`, fails the import, the editor's project open, and the build
+instead of being ignored.
 
 ## The content tree
 
@@ -269,7 +275,8 @@ Register one common directory containing all referenced content. The macro
 rejects unregistered inputs so an omitted build dependency cannot silently
 leave stale UUIDs in the executable. Existing examples include this setup.
 
-`track_assets` also scans the content tree that `content.toml` names and writes
+`track_assets` also scans the `content` tree and reads `content.toml`, failing
+the build when the file is invalid or sets a root other than `content`, and writes
 the registry to `$OUT_DIR/concerto_registry.toml`. Two files with one id, or an
 unreadable header, print the paths as a Cargo warning and fail the build.
 `concerto::content_registry!()` embeds the file; it needs a `build.rs` that

@@ -517,11 +517,8 @@ mod tests {
     fn the_project_content_config_decides_where_assets_are_written() {
         let source = source_dir();
         let project = tempfile::tempdir().expect("tempdir");
-        std::fs::write(
-            project.path().join("content.toml"),
-            "root = \"cooked\"\nextension = \"bin\"\n",
-        )
-        .expect("write config");
+        std::fs::write(project.path().join("content.toml"), "extension = \"bin\"\n")
+            .expect("write config");
         let imported = import_source_into(
             &source.path().join("square.obj"),
             "assets/square.obj",
@@ -531,7 +528,7 @@ mod tests {
         assert!(!imported.assets.is_empty());
         for asset in &imported.assets {
             assert!(
-                asset.address.starts_with("cooked/") && asset.address.ends_with(".bin"),
+                asset.address.starts_with("content/") && asset.address.ends_with(".bin"),
                 "got {}",
                 asset.address
             );

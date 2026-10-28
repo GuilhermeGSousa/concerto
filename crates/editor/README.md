@@ -94,7 +94,7 @@ The Asset Browser, the content browser, is a `UITree` over the editor world's
 and which is empty while no project is open. The editor scans only then; content
 that git or a file explorer changes while the project is open shows after it is
 reopened. The tree mirrors the
-project's content folder, `content/` unless `content.toml` names another: the folders and
+project's `content/` folder: the folders and
 assets directly inside it are the top-level rows, a folder shows a folder mark
 and holds its subfolders and assets, and an asset shows its kind mark and name.
 A folder appears once it holds an asset at any depth; empty directories are not

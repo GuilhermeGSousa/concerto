@@ -1,6 +1,7 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
 use concerto_ecs::{ResMut, Resource};
 use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
     collections::VecDeque,
@@ -11,46 +12,15 @@ use std::{
 #[derive(Debug)]
 pub struct Project {
     pub root: PathBuf,
-    /// The project-relative folder the catalogue is read from, `content` unless `content.toml` names another.
+    /// The project-relative folder the catalogue is read from.
     pub content_root: String,
-}
-
-#[derive(serde::Deserialize)]
-#[serde(default)]
-struct CatalogueConfig {
-    root: String,
-    extension: String,
-}
-impl Default for CatalogueConfig {
-    fn default() -> Self {
-        Self {
-            root: "content".into(),
-            extension: "gasset".into(),
-        }
-    }
 }
 
 /// Read-only catalogue discovery. Never creates or rewrites a project's registry.
 pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)> {
     let root = root.canonicalize()?;
     anyhow::ensure!(root.is_dir(), "Project must be a directory");
-    let config_path = root.join("content.toml");
-    let config: CatalogueConfig = if config_path.try_exists()? {
-        toml::from_str(&std::fs::read_to_string(config_path)?)?
-    } else {
-        CatalogueConfig::default()
-    };
-    anyhow::ensure!(
-        !config.root.is_empty()
-            && Path::new(&config.root)
-                .components()
-                .all(|c| matches!(c, std::path::Component::Normal(_))),
-        "Content root must be project-relative without parent traversal"
-    );
-    anyhow::ensure!(
-        !config.extension.is_empty() && !config.extension.contains(['/', '\\', '.']),
-        "Invalid content extension"
-    );
+    let config = ContentConfig::load_or_default(&root)?;
     let registry = AssetRegistry::from_content_tree(&root, &config.root, &config.extension)?;
     Ok((
         Project {
@@ -238,6 +208,19 @@ mod tests {
             .unwrap();
         }
         id
+    }
+
+    #[test]
+    fn rejects_a_content_toml_with_a_custom_root() {
+        for root in ["../x", "data"] {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(
+                dir.path().join("content.toml"),
+                format!("root = \"{root}\"\n"),
+            )
+            .unwrap();
+            assert!(discover_project(dir.path()).is_err(), "{root}");
+        }
     }
 
     #[test]
