@@ -140,6 +140,39 @@ impl World {
         missing
     }
 
+    fn add_order(
+        &self,
+        bundle_ids: &[ComponentId],
+        required: &[RequiredComponent],
+    ) -> Vec<ComponentId> {
+        let is_new = |id: &ComponentId| {
+            bundle_ids.contains(id) || required.iter().any(|entry| entry.id() == *id)
+        };
+        let has_requirements = |id: &ComponentId| {
+            self.required_components
+                .get(id)
+                .is_some_and(|required| !required.is_empty())
+        };
+        let mut members = bundle_ids.to_vec();
+        members.sort_by_key(|id| (!has_requirements(id), *id));
+        members.dedup();
+
+        let mut order: Vec<ComponentId> = Vec::new();
+        for member in members {
+            if let Some(requirements) = self.required_components.get(&member) {
+                for entry in requirements.iter() {
+                    if is_new(&entry.id()) && !order.contains(&entry.id()) {
+                        order.push(entry.id());
+                    }
+                }
+            }
+            if !order.contains(&member) {
+                order.push(member);
+            }
+        }
+        order
+    }
+
     fn spawn_allocated_internal<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
         T::register_required(self);
         let bundle_ids = T::get_component_ids();
@@ -181,10 +214,9 @@ impl World {
 
         self.entity_store.set_location(entity, new_location);
 
+        let order = self.add_order(&bundle_ids, &required);
         let cell = self.as_unsafe_world_cell_mut();
-        let required_ids: Vec<ComponentId> = required.iter().map(RequiredComponent::id).collect();
-        cell.trigger_on_add(entity, &required_ids);
-        cell.trigger_on_add(entity, &bundle_ids);
+        cell.trigger_on_add(entity, &order);
     }
 
     /// Removes an entity, its components, and its descendants from the world.
@@ -338,10 +370,9 @@ impl World {
             self.entity_store.set_location(entity, new_location);
         }
 
-        let required_ids: Vec<ComponentId> = required.iter().map(RequiredComponent::id).collect();
+        let order = self.add_order(&inserted_ids, &required);
         let cell = self.as_unsafe_world_cell_mut();
-        cell.trigger_on_add(entity, &required_ids);
-        cell.trigger_on_add(entity, &inserted_ids);
+        cell.trigger_on_add(entity, &order);
     }
 
     fn remove_component_internal<T: Component>(&mut self, entity: Entity) {
