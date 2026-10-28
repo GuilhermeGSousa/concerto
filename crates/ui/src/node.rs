@@ -39,7 +39,7 @@ use concerto_render::{
 use concerto_window::plugin::Window;
 use glam::Vec2;
 use log::warn;
-pub use taffy::{AlignContent, AlignItems, FlexDirection, Overflow, Position};
+pub use taffy::{AlignContent, AlignItems, FlexDirection, FlexWrap, Overflow, Position};
 use taffy::{
     AvailableSpace, Dimension, Display, LengthPercentage, LengthPercentageAuto, NodeId, Point,
     Rect, Size, Style, TaffyTree,
@@ -189,6 +189,8 @@ pub struct UINode {
     pub max_width: UIValue,
     pub max_height: UIValue,
     pub flex_direction: FlexDirection,
+    /// Whether children that do not fit move onto further lines.
+    pub flex_wrap: FlexWrap,
     pub flex_grow: f32,
     pub flex_shrink: f32,
     /// Horizontal and vertical space between children, in logical pixels.
@@ -259,6 +261,11 @@ impl UINode {
 
     pub fn with_flex_direction(mut self, flex_direction: FlexDirection) -> Self {
         self.flex_direction = flex_direction;
+        self
+    }
+
+    pub fn with_flex_wrap(mut self, flex_wrap: FlexWrap) -> Self {
+        self.flex_wrap = flex_wrap;
         self
     }
 
@@ -352,6 +359,7 @@ impl UINode {
             min_size: Self::dimensions(self.min_width, self.min_height),
             max_size: Self::dimensions(self.max_width, self.max_height),
             flex_direction: self.flex_direction,
+            flex_wrap: self.flex_wrap,
             flex_grow: self.flex_grow,
             flex_shrink: self.flex_shrink,
             gap: Size {
@@ -397,6 +405,7 @@ impl Default for UINode {
             max_width: Default::default(),
             max_height: Default::default(),
             flex_direction: Default::default(),
+            flex_wrap: FlexWrap::NoWrap,
             flex_grow: 0.0,
             flex_shrink: 1.0,
             gap: Vec2::ZERO,
@@ -2248,6 +2257,46 @@ mod tests {
                     .is_some()
             );
         }
+    }
+
+    #[test]
+    fn a_wrapping_row_puts_a_full_width_child_on_a_line_of_its_own() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let wrapping = world.spawn((
+            UINode::default()
+                .with_width(UIValue::Px(200.0))
+                .with_flex_direction(FlexDirection::Row)
+                .with_flex_wrap(FlexWrap::Wrap)
+                .with_gap(Vec2::splat(4.0))
+                .with_flex_shrink(0.0),
+            ChildOf::new(root),
+        ));
+        let first = world.spawn((
+            UINode::default()
+                .with_size(UIValue::Px(40.0), UIValue::Px(20.0))
+                .with_flex_shrink(0.0),
+            ChildOf::new(wrapping),
+        ));
+        let line = world.spawn((
+            UINode::default()
+                .with_size(UIValue::Percent(100.0), UIValue::Px(10.0))
+                .with_flex_shrink(0.0),
+            ChildOf::new(wrapping),
+        ));
+
+        lay_out(&mut world);
+
+        let row = rect_of(&world, wrapping);
+        assert_eq!(rect_of(&world, first).min, row.min);
+        assert_eq!(
+            rect_of(&world, line),
+            UIBox {
+                min: row.min + Vec2::new(0.0, 24.0),
+                size: Vec2::new(200.0, 10.0),
+            }
+        );
+        assert_eq!(row.size.y, 34.0);
     }
 
     fn settled_column(world: &mut concerto_ecs::World) -> (crate::testing::Watch, Vec<Entity>) {

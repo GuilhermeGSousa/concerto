@@ -258,12 +258,8 @@ fn spawn_row(
         label_for(&property.path)
     };
     let mut body_queue = cmd.entity(card.body);
-    let mut row_queue = body_queue.spawn_child((
-        theme.row().fixed().gap(theme.spacing_xs),
-        target,
-        property.value,
-        BuildPropertyWidget,
-    ));
+    let mut row_queue =
+        body_queue.spawn_child((row_node(theme), target, property.value, BuildPropertyWidget));
     let row = row_queue.entity();
     row_queue.add_child(
         theme
@@ -275,6 +271,10 @@ fn spawn_row(
             .fixed(),
     );
     row
+}
+
+pub(super) fn row_node(theme: &UITheme) -> UINode {
+    theme.row().fixed().gap(theme.spacing_xs).into_bundle()
 }
 
 fn body_node(theme: &UITheme) -> UINode {

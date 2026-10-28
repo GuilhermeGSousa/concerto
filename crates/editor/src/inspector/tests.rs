@@ -471,6 +471,7 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
         numeric::NumericEdit::Slot {
             slot: 0,
             number: 5.0,
+            space: None,
         },
     )
     .unwrap();
@@ -1232,6 +1233,7 @@ fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
             numeric::NumericEdit::Slot {
                 slot: 0,
                 number: 5.0,
+                space: None,
             },
         )
         .unwrap();
@@ -1285,6 +1287,7 @@ fn a_commit_still_queued_when_a_replacement_is_ready_refuses_it_and_is_sent() {
             numeric::NumericEdit::Slot {
                 slot: 0,
                 number: 5.0,
+                space: None,
             },
         )
         .unwrap();
@@ -1629,26 +1632,26 @@ mod variant_rows {
         (w, entity)
     }
 
-    fn row(world: &mut World, path: &[&str]) -> Option<Entity> {
+    pub(super) fn row(world: &mut World, path: &[&str]) -> Option<Entity> {
         rows(world)
             .into_iter()
             .find(|(_, row)| row.path.segments() == path)
             .map(|(entity, _)| entity)
     }
 
-    fn children(world: &World, entity: Entity) -> Vec<Entity> {
+    pub(super) fn children(world: &World, entity: Entity) -> Vec<Entity> {
         world
             .get_component_for_entity::<Children>(entity)
             .map(|children| children.iter().copied().collect())
             .unwrap_or_default()
     }
 
-    fn widget(world: &mut World, path: &[&str]) -> Entity {
+    pub(super) fn widget(world: &mut World, path: &[&str]) -> Entity {
         let row = row(world, path).expect("the row exists");
         children(world, row)[1]
     }
 
-    fn text(world: &World, entity: Entity) -> String {
+    pub(super) fn text(world: &World, entity: Entity) -> String {
         world
             .get_component_for_entity::<UIText>(entity)
             .unwrap()
@@ -1688,7 +1691,7 @@ mod variant_rows {
         assert!(menu(&mut w.f.world, button).is_none());
     }
 
-    fn queued(world: &World) -> usize {
+    pub(super) fn queued(world: &World) -> usize {
         world.get_resource::<PropertyCommits>().unwrap().0.len()
     }
 
@@ -1826,5 +1829,380 @@ mod variant_rows {
         assert_eq!(fog(&w, entity), None);
         assert_eq!(widget(&mut w.f.world, &["fog"]), checkbox);
         assert!(!checked(&mut w.f.world, &["fog"]));
+    }
+}
+
+mod color_rows {
+    use super::variant_rows::{children, queued, row, text, widget};
+    use super::*;
+    use concerto_color::{Color, LinearRgba};
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_render::components::{CameraEnvironment, Light, camera_environment::Fog};
+    use concerto_ui::{
+        focus::UIFocusLost,
+        material::UIMaterial,
+        node::FlexWrap,
+        text_input::{UITextInput, UITextInputSubmitted},
+    };
+
+    #[derive(Debug, PartialEq)]
+    struct ColorRow {
+        row: Entity,
+        swatch: Entity,
+        letters: Vec<Entity>,
+        fields: Vec<Entity>,
+    }
+
+    fn fixture(component: impl Component) -> (Inspecting, Entity) {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Light>();
+        w.register::<CameraEnvironment>();
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputSubmitted>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UIFocusLost>::default());
+        w.scene().insert(component, entity);
+        refreshed(&mut w);
+        (w, entity)
+    }
+
+    fn light(color: Color) -> Light {
+        Light {
+            color,
+            ..Light::point_light()
+        }
+    }
+
+    fn refreshed(w: &mut Inspecting) {
+        w.update();
+        w.update();
+        run(&mut w.f.world, numeric::refresh_numeric_fields);
+        run(&mut w.f.world, numeric::refresh_numeric_labels);
+        run(&mut w.f.world, color::refresh_color_swatches);
+    }
+
+    fn color_row(world: &mut World, path: &[&str]) -> ColorRow {
+        let row = row(world, path).expect("the row exists");
+        let mut swatches = world.query::<(Entity, &color::ColorSwatch), ()>();
+        let swatches: Vec<Entity> = swatches
+            .iter(world)
+            .filter(|(_, swatch)| swatch.row == row)
+            .map(|(entity, _)| entity)
+            .collect();
+        assert_eq!(swatches.len(), 1, "a color row has one swatch");
+        let mut labels = world.query::<(Entity, &numeric::NumericSlotLabel), ()>();
+        let mut letters: Vec<(usize, Entity)> = labels
+            .iter(world)
+            .filter(|(_, label)| label.row == row)
+            .map(|(entity, label)| (label.slot, entity))
+            .collect();
+        letters.sort_by_key(|(slot, _)| *slot);
+        let mut slots = world.query::<(Entity, &numeric::NumericSlot), ()>();
+        let mut fields: Vec<(usize, Entity)> = slots
+            .iter(world)
+            .filter(|(_, slot)| slot.row == row)
+            .map(|(entity, slot)| (slot.slot, entity))
+            .collect();
+        fields.sort_by_key(|(slot, _)| *slot);
+        ColorRow {
+            row,
+            swatch: swatches[0],
+            letters: letters.into_iter().map(|(_, entity)| entity).collect(),
+            fields: fields.into_iter().map(|(_, entity)| entity).collect(),
+        }
+    }
+
+    fn parent(world: &World, entity: Entity) -> Entity {
+        world
+            .get_component_for_entity::<ChildOf>(entity)
+            .unwrap()
+            .parent()
+    }
+
+    fn node(world: &World, entity: Entity) -> &UINode {
+        world.get_component_for_entity::<UINode>(entity).unwrap()
+    }
+
+    fn letters(world: &World, row: &ColorRow) -> Vec<String> {
+        row.letters
+            .iter()
+            .map(|letter| text(world, *letter))
+            .collect()
+    }
+
+    fn values(world: &World, row: &ColorRow) -> Vec<String> {
+        row.fields
+            .iter()
+            .map(|field| {
+                world
+                    .get_component_for_entity::<UITextInput>(*field)
+                    .unwrap()
+                    .value
+                    .clone()
+            })
+            .collect()
+    }
+
+    fn swatch(world: &World, row: &ColorRow) -> LinearRgba {
+        world
+            .get_component_for_entity::<UIMaterial>(row.swatch)
+            .unwrap()
+            .color
+    }
+
+    fn submit(w: &mut Inspecting, path: &[&str], slot: usize, text: &str) {
+        let field = color_row(&mut w.f.world, path).fields[slot];
+        let world = &mut w.f.world;
+        world
+            .get_component_for_entity_mut::<UITextInput>(field)
+            .unwrap()
+            .value = text.into();
+        world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: text.into(),
+            });
+        run(world, numeric::commit_numeric_fields);
+    }
+
+    fn editor_of(world: &mut World, path: &[&str]) -> Option<TypeId> {
+        rows(world)
+            .into_iter()
+            .find(|(_, row)| row.path.segments() == path)
+            .and_then(|(_, row)| row.editor_type)
+    }
+
+    fn light_color(w: &Inspecting, entity: Entity) -> Color {
+        w.get::<Light>(entity).unwrap().color
+    }
+
+    fn set_light_color(w: &mut Inspecting, entity: Entity, color: Color) {
+        w.scene()
+            .get_component_for_entity_mut::<Light>(entity)
+            .unwrap()
+            .color = color;
+    }
+
+    #[test]
+    fn a_color_property_is_a_swatch_and_four_labelled_fields() {
+        let (mut w, _) = fixture(Light::point_light());
+        let world = &mut w.f.world;
+
+        let color = color_row(world, &["color"]);
+
+        assert_eq!(
+            editor_of(world, &["color"]),
+            Some(TypeId::of::<numeric::NumericFields>())
+        );
+        assert!(
+            world
+                .get_component_for_entity::<color::ColorSwatch>(color.swatch)
+                .is_some()
+        );
+        assert_eq!(color.fields.len(), 4);
+        assert!(color.fields.iter().all(|field| {
+            world
+                .get_component_for_entity::<numeric::NumericSlot>(*field)
+                .is_some()
+        }));
+        assert!(color.letters.iter().all(|letter| {
+            world
+                .get_component_for_entity::<numeric::NumericSlotLabel>(*letter)
+                .is_some()
+        }));
+        assert_eq!(letters(world, &color), ["R", "G", "B", "A"]);
+        assert_eq!(values(world, &color), ["1.000"; 4]);
+        let mut texts = world.query::<&UIText, ()>();
+        assert!(
+            texts
+                .iter(world)
+                .all(|text| text.text != "Unsupported type")
+        );
+    }
+
+    #[test]
+    fn the_swatch_shares_the_label_line_and_the_fields_take_a_line_below() {
+        let (mut w, _) = fixture(Light::point_light());
+        let spacing = UITheme::default().spacing_xs;
+        let world = &mut w.f.world;
+        let color = color_row(world, &["color"]);
+
+        let parts = children(world, color.row);
+        assert_eq!(parts.len(), 3, "label, swatch, then the line of fields");
+        assert_eq!(text(world, parts[0]), "Color");
+        assert_eq!(parts[1], color.swatch);
+        let line = parts[2];
+        assert_eq!(node(world, color.row).flex_wrap, FlexWrap::Wrap);
+        assert_eq!(node(world, line).width, UIValue::Percent(100.0));
+        assert_eq!(color.fields.len(), 4);
+        for (letter, field) in color.letters.iter().zip(&color.fields) {
+            let stack = parent(world, *field);
+            assert_eq!(parent(world, *letter), stack);
+            assert_eq!(parent(world, stack), line);
+            assert_eq!(node(world, stack).gap.x, spacing);
+            for shrinking in [stack, *field] {
+                assert_eq!(node(world, shrinking).min_width, UIValue::Px(0.0));
+                assert!(node(world, shrinking).flex_shrink > 0.0);
+            }
+        }
+        let translation = row(world, &["translation"]).expect("the transform row exists");
+        assert_eq!(node(world, translation).flex_wrap, FlexWrap::NoWrap);
+    }
+
+    #[test]
+    fn an_srgb_color_is_edited_in_srgb_and_marks_the_scene_unsaved() {
+        let (mut w, entity) = fixture(light(Color::srgba(0.5, 0.25, 0.75, 1.0)));
+
+        submit(&mut w, &["color"], 0, "0.8");
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(light_color(&w, entity), Color::srgba(0.8, 0.25, 0.75, 1.0));
+        assert!(w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn an_hsl_color_shows_hue_in_degrees_and_wraps_it() {
+        let (mut w, entity) = fixture(light(Color::hsl(0.25, 0.5, 0.5, 1.0)));
+        let color = color_row(&mut w.f.world, &["color"]);
+        assert_eq!(letters(&w.f.world, &color), ["H", "S", "L", "A"]);
+        assert_eq!(values(&w.f.world, &color)[0], "90.000");
+
+        submit(&mut w, &["color"], 0, "450");
+        run(&mut w.f.world, send_property_commits);
+
+        let Color::Hsla(hsl) = light_color(&w, entity) else {
+            panic!("the color stays in HSL");
+        };
+        assert_eq!(hsl.h, 0.25);
+    }
+
+    #[test]
+    fn out_of_range_text_queues_nothing_and_the_field_shows_the_value_again() {
+        let (mut w, entity) = fixture(light(Color::srgba(0.5, 0.25, 0.75, 1.0)));
+
+        submit(&mut w, &["color"], 0, "1.5");
+
+        assert_eq!(queued(&w.f.world), 0);
+        let color = color_row(&mut w.f.world, &["color"]);
+        assert_eq!(values(&w.f.world, &color)[0], "0.500");
+        run(&mut w.f.world, send_property_commits);
+        assert_eq!(light_color(&w, entity), Color::srgba(0.5, 0.25, 0.75, 1.0));
+        assert!(!w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn an_edit_queued_before_the_space_changed_is_refused() {
+        let (mut w, entity) = fixture(light(Color::srgba(0.5, 0.5, 0.5, 1.0)));
+        let before = color_row(&mut w.f.world, &["color"]);
+
+        submit(&mut w, &["color"], 0, "0.8");
+        assert_eq!(queued(&w.f.world), 1);
+        let hsl = Color::hsl(0.25, 0.5, 0.5, 1.0);
+        set_light_color(&mut w, entity, hsl);
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(light_color(&w, entity), hsl);
+        assert!(!w.f.unsaved(w.document));
+        refreshed(&mut w);
+        let after = color_row(&mut w.f.world, &["color"]);
+        assert_eq!(after, before);
+        assert_eq!(letters(&w.f.world, &after), ["H", "S", "L", "A"]);
+    }
+
+    #[test]
+    fn a_color_changed_elsewhere_reaches_the_same_fields_and_swatch() {
+        let (mut w, entity) = fixture(Light::point_light());
+        let before = color_row(&mut w.f.world, &["color"]);
+
+        set_light_color(&mut w, entity, Color::rgba(0.2, 0.4, 0.6, 1.0));
+        refreshed(&mut w);
+
+        let after = color_row(&mut w.f.world, &["color"]);
+        assert_eq!(after, before);
+        assert_eq!(
+            values(&w.f.world, &after),
+            ["0.200", "0.400", "0.600", "1.000"]
+        );
+        assert_eq!(
+            swatch(&w.f.world, &after),
+            LinearRgba::new(0.2, 0.4, 0.6, 1.0)
+        );
+
+        set_light_color(&mut w, entity, Color::hsl(0.25, 0.5, 0.5, 1.0));
+        refreshed(&mut w);
+
+        let relabelled = color_row(&mut w.f.world, &["color"]);
+        assert_eq!(relabelled, before);
+        assert_eq!(letters(&w.f.world, &relabelled), ["H", "S", "L", "A"]);
+    }
+
+    #[test]
+    fn a_transparent_color_has_an_opaque_swatch() {
+        let (mut w, _) = fixture(light(Color::rgba(1.0, 0.0, 0.0, 0.25)));
+        let color = color_row(&mut w.f.world, &["color"]);
+
+        assert_eq!(
+            swatch(&w.f.world, &color),
+            LinearRgba::new(1.0, 0.0, 0.0, 1.0)
+        );
+        assert_eq!(values(&w.f.world, &color)[3], "0.250");
+    }
+
+    #[test]
+    fn ambient_is_a_color_row_under_its_toggle() {
+        let (mut w, entity) = fixture(CameraEnvironment::default());
+        assert!(row(&mut w.f.world, &["ambient"]).is_some());
+        assert!(row(&mut w.f.world, &["ambient", "0"]).is_none());
+
+        let checkbox = widget(&mut w.f.world, &["ambient"]);
+        click(&mut w.f.world, checkbox);
+        run(&mut w.f.world, send_property_commits);
+        refreshed(&mut w);
+
+        assert_eq!(
+            w.get::<CameraEnvironment>(entity).unwrap().ambient,
+            Some(Color::WHITE)
+        );
+        assert_eq!(
+            editor_of(&mut w.f.world, &["ambient", "0"]),
+            Some(TypeId::of::<numeric::NumericFields>())
+        );
+        let color = color_row(&mut w.f.world, &["ambient", "0"]);
+        let label = children(&w.f.world, color.row)[0];
+        assert_eq!(text(&w.f.world, label), "Ambient");
+        assert_eq!(letters(&w.f.world, &color), ["R", "G", "B", "A"]);
+
+        submit(&mut w, &["ambient", "0"], 0, "0.1");
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(
+            w.get::<CameraEnvironment>(entity).unwrap().ambient,
+            Some(Color::rgba(0.1, 1.0, 1.0, 1.0))
+        );
+    }
+
+    #[test]
+    fn fog_color_is_edited_under_fog() {
+        let (mut w, entity) = fixture(CameraEnvironment {
+            fog: Some(Fog {
+                color: Color::srgba(0.5, 0.5, 0.5, 1.0),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+
+        submit(&mut w, &["fog", "0", "color"], 2, "0.25");
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(
+            w.get::<CameraEnvironment>(entity)
+                .unwrap()
+                .fog
+                .unwrap()
+                .color,
+            Color::srgba(0.5, 0.5, 0.25, 1.0)
+        );
     }
 }
