@@ -98,7 +98,8 @@ impl Color {
     pub fn to_hsl(self) -> Hsla {
         match self {
             Self::Hsla(c) => c,
-            _ => self.to_linear().to_hsl(),
+            Self::Srgba(c) => c.to_hsl(),
+            Self::LinearRgba(c) => c.to_hsl(),
         }
     }
 }
@@ -130,5 +131,16 @@ impl From<Srgba> for Color {
 impl From<Hsla> for Color {
     fn from(c: Hsla) -> Self {
         Self::Hsla(c)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn srgba_to_hsl_converts_directly() {
+        let srgba = Srgba::new(0.2, 0.55, 0.9, 0.7);
+        assert_eq!(Color::Srgba(srgba).to_hsl(), srgba.to_hsl());
     }
 }
