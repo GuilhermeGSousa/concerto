@@ -119,6 +119,7 @@ impl Default for InspectorRegistry {
         };
         super::numeric::register_defaults(&mut registry);
         super::boolean::register_defaults(&mut registry);
+        super::color::register_defaults(&mut registry);
         registry
     }
 }
@@ -957,6 +958,15 @@ mod tests {
                 (vec!["fog", "0", "density"], of::<f32>()),
             ]
         );
+    }
+
+    #[test]
+    fn color_is_edited_by_the_numeric_editor_from_the_default_registry() {
+        let editor = InspectorRegistry::default()
+            .editor(TypeId::of::<concerto_color::Color>(), None)
+            .expect("a color has an editor without a type registry");
+        assert_eq!(editor.editor_type, TypeId::of::<NumericFields>());
+        assert!(!editor.walks_children);
     }
 
     #[derive(Default)]

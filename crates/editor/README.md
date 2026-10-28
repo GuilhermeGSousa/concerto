@@ -290,7 +290,8 @@ Shift-F frames the scene.
 The inspector edits live component values through typed `PropertyEditor<T>`
 adapters. `concerto-reflect` provides structural access; adapters own snapshots,
 widgets, and validated edits. A registered editor can handle a whole struct or an
-opaque type, and can replace any built-in numeric editor. Snapshots are cached per
+opaque type, and can replace any built-in editor, including the numeric fields and
+the `Color` row. Snapshots are cached per
 component, with snapshots owned by property-row entities. Component cards carry
 `InspectedComponent` and can be accessed through ordinary ECS queries.
 Unchanged components reuse their snapshots;
@@ -339,6 +340,20 @@ the label of the nearest named field above it, so `CameraEnvironment.ambient`
 shows an "Ambient" checkbox followed by an "Ambient" value row. An editor
 registered for the exact enum or `Option` type with `register_property_editor`
 still takes precedence, and its fields are not shown.
+
+### Colors
+
+A `Color` field is edited with nothing registered on the editor's `App`. Its
+row is a swatch followed by four labelled fields in the value's own space:
+`R G B A` for a linear or sRGB color, `H S L A` for an HSL one, with hue shown
+and typed in degrees. Editing a field keeps the space; the inspector never
+converts a color to another one. Linear red, green and blue accept any value
+from 0 up, so HDR colors can be typed; sRGB channels, saturation, lightness
+and alpha accept 0 to 1. Text outside those ranges is refused and the field
+shows the value again. Hue accepts any number of degrees and wraps, so `450`
+is stored as 90°. The swatch always shows the color at full alpha, and an HDR
+color clips at full brightness. An editor registered for `Color` with
+`register_property_editor::<Color, _>` still takes precedence.
 
 ### Asset handles
 

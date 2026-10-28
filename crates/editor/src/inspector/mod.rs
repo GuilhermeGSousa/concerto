@@ -49,7 +49,10 @@ pub use sync::InspectedComponent;
 use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
-use numeric::{cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields};
+use color::refresh_color_swatches;
+use numeric::{
+    cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields, refresh_numeric_labels,
+};
 use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
@@ -126,6 +129,8 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
             .add_system(LateUpdate, refresh_numeric_fields)
+            .add_system(LateUpdate, refresh_numeric_labels)
+            .add_system(LateUpdate, refresh_color_swatches)
             .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, refresh_variant_labels)
             .add_system(LateUpdate, refresh_option_fields)

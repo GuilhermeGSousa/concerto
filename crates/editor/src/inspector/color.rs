@@ -1,7 +1,13 @@
 use concerto_color::Color;
+use concerto_ecs::command::EntityCommandQueue;
+use concerto_ecs::{Component, Entity, Query};
+use concerto_ui::elements::prelude::*;
+use concerto_ui::{
+    interaction::UIDisabled, material::UIMaterial, theme::UITheme, transform::UIValue,
+};
 
-use crate::inspector::numeric::{NumericEdit, NumericSnapshot, NumericValue};
-use crate::inspector::rows::EditError;
+use crate::inspector::numeric::{NumericEdit, NumericFields, NumericSnapshot, NumericValue};
+use crate::inspector::rows::{EditError, PropertyRowValue};
 
 /// The space a [`Color`] is stored in, which is the space its fields edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -19,6 +25,10 @@ impl ColorSpace {
             Color::Hsla(_) => Self::Hsl,
         }
     }
+}
+
+pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
+    registry.register_property_editor::<Color, NumericFields>();
 }
 
 pub(crate) fn channel(color: &Color, slot: usize, number: f64) -> Result<f32, EditError> {
@@ -95,10 +105,58 @@ impl NumericValue for Color {
     }
 }
 
+fn opaque(color: Color) -> Color {
+    let mut color = color;
+    let [_, _, _, alpha] = channels_mut(&mut color);
+    *alpha = 1.0;
+    color
+}
+
+/// The swatch of a color row, filled with the row's color at full alpha.
+#[derive(Component)]
+pub(crate) struct ColorSwatch {
+    row: Entity,
+}
+
+pub(super) fn spawn_swatch(row: &mut EntityCommandQueue, color: Color, theme: &UITheme) {
+    let side = UIValue::Px(theme.control_height);
+    let entity = row.entity();
+    row.add_child((
+        theme
+            .canvas()
+            .fill(opaque(color))
+            .bordered()
+            .radius_sm()
+            .size(side, side)
+            .fixed(),
+        UIDisabled,
+        ColorSwatch { row: entity },
+    ));
+}
+
+/// Writes each color row's value, at full alpha, into its swatch.
+pub(crate) fn refresh_color_swatches(
+    rows: Query<&PropertyRowValue>,
+    swatches: Query<(&ColorSwatch, &mut UIMaterial)>,
+) {
+    for (swatch, mut material) in swatches.iter() {
+        let Some(NumericSnapshot::Color(color)) = rows
+            .get_entity(swatch.row)
+            .and_then(|value| value.downcast::<NumericSnapshot>())
+        else {
+            continue;
+        };
+        let fill = opaque(*color).to_linear();
+        if material.color != fill {
+            material.color = fill;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::inspector::numeric::format_slot;
+    use crate::inspector::numeric::{format_slot, slot_label};
 
     fn edit(color: &mut Color, slot: usize, number: f64) -> Result<(), EditError> {
         let space = Some(ColorSpace::of(color));
@@ -146,6 +204,34 @@ mod tests {
         assert_eq!(shown_slots(linear), ["0.100", "0.200", "0.300", "0.400"]);
         assert_eq!(shown_slots(srgb), ["0.500", "0.250", "0.750", "1.000"]);
         assert_eq!(shown_slots(hsl), ["90.000", "0.500", "0.500", "1.000"]);
+        let letters = |snapshot: NumericSnapshot| -> Vec<Option<&'static str>> {
+            (0..4).map(|slot| slot_label(&snapshot, slot)).collect()
+        };
+        let rgba = [Some("R"), Some("G"), Some("B"), Some("A")];
+        assert_eq!(letters(linear.numbers()), rgba);
+        assert_eq!(letters(srgb.numbers()), rgba);
+        assert_eq!(
+            letters(hsl.numbers()),
+            [Some("H"), Some("S"), Some("L"), Some("A")]
+        );
+        assert_eq!(letters(NumericSnapshot::Number(1.0)), [None; 4]);
+        assert_eq!(letters(NumericSnapshot::Vec3([1.0; 3])), [None; 4]);
+    }
+
+    #[test]
+    fn the_swatch_drops_alpha_in_the_values_own_space() {
+        assert_eq!(
+            opaque(Color::srgba(0.5, 0.5, 0.5, 0.2)),
+            Color::srgba(0.5, 0.5, 0.5, 1.0)
+        );
+        assert_eq!(
+            opaque(Color::hsl(0.25, 0.5, 0.5, 0.0)),
+            Color::hsl(0.25, 0.5, 0.5, 1.0)
+        );
+        assert_eq!(
+            opaque(Color::rgba(2.0, 0.5, 0.0, 0.5)),
+            Color::rgba(2.0, 0.5, 0.0, 1.0)
+        );
     }
 
     #[test]

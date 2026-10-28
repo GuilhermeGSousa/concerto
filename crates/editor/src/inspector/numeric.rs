@@ -5,6 +5,7 @@ use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusLost},
     node::UIRect,
+    text::UIText,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
     transform::UIValue,
@@ -16,7 +17,7 @@ use crate::inspector::rows::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
-/// One text field per number: one for `Number`, three for `Vec3`.
+/// One text field per number: one for `Number`, three for `Vec3`, and for `Color` a swatch followed by four labelled fields in the color's own space.
 #[derive(Default)]
 pub(crate) struct NumericFields;
 
@@ -120,6 +121,8 @@ fn queue_numeric(
         commits.push::<Vec3, NumericFields>(row, edit)
     } else if row.type_id == TypeId::of::<Quat>() {
         commits.push::<Quat, NumericFields>(row, edit)
+    } else if row.type_id == TypeId::of::<concerto_color::Color>() {
+        commits.push::<concerto_color::Color, NumericFields>(row, edit)
     } else {
         Err(EditError::TypeMismatch)
     }
@@ -131,6 +134,13 @@ pub(crate) struct NumericSlot {
     row: Entity,
     slot: usize,
     displayed: String,
+}
+
+/// The letter naming one field of a [`NumericFields`] row.
+#[derive(Component)]
+pub(crate) struct NumericSlotLabel {
+    row: Entity,
+    slot: usize,
 }
 
 impl<T: NumericValue> PropertyEditor<T> for NumericFields {
@@ -146,8 +156,12 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
         true
     }
     fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
+        let entity = row.entity();
+        if let NumericSnapshot::Color(color) = value {
+            color::spawn_swatch(row, *color, theme);
+        }
         for slot in 0..slot_count(value) {
-            row.add_child((
+            let field = (
                 theme
                     .text_field("")
                     .small()
@@ -158,11 +172,29 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
                     .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
                     .clipped(),
                 NumericSlot {
-                    row: row.entity(),
+                    row: entity,
                     slot,
                     displayed: String::new(),
                 },
-            ));
+            );
+            let Some(letter) = slot_label(value, slot) else {
+                row.add_child(field);
+                continue;
+            };
+            row.spawn_child(
+                theme
+                    .row()
+                    .gap(theme.spacing_xs)
+                    .grow()
+                    .shrink(1.0)
+                    .width(UIValue::Px(0.0))
+                    .min_width(UIValue::Px(0.0)),
+            )
+            .add_child((
+                theme.label(letter).small().muted().single_line().fixed(),
+                NumericSlotLabel { row: entity, slot },
+            ))
+            .add_child(field);
         }
     }
 }
@@ -187,6 +219,15 @@ pub(super) fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
         NumericSnapshot::Color(value) => color::shown(value, slot),
     };
     number.map(|n| format!("{n:.3}")).unwrap_or_default()
+}
+
+pub(super) fn slot_label(value: &NumericSnapshot, slot: usize) -> Option<&'static str> {
+    let letters = match value {
+        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => return None,
+        NumericSnapshot::Color(concerto_color::Color::Hsla(_)) => ["H", "S", "L", "A"],
+        NumericSnapshot::Color(_) => ["R", "G", "B", "A"],
+    };
+    letters.get(slot).copied()
 }
 
 fn accepts(current: &NumericSnapshot, slot: usize, number: f64) -> bool {
@@ -302,6 +343,25 @@ pub(crate) fn refresh_numeric_fields(
         }
         if slot.displayed != text {
             slot.displayed = text;
+        }
+    }
+}
+
+/// Writes the letter of each labelled field from its row's value.
+pub(crate) fn refresh_numeric_labels(
+    rows: Query<&PropertyRowValue>,
+    labels: Query<(&NumericSlotLabel, &mut UIText)>,
+) {
+    for (label, mut text) in labels.iter() {
+        let Some(letter) = rows
+            .get_entity(label.row)
+            .and_then(|value| value.downcast::<NumericSnapshot>())
+            .and_then(|value| slot_label(value, label.slot))
+        else {
+            continue;
+        };
+        if text.text != letter {
+            text.text = letter.into();
         }
     }
 }
