@@ -228,9 +228,82 @@ fn content_config_defaults_when_content_toml_is_absent() {
 #[test]
 fn content_config_fills_a_missing_field_from_the_default() {
     let base = temp_root("config-partial");
-    std::fs::write(base.join("content.toml"), "root = \"data\"\n").unwrap();
+    std::fs::write(base.join("content.toml"), "extension = \"bin\"\n").unwrap();
     let config = ContentConfig::load_or_default(&base).expect("parses");
-    assert_eq!(config.root, "data");
-    assert_eq!(config.extension, "gasset");
+    assert_eq!(config.root, "content");
+    assert_eq!(config.extension, "bin");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn content_config_rejects_a_root_other_than_content() {
+    for (tag, root) in [
+        ("data", "data"),
+        ("parent", "../x"),
+        ("empty", ""),
+        ("absolute", "/abs"),
+    ] {
+        let base = temp_root(&format!("config-root-{tag}"));
+        std::fs::write(base.join("content.toml"), format!("root = \"{root}\"\n")).unwrap();
+        let err = ContentConfig::load_or_default(&base).expect_err("rejected");
+        assert!(
+            format!("{err:#}").contains("content root must be 'content'"),
+            "root {root:?}: {err:#}"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+}
+
+#[test]
+fn content_config_rejects_a_bad_extension() {
+    for (tag, extension) in [("empty", ""), ("dot", ".gasset"), ("slash", "a/b")] {
+        let base = temp_root(&format!("config-ext-{tag}"));
+        std::fs::write(
+            base.join("content.toml"),
+            format!("extension = \"{extension}\"\n"),
+        )
+        .unwrap();
+        let err = ContentConfig::load_or_default(&base).expect_err("rejected");
+        assert!(
+            format!("{err:#}").contains("content extension must be a nonempty extension"),
+            "extension {extension:?}: {err:#}"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+}
+
+#[test]
+fn content_config_accepts_a_custom_extension_with_the_default_root() {
+    let base = temp_root("config-bin");
+    std::fs::write(
+        base.join("content.toml"),
+        "root = \"content\"\nextension = \"bin\"\n",
+    )
+    .unwrap();
+    let config = ContentConfig::load_or_default(&base).expect("accepted");
+    assert_eq!(config.extension, "bin");
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn validate_rejects_a_hand_built_bad_config() {
+    let bad_root = ContentConfig {
+        root: "data".to_string(),
+        ..ContentConfig::default()
+    };
+    assert!(bad_root.validate().is_err());
+    let bad_extension = ContentConfig {
+        extension: "a.b".to_string(),
+        ..ContentConfig::default()
+    };
+    assert!(bad_extension.validate().is_err());
+    assert!(ContentConfig::default().validate().is_ok());
+}
+
+#[test]
+fn an_unreadable_content_toml_is_an_error() {
+    let base = temp_root("config-unreadable");
+    std::fs::create_dir(base.join("content.toml")).unwrap();
+    assert!(ContentConfig::load_or_default(&base).is_err());
     std::fs::remove_dir_all(&base).ok();
 }
