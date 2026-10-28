@@ -129,6 +129,14 @@ Something to be done is a signal. If change detection cannot express the case,
 say so in the spec and propose the fix to change detection; do not work around
 it with a counter.
 
+**Functionality is a plugin.** The engine is modular and the editor follows it:
+each functionality is its own `Plugin`, as each panel, importing and MCP serving
+are. New functionality gets a new plugin unless it cannot stand apart from an
+existing one. A plugin that cannot build for wasm is compiled and registered
+only on native, behind `#[cfg(not(target_arch = "wasm32"))]`, with its
+dependencies under `[target.'cfg(not(target_arch = "wasm32"))'.dependencies]`;
+MCP serving in `concerto-editor` is the example.
+
 **Warnings are errors.** `[lints.rust] warnings = "deny"` is set, so an unused
 import fails the build.
 
@@ -206,6 +214,9 @@ work in the current task.
   change is only that, `agent:local` when it needs a look at the running
   program, and `agent:spec` when it needs design: an open decision for the
   owner, or a size of medium or more.
+- A design for the editor that needs something `concerto-ui` lacks, such as a
+  widget, a theme token, or a layout or material feature, files an issue for
+  it. The design does not work around the gap.
 - Only the top-level session files. The `implementer`, `spec-reviewer` and
   `branch-reviewer` roles report such findings to their caller.
 
