@@ -129,4 +129,9 @@ docs/        user documentation and the book
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+[PolyForm Noncommercial 1.0.0](LICENSE). You may use, change and share
+Concerto for any noncommercial purpose. Commercial use needs a separate license;
+open an issue or contact the author to ask for one.
+
+Versions released before the license change, including `concerto` 0.1.0 on
+crates.io, remain available under the MIT license they were published with.
