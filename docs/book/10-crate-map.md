@@ -15,8 +15,8 @@ game adds itself when it needs them.
 | | `reflect` | reflection: field access by path, the type registry | `reflect` |
 | Assets | `asset-format` | `AssetId` and the `.gasset` framing | |
 | | `asset-import` | the `Importer` trait | |
-| | `asset-build` | `track_assets` for build scripts | |
-| | `import` | the `concerto-import` command line and library | |
+| | `asset-build` | `track_assets` for build scripts, which also writes the registry a game embeds | |
+| | `import` | the import library behind the editor's Import… | |
 | | `gltf`, `obj` | the glTF and OBJ importers | |
 | Rendering | `render` | the wgpu renderer, cameras, lights, materials, the render world | `render` |
 | | `mesh` | mesh data, bounds, ray tests, `MeshComponent` | `mesh` |

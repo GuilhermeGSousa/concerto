@@ -14,29 +14,7 @@ pub use concerto_asset_format::{
     ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
-/// Writes `value` as a content asset at `project_root/address`, creating
-/// parent directories as needed, and upserts the asset registry so a
-/// UUID-based (`AssetServer::load`) requests can find it later.
-///
-/// The asset's id is *minted* the first time an address is written and
-/// reused every time after, by reading the header already on disk — so a
-/// re-save keeps the identity that existing references name. `address` is
-/// the project-relative path (`"content/hero/body.gasset"`); `project_root`
-/// is the source tree an editor saves into, which is deliberately *not* the
-/// exe-relative runtime root — a save must land in the tree under version
-/// control, not beside the binary where the next build overwrites it.
-pub fn save_content_asset<A: Asset>(
-    value: &A,
-    project_root: &Path,
-    address: &str,
-) -> anyhow::Result<()> {
-    let mut registry = AssetRegistry::load(project_root)?;
-    save_content_asset_into(value, project_root, address, &mut registry)?;
-    registry.save(project_root)
-}
-
-/// Writes `value` at `project_root/address` as [`save_content_asset`] does, but records it in
-/// `registry` instead of the registry file, and returns its id.
+/// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
     project_root: &Path,

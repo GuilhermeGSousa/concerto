@@ -64,7 +64,6 @@ pub fn discover_project(root: &Path) -> anyhow::Result<(Project, AssetRegistry)>
 pub enum EditorCommand {
     OpenProject(PathBuf),
     OpenAsset(AssetId),
-    RefreshCatalogue,
 }
 
 #[derive(Resource, Default)]
@@ -168,18 +167,6 @@ fn process_commands(
                         .push_back(crate::asset_editor::AssetEditorCommand::Open(asset.clone()));
                 }
             }
-            EditorCommand::RefreshCatalogue => {
-                let Some(root) = state.project.as_ref().map(|project| project.root.clone()) else {
-                    continue;
-                };
-                match discover_project(&root) {
-                    Ok((project, discovered)) => {
-                        state.project = Some(project);
-                        *registry = discovered;
-                    }
-                    Err(error) => state.status = format!("Could not refresh catalogue: {error:#}"),
-                }
-            }
             EditorCommand::OpenProject(path) => {
                 crate::guard::stop_every_game(&states, &mut cmd);
                 let dirty = crate::guard::dirty_documents(&open_documents);
@@ -251,41 +238,6 @@ mod tests {
             .unwrap();
         }
         id
-    }
-
-    #[test]
-    fn refreshing_the_catalogue_replaces_the_registry_resource() {
-        use concerto_ecs::{IntoSystem, System, World};
-
-        let dir = tempfile::tempdir().unwrap();
-        let id = write_assets(dir.path());
-        let mut world = World::new();
-        world.insert_resource(EditorCommands::default());
-        let state = ProjectState {
-            project: Some(Project {
-                root: dir.path().canonicalize().unwrap(),
-                content_root: "content".into(),
-            }),
-            ..Default::default()
-        };
-        world.insert_resource(state);
-        world.insert_resource(AssetRegistry::default());
-        world.insert_resource(crate::asset_editor::AssetEditorCommands::default());
-        world.insert_resource(crate::guard::UnsavedGuard::default());
-        world.insert_resource(AssetServer::new());
-        world
-            .get_resource_mut::<EditorCommands>()
-            .unwrap()
-            .0
-            .push_back(EditorCommand::RefreshCatalogue);
-        let mut system = process_commands.into_system();
-        system.initialize(&mut world);
-
-        system.run_and_apply((), &mut world);
-
-        let registry = world.get_resource::<AssetRegistry>().unwrap();
-        assert_eq!(registry.iter().count(), 3);
-        assert_eq!(registry.get(id).unwrap().name(), "scene");
     }
 
     #[test]

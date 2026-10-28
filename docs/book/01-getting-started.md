@@ -28,9 +28,10 @@ A window opens with nothing in it. `cargo concerto new` wrote:
 ```
 hello/
   Cargo.toml          the game package, a library plus a binary
-  build.rs            tracks content/ and copies it next to the binary
+  build.rs            tracks content/, writes its asset registry, and copies it
+                      next to the binary
   src/lib.rs          the recipe: pub fn game(app: &mut App)
-  src/main.rs         concerto::run(hello::game)
+  src/main.rs         concerto::run(hello::game, concerto::content_registry!())
   content/            imported assets; empty for now
   index.html          for `trunk serve`
   Trunk.toml
@@ -48,7 +49,8 @@ pub fn game(app: &mut App) {
 ```
 
 `game` is the **recipe**: one function that says what the game is made of.
-`src/main.rs` hands it to `concerto::run`, which opens a window and runs it;
+`src/main.rs` hands it to `concerto::run`, which opens a window and runs it
+with the asset registry `build.rs` wrote, embedded by `content_registry!()`;
 the editor calls the same function to build the worlds it edits. Chapter 2
 explains why that matters.
 

@@ -1,6 +1,7 @@
 //! Shared persistent asset identity and binary framing, independent of the engine.
 use anyhow::{bail, Context};
 use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use uuid::Uuid;
 
@@ -55,7 +56,7 @@ impl AssetId {
 
     /// Inverse of `simple_hex()` — parses an AssetId back from its
     /// 32-lowercase-hex-digit form. Used by `AssetRegistry` to reconstruct
-    /// ids read back from `.registry.toml`.
+    /// ids read back from registry TOML.
     pub fn from_simple_hex(hex: &str) -> Result<Self, uuid::Error> {
         Uuid::parse_str(hex).map(AssetId)
     }
@@ -194,4 +195,183 @@ pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHead
         );
     }
     Ok(header)
+}
+
+/// One content asset: what a scan reads from its header, or a registry line holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScannedEntry {
+    pub id: AssetId,
+    /// The path relative to the scan's base, `/`-separated (`"content/hero/body.gasset"`).
+    pub address: String,
+    pub kind: String,
+    /// Where an imported asset came from; `None` for an authored asset and for a registry line.
+    pub provenance: Option<ImportProvenance>,
+}
+
+/// Lists every `*.<extension>` file under `dir` by its header, addressed relative to `base`.
+pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<Vec<ScannedEntry>> {
+    let dir = match dir.canonicalize() {
+        Ok(dir) => dir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => {
+            return Err(err).with_context(|| format!("failed to resolve '{}'", dir.display()))
+        }
+    };
+    let base = base
+        .canonicalize()
+        .with_context(|| format!("failed to resolve '{}'", base.display()))?;
+
+    let mut entries = Vec::new();
+    let mut index_by_id: HashMap<AssetId, usize> = HashMap::new();
+    let mut stack = vec![dir];
+    while let Some(dir) = stack.pop() {
+        let listing = match std::fs::read_dir(&dir) {
+            Ok(listing) => listing,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => {
+                return Err(err).with_context(|| format!("failed to read '{}'", dir.display()))
+            }
+        };
+        for entry in listing {
+            let path = entry
+                .with_context(|| format!("failed to read an entry of '{}'", dir.display()))?
+                .path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|e| e.to_str()) != Some(extension) {
+                continue;
+            }
+
+            let header = read_content_asset_header(&path)?;
+            let address = path
+                .strip_prefix(&base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .replace('\\', "/");
+
+            if let Some(&previous) = index_by_id.get(&header.asset_id) {
+                let previous: &ScannedEntry = &entries[previous];
+                bail!(
+                    "content tree is malformed: '{}' and '{address}' both carry asset id {}",
+                    previous.address,
+                    header.asset_id.simple_hex()
+                );
+            }
+            index_by_id.insert(header.asset_id, entries.len());
+            entries.push(ScannedEntry {
+                id: header.asset_id,
+                address,
+                kind: header.kind,
+                provenance: header.provenance,
+            });
+        }
+    }
+
+    Ok(entries)
+}
+
+#[derive(Deserialize)]
+struct RegistryRecord {
+    address: String,
+    kind: String,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredRecord {
+    Record(RegistryRecord),
+    Legacy(String),
+}
+
+#[derive(Deserialize)]
+struct RegistryFile {
+    #[serde(default)]
+    assets: BTreeMap<String, StoredRecord>,
+}
+
+/// The registry text: one `id = { address, kind }` line per entry, ordered by id.
+pub fn write_registry(entries: &[ScannedEntry]) -> String {
+    let mut ordered: Vec<&ScannedEntry> = entries.iter().collect();
+    ordered.sort_by_key(|entry| entry.id);
+    let mut text = String::from("[assets]\n");
+    for entry in ordered {
+        text.push_str(&format!(
+            "{} = {{ address = {}, kind = {} }}\n",
+            entry.id.simple_hex(),
+            toml::Value::String(entry.address.clone()),
+            toml::Value::String(entry.kind.clone()),
+        ));
+    }
+    text
+}
+
+/// Reads registry text written by [`write_registry`], ordered by id.
+pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
+    let file: RegistryFile = toml::from_str(text).context("failed to parse asset registry")?;
+    let mut entries = Vec::with_capacity(file.assets.len());
+    let mut id_by_address: HashMap<String, AssetId> = HashMap::new();
+    for (hex, record) in file.assets {
+        let id = AssetId::from_simple_hex(&hex)
+            .map_err(|err| anyhow::anyhow!("invalid asset id '{hex}' in registry: {err}"))?;
+        let record = match record {
+            StoredRecord::Record(record) => record,
+            StoredRecord::Legacy(address) => bail!(
+                "asset registry predates asset kinds ('{address}' has none); rebuild the game so its build script writes a new one"
+            ),
+        };
+        if let Some(existing) = id_by_address.insert(record.address.clone(), id) {
+            bail!(
+                "asset registry maps two ids ({} and {}) to the same address '{}'",
+                existing.simple_hex(),
+                id.simple_hex(),
+                record.address
+            );
+        }
+        entries.push(ScannedEntry {
+            id,
+            address: record.address,
+            kind: record.kind,
+            provenance: None,
+        });
+    }
+    Ok(entries)
+}
+
+/// `content.toml` at a project root, read by the import, the editor's scan and `track_assets`, never at runtime.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct ContentConfig {
+    /// Uniform extension for every content asset, without the dot.
+    pub extension: String,
+    /// Content tree root, relative to the project root.
+    pub root: String,
+}
+
+impl Default for ContentConfig {
+    fn default() -> Self {
+        Self {
+            extension: "gasset".to_string(),
+            root: "content".to_string(),
+        }
+    }
+}
+
+impl ContentConfig {
+    pub fn load(path: &Path) -> anyhow::Result<Self> {
+        let text = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read '{}'", path.display()))?;
+        toml::from_str(&text).with_context(|| format!("failed to parse '{}'", path.display()))
+    }
+
+    /// Loads `content.toml` from `dir` if present, else the defaults.
+    pub fn load_or_default(dir: &Path) -> anyhow::Result<Self> {
+        let path = dir.join("content.toml");
+        if path.exists() {
+            Self::load(&path)
+        } else {
+            Ok(Self::default())
+        }
+    }
 }
