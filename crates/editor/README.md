@@ -27,7 +27,8 @@ prints the usage and exits with status 2. `run` sets up logging with
 
 `--mcp` runs the editor for an agent: the whole editor, panels included, with
 no window, served over [MCP](https://modelcontextprotocol.io) on stdin and
-stdout. Logs stay on stderr.
+stdout. Logs stay on stderr. MCP serving is native only: `concerto-mcp` and
+the editor's `mcp` module are not compiled for wasm.
 
 ```sh
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>

@@ -58,6 +58,7 @@ use variants::{refresh_option_fields, refresh_variant_labels};
 use crate::tools::edits::EditComponent;
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) use registry::{InspectionSource, current_editor};
 pub use rows::{
     EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,

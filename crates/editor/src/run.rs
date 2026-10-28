@@ -123,8 +123,9 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
         }
     };
     match options.mcp {
+        #[cfg(not(target_arch = "wasm32"))]
         Some(size) => concerto_mcp::host::run(crate::mcp::editor(recipe, options.project), size),
-        None => concerto_winit::run(move |app| {
+        _ => concerto_winit::run(move |app| {
             register_editor(app, recipe, options.project, options.decorated);
         }),
     }

@@ -12,6 +12,7 @@ pub mod hosted;
 pub mod import;
 pub mod inspector;
 pub mod marks;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod mcp;
 pub mod project;
 mod run;
