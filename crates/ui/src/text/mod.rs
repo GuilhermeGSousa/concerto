@@ -17,7 +17,11 @@ use concerto_window::plugin::Window;
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, Weight, Wrap};
 use std::hash::{Hash, Hasher};
 
-use crate::{node::UILayout, resources::UIRenderDiagnostics, text::resources::TextFontSystem};
+use crate::{
+    node::{UILayout, UINode},
+    resources::UIRenderDiagnostics,
+    text::resources::TextFontSystem,
+};
 
 pub mod fonts;
 pub(crate) mod resources;
@@ -43,6 +47,7 @@ pub enum FontStyle {
 
 /// Text node component.
 #[derive(Component, Clone)]
+#[require(UINode)]
 pub struct UIText {
     pub text: String,
     pub font_size: f32,

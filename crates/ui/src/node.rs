@@ -2573,6 +2573,22 @@ mod tests {
     }
 
     #[test]
+    fn a_bare_child_text_gets_a_node_and_is_laid_out() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let label = world.spawn((ui_text("Warren"), ChildOf::new(root)));
+
+        lay_out(&mut world);
+
+        assert_eq!(
+            world.get_component_for_entity::<UINode>(label),
+            Some(&UINode::default())
+        );
+        let layout = world.get_component_for_entity::<UILayout>(label).unwrap();
+        assert!(layout.rect.size.x > 0.0 && layout.rect.size.y > 0.0);
+    }
+
+    #[test]
     fn nothing_changing_adds_no_layout_pass_and_updates_no_node() {
         let mut world = layout_world();
         let root = column(&mut world);
