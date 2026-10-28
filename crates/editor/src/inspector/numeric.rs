@@ -11,6 +11,7 @@ use concerto_ui::{
 };
 use glam::{EulerRot, Quat, Vec3};
 
+use crate::inspector::color::{self, ColorSpace};
 use crate::inspector::rows::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
@@ -23,12 +24,14 @@ pub(crate) struct NumericFields;
 pub(crate) enum NumericSnapshot {
     Number(f64),
     Vec3([f64; 3]),
+    Color(concerto_color::Color),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NumericEdit {
     pub slot: usize,
     pub number: f64,
+    pub space: Option<ColorSpace>,
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
@@ -173,15 +176,24 @@ fn slot_count(value: &NumericSnapshot) -> usize {
     match value {
         NumericSnapshot::Number(_) => 1,
         NumericSnapshot::Vec3(_) => 3,
+        NumericSnapshot::Color(_) => 4,
     }
 }
 
-fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
+pub(super) fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
     let number = match value {
         NumericSnapshot::Number(number) => (slot == 0).then_some(*number),
         NumericSnapshot::Vec3(components) => components.get(slot).copied(),
+        NumericSnapshot::Color(value) => color::shown(value, slot),
     };
     number.map(|n| format!("{n:.3}")).unwrap_or_default()
+}
+
+fn accepts(current: &NumericSnapshot, slot: usize, number: f64) -> bool {
+    match current {
+        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => true,
+        NumericSnapshot::Color(value) => color::channel(value, slot, number).is_ok(),
+    }
 }
 
 fn numeric_commit(
@@ -194,10 +206,18 @@ fn numeric_commit(
         return None;
     }
     let number: f64 = text.trim().parse().ok()?;
-    if !number.is_finite() {
+    if !number.is_finite() || !accepts(current, slot, number) {
         return None;
     }
-    Some(NumericEdit { slot, number })
+    let space = match current {
+        NumericSnapshot::Color(value) => Some(ColorSpace::of(value)),
+        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => None,
+    };
+    Some(NumericEdit {
+        slot,
+        number,
+        space,
+    })
 }
 
 fn revert(slot: &NumericSlot, input: &mut UITextInput) {
@@ -319,7 +339,8 @@ mod tests {
             numeric_commit(&value, 1, " -4.5 ", "2.000"),
             Some(NumericEdit {
                 slot: 1,
-                number: -4.5
+                number: -4.5,
+                space: None
             })
         );
     }
@@ -350,7 +371,8 @@ mod tests {
             numeric_commit(&value, 0, "7", "1.000"),
             Some(NumericEdit {
                 slot: 0,
-                number: 7.0
+                number: 7.0,
+                space: None
             })
         );
         assert_eq!(numeric_commit(&value, 1, "7", "1.000"), None);
@@ -364,7 +386,11 @@ mod tests {
         let mut vector = Vec3::ONE;
         let mut rotation = Quat::IDENTITY;
         for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let edit = NumericEdit { slot: 0, number };
+            let edit = NumericEdit {
+                slot: 0,
+                number,
+                space: None,
+            };
             assert_eq!(small.edit(&edit), Err(EditError::Rejected));
             assert_eq!(large.edit(&edit), Err(EditError::Rejected));
             assert_eq!(vector.edit(&edit), Err(EditError::Rejected));
@@ -373,6 +399,7 @@ mod tests {
         let overflow = NumericEdit {
             slot: 0,
             number: 1e300,
+            space: None,
         };
         assert_eq!(small.edit(&overflow), Err(EditError::Rejected));
         assert_eq!(vector.edit(&overflow), Err(EditError::Rejected));
@@ -380,6 +407,7 @@ mod tests {
         let bad_slot = NumericEdit {
             slot: 3,
             number: 0.0,
+            space: None,
         };
         assert_eq!(small.edit(&bad_slot), Err(EditError::Rejected));
         assert_eq!(large.edit(&bad_slot), Err(EditError::Rejected));
@@ -393,12 +421,14 @@ mod tests {
             .edit(&NumericEdit {
                 slot: 0,
                 number: 2.5,
+                space: None,
             })
             .unwrap();
         large
             .edit(&NumericEdit {
                 slot: 0,
                 number: -7.25,
+                space: None,
             })
             .unwrap();
         assert_eq!(small.numbers(), NumericSnapshot::Number(2.5));
@@ -415,6 +445,7 @@ mod tests {
         copy.edit(&NumericEdit {
             slot: 0,
             number: degrees[0],
+            space: None,
         })
         .unwrap();
         assert!(original.dot(copy).abs() > 1.0 - 1e-5);
@@ -424,6 +455,7 @@ mod tests {
             .edit(&NumericEdit {
                 slot: 1,
                 number: 90.0,
+                space: None,
             })
             .unwrap();
         assert!(
@@ -436,6 +468,36 @@ mod tests {
             panic!("expected degrees");
         };
         assert!(x.abs() < 1e-3 && (y - 90.0).abs() < 1e-3 && z.abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_color_has_four_slots_and_refuses_out_of_range_text() {
+        let srgb = NumericSnapshot::Color(concerto_color::Color::srgba(0.5, 0.5, 0.5, 1.0));
+        assert_eq!(slot_count(&srgb), 4);
+        assert_eq!(
+            numeric_commit(&srgb, 3, "0.5", "1.000"),
+            Some(NumericEdit {
+                slot: 3,
+                number: 0.5,
+                space: Some(ColorSpace::Srgb),
+            })
+        );
+        assert_eq!(numeric_commit(&srgb, 4, "0.5", ""), None);
+        assert_eq!(numeric_commit(&srgb, 0, "1.2", "0.500"), None);
+        assert!(numeric_commit(&srgb, 0, "1.0000000001", "0.500").is_some());
+        let linear = NumericSnapshot::Color(concerto_color::Color::rgba(0.5, 0.5, 0.5, 1.0));
+        assert_eq!(
+            numeric_commit(&linear, 0, "4", "0.500"),
+            Some(NumericEdit {
+                slot: 0,
+                number: 4.0,
+                space: Some(ColorSpace::Linear),
+            })
+        );
+        assert_eq!(
+            numeric_commit(&NumericSnapshot::Number(1.0), 0, "4", "1.000").map(|edit| edit.space),
+            Some(None)
+        );
     }
 
     #[test]

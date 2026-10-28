@@ -29,6 +29,7 @@ use crate::tools::{scene::SceneRoot, selection::Selection};
 
 mod add_component;
 mod boolean;
+mod color;
 mod component_menu;
 mod name_field;
 mod numeric;

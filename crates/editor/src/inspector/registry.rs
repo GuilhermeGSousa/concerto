@@ -513,6 +513,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 4.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -522,6 +523,7 @@ mod tests {
                 NumericEdit {
                     slot: 1,
                     number: 5.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -548,6 +550,7 @@ mod tests {
             edit: Arc::new(NumericEdit {
                 slot: 0,
                 number: 1.0,
+                space: None,
             }),
         });
         s.send();
@@ -561,6 +564,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 4.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -586,6 +590,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 4.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -621,7 +626,8 @@ mod tests {
                 &row,
                 NumericEdit {
                     slot: 0,
-                    number: 9.0
+                    number: 9.0,
+                    space: None
                 }
             ),
             Err(EditError::TypeMismatch)
@@ -665,6 +671,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 9.0,
+                    space: None,
                 },
             )
             .unwrap()
@@ -691,6 +698,7 @@ mod tests {
             NumericEdit {
                 slot: 0,
                 number: 9.0,
+                space: None,
             },
         )
         .unwrap();
@@ -709,7 +717,11 @@ mod tests {
     ) -> crate::tools::edits::CommitProperty {
         let commit = PropertyCommit {
             row,
-            edit: Arc::new(NumericEdit { slot: 0, number }),
+            edit: Arc::new(NumericEdit {
+                slot: 0,
+                number,
+                space: None,
+            }),
         };
         checked(registry, None, Tick::default(), commit).unwrap()
     }
@@ -986,6 +998,7 @@ mod tests {
             NumericEdit {
                 slot: 0,
                 number: 3.0,
+                space: None,
             },
         )
         .unwrap();

@@ -464,6 +464,7 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
         numeric::NumericEdit {
             slot: 0,
             number: 5.0,
+            space: None,
         },
     )
     .unwrap();
@@ -1225,6 +1226,7 @@ fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
             numeric::NumericEdit {
                 slot: 0,
                 number: 5.0,
+                space: None,
             },
         )
         .unwrap();
@@ -1278,6 +1280,7 @@ fn a_commit_still_queued_when_a_replacement_is_ready_refuses_it_and_is_sent() {
             numeric::NumericEdit {
                 slot: 0,
                 number: 5.0,
+                space: None,
             },
         )
         .unwrap();
