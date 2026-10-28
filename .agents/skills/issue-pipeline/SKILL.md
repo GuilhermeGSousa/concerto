@@ -158,8 +158,8 @@ other issue takes the short path, "Without `agent:spec`".
 - An issue that loses `agent:spec` before its spec is approved takes the short
   path from its step 2: the owner's removal settles whether it needs design, so
   do not add the label back. A draft `## Spec` stays in the description as
-  notes, and `branch-reviewer` reviews against the issue body. After the spec is approved,
-  the issue finishes the full path, plan approval included.
+  notes, and `branch-reviewer` reviews against the issue body. After the spec
+  is approved, the issue finishes the full path, plan approval included.
 - A label change takes effect at your next wake or tick. A cloud driver does
   not wake on one; the owner comments after changing a label.
 
