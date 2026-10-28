@@ -4,18 +4,20 @@ use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusLost},
-    node::UIRect,
+    node::{FlexWrap, UIRect},
+    text::UIText,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
     transform::UIValue,
 };
 use glam::{EulerRot, Quat, Vec3};
 
+use crate::inspector::color::{self, ColorSpace};
 use crate::inspector::rows::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
-/// One text field per number: one for `Number`, three for `Vec3`.
+/// One text field per number: one for `Number`, three for `Vec3`, and for `Color` a swatch beside the label with four labelled fields in the color's own space on a line below.
 #[derive(Default)]
 pub(crate) struct NumericFields;
 
@@ -23,12 +25,14 @@ pub(crate) struct NumericFields;
 pub(crate) enum NumericSnapshot {
     Number(f64),
     Vec3([f64; 3]),
+    Color(concerto_color::Color),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct NumericEdit {
     pub slot: usize,
     pub number: f64,
+    pub space: Option<ColorSpace>,
 }
 
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
@@ -117,6 +121,8 @@ fn queue_numeric(
         commits.push::<Vec3, NumericFields>(row, edit)
     } else if row.type_id == TypeId::of::<Quat>() {
         commits.push::<Quat, NumericFields>(row, edit)
+    } else if row.type_id == TypeId::of::<concerto_color::Color>() {
+        commits.push::<concerto_color::Color, NumericFields>(row, edit)
     } else {
         Err(EditError::TypeMismatch)
     }
@@ -125,9 +131,16 @@ fn queue_numeric(
 /// One field of a [`NumericFields`] row.
 #[derive(Component)]
 pub(crate) struct NumericSlot {
-    row: Entity,
-    slot: usize,
+    pub(super) row: Entity,
+    pub(super) slot: usize,
     displayed: String,
+}
+
+/// The letter naming one field of a [`NumericFields`] row.
+#[derive(Component)]
+pub(crate) struct NumericSlotLabel {
+    pub(super) row: Entity,
+    pub(super) slot: usize,
 }
 
 impl<T: NumericValue> PropertyEditor<T> for NumericFields {
@@ -143,25 +156,64 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
         true
     }
     fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
+        let entity = row.entity();
+        let NumericSnapshot::Color(color) = value else {
+            for slot in 0..slot_count(value) {
+                spawn_slot(row, entity, value, slot, theme);
+            }
+            return;
+        };
+        color::spawn_swatch(row, *color, theme);
+        row.insert(super::sync::row_node(theme).with_flex_wrap(FlexWrap::Wrap));
+        let mut line = row.spawn_child(theme.row().width(UIValue::Percent(100.0)));
         for slot in 0..slot_count(value) {
-            row.add_child((
-                theme
-                    .text_field("")
-                    .small()
-                    .grow()
-                    .shrink(1.0)
-                    .width(UIValue::Px(0.0))
-                    .min_width(UIValue::Px(0.0))
-                    .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
-                    .clipped(),
-                NumericSlot {
-                    row: row.entity(),
-                    slot,
-                    displayed: String::new(),
-                },
-            ));
+            spawn_slot(&mut line, entity, value, slot, theme);
         }
     }
+}
+
+fn spawn_slot(
+    parent: &mut EntityCommandQueue,
+    row: Entity,
+    value: &NumericSnapshot,
+    slot: usize,
+    theme: &UITheme,
+) {
+    let field = (
+        theme
+            .text_field("")
+            .small()
+            .grow()
+            .shrink(1.0)
+            .width(UIValue::Px(0.0))
+            .min_width(UIValue::Px(0.0))
+            .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
+            .clipped(),
+        NumericSlot {
+            row,
+            slot,
+            displayed: String::new(),
+        },
+    );
+    let Some(letter) = slot_label(value, slot) else {
+        parent.add_child(field);
+        return;
+    };
+    parent
+        .spawn_child(
+            theme
+                .row()
+                .gap(theme.spacing_xs)
+                .grow()
+                .shrink(1.0)
+                .width(UIValue::Px(0.0))
+                .min_width(UIValue::Px(0.0)),
+        )
+        .add_child((
+            theme.label(letter).small().muted().single_line().fixed(),
+            NumericSlotLabel { row, slot },
+        ))
+        .add_child(field);
 }
 
 fn field_leading(theme: &UITheme) -> f32 {
@@ -173,15 +225,33 @@ fn slot_count(value: &NumericSnapshot) -> usize {
     match value {
         NumericSnapshot::Number(_) => 1,
         NumericSnapshot::Vec3(_) => 3,
+        NumericSnapshot::Color(_) => 4,
     }
 }
 
-fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
+pub(super) fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
     let number = match value {
         NumericSnapshot::Number(number) => (slot == 0).then_some(*number),
         NumericSnapshot::Vec3(components) => components.get(slot).copied(),
+        NumericSnapshot::Color(value) => color::shown(value, slot),
     };
     number.map(|n| format!("{n:.3}")).unwrap_or_default()
+}
+
+pub(super) fn slot_label(value: &NumericSnapshot, slot: usize) -> Option<&'static str> {
+    let letters = match value {
+        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => return None,
+        NumericSnapshot::Color(concerto_color::Color::Hsla(_)) => ["H", "S", "L", "A"],
+        NumericSnapshot::Color(_) => ["R", "G", "B", "A"],
+    };
+    letters.get(slot).copied()
+}
+
+fn accepts(current: &NumericSnapshot, slot: usize, number: f64) -> bool {
+    match current {
+        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => true,
+        NumericSnapshot::Color(value) => color::channel(value, slot, number).is_ok(),
+    }
 }
 
 fn numeric_commit(
@@ -194,10 +264,18 @@ fn numeric_commit(
         return None;
     }
     let number: f64 = text.trim().parse().ok()?;
-    if !number.is_finite() {
+    if !number.is_finite() || !accepts(current, slot, number) {
         return None;
     }
-    Some(NumericEdit { slot, number })
+    let space = match current {
+        NumericSnapshot::Color(value) => Some(ColorSpace::of(value)),
+        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => None,
+    };
+    Some(NumericEdit {
+        slot,
+        number,
+        space,
+    })
 }
 
 fn revert(slot: &NumericSlot, input: &mut UITextInput) {
@@ -286,6 +364,25 @@ pub(crate) fn refresh_numeric_fields(
     }
 }
 
+/// Writes the letter of each labelled field from its row's value.
+pub(crate) fn refresh_numeric_labels(
+    rows: Query<&PropertyRowValue>,
+    labels: Query<(&NumericSlotLabel, &mut UIText)>,
+) {
+    for (label, mut text) in labels.iter() {
+        let Some(letter) = rows
+            .get_entity(label.row)
+            .and_then(|value| value.downcast::<NumericSnapshot>())
+            .and_then(|value| slot_label(value, label.slot))
+        else {
+            continue;
+        };
+        if text.text != letter {
+            text.text = letter.into();
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
 
@@ -319,7 +416,8 @@ mod tests {
             numeric_commit(&value, 1, " -4.5 ", "2.000"),
             Some(NumericEdit {
                 slot: 1,
-                number: -4.5
+                number: -4.5,
+                space: None
             })
         );
     }
@@ -350,7 +448,8 @@ mod tests {
             numeric_commit(&value, 0, "7", "1.000"),
             Some(NumericEdit {
                 slot: 0,
-                number: 7.0
+                number: 7.0,
+                space: None
             })
         );
         assert_eq!(numeric_commit(&value, 1, "7", "1.000"), None);
@@ -364,7 +463,11 @@ mod tests {
         let mut vector = Vec3::ONE;
         let mut rotation = Quat::IDENTITY;
         for number in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
-            let edit = NumericEdit { slot: 0, number };
+            let edit = NumericEdit {
+                slot: 0,
+                number,
+                space: None,
+            };
             assert_eq!(small.edit(&edit), Err(EditError::Rejected));
             assert_eq!(large.edit(&edit), Err(EditError::Rejected));
             assert_eq!(vector.edit(&edit), Err(EditError::Rejected));
@@ -373,6 +476,7 @@ mod tests {
         let overflow = NumericEdit {
             slot: 0,
             number: 1e300,
+            space: None,
         };
         assert_eq!(small.edit(&overflow), Err(EditError::Rejected));
         assert_eq!(vector.edit(&overflow), Err(EditError::Rejected));
@@ -380,6 +484,7 @@ mod tests {
         let bad_slot = NumericEdit {
             slot: 3,
             number: 0.0,
+            space: None,
         };
         assert_eq!(small.edit(&bad_slot), Err(EditError::Rejected));
         assert_eq!(large.edit(&bad_slot), Err(EditError::Rejected));
@@ -393,12 +498,14 @@ mod tests {
             .edit(&NumericEdit {
                 slot: 0,
                 number: 2.5,
+                space: None,
             })
             .unwrap();
         large
             .edit(&NumericEdit {
                 slot: 0,
                 number: -7.25,
+                space: None,
             })
             .unwrap();
         assert_eq!(small.numbers(), NumericSnapshot::Number(2.5));
@@ -415,6 +522,7 @@ mod tests {
         copy.edit(&NumericEdit {
             slot: 0,
             number: degrees[0],
+            space: None,
         })
         .unwrap();
         assert!(original.dot(copy).abs() > 1.0 - 1e-5);
@@ -424,6 +532,7 @@ mod tests {
             .edit(&NumericEdit {
                 slot: 1,
                 number: 90.0,
+                space: None,
             })
             .unwrap();
         assert!(
@@ -436,6 +545,36 @@ mod tests {
             panic!("expected degrees");
         };
         assert!(x.abs() < 1e-3 && (y - 90.0).abs() < 1e-3 && z.abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_color_has_four_slots_and_refuses_out_of_range_text() {
+        let srgb = NumericSnapshot::Color(concerto_color::Color::srgba(0.5, 0.5, 0.5, 1.0));
+        assert_eq!(slot_count(&srgb), 4);
+        assert_eq!(
+            numeric_commit(&srgb, 3, "0.5", "1.000"),
+            Some(NumericEdit {
+                slot: 3,
+                number: 0.5,
+                space: Some(ColorSpace::Srgb),
+            })
+        );
+        assert_eq!(numeric_commit(&srgb, 4, "0.5", ""), None);
+        assert_eq!(numeric_commit(&srgb, 0, "1.2", "0.500"), None);
+        assert!(numeric_commit(&srgb, 0, "1.0000000001", "0.500").is_some());
+        let linear = NumericSnapshot::Color(concerto_color::Color::rgba(0.5, 0.5, 0.5, 1.0));
+        assert_eq!(
+            numeric_commit(&linear, 0, "4", "0.500"),
+            Some(NumericEdit {
+                slot: 0,
+                number: 4.0,
+                space: Some(ColorSpace::Linear),
+            })
+        );
+        assert_eq!(
+            numeric_commit(&NumericSnapshot::Number(1.0), 0, "4", "1.000").map(|edit| edit.space),
+            Some(None)
+        );
     }
 
     #[test]

@@ -119,6 +119,7 @@ impl Default for InspectorRegistry {
         };
         super::numeric::register_defaults(&mut registry);
         super::boolean::register_defaults(&mut registry);
+        super::color::register_defaults(&mut registry);
         registry
     }
 }
@@ -513,6 +514,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 4.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -522,6 +524,7 @@ mod tests {
                 NumericEdit {
                     slot: 1,
                     number: 5.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -548,6 +551,7 @@ mod tests {
             edit: Arc::new(NumericEdit {
                 slot: 0,
                 number: 1.0,
+                space: None,
             }),
         });
         s.send();
@@ -561,6 +565,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 4.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -586,6 +591,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 4.0,
+                    space: None,
                 },
             )
             .unwrap();
@@ -621,7 +627,8 @@ mod tests {
                 &row,
                 NumericEdit {
                     slot: 0,
-                    number: 9.0
+                    number: 9.0,
+                    space: None
                 }
             ),
             Err(EditError::TypeMismatch)
@@ -665,6 +672,7 @@ mod tests {
                 NumericEdit {
                     slot: 0,
                     number: 9.0,
+                    space: None,
                 },
             )
             .unwrap()
@@ -691,6 +699,7 @@ mod tests {
             NumericEdit {
                 slot: 0,
                 number: 9.0,
+                space: None,
             },
         )
         .unwrap();
@@ -709,7 +718,11 @@ mod tests {
     ) -> crate::tools::edits::CommitProperty {
         let commit = PropertyCommit {
             row,
-            edit: Arc::new(NumericEdit { slot: 0, number }),
+            edit: Arc::new(NumericEdit {
+                slot: 0,
+                number,
+                space: None,
+            }),
         };
         checked(registry, None, Tick::default(), commit).unwrap()
     }
@@ -947,6 +960,15 @@ mod tests {
         );
     }
 
+    #[test]
+    fn color_is_edited_by_the_numeric_editor_from_the_default_registry() {
+        let editor = InspectorRegistry::default()
+            .editor(TypeId::of::<concerto_color::Color>(), None)
+            .expect("a color has an editor without a type registry");
+        assert_eq!(editor.editor_type, TypeId::of::<NumericFields>());
+        assert!(!editor.walks_children);
+    }
+
     #[derive(Default)]
     struct Whole;
 
@@ -986,6 +1008,7 @@ mod tests {
             NumericEdit {
                 slot: 0,
                 number: 3.0,
+                space: None,
             },
         )
         .unwrap();
