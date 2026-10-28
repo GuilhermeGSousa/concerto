@@ -323,4 +323,116 @@ mod tests {
         let mut world = World::new();
         world.register_component::<SelfCycle>();
     }
+
+    fn mid(world: &World, entity: crate::entity::Entity) -> Option<u32> {
+        world
+            .get_component_for_entity::<Mid>(entity)
+            .map(|mid| mid.0)
+    }
+
+    #[test]
+    fn spawn_adds_a_default_required_component() {
+        let mut world = World::new();
+
+        let entity = world.spawn(Chain);
+
+        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
+    }
+
+    #[test]
+    fn spawn_adds_transitive_requirements() {
+        let mut world = World::new();
+
+        let entity = world.spawn(Deep);
+
+        assert!(world.get_component_for_entity::<Chain>(entity).is_some());
+        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
+    }
+
+    #[test]
+    fn spawn_uses_the_declared_constructor() {
+        let mut world = World::new();
+
+        let near = world.spawn(Near);
+        let wins = world.spawn(Wins);
+
+        assert_eq!(mid(&world, near), Some(1));
+        assert_eq!(mid(&world, wins), Some(2));
+    }
+
+    #[test]
+    fn bundle_value_wins_in_either_order() {
+        let mut world = World::new();
+
+        let first = world.spawn((Near, Mid(7)));
+        let second = world.spawn((Mid(8), Near));
+
+        assert_eq!(mid(&world, first), Some(7));
+        assert_eq!(mid(&world, second), Some(8));
+    }
+
+    #[test]
+    fn insert_adds_a_default_required_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Leaf);
+
+        world.insert(Near, entity);
+
+        assert_eq!(mid(&world, entity), Some(1));
+        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
+    }
+
+    #[test]
+    fn insert_keeps_an_existing_required_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Mid(7));
+
+        world.insert(Near, entity);
+
+        assert_eq!(mid(&world, entity), Some(7));
+    }
+
+    #[test]
+    fn insert_bundle_value_wins_over_the_default() {
+        let mut world = World::new();
+        let entity = world.spawn(Leaf);
+
+        world.insert((Mid(9), Near), entity);
+
+        assert_eq!(mid(&world, entity), Some(9));
+    }
+
+    #[test]
+    fn removing_the_requirer_leaves_the_required_component() {
+        let mut world = World::new();
+        let entity = world.spawn(Chain);
+
+        world.remove_component::<Chain>(entity);
+
+        assert!(world.get_component_for_entity::<Leaf>(entity).is_some());
+    }
+
+    #[test]
+    fn added_matches_a_required_component() {
+        use crate::query::filter::Added;
+
+        let mut world = World::new();
+        world.tick();
+        world.spawn(Chain);
+
+        let mut state = world.query::<crate::entity::Entity, Added<Leaf>>();
+
+        assert_eq!(state.iter(&mut world).count(), 1);
+    }
+
+    #[test]
+    fn requirer_inserted_before_the_required_value_ends_with_the_stored_value() {
+        let mut world = World::new();
+        let entity = world.spawn(Leaf);
+
+        world.insert(Near, entity);
+        world.insert(Mid(5), entity);
+
+        assert_eq!(mid(&world, entity), Some(5));
+    }
 }

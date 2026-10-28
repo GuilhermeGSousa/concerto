@@ -9,7 +9,7 @@ pub mod required;
 pub mod scene;
 
 pub use concerto_ecs_macros::Component;
-pub use required::RequiredComponents;
+pub use required::{RequiredComponent, RequiredComponents};
 
 use crate::{
     entity::Entity,

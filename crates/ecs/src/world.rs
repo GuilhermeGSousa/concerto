@@ -24,7 +24,7 @@ use crate::{
     common::generate_type_id,
     component::{
         Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext,
-        RequiredComponents,
+        RequiredComponent, RequiredComponents,
     },
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
@@ -121,8 +121,31 @@ impl World {
         self.flush_commands();
     }
 
+    fn missing_required(
+        &self,
+        present: &[ComponentId],
+        added: &[ComponentId],
+    ) -> Vec<RequiredComponent> {
+        let mut missing: Vec<RequiredComponent> = Vec::new();
+        for id in added {
+            let Some(required) = self.required_components.get(id) else {
+                continue;
+            };
+            for entry in required.iter() {
+                if !present.contains(&entry.id()) && !missing.iter().any(|m| m.id() == entry.id()) {
+                    missing.push(entry.clone());
+                }
+            }
+        }
+        missing
+    }
+
     fn spawn_allocated_internal<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
-        let type_ids = T::get_component_ids();
+        T::register_required(self);
+        let bundle_ids = T::get_component_ids();
+        let required = self.missing_required(&bundle_ids, &bundle_ids);
+        let mut type_ids = bundle_ids.clone();
+        type_ids.extend(required.iter().map(RequiredComponent::id));
         let entity_type = generate_type_id(&type_ids);
 
         let change_tick = *self.change_tick();
@@ -131,7 +154,13 @@ impl World {
             .archetype_index
             .entry(entity_type.clone())
             .or_insert_with(|| {
-                let archetype = Archetype::new(T::generate_empty_table(), type_ids, archetype_id);
+                let mut table = T::generate_empty_table();
+                for entry in &required {
+                    if !table.has_column(entry.id()) {
+                        entry.add_column(&mut table);
+                    }
+                }
+                let archetype = Archetype::new(table, type_ids, archetype_id);
                 self.archetypes.push(archetype);
                 self.archetypes.len() - 1
             });
@@ -141,6 +170,9 @@ impl World {
         let row = TableRowIndex::new(archetype.len());
         archetype.add_entity(entity);
         bundle.write_into(&mut PushRow(archetype), change_tick);
+        for entry in &required {
+            entry.write(archetype, row, change_tick);
+        }
 
         let new_location = EntityLocation {
             archetype_index: *archetype_index as u32,
@@ -150,7 +182,9 @@ impl World {
         self.entity_store.set_location(entity, new_location);
 
         let cell = self.as_unsafe_world_cell_mut();
-        cell.trigger_on_add(entity, &T::get_component_ids());
+        let required_ids: Vec<ComponentId> = required.iter().map(RequiredComponent::id).collect();
+        cell.trigger_on_add(entity, &required_ids);
+        cell.trigger_on_add(entity, &bundle_ids);
     }
 
     /// Removes an entity, its components, and its descendants from the world.
@@ -224,6 +258,7 @@ impl World {
     }
 
     fn insert_internal<T: ComponentBundle>(&mut self, components: T, entity: Entity) {
+        T::register_required(self);
         let Some(location) = self.entity_store.find_location(entity) else {
             panic!("Entity should exist in the world");
         };
@@ -245,6 +280,8 @@ impl World {
                 component_ids.push(*id);
             }
         }
+        let required = self.missing_required(&component_ids, &inserted_ids);
+        component_ids.extend(required.iter().map(RequiredComponent::id));
 
         let entity_type = generate_type_id(&component_ids);
 
@@ -256,6 +293,11 @@ impl World {
 
                 let mut table = self.archetypes[source_index].clone_empty_table();
                 table.merge(T::generate_empty_table());
+                for entry in &required {
+                    if !table.has_column(entry.id()) {
+                        entry.add_column(&mut table);
+                    }
+                }
                 self.archetypes.push(Archetype::new(
                     table,
                     component_ids,
@@ -286,6 +328,9 @@ impl World {
             source.move_row_to(location.row, destination);
             let new_row = TableRowIndex::new(destination.len() - 1);
             components.write_into(&mut MergeRow(destination, new_row), change_tick);
+            for entry in &required {
+                entry.write(destination, new_row, change_tick);
+            }
             let new_location = EntityLocation {
                 archetype_index: destination_index as u32,
                 row: new_row,
@@ -293,8 +338,10 @@ impl World {
             self.entity_store.set_location(entity, new_location);
         }
 
-        self.as_unsafe_world_cell_mut()
-            .trigger_on_add(entity, &inserted_ids);
+        let required_ids: Vec<ComponentId> = required.iter().map(RequiredComponent::id).collect();
+        let cell = self.as_unsafe_world_cell_mut();
+        cell.trigger_on_add(entity, &required_ids);
+        cell.trigger_on_add(entity, &inserted_ids);
     }
 
     fn remove_component_internal<T: Component>(&mut self, entity: Entity) {
