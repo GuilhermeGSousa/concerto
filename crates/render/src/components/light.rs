@@ -399,14 +399,10 @@ impl RenderLights {
         self.slots.swap_remove(index);
         self.slots.get(index).copied()
     }
-
-    pub(crate) fn len(&self) -> usize {
-        self.slots.len()
-    }
 }
 
 fn next_light_slot(len: usize) -> Option<RenderLightSlot> {
-    (len < MAX_LIGHTS).then(|| RenderLightSlot(len as u32))
+    (len < MAX_LIGHTS).then_some(RenderLightSlot(len as u32))
 }
 
 pub(crate) fn update_changed_lights(
