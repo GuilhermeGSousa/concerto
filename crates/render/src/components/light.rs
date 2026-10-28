@@ -451,6 +451,15 @@ pub(crate) fn extract_lights(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_app::extractor::extract;
+    use concerto_app::schedule_groups::Extract;
+    use concerto_ecs::{
+        system::{
+            executor::single_thread::SingleThreadedExecutor,
+            schedule::{ScheduleLabel, Schedules},
+        },
+        Query, ResMut, World,
+    };
     use glam::{Mat4, Quat};
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
@@ -465,6 +474,54 @@ mod tests {
         assert!(render_light == render_light.synced_with(&light, &transform));
         let moved = at(Vec3::new(1.0, 2.0, 4.0), Quat::from_rotation_x(0.5));
         assert!(render_light != render_light.synced_with(&light, &moved));
+    }
+
+    #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    struct CountChanged;
+
+    #[derive(Resource, Default)]
+    struct ChangedLights(usize);
+
+    fn count_changed(
+        lights: Query<Entity, Changed<RenderLight>>,
+        mut counted: ResMut<ChangedLights>,
+    ) {
+        counted.0 = lights.iter().count();
+    }
+
+    #[test]
+    fn extracting_a_still_light_does_not_mark_its_render_light_changed() {
+        let mut main = World::new();
+        let mut render = World::new();
+        render.insert_resource(ChangedLights::default());
+        let render_entity = render.spawn(RenderLight::zeroed());
+        let light = main.spawn((
+            Light::point_light(),
+            at(Vec3::ZERO, Quat::IDENTITY),
+            RenderEntity::new(render_entity),
+        ));
+
+        let mut schedules = Schedules::default();
+        schedules.add_system(Extract, extract_lights);
+        schedules.add_system(CountChanged, count_changed);
+        let compiled = schedules.compile::<SingleThreadedExecutor>(&mut render);
+        render.insert_resource(compiled);
+
+        let frame = |main: &mut World, render: &mut World| {
+            render.tick();
+            extract(main, render);
+            render.run_schedule(CountChanged);
+            render.get_resource::<ChangedLights>().unwrap().0
+        };
+
+        assert_eq!(frame(&mut main, &mut render), 1);
+        assert_eq!(frame(&mut main, &mut render), 0);
+
+        *main
+            .get_component_for_entity_mut::<GlobalTransform>(light)
+            .unwrap() = at(Vec3::X, Quat::IDENTITY);
+        assert_eq!(frame(&mut main, &mut render), 1);
+        assert_eq!(frame(&mut main, &mut render), 0);
     }
 
     #[test]
