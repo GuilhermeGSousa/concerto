@@ -9,8 +9,8 @@ use crate::{
         mesh::extract_meshes,
         render_entity::{extract, SyncWithRenderWorld},
         shadows::{
-            resize_shadow_maps, update_shadow_view_proj, RenderLighting, RenderPointShadowMaps,
-            RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
+            assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
+            RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
         },
         skeleton::{extract_skeletons, SkinUniforms},
         world_environment::WorldEnvironment,
@@ -133,7 +133,13 @@ impl Plugin for RenderPlugin {
                 .chain(),
         )
         .add_render_system(Render, clear_cameras)
-        .add_render_system(Render, update_changed_lights.in_set(RenderSet::Lights))
+        .add_render_system(Render, assign_shadow_layers.in_set(RenderSet::Lights))
+        .add_render_system(
+            Render,
+            update_changed_lights
+                .in_set(RenderSet::Lights)
+                .after(assign_shadow_layers),
+        )
         .add_render_system(
             Render,
             (update_shadow_view_proj, resize_shadow_maps).in_set(RenderSet::Shadows),

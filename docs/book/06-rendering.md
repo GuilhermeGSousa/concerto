@@ -61,7 +61,9 @@ cmd.spawn((
 
 `LightType` is `Point`, `Spot { cone_angle }` or `Directional`. A directional
 light shines along its transform's −Z. `shadowmaps_enabled` makes it cast
-shadows.
+shadows; it and `light_type` can be changed at any time and take effect on the
+next frame. Up to 128 spot and directional lights cast shadows at once. Point
+lights do not draw shadows yet.
 
 ## Meshes and materials
 

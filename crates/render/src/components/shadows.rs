@@ -1,12 +1,10 @@
 use std::marker::PhantomData;
 
 use concerto_ecs::{
-    component::Component,
     entity::Entity,
     resource::{Res, ResMut, Resource},
     Query,
 };
-use derive_more::Deref;
 use encase::{ShaderSize, UniformBuffer};
 use glam::{Mat4, Vec3};
 use wgpu::{
@@ -17,7 +15,7 @@ use wgpu::{
 use crate::{
     capabilities::RenderCapabilities,
     components::{
-        light::{push_render_light_to_gpu, LightType, RenderLight, RenderLights},
+        light::{LightType, RenderLight, RenderLights, RenderShadowsEnabled},
         mesh::RenderMeshInstance,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
@@ -45,73 +43,10 @@ const SHADOW_MAP_SIZE: u32 = 1024;
 // respawning, etc). ~5s at 60fps; tune freely.
 const SHADOW_MAP_SHRINK_DELAY_FRAMES: u32 = 300;
 
-// Not `#[derive(Component)]`: needs a custom `on_remove` to free its slot
-// (in `RenderSpotDirectionalShadowMaps` or `RenderPointShadowMaps`, depending
-// on the light's type) and compact that pool, mirroring `RenderLight`
-// (components/light.rs).
-#[derive(Clone, Copy, Deref)]
-pub struct RenderShadowCasterSlot(pub(crate) u32);
-
-impl RenderShadowCasterSlot {
-    pub(crate) fn update_slot(&mut self, new_slot: u32) {
-        self.0 = new_slot;
-    }
-}
-
-impl Component for RenderShadowCasterSlot {
-    fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let Some(&slot) =
-                world.get_component_for_entity::<RenderShadowCasterSlot>(context.entity)
-            else {
-                return;
-            };
-
-            let is_point = world
-                .get_component_for_entity::<RenderLight>(context.entity)
-                .is_some_and(|light| light.light_type == LightType::Point.index());
-
-            let moved_entity = if is_point {
-                let Some(shadow_maps) = world.get_resource_mut::<RenderPointShadowMaps>() else {
-                    return;
-                };
-                shadow_maps.swap_remove_caster(&slot)
-            } else {
-                let Some(shadow_maps) = world.get_resource_mut::<RenderSpotDirectionalShadowMaps>()
-                else {
-                    return;
-                };
-                shadow_maps.swap_remove_caster(&slot)
-            };
-
-            if let Some(render_light) =
-                world.get_component_for_entity_mut::<RenderLight>(context.entity)
-            {
-                render_light.shadow_layer = -1;
-            }
-            push_render_light_to_gpu(&world, context.entity);
-
-            if let Some(moved_entity) = moved_entity {
-                if let Some(moved_shadow_slot) =
-                    world.get_component_for_entity_mut::<RenderShadowCasterSlot>(moved_entity)
-                {
-                    moved_shadow_slot.update_slot(*slot);
-                }
-                if let Some(moved_light) =
-                    world.get_component_for_entity_mut::<RenderLight>(moved_entity)
-                {
-                    moved_light.shadow_layer = *slot as i32;
-                }
-                push_render_light_to_gpu(&world, moved_entity);
-            }
-        })
-    }
-}
-
 // Distinguishes the two shadow-map pool "shapes" that `ShadowMapPool<K>`
 // supports. Spot and directional lights each need a single 2D view per
 // caster; point lights are omnidirectional and need a full cube (6 views)
-// per caster. Everything else — slot allocation, swap-remove compaction,
+// per caster. Everything else — layer assignment and
 // grow/shrink-with-hysteresis — is identical between them, so that's all
 // implemented once against this trait instead of twice.
 pub(crate) trait ShadowMapKind: 'static {
@@ -147,18 +82,6 @@ impl ShadowMapKind for PointShadowKind {
     }
 }
 
-// Slot-allocated shadow-map depth texture — see `ShadowMapKind` for what
-// varies between `RenderSpotDirectionalShadowMaps` and
-// `RenderPointShadowMaps`. Slots are allocated on demand and kept packed via
-// swap-remove, same as `RenderLights::slots` (components/light.rs).
-// `capacity` (the actual GPU texture's per-caster view count) tracks real
-// demand: it grows immediately when `slots` outgrows it, but only shrinks
-// after `SHADOW_MAP_SHRINK_DELAY_FRAMES` consecutive frames of lower usage
-// — see `reconcile_capacity`.
-//
-// Doesn't own a bind group itself — both pools are sampled together via
-// `RenderLighting`'s combined `@group(2)` bind group, which is rebuilt
-// whenever `reconcile_capacity` reports an actual resize.
 pub(crate) struct ShadowMapPool<K: ShadowMapKind> {
     pub(crate) texture: wgpu::Texture,
     // One view per underlying texture layer: a single caster view for
@@ -260,21 +183,6 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
         })
     }
 
-    // `None` once all `MAX_SHADOW_CASTERS` casters are in use.
-    pub(crate) fn push_caster(&mut self, entity: Entity) -> Option<u32> {
-        if self.slots.len() as u32 >= self.max_capacity {
-            return None;
-        }
-        self.slots.push(entity);
-        Some(self.slots.len() as u32 - 1)
-    }
-
-    pub(crate) fn swap_remove_caster(&mut self, slot: &RenderShadowCasterSlot) -> Option<Entity> {
-        let index = **slot as usize;
-        self.slots.swap_remove(index);
-        self.slots.get(index).copied()
-    }
-
     // Grows immediately to fit `slots`; shrinks only after
     // `SHADOW_MAP_SHRINK_DELAY_FRAMES` consecutive frames of lower usage.
     // Returns whether it actually resized this call, so callers can tell
@@ -315,6 +223,73 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
 
 pub(crate) type RenderSpotDirectionalShadowMaps = ShadowMapPool<SpotDirectionalShadowKind>;
 pub(crate) type RenderPointShadowMaps = ShadowMapPool<PointShadowKind>;
+
+fn assign_layers(
+    lights: &[(Entity, u32, bool)],
+    spot_directional_limit: u32,
+    point_limit: u32,
+) -> (Vec<Entity>, Vec<Entity>) {
+    let mut spot_directional = Vec::new();
+    let mut point = Vec::new();
+    for &(entity, light_type, enabled) in lights {
+        if !enabled {
+            continue;
+        }
+        if light_type == LightType::Point.index() {
+            point.push(entity);
+        } else {
+            spot_directional.push(entity);
+        }
+    }
+
+    for (casters, limit) in [
+        (&mut spot_directional, spot_directional_limit),
+        (&mut point, point_limit),
+    ] {
+        casters.sort_by_key(|entity| (entity.index(), entity.generation()));
+        casters.truncate(limit as usize);
+    }
+
+    (spot_directional, point)
+}
+
+fn layer_of(slots: &[Entity], entity: Entity) -> i32 {
+    slots
+        .iter()
+        .position(|&slot| slot == entity)
+        .map_or(-1, |layer| layer as i32)
+}
+
+pub(crate) fn assign_shadow_layers(
+    lights: Query<(Entity, &mut RenderLight, &RenderShadowsEnabled)>,
+    mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
+    mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
+) {
+    let casters: Vec<(Entity, u32, bool)> = lights
+        .iter()
+        .map(|(entity, light, enabled)| (entity, light.light_type, enabled.0))
+        .collect();
+
+    let (spot_directional, point) = assign_layers(
+        &casters,
+        spot_directional_shadow_maps.max_capacity,
+        point_shadow_maps.max_capacity,
+    );
+    spot_directional_shadow_maps.slots = spot_directional;
+    point_shadow_maps.slots = point;
+
+    for (entity, mut light, _) in lights.iter() {
+        let slots = if light.light_type == LightType::Point.index() {
+            &point_shadow_maps.slots
+        } else {
+            &spot_directional_shadow_maps.slots
+        };
+        let layer = layer_of(slots, entity);
+        if light.shadow_layer != layer {
+            light.shadow_layer = layer;
+        }
+    }
+}
 
 // Shared array of shadow view-proj matrices for *spot/directional* casters
 // only, indexed by `RenderLight::shadow_layer` — read at `@group(2)
@@ -455,12 +430,6 @@ impl RenderLighting {
     }
 }
 
-// Reconciles both shadow-map pools' GPU texture capacity to actual demand
-// once per frame, and rebuilds `RenderLighting`'s combined bind group if
-// either pool actually resized. Runs after commands from
-// `RenderLight::on_add`/`RenderShadowCasterSlot::on_remove` have flushed, so
-// if several casters are added or removed in the same tick, this only
-// resizes once for the lot — not once per entity.
 pub(crate) fn resize_shadow_maps(
     mut spot_directional_shadow_maps: ResMut<RenderSpotDirectionalShadowMaps>,
     mut point_shadow_maps: ResMut<RenderPointShadowMaps>,
@@ -651,7 +620,10 @@ pub(crate) fn render_shadow_maps(
 mod tests {
     use super::*;
     use crate::{
-        components::{light::Light, render_entity::SyncWithRenderWorld},
+        components::{
+            light::{Light, RenderLightSlot},
+            render_entity::{MainEntity, RenderEntity, SyncWithRenderWorld},
+        },
         draw_target::DrawTarget,
         gpu::Gpu,
         plugin::RenderPlugin,
@@ -662,6 +634,7 @@ mod tests {
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
         App,
     };
+    use concerto_ecs::World;
     use concerto_foundation::transform::Transform;
     use concerto_window::plugin::{Window, WindowPlugin};
 
@@ -692,23 +665,319 @@ mod tests {
             .spawn((light, Transform::IDENTITY, SyncWithRenderWorld))
     }
 
+    fn render_entity(app: &App, main: Entity) -> Entity {
+        **app
+            .main()
+            .world()
+            .get_component_for_entity::<RenderEntity>(main)
+            .unwrap()
+    }
+
+    fn layer(app: &App, main: Entity) -> i32 {
+        app.render()
+            .world()
+            .get_component_for_entity::<RenderLight>(render_entity(app, main))
+            .unwrap()
+            .shadow_layer
+    }
+
+    fn to_main(app: &App, slots: &[Entity]) -> Vec<Entity> {
+        slots
+            .iter()
+            .map(|&render_entity| {
+                **app
+                    .render()
+                    .world()
+                    .get_component_for_entity::<MainEntity>(render_entity)
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn spot_slots(app: &App) -> Vec<Entity> {
+        let pool = app
+            .render()
+            .get_resource::<RenderSpotDirectionalShadowMaps>()
+            .unwrap();
+        to_main(app, &pool.slots)
+    }
+
+    fn point_slots(app: &App) -> Vec<Entity> {
+        let pool = app
+            .render()
+            .get_resource::<RenderPointShadowMaps>()
+            .unwrap();
+        to_main(app, &pool.slots)
+    }
+
+    fn spot_capacity(app: &App) -> u32 {
+        app.render()
+            .get_resource::<RenderSpotDirectionalShadowMaps>()
+            .unwrap()
+            .capacity
+    }
+
+    fn edit(app: &mut App, main: Entity, change: impl FnOnce(&mut Light)) {
+        change(
+            app.main_mut()
+                .world_mut()
+                .get_component_for_entity_mut::<Light>(main)
+                .unwrap(),
+        );
+    }
+
+    #[test]
+    fn ticking_shadows_after_spawn_gives_the_light_a_layer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = app(&gpu);
+        let light = spawn(&mut app, Light::spot_light(0.6));
+
+        app.update();
+        app.update();
+        assert_eq!(layer(&app, light), -1);
+        assert!(spot_slots(&app).is_empty());
+
+        edit(&mut app, light, |light| light.shadowmaps_enabled = true);
+        app.update();
+        assert_eq!(layer(&app, light), 0);
+        assert_eq!(spot_slots(&app), vec![light]);
+    }
+
+    #[test]
+    fn turning_shadows_off_frees_the_layer_at_once() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = app(&gpu);
+        let a = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        let b = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        let c = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+
+        app.update();
+        assert_eq!([layer(&app, a), layer(&app, b), layer(&app, c)], [0, 1, 2]);
+        assert_eq!(spot_capacity(&app), 3);
+
+        edit(&mut app, a, |light| light.shadowmaps_enabled = false);
+        app.update();
+        assert_eq!([layer(&app, a), layer(&app, b), layer(&app, c)], [-1, 0, 1]);
+        assert_eq!(spot_slots(&app), vec![b, c]);
+        assert_eq!(spot_capacity(&app), 3);
+
+        edit(&mut app, a, |light| light.shadowmaps_enabled = true);
+        app.update();
+        assert_eq!([layer(&app, a), layer(&app, b), layer(&app, c)], [0, 1, 2]);
+    }
+
+    #[test]
+    fn switching_a_shadowed_spot_to_point_moves_it_between_pools() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = app(&gpu);
+        let a = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        let b = spawn(&mut app, Light::directional_light().with_shadows());
+
+        app.update();
+        assert_eq!(spot_slots(&app), vec![a, b]);
+
+        edit(&mut app, a, |light| light.light_type = LightType::Point);
+        app.update();
+        assert_eq!(spot_slots(&app), vec![b]);
+        assert_eq!(layer(&app, b), 0);
+        assert_eq!(point_slots(&app), vec![a]);
+        assert_eq!(layer(&app, a), 0);
+
+        edit(&mut app, a, |light| {
+            light.light_type = LightType::Spot { cone_angle: 0.6 }
+        });
+        app.update();
+        assert_eq!(spot_slots(&app), vec![a, b]);
+        assert_eq!([layer(&app, a), layer(&app, b)], [0, 1]);
+        assert!(point_slots(&app).is_empty());
+    }
+
+    #[test]
+    fn a_despawned_caster_frees_its_layer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = app(&gpu);
+        let a = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        let b = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        let c = spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        app.update();
+
+        app.main_mut().world_mut().despawn(a);
+        app.update();
+        assert_eq!([layer(&app, b), layer(&app, c)], [0, 1]);
+
+        let lights = app.render().get_resource::<RenderLights>().unwrap();
+        assert_eq!(lights.slots.len(), 2);
+        for main in [b, c] {
+            let render_entity = render_entity(&app, main);
+            let slot = **app
+                .render()
+                .world()
+                .get_component_for_entity::<RenderLightSlot>(render_entity)
+                .unwrap();
+            assert_eq!(lights.slots[slot as usize], render_entity);
+        }
+    }
+
+    fn entities() -> (Entity, Entity, Entity) {
+        let mut world = World::new();
+        (world.spawn(()), world.spawn(()), world.spawn(()))
+    }
+
+    fn spot() -> u32 {
+        LightType::Spot { cone_angle: 0.6 }.index()
+    }
+
+    fn directional() -> u32 {
+        LightType::Directional.index()
+    }
+
+    fn point() -> u32 {
+        LightType::Point.index()
+    }
+
+    const LIMIT: u32 = MAX_SHADOW_CASTERS;
+
+    #[test]
+    fn a_light_ticked_on_gets_layer_zero() {
+        let (a, _, _) = entities();
+
+        let (spots, points) = assign_layers(&[(a, spot(), false)], LIMIT, LIMIT);
+        assert!(spots.is_empty());
+        assert!(points.is_empty());
+        assert_eq!(layer_of(&spots, a), -1);
+
+        let (spots, points) = assign_layers(&[(a, spot(), true)], LIMIT, LIMIT);
+        assert_eq!(spots, vec![a]);
+        assert!(points.is_empty());
+        assert_eq!(layer_of(&spots, a), 0);
+    }
+
+    #[test]
+    fn turning_shadows_off_gives_no_layer() {
+        let (a, b, _) = entities();
+
+        let (spots, _) = assign_layers(&[(a, spot(), true), (b, spot(), true)], LIMIT, LIMIT);
+        assert_eq!(spots, vec![a, b]);
+
+        let (spots, _) = assign_layers(&[(a, spot(), false), (b, spot(), true)], LIMIT, LIMIT);
+        assert_eq!(spots, vec![b]);
+        assert_eq!(layer_of(&spots, a), -1);
+        assert_eq!(layer_of(&spots, b), 0);
+    }
+
+    #[test]
+    fn spot_to_point_moves_the_light_between_pools() {
+        let (a, b, _) = entities();
+
+        let (spots, points) =
+            assign_layers(&[(a, spot(), true), (b, directional(), true)], LIMIT, LIMIT);
+        assert_eq!(spots, vec![a, b]);
+        assert!(points.is_empty());
+
+        let (spots, points) = assign_layers(
+            &[(a, point(), true), (b, directional(), true)],
+            LIMIT,
+            LIMIT,
+        );
+        assert_eq!(spots, vec![b]);
+        assert_eq!(points, vec![a]);
+        assert_eq!(layer_of(&spots, b), 0);
+        assert_eq!(layer_of(&points, a), 0);
+
+        let (spots, points) =
+            assign_layers(&[(a, spot(), true), (b, directional(), true)], LIMIT, LIMIT);
+        assert_eq!(spots, vec![a, b]);
+        assert!(points.is_empty());
+    }
+
+    #[test]
+    fn spot_and_directional_share_the_spot_pool() {
+        let (a, _, _) = entities();
+
+        for light_type in [spot(), directional()] {
+            let (spots, points) = assign_layers(&[(a, light_type, true)], LIMIT, LIMIT);
+            assert_eq!(spots, vec![a]);
+            assert!(points.is_empty());
+        }
+    }
+
+    #[test]
+    fn the_point_limit_of_one_keeps_the_first_point_light() {
+        let (a, b, c) = entities();
+
+        let (_, points) = assign_layers(
+            &[(c, point(), true), (a, point(), true), (b, point(), true)],
+            LIMIT,
+            1,
+        );
+        assert_eq!(points, vec![a]);
+        assert_eq!(layer_of(&points, b), -1);
+        assert_eq!(layer_of(&points, c), -1);
+    }
+
+    #[test]
+    fn spot_casters_past_the_limit_get_no_layer() {
+        let (a, b, c) = entities();
+
+        let (spots, _) = assign_layers(
+            &[(a, spot(), true), (b, spot(), true), (c, spot(), true)],
+            2,
+            LIMIT,
+        );
+        assert_eq!(spots, vec![a, b]);
+        assert_eq!(layer_of(&spots, c), -1);
+    }
+
+    #[test]
+    fn the_order_is_stable() {
+        let (a, b, c) = entities();
+        let shuffled = [(c, spot(), true), (a, spot(), true), (b, spot(), true)];
+        let rotated = [(b, spot(), true), (c, spot(), true), (a, spot(), true)];
+
+        assert_eq!(assign_layers(&shuffled, LIMIT, LIMIT).0, vec![a, b, c]);
+        assert_eq!(assign_layers(&rotated, LIMIT, LIMIT).0, vec![a, b, c]);
+        assert_eq!(
+            assign_layers(&shuffled, LIMIT, LIMIT),
+            assign_layers(&shuffled, LIMIT, LIMIT)
+        );
+    }
+
     #[test]
     fn each_layer_keeps_one_view_proj_buffer() {
         let Some(gpu) = gpu() else {
             return;
         };
         let mut app = app(&gpu);
-        spawn(&mut app, Light::spot_light(0.6).with_shadows());
+        let first = spawn(&mut app, Light::spot_light(0.6).with_shadows());
         spawn(&mut app, Light::spot_light(0.6).with_shadows());
 
         for _ in 0..3 {
             app.update();
         }
+        assert_eq!(buffer_count(&app), 2);
 
-        let buffers = app
-            .render()
+        edit(&mut app, first, |light| light.shadowmaps_enabled = false);
+        app.update();
+        assert_eq!(buffer_count(&app), 2);
+
+        edit(&mut app, first, |light| light.shadowmaps_enabled = true);
+        app.update();
+        assert_eq!(buffer_count(&app), 2);
+    }
+
+    fn buffer_count(app: &App) -> usize {
+        app.render()
             .get_resource::<RenderShadowCasterViewProjs>()
-            .unwrap();
-        assert_eq!(buffers.0.len(), 2);
+            .unwrap()
+            .0
+            .len()
     }
 }
