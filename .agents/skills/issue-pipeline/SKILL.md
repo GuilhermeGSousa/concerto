@@ -59,7 +59,10 @@ You are a fresh session started by the hourly scheduled task.
 
 As a cloud driver you subscribe to the PR's activity. The owner's comments,
 reviews, CI results and the merge wake you; a wake may start in a fresh
-container, so before every wait commit and push everything.
+container, so before every wait commit and push everything. On every wake,
+read this skill from `origin/master` with
+`git show origin/master:.agents/skills/issue-pipeline/SKILL.md` and follow that
+version.
 
 ## Local runner
 
@@ -139,19 +142,23 @@ owner next comments or reviews.
 
 ### Which path an issue is on
 
-An issue labelled `agent:spec` takes the path "With `agent:spec`"; every other
-issue takes "Without `agent:spec`".
+An issue labelled `agent:spec` takes the full path, "With `agent:spec`"; every
+other issue takes the short path, "Without `agent:spec`".
 
 - Every driver, local or cloud, reads this skill from `origin/master` at each
   start, wake or tick, and reads the issue's labels then.
-- An issue whose PR already has a questions comment or a `## Spec` from before
-  `agent:spec` existed stays on the full path: add `agent:spec` to it.
+- An issue whose PR already had a questions comment or a `## Spec` when this
+  rule was introduced stays on the full path: add `agent:spec` to it once, the
+  first time you drive it under this text. A later removal by the owner
+  stands.
 - An issue that gains `agent:spec` on the short path, from the owner or from
   you, switches to the full path from its step 1. If the PR was marked ready,
   turn it back into a draft and remove `agent:needs-owner`. Commits already
   pushed stay; the spec accounts for them.
 - An issue that loses `agent:spec` before its spec is approved takes the short
-  path. A draft `## Spec` stays in the description as notes, and
+  path from its step 2: the owner's removal settles whether it needs design, so
+  do not add the label back. A draft `## Spec` stays in the description as
+  notes, and
   `branch-reviewer` reviews against the issue body. After the spec is approved,
   the issue finishes the full path, plan approval included.
 - A label change takes effect at your next wake or tick. A cloud driver does
@@ -164,7 +171,8 @@ issue takes "Without `agent:spec`".
    or more), add `agent:spec` to the issue, comment on the PR why, and continue
    on the other path from its step 1.
 2. Make the change yourself, test-first where code changes, and run the
-   checks. No `implementer` runs: that role works from an approved plan.
+   checks. No `implementer` runs: that role works from an approved plan. If a
+   design decision comes up while you work, escalate as in step 1.
 3. Commit and push.
 4. Review. The issue body stands in for the spec.
 
@@ -189,9 +197,9 @@ issue takes "Without `agent:spec`".
 1. Wait for CI to finish on the head commit.
 2. CI red: fix it, as under After review. Do not review a red head.
 3. CI green: run `branch-reviewer` with the branch and the spec copy, or the
-   issue body without `agent:spec`, telling it whether it runs in a cloud or local
-   session. Fix what it finds, push, and return to step 1. After 2 rounds that
-   still leave findings, post them and wait on the owner.
+   issue body without `agent:spec`, telling it whether it runs in a cloud or
+   local session. Fix what it finds, push, and return to step 1. After 2
+   rounds that still leave findings, post them and wait on the owner.
 4. Post the report as a comment. In the cloud, when the change touches
    rendering, UI or the editor, list the visual checks the owner must make.
    Locally, report what `visual-verification` showed.

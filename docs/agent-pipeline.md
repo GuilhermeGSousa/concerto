@@ -40,6 +40,8 @@ waits on you carries `agent:needs-owner`.
 An issue without `agent:spec` goes through:
 
 1. **Implementation**, test-first where code changes. The issue is the spec.
+   If the agent meets a design decision, it adds `agent:spec` and switches to
+   the path below.
 2. **Review**, as below.
 
 An issue with `agent:spec` goes through:
