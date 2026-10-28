@@ -247,6 +247,14 @@ pub(crate) fn extract_cameras(
             continue;
         }
 
+        let target_size = match &camera.render_target {
+            RenderTarget::Texture(handle) => match texture_assets.get(handle) {
+                Some(texture) => Some(texture.size()),
+                None => continue,
+            },
+            RenderTarget::MainWindow => None,
+        };
+
         let mut buffer = UniformBuffer::new(Vec::new());
         buffer.write(&camera_uniform).unwrap();
         let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -264,21 +272,14 @@ pub(crate) fn extract_cameras(
             label: Some("camera_bind_group"),
         });
 
-        let render_target: Option<RenderTexture> = match &camera.render_target {
-            RenderTarget::Texture(handle) => {
-                let texture = texture_assets
-                    .get(handle)
-                    .expect("Texture asset for camera render target not found in AssetStore");
-                let size = texture.size();
-                Some(create_rtt(
-                    &device,
-                    context.surface_config.format,
-                    size.width.max(1),
-                    size.height.max(1),
-                ))
-            }
-            RenderTarget::MainWindow => None,
-        };
+        let render_target: Option<RenderTexture> = target_size.map(|size| {
+            create_rtt(
+                &device,
+                context.surface_config.format,
+                size.width.max(1),
+                size.height.max(1),
+            )
+        });
 
         let (depth_w, depth_h) = match &render_target {
             Some(rt) => {
