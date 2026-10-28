@@ -31,7 +31,7 @@ use concerto_window::input::MouseButton;
 use crate::fonts::{glyph, icon};
 use crate::hosted::EditTarget;
 use crate::inspector::{
-    EditContext, EditError, ErasedEditor, MENU_FILL, PropertyCommit, PropertyCommits, PropertyRow,
+    EditContext, EditError, ErasedEditor, PropertyCommit, PropertyCommits, PropertyRow,
     PropertyRowValue,
 };
 
@@ -208,7 +208,6 @@ fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
             None => cmd.spawn((
                 theme
                     .popup()
-                    .fill(MENU_FILL)
                     .width(UIValue::Px(MENU_WIDTH))
                     .padding(theme.spacing_xs),
                 menu_panel(on.entity()),

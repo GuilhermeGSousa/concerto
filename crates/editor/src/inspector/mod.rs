@@ -39,7 +39,6 @@ mod sync;
 mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
-pub(crate) use add_component::MENU_FILL;
 use add_component::{
     add_highlighted_component, clear_add_component_search, populate_add_component_menu,
 };

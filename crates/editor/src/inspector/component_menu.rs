@@ -1,8 +1,6 @@
 //! The "⋯" button on a component card and the menu it opens.
 use super::*;
 
-use super::add_component::MENU_FILL;
-
 use crate::fonts::{glyph, icon};
 use concerto_ecs::component::bundle::IntoBundle;
 use concerto_ui::{
@@ -74,7 +72,6 @@ pub(super) fn ensure_component_menu(
     cmd.spawn((
         theme
             .context_menu()
-            .fill(MENU_FILL)
             .width(UIValue::Px(MENU_WIDTH))
             .padding(theme.spacing_xs)
             .anchor_align(UIAnchorAlign::End),

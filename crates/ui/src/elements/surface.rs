@@ -43,9 +43,12 @@ impl UITheme {
         self.surface_of(self.surface_raised, self.radius_md)
     }
 
-    /// A floating menu body: a bordered, clipped column card.
+    /// A floating menu body: an opaque, bordered, clipped column.
     pub fn popup(&self) -> Surface {
-        self.card().bordered().column().clipped()
+        self.surface_of(self.surface_overlay, self.radius_md)
+            .bordered()
+            .column()
+            .clipped()
     }
 
     /// Children left to right, centred, `spacing_sm` apart.

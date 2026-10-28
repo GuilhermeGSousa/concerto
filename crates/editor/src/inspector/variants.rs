@@ -23,7 +23,7 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 use super::{
-    EditContext, EditError, ErasedEditor, MENU_FILL, PropertyCommit, PropertyCommits, PropertyRow,
+    EditContext, EditError, ErasedEditor, PropertyCommit, PropertyCommits, PropertyRow,
     PropertyRowValue,
 };
 use crate::fonts::{glyph, icon};
@@ -252,7 +252,6 @@ fn toggle_variant_menu(row: Entity, variants: &'static [&'static str]) -> Listen
             None => cmd.spawn((
                 theme
                     .dropdown(button)
-                    .fill(MENU_FILL)
                     .width(UIValue::Px(MENU_WIDTH))
                     .padding(theme.spacing_xs)
                     .open(true),
