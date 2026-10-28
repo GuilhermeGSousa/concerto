@@ -4,7 +4,7 @@ use concerto_reflect::Reflect;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusLost},
-    node::UIRect,
+    node::{FlexWrap, UIRect},
     text::UIText,
     text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
     theme::UITheme,
@@ -17,7 +17,7 @@ use crate::inspector::rows::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
-/// One text field per number: one for `Number`, three for `Vec3`, and for `Color` a swatch followed by four labelled fields in the color's own space.
+/// One text field per number: one for `Number`, three for `Vec3`, and for `Color` a swatch beside the label with four labelled fields in the color's own space on a line below.
 #[derive(Default)]
 pub(crate) struct NumericFields;
 
@@ -131,16 +131,16 @@ fn queue_numeric(
 /// One field of a [`NumericFields`] row.
 #[derive(Component)]
 pub(crate) struct NumericSlot {
-    row: Entity,
-    slot: usize,
+    pub(super) row: Entity,
+    pub(super) slot: usize,
     displayed: String,
 }
 
 /// The letter naming one field of a [`NumericFields`] row.
 #[derive(Component)]
 pub(crate) struct NumericSlotLabel {
-    row: Entity,
-    slot: usize,
+    pub(super) row: Entity,
+    pub(super) slot: usize,
 }
 
 impl<T: NumericValue> PropertyEditor<T> for NumericFields {
@@ -157,46 +157,63 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
     }
     fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
         let entity = row.entity();
-        if let NumericSnapshot::Color(color) = value {
-            color::spawn_swatch(row, *color, theme);
-        }
+        let NumericSnapshot::Color(color) = value else {
+            for slot in 0..slot_count(value) {
+                spawn_slot(row, entity, value, slot, theme);
+            }
+            return;
+        };
+        color::spawn_swatch(row, *color, theme);
+        row.insert(super::sync::row_node(theme).with_flex_wrap(FlexWrap::Wrap));
+        let mut line = row.spawn_child(theme.row().width(UIValue::Percent(100.0)));
         for slot in 0..slot_count(value) {
-            let field = (
-                theme
-                    .text_field("")
-                    .small()
-                    .grow()
-                    .shrink(1.0)
-                    .width(UIValue::Px(0.0))
-                    .min_width(UIValue::Px(0.0))
-                    .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
-                    .clipped(),
-                NumericSlot {
-                    row: entity,
-                    slot,
-                    displayed: String::new(),
-                },
-            );
-            let Some(letter) = slot_label(value, slot) else {
-                row.add_child(field);
-                continue;
-            };
-            row.spawn_child(
-                theme
-                    .row()
-                    .gap(theme.spacing_xs)
-                    .grow()
-                    .shrink(1.0)
-                    .width(UIValue::Px(0.0))
-                    .min_width(UIValue::Px(0.0)),
-            )
-            .add_child((
-                theme.label(letter).small().muted().single_line().fixed(),
-                NumericSlotLabel { row: entity, slot },
-            ))
-            .add_child(field);
+            spawn_slot(&mut line, entity, value, slot, theme);
         }
     }
+}
+
+fn spawn_slot(
+    parent: &mut EntityCommandQueue,
+    row: Entity,
+    value: &NumericSnapshot,
+    slot: usize,
+    theme: &UITheme,
+) {
+    let field = (
+        theme
+            .text_field("")
+            .small()
+            .grow()
+            .shrink(1.0)
+            .width(UIValue::Px(0.0))
+            .min_width(UIValue::Px(0.0))
+            .padding(UIRect::axes(field_leading(theme), theme.spacing_xs))
+            .clipped(),
+        NumericSlot {
+            row,
+            slot,
+            displayed: String::new(),
+        },
+    );
+    let Some(letter) = slot_label(value, slot) else {
+        parent.add_child(field);
+        return;
+    };
+    parent
+        .spawn_child(
+            theme
+                .row()
+                .gap(theme.spacing_xs)
+                .grow()
+                .shrink(1.0)
+                .width(UIValue::Px(0.0))
+                .min_width(UIValue::Px(0.0)),
+        )
+        .add_child((
+            theme.label(letter).small().muted().single_line().fixed(),
+            NumericSlotLabel { row, slot },
+        ))
+        .add_child(field);
 }
 
 fn field_leading(theme: &UITheme) -> f32 {

@@ -115,7 +115,7 @@ fn opaque(color: Color) -> Color {
 /// The swatch of a color row, filled with the row's color at full alpha.
 #[derive(Component)]
 pub(crate) struct ColorSwatch {
-    row: Entity,
+    pub(super) row: Entity,
 }
 
 pub(super) fn spawn_swatch(row: &mut EntityCommandQueue, color: Color, theme: &UITheme) {

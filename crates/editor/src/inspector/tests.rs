@@ -1834,6 +1834,7 @@ mod color_rows {
     use concerto_ui::{
         focus::UIFocusLost,
         material::UIMaterial,
+        node::FlexWrap,
         text_input::{UITextInput, UITextInputSubmitted},
     };
 
@@ -1875,20 +1876,44 @@ mod color_rows {
 
     fn color_row(world: &mut World, path: &[&str]) -> ColorRow {
         let row = row(world, path).expect("the row exists");
-        let parts = children(world, row);
-        let stacks = &parts[2..];
+        let mut swatches = world.query::<(Entity, &color::ColorSwatch), ()>();
+        let swatches: Vec<Entity> = swatches
+            .iter(world)
+            .filter(|(_, swatch)| swatch.row == row)
+            .map(|(entity, _)| entity)
+            .collect();
+        assert_eq!(swatches.len(), 1, "a color row has one swatch");
+        let mut labels = world.query::<(Entity, &numeric::NumericSlotLabel), ()>();
+        let mut letters: Vec<(usize, Entity)> = labels
+            .iter(world)
+            .filter(|(_, label)| label.row == row)
+            .map(|(entity, label)| (label.slot, entity))
+            .collect();
+        letters.sort_by_key(|(slot, _)| *slot);
+        let mut slots = world.query::<(Entity, &numeric::NumericSlot), ()>();
+        let mut fields: Vec<(usize, Entity)> = slots
+            .iter(world)
+            .filter(|(_, slot)| slot.row == row)
+            .map(|(entity, slot)| (slot.slot, entity))
+            .collect();
+        fields.sort_by_key(|(slot, _)| *slot);
         ColorRow {
             row,
-            swatch: parts[1],
-            letters: stacks
-                .iter()
-                .map(|stack| children(world, *stack)[0])
-                .collect(),
-            fields: stacks
-                .iter()
-                .map(|stack| children(world, *stack)[1])
-                .collect(),
+            swatch: swatches[0],
+            letters: letters.into_iter().map(|(_, entity)| entity).collect(),
+            fields: fields.into_iter().map(|(_, entity)| entity).collect(),
         }
+    }
+
+    fn parent(world: &World, entity: Entity) -> Entity {
+        world
+            .get_component_for_entity::<ChildOf>(entity)
+            .unwrap()
+            .parent()
+    }
+
+    fn node(world: &World, entity: Entity) -> &UINode {
+        world.get_component_for_entity::<UINode>(entity).unwrap()
     }
 
     fn letters(world: &World, row: &ColorRow) -> Vec<String> {
@@ -1988,6 +2013,35 @@ mod color_rows {
                 .iter(world)
                 .all(|text| text.text != "Unsupported type")
         );
+    }
+
+    #[test]
+    fn the_swatch_shares_the_label_line_and_the_fields_take_a_line_below() {
+        let (mut w, _) = fixture(Light::point_light());
+        let spacing = UITheme::default().spacing_xs;
+        let world = &mut w.f.world;
+        let color = color_row(world, &["color"]);
+
+        let parts = children(world, color.row);
+        assert_eq!(parts.len(), 3, "label, swatch, then the line of fields");
+        assert_eq!(text(world, parts[0]), "Color");
+        assert_eq!(parts[1], color.swatch);
+        let line = parts[2];
+        assert_eq!(node(world, color.row).flex_wrap, FlexWrap::Wrap);
+        assert_eq!(node(world, line).width, UIValue::Percent(100.0));
+        assert_eq!(color.fields.len(), 4);
+        for (letter, field) in color.letters.iter().zip(&color.fields) {
+            let stack = parent(world, *field);
+            assert_eq!(parent(world, *letter), stack);
+            assert_eq!(parent(world, stack), line);
+            assert_eq!(node(world, stack).gap.x, spacing);
+            for shrinking in [stack, *field] {
+                assert_eq!(node(world, shrinking).min_width, UIValue::Px(0.0));
+                assert!(node(world, shrinking).flex_shrink > 0.0);
+            }
+        }
+        let translation = row(world, &["translation"]).expect("the transform row exists");
+        assert_eq!(node(world, translation).flex_wrap, FlexWrap::NoWrap);
     }
 
     #[test]

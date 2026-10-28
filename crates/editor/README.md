@@ -344,9 +344,9 @@ still takes precedence, and its fields are not shown.
 ### Colors
 
 A `Color` field is edited with nothing registered on the editor's `App`. Its
-row is a swatch followed by four labelled fields in the value's own space:
-`R G B A` for a linear or sRGB color, `H S L A` for an HSL one, with hue shown
-and typed in degrees. Editing a field keeps the space; the inspector never
+row shows a swatch beside the label, and below them, across the card, four
+labelled fields in the value's own space: `R G B A` for a linear or sRGB color,
+`H S L A` for an HSL one, with hue shown and typed in degrees. Editing a field keeps the space; the inspector never
 converts a color to another one. Linear red, green and blue accept any value
 from 0 up, so HDR colors can be typed; sRGB channels, saturation, lightness
 and alpha accept 0 to 1. Text outside those ranges is refused and the field
