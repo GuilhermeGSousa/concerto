@@ -2108,7 +2108,10 @@ mod tests {
             document,
             message: STOP_TO_SAVE.into(),
         };
-        assert_eq!(f.written::<SaveFailed>(), [stop_to_save.clone()]);
+        assert_eq!(
+            f.written::<SaveFailed>(),
+            std::slice::from_ref(&stop_to_save)
+        );
 
         f.frames_until_playing(document);
         save(&mut f, document);
