@@ -307,3 +307,124 @@ fn an_unreadable_content_toml_is_an_error() {
     assert!(ContentConfig::load_or_default(&base).is_err());
     std::fs::remove_dir_all(&base).ok();
 }
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_content_directory_keeps_content_addresses() {
+    let base = temp_root("scan-symlink-root");
+    let outside = temp_root("scan-symlink-outside");
+    let id = AssetId::new();
+    write_asset(&outside.join("a.gasset"), id, "Mesh", None);
+    std::os::unix::fs::symlink(&outside, base.join("content")).unwrap();
+
+    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: "content/a.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+    std::fs::remove_dir_all(&outside).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_cycle_lists_each_entry_once_and_terminates() {
+    let base = temp_root("scan-cycle");
+    let id = AssetId::new();
+    write_asset(&base.join("content/a.gasset"), id, "Mesh", None);
+    std::fs::create_dir_all(base.join("content/sub")).unwrap();
+    std::os::unix::fs::symlink(base.join("content"), base.join("content/sub/loop")).unwrap();
+
+    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: "content/a.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_reached_through_two_paths_is_listed_once_under_the_first_name() {
+    let base = temp_root("scan-twice");
+    let id = AssetId::new();
+    write_asset(&base.join("content/real/a.gasset"), id, "Mesh", None);
+    std::os::unix::fs::symlink(base.join("content/real"), base.join("content/alias")).unwrap();
+
+    let entries = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: "content/alias/a.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_directory_outside_the_base_keeps_the_walked_path_as_its_address() {
+    let base = temp_root("scan-outside-base");
+    let other = temp_root("scan-outside-dir");
+    let id = AssetId::new();
+    write_asset(&other.join("a.gasset"), id, "Mesh", None);
+
+    let entries = scan_content(&base, &other, "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: other.join("a.gasset").to_string_lossy().replace('\\', "/"),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+    std::fs::remove_dir_all(&other).ok();
+}
+
+#[cfg(unix)]
+#[test]
+fn a_base_with_parent_after_a_symlink_is_normalised_lexically() {
+    let base = temp_root("scan-lexical");
+    let elsewhere = temp_root("scan-lexical-target");
+    let id = AssetId::new();
+    write_asset(&elsewhere.join("a.gasset"), id, "Mesh", None);
+    std::os::unix::fs::symlink(&elsewhere, base.join("link")).unwrap();
+
+    let entries = scan_content(&base.join("link/.."), &base.join("link"), "gasset").expect("scan");
+
+    assert_eq!(
+        entries,
+        vec![ScannedEntry {
+            id,
+            address: "link/a.gasset".into(),
+            kind: "Mesh".into(),
+            provenance: None,
+        }]
+    );
+
+    std::fs::remove_dir_all(&base).ok();
+    std::fs::remove_dir_all(&elsewhere).ok();
+}
