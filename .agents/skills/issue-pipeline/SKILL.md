@@ -60,9 +60,9 @@ You are a fresh session started by the hourly scheduled task.
 As a cloud driver you subscribe to the PR's activity. The owner's comments,
 reviews, CI results and the merge wake you; a wake may start in a fresh
 container, so before every wait commit and push everything. On every wake,
-read this skill from `origin/master` with
-`git show origin/master:.agents/skills/issue-pipeline/SKILL.md` and follow that
-version.
+run `git fetch origin`, read this skill with
+`git show origin/master:.agents/skills/issue-pipeline/SKILL.md`, and follow
+that version.
 
 ## Local runner
 
@@ -158,8 +158,7 @@ other issue takes the short path, "Without `agent:spec`".
 - An issue that loses `agent:spec` before its spec is approved takes the short
   path from its step 2: the owner's removal settles whether it needs design, so
   do not add the label back. A draft `## Spec` stays in the description as
-  notes, and
-  `branch-reviewer` reviews against the issue body. After the spec is approved,
+  notes, and `branch-reviewer` reviews against the issue body. After the spec is approved,
   the issue finishes the full path, plan approval included.
 - A label change takes effect at your next wake or tick. A cloud driver does
   not wake on one; the owner comments after changing a label.
@@ -172,7 +171,9 @@ other issue takes the short path, "Without `agent:spec`".
    on the other path from its step 1.
 2. Make the change yourself, test-first where code changes, and run the
    checks. No `implementer` runs: that role works from an approved plan. If a
-   design decision comes up while you work, escalate as in step 1.
+   design decision comes up while you work, escalate as in step 1, unless the
+   owner removed `agent:spec`; then ask the question in a PR comment and wait
+   on the owner.
 3. Commit and push.
 4. Review. The issue body stands in for the spec.
 
