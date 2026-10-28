@@ -211,8 +211,15 @@ impl Component for RenderLight {
     fn on_add() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let slot = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
-                lights.push_light(context.entity);
-                RenderLightSlot(lights.len() as u32 - 1)
+                match lights.push_light(context.entity) {
+                    Some(slot) => slot,
+                    None => {
+                        log::warn!(
+                            "light limit of {MAX_LIGHTS} reached; the light is not rendered"
+                        );
+                        return;
+                    }
+                }
             } else {
                 return;
             };
@@ -313,8 +320,10 @@ impl RenderLights {
         queue.write_buffer(&self.buffer, count_offset, &buffer.into_inner());
     }
 
-    pub(crate) fn push_light(&mut self, light: Entity) {
+    pub(crate) fn push_light(&mut self, light: Entity) -> Option<RenderLightSlot> {
+        let slot = next_light_slot(self.slots.len())?;
         self.slots.push(light);
+        Some(slot)
     }
 
     pub(crate) fn swap_remove_light(&mut self, slot: &RenderLightSlot) -> Option<Entity> {
@@ -322,10 +331,10 @@ impl RenderLights {
         self.slots.swap_remove(index);
         self.slots.get(index).copied()
     }
+}
 
-    pub(crate) fn len(&self) -> usize {
-        self.slots.len()
-    }
+fn next_light_slot(len: usize) -> Option<RenderLightSlot> {
+    (len < MAX_LIGHTS).then_some(RenderLightSlot(len as u32))
 }
 
 pub(crate) fn update_changed_lights(
@@ -392,6 +401,16 @@ mod tests {
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
         GlobalTransform::new(Mat4::from_rotation_translation(rotation, translation))
+    }
+
+    #[test]
+    fn no_slot_is_handed_out_past_max_lights() {
+        assert_eq!(next_light_slot(0).map(|slot| *slot), Some(0));
+        assert_eq!(
+            next_light_slot(MAX_LIGHTS - 1).map(|slot| *slot),
+            Some(MAX_LIGHTS as u32 - 1)
+        );
+        assert!(next_light_slot(MAX_LIGHTS).is_none());
     }
 
     #[test]
