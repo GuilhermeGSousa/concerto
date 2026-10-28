@@ -582,7 +582,10 @@ fn property_write(
     if root {
         return Err(root_refused(&format!("Set {name}")));
     }
-    let Some(property) = found.row.filter(|property| property.has_editor()) else {
+    let Some(property) = found
+        .row
+        .filter(|property| !found.names_enum && property.has_editor())
+    else {
         return Ok(Write::Value(SetValue {
             entity,
             component,

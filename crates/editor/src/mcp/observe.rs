@@ -865,7 +865,7 @@ pub(super) fn component_json(
                     path.insert("path".into(), listed.path.segments().join(".").into());
                     path.insert(
                         "adapter".into(),
-                        listed.row.is_some_and(Property::has_editor).into(),
+                        (!listed.names_enum && listed.row.is_some_and(Property::has_editor)).into(),
                     );
                     if listed.names_enum {
                         path.insert("enum".into(), true.into());
@@ -906,7 +906,7 @@ pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec
         listed.push(ListedPath {
             path: row.path.clone(),
             row: Some(row),
-            names_enum: !row.has_editor() && names_enum(value, &row.path),
+            names_enum: names_enum(value, &row.path),
         });
     }
     listed

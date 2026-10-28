@@ -76,10 +76,10 @@ answers `entity` as JSON: its id, its name, and each component the inspector
 lists, or only those `components` names by short name, ignoring case, or full
 path. Each component has its short `name`, its full `type`, its `value`, and
 its `paths`: every property path, dot-separated, with `adapter` saying whether
-an inspector widget edits it. A path that names an enum, one some of those
-paths sit under such as `light_type` above `light_type.cone_angle`, or one with
-no fields in its current variant, is listed too, with `"enum": true` and no
-adapter. A component without reflection data has
+an inspector widget edits it. A path that names an enum or an `Option`, such
+as `light_type` above `light_type.cone_angle`, has `"enum": true` and no
+adapter, even where the inspector shows a variant picker for it, because
+`set_property` writes it whole (below). A component without reflection data has
 `"value": null, "unavailable": true` and no paths. A list longer than 16
 elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
 cut list is not a value to write back. Ids are scene entities written as
