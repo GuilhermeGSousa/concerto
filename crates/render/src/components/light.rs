@@ -196,7 +196,7 @@ pub(crate) fn push_render_light_to_gpu(
     }
 }
 
-#[derive(ShaderType, Clone, Copy)]
+#[derive(ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
     pub(crate) translation: Vec3,
     pub(crate) intensity: f32,
@@ -211,6 +211,20 @@ pub struct RenderLight {
 }
 
 impl RenderLight {
+    fn synced_with(mut self, light: &Light, transform: &GlobalTransform) -> Self {
+        self.direction = -(transform.rotation() * Vec3::Z);
+        self.color = light.color.to_linear();
+        self.translation = transform.translation();
+        self.intensity = light.intensity;
+        self.light_type = light.light_type.index();
+        self.cos_cone_angle = match &light.light_type {
+            LightType::Spot { cone_angle } => f32::cos(*cone_angle),
+            _ => 0.0,
+        };
+        self.range = light.range;
+        self
+    }
+
     pub(crate) fn zeroed() -> Self {
         Self {
             translation: Vec3::ZERO,
@@ -413,36 +427,21 @@ pub(crate) fn extract_lights(
 ) {
     for (light, transform, render_entity) in lights.iter() {
         let render_entity = **render_entity;
-        let local_z = transform.rotation() * Vec3::Z;
-        let cos_cone_angle = match &light.light_type {
-            LightType::Spot { cone_angle } => f32::cos(*cone_angle),
-            _ => 0.0,
-        };
 
         if let Some(mut render_light) = render_lights.get_entity(render_entity) {
-            render_light.direction = -local_z;
-            render_light.color = light.color.to_linear();
-            render_light.translation = transform.translation();
-            render_light.intensity = light.intensity;
-            render_light.light_type = light.light_type.index();
-            render_light.cos_cone_angle = cos_cone_angle;
-            render_light.range = light.range;
+            let synced = render_light.synced_with(light, transform);
+            render_light.set_if_neq(synced);
             continue;
         }
 
+        let render_light = RenderLight::zeroed().synced_with(light, transform);
         let render_light = RenderLight {
-            translation: transform.translation(),
-            color: light.color.to_linear(),
-            intensity: light.intensity,
-            direction: -local_z,
-            light_type: light.light_type.index(),
-            cos_cone_angle,
-            range: light.range,
             shadow_layer: if light.shadowmaps_enabled {
                 SHADOW_LAYER_REQUESTED
             } else {
                 -1
             },
+            ..render_light
         };
 
         cmd.insert(render_light, render_entity);
@@ -456,6 +455,16 @@ mod tests {
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
         GlobalTransform::new(Mat4::from_rotation_translation(rotation, translation))
+    }
+
+    #[test]
+    fn syncing_an_unchanged_light_yields_an_equal_render_light() {
+        let light = Light::spot_light(0.5);
+        let transform = at(Vec3::new(1.0, 2.0, 3.0), Quat::from_rotation_x(0.5));
+        let render_light = RenderLight::zeroed().synced_with(&light, &transform);
+        assert!(render_light == render_light.synced_with(&light, &transform));
+        let moved = at(Vec3::new(1.0, 2.0, 4.0), Quat::from_rotation_x(0.5));
+        assert!(render_light != render_light.synced_with(&light, &moved));
     }
 
     #[test]
