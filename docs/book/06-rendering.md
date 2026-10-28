@@ -49,19 +49,21 @@ use concerto::render::components::light::{Light, LightType};
 cmd.spawn((
     Light {
         color: Color::rgba(1.0, 0.95, 0.9, 1.0),
-        intensity: 100.0,
-        light_type: LightType::Point,
+        intensity: 1.0,
+        light_type: LightType::Directional,
         range: 0.0,
         shadowmaps_enabled: true,
     },
-    Transform::from_translation(Vec3::new(0.0, 8.0, 4.0)),
+    Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::from_rotation_x(-0.8)),
     SyncWithRenderWorld,
 ));
 ```
 
 `LightType` is `Point`, `Spot { cone_angle }` or `Directional`. A directional
 light shines along its transform's −Z. `shadowmaps_enabled` makes it cast
-shadows.
+shadows; it and `light_type` can be changed at any time and take effect on the
+next frame. Up to 128 spot and directional lights cast shadows at once. Point
+lights do not draw shadows yet.
 
 ## Meshes and materials
 

@@ -285,9 +285,8 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
             attenuation *= smoothstep(light.cos_cone_angle, cone_edge_softness, angle_cos);
         }
 
-        // Point-light shadow sampling isn't implemented yet (see
-        // render_shadow_maps in shadows.rs) — only spot/directional casters
-        // get a real shadow factor here.
+        // Point-light shadow maps aren't rendered or sampled yet — only
+        // spot/directional casters get a real shadow factor here.
         var shadow = 1.0;
         if light_type != POINT_LIGHT {
             let geometric_normal = normalize(in.world_normal);
