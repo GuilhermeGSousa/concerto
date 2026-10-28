@@ -5,7 +5,8 @@ use crate::{Hsla, Srgba};
 
 /// Linear RGBA color, suitable for use as a GPU uniform.
 ///
-/// Values are in the range [0.0, 1.0] in linear light. This is the canonical
+/// The red, green and blue channels are linear light, usually in 0.0 to 1.0,
+/// and may exceed 1.0 for HDR. Alpha is in 0.0 to 1.0. This is the canonical
 /// representation every [`Color`](crate::Color) variant converts to.
 #[repr(C)]
 #[derive(
