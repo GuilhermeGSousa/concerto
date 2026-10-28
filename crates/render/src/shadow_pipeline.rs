@@ -11,7 +11,10 @@ use wgpu::{
 use crate::{
     assets::vertex::VertexBufferLayout,
     capabilities::RenderCapabilities,
-    components::shadows::{render_shadow_maps, update_shadow_view_proj},
+    components::shadows::{
+        render_shadow_maps, resize_shadow_maps, update_shadow_view_proj,
+        RenderShadowCasterViewProjs,
+    },
     device::RenderDevice,
     layouts::SkeletonLayout,
     sets::RenderSet,
@@ -38,7 +41,8 @@ impl Plugin for ShadowPipelinePlugin {
             Render,
             render_shadow_maps
                 .in_set(RenderSet::Shadows)
-                .after(update_shadow_view_proj),
+                .after(update_shadow_view_proj)
+                .after(resize_shadow_maps),
         );
     }
 
@@ -133,5 +137,7 @@ impl Plugin for ShadowPipelinePlugin {
             pipeline,
             bind_group_layout: light_view_bind_group_layout,
         });
+        app.render_mut()
+            .insert_resource(RenderShadowCasterViewProjs::default());
     }
 }

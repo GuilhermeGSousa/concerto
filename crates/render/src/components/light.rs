@@ -17,25 +17,9 @@ use encase::{ShaderSize, ShaderType, UniformBuffer};
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};
 
-use crate::{
-    components::{
-        render_entity::RenderEntity,
-        shadows::{
-            RenderPointShadowMaps, RenderShadowCasterSlot, RenderShadowCasterViewProj,
-            RenderSpotDirectionalShadowMaps,
-        },
-    },
-    device::RenderDevice,
-    queue::RenderQueue,
-    shadow_pipeline::ShadowPipeline,
-};
+use crate::{components::render_entity::RenderEntity, queue::RenderQueue};
 
 const MAX_LIGHTS: usize = 128;
-
-/// Sentinel [`RenderLight::shadow_layer`] value set by [`light_added`] to ask
-/// [`RenderLight::on_add`] to allocate a shadow-caster slot. Never observed
-/// outside that same tick — resolved to either a real layer index or `-1`.
-const SHADOW_LAYER_REQUESTED: i32 = -2;
 
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
@@ -180,12 +164,7 @@ impl RenderLightSlot {
 // lifecycle callbacks) rather than a `Query<&mut RenderLight>` — the former
 // bypasses `Mut`'s change-tick marking, so `update_changed_lights`'s
 // `Changed<RenderLight>` filter would never pick the write up otherwise.
-// `pub(crate)`: also called from `RenderShadowCasterSlot::on_remove`
-// (components/shadows.rs).
-pub(crate) fn push_render_light_to_gpu(
-    world: &concerto_ecs::world::RestrictedWorld<'_>,
-    entity: Entity,
-) {
+fn push_render_light_to_gpu(world: &concerto_ecs::world::RestrictedWorld<'_>, entity: Entity) {
     if let (Some(render_light), Some(render_light_slot), Some(lights), Some(queue)) = (
         world.get_component_for_entity::<RenderLight>(entity),
         world.get_component_for_entity::<RenderLightSlot>(entity),
@@ -195,6 +174,9 @@ pub(crate) fn push_render_light_to_gpu(
         lights.write_buffer(queue, render_light, *render_light_slot);
     }
 }
+
+#[derive(Component)]
+pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
 
 #[derive(ShaderType, Clone, Copy)]
 pub struct RenderLight {
@@ -236,56 +218,6 @@ impl Component for RenderLight {
             };
 
             world.insert(slot, context.entity);
-
-            let casts_shadows = world
-                .get_component_for_entity::<RenderLight>(context.entity)
-                .is_some_and(|light| light.shadow_layer == SHADOW_LAYER_REQUESTED);
-
-            if casts_shadows {
-                let is_point = world
-                    .get_component_for_entity::<RenderLight>(context.entity)
-                    .is_some_and(|light| light.light_type == LightType::Point.index());
-
-                let shadow_slot = if is_point {
-                    world
-                        .get_resource_mut::<RenderPointShadowMaps>()
-                        .and_then(|shadow_maps| shadow_maps.push_caster(context.entity))
-                } else {
-                    world
-                        .get_resource_mut::<RenderSpotDirectionalShadowMaps>()
-                        .and_then(|shadow_maps| shadow_maps.push_caster(context.entity))
-                };
-
-                match shadow_slot {
-                    Some(shadow_slot) => {
-                        world.insert(RenderShadowCasterSlot(shadow_slot), context.entity);
-                        if let Some(render_light) =
-                            world.get_component_for_entity_mut::<RenderLight>(context.entity)
-                        {
-                            render_light.shadow_layer = shadow_slot as i32;
-                        }
-
-                        if let (Some(device), Some(shadow_pipeline)) = (
-                            world.get_resource::<RenderDevice>(),
-                            world.get_resource::<ShadowPipeline>(),
-                        ) {
-                            let view_proj = RenderShadowCasterViewProj::new(
-                                device,
-                                &shadow_pipeline.bind_group_layout,
-                            );
-                            world.insert(view_proj, context.entity);
-                        }
-                    }
-                    // Shadow-caster pool exhausted; fall back to unshadowed.
-                    None => {
-                        if let Some(render_light) =
-                            world.get_component_for_entity_mut::<RenderLight>(context.entity)
-                        {
-                            render_light.shadow_layer = -1;
-                        }
-                    }
-                }
-            }
 
             if let (Some(lights), Some(queue)) = (
                 world.get_resource::<RenderLights>(),
@@ -408,7 +340,7 @@ pub(crate) fn update_changed_lights(
 
 pub(crate) fn extract_lights(
     lights: Extracted<Query<(&Light, &GlobalTransform, &RenderEntity)>>,
-    render_lights: Query<&mut RenderLight>,
+    render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
     mut cmd: CommandQueue,
 ) {
     for (light, transform, render_entity) in lights.iter() {
@@ -419,7 +351,9 @@ pub(crate) fn extract_lights(
             _ => 0.0,
         };
 
-        if let Some(mut render_light) = render_lights.get_entity(render_entity) {
+        if let Some((mut render_light, mut shadows_enabled)) =
+            render_lights.get_entity(render_entity)
+        {
             render_light.direction = -local_z;
             render_light.color = light.color.to_linear();
             render_light.translation = transform.translation();
@@ -427,6 +361,9 @@ pub(crate) fn extract_lights(
             render_light.light_type = light.light_type.index();
             render_light.cos_cone_angle = cos_cone_angle;
             render_light.range = light.range;
+            if shadows_enabled.0 != light.shadowmaps_enabled {
+                shadows_enabled.0 = light.shadowmaps_enabled;
+            }
             continue;
         }
 
@@ -438,14 +375,13 @@ pub(crate) fn extract_lights(
             light_type: light.light_type.index(),
             cos_cone_angle,
             range: light.range,
-            shadow_layer: if light.shadowmaps_enabled {
-                SHADOW_LAYER_REQUESTED
-            } else {
-                -1
-            },
+            shadow_layer: -1,
         };
 
-        cmd.insert(render_light, render_entity);
+        cmd.insert(
+            (render_light, RenderShadowsEnabled(light.shadowmaps_enabled)),
+            render_entity,
+        );
     }
 }
 
