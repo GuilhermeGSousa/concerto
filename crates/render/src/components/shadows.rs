@@ -46,9 +46,9 @@ const SHADOW_MAP_SHRINK_DELAY_FRAMES: u32 = 300;
 // Distinguishes the two shadow-map pool "shapes" that `ShadowMapPool<K>`
 // supports. Spot and directional lights each need a single 2D view per
 // caster; point lights are omnidirectional and need a full cube (6 views)
-// per caster. Everything else — layer assignment and
-// grow/shrink-with-hysteresis — is identical between them, so that's all
-// implemented once against this trait instead of twice.
+// per caster. Everything else — grow/shrink-with-hysteresis — is identical
+// between them, so that's implemented once against this trait instead of
+// twice.
 pub(crate) trait ShadowMapKind: 'static {
     const VIEWS_PER_CASTER: u32;
     const LABEL: &'static str;
@@ -549,8 +549,8 @@ fn shadow_view_proj(light: &RenderLight) -> Mat4 {
     }
 }
 
-// Renders one depth-only pass per shadow-casting spot/directional light into
-// its slot in `RenderSpotDirectionalShadowMaps`. Every mesh instance is
+// Renders one depth-only pass per assigned layer of
+// `RenderSpotDirectionalShadowMaps`, into that layer. Every mesh instance is
 // redrawn into every caster with no culling — same as `material_renderpass`,
 // which redraws every instance per camera today.
 pub(crate) fn render_shadow_maps(
