@@ -575,6 +575,14 @@ fn recipe(app: &mut App) {
 }
 ```
 
+An editor chooses the layout of the row that holds its widgets by overriding
+`PropertyEditor::row_node(&self, &Snapshot, &UITheme) -> UINode`. The default
+returns `standard_row_node(theme)`, which an override can start from and adjust,
+as the numeric editor does to wrap a color row's fields. `row_node` runs once,
+when the row is spawned, and a refresh that keeps the row does not call it
+again. An editor whose node depends on the snapshot must return `false` from
+`follows_snapshot`, so a value change rebuilds the row.
+
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
 the widget registry and sends it to the scene, where the tools write the value.
 `PropertyEditor::apply` runs there, and its `EditContext` holds the scene

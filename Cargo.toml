@@ -107,7 +107,6 @@ pollster = "0.4.0"
 env_logger = "0.11.8"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { version = "24.0.1", features = ["webgl"] }
 console_log = "1.0.0"
 console_error_panic_hook = "0.1.7"
 
