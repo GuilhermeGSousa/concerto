@@ -240,7 +240,7 @@ A tool system that panics takes the editor down, as any system does.
 The editor is one `App`, the one the window host drives. It holds the window,
 the UI, the panels, and the documents, and no scene entity. A scene being
 edited lives in an `App` of its own, the edit `App`, which the editor builds,
-steps, and drops. The crate has three parts:
+steps, and drops. The crate has these parts:
 
 - `src/hosted/` builds an `App` from a recipe, holds it on its document as a
   `HostedApp`, steps it, feeds it the viewport's input, and carries messages
@@ -251,6 +251,10 @@ steps, and drops. The crate has three parts:
   scene needs no renderer; the viewport half is added when the recipe has one.
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
   editor's `App`.
+- `src/reload/` builds the game's editor crate again when asked to reload game
+  code. `cargo.rs` finds the crate's profile and target directory, runs cargo
+  and reads its JSON messages; `mod.rs` holds `GameReload`, the signals and
+  what Chatter says.
 
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
@@ -437,6 +441,69 @@ Ctrl+P stops the game whichever side has input, and Shift+F1 works while the
 game has it; the host reads both from the window's own events while the game
 has input. `hosted::input::ReleaseInput(document)` gives input to the editor
 from code.
+
+## Reloading game code
+
+Ctrl+R builds the game's editor crate again: the crate whose `main` called
+`run`, with the game's library it links. Like every editor shortcut, it does
+nothing while the game has the input; Shift+F1 or a click outside the viewport
+gives input back first. For now the build is all a reload does. When it
+succeeds, Chatter reads "Game code built", and the editor keeps running the
+code it started with.
+
+The build is `cargo build --manifest-path <editor crate>/Cargo.toml --package
+<package> --bin <bin> --profile <profile> --target-dir <target dir>
+--message-format=json`, run with the editor's environment and working
+directory:
+
+- the profile is the one the running editor was built with: `dev` for
+  `target/debug/`, otherwise the name of the binary's directory, such as
+  `release` or `profiling`;
+- the target directory is the one the running binary sits in, whatever
+  `--target-dir` the first build used;
+- the cargo is the one that built the editor, or `cargo` from `PATH` when that
+  one is gone.
+
+The build is incremental only when the editor was first built the same way:
+`cargo run -p <game>-editor`, with default features. After `cargo build
+--workspace`, feature unification can differ, and the first reload recompiles
+part of the graph. A reload builds the package's default features, so features
+passed with `--features` when the editor was started are lost.
+
+Ctrl+R is refused, with the reason in Chatter and the warning glyph:
+
+- for an editor built with `--target`: "Reload does not support an editor
+  built with --target";
+- for a binary that does not sit in a cargo target directory, `target/<profile>/`;
+- under `--mcp`;
+- with no project open: "Open a project before reloading".
+
+A second Ctrl+R while a build runs is ignored.
+
+While cargo builds, Chatter reads "Building game code · 14 crates compiled ·
+tech_demo · 8 s". Fresh crates are not counted, and cargo gives no total.
+Until a crate is compiled, it shows cargo's last line on stderr instead, such
+as "Blocking waiting for file lock". Cargo's stderr also goes to the log, at
+`info`. Games keep running through the build.
+
+A failed build leaves the editor as it was. Chatter reads "Build failed: 3
+errors" with the warning glyph, and each error is logged at `error` as rustc
+prints it, with its location. When cargo fails without a compiler error, as
+on a bad manifest, the end of its stderr is the one error.
+
+`CancelReload` stops a build. It sends SIGTERM to cargo's process group, which
+reaches cargo, rustc and build scripts, and SIGKILL after 2 s; Chatter reads
+"Reload cancelled". Quitting during a build stops it the same way. The build
+runs in a process group of its own, so Ctrl+C in the terminal does not reach
+it directly.
+
+Code learns how a reload ended from `ReloadFailed { message }`, written for a
+refused reload, a failed build and a cancelled one. `message` is the Chatter
+text.
+
+Reload works on Linux. macOS takes the same path, enabled but untried. On
+Windows the editor builds, and Ctrl+R says "Reloading game code is not
+supported on this platform yet".
 
 ## Saving
 

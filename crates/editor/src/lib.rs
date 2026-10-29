@@ -14,6 +14,7 @@ pub mod inspector;
 pub mod marks;
 pub mod mcp;
 pub mod project;
+pub mod reload;
 mod run;
 pub mod scene;
 pub mod shell;
@@ -38,6 +39,8 @@ pub struct EditorPlugin {
     pub decorated: bool,
     /// What the `App` of each scene being edited is built from.
     pub recipe: fn(&mut App),
+    /// How the editor builds its own crate again when asked to reload game code.
+    pub reload: reload::ReloadSetup,
 }
 
 impl Plugin for EditorPlugin {
@@ -53,6 +56,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(hierarchy::HierarchyPlugin);
         app.register_plugin(content::ContentPlugin);
         app.register_plugin(import::ImportPlugin);
+        app.register_plugin(reload::ReloadPlugin(self.reload.clone()));
         app.register_plugin(diagnostics::DiagnosticsPlugin);
         app.register_plugin(inspector::InspectorPlugin);
         app.insert_resource(asset_editor::AssetEditorRegistry::default());

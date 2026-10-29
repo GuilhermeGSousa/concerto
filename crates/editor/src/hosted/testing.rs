@@ -56,6 +56,7 @@ use crate::{
     hierarchy::HierarchyState,
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
     project::{Project, ProjectState},
+    reload::{GameReload, ReloadFailed},
     scene::{
         SaveFailed, SceneEditor, SceneEditorState, SceneOpenFailed, SceneOpened, SceneRecipe,
         SceneSaved, SceneState,
@@ -319,6 +320,10 @@ impl SceneFixture {
         world.insert_resource(EventChannel::<SceneOpenFailed>::new());
         world.insert_resource(EventChannel::<SceneSaved>::new());
         world.insert_resource(EventChannel::<SaveFailed>::new());
+        world.insert_resource(EventChannel::<ReloadFailed>::new());
+        world.insert_resource(GameReload::new(Err(
+            "The fixture has no editor crate to build".into(),
+        )));
         insert_play_outcomes(&mut world);
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
@@ -328,6 +333,7 @@ impl SceneFixture {
         crate::scene::install_listeners(&mut world);
         crate::hierarchy::install_listeners(&mut world);
         crate::inspector::install_listeners(&mut world);
+        crate::reload::install_listeners(&mut world);
         concerto_ui::items::install_listeners(&mut world);
         concerto_ui::tree::install_listeners(&mut world);
         let mut panel = build_hierarchy_panel.into_system();
@@ -352,6 +358,7 @@ impl SceneFixture {
             crate::hierarchy::reconcile_content.into_boxed_system(),
             crate::inspector::collect_inspector_data.into_boxed_system(),
             crate::scene::show_play_failures.into_boxed_system(),
+            crate::reload::update_reload_build.into_boxed_system(),
         ]);
         for system in &mut systems {
             system.initialize(&mut world);

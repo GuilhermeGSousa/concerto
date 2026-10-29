@@ -6,7 +6,10 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
 
-use crate::EditorPlugin;
+use crate::{
+    EditorPlugin,
+    reload::{ReloadSetup, ReloadTarget},
+};
 
 const MCP_SIZE: (u32, u32) = (1600, 900);
 
@@ -125,6 +128,7 @@ pub(crate) fn register_editor(
     recipe: fn(&mut App),
     project: PathBuf,
     decorated: bool,
+    reload: ReloadSetup,
 ) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -136,6 +140,7 @@ pub(crate) fn register_editor(
             project: Some(project),
             decorated,
             recipe,
+            reload,
         })
         .register_plugin(concerto_ui::plugin::UIPlugin);
 }
@@ -158,9 +163,16 @@ pub fn run(recipe: fn(&mut App), editor: EditorCrate) {
     };
     match options.mcp {
         Some(size) => concerto_mcp::host::run(crate::mcp::editor(recipe, options.project), size),
-        None => concerto_winit::run(move |app| {
-            register_editor(app, recipe, options.project, options.decorated);
-        }),
+        None => {
+            let reload = ReloadSetup {
+                target: std::env::current_exe()
+                    .map_err(|error| format!("Reload cannot find the running editor: {error}"))
+                    .and_then(|exe| ReloadTarget::locate(&editor, &exe)),
+            };
+            concerto_winit::run(move |app| {
+                register_editor(app, recipe, options.project, options.decorated, reload);
+            })
+        }
     }
 }
 

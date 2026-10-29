@@ -17,6 +17,7 @@ use taffy::FlexDirection;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{MEDIUM, glyph, icon};
 use crate::project::ProjectState;
+use crate::reload::GameReload;
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
 
@@ -145,6 +146,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
 fn refresh_chrome(
     project: Res<ProjectState>,
     scenes: Res<SceneState>,
+    reload: Option<Res<GameReload>>,
     theme: Res<UITheme>,
     labels: Query<(&Label, &mut UIText)>,
 ) {
@@ -153,12 +155,16 @@ fn refresh_chrome(
     } else {
         format!("{} · {}", project.status, scenes.status)
     };
+    let (chatter, flagged) = match reload.as_deref().and_then(GameReload::status) {
+        Some((status, warning)) => (format!("{status} · {chatter}"), warning),
+        None => (chatter, false),
+    };
     for (label, mut component) in labels.iter() {
         let value = match label {
             Label::Chatter => chatter.clone(),
             Label::ChatterGlyph => {
                 let lowered = chatter.to_lowercase();
-                let warning = lowered.contains("fail") || lowered.contains("error");
+                let warning = flagged || lowered.contains("fail") || lowered.contains("error");
                 let color = if warning {
                     theme.accent
                 } else {
@@ -173,5 +179,53 @@ fn refresh_chrome(
         if component.text != value {
             component.text = value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_ecs::{Entity, IntoSystem, System, World, events::event_channel::EventChannel};
+    use concerto_ui::{text::UIText, theme::UITheme};
+
+    use super::{Label, refresh_chrome};
+    use crate::{
+        fonts::glyph,
+        project::ProjectState,
+        reload::{GameReload, ReloadFailed, ReloadGameCode},
+        scene::SceneState,
+    };
+
+    fn text(world: &World, entity: Entity) -> String {
+        world
+            .get_component_for_entity::<UIText>(entity)
+            .unwrap()
+            .text
+            .clone()
+    }
+
+    #[test]
+    fn the_reload_status_comes_first_and_its_warning_shows_the_warning_glyph() {
+        let mut world = World::new();
+        world.insert_resource(ProjectState::default());
+        world.insert_resource(SceneState::default());
+        world.insert_resource(UITheme::default());
+        world.insert_resource(EventChannel::<ReloadFailed>::new());
+        world.insert_resource(GameReload::new(Err(
+            "Reload is not available under --mcp".into()
+        )));
+        crate::reload::install_listeners(&mut world);
+        world.trigger(ReloadGameCode);
+        let chatter = world.spawn((Label::Chatter, UIText::default()));
+        let marker = world.spawn((Label::ChatterGlyph, UIText::default()));
+
+        let mut system = refresh_chrome.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(
+            text(&world, chatter),
+            "Reload is not available under --mcp · Choose a project folder to get started."
+        );
+        assert_eq!(text(&world, marker), glyph::WARNING.to_string());
     }
 }

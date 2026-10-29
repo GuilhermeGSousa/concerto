@@ -25,6 +25,11 @@ define_action!(
 );
 
 define_action!(
+    /// Build the game's editor crate again.
+    ReloadGameCode
+);
+
+define_action!(
     /// Delete the selected entity and its descendants.
     DeleteEntity
 );
@@ -86,6 +91,7 @@ impl Plugin for ActionsPlugin {
 fn install_default_bindings(mut actions: ResMut<ActionMap>) {
     actions.bind_global(Save, Shortcut::ctrl(KeyCode::KeyS));
     actions.bind_global(TogglePlay, Shortcut::ctrl(KeyCode::KeyP));
+    actions.bind_global(ReloadGameCode, Shortcut::ctrl(KeyCode::KeyR));
     actions.bind(DismissPrompt, Shortcut::key(KeyCode::Escape), PromptContext);
     actions.bind(
         ConfirmImport,
@@ -166,6 +172,18 @@ mod tests {
         assert_eq!(
             actions.resolve(Shortcut::ctrl(KeyCode::KeyP)),
             Some(TogglePlay.intern())
+        );
+    }
+
+    #[test]
+    fn ctrl_r_reloads_wherever_the_editor_is() {
+        let mut world = bound();
+        let actions = world.get_resource_mut::<ActionMap>().unwrap();
+        actions.push_context(ViewportContext);
+
+        assert_eq!(
+            actions.resolve(Shortcut::ctrl(KeyCode::KeyR)),
+            Some(ReloadGameCode.intern())
         );
     }
 

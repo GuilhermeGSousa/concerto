@@ -40,6 +40,9 @@ log = "0.4"
 derive_more = { version = "2", features = ["full"] }
 image = "0.25.5"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 base64 = "0.22"
 concerto = { path = "../.." }
