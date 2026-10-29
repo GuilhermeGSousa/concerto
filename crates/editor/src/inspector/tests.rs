@@ -2407,9 +2407,18 @@ fn the_component_stack_leaves_room_for_the_scrollbar() {
         .expect("the panel spawns a component stack")
         .padding;
     assert!(
-        padding.right >= concerto_ui::scroll::SCROLLBAR_WIDTH,
-        "the scrollbar is drawn over the last {} px of the stack, which keeps only {} px clear",
-        concerto_ui::scroll::SCROLLBAR_WIDTH,
+        padding.right >= SCROLLBAR_WIDTH,
+        "the scrollbar is drawn over the last {SCROLLBAR_WIDTH} px of the stack, which keeps only {} px clear",
         padding.right
+    );
+    let name_margin = world
+        .query::<&UINode, With<NameField>>()
+        .iter(&mut world)
+        .next()
+        .expect("the panel spawns a name field")
+        .margin;
+    assert_eq!(
+        name_margin.right, padding.right,
+        "the name field ends where the component cards end"
     );
 }

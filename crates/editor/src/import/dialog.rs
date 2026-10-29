@@ -18,7 +18,7 @@ use concerto_ui::{
     interaction::{Interactable, UIClick, UIDisabled},
     list::UIList,
     node::{UILayout, UINode, UIRect},
-    scroll::UIScrollArea,
+    scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     sets::UiSet,
     text::UIText,
     text_input::{UITextInput, UITextInputChanged},
@@ -42,7 +42,7 @@ const DIALOG_LAYER: i32 = 200;
 const CARD_WIDTH: f32 = 720.0;
 const NAME_WIDTH: f32 = 140.0;
 const STATUS_WIDTH: f32 = 190.0;
-const SCROLLBAR_GUTTER: f32 = 12.0;
+const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 4.0;
 const ROW_HEIGHT: f32 = 30.0;
 const VISIBLE_ROWS: usize = 10;
 

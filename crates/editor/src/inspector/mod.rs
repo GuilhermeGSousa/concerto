@@ -220,7 +220,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                                 .fixed()
                                 .gap(theme.spacing_xs + 2.0)
                                 .padding(UIRect {
-                                    right: SCROLLBAR_WIDTH + theme.spacing_xs,
+                                    right: scrollbar_gutter(theme),
                                     ..UIRect::all(0.0)
                                 }),
                             ComponentStack::default(),
@@ -234,6 +234,10 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 },
             );
         });
+}
+
+fn scrollbar_gutter(theme: &UITheme) -> f32 {
+    SCROLLBAR_WIDTH + theme.spacing_xs
 }
 
 fn sync_inspector_scroll(
