@@ -49,7 +49,7 @@ use wgpu::{Buffer, util::DeviceExt};
 use crate::{
     anchor::{UIAnchoredPanel, UIPanelStack},
     items::UIWidgetPart,
-    material::UIMaterial,
+    material::{UIGradient, UIMaterial},
     resources::UIRenderDiagnostics,
     scroll::UIScrollArea,
     transform::UIValue,
@@ -806,7 +806,7 @@ impl FromWorld for WatchedMaterials {
 #[derive(Component)]
 pub(crate) struct RenderUIMaterial {
     pub(crate) material_bind_group: wgpu::BindGroup,
-    signature: [u32; 19],
+    signature: [u32; 27],
 }
 
 pub(crate) fn compute_ui_nodes(
@@ -1515,6 +1515,21 @@ pub(crate) fn sync_material_params(
         if material.flags[0] != has_texture {
             material.flags[0] = has_texture;
         }
+        let (kind, gradient_params, gradient_color) = match material.gradient {
+            UIGradient::None => (0.0, [0.0; 4], [0.0; 4]),
+            UIGradient::SaturationValue { hue } => (1.0, [hue, 0.0, 0.0, 0.0], [0.0; 4]),
+            UIGradient::Hue => (2.0, [0.0; 4], [0.0; 4]),
+            UIGradient::Alpha { color, cell } => (3.0, [0.0, cell, 0.0, 0.0], color.to_array()),
+        };
+        if material.flags[2] != kind {
+            material.flags[2] = kind;
+        }
+        if material.gradient_params != gradient_params {
+            material.gradient_params = gradient_params;
+        }
+        if material.gradient_color != gradient_color {
+            material.gradient_color = gradient_color;
+        }
     }
 }
 
@@ -1666,9 +1681,11 @@ pub(crate) fn extract_ui_materials(
 fn material_signature(
     material: &UIMaterial,
     render_textures: &RenderAssets<RenderTexture>,
-) -> [u32; 19] {
+) -> [u32; 27] {
     let color = material.color.to_array();
     let border = material.border_color.to_array();
+    let params = material.gradient_params;
+    let gradient = material.gradient_color;
     [
         color[0].to_bits(),
         color[1].to_bits(),
@@ -1688,6 +1705,14 @@ fn material_signature(
         material.flags[1].to_bits(),
         material.flags[2].to_bits(),
         material.flags[3].to_bits(),
+        params[0].to_bits(),
+        params[1].to_bits(),
+        params[2].to_bits(),
+        params[3].to_bits(),
+        gradient[0].to_bits(),
+        gradient[1].to_bits(),
+        gradient[2].to_bits(),
+        gradient[3].to_bits(),
         material.texture.as_ref().map_or(0, |handle| {
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -2056,6 +2081,113 @@ mod tests {
 
         material.flags[1] = std::f32::consts::FRAC_PI_4;
         assert_ne!(before, material_signature(&material, &textures));
+    }
+
+    #[test]
+    fn gradient_params_and_gradient_color_are_part_of_the_material_signature() {
+        use crate::material::UIMaterial;
+        let textures = RenderAssets::<RenderTexture>::new();
+        for slot in 0..4 {
+            let mut material = UIMaterial::flat(concerto_color::Color::WHITE);
+            let before = material_signature(&material, &textures);
+            material.gradient_params[slot] = 0.25;
+            assert_ne!(before, material_signature(&material, &textures));
+
+            let mut material = UIMaterial::flat(concerto_color::Color::WHITE);
+            material.gradient_color[slot] = 0.25;
+            assert_ne!(before, material_signature(&material, &textures));
+        }
+    }
+
+    fn gradient_node(
+        world: &mut concerto_ecs::World,
+        gradient: crate::material::UIGradient,
+    ) -> Entity {
+        use crate::material::UIMaterial;
+        let rect = UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(200.0, 150.0),
+        };
+        world.spawn((
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            UIMaterial {
+                gradient,
+                ..UIMaterial::flat(concerto_color::Color::WHITE)
+            },
+        ))
+    }
+
+    #[test]
+    fn sync_material_params_writes_the_gradient_kind_and_uniforms() {
+        use crate::{material::UIGradient, material::UIMaterial, testing::Watch};
+        use concerto_color::Srgba;
+
+        let mut world = concerto_ecs::World::new();
+        let node = gradient_node(&mut world, UIGradient::None);
+        let mut watch = Watch::new::<UIMaterial, _>(&mut world, sync_material_params);
+        watch.run(&mut world);
+
+        let tint = Srgba::new(0.2, 0.4, 0.6, 0.8);
+        let cases = [
+            (
+                UIGradient::SaturationValue { hue: 120.0 },
+                1.0,
+                [120.0, 0.0, 0.0, 0.0],
+                [0.0; 4],
+            ),
+            (UIGradient::Hue, 2.0, [0.0; 4], [0.0; 4]),
+            (
+                UIGradient::Alpha {
+                    color: tint,
+                    cell: 4.0,
+                },
+                3.0,
+                [0.0, 4.0, 0.0, 0.0],
+                tint.to_array(),
+            ),
+            (UIGradient::None, 0.0, [0.0; 4], [0.0; 4]),
+        ];
+        for (gradient, kind, params, color) in cases {
+            world
+                .get_component_for_entity_mut::<UIMaterial>(node)
+                .unwrap()
+                .gradient = gradient;
+            watch.run(&mut world);
+
+            let material = world.get_component_for_entity::<UIMaterial>(node).unwrap();
+            assert_eq!(material.flags[2], kind, "{gradient:?}");
+            assert_eq!(material.gradient_params, params, "{gradient:?}");
+            assert_eq!(material.gradient_color, color, "{gradient:?}");
+        }
+    }
+
+    #[test]
+    fn a_settled_gradient_material_is_not_written_again() {
+        use crate::{material::UIGradient, material::UIMaterial, testing::Watch};
+        use concerto_color::Srgba;
+
+        let mut world = concerto_ecs::World::new();
+        let node = gradient_node(
+            &mut world,
+            UIGradient::Alpha {
+                color: Srgba::new(1.0, 0.5, 0.0, 1.0),
+                cell: 4.0,
+            },
+        );
+        let mut watch = Watch::new::<UIMaterial, _>(&mut world, sync_material_params);
+        watch.run(&mut world);
+        assert_eq!(watch.run(&mut world), 0);
+
+        world
+            .get_component_for_entity_mut::<UILayout>(node)
+            .unwrap()
+            .paint_order = 0;
+        assert_eq!(watch.run(&mut world), 0);
     }
 
     #[test]
