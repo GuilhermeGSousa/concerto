@@ -81,6 +81,12 @@ fn render_main(world: &mut World) {
 /// Panics during [`build`](Plugin::build) if the `App` has no [`Gpu`] resource.
 pub struct RenderPlugin;
 
+/// Makes meshes and skeletons require `SyncWithRenderWorld`.
+pub fn register_sync_requirements(app: &mut concerto_app::App) {
+    app.register_required_components::<concerto_mesh::MeshComponent, SyncWithRenderWorld>()
+        .register_required_components::<concerto_mesh::SkeletonComponent, SyncWithRenderWorld>();
+}
+
 impl Plugin for RenderPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         assert!(
@@ -108,9 +114,7 @@ impl Plugin for RenderPlugin {
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
             .register_type::<concerto_mesh::SkeletonComponent>();
-        app.register_required_components::<concerto_mesh::MeshComponent, SyncWithRenderWorld>()
-            .register_required_components::<concerto_mesh::SkeletonComponent, SyncWithRenderWorld>(
-            );
+        register_sync_requirements(app);
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);

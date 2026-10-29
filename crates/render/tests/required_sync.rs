@@ -12,7 +12,7 @@ use concerto_render::{
     },
     draw_target::DrawTarget,
     gpu::Gpu,
-    plugin::RenderPlugin,
+    plugin::{register_sync_requirements, RenderPlugin},
     ExclusiveCamera,
 };
 use concerto_window::plugin::{Window, WindowPlugin};
@@ -102,12 +102,15 @@ fn a_scene_camera_under_an_exclusive_camera_is_mirrored_but_not_extracted() {
         .is_some());
 }
 
+fn bare_app() -> App {
+    let mut app = App::new();
+    register_sync_requirements(&mut app);
+    app
+}
+
 #[test]
 fn a_bare_mesh_gets_the_marker() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let mut app = app(&gpu);
+    let mut app = bare_app();
     let mesh = app
         .main_mut()
         .world_mut()
@@ -122,10 +125,7 @@ fn a_bare_mesh_gets_the_marker() {
 
 #[test]
 fn a_bare_skeleton_gets_the_marker() {
-    let Some(gpu) = gpu() else {
-        return;
-    };
-    let mut app = app(&gpu);
+    let mut app = bare_app();
     let skeleton = app
         .main_mut()
         .world_mut()

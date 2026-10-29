@@ -119,9 +119,13 @@ fix the entry in the same commit as the change that made it false.
 ## UI
 
 - **`UILayout` is written only when it differs,** so `Changed<UILayout>` means
-  the rectangle, clip or paint order moved. It is inserted the
-  first time a node is laid out (it requires `SyncWithRenderWorld`), so a node
-  spawned this frame has none until the layout set runs.
+  the rectangle, clip or paint order moved. It is inserted the first time a node is laid out (it requires
+  `SyncWithRenderWorld`), so a node spawned this frame has none until the
+  layout set runs.
+- **`RenderPlugin::build` registers the mesh and skeleton requirement,** so
+  register the plugin before anything spawns meshes, or the registration
+  panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
+  editor-created `Name` + `Transform` entity requires nothing.
 - **A scroll area's offset is applied in the layout walk,** not in Taffy. Every
   child of a node with `UIScrollArea` except its `UIWidgetPart`s is moved up by
   the offset, so a scrolled child's `UINode` says where it sits in unscrolled

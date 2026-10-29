@@ -22,7 +22,8 @@ with no `Default` fails to compile with the ordinary trait-bound error.
 
 Where the attribute cannot be used, override `Component::register_required`
 and call `required.register::<U>(constructor)` for each requirement. The world
-grid does this.
+grid does this because it implements `Component` by hand, so the derive is
+unavailable.
 
 ## Registering a requirement from outside
 
