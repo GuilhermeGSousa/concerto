@@ -144,7 +144,7 @@ impl AssetServer {
         }
     }
 
-    /// Replaces the type registry loads hand to `on_load`; every clone of the server sees it, and loads already running keep the one they started with.
+    /// Replaces the type registry loads hand to `on_load`; every clone sees it, and a load uses the one the server holds when its `on_load` starts.
     pub fn set_type_registry(&self, registry: AppTypeRegistry) {
         *self.data.type_registry.write().unwrap() = registry;
     }

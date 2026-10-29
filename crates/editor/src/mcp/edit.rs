@@ -594,12 +594,13 @@ fn property_write(
         }));
     };
     let row = property.row(entity, component);
+    let current = source.read(entity, component);
     let types = source.types();
     let editor = current_editor(registry, Some(&*types), changed, &row)
         .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
     let mut edit = Err(unknown_path(short, &arguments.path, &[]));
     let mut hook = LiveLeaves::from_parts(&types, server);
-    if let Some(value) = source.read(entity, component) {
+    if let Some(value) = current {
         let _ = with_property(value, &row.path, &mut |field| {
             edit = value_edit(
                 field,

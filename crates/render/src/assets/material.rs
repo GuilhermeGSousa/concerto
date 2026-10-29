@@ -622,6 +622,7 @@ mod tests {
         let normal = server.add(Texture::render_target(1, 1));
         let (base_color_id, normal_id) = (base_color.id(), normal.id());
         let material = server.add(StandardMaterial::new(Some(base_color), Some(normal)));
+        server.cancel_pending();
         handle_asset_load_events(&mut world);
 
         assert!(!server.is_loading());

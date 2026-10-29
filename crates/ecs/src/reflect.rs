@@ -13,9 +13,7 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{Component, Entity, Resource, World, system::input::ComponentMetadata};
 
-/// The world's type registry, shared by every clone.
-///
-/// Take one guard at a time and register no type while holding a read guard.
+/// The world's type registry, shared by every clone; take one guard at a time.
 #[derive(Resource, Clone, Default)]
 pub struct AppTypeRegistry(Arc<RwLock<TypeRegistry>>);
 

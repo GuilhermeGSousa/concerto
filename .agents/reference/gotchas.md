@@ -185,11 +185,13 @@ fix the entry in the same commit as the change that made it false.
   registration's type. Write `(*registration).type_id()`.
 - **An asset's `on_load` reads the world's registry through its context.**
   `AssetLoadContext::type_registry()` returns the registry the server holds
-  when the load starts. `AssetManagerPlugin::build` links the world's registry
-  to the server it inserts. A server inserted some other way has its own empty
-  registry until `set_type_registry` is called, and `on_load` then finds no type
-  data. `set_type_registry` affects loads that start afterwards; a running load
-  keeps the one it started with. A load requested from inside another plugin's
+  when that load's `on_load` starts, since the context is built just before
+  `on_load`, after the file read. `AssetManagerPlugin::build` links the world's
+  registry to the server it inserts. A server inserted some other way has its
+  own empty registry until `set_type_registry` is called, and `on_load` then
+  finds no type data. A `set_type_registry` made while a load is still reading
+  its file is seen by that load; one made after its `on_load` began is not. A
+  load requested from inside another plugin's
   `build` sees a partial registry, since plugins register their types in
   `build`, before `Startup`.
 - **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
