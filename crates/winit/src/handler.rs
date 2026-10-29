@@ -239,6 +239,11 @@ impl ApplicationHandler for Handler {
         }
 
         let attributes = WindowAttributes::default().with_title("Concerto");
+        #[cfg(windows)]
+        let attributes = attributes.with_platform_attributes(Box::new(
+            winit::platform::windows::WindowAttributesWindows::default()
+                .with_use_system_scroll_speed(false),
+        ));
         #[cfg(target_arch = "wasm32")]
         let attributes = attributes.with_platform_attributes(Box::new(
             winit::platform::web::WindowAttributesWeb::default().with_append(true),
