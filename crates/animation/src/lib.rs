@@ -2,6 +2,7 @@ pub mod blackboard;
 pub mod clip;
 pub mod evaluation;
 pub mod graph;
+pub mod inertialization;
 pub mod node;
 pub mod player;
 pub mod plugin;
