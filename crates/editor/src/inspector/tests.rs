@@ -557,6 +557,13 @@ fn labels_turn_snake_case_into_words() {
 }
 
 #[test]
+fn labels_drop_stray_underscores() {
+    assert_eq!(label_for(&PropertyPath::new(["_marker"])), "Marker");
+    assert_eq!(label_for(&PropertyPath::new(["value_"])), "Value");
+    assert_eq!(label_for(&PropertyPath::new(["near__far"])), "Near far");
+}
+
+#[test]
 fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
     assert_eq!(label_for(&PropertyPath::new(["ambient", "0"])), "Ambient");
     assert_eq!(label_for(&PropertyPath::new(["pair", "0", "1"])), "Pair");

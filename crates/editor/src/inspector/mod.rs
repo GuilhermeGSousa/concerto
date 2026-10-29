@@ -84,7 +84,10 @@ fn label_for(path: &PropertyPath) -> String {
         .find(|segment| segment.parse::<usize>().is_err())
         .copied()
         .unwrap_or(path.name())
-        .replace('_', " ");
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut chars = name.chars();
     chars
         .next()
