@@ -20,7 +20,7 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::{Mesh, MeshComponent};
 use concerto_reflect::TypeRegistry;
-use concerto_ui::node::UINode;
+use concerto_ui::{material::UIMaterial, node::UINode};
 use std::any::TypeId;
 
 struct Picking {
@@ -151,11 +151,17 @@ impl Picking {
             .expect("the picker row has a label")
     }
     fn menu_open(&mut self) -> bool {
+        let overlay = UITheme::default().surface_overlay.to_linear();
         self.f
             .world
-            .query::<(&AssetPickerMenu, &UIAnchoredPanel), ()>()
+            .query::<(&AssetPickerMenu, &UIAnchoredPanel, &UIMaterial), ()>()
             .iter(&mut self.f.world)
-            .any(|(_, panel)| panel.open)
+            .any(|(_, panel, material)| {
+                if panel.open {
+                    assert_eq!(material.color, overlay);
+                }
+                panel.open
+            })
     }
     fn items(&mut self) -> Vec<(Entity, String)> {
         let menus: Vec<Entity> = self

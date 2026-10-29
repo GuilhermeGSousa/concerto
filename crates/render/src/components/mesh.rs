@@ -65,10 +65,7 @@ pub(crate) fn extract_meshes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        components::render_entity::SyncWithRenderWorld, draw_target::DrawTarget, gpu::Gpu,
-        plugin::RenderPlugin,
-    };
+    use crate::{draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin};
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
@@ -96,7 +93,6 @@ mod tests {
                 handle: AssetHandle::weak(mesh),
             },
             Transform::IDENTITY,
-            SyncWithRenderWorld,
         ));
         app.finish_plugin_build();
         (app, entity)
@@ -113,7 +109,7 @@ mod tests {
 
     #[test]
     fn swapping_a_mesh_handle_changes_the_mesh_its_render_entity_draws() {
-        let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+        let Some(gpu) = Gpu::request_for_test() else {
             return;
         };
         let (first, second) = (AssetId::new(), AssetId::new());

@@ -22,7 +22,10 @@ use crate::world_id::WorldId;
 use crate::{
     archetype::Archetype,
     common::generate_type_id,
-    component::{Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext},
+    component::{
+        Component, ComponentId, ComponentLifecycleContext, RequiredComponent, RequiredComponents,
+        components::Components,
+    },
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
     system::input::{SystemInput, ValidationError},
@@ -58,7 +61,7 @@ pub struct World {
     resources: TypeIdMap<ResourceData>,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
-    component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
+    components: Components,
     listeners: Listeners,
     change_tick: AtomicU32,
     last_change_tick: Tick,
@@ -75,7 +78,7 @@ impl Default for World {
             resources: TypeIdMap::default(),
             entity_store: EntityStore::default(),
             archetype_index: HashMap::new(),
-            component_lifetimes: TypeIdMap::default(),
+            components: Components::default(),
             listeners: Listeners::default(),
             change_tick: AtomicU32::new(1),
             last_change_tick: Tick::new(0),
@@ -117,7 +120,11 @@ impl World {
     }
 
     fn spawn_allocated_internal<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
-        let type_ids = T::get_component_ids();
+        T::register_required(self);
+        let bundle_ids = T::get_component_ids();
+        let required = self.components.missing_required(&bundle_ids, &bundle_ids);
+        let mut type_ids = bundle_ids.clone();
+        type_ids.extend(required.iter().map(RequiredComponent::id));
         let entity_type = generate_type_id(&type_ids);
 
         let change_tick = *self.change_tick();
@@ -126,7 +133,13 @@ impl World {
             .archetype_index
             .entry(entity_type.clone())
             .or_insert_with(|| {
-                let archetype = Archetype::new(T::generate_empty_table(), type_ids, archetype_id);
+                let mut table = T::generate_empty_table();
+                for entry in &required {
+                    if !table.has_column(entry.id()) {
+                        entry.add_column(&mut table);
+                    }
+                }
+                let archetype = Archetype::new(table, type_ids, archetype_id);
                 self.archetypes.push(archetype);
                 self.archetypes.len() - 1
             });
@@ -136,6 +149,9 @@ impl World {
         let row = TableRowIndex::new(archetype.len());
         archetype.add_entity(entity);
         bundle.write_into(&mut PushRow(archetype), change_tick);
+        for entry in &required {
+            entry.write(archetype, row, change_tick);
+        }
 
         let new_location = EntityLocation {
             archetype_index: *archetype_index as u32,
@@ -144,8 +160,9 @@ impl World {
 
         self.entity_store.set_location(entity, new_location);
 
+        let order = self.components.add_order(&bundle_ids, &required);
         let cell = self.as_unsafe_world_cell_mut();
-        cell.trigger_on_add(entity, &T::get_component_ids());
+        cell.trigger_on_add(entity, &order);
     }
 
     /// Removes an entity, its components, and its descendants from the world.
@@ -219,6 +236,7 @@ impl World {
     }
 
     fn insert_internal<T: ComponentBundle>(&mut self, components: T, entity: Entity) {
+        T::register_required(self);
         let Some(location) = self.entity_store.find_location(entity) else {
             panic!("Entity should exist in the world");
         };
@@ -240,6 +258,10 @@ impl World {
                 component_ids.push(*id);
             }
         }
+        let required = self
+            .components
+            .missing_required(&component_ids, &inserted_ids);
+        component_ids.extend(required.iter().map(RequiredComponent::id));
 
         let entity_type = generate_type_id(&component_ids);
 
@@ -251,6 +273,11 @@ impl World {
 
                 let mut table = self.archetypes[source_index].clone_empty_table();
                 table.merge(T::generate_empty_table());
+                for entry in &required {
+                    if !table.has_column(entry.id()) {
+                        entry.add_column(&mut table);
+                    }
+                }
                 self.archetypes.push(Archetype::new(
                     table,
                     component_ids,
@@ -281,6 +308,9 @@ impl World {
             source.move_row_to(location.row, destination);
             let new_row = TableRowIndex::new(destination.len() - 1);
             components.write_into(&mut MergeRow(destination, new_row), change_tick);
+            for entry in &required {
+                entry.write(destination, new_row, change_tick);
+            }
             let new_location = EntityLocation {
                 archetype_index: destination_index as u32,
                 row: new_row,
@@ -288,8 +318,9 @@ impl World {
             self.entity_store.set_location(entity, new_location);
         }
 
-        self.as_unsafe_world_cell_mut()
-            .trigger_on_add(entity, &inserted_ids);
+        let order = self.components.add_order(&inserted_ids, &required);
+        let cell = self.as_unsafe_world_cell_mut();
+        cell.trigger_on_add(entity, &order);
     }
 
     fn remove_component_internal<T: Component>(&mut self, entity: Entity) {
@@ -616,9 +647,7 @@ impl World {
     }
 
     pub(crate) fn register_component_lifetimes<T: Component>(&mut self) {
-        self.component_lifetimes
-            .entry(ComponentId::of::<T>())
-            .or_insert(ComponentLifecycleCallbacks::from_component::<T>());
+        self.components.register_lifecycle::<T>();
     }
 
     /// Borrows one entity for hierarchy edits.
@@ -626,8 +655,55 @@ impl World {
         EntityWorldMut::new(self, entity)
     }
 
+    /// Registers `T`'s lifecycle callbacks and its flattened required components.
+    ///
+    /// # Panics
+    /// Panics if `T`'s requirements form a cycle.
     pub fn register_component<T: Component>(&mut self) {
         self.register_component_lifetimes::<T>();
+        self.register_required_table::<T>();
+    }
+
+    /// The flattened required components of `id`, deepest first, or `None` if it is not registered.
+    pub fn required_components(&self, id: ComponentId) -> Option<&RequiredComponents> {
+        self.components.required(id)
+    }
+
+    pub(crate) fn register_required_table<T: Component>(&mut self) {
+        self.components.register_requirements::<T>();
+    }
+
+    /// Makes `T` require `U`, built with `U::default()`, after `T` was defined.
+    ///
+    /// # Panics
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement forms a cycle.
+    pub fn register_required_components<T: Component, U: Component + Default>(&mut self) {
+        self.register_required_components_with::<T, U>(U::default);
+    }
+
+    /// Makes `T` require `U`, built by `constructor`, after `T` was defined.
+    ///
+    /// A requirement `T` declares itself wins over this one; a later call wins over an earlier one.
+    ///
+    /// # Panics
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement forms a cycle.
+    pub fn register_required_components_with<T: Component, U: Component>(
+        &mut self,
+        constructor: fn() -> U,
+    ) {
+        let affected = self.components.prepare_external::<T, U>();
+        if let Some(archetype) = self.archetypes.iter().find(|archetype| {
+            !archetype.is_empty() && affected.iter().any(|id| archetype.contains(*id))
+        }) {
+            panic!(
+                "cannot make {} require {} while an entity holds {} or a component requiring it (archetype of {} entities)",
+                T::name(),
+                U::name(),
+                T::name(),
+                archetype.len()
+            );
+        }
+        self.components.set_external::<T, U>(constructor);
     }
 
     /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
@@ -945,7 +1021,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_add_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_add, lifetimes.signal_add);
@@ -965,7 +1041,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_replace, lifetimes.signal_replace);
@@ -979,7 +1055,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_remove_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_remove, lifetimes.signal_remove);
@@ -1002,7 +1078,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_despawn, lifetimes.signal_despawn);

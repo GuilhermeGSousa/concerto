@@ -20,6 +20,7 @@ use concerto_mcp::{
     host::{HostClosing, HostPicture, run_with},
     receive_calls,
 };
+use concerto_render::gpu::Gpu;
 use concerto_window::plugin::{Window, WindowCommand};
 use rmcp::{
     RoleClient, ServiceExt,
@@ -178,6 +179,7 @@ where
     let _turn = ONE_APP_AT_A_TIME
         .lock()
         .unwrap_or_else(PoisonError::into_inner);
+    Gpu::request_for_test()?;
     let (client_io, server_io) = tokio::io::duplex(64 * 1024);
     let client = std::thread::spawn(move || {
         tokio::runtime::Builder::new_current_thread()
@@ -190,16 +192,12 @@ where
             })
     });
     let started = Instant::now();
-    if run_with(
+    run_with(
         server_io,
         recipe(count.clone(), observed.clone(), closes),
         (320, 180),
     )
-    .is_err()
-    {
-        eprintln!("skipped: no GPU adapter");
-        return None;
-    }
+    .expect("an adapter was found");
     let took = started.elapsed();
     let result = client
         .join()

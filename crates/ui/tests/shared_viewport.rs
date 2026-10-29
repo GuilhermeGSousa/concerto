@@ -6,7 +6,7 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_foundation::transform::Transform;
 use concerto_render::{
-    components::{camera::Camera, render_entity::SyncWithRenderWorld},
+    components::camera::Camera,
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
@@ -20,7 +20,7 @@ use concerto_window::plugin::{Window, WindowPlugin};
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn first_pixel(gpu: &Gpu, texture: &wgpu::Texture) -> [u8; 4] {
@@ -77,7 +77,6 @@ fn source(gpu: &Gpu, picture: SharedTexture) -> App {
             ..Default::default()
         },
         Transform::IDENTITY,
-        SyncWithRenderWorld,
     ));
     app.finish_plugin_build();
     app

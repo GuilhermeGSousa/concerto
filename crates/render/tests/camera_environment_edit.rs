@@ -16,7 +16,6 @@ use concerto_render::{
     components::{
         camera::{Camera, RenderCamera},
         camera_environment::{CameraEnvironment, Fog},
-        render_entity::SyncWithRenderWorld,
     },
     draw_target::DrawTarget,
     gpu::Gpu,
@@ -25,7 +24,7 @@ use concerto_render::{
 use concerto_window::plugin::{Window, WindowPlugin};
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn camera_app(gpu: &Gpu) -> (App, Entity) {
@@ -44,7 +43,6 @@ fn camera_app(gpu: &Gpu) -> (App, Entity) {
         Camera::default(),
         CameraEnvironment::default(),
         Transform::IDENTITY,
-        SyncWithRenderWorld,
     ));
     app.finish_plugin_build();
     (app, camera)

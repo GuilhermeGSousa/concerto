@@ -12,7 +12,7 @@ use concerto_render::{
     assets::texture::Texture,
     components::{
         camera::{Camera, RenderCamera, RenderTarget},
-        render_entity::{RenderEntity, SyncWithRenderWorld},
+        render_entity::RenderEntity,
     },
     draw_target::DrawTarget,
     gpu::Gpu,
@@ -22,7 +22,7 @@ use concerto_render::{
 use concerto_window::plugin::{Window, WindowPlugin};
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn app(gpu: &Gpu) -> App {
@@ -47,7 +47,6 @@ fn spawn_camera(app: &mut App, render_target: RenderTarget) -> Entity {
             ..Camera::default()
         },
         Transform::IDENTITY,
-        SyncWithRenderWorld,
     ))
 }
 

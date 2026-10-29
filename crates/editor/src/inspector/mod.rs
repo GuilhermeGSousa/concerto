@@ -39,7 +39,6 @@ mod sync;
 mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
-pub(crate) use add_component::MENU_FILL;
 use add_component::{
     add_highlighted_component, clear_add_component_search, populate_add_component_menu,
 };
@@ -84,7 +83,11 @@ fn label_for(path: &PropertyPath) -> String {
         .rev()
         .find(|segment| segment.parse::<usize>().is_err())
         .copied()
-        .unwrap_or(path.name());
+        .unwrap_or(path.name())
+        .split('_')
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut chars = name.chars();
     chars
         .next()

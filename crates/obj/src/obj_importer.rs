@@ -16,7 +16,6 @@ use concerto_mesh::vertex::Vertex;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
-use concerto_render::components::render_entity::SyncWithRenderWorld;
 use concerto_scene::scene::{Scene, SceneNode};
 
 pub struct ObjImporter;
@@ -77,7 +76,6 @@ impl Importer for ObjImporter {
                 referenced_assets.push(material_id);
             }
 
-            push_node_component(&mut node, &SyncWithRenderWorld)?;
             nodes.push(node);
         }
 

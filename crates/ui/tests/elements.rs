@@ -335,7 +335,7 @@ fn a_popup_is_a_bordered_clipped_column_card() {
     let t = theme();
     let spawned = spawn(t.popup());
     let material = material_of(&spawned);
-    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.color, t.surface_overlay.to_linear());
     assert_eq!(material.corner_radius, t.radius_md);
     assert_eq!(material.border_color, t.border.to_linear());
     assert_eq!(material.border_width, 1.0);
@@ -593,7 +593,7 @@ fn a_dropdown_hangs_below_its_trigger_and_toggles_with_it() {
     let material = world
         .get_component_for_entity::<UIMaterial>(entity)
         .unwrap();
-    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.color, t.surface_overlay.to_linear());
     assert_eq!(material.border_width, 1.0);
 }
 
@@ -760,12 +760,29 @@ fn a_chip_pads_two_by_seven() {
 }
 
 #[test]
-fn a_context_menu_is_a_bordered_raised_card() {
+fn a_context_menu_is_a_bordered_opaque_card() {
     let t = theme();
     let spawned = spawn(t.context_menu());
     let material = material_of(&spawned);
-    assert_eq!(material.color, t.surface_raised.to_linear());
+    assert_eq!(material.color, t.surface_overlay.to_linear());
     assert_eq!(material.border_width, 1.0);
+}
+
+#[test]
+fn the_popup_fill_is_opaque() {
+    let t = UITheme::nocturne();
+    assert_eq!(t.surface_overlay.to_linear().a, 1.0);
+    let mut world = World::default();
+    let trigger = world.spawn(Marker);
+    let popups = [
+        world.spawn(t.popup()),
+        world.spawn(t.dropdown(trigger)),
+        world.spawn(t.context_menu()),
+    ];
+    for popup in popups {
+        let material = world.get_component_for_entity::<UIMaterial>(popup).unwrap();
+        assert_eq!(material.color.a, 1.0);
+    }
 }
 
 #[test]

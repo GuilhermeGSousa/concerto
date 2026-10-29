@@ -112,7 +112,11 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
             wgpu::TextureViewDimension::D2Array | wgpu::TextureViewDimension::CubeArray
         );
 
-        let max_capacity = if is_array { MAX_SHADOW_CASTERS } else { 1 };
+        let max_capacity = pool_max_capacity(
+            is_array,
+            K::VIEWS_PER_CASTER,
+            device.limits().max_texture_array_layers,
+        );
         let min_capacity = if is_array && !capabilities.single_layer_texture_arrays {
             2
         } else {
@@ -218,6 +222,14 @@ impl<K: ShadowMapKind> ShadowMapPool<K> {
         self.views = views;
         self.capacity = capacity;
         self.frames_below_capacity = 0;
+    }
+}
+
+fn pool_max_capacity(is_array: bool, views_per_caster: u32, max_texture_array_layers: u32) -> u32 {
+    if is_array {
+        MAX_SHADOW_CASTERS.min(max_texture_array_layers / views_per_caster)
+    } else {
+        1
     }
 }
 
@@ -622,7 +634,7 @@ mod tests {
     use crate::{
         components::{
             light::{Light, RenderLightSlot},
-            render_entity::{MainEntity, RenderEntity, SyncWithRenderWorld},
+            render_entity::{MainEntity, RenderEntity},
         },
         draw_target::DrawTarget,
         gpu::Gpu,
@@ -638,8 +650,16 @@ mod tests {
     use concerto_foundation::transform::Transform;
     use concerto_window::plugin::{Window, WindowPlugin};
 
+    #[test]
+    fn pool_capacity_is_capped_by_texture_array_layers() {
+        assert_eq!(pool_max_capacity(true, 6, 256), 42);
+        assert_eq!(pool_max_capacity(true, 1, 256), 128);
+        assert_eq!(pool_max_capacity(true, 6, 8192), MAX_SHADOW_CASTERS);
+        assert_eq!(pool_max_capacity(false, 6, 256), 1);
+    }
+
     fn gpu() -> Option<Gpu> {
-        pollster::block_on(Gpu::request(&Gpu::instance(), None))
+        Gpu::request_for_test()
     }
 
     fn app(gpu: &Gpu) -> App {
@@ -662,7 +682,7 @@ mod tests {
     fn spawn(app: &mut App, light: Light) -> Entity {
         app.main_mut()
             .world_mut()
-            .spawn((light, Transform::IDENTITY, SyncWithRenderWorld))
+            .spawn((light, Transform::IDENTITY))
     }
 
     fn render_entity(app: &App, main: Entity) -> Entity {

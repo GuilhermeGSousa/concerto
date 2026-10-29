@@ -544,6 +544,26 @@ fn labels_capitalise_the_field_name() {
 }
 
 #[test]
+fn labels_turn_snake_case_into_words() {
+    assert_eq!(label_for(&PropertyPath::new(["light_type"])), "Light type");
+    assert_eq!(
+        label_for(&PropertyPath::new(["shadowmaps_enabled"])),
+        "Shadowmaps enabled"
+    );
+    assert_eq!(
+        label_for(&PropertyPath::new(["light_type", "cone_angle"])),
+        "Cone angle"
+    );
+}
+
+#[test]
+fn labels_drop_stray_underscores() {
+    assert_eq!(label_for(&PropertyPath::new(["_marker"])), "Marker");
+    assert_eq!(label_for(&PropertyPath::new(["value_"])), "Value");
+    assert_eq!(label_for(&PropertyPath::new(["near__far"])), "Near far");
+}
+
+#[test]
 fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
     assert_eq!(label_for(&PropertyPath::new(["ambient", "0"])), "Ambient");
     assert_eq!(label_for(&PropertyPath::new(["pair", "0", "1"])), "Pair");
@@ -968,6 +988,18 @@ fn is_open(world: &World, panel: Entity) -> bool {
         .open
 }
 
+fn assert_overlay_fill(world: &World, menu: Entity) {
+    assert_eq!(
+        world
+            .get_component_for_entity::<concerto_ui::material::UIMaterial>(menu)
+            .unwrap()
+            .color,
+        concerto_ui::theme::UITheme::default()
+            .surface_overlay
+            .to_linear()
+    );
+}
+
 fn open_add_menu(world: &mut World) -> Entity {
     let menu = only::<add_component::AddComponentMenu>(world);
     world
@@ -975,6 +1007,7 @@ fn open_add_menu(world: &mut World) -> Entity {
         .unwrap()
         .open = true;
     run(world, populate_add_component_menu);
+    assert_overlay_fill(world, menu);
     menu
 }
 
@@ -1071,6 +1104,7 @@ fn a_cards_menu_removes_its_component() {
             .unwrap();
     assert!(panel.open);
     assert_eq!(panel.owner, Some(button));
+    assert_overlay_fill(&w.f.world, menu);
 
     let remove = only::<component_menu::RemoveComponentItem>(&mut w.f.world);
     click(&mut w.f.world, remove);
@@ -1715,6 +1749,8 @@ mod variant_rows {
 
         click(&mut w.f.world, button);
 
+        let open = menu(&mut w.f.world, button).expect("the menu is open");
+        assert_overlay_fill(&w.f.world, open);
         let names: Vec<_> = items(&mut w.f.world, button)
             .into_iter()
             .map(|(_, name)| name)

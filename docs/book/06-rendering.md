@@ -7,17 +7,16 @@ components; you do not call draw functions.
 ## Getting to the renderer
 
 The renderer reads a copy of the scene kept in the render world (chapter 2).
-An entity gets a copy only if it has `SyncWithRenderWorld`, from
-`concerto::render::components::render_entity`. UI nodes, the live camera,
-and the mesh and light nodes of an imported scene already have it. When you spawn a light, a
-mesh or a grid in code, add it:
+An entity gets a copy only if it has `SyncWithRenderWorld`. Cameras, lights,
+meshes, materials, UI nodes and the world grid require it, so spawning one adds
+it and you never write it by hand:
 
 ```rust
-cmd.spawn((light, transform, SyncWithRenderWorld));
+cmd.spawn((light, transform));
 ```
 
-A scene that renders black, or a grid that does not appear, is almost always
-missing it.
+An entity with none of these components has no copy. See
+[required components](../required-components.md).
 
 Removing a component such as `Light` from a living entity does not remove its
 copy, so the light keeps shining. Despawn the entity instead.
@@ -55,7 +54,6 @@ cmd.spawn((
         shadowmaps_enabled: true,
     },
     Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::from_rotation_x(-0.8)),
-    SyncWithRenderWorld,
 ));
 ```
 
@@ -99,7 +97,6 @@ fn spawn_triangle(mut cmd: CommandQueue, assets: Res<AssetServer>) {
         MeshComponent { handle: assets.add(mesh) },
         MaterialComponent { handle: assets.add(material) },
         Transform::default(),
-        SyncWithRenderWorld,
     ));
 }
 ```

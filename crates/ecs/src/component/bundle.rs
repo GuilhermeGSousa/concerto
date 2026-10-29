@@ -2,6 +2,7 @@ use crate::{
     archetype::Archetype,
     component::{Component, ComponentId},
     table::{Table, TableRowIndex},
+    world::World,
 };
 use std::any::TypeId;
 
@@ -50,6 +51,10 @@ pub trait ComponentBundle: Send + Sync + Sized {
 
     fn generate_empty_table() -> Table;
 
+    /// Registers the requirement tables of every component in the bundle.
+    #[doc(hidden)]
+    fn register_required(world: &mut World);
+
     /// Writes every component in the bundle onto `sink`, one at a time.
     #[doc(hidden)]
     fn write_into<S: ComponentSink>(self, sink: &mut S, current_tick: u32);
@@ -84,6 +89,10 @@ where
         table
     }
 
+    fn register_required(world: &mut World) {
+        world.register_required_table::<T>();
+    }
+
     fn write_into<S: ComponentSink>(self, sink: &mut S, current_tick: u32) {
         sink.write(self, current_tick);
     }
@@ -106,6 +115,12 @@ where
         type_ids.sort();
         type_ids.dedup();
         type_ids
+    }
+
+    fn register_required(world: &mut World) {
+        for typle_index!(i) in 0..T::LEN {
+            <<T<{ i }> as IntoBundle>::Bundle>::register_required(world);
+        }
     }
 
     fn write_into<S: ComponentSink>(self, sink: &mut S, current_tick: u32) {

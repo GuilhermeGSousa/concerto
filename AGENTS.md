@@ -15,6 +15,7 @@ defines `DefaultPlugins`.
 |---|---|
 | [.agents/reference/architecture.md](.agents/reference/architecture.md) | You need the crate map, the frame loop, the two worlds, or the asset pipeline |
 | [.agents/reference/gotchas.md](.agents/reference/gotchas.md) | Before touching scheduling, change detection, rendering, skinning, animation, or the editor |
+| [docs/required-components.md](docs/required-components.md) | Declaring `#[require(..)]`, or a component that must always come with another |
 | [docs/scheduling.md](docs/scheduling.md) | Ordering systems, sets, chains |
 | [docs/asset-importing.md](docs/asset-importing.md) | Importing sources, `.gasset` files, `asset_id!` |
 | [docs/profiling.md](docs/profiling.md) | Measuring performance |
@@ -72,6 +73,8 @@ cargo test --workspace
 cargo test -p concerto-physics --no-default-features --features force-rapier
 cargo build --target wasm32-unknown-unknown
 ```
+
+A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on macOS and Windows.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
@@ -148,7 +151,9 @@ is not observed.
 - Render-world systems are added with `add_render_system`. `add_system` with
   `Extract`, `Render`, or `LateRender` puts the system in the main world, where
   those schedules never run.
-- An entity reaches the renderer only if it has `SyncWithRenderWorld`.
+- An entity reaches the renderer only if it has `SyncWithRenderWorld`. Camera,
+  light, mesh, material and UI layout components require it; a new extracted
+  component declares `#[require(SyncWithRenderWorld)]`.
 - `content/` trees and `<source>.import.toml` files are committed. Never run a
   flow that saves or imports against `examples/*`; copy the project's `content/`
   somewhere disposable first.
