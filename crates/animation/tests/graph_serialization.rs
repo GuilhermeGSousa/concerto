@@ -1,4 +1,4 @@
-use concerto_animation::TransitionBlend;
+use concerto_animation::TransitionBlender;
 use concerto_animation::clip::AnimationClip;
 use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
@@ -66,31 +66,20 @@ fn state_machine_graph_round_trips_trigger_payloads_and_clip_ids() {
         "idle",
         server.add(state_graph(clip("idle"))),
         |transition| {
-            transition.to(
-                "walk",
-                AnimationFSMTrigger::on_bool("go", true),
-                TransitionBlend::cross_fade(0.2),
-            );
+            transition.to("walk", AnimationFSMTrigger::on_bool("go", true), 0.2);
         },
     )
     .state(
         "walk",
         server.add(state_graph(clip("walk"))),
         |transition| {
-            transition.to(
-                "run",
-                AnimationFSMTrigger::on_non_zero_vec("move"),
-                TransitionBlend::cross_fade(0.15),
-            );
+            transition.to("run", AnimationFSMTrigger::on_non_zero_vec("move"), 0.15);
         },
     )
     .state("run", server.add(state_graph(clip("run"))), |transition| {
-        transition.to(
-            "idle",
-            AnimationFSMTrigger::OnAnimationEnd,
-            TransitionBlend::inertialize(0.1),
-        );
+        transition.to("idle", AnimationFSMTrigger::OnAnimationEnd, 0.1);
     })
+    .blender(TransitionBlender::Inertialization)
     .build();
 
     // The outer graph feeds the state machine plus a bare clip into its result;
@@ -152,15 +141,15 @@ fn state_machine_graph_round_trips_trigger_payloads_and_clip_ids() {
         "OnAnimationEnd trigger survived the round trip"
     );
 
-    let blends: Vec<TransitionBlend> = restored_machine.blends().copied().collect();
     assert_eq!(
-        blends,
-        vec![
-            TransitionBlend::cross_fade(0.2),
-            TransitionBlend::cross_fade(0.15),
-            TransitionBlend::inertialize(0.1),
-        ],
-        "every transition blend mode survived the round trip"
+        restored_machine.blender(),
+        TransitionBlender::Inertialization,
+        "the blender survived the round trip"
+    );
+    assert_eq!(
+        restored_machine.blend_times().collect::<Vec<_>>(),
+        vec![0.2, 0.15, 0.1],
+        "every blend time survived the round trip"
     );
 
     let restored_clip_id = restored

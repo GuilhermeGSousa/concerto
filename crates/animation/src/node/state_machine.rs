@@ -4,7 +4,8 @@ use std::collections::HashMap;
 use crate::graph::{AnimationGraph, AnimationGraphInstance, AnimationGraphInstances, GraphId};
 use crate::pose::{EvaluatedPose, Pose, PosePool};
 use crate::transition::{
-    AnimationTransitionBlender, TransitionBlend, inertialization_blender::InertializationBlender,
+    AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
+    inertialization_blender::InertializationBlender,
 };
 use crate::{
     evaluation::AnimationGraphContext,
@@ -52,14 +53,14 @@ impl AnimationFSMTrigger {
 pub struct AnimationStateMachineTransitionDefinition<'a> {
     pub target_state: &'a str,
     pub trigger: AnimationFSMTrigger,
-    pub blend: TransitionBlend,
+    pub blend_time: f32,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationStateMachineTransition {
     next_state: StateId,
     trigger: AnimationFSMTrigger,
-    blend: TransitionBlend,
+    blend_time: f32,
 }
 
 #[derive(Clone, Copy, Deref, serde::Serialize, serde::Deserialize)]
@@ -82,6 +83,8 @@ pub struct AnimationStateMachine {
     initial_state: StateId,
     states: Vec<AnimationFSMState>,
     transitions: Vec<Vec<AnimationStateMachineTransition>>,
+    #[serde(default)]
+    blender: TransitionBlender,
 }
 
 impl AnimationStateMachine {
@@ -118,7 +121,7 @@ impl AnimationStateMachine {
                             .get(transition_def.target_state)
                             .unwrap_or(&0.into()),
                         trigger: transition_def.trigger,
-                        blend: transition_def.blend,
+                        blend_time: transition_def.blend_time,
                     });
                 });
             });
@@ -127,6 +130,7 @@ impl AnimationStateMachine {
             initial_state: *name_to_index.get(initial_state).unwrap_or(&0.into()),
             states,
             transitions,
+            blender: TransitionBlender::default(),
         }
     }
 
@@ -142,6 +146,7 @@ impl AnimationStateMachine {
                 graph: state_graph,
             }],
             transitions: Vec::new(),
+            blender: TransitionBlender::default(),
         };
         let mut tb = TransitionBuilder {
             builder: &mut builder,
@@ -151,12 +156,17 @@ impl AnimationStateMachine {
         builder
     }
 
-    /// Every transition's blend mode, flattened across states.
-    pub fn blends(&self) -> impl Iterator<Item = &TransitionBlend> + '_ {
+    /// The blending backend every transition of this machine uses.
+    pub fn blender(&self) -> TransitionBlender {
+        self.blender
+    }
+
+    /// Every transition's blend time, flattened across states.
+    pub fn blend_times(&self) -> impl Iterator<Item = f32> + '_ {
         self.transitions
             .iter()
             .flatten()
-            .map(|transition| &transition.blend)
+            .map(|transition| transition.blend_time)
     }
 
     pub(crate) fn get_state_transitions(
@@ -194,6 +204,7 @@ impl AnimationStateMachine {
             self.initial_state,
             instanced_internal_graphs,
             state_names,
+            self.blender,
         ))
     }
 }
@@ -203,7 +214,7 @@ pub(crate) struct AnimationStateMachineInstance {
     state_graph_instances: AnimationGraphInstances,
     current_state: StateId,
     state_names: Vec<String>,
-    blender: InertializationBlender,
+    blender: Box<dyn AnimationTransitionBlender>,
 }
 
 impl AnimationStateMachineInstance {
@@ -211,12 +222,20 @@ impl AnimationStateMachineInstance {
         initial_state: StateId,
         graph_instance: Vec<AnimationGraphInstance>,
         state_names: Vec<String>,
+        blender: TransitionBlender,
     ) -> Self {
+        let initial_graph = initial_state.as_graph_id();
+        let blender: Box<dyn AnimationTransitionBlender> = match blender {
+            TransitionBlender::CrossFade => Box::new(BlendStack::new(initial_graph)),
+            TransitionBlender::Inertialization => {
+                Box::new(InertializationBlender::new(initial_graph))
+            }
+        };
         Self {
             state_graph_instances: AnimationGraphInstances::new(graph_instance),
             current_state: initial_state,
             state_names,
-            blender: InertializationBlender::new(initial_state.as_graph_id()),
+            blender,
         }
     }
 
@@ -236,7 +255,7 @@ impl AnimationStateMachineInstance {
         self.blender.transition(
             transition.next_state.as_graph_id(),
             &mut self.state_graph_instances,
-            &transition.blend,
+            transition.blend_time,
             context,
         );
 
@@ -338,16 +357,23 @@ struct FSMTransitionEntry {
     from: String,
     to: String,
     trigger: AnimationFSMTrigger,
-    blend: TransitionBlend,
+    blend_time: f32,
 }
 
 pub struct AnimationStateMachineBuilder {
     initial_state: String,
     states: Vec<FSMStateEntry>,
     transitions: Vec<FSMTransitionEntry>,
+    blender: TransitionBlender,
 }
 
 impl AnimationStateMachineBuilder {
+    /// Picks the blending backend for every transition of the machine.
+    pub fn blender(mut self, blender: TransitionBlender) -> Self {
+        self.blender = blender;
+        self
+    }
+
     pub fn state(
         mut self,
         state_name: &str,
@@ -388,7 +414,7 @@ impl AnimationStateMachineBuilder {
             transitions[*from_index].push(AnimationStateMachineTransition {
                 next_state: target_index,
                 trigger: entry.trigger,
-                blend: entry.blend,
+                blend_time: entry.blend_time,
             });
         }
 
@@ -401,6 +427,7 @@ impl AnimationStateMachineBuilder {
             initial_state,
             states,
             transitions,
+            blender: self.blender,
         }
     }
 }
@@ -415,13 +442,13 @@ impl TransitionBuilder<'_> {
         &mut self,
         state_name: &str,
         trigger: AnimationFSMTrigger,
-        blend: TransitionBlend,
+        blend_time: f32,
     ) -> &mut Self {
         self.builder.transitions.push(FSMTransitionEntry {
             from: self.from.clone(),
             to: state_name.to_string(),
             trigger,
-            blend,
+            blend_time,
         });
         self
     }

@@ -9,32 +9,17 @@ use crate::{
 pub(crate) mod blend_stack;
 pub(crate) mod inertialization_blender;
 
-/// How a state machine moves from one state to the next.
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum TransitionBlend {
-    CrossFade { transition_time: f32 },
-    Inertialize { halflife: f32 },
+/// How a state machine moves between states: `blend_time` is the cross-fade duration or the inertialization halflife.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TransitionBlender {
+    #[default]
+    CrossFade,
+    Inertialization,
 }
 
-impl TransitionBlend {
-    /// A cross-fade lasting `transition_time` seconds.
-    pub fn cross_fade(transition_time: f32) -> Self {
-        Self::CrossFade { transition_time }
-    }
+pub(crate) trait AnimationTransitionBlender: Send + Sync {
+    fn current(&self) -> GraphId;
 
-    /// An inertialization whose offset halves every `halflife` seconds.
-    pub fn inertialize(halflife: f32) -> Self {
-        Self::Inertialize { halflife }
-    }
-}
-
-impl Default for TransitionBlend {
-    fn default() -> Self {
-        Self::cross_fade(0.1)
-    }
-}
-
-pub(crate) trait AnimationTransitionBlender {
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
@@ -55,7 +40,7 @@ pub(crate) trait AnimationTransitionBlender {
         &mut self,
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
-        blend: &TransitionBlend,
+        blend_time: f32,
         context: &AnimationGraphContext<'_>,
     );
 }

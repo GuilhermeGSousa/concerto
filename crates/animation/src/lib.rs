@@ -11,7 +11,7 @@ pub mod root;
 pub mod target;
 pub mod transition;
 
-pub use transition::TransitionBlend;
+pub use transition::TransitionBlender;
 
 #[cfg(test)]
 mod tests {
@@ -32,7 +32,7 @@ mod tests {
         AnimationClipNode, AnimationClipNodeInstance, AnimationNodeInstance, AnimationNodeKind,
     };
     use crate::pose::PosePool;
-    use crate::transition::TransitionBlend;
+    use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {
         let mut clip = AnimationClip::default();
@@ -201,29 +201,21 @@ mod tests {
             transition.to(
                 "jump_start",
                 AnimationFSMTrigger::on_bool("jumped", true),
-                TransitionBlend::cross_fade(0.01),
+                0.01,
             );
         })
         .state("jump_start", jump_start, |transition| {
-            transition.to(
-                "air",
-                AnimationFSMTrigger::OnAnimationEnd,
-                TransitionBlend::cross_fade(0.1),
-            );
+            transition.to("air", AnimationFSMTrigger::OnAnimationEnd, 0.1);
         })
         .state("air", air, |transition| {
             transition.to(
                 "land",
                 AnimationFSMTrigger::on_bool("is_grounded", true),
-                TransitionBlend::cross_fade(0.01),
+                0.01,
             );
         })
         .state("land", land, |transition| {
-            transition.to(
-                "movement",
-                AnimationFSMTrigger::OnAnimationEnd,
-                TransitionBlend::cross_fade(0.1),
-            );
+            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1);
         })
         .build();
         let fsm = AnimationNodeKind::StateMachine(fsm);
@@ -325,11 +317,7 @@ mod tests {
         );
 
         let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
-            transition.to(
-                "b",
-                AnimationFSMTrigger::on_bool("go", true),
-                TransitionBlend::cross_fade(0.1),
-            );
+            transition.to("b", AnimationFSMTrigger::on_bool("go", true), 0.1);
         })
         .state("b", b, |_| {})
         .build();
@@ -425,18 +413,10 @@ mod tests {
         );
 
         let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
-            transition.to(
-                "jump",
-                AnimationFSMTrigger::on_bool("jump", true),
-                TransitionBlend::cross_fade(0.01),
-            );
+            transition.to("jump", AnimationFSMTrigger::on_bool("jump", true), 0.01);
         })
         .state("jump", jump, |transition| {
-            transition.to(
-                "movement",
-                AnimationFSMTrigger::OnAnimationEnd,
-                TransitionBlend::cross_fade(0.01),
-            );
+            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.01);
         })
         .build();
         let fsm = AnimationNodeKind::StateMachine(fsm);
@@ -536,8 +516,8 @@ mod tests {
             a_clip: AnimationClip,
             b_clip: AnimationClip,
             c_clip: AnimationClip,
-            a_to_b: TransitionBlend,
-            b_to_c: TransitionBlend,
+            blend_time: f32,
+            blender: TransitionBlender,
         ) -> Self {
             let mut server = AssetServer::new();
             let mut clips = AssetStore::<AnimationClip>::new();
@@ -560,17 +540,14 @@ mod tests {
             let c = graph_for(c_clip);
 
             let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
-                transition.to("b", AnimationFSMTrigger::on_bool("to_b", true), a_to_b);
-                transition.to(
-                    "a",
-                    AnimationFSMTrigger::on_bool("again", true),
-                    TransitionBlend::inertialize(0.2),
-                );
+                transition.to("b", AnimationFSMTrigger::on_bool("to_b", true), blend_time);
+                transition.to("a", AnimationFSMTrigger::on_bool("again", true), 0.2);
             })
             .state("b", b, |transition| {
-                transition.to("c", AnimationFSMTrigger::on_bool("to_c", true), b_to_c);
+                transition.to("c", AnimationFSMTrigger::on_bool("to_c", true), blend_time);
             })
             .state("c", c, |_| {})
+            .blender(blender)
             .build();
             let fsm = AnimationNodeKind::StateMachine(fsm);
 
@@ -647,8 +624,8 @@ mod tests {
             linear_x_clip(bone, 2.0),
             constant_x_clip(bone, 10.0),
             constant_x_clip(bone, -5.0),
-            TransitionBlend::inertialize(halflife),
-            TransitionBlend::cross_fade(0.1),
+            halflife,
+            TransitionBlender::Inertialization,
         )
     }
 
@@ -711,59 +688,6 @@ mod tests {
             (velocity_after - velocity_before).abs() <= destination_velocity + 0.5,
             "velocity went from {velocity_before} to {velocity_after}"
         );
-    }
-
-    #[test]
-    fn inertialize_then_cross_fade_keeps_decaying_on_top() {
-        let mut machine = inertialize_machine(0.5);
-        machine.run(5);
-        machine.set("to_b", true);
-        machine.step();
-        machine.set("to_b", false);
-        let mid_decay = machine.run(10);
-        assert!((mid_decay - 10.0).abs() > 0.5, "offset already gone");
-
-        machine.set("to_c", true);
-        let first = machine.step();
-        machine.set("to_c", false);
-        assert_eq!(machine.state(), "c");
-        assert!(first.is_finite());
-
-        let settled = machine.run(900);
-        assert!((settled + 5.0).abs() < 1e-3, "settled at {settled}");
-    }
-
-    #[test]
-    fn cross_fade_then_inertialize_collapses_and_inertializes_from_the_output() {
-        let bone = Uuid::new_v4();
-        let mut machine = Machine::new(
-            bone,
-            constant_x_clip(bone, 0.0),
-            constant_x_clip(bone, 10.0),
-            constant_x_clip(bone, -5.0),
-            TransitionBlend::cross_fade(0.1),
-            TransitionBlend::inertialize(0.2),
-        );
-        machine.set("to_b", true);
-        machine.step();
-        machine.set("to_b", false);
-        let mid_fade = machine.run(2);
-        assert!(
-            mid_fade > 0.0 && mid_fade < 10.0,
-            "not mid-fade: {mid_fade}"
-        );
-
-        machine.set("to_c", true);
-        let on_transition = machine.step();
-        machine.set("to_c", false);
-        assert_eq!(machine.state(), "c");
-        assert!(
-            (on_transition - mid_fade).abs() < 1e-4,
-            "expected the cross-faded output {mid_fade}, got {on_transition}"
-        );
-
-        let settled = machine.run(600);
-        assert!((settled + 5.0).abs() < 1e-3, "settled at {settled}");
     }
 
     #[test]

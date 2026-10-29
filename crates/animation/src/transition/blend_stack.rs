@@ -4,7 +4,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraphInstances, GraphId},
     pose::{Pose, PosePool},
-    transition::{AnimationTransitionBlender, TransitionBlend},
+    transition::AnimationTransitionBlender,
 };
 
 /// One active graph in the cross-fade. The stack is ordered oldest → newest; only the newest
@@ -30,16 +30,24 @@ impl BlendStack {
         }
     }
 
+    pub(crate) fn collapse(&mut self) {
+        if let Some(top) = self.entries.last_mut() {
+            top.weight = 1.0;
+        }
+        let last = self.entries.len().saturating_sub(1);
+        self.entries.drain(..last);
+    }
+}
+
+impl AnimationTransitionBlender for BlendStack {
     /// The state currently being transitioned into — the single source of truth the FSM reads.
-    pub(crate) fn current(&self) -> GraphId {
+    fn current(&self) -> GraphId {
         self.entries
             .last()
             .expect("blend stack always retains the current graph")
             .graph_id
     }
-}
 
-impl AnimationTransitionBlender for BlendStack {
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
@@ -97,7 +105,7 @@ impl AnimationTransitionBlender for BlendStack {
         &mut self,
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
-        blend: &TransitionBlend,
+        transition_time: f32,
         _context: &AnimationGraphContext<'_>,
     ) {
         if *self.current() == *next_graph {
@@ -113,20 +121,10 @@ impl AnimationTransitionBlender for BlendStack {
             graph_instance.reset();
         }
 
-        let (fade_speed, weight) = match *blend {
-            TransitionBlend::CrossFade { transition_time } => (1.0 / transition_time, 0.0),
-            TransitionBlend::Inertialize { .. } => (0.0, 1.0),
-        };
-
         self.entries.push(BlendStackEntry {
             graph_id: next_graph,
-            fade_speed,
-            weight,
+            fade_speed: 1.0 / transition_time,
+            weight: 0.0,
         });
-
-        if weight >= 1.0 {
-            let last = self.entries.len() - 1;
-            self.entries.drain(..last);
-        }
     }
 }

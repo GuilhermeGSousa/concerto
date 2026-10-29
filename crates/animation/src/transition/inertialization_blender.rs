@@ -5,7 +5,7 @@ use crate::{
     graph::{AnimationGraphInstances, GraphId},
     inertialization::{Inertializer, PoseVelocity},
     pose::{Pose, PosePool},
-    transition::{AnimationTransitionBlender, TransitionBlend, blend_stack::BlendStack},
+    transition::{AnimationTransitionBlender, blend_stack::BlendStack},
 };
 
 pub(crate) struct InertializationBlender {
@@ -31,11 +31,6 @@ impl InertializationBlender {
             previous_output: None,
             last_delta_time: 0.0,
         }
-    }
-
-    /// The state currently being transitioned into, as the wrapped stack reports it.
-    pub(crate) fn current(&self) -> GraphId {
-        self.stack.current()
     }
 
     fn source_velocity(&self, bone_count: usize) -> PoseVelocity {
@@ -66,6 +61,10 @@ impl InertializationBlender {
 }
 
 impl AnimationTransitionBlender for InertializationBlender {
+    fn current(&self) -> GraphId {
+        self.stack.current()
+    }
+
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
@@ -126,7 +125,7 @@ impl AnimationTransitionBlender for InertializationBlender {
         &mut self,
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
-        blend: &TransitionBlend,
+        blend_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
         if *self.stack.current() == *next_graph {
@@ -134,11 +133,8 @@ impl AnimationTransitionBlender for InertializationBlender {
         }
 
         self.stack
-            .transition(next_graph, graph_instances, blend, context);
-
-        self.pending_halflife = match *blend {
-            TransitionBlend::Inertialize { halflife } => Some(halflife),
-            TransitionBlend::CrossFade { .. } => None,
-        };
+            .transition(next_graph, graph_instances, 1.0, context);
+        self.stack.collapse();
+        self.pending_halflife = Some(blend_time);
     }
 }

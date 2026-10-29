@@ -159,9 +159,11 @@ A graph is a tree of nodes under a result node:
 - **State machine** switches between sub-graphs on triggers such as
   `AnimationFSMTrigger::on_bool("is_grounded", false)` or
   `AnimationFSMTrigger::OnAnimationEnd`. Each transition takes a
-  `TransitionBlend`: `cross_fade(transition_time)` fades the old state out
-  over that time, and `inertialize(halflife)` plays only the new state and
-  decays the pose difference to the old one with that halflife.
+  `blend_time`, and the machine's `TransitionBlender` (set with
+  `.blender(..)` on the builder) decides what it means: `CrossFade`, the
+  default, fades the old state out over `blend_time` seconds, and
+  `Inertialization` plays only the new state and decays the pose difference
+  to the old one with `blend_time` as the halflife.
 
 Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`. The tech demo's
