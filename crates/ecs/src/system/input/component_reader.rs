@@ -40,7 +40,10 @@ impl<'w> ComponentMetadata<'w> {
         self.read().component_ids(entity)
     }
 
-    pub fn registration(&self, id: ComponentId) -> Option<&'w concerto_reflect::TypeRegistration> {
+    pub fn registration(
+        &self,
+        id: ComponentId,
+    ) -> Option<std::sync::Arc<concerto_reflect::TypeRegistration>> {
         self.read().registration(id)
     }
 

@@ -524,6 +524,8 @@ mod tests {
         }
     }
 
+    impl concerto_foundation::assets::LoadableAsset for Note {}
+
     #[test]
     fn a_dropped_asset_is_freed_in_an_edit_app() {
         let mut app = App::for_editing();
@@ -644,7 +646,10 @@ mod type_registration_tests {
             .register_plugin(plugins::TimePlugin)
             .register_plugin(plugins::TransformPlugin);
 
-        let registration = registry(&app).get(TypeId::of::<Transform>()).unwrap();
+        let registration = registry(&app)
+            .read()
+            .get(TypeId::of::<Transform>())
+            .unwrap();
         assert_eq!(registration.short_name(), "Transform");
         assert!(registration.data::<ReflectComponent>().is_some());
         assert!(registration.data::<ReflectDefault>().is_some());
@@ -657,11 +662,28 @@ mod type_registration_tests {
 
         app.register_type::<Health>();
 
-        let registration = registry(&app).get(TypeId::of::<Health>()).unwrap();
+        let registration = registry(&app).read().get(TypeId::of::<Health>()).unwrap();
         assert!(registration.data::<ReflectComponent>().is_some());
         assert!(registration.data::<ReflectDefault>().is_some());
         assert!(registration.data::<ReflectSceneComponent>().is_none());
         let _ = Health::default().points;
+    }
+
+    #[test]
+    fn two_apps_do_not_share_a_type_registry() {
+        let mut first = App::new();
+        let second = App::new();
+
+        first.register_type::<Health>();
+
+        assert!(registry(&first)
+            .read()
+            .get(TypeId::of::<Health>())
+            .is_some());
+        assert!(registry(&second)
+            .read()
+            .get(TypeId::of::<Health>())
+            .is_none());
     }
 
     #[derive(Component, Default)]

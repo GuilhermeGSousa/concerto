@@ -84,6 +84,23 @@ fn a_registration_carries_its_names_and_the_type_data_its_derive_declared() {
 }
 
 #[test]
+fn a_registration_fetched_with_get_outlives_a_later_register() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Gain>();
+
+    let registration = registry.get(TypeId::of::<Gain>()).unwrap();
+    registry.register::<Plain>();
+    let by_name = registry.get_by_name("Gain").unwrap();
+    let listed = registry.iter().count();
+    drop(registry);
+
+    assert_eq!(registration.short_name(), "Gain");
+    assert!(registration.data::<ReflectThing>().is_some());
+    assert_eq!(by_name.type_id(), registration.type_id());
+    assert!(listed > 2);
+}
+
+#[test]
 fn a_type_declaring_nothing_has_no_type_data() {
     let mut registry = TypeRegistry::default();
     registry.register::<Plain>();

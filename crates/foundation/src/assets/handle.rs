@@ -290,7 +290,7 @@ impl LiveLeaves {
     pub fn new(world: &World) -> Self {
         let server = world.get_resource::<AssetServer>();
         match world.get_resource::<AppTypeRegistry>() {
-            Some(registry) => Self::from_parts(registry, server),
+            Some(registry) => Self::from_parts(&registry.read(), server),
             None => Self {
                 server: server.cloned(),
                 handles: HashMap::new(),
@@ -304,7 +304,7 @@ impl LiveLeaves {
             .iter()
             .filter_map(|registration| {
                 Some((
-                    registration.type_id(),
+                    (*registration).type_id(),
                     *registration.data::<ReflectAssetHandle>()?,
                 ))
             })

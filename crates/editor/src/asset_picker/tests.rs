@@ -189,8 +189,7 @@ impl Picking {
     }
     fn picker(&self) -> AssetPicker {
         AssetPicker::new(
-            *self
-                .scene()
+            self.scene()
                 .get_resource::<AppTypeRegistry>()
                 .unwrap()
                 .get_type_data::<ReflectAssetHandle>(TypeId::of::<AssetHandle<Mesh>>())

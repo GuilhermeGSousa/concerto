@@ -13,7 +13,7 @@ pub mod transition;
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{
-        Asset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+        LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
     use uuid::Uuid;
 
@@ -134,7 +134,7 @@ mod tests {
         clip
     }
 
-    fn add_asset<A: Asset + Default + 'static>(
+    fn add_asset<A: LoadableAsset + Default + 'static>(
         server: &AssetServer,
         store: &mut AssetStore<A>,
         asset: A,

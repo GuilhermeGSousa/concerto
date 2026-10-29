@@ -11,6 +11,7 @@ use std::{
 use anyhow::Context;
 use concerto_ecs::{
     query::change_detection::DetectChanges,
+    reflect::AppTypeRegistry,
     resource::{Res, Resource},
     world,
 };
@@ -61,6 +62,7 @@ impl AssetLoadEvent {
 pub struct AssetLoadContext {
     asset_server: AssetServer,
     asset_id: AssetId,
+    type_registry: AppTypeRegistry,
 }
 
 impl AssetLoadContext {
@@ -72,10 +74,17 @@ impl AssetLoadContext {
         self.asset_id
     }
 
+    /// The type registry shared with the world; take one `read()` guard and register no type while holding it.
+    pub fn type_registry(&self) -> &AppTypeRegistry {
+        &self.type_registry
+    }
+
     pub(crate) fn new(asset_server: AssetServer, asset_id: AssetId) -> Self {
+        let type_registry = asset_server.data.type_registry.read().unwrap().clone();
         Self {
             asset_server,
             asset_id,
+            type_registry,
         }
     }
 }
@@ -96,6 +105,7 @@ pub(crate) struct AssetServerData {
     asset_load_event_sender: Sender<AssetLoadEvent>,
     asset_load_event_receiver: Receiver<AssetLoadEvent>,
     content: RwLock<ContentState>,
+    type_registry: RwLock<AppTypeRegistry>,
 }
 
 struct ContentState {
@@ -126,11 +136,17 @@ impl AssetServer {
                 root,
                 registry: Arc::default(),
             }),
+            type_registry: RwLock::new(AppTypeRegistry::default()),
         };
 
         Self {
             data: Arc::new(server_data),
         }
+    }
+
+    /// Replaces the type registry loads hand to `on_load`; every clone sees it, and a load uses the one the server holds when its `on_load` starts.
+    pub fn set_type_registry(&self, registry: AppTypeRegistry) {
+        *self.data.type_registry.write().unwrap() = registry;
     }
 
     /// Configures the editor project root and its complete registry snapshot.
@@ -209,14 +225,28 @@ impl AssetServer {
         self.data.handle_provider.is_registered::<A>()
     }
 
-    pub fn add<A: Asset>(&self, asset: A) -> AssetHandle<A> {
+    /// Adds a built asset, running its `on_load` inline before it reaches the world; a failing `on_load` is logged and the returned handle never resolves.
+    pub fn add<A: LoadableAsset>(&self, mut asset: A) -> AssetHandle<A> {
         let id = AssetId::new();
+        let handle = self.data.handle_provider.request_handle(id);
+
+        self.data.loaded_assets.write().unwrap().insert(id);
+        let context = AssetLoadContext::new(self.clone(), id);
+        if let Err(error) = asset.on_load(&context) {
+            log::error!(
+                "Failed to add asset (type {}): {:#}",
+                std::any::type_name::<A>(),
+                error
+            );
+            self.data.loaded_assets.write().unwrap().remove(&id);
+            return handle;
+        }
 
         let sender = self.data.asset_load_event_sender.clone();
         let _ = sender.send(AssetLoadEvent::Loaded {
             asset: LoadedAsset::new(id, asset),
         });
-        self.data.handle_provider.request_handle(id)
+        handle
     }
 
     /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
@@ -447,6 +477,7 @@ mod tests {
         registry::{AssetEntry, AssetRegistry},
     };
     use concerto_ecs::{component::Component, reflect::ReflectSceneComponent, world::World};
+    use concerto_reflect::ReflectDefault;
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("asset-server-{tag}-{}", std::process::id()));
@@ -617,7 +648,7 @@ mod tests {
     }
 
     fn handle_type_data(world: &World) -> ReflectAssetHandle {
-        *world
+        world
             .get_resource::<concerto_ecs::reflect::AppTypeRegistry>()
             .unwrap()
             .get_type_data::<ReflectAssetHandle>(std::any::TypeId::of::<AssetHandle<FixtureAsset>>())
@@ -678,7 +709,7 @@ mod tests {
         let stored = concerto_reflect::json_to_value_with(
             &serde_json::Value::String(id.simple_hex()),
             TypeId::of::<AssetHandle<FixtureAsset>>(),
-            world.get_resource::<AppTypeRegistry>().unwrap(),
+            &world.get_resource::<AppTypeRegistry>().unwrap().read(),
             &mut hook,
         )
         .unwrap();
@@ -705,18 +736,18 @@ mod tests {
         let entity = world.spawn(());
         let id = AssetId::new();
         let mut hook = LiveLeaves::new(&world);
-        let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+        let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
         let reference = concerto_reflect::json_to_value_with(
             &serde_json::Value::String(entity.to_id_string()),
             TypeId::of::<SceneEntityRef>(),
-            registry,
+            &registry,
             &mut hook,
         )
         .unwrap();
         let asset = concerto_reflect::json_to_value_with(
             &serde_json::Value::String(id.simple_hex()),
             TypeId::of::<AssetHandle<FixtureAsset>>(),
-            registry,
+            &registry,
             &mut hook,
         )
         .unwrap();
@@ -973,6 +1004,93 @@ mod tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 
+    #[derive(concerto_reflect::Reflect, Default)]
+    #[reflect(Default)]
+    struct Probed;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct ProbeAsset {
+        #[serde(skip)]
+        saw_default: bool,
+    }
+
+    impl Asset for ProbeAsset {
+        fn name() -> &'static str {
+            "ProbeAsset"
+        }
+    }
+
+    impl LoadableAsset for ProbeAsset {
+        fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+            self.saw_default = context
+                .type_registry()
+                .get_type_data::<ReflectDefault>(TypeId::of::<Probed>())
+                .is_some();
+            Ok(())
+        }
+    }
+
+    fn probe_server(dir: &std::path::Path) -> (AssetServer, World, AssetId) {
+        let mut registry = AssetRegistry::new();
+        let id = save_content_asset_into(
+            &ProbeAsset { saw_default: false },
+            dir,
+            "content/fixture/probe.gasset",
+            &mut registry,
+        )
+        .unwrap();
+        let mut server =
+            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
+        let store = AssetStore::<ProbeAsset>::new();
+        server.register_asset(&store);
+        server.publish_registry(registry);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        (server, world, id)
+    }
+
+    fn probe_saw_default(server: &AssetServer, world: &mut World, id: AssetId) -> bool {
+        let handle = server.load::<ProbeAsset>(id);
+        drive_pending_load(server, id);
+        handle_asset_load_events(world);
+        let store = world.get_resource::<AssetStore<ProbeAsset>>().unwrap();
+        store.get(&handle).expect("probe loaded").saw_default
+    }
+
+    #[test]
+    fn on_load_reads_type_data_from_the_registry_given_to_the_server() {
+        let dir = temp_root("on-load-registry");
+        let (server, mut world, id) = probe_server(&dir);
+        let registry = concerto_ecs::reflect::AppTypeRegistry::default();
+        registry.write().register::<Probed>();
+        server.set_type_registry(registry);
+
+        assert!(probe_saw_default(&server, &mut world, id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn on_load_sees_nothing_in_a_server_without_a_shared_registry() {
+        let dir = temp_root("on-load-empty-registry");
+        let (server, mut world, id) = probe_server(&dir);
+
+        assert!(!probe_saw_default(&server, &mut world, id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_type_registered_after_the_registry_was_shared_is_visible_to_a_later_load() {
+        let dir = temp_root("on-load-late-type");
+        let (server, mut world, id) = probe_server(&dir);
+        let registry = concerto_ecs::reflect::AppTypeRegistry::default();
+        server.set_type_registry(registry.clone());
+        registry.write().register::<Probed>();
+
+        assert!(probe_saw_default(&server, &mut world, id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
     #[derive(serde::Serialize, serde::Deserialize)]
     struct GatedAsset(u32);
 
@@ -1047,6 +1165,114 @@ mod tests {
 
         let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
         assert_eq!(store.get(&handle).map(|asset| asset.value), Some(8));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn added_server<A: Asset>(dir: &std::path::Path) -> (AssetServer, World) {
+        let mut server =
+            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
+        let store = AssetStore::<A>::new();
+        server.register_asset(&store);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        (server, world)
+    }
+
+    #[test]
+    fn add_runs_on_load_before_the_asset_reaches_the_world() {
+        let dir = temp_root("add-on-load");
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+        let handle = server.add(FixtureAsset {
+            value: 5,
+            initialized: false,
+        });
+
+        handle_asset_load_events(&mut world);
+
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        let asset = store.get(&handle).expect("added asset loaded");
+        assert_eq!(asset.value, 5);
+        assert!(asset.initialized);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct FailingAsset;
+
+    impl Asset for FailingAsset {
+        fn name() -> &'static str {
+            "FailingAsset"
+        }
+    }
+
+    impl LoadableAsset for FailingAsset {
+        fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
+            anyhow::bail!("refused")
+        }
+    }
+
+    #[test]
+    fn add_whose_on_load_fails_sends_no_loaded_event_and_the_handle_never_resolves() {
+        let dir = temp_root("add-on-load-fails");
+        let (server, mut world) = added_server::<FailingAsset>(&dir);
+
+        let handle = server.add(FailingAsset);
+
+        assert!(!server.is_loading());
+        assert!(!server
+            .data
+            .loaded_assets
+            .read()
+            .unwrap()
+            .contains(&handle.id()));
+        handle_asset_load_events(&mut world);
+        let store = world.get_resource::<AssetStore<FailingAsset>>().unwrap();
+        assert!(store.get(&handle).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct SelfLoadingAsset {
+        #[serde(skip)]
+        spawned_a_load: bool,
+    }
+
+    impl Asset for SelfLoadingAsset {
+        fn name() -> &'static str {
+            "SelfLoadingAsset"
+        }
+    }
+
+    impl LoadableAsset for SelfLoadingAsset {
+        fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+            let server = context.asset_server();
+            let _own = server.load::<SelfLoadingAsset>(context.asset_id());
+            self.spawned_a_load = !server.data.pending_tasks.read().unwrap().is_empty();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn loading_an_added_asset_from_its_own_on_load_spawns_no_task() {
+        let dir = temp_root("add-self-load");
+        let (server, mut world) = added_server::<SelfLoadingAsset>(&dir);
+
+        let handle = server.add(SelfLoadingAsset {
+            spawned_a_load: false,
+        });
+        handle_asset_load_events(&mut world);
+
+        let store = world
+            .get_resource::<AssetStore<SelfLoadingAsset>>()
+            .unwrap();
+        assert!(
+            !store
+                .get(&handle)
+                .expect("added asset loaded")
+                .spawned_a_load
+        );
+        assert!(!server.is_loading());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
