@@ -106,7 +106,7 @@ simulated bodies are interpolated between steps for display.
 
 ## Animation
 
-A skinned model imported from glTF comes with a skeleton and its animation
+A skinned model imported from glTF comes with a skeleton asset (bone names, parents, rest pose, inverse bind poses and bone ids, in `concerto::mesh`) and its animation
 clips. When its scene spawns, the skinned entity gets an `AnimationPlayer`.
 You give it an **animation graph**, which decides which clips play and how they
 blend, and you drive the graph with **parameters**.

@@ -73,7 +73,7 @@ pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 
 /// Bumped whenever `ContentAssetHeader`'s on-disk shape changes
 /// incompatibly. `read_content_asset` rejects a mismatch outright.
-pub const CONTENT_FORMAT_VERSION: u32 = 2;
+pub const CONTENT_FORMAT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentAssetHeader {
