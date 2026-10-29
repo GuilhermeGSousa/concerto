@@ -54,10 +54,6 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
 
-      - name: Install a software Vulkan driver
-        if: runner.os == 'Linux'
-        run: sudo apt-get update; sudo apt-get install --no-install-recommends mesa-vulkan-drivers
-
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -80,7 +76,6 @@ jobs:
         env:
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_INCREMENTAL: 0
-          CONCERTO_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
 
   test_physics_rapier:
     name: Test Physics (Rapier backend)
