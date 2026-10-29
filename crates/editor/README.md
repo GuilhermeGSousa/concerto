@@ -179,8 +179,9 @@ answers once the game has had the last: `Sent <n> window events to the game in
 document <id>.`, naming the keys still held in the game and those held in the
 editor, which a later call should release. An event is
 `{ "key", "pressed", "text"? }`, a key named as the window crate's `KeyCode`
-names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`), ignoring case, with
-the text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
+names it (`KeyW`, `Space`, `ArrowUp`, `ShiftLeft`, `F1`; the logo keys, Super
+or Windows or Command, are `MetaLeft` and `MetaRight`), ignoring case, with the
+text a press types; `{ "button", "pressed", "at"? }`, one of `left`,
 `right`, `middle`, `back` and `forward`, moving the pointer to `at` first;
 `{ "move": [x, y] }`, which moves the pointer there and, as a mouse does, adds
 the mouse motion that takes it there, a second window event; or
