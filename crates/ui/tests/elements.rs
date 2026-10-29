@@ -176,6 +176,12 @@ fn text_defaults_follow_the_theme() {
 }
 
 #[test]
+fn text_without_a_node_gets_one() {
+    let spawned = spawn(theme().text("Warren"));
+    assert_eq!(spawned.get::<UINode>(), &UINode::default());
+}
+
+#[test]
 fn a_label_is_a_node_with_text() {
     let spawned = spawn(theme().label("Curiosities"));
     assert_eq!(spawned.get::<UINode>(), &UINode::default());

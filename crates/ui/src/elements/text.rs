@@ -3,7 +3,7 @@ use concerto_ecs::component::bundle::IntoBundle;
 use super::{Layout, Themed, Typography};
 use crate::{node::UINode, text::UIText, theme::UITheme};
 
-/// Text for an entity that already has a node: a button, a field, an icon slot.
+/// Body text. Spawning it gives the entity a default node unless it already has one.
 pub struct Text {
     pub(crate) theme: UITheme,
     pub(crate) text: UIText,
