@@ -160,3 +160,28 @@ fn the_later_external_registration_wins() {
 
     assert_eq!(value(&world, entity), Some(3));
 }
+
+fn make_value() -> Value {
+    Value(7)
+}
+
+#[test]
+fn identical_registration_is_a_no_op_while_an_entity_holds_the_type() {
+    let mut world = World::new();
+    world.register_required_components_with::<Base, Value>(make_value);
+    let entity = world.spawn(Base);
+
+    world.register_required_components_with::<Base, Value>(make_value);
+
+    assert_eq!(value(&world, entity), Some(7));
+}
+
+#[test]
+#[should_panic(expected = "Base")]
+fn different_constructor_still_panics_while_an_entity_holds_the_type() {
+    let mut world = World::new();
+    world.register_required_components_with::<Base, Value>(make_value);
+    world.spawn(Base);
+
+    world.register_required_components_with::<Base, Value>(|| Value(8));
+}

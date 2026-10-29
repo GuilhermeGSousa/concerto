@@ -684,6 +684,7 @@ impl World {
     /// Makes `T` require `U`, built by `constructor`, after `T` was defined.
     ///
     /// A requirement `T` declares itself wins over this one; a later call wins over an earlier one.
+    /// Repeating an earlier call with the same constructor does nothing.
     ///
     /// # Panics
     /// Panics if an entity holds `T` or a component that requires it, or if the requirement forms a cycle.
@@ -691,6 +692,9 @@ impl World {
         &mut self,
         constructor: fn() -> U,
     ) {
+        if self.components.has_external::<T, U>(constructor) {
+            return;
+        }
         let affected = self.components.prepare_external::<T, U>();
         if let Some(archetype) = self.archetypes.iter().find(|archetype| {
             !archetype.is_empty() && affected.iter().any(|id| archetype.contains(*id))

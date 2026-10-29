@@ -37,7 +37,9 @@ app.register_required_components_with::<MeshComponent, Tint>(|| Tint::red());
 `RenderPlugin` uses this for meshes and skeletons, so a mesh gets
 `SyncWithRenderWorld` only when `RenderPlugin` is built.
 
-- It panics if an entity already holds `T` or a component that requires it.
+- It panics if an entity already holds `T` or a component that requires it,
+  unless the same constructor was already registered for `T` and `U`: that
+  repeat does nothing.
 - It panics if the requirement forms a cycle.
 - A requirement `T` declares itself wins over an external one.
 - A later external registration wins over an earlier one.

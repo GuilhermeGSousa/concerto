@@ -19,6 +19,7 @@ pub struct RequiredComponent {
     add_column: fn(&mut Table),
     write: WriteRequired,
     register: RegisterRequired,
+    constructor: usize,
 }
 
 impl RequiredComponent {
@@ -70,11 +71,19 @@ impl RequiredComponents {
                 }
             }),
             register: Components::register_required_in::<T>,
+            constructor: constructor as usize,
         };
         match self.entries.iter_mut().find(|existing| existing.id == id) {
             Some(existing) => *existing = entry,
             None => self.entries.push(entry),
         }
+    }
+
+    pub(crate) fn built_by<T: Component>(&self, constructor: fn() -> T) -> bool {
+        let id = ComponentId::of::<T>();
+        self.entries
+            .iter()
+            .any(|entry| entry.id == id && entry.constructor == constructor as usize)
     }
 
     pub(crate) fn contains(&self, id: ComponentId) -> bool {
