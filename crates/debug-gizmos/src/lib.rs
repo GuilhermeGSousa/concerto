@@ -21,10 +21,12 @@ pub mod gizmos;
 pub mod pipeline;
 pub mod plugin;
 pub mod render;
+pub mod skeleton;
 pub mod storage;
 pub mod vertex;
 
 pub use gizmos::DebugGizmos;
 pub use plugin::DebugGizmosPlugin;
+pub use skeleton::SkeletonGizmo;
 pub use storage::GizmoStorage;
 pub use vertex::{GizmoVertex, WideGizmoVertex};

@@ -142,6 +142,12 @@ fn draw_targets(mut gizmos: DebugGizmos, targets: Query<&GlobalTransform, With<E
 
 Gizmos are immediate mode: draw them every frame you want them seen.
 
+`SkeletonGizmo` draws a skeleton without a mesh. Put it on an entity with a
+`SkeletonComponent`, or tick it on in the editor's inspector, and every frame it
+draws a line from each bone to its parent bone and a sphere at each joint, in
+the edit viewport too. Its fields set the colour, the joint size, and whether
+each bone's axes are drawn.
+
 ## Custom materials
 
 A material is an asset whose fields become shader bindings. Derive `Asset` and
