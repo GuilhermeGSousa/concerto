@@ -1,0 +1,10 @@
+[package]
+name = "concerto-bvh"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-asset-import.workspace = true

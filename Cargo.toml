@@ -47,6 +47,7 @@ concerto-app = { path = "crates/app", version = "0.1.0" }
 concerto-asset-build = { path = "crates/asset-build", version = "0.1.0" }
 concerto-asset-format = { path = "crates/asset-format", version = "0.1.0" }
 concerto-asset-import = { path = "crates/asset-import", version = "0.1.0" }
+concerto-bvh = { path = "crates/bvh", version = "0.1.0" }
 concerto-color = { path = "crates/color", version = "0.1.0" }
 concerto-debug-gizmos = { path = "crates/debug-gizmos", version = "0.1.0" }
 concerto-director = { path = "crates/director", version = "0.1.0" }
