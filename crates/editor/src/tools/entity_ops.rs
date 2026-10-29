@@ -525,7 +525,6 @@ mod tests {
                     AssetId::new(),
                 ),
                 bones: vec![concerto_ecs::component::scene::SceneEntityRef::Entity(bone)],
-                bone_ids: vec![],
                 root: None,
             },
             child,

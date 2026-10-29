@@ -4,11 +4,11 @@
 //! through serialized component payloads.
 use std::path::Path;
 
-use concerto_asset_import::{ImportContext, Importer};
+use concerto_asset_import::{ImportContext, ImportOutputs, Importer};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::AssetId;
 use concerto_gltf::gltf_importer::GltfImporter;
-use concerto_mesh::{SkeletonComponent, mesh::MeshComponent};
+use concerto_mesh::{JointPose, Skeleton, SkeletonComponent, mesh::MeshComponent};
 use concerto_reflect::{Reflect, apply_value};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 
@@ -166,14 +166,14 @@ fn import_emits_skeleton_and_animation_sub_assets() {
         AssetId::from_path("skinned.gltf#skeleton/0"),
         "the skeleton handle must address the emitted skeleton sub-asset"
     );
-    assert_eq!(
-        scene_skeleton.bones.len(),
-        scene_skeleton.bone_ids.len(),
-        "every bone must have a matching stable id for animation channel lookup"
-    );
     assert!(
         !scene_skeleton.bones.is_empty(),
         "the fixture's skin has joints, so bones must not be empty"
+    );
+    assert_eq!(
+        scene_skeleton.bones.len(),
+        emitted_skeleton(&outputs, "skeleton/0").bone_count(),
+        "every bone must have a matching entry in the skeleton asset"
     );
 }
 
@@ -312,11 +312,13 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     );
     for binding in &bindings {
         assert_eq!(
-            binding.bone_ids, source_skel.bone_ids,
-            "primitive child binding must share the source skeleton's bone ids"
+            binding.bones, source_skel.bones,
+            "primitive child binding must share the source skeleton's bones"
         );
         assert_eq!(binding.skeleton.id(), source_skel.skeleton.id());
     }
+
+    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
 
     // The Wiggle clip's channel key must be one of those bone ids, or animation
     // silently does nothing.
@@ -328,8 +330,93 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     let clip: concerto_animation::clip::AnimationClip =
         bincode::deserialize(&clip_entry.bytes).unwrap();
     assert!(
-        clip.target_ids()
-            .any(|id| source_skel.bone_ids.contains(id)),
+        clip.target_ids().any(|id| skeleton.bone_ids.contains(id)),
         "the animation clip must key at least one channel by a skeleton bone id"
+    );
+}
+
+fn import_fixture(
+    name: &str,
+) -> (
+    Result<(), concerto_asset_import::ImportError>,
+    ImportContext,
+) {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name);
+    let mut ctx = ImportContext::new(std::path::PathBuf::from(name));
+    let result = GltfImporter.import(&fixture, &mut ctx);
+    (result, ctx)
+}
+
+fn emitted_skeleton(outputs: &ImportOutputs, name: &str) -> Skeleton {
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
+    bincode::deserialize(&entry.bytes).expect("the skeleton sub-asset must decode")
+}
+
+#[test]
+fn skeleton_asset_carries_names_parents_rest_pose_and_ids() {
+    let (result, ctx) = import_fixture("skinned.gltf");
+    result.expect("importing the skinned fixture should succeed");
+    let outputs = ctx.into_parts();
+    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
+
+    assert_eq!(skeleton.bone_count(), 2);
+    assert_eq!(&*skeleton.names, ["Root".to_string(), "Joint".to_string()]);
+    assert_eq!(&*skeleton.parents, [None, Some(0)]);
+    assert_eq!(skeleton.rest_pose[0], JointPose::IDENTITY);
+    assert_eq!(
+        skeleton.rest_pose[1].translation,
+        glam::Vec3::new(0.0, 1.0, 0.0)
+    );
+    assert_eq!(skeleton.bone_index("Joint"), Some(1));
+    assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
+}
+
+#[test]
+fn joint_listed_before_its_parent_fails_the_import() {
+    let (result, ctx) = import_fixture("skinned_out_of_order.gltf");
+    let error = result.expect_err("a skin that is not parents-first must be rejected");
+    let message = format!("{error:?}");
+    assert!(
+        message.contains("skin 0") && message.contains("joint 2"),
+        "the error must name the skin and the joint, got: {message}"
+    );
+    assert!(
+        ctx.into_parts()
+            .sub_assets
+            .iter()
+            .all(|s| s.name != "skeleton/0"),
+        "a rejected skin must emit no skeleton"
+    );
+}
+
+#[test]
+fn parent_outside_the_skin_makes_the_joint_a_root() {
+    let (result, ctx) = import_fixture("skinned_parent_outside_skin.gltf");
+    result.expect("importing should succeed");
+    let skeleton = emitted_skeleton(&ctx.into_parts(), "skeleton/0");
+
+    assert_eq!(&*skeleton.names, ["Joint".to_string(), "Tip".to_string()]);
+    assert_eq!(&*skeleton.parents, [None, Some(0)]);
+}
+
+#[test]
+fn skin_with_an_unreachable_joint_emits_no_skeleton() {
+    let (result, ctx) = import_fixture("skinned_unreachable_joint.gltf");
+    result.expect("a skipped skin is not an import error");
+    let names: Vec<String> = ctx
+        .into_parts()
+        .sub_assets
+        .into_iter()
+        .map(|s| s.name)
+        .collect();
+    assert!(
+        !names.iter().any(|n| n.starts_with("skeleton/")),
+        "a skipped skin must emit nothing, got: {names:?}"
     );
 }

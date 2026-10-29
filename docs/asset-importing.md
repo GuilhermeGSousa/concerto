@@ -139,11 +139,15 @@ u32   header length, little-endian
       payload — the asset's own bincode encoding, verbatim
 ```
 
+A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
+
+Format version 3 rejects every `.gasset` written at version 2. After upgrading, re-import each source through the editor over a scratch copy of the project, re-save any scene that stores `SkeletonComponent::bone_ids`, and commit the result.
+
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
 | Field            | Meaning                                                        |
 |------------------|---------------------------------------------------------------|
-| `format_version` | `CONTENT_FORMAT_VERSION` (currently `2`); a mismatch is rejected on read |
+| `format_version` | `CONTENT_FORMAT_VERSION` (currently `3`); a mismatch is rejected on read; there is no decoder for older files |
 | `asset_id`       | Persistent UUID, minted once and reused from source metadata; legacy UUIDs are preserved |
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
@@ -241,8 +245,10 @@ let hero: AssetHandle<Scene> = asset_server.load::<Scene>(HERO);
 The macro resolves paths against the **calling package's `CARGO_MANIFEST_DIR`**,
 reads the `.gasset` header, and emits the UUID's 16 bytes as a constant. It does
 not embed the file payload, import source assets, read the registry, or perform
-a runtime path lookup. Missing files, malformed headers, and unsupported file
-versions are compile errors at the macro invocation. It is also available as
+a runtime path lookup. A missing file expands to `AssetId::nil()` with a
+deprecation warning at the macro invocation, which a crate that denies warnings
+sees as an error. Malformed headers and unsupported file versions are compile
+errors there. It is also available as
 `concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
 Register the package's content directory for stable Rust build tracking, and

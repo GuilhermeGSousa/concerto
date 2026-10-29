@@ -12,10 +12,18 @@ use syn::{parse_macro_input, Data, DeriveInput, Fields};
 pub fn asset_id_bytes(input: TokenStream) -> TokenStream {
     let path = parse_macro_input!(input as syn::LitStr);
     match read_asset_id(&path) {
-        Ok(bytes) => quote!({
+        Ok(AssetIdLookup::Found(bytes)) => quote!({
             // Keep the configured root visible to rustc's environment tracking.
             const _: &str = env!("CONCERTO_ASSET_ROOT");
             [#(#bytes),*]
+        })
+        .into(),
+        Ok(AssetIdLookup::Missing(message)) => quote_spanned!(path.span()=> {
+            const _: &str = env!("CONCERTO_ASSET_ROOT");
+            #[deprecated(note = #message)]
+            const fn missing_asset() {}
+            const _: () = missing_asset();
+            [0u8; 16]
         })
         .into(),
         Err(message) => syn::Error::new(path.span(), message)
@@ -24,7 +32,12 @@ pub fn asset_id_bytes(input: TokenStream) -> TokenStream {
     }
 }
 
-fn read_asset_id(literal: &syn::LitStr) -> Result<[u8; 16], String> {
+enum AssetIdLookup {
+    Found([u8; 16]),
+    Missing(String),
+}
+
+fn read_asset_id(literal: &syn::LitStr) -> Result<AssetIdLookup, String> {
     use std::path::Path;
 
     let tracking_root = std::env::var_os("CONCERTO_ASSET_ROOT").ok_or_else(|| {
@@ -38,9 +51,21 @@ fn read_asset_id(literal: &syn::LitStr) -> Result<[u8; 16], String> {
         return Err("asset_id! expects a path relative to the calling package".into());
     }
     let path = Path::new(&manifest).join(relative);
-    let canonical = path
-        .canonicalize()
-        .map_err(|error| format!("asset_id!: cannot open '{}': {error}", path.display()))?;
+    let canonical = match path.canonicalize() {
+        Ok(canonical) => canonical,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(AssetIdLookup::Missing(format!(
+                "asset_id!: no asset at '{}'; using a nil id",
+                path.display()
+            )));
+        }
+        Err(error) => {
+            return Err(format!(
+                "asset_id!: cannot open '{}': {error}",
+                path.display()
+            ))
+        }
+    };
     if !canonical.starts_with(Path::new(&tracking_root)) {
         return Err(format!(
             "asset_id!: '{}' is outside the directory registered by asset_build::track_assets",
@@ -48,7 +73,7 @@ fn read_asset_id(literal: &syn::LitStr) -> Result<[u8; 16], String> {
         ));
     }
     concerto_asset_format::read_content_asset_header(&canonical)
-        .map(|header| header.asset_id.to_bytes())
+        .map(|header| AssetIdLookup::Found(header.asset_id.to_bytes()))
         .map_err(|error| format!("asset_id!: {error:#}"))
 }
 

@@ -13,7 +13,6 @@ use concerto_scene::capture::{capture_scene, capture_subtree};
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
 use concerto_scene::spawner::{spawn_scene, spawn_scene_in_world};
 use glam::Vec3;
-use uuid::Uuid;
 
 fn world() -> World {
     let mut world = World::default();
@@ -140,7 +139,6 @@ fn resolved_skeleton_references_capture_as_node_indices() {
                 SceneEntityRef::Entity(bone_b),
                 SceneEntityRef::Entity(bone_a),
             ],
-            bone_ids: vec![Uuid::from_u128(1), Uuid::from_u128(2)],
             root: Some(SceneEntityRef::Entity(bone_a)),
         },
         mesh,
@@ -178,7 +176,6 @@ fn a_component_that_cannot_be_read_back_fails_the_capture() {
         SkeletonComponent {
             skeleton: AssetHandle::<Skeleton>::weak(AssetId::from_path("rig#skeleton")),
             bones: vec![SceneEntityRef::Entity(outsider)],
-            bone_ids: vec![Uuid::from_u128(1)],
             root: None,
         },
         mesh,
@@ -218,7 +215,6 @@ fn skinned(world: &mut World, parent: Entity, bones_inside: bool) -> Entity {
         SkeletonComponent {
             skeleton: AssetHandle::<Skeleton>::weak(AssetId::from_path("rig#skeleton")),
             bones: vec![SceneEntityRef::Entity(bone)],
-            bone_ids: vec![Uuid::from_u128(1)],
             root: Some(SceneEntityRef::Entity(bone)),
         },
         mesh,
