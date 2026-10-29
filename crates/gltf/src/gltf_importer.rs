@@ -289,16 +289,16 @@ impl Importer for GltfImporter {
                 let parent_position = node_parents
                     .get(&joint.index())
                     .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
-                if let Some((parent_node, parent_position)) = parent_position {
-                    if parent_position >= position {
-                        return Err(ImportError::MalformedSource {
-                            source_path: source_path.to_path_buf(),
-                            message: format!(
-                                "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
-                                joint.index()
-                            ),
-                        });
-                    }
+                if let Some((parent_node, parent_position)) = parent_position
+                    && parent_position >= position
+                {
+                    return Err(ImportError::MalformedSource {
+                        source_path: source_path.to_path_buf(),
+                        message: format!(
+                            "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
+                            joint.index()
+                        ),
+                    });
                 }
                 parents.push(parent_position.map(|(_, at)| at as u16));
                 names.push(
