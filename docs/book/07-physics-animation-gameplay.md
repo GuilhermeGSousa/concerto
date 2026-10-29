@@ -104,6 +104,9 @@ collisions. It also fills `CharacterSimulation::trajectory` with
 `sample_count` predicted samples, `sample_dt` apart, assuming the desired
 motion holds.
 
+The default halflife changed from 0.1 s, the old `CharacterMovement` value, to
+0.27 s.
+
 `ground.ground()` says more: `InAir`, `OnGround` or `OnSteepGround`. Input
 comes from the `Input` resource in `concerto::window::input`, with
 `is_held`, `is_just_pressed` and `is_just_released` for keys and the matching
