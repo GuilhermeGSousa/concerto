@@ -124,6 +124,17 @@ fn a_huge_channel_count_is_rejected_without_allocating() {
 }
 
 #[test]
+fn a_deeply_nested_hierarchy_is_rejected() {
+    let mut text = String::from("HIERARCHY\nROOT J0\n{\nOFFSET 0 0 0\nCHANNELS 0\n");
+    for depth in 1..1000 {
+        text.push_str(&format!("JOINT J{depth}\n{{\nOFFSET 0 0 0\nCHANNELS 0\n"));
+    }
+    text.push_str(&"}\n".repeat(1000));
+    text.push_str("MOTION\nFrames: 2\nFrame Time: 0.0333333\n\n\n");
+    assert_malformed("deep.bvh", &text, "nested");
+}
+
+#[test]
 fn unbalanced_braces_are_rejected() {
     let missing_close = TWO_JOINTS.replacen("}\nMOTION", "MOTION", 1);
     assert_malformed("open.bvh", &missing_close, "brace");

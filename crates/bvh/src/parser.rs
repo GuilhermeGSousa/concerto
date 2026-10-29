@@ -179,7 +179,7 @@ pub(crate) fn parse(text: &str) -> Result<Bvh> {
     let mut channel_count = 0;
     match tokens.next() {
         Some((_, "ROOT")) => {
-            parse_joint(&mut tokens, None, &mut joints, &mut channel_count)?;
+            parse_joint(&mut tokens, None, 0, &mut joints, &mut channel_count)?;
         }
         Some((line, token)) => return error(line, format!("expected ROOT, found {token}")),
         None => return error(tokens.last_line, "no ROOT joint in HIERARCHY"),
@@ -206,13 +206,22 @@ pub(crate) fn parse(text: &str) -> Result<Bvh> {
     })
 }
 
+const MAX_JOINT_DEPTH: usize = 128;
+
 fn parse_joint(
     tokens: &mut Tokens<'_>,
     parent: Option<usize>,
+    depth: usize,
     joints: &mut Vec<Joint>,
     channel_count: &mut usize,
 ) -> Result<()> {
     let (name_line, name) = tokens.expect_next("a joint name")?;
+    if depth >= MAX_JOINT_DEPTH {
+        return error(
+            name_line,
+            format!("joints are nested more than {MAX_JOINT_DEPTH} deep"),
+        );
+    }
     if name == "{" || name == "}" {
         return error(name_line, "expected a joint name");
     }
@@ -266,7 +275,7 @@ fn parse_joint(
                 *channel_count += count;
                 joints[index].channels = channels;
             }
-            "JOINT" => parse_joint(tokens, Some(index), joints, channel_count)?,
+            "JOINT" => parse_joint(tokens, Some(index), depth + 1, joints, channel_count)?,
             "End" => {
                 tokens.expect("Site")?;
                 tokens.expect_open_brace()?;
