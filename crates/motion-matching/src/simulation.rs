@@ -1,4 +1,4 @@
-use concerto_ecs::Component;
+use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_foundation::math::spring_damper::{
     simple_spring_damper_exact_quat, spring_character_predict, CharacterState,
 };
