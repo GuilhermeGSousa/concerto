@@ -83,7 +83,8 @@ fn label_for(path: &PropertyPath) -> String {
         .rev()
         .find(|segment| segment.parse::<usize>().is_err())
         .copied()
-        .unwrap_or(path.name());
+        .unwrap_or(path.name())
+        .replace('_', " ");
     let mut chars = name.chars();
     chars
         .next()

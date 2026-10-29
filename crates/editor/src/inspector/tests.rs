@@ -544,6 +544,19 @@ fn labels_capitalise_the_field_name() {
 }
 
 #[test]
+fn labels_turn_snake_case_into_words() {
+    assert_eq!(label_for(&PropertyPath::new(["light_type"])), "Light type");
+    assert_eq!(
+        label_for(&PropertyPath::new(["shadowmaps_enabled"])),
+        "Shadowmaps enabled"
+    );
+    assert_eq!(
+        label_for(&PropertyPath::new(["light_type", "cone_angle"])),
+        "Cone angle"
+    );
+}
+
+#[test]
 fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
     assert_eq!(label_for(&PropertyPath::new(["ambient", "0"])), "Ambient");
     assert_eq!(label_for(&PropertyPath::new(["pair", "0", "1"])), "Pair");
