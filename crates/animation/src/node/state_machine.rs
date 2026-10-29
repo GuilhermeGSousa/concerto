@@ -3,7 +3,9 @@ use std::collections::HashMap;
 
 use crate::graph::{AnimationGraph, AnimationGraphInstance, AnimationGraphInstances, GraphId};
 use crate::pose::{EvaluatedPose, Pose, PosePool};
-use crate::transition::{AnimationTransitionBlender, TransitionBlend, blend_stack::BlendStack};
+use crate::transition::{
+    AnimationTransitionBlender, TransitionBlend, inertialization_blender::InertializationBlender,
+};
 use crate::{
     evaluation::AnimationGraphContext,
     node::{AnimationNodeInstance, AnimationNodeKind},
@@ -201,7 +203,7 @@ pub(crate) struct AnimationStateMachineInstance {
     state_graph_instances: AnimationGraphInstances,
     current_state: StateId,
     state_names: Vec<String>,
-    blend_stack: BlendStack,
+    blender: InertializationBlender,
 }
 
 impl AnimationStateMachineInstance {
@@ -214,7 +216,7 @@ impl AnimationStateMachineInstance {
             state_graph_instances: AnimationGraphInstances::new(graph_instance),
             current_state: initial_state,
             state_names,
-            blend_stack: BlendStack::new(initial_state.as_graph_id()),
+            blender: InertializationBlender::new(initial_state.as_graph_id()),
         }
     }
 
@@ -231,7 +233,7 @@ impl AnimationStateMachineInstance {
         transition: &AnimationStateMachineTransition,
     ) {
         self.current_state = transition.next_state;
-        self.blend_stack.transition(
+        self.blender.transition(
             transition.next_state.as_graph_id(),
             &mut self.state_graph_instances,
             &transition.blend,
@@ -241,7 +243,7 @@ impl AnimationStateMachineInstance {
         // The blend stack's newest entry and the FSM's current state are the same fact; they
         // must never diverge, or transition logic would run against a state that isn't playing.
         debug_assert_eq!(
-            *self.blend_stack.current(),
+            *self.blender.current(),
             *self.current_state.as_graph_id(),
             "blend stack current graph drifted from the FSM current state",
         );
@@ -304,7 +306,7 @@ impl AnimationNodeInstance for AnimationStateMachineInstance {
             }
         }
 
-        self.blend_stack
+        self.blender
             .update(delta_time, &mut self.state_graph_instances, context);
     }
 
@@ -317,7 +319,7 @@ impl AnimationNodeInstance for AnimationStateMachineInstance {
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        self.blend_stack.sample(
+        self.blender.sample(
             bone_ids,
             &mut self.state_graph_instances,
             context,
