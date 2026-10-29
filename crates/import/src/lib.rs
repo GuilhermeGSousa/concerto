@@ -150,6 +150,7 @@ fn import_placed(
     let importer_name = match extension.as_str() {
         "gltf" | "glb" => "gltf",
         "obj" => "obj",
+        "bvh" => "bvh",
         _ => "image",
     };
     let relative_source = source.strip_prefix(project_root).unwrap_or(source);
@@ -203,6 +204,7 @@ fn import_placed(
             source_id: AssetId::new(),
             importer: importer_name.to_string(),
             outputs,
+            settings: toml::Table::new(),
         }
     };
     validate_ownership(&metadata, &sidecar, source, project_root, config, &headers)?;
@@ -224,7 +226,8 @@ fn import_placed(
             .entry(sub_name.to_string())
             .or_default()
     });
-    let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver);
+    let mut ctx = ImportContext::with_sub_asset_id_resolver(source.to_path_buf(), resolver)
+        .with_settings(metadata.settings.clone());
     importer
         .import(read, &mut ctx)
         .map_err(|err| anyhow::anyhow!("{err:?}"))

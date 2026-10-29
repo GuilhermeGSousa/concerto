@@ -105,3 +105,18 @@ fn track_dependency_records_path_and_hash() {
         "dependency content_hash matches tracked value"
     );
 }
+
+#[test]
+fn with_settings_makes_settings_return_the_table() {
+    let mut table = toml::Table::new();
+    table.insert("scale".to_string(), toml::Value::Float(0.5));
+    let ctx = ImportContext::new(std::path::PathBuf::from("motion/walk.bvh"))
+        .with_settings(table.clone());
+    assert_eq!(ctx.settings(), &table);
+}
+
+#[test]
+fn a_context_built_without_settings_returns_an_empty_table() {
+    let ctx = ImportContext::new(std::path::PathBuf::from("motion/walk.bvh"));
+    assert!(ctx.settings().is_empty());
+}
