@@ -34,10 +34,12 @@ use crate::{
     dock::{DockedApp, MARGIN, PanelDescriptor, PanelRegistry, RAIL, Region},
     fonts::{glyph, icon},
     guard::PROMPT_LAYER,
+    window_chrome::{CONTROL_LAYER, WindowChromeControl},
 };
 
 const PANEL_ID: &str = "concerto.reload";
 const ABOVE_CHATTER: f32 = 30.0 + 8.0;
+const ERROR_VIEW_MAX_HEIGHT: f32 = 320.0;
 
 pub(super) struct ReloadUiPlugin;
 
@@ -127,17 +129,21 @@ fn build_reload_button(mut cmd: CommandQueue, registry: Res<PanelRegistry>, them
         return;
     };
     cmd.entity(body).add_child_with(
-        theme
-            .pressable()
-            .row()
-            .gap(theme.spacing_xs + 2.0)
-            .height(UIValue::Px(26.0))
-            .padding(UIRect::axes(0.0, theme.spacing_sm))
-            .margin(UIRect {
-                right: theme.spacing_md,
-                ..Default::default()
-            })
-            .on_click(press_reload_button()),
+        (
+            theme
+                .pressable()
+                .row()
+                .gap(theme.spacing_xs + 2.0)
+                .height(UIValue::Px(26.0))
+                .padding(UIRect::axes(0.0, theme.spacing_sm))
+                .margin(UIRect {
+                    right: theme.spacing_md,
+                    ..Default::default()
+                })
+                .z_index(CONTROL_LAYER)
+                .on_click(press_reload_button()),
+            WindowChromeControl,
+        ),
         |mut button| {
             button
                 .add_child((
@@ -351,13 +357,17 @@ fn block_text(error: &super::BuildDiagnostic) -> String {
 
 fn sync_error_scroll(
     stacks: Query<&UILayout, With<ErrorStack>>,
-    views: Query<(&mut UIScrollArea, &UILayout), With<ErrorView>>,
+    views: Query<(&mut UIScrollArea, &mut UINode, &UILayout), With<ErrorView>>,
 ) {
     let Some(stack) = stacks.iter().next() else {
         return;
     };
     let extent = stack.rect.size.y;
-    for (mut area, view) in views.iter() {
+    let height = UIValue::Px(extent.min(ERROR_VIEW_MAX_HEIGHT));
+    for (mut area, mut node, view) in views.iter() {
+        if node.height != height {
+            node.height = height;
+        }
         if area.content_extent != extent {
             area.content_extent = extent;
         }
@@ -421,7 +431,15 @@ mod tests {
         plugin::Window,
     };
 
-    use super::{ButtonPart, ReloadUiPlugin, listed_errors};
+    use concerto_ui::{
+        node::{UIBox, UILayout, UINode},
+        transform::UIValue,
+    };
+    use glam::Vec2;
+
+    use super::{
+        ButtonPart, ERROR_VIEW_MAX_HEIGHT, ErrorStack, ErrorView, ReloadUiPlugin, listed_errors,
+    };
     use crate::{
         actions::{ActionsPlugin, DismissBuildErrors},
         dock::{DockPlugin, PanelRegistry},
@@ -433,6 +451,7 @@ mod tests {
         },
         scene::SceneState,
         shell::{CHATTER_ID, ShellPlugin},
+        window_chrome::{CONTROL_LAYER, WindowChromeControl},
     };
 
     fn setup() -> App {
@@ -713,6 +732,80 @@ mod tests {
 
         assert_eq!(listed_errors(app.main_mut().world_mut()), listed(&errors));
         with_text(app.main_mut().world_mut(), "Build failed · 1 error");
+    }
+
+    #[test]
+    fn the_reload_button_is_a_window_control_above_the_drag_strip() {
+        let mut app = setup();
+        tick(&mut app);
+        let world = app.main_mut().world_mut();
+        let button = pressable(world, "Reload");
+
+        assert!(
+            world
+                .get_component_for_entity::<WindowChromeControl>(button)
+                .is_some()
+        );
+        assert_eq!(
+            world
+                .get_component_for_entity::<UINode>(button)
+                .unwrap()
+                .z_index,
+            CONTROL_LAYER
+        );
+    }
+
+    fn lay_out(world: &mut World, entity: Entity, height: f32) {
+        let rect = UIBox {
+            min: Vec2::ZERO,
+            size: Vec2::new(700.0, height),
+        };
+        world.insert(
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            entity,
+        );
+    }
+
+    fn only<T: concerto_ecs::Component>(world: &mut World) -> Entity {
+        world
+            .query::<(Entity, &T), ()>()
+            .iter(world)
+            .map(|(entity, _)| entity)
+            .next()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_error_view_is_as_tall_as_its_errors_up_to_a_limit() {
+        let mut app = setup();
+        tick(&mut app);
+        fail(
+            &mut app,
+            vec![error("cannot find value `x` in this scope", 2)],
+        );
+        tick(&mut app);
+        let world = app.main_mut().world_mut();
+        let (view, stack) = (only::<ErrorView>(world), only::<ErrorStack>(world));
+        let height = |world: &mut World| {
+            world
+                .get_component_for_entity::<UINode>(view)
+                .unwrap()
+                .height
+        };
+
+        lay_out(world, view, 0.0);
+        lay_out(world, stack, 105.0);
+        world.run_schedule(LateUpdate);
+        assert_eq!(height(world), UIValue::Px(105.0));
+
+        lay_out(world, stack, ERROR_VIEW_MAX_HEIGHT * 3.0);
+        world.run_schedule(LateUpdate);
+        assert_eq!(height(world), UIValue::Px(ERROR_VIEW_MAX_HEIGHT));
     }
 
     #[cfg(unix)]

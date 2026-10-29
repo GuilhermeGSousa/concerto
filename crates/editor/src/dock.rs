@@ -137,42 +137,55 @@ fn build_dock(
 
     registry.root = Some(root);
 
+    let mut band = None;
+
     for region in Region::ALL {
         let panels = registry.in_region(region);
         if panels.is_empty() {
             continue;
         }
-        let container = spawn_region(&mut cmd, root, region, &theme);
+        let parent = match region {
+            Region::Brand | Region::Stats => {
+                *band.get_or_insert_with(|| spawn_band(&mut cmd, root))
+            }
+            _ => root,
+        };
+        let container = spawn_region(&mut cmd, parent, region, &theme);
         for (id, body) in fill_region(&mut cmd, container, region, &panels, &theme) {
             registry.bodies.insert(id, body);
         }
     }
 }
 
-fn spawn_region(cmd: &mut CommandQueue, root: Entity, region: Region, theme: &UITheme) -> Entity {
+fn spawn_band(cmd: &mut CommandQueue, root: Entity) -> Entity {
+    cmd.entity(root)
+        .spawn_child(
+            UINode::default()
+                .with_height(UIValue::Px(TOP))
+                .with_position(Position::Absolute)
+                .with_inset(UIInset {
+                    top: UIValue::Px(MARGIN),
+                    left: UIValue::Px(MARGIN),
+                    right: UIValue::Px(MARGIN),
+                    ..Default::default()
+                })
+                .with_flex_direction(FlexDirection::Row),
+        )
+        .entity()
+}
+
+fn spawn_region(cmd: &mut CommandQueue, parent: Entity, region: Region, theme: &UITheme) -> Entity {
     let rail_top = TOP + MARGIN;
     let node = match region {
         Region::Scene => UINode::default()
             .with_size(UIValue::Percent(100.0), UIValue::Percent(100.0))
             .with_position(Position::Absolute),
         Region::Brand => UINode::default()
-            .with_height(UIValue::Px(TOP))
-            .with_position(Position::Absolute)
-            .with_inset(UIInset {
-                top: UIValue::Px(MARGIN),
-                left: UIValue::Px(MARGIN),
-                right: UIValue::Px(340.0),
-                ..Default::default()
-            })
+            .with_flex_grow(1.0)
+            .with_min_width(UIValue::Px(0.0))
             .with_flex_direction(FlexDirection::Row),
         Region::Stats => UINode::default()
-            .with_height(UIValue::Px(TOP))
-            .with_position(Position::Absolute)
-            .with_inset(UIInset {
-                top: UIValue::Px(MARGIN),
-                right: UIValue::Px(MARGIN),
-                ..Default::default()
-            })
+            .with_flex_shrink(0.0)
             .with_flex_direction(FlexDirection::Row),
         Region::Rail => UINode::default()
             .with_width(UIValue::Px(RAIL))
@@ -207,7 +220,7 @@ fn spawn_region(cmd: &mut CommandQueue, root: Entity, region: Region, theme: &UI
             .with_gap(glam::Vec2::new(0.0, 8.0)),
     };
 
-    let entity = cmd.entity(root).spawn_child(node.clipped()).entity();
+    let entity = cmd.entity(parent).spawn_child(node.clipped()).entity();
     let _ = theme;
     entity
 }
@@ -345,6 +358,50 @@ mod tests {
                 "{region:?}: a panel drawn over the scene must be hit before the viewport behind it"
             );
         }
+    }
+
+    #[test]
+    fn the_brand_region_ends_where_the_stats_region_begins() {
+        use concerto_ecs::entity::hierarchy::{ChildOf, Children};
+
+        let mut world = World::default();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        world.insert_resource(UITheme::default());
+        world.insert_resource(concerto_window::plugin::Window::new((1280, 720), 1.0));
+        let mut registry = PanelRegistry::default();
+        registry.register(panel("brand", Region::Brand));
+        registry.register(panel("stats", Region::Stats));
+        world.insert_resource(registry);
+        let mut system = build_dock.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let registry = world.get_resource::<PanelRegistry>().unwrap();
+        let (brand, stats) = (
+            registry.body("brand").unwrap(),
+            registry.body("stats").unwrap(),
+        );
+        let parent = |entity| {
+            world
+                .get_component_for_entity::<ChildOf>(entity)
+                .unwrap()
+                .parent()
+        };
+        let node = |entity| world.get_component_for_entity::<UINode>(entity).unwrap();
+        let (brand, stats) = (parent(brand), parent(stats));
+        let band = parent(brand);
+        assert_eq!(
+            parent(stats),
+            band,
+            "both regions must share one row, or the brand region's tabs overlap the stats region's controls"
+        );
+        assert_eq!(node(band).flex_direction, FlexDirection::Row);
+        assert_eq!(node(brand).flex_grow, 1.0);
+        assert_eq!(node(brand).min_width, UIValue::Px(0.0));
+        assert_eq!(node(brand).position, Position::Relative);
+        assert_eq!(node(stats).flex_shrink, 0.0);
+        assert_eq!(node(stats).position, Position::Relative);
     }
 
     #[test]
