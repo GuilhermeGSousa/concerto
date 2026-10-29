@@ -139,7 +139,7 @@ u32   header length, little-endian
       payload — the asset's own bincode encoding, verbatim
 ```
 
-A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first, or whose joint is outside every scene root, is skipped or rejected and emits no skeleton.
+A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
 Format version 3 rejects every `.gasset` written at version 2. After upgrading, re-import each source through the editor over a scratch copy of the project, re-save any scene that stores `SkeletonComponent::bone_ids`, and commit the result.
 

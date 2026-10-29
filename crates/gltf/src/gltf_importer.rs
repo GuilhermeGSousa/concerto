@@ -300,7 +300,19 @@ impl Importer for GltfImporter {
                         ),
                     });
                 }
-                parents.push(parent_position.map(|(_, at)| at as u16));
+                let parent = parent_position
+                    .map(|(_, at)| {
+                        u16::try_from(at).map_err(|_| ImportError::MalformedSource {
+                            source_path: source_path.to_path_buf(),
+                            message: format!(
+                                "skin {skin_index}: joint {} has a parent at position {at}, past the {} bones a skeleton can address",
+                                joint.index(),
+                                u16::MAX as usize + 1
+                            ),
+                        })
+                    })
+                    .transpose()?;
+                parents.push(parent);
                 names.push(
                     joint
                         .name()

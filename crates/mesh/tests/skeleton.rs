@@ -1,4 +1,3 @@
-//! Covers Skeleton construction, lookup, forward kinematics and bincode round-tripping.
 use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonError};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
