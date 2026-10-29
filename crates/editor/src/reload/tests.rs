@@ -753,3 +753,52 @@ fn a_reload_cancelled_while_waiting_returns_to_idle() {
     assert_eq!(failures(&r.f), ["Reload cancelled"]);
     assert!(r.sessions().is_empty());
 }
+
+#[test]
+fn a_missing_built_editor_leaves_no_session_behind() {
+    let mut r = reloadable();
+    r.f.open();
+    let executable = r.bins.path().join("gone");
+    r.start(built(&executable), built(&executable));
+
+    r.until_settled();
+
+    assert_eq!(
+        failures(&r.f),
+        [format!(
+            "Reload failed: the built editor {} is missing",
+            executable.display()
+        )]
+    );
+    assert!(r.sessions().is_empty());
+}
+
+#[test]
+fn a_settled_reload_does_not_mark_its_state_changed() {
+    let mut f = SceneFixture::new();
+    f.open();
+    for phase in [ReloadPhase::Idle, ReloadPhase::Failed] {
+        reload_mut(&mut f).phase = phase;
+        f.frame();
+        let settled = f.world.resource_changed_tick::<GameReload>();
+
+        f.frame();
+        f.frame();
+
+        assert_eq!(f.world.resource_changed_tick::<GameReload>(), settled);
+    }
+}
+
+#[test]
+fn a_reload_asked_for_during_a_build_is_ignored() {
+    let mut r = reloadable();
+    r.f.open();
+    let executable = r.executable("game-editor");
+    r.start(vec![], built(&executable));
+
+    r.f.world.trigger(ReloadGameCode);
+
+    assert!(matches!(reload(&r.f).phase, ReloadPhase::Building(_)));
+    assert_eq!(reload(&r.f).fake_builds.len(), 1);
+    assert!(failures(&r.f).is_empty());
+}

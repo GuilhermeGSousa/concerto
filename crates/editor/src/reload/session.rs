@@ -213,7 +213,7 @@ impl SessionRestore {
         self.problems.push(problem);
     }
 
-    fn take_scene(&mut self, asset: AssetId) -> Option<SceneSession> {
+    fn take_scene(&mut self, asset: AssetId) -> Option<Option<SceneSession>> {
         if !self.requested || self.opened.contains(&asset) {
             return None;
         }
@@ -223,7 +223,7 @@ impl SessionRestore {
             .iter_mut()
             .find(|document| document.asset == asset && document.kind == Scene::name())?;
         self.opened.insert(asset);
-        document.scene.take()
+        Some(document.scene.take())
     }
 
     fn complete(&self) -> bool {
@@ -312,7 +312,7 @@ pub(crate) fn finish_restore(
         return;
     };
     for SceneOpened { document, asset } in opened.read() {
-        if let Some(view) = restore.take_scene(asset.id) {
+        if let Some(Some(view)) = restore.take_scene(asset.id) {
             cmd.trigger(ApplySceneView {
                 document: *document,
                 view,
@@ -427,6 +427,41 @@ mod tests {
             ],
             active: Some(1),
         }
+    }
+
+    #[test]
+    fn a_scene_that_fails_to_open_is_a_problem_even_without_a_saved_view() {
+        use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
+
+        let mut session = session();
+        session.documents.truncate(1);
+        session.documents[0].scene = None;
+        let mut asset = crate::hosted::testing::test_asset_entry();
+        asset.id = session.documents[0].asset;
+        let mut restore = SessionRestore::new(session, "/nowhere".into());
+        restore.requested = true;
+        let mut world = World::default();
+        world.insert_resource(restore);
+        world.insert_resource(GameReload::new(Err("unused".into())));
+        world.insert_resource(EventChannel::<SceneOpened>::new());
+        let mut failed = EventChannel::<SceneOpenFailed>::new();
+        failed.push_event(SceneOpenFailed {
+            document: world.spawn(()),
+            asset,
+            message: "Could not open scene".into(),
+        });
+        world.insert_resource(failed);
+        let mut system = finish_restore.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_eq!(
+            world.get_resource::<GameReload>().unwrap().status(),
+            Some((
+                "Reloaded with problems: notes.gasset: Could not open scene; the session is kept in /nowhere".into(),
+                true
+            ))
+        );
     }
 
     #[test]

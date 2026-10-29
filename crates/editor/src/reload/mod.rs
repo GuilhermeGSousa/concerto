@@ -1,4 +1,3 @@
-//! Reloading game code: building the game's editor crate again from inside the editor, then restarting into it with the session.
 mod cargo;
 mod restart;
 mod session;
@@ -294,6 +293,9 @@ pub(crate) fn update_reload_build(
     mut reload: ResMut<GameReload>,
     mut failed: EventWriter<ReloadFailed>,
 ) {
+    if !matches!(reload.phase, ReloadPhase::Building(_)) {
+        return;
+    }
     let ReloadPhase::Building(job) = &mut reload.phase else {
         return;
     };
@@ -394,6 +396,12 @@ pub(crate) fn restart_when_ready(
     edits: QueuedEdits,
     mut cmd: CommandQueue,
 ) {
+    if !matches!(
+        reload.phase,
+        ReloadPhase::Waiting { .. } | ReloadPhase::Confirming(_)
+    ) {
+        return;
+    }
     match &mut reload.phase {
         ReloadPhase::Waiting { executable } => match readiness(&documents, &in_flight, &edits) {
             Readiness::StopGames(games) => {
@@ -485,15 +493,15 @@ fn save_and_close(world: &mut World, executable: PathBuf) -> Result<(), String> 
         .and_then(|reload| reload.target.as_ref().ok())
         .map(|target| target.session_dir(SystemTime::now()))
         .ok_or_else(|| format!("{SESSION_FAILED}: the editor has no build to restart into"))?;
-    session
-        .write(&dir)
-        .map_err(|error| format!("{SESSION_FAILED}: {error:#}"))?;
     if !executable.is_file() {
         return Err(format!(
             "Reload failed: the built editor {} is missing",
             executable.display()
         ));
     }
+    session
+        .write(&dir)
+        .map_err(|error| format!("{SESSION_FAILED}: {error:#}"))?;
     world
         .get_resource::<RestartSlot>()
         .ok_or_else(|| "Reload failed: the editor has nowhere to restart from".to_string())?
