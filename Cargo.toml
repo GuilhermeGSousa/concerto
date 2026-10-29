@@ -63,6 +63,7 @@ concerto-import = { path = "crates/import", version = "0.1.0" }
 concerto-jolt-ffi = { path = "crates/jolt-ffi", version = "0.1.0" }
 concerto-mcp = { path = "crates/mcp", version = "0.1.0" }
 concerto-mesh = { path = "crates/mesh", version = "0.1.0" }
+concerto-motion-matching = { path = "crates/motion-matching", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
