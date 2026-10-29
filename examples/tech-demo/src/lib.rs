@@ -60,7 +60,7 @@ mod tests {
         );
         let spawner = app
             .get_resource::<AppTypeRegistry>()
-            .and_then(|registry| registry.get(TypeId::of::<PlayerSpawner>()))
+            .and_then(|registry| registry.read().get(TypeId::of::<PlayerSpawner>()))
             .unwrap();
         assert!(spawner.data::<ReflectComponent>().is_some());
         assert!(spawner.data::<ReflectDefault>().is_some());

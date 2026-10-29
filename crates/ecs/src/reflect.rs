@@ -9,13 +9,32 @@ use concerto_reflect::{
     EncodeError, FromType, LeafError, LeafHook, Reflect, ReflectDefault, ReflectedValue, TypeData,
     TypeRegistration, TypeRegistry, ValueWarning, apply_value_with, to_value_with,
 };
-use derive_more::{Deref, DerefMut};
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::{Component, Entity, Resource, World, system::input::ComponentMetadata};
 
-/// The world's type registry.
-#[derive(Resource, Default, Deref, DerefMut)]
-pub struct AppTypeRegistry(pub TypeRegistry);
+/// The world's type registry, shared by every clone.
+///
+/// Take one guard at a time and register no type while holding a read guard.
+#[derive(Resource, Clone, Default)]
+pub struct AppTypeRegistry(Arc<RwLock<TypeRegistry>>);
+
+impl AppTypeRegistry {
+    /// Locks the registry for reading.
+    pub fn read(&self) -> RwLockReadGuard<'_, TypeRegistry> {
+        self.0.read()
+    }
+
+    /// Locks the registry for writing.
+    pub fn write(&self) -> RwLockWriteGuard<'_, TypeRegistry> {
+        self.0.write()
+    }
+
+    /// A copy of the type data `D` registered for `id`, taken under the read lock.
+    pub fn get_type_data<D: TypeData + Copy>(&self, id: TypeId) -> Option<D> {
+        self.0.read().get_type_data::<D>(id).copied()
+    }
+}
 
 /// How to read, change, add and remove a reflected component on a world.
 #[derive(Clone, Copy)]
@@ -32,7 +51,7 @@ impl ReflectComponent {
         let Some(default) = world
             .get_resource::<AppTypeRegistry>()
             .and_then(|registry| registry.get_type_data::<ReflectDefault>(id))
-            .map(ReflectDefault::default)
+            .map(|data| data.default())
         else {
             return false;
         };
@@ -134,7 +153,7 @@ fn capture<T: Component + Reflect>(
     Some(to_value_with(
         value,
         &mut CaptureHook {
-            registry: world.get_resource::<AppTypeRegistry>(),
+            registry: world.get_resource::<AppTypeRegistry>().map(|r| r.read()),
             capture,
         },
     ))
@@ -211,14 +230,15 @@ impl LeafHook for SpawnHook<'_> {
 }
 
 struct CaptureHook<'a> {
-    registry: Option<&'a AppTypeRegistry>,
+    registry: Option<RwLockReadGuard<'a, TypeRegistry>>,
     capture: &'a mut SceneCapture,
 }
 
 impl LeafHook for CaptureHook<'_> {
     fn encode(&mut self, leaf: &dyn Reflect) -> Option<Result<Vec<u8>, LeafError>> {
         let capture = self
-            .registry?
+            .registry
+            .as_ref()?
             .get_type_data::<ReflectSceneLeaf>((leaf as &dyn Any).type_id())?
             .capture;
         Some(capture(leaf, self.capture))

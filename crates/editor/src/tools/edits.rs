@@ -251,7 +251,7 @@ impl SetValue {
         if registry.get_type_data::<ReflectJson>(field).is_some()
             || registry.get_type_data::<ReflectDefault>(field).is_some()
         {
-            return json_to_value_with(&self.value, field, registry, hook);
+            return json_to_value_with(&self.value, field, &registry.read(), hook);
         }
         let segments = self.path.segments();
         let variants: Vec<Option<&'static str>> = (0..segments.len())
@@ -281,7 +281,7 @@ impl SetValue {
                 }
             },
         );
-        let stored = json_to_value_with(&wrapped, self.component, registry, hook)?;
+        let stored = json_to_value_with(&wrapped, self.component, &registry.read(), hook)?;
         segments
             .iter()
             .try_fold(stored, |stored, segment| {
@@ -352,7 +352,6 @@ fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditE
     world
         .get_resource::<AppTypeRegistry>()
         .and_then(|registry| registry.get_type_data::<ReflectComponent>(component))
-        .copied()
         .ok_or(EditError::UnregisteredComponent)
 }
 
@@ -432,7 +431,7 @@ pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
 fn component_name(world: &World, component: TypeId) -> &'static str {
     world
         .get_resource::<AppTypeRegistry>()
-        .and_then(|registry| registry.get(component))
+        .and_then(|registry| registry.read().get(component))
         .map_or("the component", |registration| registration.short_name())
 }
 

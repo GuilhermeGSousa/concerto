@@ -489,11 +489,11 @@ fn registration_splits_between_the_recipe_and_the_editors_app() {
         1
     );
     let types = editor.get_resource::<AppTypeRegistry>().unwrap();
-    assert!(types.get(TypeId::of::<Setting>()).is_none());
+    assert!(types.read().get(TypeId::of::<Setting>()).is_none());
 
     let mut scene = App::new();
     example::register(&mut scene);
     let types = scene.get_resource::<AppTypeRegistry>().unwrap();
-    assert!(types.get(TypeId::of::<Setting>()).is_some());
+    assert!(types.read().get(TypeId::of::<Setting>()).is_some());
     assert!(scene.get_resource::<InspectorRegistry>().is_none());
 }

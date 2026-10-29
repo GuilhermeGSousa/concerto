@@ -97,7 +97,7 @@ impl World {
     /// Creates a new, empty `World` with no entities or resources.
     pub fn new() -> World {
         let mut world = Self::default();
-        world.type_registry_mut();
+        world.type_registry();
         world
     }
 
@@ -713,16 +713,18 @@ impl World {
 
     /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
     pub fn register_type<T: GetTypeRegistration>(&mut self) {
-        self.type_registry_mut().register::<T>();
+        self.type_registry().write().register::<T>();
     }
 
-    fn type_registry_mut(&mut self) -> &mut AppTypeRegistry {
-        if self.get_resource::<AppTypeRegistry>().is_none() {
-            let mut registry = AppTypeRegistry::default();
-            registry.register::<SceneEntityRef>();
-            self.insert_resource(registry);
+    /// This world's [`AppTypeRegistry`], created first if the world has none; clones share it.
+    pub fn type_registry(&mut self) -> AppTypeRegistry {
+        if let Some(registry) = self.get_resource::<AppTypeRegistry>() {
+            return registry.clone();
         }
-        self.get_resource_mut::<AppTypeRegistry>().unwrap()
+        let registry = AppTypeRegistry::default();
+        registry.write().register::<SceneEntityRef>();
+        self.insert_resource(registry.clone());
+        registry
     }
 
     /// Every component `entity` carries, including ones that are not scene
@@ -736,7 +738,7 @@ impl World {
 
     /// The registration of the type `id`, or `None` if it was never registered.
     pub fn registration(&self, id: ComponentId) -> Option<Arc<TypeRegistration>> {
-        self.get_resource::<AppTypeRegistry>()?.get(id)
+        self.get_resource::<AppTypeRegistry>()?.read().get(id)
     }
 
     /// The registered scene components `entity` currently carries.
@@ -750,7 +752,7 @@ impl World {
         self.component_ids(entity)
             .iter()
             .filter_map(move |component_id| {
-                let registration = registry?.get(*component_id)?;
+                let registration = registry?.read().get(*component_id)?;
                 let scene = *registration.data::<ReflectSceneComponent>()?;
                 Some(SceneComponentType::new(registration, scene))
             })
@@ -769,7 +771,7 @@ impl World {
     ) -> bool {
         let spawn = self
             .get_resource::<AppTypeRegistry>()
-            .and_then(|registry| registry.get_by_name(type_name))
+            .and_then(|registry| registry.read().get_by_name(type_name))
             .and_then(|registration| {
                 registration
                     .data::<ReflectSceneComponent>()

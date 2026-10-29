@@ -78,7 +78,7 @@ fn editing_a_camera_environment_changes_the_camera_uniform() {
         .with_ambient(Color::WHITE);
     let stored = to_value(&replacement).unwrap();
     let world = app.main_mut().world_mut();
-    let reflect = *world
+    let reflect = world
         .get_resource::<AppTypeRegistry>()
         .unwrap()
         .get_type_data::<ReflectComponent>(TypeId::of::<CameraEnvironment>())

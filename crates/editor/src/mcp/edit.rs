@@ -594,16 +594,17 @@ fn property_write(
         }));
     };
     let row = property.row(entity, component);
-    let editor = current_editor(registry, Some(source.types()), changed, &row)
+    let types = source.types();
+    let editor = current_editor(registry, Some(&*types), changed, &row)
         .map_err(|error| refused(&format!("Set {name} failed: {error}")))?;
     let mut edit = Err(unknown_path(short, &arguments.path, &[]));
-    let mut hook = LiveLeaves::from_parts(source.types(), server);
+    let mut hook = LiveLeaves::from_parts(&types, server);
     if let Some(value) = source.read(entity, component) {
         let _ = with_property(value, &row.path, &mut |field| {
             edit = value_edit(
                 field,
                 &arguments.value,
-                source.types(),
+                &types,
                 &mut hook,
                 editor.adapter.as_ref(),
                 &name,
@@ -732,7 +733,8 @@ fn add_component(
     };
     for (arguments, reply) in calls.read() {
         let edit = resolve(&arguments.entity, &entities).and_then(|entity| {
-            let (component, short, _) = registered_component(source.types(), &arguments.component)?;
+            let (component, short, _) =
+                registered_component(&source.types(), &arguments.component)?;
             if roots.get_entity(entity).is_some() {
                 return Err(root_refused(&format!("Add {short}")));
             }

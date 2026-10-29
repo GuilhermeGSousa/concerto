@@ -2,6 +2,7 @@ use std::{
     any::{Any, TypeId},
     collections::HashMap,
     marker::PhantomData,
+    ops::Deref,
     sync::Arc,
 };
 
@@ -219,7 +220,7 @@ impl InspectorRegistry {
         let types = scene.get_resource::<AppTypeRegistry>()?;
         let entry = types.get_type_data::<ReflectComponent>(component)?;
         let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
-        Some(self.collect_at(registry_tick, value, types))
+        Some(self.collect_at(registry_tick, value, &types.read()))
     }
 
     fn collect_at(
@@ -304,7 +305,7 @@ impl InspectionSource<'_> {
     }
     pub fn follows_snapshot(&self, registry: &InspectorRegistry, property: &Property) -> bool {
         registry
-            .editor(property.type_id, Some(&self.table))
+            .editor(property.type_id, Some(&self.table.read()))
             .is_some_and(|editor| {
                 Some(editor.editor_type) == property.editor_type
                     && editor.adapter.follows_snapshot()
@@ -318,7 +319,7 @@ impl InspectionSource<'_> {
         theme: &UITheme,
     ) -> UINode {
         registry
-            .editor(property.type_id, Some(&self.table))
+            .editor(property.type_id, Some(&self.table.read()))
             .filter(|editor| Some(editor.editor_type) == property.editor_type)
             .and_then(|editor| editor.adapter.row_node(&property.value, theme).ok())
             .unwrap_or_else(|| super::sync::standard_row_node(theme))
@@ -326,8 +327,9 @@ impl InspectionSource<'_> {
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {
         let present = self.components.component_ids(entity);
+        let table = self.table.read();
         let addable = || {
-            self.table
+            table
                 .iter()
                 .filter(|registration| {
                     registration.data::<ReflectComponent>().is_some()
@@ -339,15 +341,16 @@ impl InspectionSource<'_> {
         (missing, addable().count())
     }
     pub fn visible_components(&self, entity: Entity) -> Vec<(TypeId, &'static str)> {
+        let table = self.table.read();
         self.components
             .component_ids(entity)
             .iter()
-            .filter_map(|&id| Some((id, self.table.get(id)?.short_name())))
+            .filter_map(|&id| Some((id, table.get(id)?.short_name())))
             .collect()
     }
     /// The edit `App`'s type registry.
-    pub fn types(&self) -> &TypeRegistry {
-        &self.table
+    pub fn types(&self) -> impl Deref<Target = TypeRegistry> + '_ {
+        self.table.read()
     }
     /// The component `id` on `entity`, or `None` when it is absent or has no reflection data.
     pub fn read(&self, entity: Entity, id: TypeId) -> Option<&dyn Reflect> {
@@ -360,7 +363,7 @@ impl InspectionSource<'_> {
         entity: Entity,
         id: TypeId,
     ) -> Option<Vec<Property>> {
-        Some(registry.collect_at(registry_tick, self.read(entity, id)?, &self.table))
+        Some(registry.collect_at(registry_tick, self.read(entity, id)?, &self.table.read()))
     }
 }
 
@@ -443,7 +446,8 @@ pub(super) fn send_property_commits(
     if commits.0.is_empty() {
         return;
     }
-    let types = types.as_deref().map(|types| &types.0);
+    let types = types.as_deref().map(|types| types.read());
+    let types = types.as_deref();
     for commit in std::mem::take(&mut commits.0) {
         match checked(&registry, types, registry.changed_tick(), commit) {
             Ok(commit) => scene.trigger(commit),

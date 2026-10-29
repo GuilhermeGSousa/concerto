@@ -154,6 +154,7 @@ impl TypeRegistry {
 }
 
 /// Builds a `Default` value of the type.
+#[derive(Clone, Copy)]
 pub struct ReflectDefault {
     default: fn() -> Box<dyn Reflect>,
 }

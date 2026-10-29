@@ -617,7 +617,7 @@ mod tests {
     }
 
     fn handle_type_data(world: &World) -> ReflectAssetHandle {
-        *world
+        world
             .get_resource::<concerto_ecs::reflect::AppTypeRegistry>()
             .unwrap()
             .get_type_data::<ReflectAssetHandle>(std::any::TypeId::of::<AssetHandle<FixtureAsset>>())
@@ -678,7 +678,7 @@ mod tests {
         let stored = concerto_reflect::json_to_value_with(
             &serde_json::Value::String(id.simple_hex()),
             TypeId::of::<AssetHandle<FixtureAsset>>(),
-            world.get_resource::<AppTypeRegistry>().unwrap(),
+            &world.get_resource::<AppTypeRegistry>().unwrap().read(),
             &mut hook,
         )
         .unwrap();
@@ -705,18 +705,18 @@ mod tests {
         let entity = world.spawn(());
         let id = AssetId::new();
         let mut hook = LiveLeaves::new(&world);
-        let registry = world.get_resource::<AppTypeRegistry>().unwrap();
+        let registry = world.get_resource::<AppTypeRegistry>().unwrap().read();
         let reference = concerto_reflect::json_to_value_with(
             &serde_json::Value::String(entity.to_id_string()),
             TypeId::of::<SceneEntityRef>(),
-            registry,
+            &registry,
             &mut hook,
         )
         .unwrap();
         let asset = concerto_reflect::json_to_value_with(
             &serde_json::Value::String(id.simple_hex()),
             TypeId::of::<AssetHandle<FixtureAsset>>(),
-            registry,
+            &registry,
             &mut hook,
         )
         .unwrap();

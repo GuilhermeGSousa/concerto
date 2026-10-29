@@ -573,7 +573,7 @@ mod tests {
         assert_eq!(
             registry
                 .get_type_data::<ReflectAssetHandle>(handle)
-                .map(ReflectAssetHandle::kind),
+                .map(|data| data.kind()),
             Some("StandardMaterial")
         );
     }
