@@ -304,7 +304,7 @@ impl LiveLeaves {
             .iter()
             .filter_map(|registration| {
                 Some((
-                    registration.type_id(),
+                    (*registration).type_id(),
                     *registration.data::<ReflectAssetHandle>()?,
                 ))
             })

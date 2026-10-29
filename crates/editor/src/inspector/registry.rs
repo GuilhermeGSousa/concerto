@@ -335,7 +335,7 @@ impl InspectionSource<'_> {
                     registration.data::<ReflectComponent>().is_some()
                         && registration.data::<ReflectDefault>().is_some()
                 })
-                .map(|registration| (registration.type_id(), registration.short_name()))
+                .map(|registration| ((*registration).type_id(), registration.short_name()))
         };
         let missing = addable().filter(|(id, _)| !present.contains(id)).collect();
         (missing, addable().count())

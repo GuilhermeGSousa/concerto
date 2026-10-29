@@ -416,7 +416,7 @@ fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolE
         .filter(|registration| registration.data::<ReflectComponent>().is_some())
         .map(|registration| {
             (
-                registration.type_id(),
+                (*registration).type_id(),
                 registration.short_name(),
                 registration.type_path(),
             )
