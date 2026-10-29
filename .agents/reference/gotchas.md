@@ -169,6 +169,32 @@ fix the entry in the same commit as the change that made it false.
 - **A handle type must be registered to load from a scene.** Registering the
   component that holds `AssetHandle<A>` registers it. A handle whose type
   nothing registered spawns weak and loads nothing, with a warning.
+- **`AppTypeRegistry` is one shared lock.** It is a `Clone` handle on an
+  `Arc<parking_lot::RwLock<TypeRegistry>>`; `read()` and `write()` return the
+  guards. `get_type_data::<D>(id)` copies a `Copy` type data out under the read
+  lock. `TypeRegistry::get`, `get_by_name` and `iter` return
+  `Arc<TypeRegistration>`, so they outlive the guard.
+- **Registry lock rules.** Never hold a read guard while calling anything that
+  registers a type: it takes the write lock and deadlocks. Never hold a guard
+  across an `.await` in a load task. A second `read()` on a thread that holds
+  one can deadlock when a writer queues between them, so take one `read()` and
+  pass the guard down. `AssetServer::add` runs `on_load` inline on the caller's
+  thread, so do not call it while holding a registry guard.
+- **`.type_id()` on an `Arc<TypeRegistration>` is the `Arc`'s.** With
+  `std::any::Any` in scope the call resolves to the `Arc`, not the
+  registration's type. Write `(*registration).type_id()`.
+- **An asset's `on_load` reads the world's registry through its context.**
+  `AssetLoadContext::type_registry()` returns the registry the server holds
+  when the load starts. `AssetManagerPlugin::build` links the world's registry
+  to the server it inserts. A server inserted some other way has its own empty
+  registry until `set_type_registry` is called, and `on_load` then finds no type
+  data. `set_type_registry` affects loads that start afterwards; a running load
+  keeps the one it started with. A load requested from inside another plugin's
+  `build` sees a partial registry, since plugins register their types in
+  `build`, before `Startup`.
+- **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
+  `Loaded` event.** When `on_load` fails, it logs an error and inserts nothing:
+  the handle it returned never resolves.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
