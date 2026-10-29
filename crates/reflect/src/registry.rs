@@ -1,6 +1,7 @@
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
+    sync::Arc,
 };
 
 use crate::Reflect;
@@ -74,7 +75,7 @@ fn short_name(type_path: &'static str) -> &'static str {
 
 /// Every registered type, by `TypeId`, with what it was declared to support.
 pub struct TypeRegistry {
-    registrations: HashMap<TypeId, TypeRegistration>,
+    registrations: HashMap<TypeId, Arc<TypeRegistration>>,
     by_path: HashMap<&'static str, TypeId>,
     by_short_name: HashMap<&'static str, TypeId>,
 }
@@ -123,28 +124,32 @@ impl TypeRegistry {
             }
             self.by_short_name.insert(registration.short_name, type_id);
         }
-        self.registrations.insert(type_id, registration);
+        self.registrations.insert(type_id, Arc::new(registration));
     }
 
-    pub fn get(&self, id: TypeId) -> Option<&TypeRegistration> {
-        self.registrations.get(&id)
+    /// The registration of the type `id`; it stays valid after the registry changes or is dropped.
+    pub fn get(&self, id: TypeId) -> Option<Arc<TypeRegistration>> {
+        self.registrations.get(&id).cloned()
     }
 
     /// Looks a type up by full path, or by short name when no full path matches.
-    pub fn get_by_name(&self, name: &str) -> Option<&TypeRegistration> {
+    pub fn get_by_name(&self, name: &str) -> Option<Arc<TypeRegistration>> {
         self.by_path
             .get(name)
             .or_else(|| self.by_short_name.get(name))
             .and_then(|id| self.registrations.get(id))
+            .cloned()
     }
 
     /// The type data `D` of the type `id`, if it was declared.
     pub fn get_type_data<D: TypeData>(&self, id: TypeId) -> Option<&D> {
-        self.get(id).and_then(TypeRegistration::data)
+        self.registrations
+            .get(&id)
+            .and_then(|registration| registration.data())
     }
 
-    pub fn iter(&self) -> impl Iterator<Item = &TypeRegistration> {
-        self.registrations.values()
+    pub fn iter(&self) -> impl Iterator<Item = Arc<TypeRegistration>> + '_ {
+        self.registrations.values().cloned()
     }
 }
 

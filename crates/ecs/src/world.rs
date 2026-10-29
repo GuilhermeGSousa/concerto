@@ -1,5 +1,6 @@
 use log::warn;
 use std::collections::hash_map::Entry::{Occupied, Vacant};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{any::TypeId, cell::UnsafeCell, collections::HashMap, marker::PhantomData, ptr};
 
@@ -734,7 +735,7 @@ impl World {
     }
 
     /// The registration of the type `id`, or `None` if it was never registered.
-    pub fn registration(&self, id: ComponentId) -> Option<&TypeRegistration> {
+    pub fn registration(&self, id: ComponentId) -> Option<Arc<TypeRegistration>> {
         self.get_resource::<AppTypeRegistry>()?.get(id)
     }
 
@@ -744,7 +745,7 @@ impl World {
     /// [`register_component`](Self::register_component) — engine plumbing such
     /// as render-world mirrors — are deliberately not listed: this reports what
     /// a scene can describe, which is what a tool wants to show.
-    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = SceneComponentType<'_>> {
+    pub fn component_types(&self, entity: Entity) -> impl Iterator<Item = SceneComponentType> + '_ {
         let registry = self.get_resource::<AppTypeRegistry>();
         self.component_ids(entity)
             .iter()
@@ -769,8 +770,11 @@ impl World {
         let spawn = self
             .get_resource::<AppTypeRegistry>()
             .and_then(|registry| registry.get_by_name(type_name))
-            .and_then(|registration| registration.data::<ReflectSceneComponent>())
-            .map(|scene| scene.spawn);
+            .and_then(|registration| {
+                registration
+                    .data::<ReflectSceneComponent>()
+                    .map(|scene| scene.spawn)
+            });
         let Some(spawn) = spawn else {
             warn!(
                 "Skipping component '{type_name}': no scene component registered under that name \

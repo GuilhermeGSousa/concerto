@@ -1,6 +1,7 @@
 use std::{
     any::{Any, TypeId},
     collections::HashMap,
+    sync::Arc,
 };
 
 use concerto_asset_format::AssetId;
@@ -229,13 +230,13 @@ impl LeafHook for CaptureHook<'_> {
 }
 
 /// A scene component an entity carries, as `World::component_types` lists it.
-pub struct SceneComponentType<'w> {
-    registration: &'w TypeRegistration,
+pub struct SceneComponentType {
+    registration: Arc<TypeRegistration>,
     scene: ReflectSceneComponent,
 }
 
-impl<'w> SceneComponentType<'w> {
-    pub(crate) fn new(registration: &'w TypeRegistration, scene: ReflectSceneComponent) -> Self {
+impl SceneComponentType {
+    pub(crate) fn new(registration: Arc<TypeRegistration>, scene: ReflectSceneComponent) -> Self {
         Self {
             registration,
             scene,
@@ -252,8 +253,8 @@ impl<'w> SceneComponentType<'w> {
         self.registration.short_name()
     }
 
-    pub fn registration(&self) -> &'w TypeRegistration {
-        self.registration
+    pub fn registration(&self) -> &TypeRegistration {
+        &self.registration
     }
 
     /// The component's value off `entity` as scene data, mapping entities and recording assets in `capture`.
