@@ -18,7 +18,7 @@ use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::mesh::{Mesh, MeshComponent};
-use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
 use concerto_mesh::vertex::Vertex;
 use concerto_reflect::Reflect;
 use concerto_render::assets::material::StandardMaterial;
@@ -27,7 +27,7 @@ use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
 use concerto_scene::scene::{Scene, SceneNode};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
 use image::ImageBuffer;
 use log::warn;
@@ -230,6 +230,13 @@ impl Importer for GltfImporter {
             }
         }
 
+        let mut node_parents: HashMap<usize, usize> = HashMap::new();
+        for node in document.nodes() {
+            for child in node.children() {
+                node_parents.insert(child.index(), node.index());
+            }
+        }
+
         // Skins -> `skeleton/N` sub-assets. A skin with no inverse bind
         // matrices is unusable, so it is skipped and its node gets no
         // `SkeletonComponent`. `SkinInfo` is looked up by `skeleton_index`, not
@@ -246,9 +253,6 @@ impl Importer for GltfImporter {
             else {
                 continue;
             };
-
-            let skeleton = Skeleton::from(inverse_bind_matrices);
-            ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
 
             let bones: Vec<SceneEntityRef> = skin
                 .joints()
@@ -274,6 +278,56 @@ impl Importer for GltfImporter {
             if missing_joint_path {
                 continue;
             }
+
+            let mut joint_positions: HashMap<usize, usize> = HashMap::new();
+            for (position, joint) in skin.joints().enumerate() {
+                joint_positions.entry(joint.index()).or_insert(position);
+            }
+            let mut parents: Vec<Option<u16>> = Vec::with_capacity(bones.len());
+            let mut names: Vec<String> = Vec::with_capacity(bones.len());
+            let mut rest_pose: Vec<JointPose> = Vec::with_capacity(bones.len());
+            for (position, joint) in skin.joints().enumerate() {
+                let parent_position = node_parents
+                    .get(&joint.index())
+                    .and_then(|parent| joint_positions.get(parent).map(|at| (*parent, *at)));
+                if let Some((parent_node, parent_position)) = parent_position {
+                    if parent_position >= position {
+                        return Err(ImportError::MalformedSource {
+                            source_path: source_path.to_path_buf(),
+                            message: format!(
+                                "skin {skin_index}: joint {} is listed before its parent joint {parent_node}; joints must be ordered parents first",
+                                joint.index()
+                            ),
+                        });
+                    }
+                }
+                parents.push(parent_position.map(|(_, at)| at as u16));
+                names.push(
+                    joint
+                        .name()
+                        .map(str::to_string)
+                        .unwrap_or_else(|| format!("joint_{}", joint.index())),
+                );
+                let (translation, rotation, scale) = joint.transform().decomposed();
+                rest_pose.push(JointPose {
+                    translation: Vec3::from_array(translation),
+                    rotation: Quat::from_array(rotation),
+                    scale: Vec3::from_array(scale),
+                });
+            }
+
+            let skeleton = Skeleton::new(
+                inverse_bind_matrices,
+                parents,
+                names,
+                rest_pose,
+                bone_ids.clone(),
+            )
+            .map_err(|err| ImportError::MalformedSource {
+                source_path: source_path.to_path_buf(),
+                message: format!("skin {skin_index}: {err}"),
+            })?;
+            ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
 
             skins.push(SkinInfo {
                 skeleton_index: skin_index,
