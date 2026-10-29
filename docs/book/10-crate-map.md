@@ -19,7 +19,7 @@ game adds itself when it needs them.
 | | `import` | the import library behind the editor's Import… | |
 | | `gltf`, `obj` | the glTF and OBJ importers | |
 | Rendering | `render` | the wgpu renderer, cameras, lights, materials, the render world | `render` |
-| | `mesh` | mesh data, bounds, ray tests, `MeshComponent`, skeleton assets and `JointPose` | `mesh` |
+| | `mesh` | mesh data, bounds, ray tests, `MeshComponent`, skeleton assets, `JointPose` and `SkeletonGizmo` | `mesh` |
 | | `skybox` | the sky | `skybox` |
 | | `world-grid` | the ground grid | `world_grid` |
 | | `debug-gizmos` | immediate-mode debug lines and shapes | add `concerto-debug-gizmos` |

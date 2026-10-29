@@ -27,6 +27,5 @@ pub mod vertex;
 
 pub use gizmos::DebugGizmos;
 pub use plugin::DebugGizmosPlugin;
-pub use skeleton::SkeletonGizmo;
 pub use storage::GizmoStorage;
 pub use vertex::{GizmoVertex, WideGizmoVertex};

@@ -1,36 +1,10 @@
 use std::collections::HashSet;
 
-use concerto_color::Color;
-use concerto_ecs::{
-    Component, Entity, Query,
-    component::scene::SceneEntityRef,
-    entity::hierarchy::ChildOf,
-    reflect::{ReflectComponent, ReflectSceneComponent},
-};
+use concerto_ecs::{Entity, Query, component::scene::SceneEntityRef, entity::hierarchy::ChildOf};
 use concerto_foundation::transform::GlobalTransform;
-use concerto_mesh::skeleton::SkeletonComponent;
-use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_mesh::{SkeletonComponent, SkeletonGizmo};
 
 use crate::DebugGizmos;
-
-/// Draws the bones of the skeleton on this entity every frame: a line from each bone to its parent bone and a sphere at each joint.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, Default, SceneComponent)]
-pub struct SkeletonGizmo {
-    pub color: Color,
-    pub joint_size: f32,
-    pub axes: bool,
-}
-
-impl Default for SkeletonGizmo {
-    fn default() -> Self {
-        Self {
-            color: Color::srgba(1.0, 0.8, 0.2, 1.0),
-            joint_size: 0.02,
-            axes: false,
-        }
-    }
-}
 
 pub(crate) fn draw_skeleton_gizmos(
     skeletons: Query<(&SkeletonGizmo, &SkeletonComponent)>,

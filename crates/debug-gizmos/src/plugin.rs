@@ -12,7 +12,7 @@ use concerto_render::{
 use crate::{
     pipeline::GizmoPipeline,
     render::{clear_gizmos, extract_gizmos, render_gizmos},
-    skeleton::{SkeletonGizmo, draw_skeleton_gizmos},
+    skeleton::draw_skeleton_gizmos,
     storage::{GizmoStorage, RenderGizmos},
 };
 
@@ -30,7 +30,7 @@ impl Plugin for DebugGizmosPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.insert_resource(GizmoStorage::default());
         app.add_system(First, clear_gizmos.at_edit_time());
-        app.register_type::<SkeletonGizmo>().add_system(
+        app.add_system(
             LateUpdate,
             draw_skeleton_gizmos
                 .after(propagate_global_transforms)
@@ -67,19 +67,44 @@ impl Plugin for DebugGizmosPlugin {
 
 #[cfg(test)]
 mod tests {
-    use std::any::TypeId;
-
-    use concerto_app::App;
+    use concerto_app::{App, schedule_groups::LateUpdate};
+    use concerto_ecs::{
+        component::scene::SceneEntityRef,
+        entity::hierarchy::ChildOf,
+        system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
+    };
+    use concerto_foundation::transform::GlobalTransform;
+    use concerto_mesh::{SkeletonComponent, SkeletonGizmo};
+    use glam::{Mat4, Vec3};
 
     use super::DebugGizmosPlugin;
-    use crate::SkeletonGizmo;
+    use crate::GizmoStorage;
 
     #[test]
-    fn the_skeleton_gizmo_is_registered_for_the_inspector() {
+    fn the_plugin_draws_skeleton_gizmos_in_late_update() {
         let mut app = App::new();
         app.register_plugin(DebugGizmosPlugin);
+        let world = app.main_mut().world_mut();
+        let hip = world.spawn(GlobalTransform::new(Mat4::from_translation(Vec3::Y)));
+        let knee = world.spawn((
+            GlobalTransform::new(Mat4::from_translation(Vec3::Y * 0.5)),
+            ChildOf::new(hip),
+        ));
+        world.spawn((
+            SkeletonComponent::new(
+                Default::default(),
+                vec![SceneEntityRef::Entity(hip), SceneEntityRef::Entity(knee)],
+                None,
+            ),
+            SkeletonGizmo::default(),
+        ));
+        let schedules = world.remove_resource::<Schedules>().unwrap();
+        let compiled = schedules.compile::<SingleThreadedExecutor>(world);
+        world.insert_resource(compiled);
 
-        let registry = app.main_mut().world_mut().type_registry();
-        assert!(registry.read().get(TypeId::of::<SkeletonGizmo>()).is_some());
+        world.run_schedule(LateUpdate);
+
+        let storage = world.get_resource::<GizmoStorage>().unwrap();
+        assert!(!storage.vertices.is_empty());
     }
 }
