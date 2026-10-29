@@ -93,7 +93,9 @@ pub struct AssetManagerPlugin;
 
 impl Plugin for AssetManagerPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(AssetServer::new());
+        let server = AssetServer::new();
+        server.set_type_registry(app.main_mut().world_mut().type_registry());
+        app.insert_resource(server);
         app.register_event::<AssetLifetimeEvent>();
         app.add_system(LateUpdate, handle_asset_load_events.at_edit_time());
         app.add_system(First, sync_asset_registry.at_edit_time());
@@ -141,6 +143,7 @@ mod tests {
         registry::{AssetEntry, AssetRegistry},
         AssetId, ContentAssetRoot,
     };
+    use concerto_reflect::ReflectDefault;
     use std::time::{Duration, Instant};
 
     fn temp_root() -> std::path::PathBuf {
@@ -267,6 +270,82 @@ mod tests {
             app.get_resource::<AssetRegistry>().unwrap().get(id),
             scanned.get(id)
         );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[derive(concerto_reflect::Reflect, Default)]
+    #[reflect(Default)]
+    struct Probed;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Probe {
+        #[serde(skip)]
+        saw_default: bool,
+    }
+
+    impl concerto_foundation::assets::Asset for Probe {
+        fn name() -> &'static str {
+            "Probe"
+        }
+    }
+
+    impl concerto_foundation::assets::LoadableAsset for Probe {
+        fn on_load(
+            &mut self,
+            context: &concerto_foundation::assets::asset_server::AssetLoadContext,
+        ) -> anyhow::Result<()> {
+            self.saw_default = context
+                .type_registry()
+                .get_type_data::<ReflectDefault>(std::any::TypeId::of::<Probed>())
+                .is_some();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_pool_load_reads_types_registered_in_the_app_after_the_plugin_built() {
+        use concerto_foundation::assets::{
+            asset_store::AssetStore, content::save_content_asset_into,
+        };
+
+        let root = temp_root();
+        let mut scanned = AssetRegistry::new();
+        let id = save_content_asset_into(
+            &Probe { saw_default: false },
+            &root,
+            "content/probe.gasset",
+            &mut scanned,
+        )
+        .unwrap();
+        let mut app = App::new();
+        app.register_plugin(crate::main_schedule::MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(AssetManagerPlugin);
+        app.register_asset::<Probe>();
+        wait_for_plugins(&mut app);
+        app.finish_plugin_build();
+        app.register_type::<Probed>();
+        let server = app.get_resource::<AssetServer>().unwrap();
+        server.publish_content_source(ContentAssetRoot::Directory(root.clone()), scanned);
+
+        let handle = server.load::<Probe>(id);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app
+            .get_resource::<AssetStore<Probe>>()
+            .unwrap()
+            .get(&handle)
+            .is_none()
+        {
+            assert!(Instant::now() < deadline, "the probe never loaded");
+            app.update();
+            std::thread::yield_now();
+        }
+        let probe = app
+            .get_resource::<AssetStore<Probe>>()
+            .unwrap()
+            .get(&handle)
+            .unwrap();
+        assert!(probe.saw_default);
         std::fs::remove_dir_all(root).unwrap();
     }
 

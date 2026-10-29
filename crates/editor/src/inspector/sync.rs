@@ -299,7 +299,8 @@ pub(super) fn build_property_widgets(
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let types = types.as_deref().map(|types| &types.0);
+    let types = types.as_deref().map(|types| types.read());
+    let types = types.as_deref();
     for (entity, row, value) in rows.iter() {
         if let Some(editor) = registry
             .editor(row.type_id, types)

@@ -856,8 +856,9 @@ pub(super) fn component_json(
     component.insert("type".into(), full.into());
     match source.read(entity, id) {
         Some(value) => {
-            component.insert("value".into(), bounded(to_json(value, source.types())));
-            let rows = registry.collect(value, source.types());
+            let types = source.types();
+            component.insert("value".into(), bounded(to_json(value, &types)));
+            let rows = registry.collect(value, &types);
             let paths: Vec<Value> = listed_paths(value, &rows)
                 .iter()
                 .map(|listed| {

@@ -164,7 +164,7 @@ mod tests {
             })
             .with_ambient(Color::WHITE);
         let stored = to_value(&replacement).unwrap();
-        let reflect = *world
+        let reflect = world
             .get_resource::<AppTypeRegistry>()
             .unwrap()
             .get_type_data::<ReflectComponent>(TypeId::of::<CameraEnvironment>())

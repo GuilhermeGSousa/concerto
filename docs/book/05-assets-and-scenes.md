@@ -19,7 +19,7 @@ Import with **Import…** in the editor. There is no import command line.
 
 A glTF yields meshes, materials, textures, skeletons, animations and one
 scene; an OBJ yields meshes, a material and a scene; an image yields a
-texture. Commit `content/` and every
+texture. A skeleton asset holds bone names, parent indices (parents first), inverse bind poses, the rest pose and the bone ids. A glTF skin whose joints are not ordered parents-first is rejected. Commit `content/` and every
 `<source>.import.toml`: the import file pins each sub-asset's id, so importing
 again after the artist changes the source keeps every reference intact.
 
@@ -34,7 +34,8 @@ use concerto::{asset_id, foundation::assets::AssetId};
 const HERO: AssetId = asset_id!("content/hero/scene.gasset");
 ```
 
-A missing or broken file is a compile error at that line. The path is relative
+A missing file gives a nil id and a warning at that line; a broken file is a
+compile error there. The path is relative
 to the package. For the macro to see content changes, the game's `build.rs`
 calls `concerto_asset_build::track_assets("content")`; projects made by
 `cargo concerto new` already do.

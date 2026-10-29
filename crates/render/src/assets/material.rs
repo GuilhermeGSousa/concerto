@@ -597,3 +597,49 @@ pub trait Material: AsBindGroup + LoadableAsset + Send + Sync + 'static {
         let _ = defs;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concerto_ecs::world::World;
+    use concerto_foundation::assets::{
+        asset_server::handle_asset_load_events, asset_store::AssetStore,
+    };
+
+    #[test]
+    fn a_material_added_with_added_textures_keeps_them_and_requests_no_load() {
+        let mut server = AssetServer::new();
+        let textures = AssetStore::<Texture>::new();
+        let materials = AssetStore::<StandardMaterial>::new();
+        server.register_asset(&textures);
+        server.register_asset(&materials);
+        let mut world = World::new();
+        world.insert_resource(textures);
+        world.insert_resource(materials);
+        world.insert_resource(server.clone());
+
+        let base_color = server.add(Texture::render_target(1, 1));
+        let normal = server.add(Texture::render_target(1, 1));
+        let (base_color_id, normal_id) = (base_color.id(), normal.id());
+        let material = server.add(StandardMaterial::new(Some(base_color), Some(normal)));
+        server.cancel_pending();
+        handle_asset_load_events(&mut world);
+
+        assert!(!server.is_loading());
+        let materials = world
+            .get_resource::<AssetStore<StandardMaterial>>()
+            .unwrap();
+        let material = materials.get(&material).expect("material loaded");
+        assert_eq!(
+            material.base_color_texture().map(|handle| handle.id()),
+            Some(base_color_id)
+        );
+        assert_eq!(
+            material.normal_texture().map(|handle| handle.id()),
+            Some(normal_id)
+        );
+        let textures = world.get_resource::<AssetStore<Texture>>().unwrap();
+        assert!(textures.get(&AssetHandle::weak(base_color_id)).is_some());
+        assert!(textures.get(&AssetHandle::weak(normal_id)).is_some());
+    }
+}

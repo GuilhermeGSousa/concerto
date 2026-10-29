@@ -10,16 +10,11 @@ use winit::{
     window::Window as WinitWindow,
 };
 
-#[cfg(target_arch = "wasm32")]
-use winit::platform::web::EventLoopExtWebSys;
-
 mod apply;
 mod handler;
 mod translate;
 
 /// Opens a window, builds an `App` with `build`, and drives it until the window closes.
-#[allow(deprecated)]
-#[allow(unused_mut)]
 pub fn run(build: impl FnOnce(&mut App) + 'static) {
     profiling::register_thread!("main");
 
@@ -32,39 +27,11 @@ pub fn run(build: impl FnOnce(&mut App) + 'static) {
         ControlFlow::Poll
     });
 
-    let mut attributes = WinitWindow::default_attributes().with_title("Concerto");
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        use winit::platform::web::WindowAttributesExtWebSys;
-        attributes = attributes.with_append(true);
-    }
-
-    let window = Arc::new(
-        event_loop
-            .create_window(attributes)
-            .expect("create window err."),
-    );
-    window.set_cursor_visible(true);
-
-    let slot = Rc::new(RefCell::new(None));
-    let building = build_app(Arc::clone(&window), build, Rc::clone(&slot));
-    let handler = handler::Handler::new(slot, window);
-
-    cfg_if::cfg_if! {
-        if #[cfg(target_arch = "wasm32")] {
-            wasm_bindgen_futures::spawn_local(building);
-            event_loop.spawn_app(handler);
-        } else {
-            pollster::block_on(building);
-            let mut handler = handler;
-            let _ = event_loop.run_app(&mut handler);
-        }
-    }
+    let _ = event_loop.run_app(handler::Handler::new(build));
 }
 
 async fn build_app(
-    window: Arc<WinitWindow>,
+    window: Arc<dyn WinitWindow>,
     build: impl FnOnce(&mut App) + 'static,
     slot: Rc<RefCell<Option<App>>>,
 ) {
@@ -78,7 +45,7 @@ async fn build_app(
         .await
         .expect("no GPU adapter is available");
 
-    let size = window.inner_size();
+    let size = window.surface_size();
     let mut app = App::new();
     app.insert_resource(gpu)
         .insert_resource(DrawTarget::Surface(surface))

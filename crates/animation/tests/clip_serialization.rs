@@ -36,10 +36,17 @@ fn animation_clip_round_trips_through_bincode() {
 
 #[test]
 fn skeleton_round_trips_through_bincode() {
-    use concerto_mesh::skeleton::Skeleton;
+    use concerto_mesh::skeleton::{JointPose, Skeleton};
     use glam::Mat4;
 
-    let skeleton = Skeleton::from(vec![Mat4::IDENTITY, Mat4::from_translation(Vec3::X)]);
+    let skeleton = Skeleton::new(
+        vec![Mat4::IDENTITY, Mat4::from_translation(Vec3::X)],
+        vec![None, Some(0)],
+        vec!["root".to_string(), "child".to_string()],
+        vec![JointPose::IDENTITY; 2],
+        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+    )
+    .expect("a two-bone skeleton must build");
     let bytes = bincode::serialize(&skeleton).expect("Skeleton must serialize");
     let decoded: Skeleton = bincode::deserialize(&bytes).expect("Skeleton must round-trip");
 

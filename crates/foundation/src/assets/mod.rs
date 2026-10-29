@@ -11,6 +11,7 @@ pub use concerto_foundation_macros::asset_id_bytes as __asset_id_bytes;
 /// Paths are relative to the calling package's manifest. Register the content
 /// directory with `concerto_asset_build::track_assets` in that package's build script.
 /// Only the header is read; the expansion is a constant UUID, not asset bytes.
+/// A missing file expands to `AssetId::nil()` with a warning.
 ///
 /// ```ignore
 /// const HERO: AssetId = asset_id!("content/hero/scene.gasset");
@@ -125,8 +126,7 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
 }
 
 pub trait LoadableAsset: Asset {
-    /// Finishes runtime initialization after the cooked payload has been
-    /// deserialized. Most assets need no additional work.
+    /// Finishes runtime initialization after a cooked load deserializes the payload, or inline in `AssetServer::add`.
     fn on_load(&mut self, _context: &asset_server::AssetLoadContext) -> anyhow::Result<()> {
         Ok(())
     }

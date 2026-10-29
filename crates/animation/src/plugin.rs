@@ -1,4 +1,5 @@
 use concerto_app::{plugins::Plugin, schedule_groups::LateUpdate};
+use concerto_mesh::skeleton::Skeleton;
 
 use crate::{
     clip::AnimationClip,
@@ -15,6 +16,7 @@ impl Plugin for AnimationPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.register_asset::<AnimationClip>();
         app.register_asset::<AnimationGraph>();
+        app.register_asset::<Skeleton>();
 
         app.add_system(LateUpdate, initialize_skeletons)
             .add_system(LateUpdate, animate_targets)

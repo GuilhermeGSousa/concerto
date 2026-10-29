@@ -373,7 +373,7 @@ mod tests {
 
         fn edit_vcam(&mut self, vcam: concerto_ecs::Entity, replacement: &VirtualCamera) {
             let stored = to_value(replacement).unwrap();
-            let reflect = *self
+            let reflect = self
                 .world
                 .get_resource::<AppTypeRegistry>()
                 .unwrap()

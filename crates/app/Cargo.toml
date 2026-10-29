@@ -32,3 +32,4 @@ wasm-bindgen-futures = "0.4"
 [dev-dependencies]
 concerto-tasks.workspace = true
 serde = { version = "1", features = ["derive"] }
+anyhow = "1.0.97"

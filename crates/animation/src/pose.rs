@@ -1,29 +1,11 @@
 use concerto_foundation::blend::Blendable;
-use glam::{Quat, Vec3};
-
-#[derive(Clone)]
-pub struct JointPose {
-    pub translation: Vec3,
-    pub rotation: Quat,
-    // Uniform scaling? No scaling at all?
-    pub scale: Vec3,
-}
+pub use concerto_mesh::skeleton::JointPose;
 
 pub struct Pose(Box<[JointPose]>);
 
 impl Pose {
     pub fn identity(bone_count: usize) -> Pose {
-        Pose(
-            vec![
-                JointPose {
-                    translation: Vec3::ZERO,
-                    rotation: Quat::IDENTITY,
-                    scale: Vec3::ONE,
-                };
-                bone_count
-            ]
-            .into_boxed_slice(),
-        )
+        Pose(vec![JointPose::IDENTITY; bone_count].into_boxed_slice())
     }
 
     /// The number of joints in this pose.

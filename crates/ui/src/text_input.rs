@@ -566,8 +566,8 @@ fn apply_keys(
     let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
     let command = held(KeyCode::ControlLeft)
         || held(KeyCode::ControlRight)
-        || held(KeyCode::SuperLeft)
-        || held(KeyCode::SuperRight);
+        || held(KeyCode::MetaLeft)
+        || held(KeyCode::MetaRight);
     let shift = shift_held(input);
     let mut acted = false;
 
