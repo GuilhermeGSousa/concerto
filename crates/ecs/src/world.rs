@@ -23,8 +23,8 @@ use crate::{
     archetype::Archetype,
     common::generate_type_id,
     component::{
-        Component, ComponentId, ComponentLifecycleCallbacks, ComponentLifecycleContext,
-        RequiredComponent, RequiredComponents,
+        Component, ComponentId, ComponentLifecycleContext, RequiredComponent, RequiredComponents,
+        components::Components,
     },
     entity::{Entity, EntityLocation, EntityStructuralVersion, EntityType},
     resource::Resource,
@@ -61,10 +61,7 @@ pub struct World {
     resources: TypeIdMap<ResourceData>,
     entity_store: EntityStore,
     archetype_index: HashMap<EntityType, usize>,
-    component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
-    required_components: TypeIdMap<RequiredComponents>,
-    declared_required: TypeIdMap<RequiredComponents>,
-    external_required: TypeIdMap<RequiredComponents>,
+    components: Components,
     listeners: Listeners,
     change_tick: AtomicU32,
     last_change_tick: Tick,
@@ -81,10 +78,7 @@ impl Default for World {
             resources: TypeIdMap::default(),
             entity_store: EntityStore::default(),
             archetype_index: HashMap::new(),
-            component_lifetimes: TypeIdMap::default(),
-            required_components: TypeIdMap::default(),
-            declared_required: TypeIdMap::default(),
-            external_required: TypeIdMap::default(),
+            components: Components::default(),
             listeners: Listeners::default(),
             change_tick: AtomicU32::new(1),
             last_change_tick: Tick::new(0),
@@ -125,62 +119,10 @@ impl World {
         self.flush_commands();
     }
 
-    fn missing_required(
-        &self,
-        present: &[ComponentId],
-        added: &[ComponentId],
-    ) -> Vec<RequiredComponent> {
-        let mut missing: Vec<RequiredComponent> = Vec::new();
-        for id in added {
-            let Some(required) = self.required_components.get(id) else {
-                continue;
-            };
-            for entry in required.iter() {
-                if !present.contains(&entry.id()) && !missing.iter().any(|m| m.id() == entry.id()) {
-                    missing.push(entry.clone());
-                }
-            }
-        }
-        missing
-    }
-
-    fn add_order(
-        &self,
-        bundle_ids: &[ComponentId],
-        required: &[RequiredComponent],
-    ) -> Vec<ComponentId> {
-        let is_new = |id: &ComponentId| {
-            bundle_ids.contains(id) || required.iter().any(|entry| entry.id() == *id)
-        };
-        let has_requirements = |id: &ComponentId| {
-            self.required_components
-                .get(id)
-                .is_some_and(|required| !required.is_empty())
-        };
-        let mut members = bundle_ids.to_vec();
-        members.sort_by_key(|id| (!has_requirements(id), *id));
-        members.dedup();
-
-        let mut order: Vec<ComponentId> = Vec::new();
-        for member in members {
-            if let Some(requirements) = self.required_components.get(&member) {
-                for entry in requirements.iter() {
-                    if is_new(&entry.id()) && !order.contains(&entry.id()) {
-                        order.push(entry.id());
-                    }
-                }
-            }
-            if !order.contains(&member) {
-                order.push(member);
-            }
-        }
-        order
-    }
-
     fn spawn_allocated_internal<T: ComponentBundle>(&mut self, entity: Entity, bundle: T) {
         T::register_required(self);
         let bundle_ids = T::get_component_ids();
-        let required = self.missing_required(&bundle_ids, &bundle_ids);
+        let required = self.components.missing_required(&bundle_ids, &bundle_ids);
         let mut type_ids = bundle_ids.clone();
         type_ids.extend(required.iter().map(RequiredComponent::id));
         let entity_type = generate_type_id(&type_ids);
@@ -218,7 +160,7 @@ impl World {
 
         self.entity_store.set_location(entity, new_location);
 
-        let order = self.add_order(&bundle_ids, &required);
+        let order = self.components.add_order(&bundle_ids, &required);
         let cell = self.as_unsafe_world_cell_mut();
         cell.trigger_on_add(entity, &order);
     }
@@ -316,7 +258,9 @@ impl World {
                 component_ids.push(*id);
             }
         }
-        let required = self.missing_required(&component_ids, &inserted_ids);
+        let required = self
+            .components
+            .missing_required(&component_ids, &inserted_ids);
         component_ids.extend(required.iter().map(RequiredComponent::id));
 
         let entity_type = generate_type_id(&component_ids);
@@ -374,7 +318,7 @@ impl World {
             self.entity_store.set_location(entity, new_location);
         }
 
-        let order = self.add_order(&inserted_ids, &required);
+        let order = self.components.add_order(&inserted_ids, &required);
         let cell = self.as_unsafe_world_cell_mut();
         cell.trigger_on_add(entity, &order);
     }
@@ -703,9 +647,7 @@ impl World {
     }
 
     pub(crate) fn register_component_lifetimes<T: Component>(&mut self) {
-        self.component_lifetimes
-            .entry(ComponentId::of::<T>())
-            .or_insert(ComponentLifecycleCallbacks::from_component::<T>());
+        self.components.register_lifecycle::<T>();
     }
 
     /// Borrows one entity for hierarchy edits.
@@ -724,41 +666,11 @@ impl World {
 
     /// The flattened required components of `id`, deepest first, or `None` if it is not registered.
     pub fn required_components(&self, id: ComponentId) -> Option<&RequiredComponents> {
-        self.required_components.get(&id)
+        self.components.required(id)
     }
 
     pub(crate) fn register_required_table<T: Component>(&mut self) {
-        self.register_required_in::<T>(&mut Vec::new());
-    }
-
-    pub(crate) fn register_required_in<T: Component>(
-        &mut self,
-        stack: &mut Vec<(ComponentId, &'static str)>,
-    ) {
-        let id = ComponentId::of::<T>();
-        if self.required_components.contains_key(&id) {
-            return;
-        }
-        if let Some(start) = stack.iter().position(|(seen, _)| *seen == id) {
-            let path = stack[start..]
-                .iter()
-                .map(|(_, name)| *name)
-                .chain([T::name()])
-                .collect::<Vec<_>>()
-                .join(" -> ");
-            panic!("required components form a cycle: {path}");
-        }
-        let mut direct = RequiredComponents::default();
-        T::register_required(&mut direct);
-        self.declared_required.insert(id, direct.clone());
-        if let Some(external) = self.external_required.get(&id) {
-            direct.extend_missing(external);
-        }
-        stack.push((id, T::name()));
-        direct.register_all(self, stack);
-        stack.pop();
-        let flattened = direct.flatten(&self.required_components);
-        self.required_components.insert(id, flattened);
+        self.components.register_requirements::<T>();
     }
 
     /// Makes `T` require `U`, built with `U::default()`, after `T` was defined.
@@ -779,24 +691,7 @@ impl World {
         &mut self,
         constructor: fn() -> U,
     ) {
-        let target = ComponentId::of::<T>();
-        self.register_required_in::<U>(&mut Vec::new());
-        let cycles = target == ComponentId::of::<U>()
-            || self.required_components[&ComponentId::of::<U>()].contains(target);
-        if cycles {
-            panic!(
-                "required components form a cycle: {} -> {} -> {}",
-                T::name(),
-                U::name(),
-                T::name()
-            );
-        }
-        let mut affected: Vec<ComponentId> = self
-            .required_components
-            .iter()
-            .filter(|(id, table)| **id == target || table.contains(target))
-            .map(|(id, _)| *id)
-            .collect();
+        let affected = self.components.prepare_external::<T, U>();
         if let Some(archetype) = self.archetypes.iter().find(|archetype| {
             !archetype.is_empty() && affected.iter().any(|id| archetype.contains(*id))
         }) {
@@ -808,23 +703,7 @@ impl World {
                 archetype.len()
             );
         }
-        self.external_required
-            .entry(target)
-            .or_default()
-            .set(constructor);
-        if !self.required_components.contains_key(&target) {
-            self.register_required_in::<T>(&mut Vec::new());
-            return;
-        }
-        affected.sort_by_key(|id| self.required_components[id].len());
-        for id in affected {
-            let mut direct = self.declared_required[&id].clone();
-            if let Some(external) = self.external_required.get(&id) {
-                direct.extend_missing(external);
-            }
-            let flattened = direct.flatten(&self.required_components);
-            self.required_components.insert(id, flattened);
-        }
+        self.components.set_external::<T, U>(constructor);
     }
 
     /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.
@@ -1142,7 +1021,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_add_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_add, lifetimes.signal_add);
@@ -1162,7 +1041,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_replace_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_replace, lifetimes.signal_replace);
@@ -1176,7 +1055,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_remove_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_remove, lifetimes.signal_remove);
@@ -1199,7 +1078,7 @@ impl<'w> UnsafeWorldCell<'w> {
     pub(crate) fn trigger_on_despawn_component(&self, entity: Entity, id: &ComponentId) {
         // SAFETY: lifecycle hooks run inside an exclusive world operation.
         let world = unsafe { self.world() };
-        let Some(lifetimes) = world.component_lifetimes.get(id) else {
+        let Some(lifetimes) = world.components.lifecycle(id) else {
             return;
         };
         let (hook, signal) = (lifetimes.on_despawn, lifetimes.signal_despawn);

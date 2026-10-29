@@ -4,6 +4,7 @@ use std::{
 };
 
 pub mod bundle;
+pub(crate) mod components;
 pub mod name;
 pub mod required;
 pub mod scene;

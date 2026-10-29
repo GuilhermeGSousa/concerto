@@ -1,15 +1,15 @@
 use std::{collections::HashSet, sync::Arc};
 
+use super::components::Components;
 use super::{Component, ComponentId};
 use crate::{
     archetype::Archetype,
     table::{Table, TableRowIndex},
     utilities::TypeIdMap,
-    world::World,
 };
 
 type WriteRequired = Arc<dyn Fn(&mut Archetype, TableRowIndex, u32) + Send + Sync>;
-type RegisterRequired = fn(&mut World, &mut Vec<(ComponentId, &'static str)>);
+type RegisterRequired = fn(&mut Components, &mut Vec<(ComponentId, &'static str)>);
 
 /// One required component, with the erased functions that add its column and write its default.
 #[derive(Clone)]
@@ -69,7 +69,7 @@ impl RequiredComponents {
                     archetype.push_component(constructor(), tick);
                 }
             }),
-            register: World::register_required_in::<T>,
+            register: Components::register_required_in::<T>,
         };
         match self.entries.iter_mut().find(|existing| existing.id == id) {
             Some(existing) => *existing = entry,
@@ -79,14 +79,6 @@ impl RequiredComponents {
 
     pub(crate) fn contains(&self, id: ComponentId) -> bool {
         self.entries.iter().any(|entry| entry.id == id)
-    }
-
-    pub(crate) fn extend_missing(&mut self, other: &RequiredComponents) {
-        for entry in &other.entries {
-            if !self.contains(entry.id) {
-                self.entries.push(entry.clone());
-            }
-        }
     }
 
     /// The required components, deepest requirement first.
@@ -106,21 +98,24 @@ impl RequiredComponents {
 
     pub(crate) fn register_all(
         &self,
-        world: &mut World,
+        components: &mut Components,
         stack: &mut Vec<(ComponentId, &'static str)>,
     ) {
         for entry in &self.entries {
-            (entry.register)(world, stack);
+            (entry.register)(components, stack);
         }
     }
 
-    pub(crate) fn flatten(&self, tables: &TypeIdMap<RequiredComponents>) -> RequiredComponents {
+    pub(crate) fn flatten<'a>(
+        &self,
+        tables: &impl Fn(ComponentId) -> Option<&'a RequiredComponents>,
+    ) -> RequiredComponents {
         let mut chosen: TypeIdMap<RequiredComponent> = TypeIdMap::default();
         for entry in &self.entries {
             chosen.insert(entry.id, entry.clone());
         }
         for entry in &self.entries {
-            if let Some(table) = tables.get(&entry.id) {
+            if let Some(table) = tables(entry.id) {
                 for deeper in &table.entries {
                     chosen.entry(deeper.id).or_insert_with(|| deeper.clone());
                 }
@@ -135,9 +130,9 @@ impl RequiredComponents {
     }
 }
 
-fn visit(
+fn visit<'a>(
     id: ComponentId,
-    tables: &TypeIdMap<RequiredComponents>,
+    tables: &impl Fn(ComponentId) -> Option<&'a RequiredComponents>,
     chosen: &TypeIdMap<RequiredComponent>,
     seen: &mut HashSet<ComponentId>,
     out: &mut Vec<RequiredComponent>,
@@ -145,7 +140,7 @@ fn visit(
     if !seen.insert(id) {
         return;
     }
-    if let Some(table) = tables.get(&id) {
+    if let Some(table) = tables(id) {
         for deeper in &table.entries {
             visit(deeper.id, tables, chosen, seen, out);
         }
@@ -156,6 +151,7 @@ fn visit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::world::World;
 
     #[derive(Component, Default)]
     struct Leaf;
