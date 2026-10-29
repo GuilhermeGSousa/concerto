@@ -5,7 +5,7 @@ use concerto_ecs::{
     component::Component,
     entity::Entity,
     events::event_reader::EventReader,
-    query::{Query, filter::Added},
+    query::{Query, change_detection::Mut, filter::Added},
     resource::{Res, ResMut},
     signal::{
         EntitySignal, On, Signal,
@@ -31,7 +31,8 @@ use crate::{
 const SQUARE_WIDTH: f32 = 200.0;
 const SQUARE_HEIGHT: f32 = 150.0;
 const STRIP_HEIGHT: f32 = 12.0;
-const MARKER: f32 = 10.0;
+const MARKER: f32 = 12.0;
+const OUTLINE: Color = Color::srgba(0.0, 0.0, 0.0, 0.6);
 const THUMB_WIDTH: f32 = 4.0;
 const THUMB_OVERHANG: f32 = 2.0;
 const CHECKER_CELL: f32 = 4.0;
@@ -270,6 +271,7 @@ pub(crate) enum FieldKind {
 pub(crate) struct ColorPickerField {
     picker: Entity,
     kind: FieldKind,
+    displayed: String,
 }
 
 fn field_text(kind: FieldKind, shown: Shown) -> String {
@@ -448,7 +450,7 @@ fn thumb(picker: Entity, kind: PartKind, inset: UIInset) -> (UINode, UIMaterial,
             .with_inset(inset),
         UIMaterial {
             corner_radius: 1.0,
-            ..UIMaterial::with_border(Color::WHITE, Color::srgba(0.0, 0.0, 0.0, 0.6), 1.0)
+            ..UIMaterial::with_border(Color::WHITE, OUTLINE, 1.0)
         },
         ColorPickerPart { picker, kind },
     )
@@ -508,20 +510,38 @@ pub(crate) fn setup_color_pickers(
             press_area(entity, Area::Square),
             drag_area(entity, Area::Square),
         ))
-        .add_child((
-            UINode::default()
-                .with_size(UIValue::Px(MARKER), UIValue::Px(MARKER))
-                .with_position(Position::Absolute)
-                .with_inset(marker_inset(shown)),
-            UIMaterial {
-                corner_radius: MARKER / 2.0,
-                ..UIMaterial::with_border(Color::TRANSPARENT, Color::WHITE, 2.0)
+        .add_child_with(
+            (
+                UINode::default()
+                    .with_size(UIValue::Px(MARKER), UIValue::Px(MARKER))
+                    .with_position(Position::Absolute)
+                    .with_inset(marker_inset(shown)),
+                UIMaterial {
+                    corner_radius: MARKER / 2.0,
+                    ..UIMaterial::with_border(Color::TRANSPARENT, OUTLINE, 1.0)
+                },
+                ColorPickerPart {
+                    picker: entity,
+                    kind: PartKind::Marker,
+                },
+            ),
+            |mut outline| {
+                outline.add_child((
+                    UINode::default()
+                        .with_size(UIValue::Px(MARKER - 2.0), UIValue::Px(MARKER - 2.0))
+                        .with_position(Position::Absolute)
+                        .with_inset(UIInset {
+                            left: UIValue::Px(1.0),
+                            top: UIValue::Px(1.0),
+                            ..Default::default()
+                        }),
+                    UIMaterial {
+                        corner_radius: MARKER / 2.0 - 1.0,
+                        ..UIMaterial::with_border(Color::TRANSPARENT, Color::WHITE, 2.0)
+                    },
+                ));
             },
-            ColorPickerPart {
-                picker: entity,
-                kind: PartKind::Marker,
-            },
-        ));
+        );
         root.spawn_child(strip(entity, Area::Hue, UIGradient::Hue))
             .add_child(thumb(entity, PartKind::HueThumb, hue_thumb_inset(shown)));
         root.spawn_child((
@@ -542,34 +562,41 @@ pub(crate) fn setup_color_pickers(
                 .with_align_items(AlignItems::Center)
                 .with_gap(Vec2::splat(theme.spacing_sm)),
         );
+        let hex = field_text(FieldKind::Hex, shown);
         fields.add_child((
             theme
                 .text_field("#RRGGBB")
-                .value(field_text(FieldKind::Hex, shown))
+                .value(hex.clone())
                 .width(UIValue::Px(HEX_WIDTH)),
             ColorPickerField {
                 picker: entity,
                 kind: FieldKind::Hex,
+                displayed: hex,
             },
         ));
         if picker.space == Space::Linear {
+            let intensity = field_text(FieldKind::Intensity, shown);
             fields
                 .add_child(theme.label("Intensity").small().no_wrap())
                 .add_child((
                     theme
                         .text_field("1")
-                        .value(field_text(FieldKind::Intensity, shown))
+                        .value(intensity.clone())
                         .width(UIValue::Px(INTENSITY_WIDTH)),
                     ColorPickerField {
                         picker: entity,
                         kind: FieldKind::Intensity,
+                        displayed: intensity,
                     },
                 ));
         }
     }
 }
 
-fn show(input: &mut UITextInput, text: String) {
+fn display(field: &mut Mut<ColorPickerField>, input: &mut Mut<UITextInput>, text: String) {
+    if field.displayed != text {
+        field.displayed = text.clone();
+    }
     if input.value != text {
         input.value = text;
         input.cursor = input.value.len();
@@ -581,19 +608,20 @@ pub(crate) fn commit_color_picker_fields(
     mut submitted: EventReader<UITextInputSubmitted>,
     mut lost: EventReader<UIFocusLost>,
     mut cancelled: EventReader<UITextInputCancelled>,
-    fields: Query<(&ColorPickerField, &mut UITextInput)>,
+    fields: Query<(&mut ColorPickerField, &mut UITextInput)>,
     pickers: Query<&mut UIColorPicker>,
     mut focused: ResMut<FocusedWidget>,
     mut cmd: CommandQueue,
 ) {
     for event in cancelled.read() {
-        let Some((field, mut input)) = fields.get_entity(event.entity) else {
+        let Some((mut field, mut input)) = fields.get_entity(event.entity) else {
             continue;
         };
         let Some(shown) = pickers.get_entity(field.picker).map(|state| state.shown) else {
             continue;
         };
-        show(&mut input, field_text(field.kind, shown));
+        let text = field_text(field.kind, shown);
+        display(&mut field, &mut input, text);
         if **focused == Some(event.entity) {
             **focused = None;
         }
@@ -604,15 +632,15 @@ pub(crate) fn commit_color_picker_fields(
         .chain(lost.read().map(|event| event.0))
         .collect();
     for entity in finished {
-        let Some((field, mut input)) = fields.get_entity(entity) else {
+        let Some((mut field, mut input)) = fields.get_entity(entity) else {
             continue;
         };
+        if input.value == field.displayed {
+            continue;
+        }
         let Some(shown) = pickers.get_entity(field.picker).map(|state| state.shown) else {
             continue;
         };
-        if input.value == field_text(field.kind, shown) {
-            continue;
-        }
         let shown = match entered(field.kind, &input.value, shown) {
             Some(next) => {
                 change(field.picker, &pickers, &mut cmd, next);
@@ -620,14 +648,15 @@ pub(crate) fn commit_color_picker_fields(
             }
             None => shown,
         };
-        show(&mut input, field_text(field.kind, shown));
+        let text = field_text(field.kind, shown);
+        display(&mut field, &mut input, text);
     }
 }
 
 pub(crate) fn sync_color_picker_parts(
     pickers: Query<&UIColorPicker>,
     parts: Query<(&ColorPickerPart, &mut UINode, &mut UIMaterial)>,
-    fields: Query<(Entity, &ColorPickerField, &mut UITextInput)>,
+    fields: Query<(Entity, &mut ColorPickerField, &mut UITextInput)>,
     focused: Res<FocusedWidget>,
 ) {
     for (part, mut node, mut material) in parts.iter() {
@@ -658,14 +687,15 @@ pub(crate) fn sync_color_picker_parts(
             }
         }
     }
-    for (entity, field, mut input) in fields.iter() {
+    for (entity, mut field, mut input) in fields.iter() {
         if **focused == Some(entity) {
             continue;
         }
         let Some(picker) = pickers.get_entity(field.picker) else {
             continue;
         };
-        show(&mut input, field_text(field.kind, picker.shown));
+        let text = field_text(field.kind, picker.shown);
+        display(&mut field, &mut input, text);
     }
 }
 
@@ -885,6 +915,19 @@ mod tests {
                 .get_component_for_entity::<UIMaterial>(part)
                 .unwrap()
                 .gradient
+        }
+
+        fn focus(&mut self, field: Entity) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+        }
+
+        fn lose_focus(&mut self, field: Entity) {
+            **self.world.get_resource_mut::<FocusedWidget>().unwrap() = None;
+            self.world
+                .get_resource_mut::<EventChannel<UIFocusLost>>()
+                .unwrap()
+                .push_event(UIFocusLost(field));
+            self.frame();
         }
 
         fn press_escape(&mut self) {
@@ -1110,12 +1153,7 @@ mod tests {
         assert!(harness.field(picker, FieldKind::Intensity).is_none());
 
         harness.type_into(hex, "#3366CC80");
-        harness
-            .world
-            .get_resource_mut::<EventChannel<UIFocusLost>>()
-            .unwrap()
-            .push_event(UIFocusLost(hex));
-        harness.frame();
+        harness.lose_focus(hex);
 
         assert_heard(
             harness.heard(),
@@ -1152,14 +1190,35 @@ mod tests {
         let hex = harness.field(picker, FieldKind::Hex).unwrap();
         let square = harness.part(picker, PartKind::Square);
         harness.type_into(hex, "#12");
-        **harness.world.get_resource_mut::<FocusedWidget>().unwrap() = Some(hex);
+        harness.focus(hex);
 
         harness.press(square, Vec2::new(0.0, 0.0));
 
         assert_eq!(harness.text(hex), "#12");
-        **harness.world.get_resource_mut::<FocusedWidget>().unwrap() = None;
-        harness.frame();
+        harness.heard();
+        harness.lose_focus(hex);
         assert_eq!(harness.text(hex), "#FFFFFF");
+        assert!(harness.heard().is_empty());
+        assert_eq!(harness.color(picker), Color::srgba(1.0, 1.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn a_press_after_a_hex_entry_is_kept_when_the_field_loses_focus() {
+        let mut harness = Harness::new();
+        let picker = harness.picker(Color::srgba(1.0, 0.0, 0.0, 1.0));
+        let hex = harness.field(picker, FieldKind::Hex).unwrap();
+        let square = harness.part(picker, PartKind::Square);
+        harness.focus(hex);
+        harness.submit(hex, "#00FF00");
+        assert_heard(harness.heard(), &[Color::srgba(0.0, 1.0, 0.0, 1.0)]);
+
+        harness.press(square, Vec2::new(0.5, 0.5));
+        harness.lose_focus(hex);
+
+        let pressed = Color::srgba(0.25, 0.5, 0.25, 1.0);
+        assert_heard(harness.heard(), &[pressed]);
+        assert_near(harness.color(picker), pressed);
+        assert_eq!(harness.text(hex), "#408040");
     }
 
     #[test]
@@ -1194,6 +1253,7 @@ mod tests {
             ColorPickerField {
                 picker,
                 kind: FieldKind::Hex,
+                displayed: String::new(),
             },
         ));
         harness.world.despawn(picker);
@@ -1222,7 +1282,10 @@ mod tests {
         harness.press(square, Vec2::new(0.25, 0.25));
 
         assert_heard(harness.heard(), &[red(0.25, 0.75)]);
-        assert_eq!(px(harness.inset(marker)), (45.0, 32.5));
+        assert_eq!(
+            px(harness.inset(marker)),
+            (50.0 - MARKER / 2.0, 37.5 - MARKER / 2.0)
+        );
 
         for (x, y) in [(0.5, 0.5), (1.0, 0.0), (0.5, 0.0)] {
             harness.drag(square, Vec2::new(x, y));
@@ -1230,7 +1293,10 @@ mod tests {
             assert_heard(harness.heard(), &[red(x, 1.0 - y)]);
             assert_eq!(
                 px(harness.inset(marker)),
-                (x * SQUARE_WIDTH - 5.0, y * SQUARE_HEIGHT - 5.0)
+                (
+                    x * SQUARE_WIDTH - MARKER / 2.0,
+                    y * SQUARE_HEIGHT - MARKER / 2.0
+                )
             );
         }
 
@@ -1265,8 +1331,75 @@ mod tests {
 
         assert!(harness.heard().is_empty());
         assert_near(harness.color(picker), Color::srgba(0.5, 1.0, 1.0, 0.75));
-        assert_eq!(px(harness.inset(marker)), (95.0, -5.0));
+        assert_eq!(
+            px(harness.inset(marker)),
+            (100.0 - MARKER / 2.0, -MARKER / 2.0)
+        );
         assert_eq!(px(harness.inset(alpha_thumb)), (148.0, -THUMB_OVERHANG));
+    }
+
+    #[test]
+    fn the_marker_is_a_white_ring_inside_a_dark_one() {
+        use concerto_ecs::entity::hierarchy::Children;
+
+        let mut harness = Harness::new();
+        let picker = harness.picker(Color::srgba(1.0, 1.0, 1.0, 1.0));
+        let marker = harness.part(picker, PartKind::Marker);
+        let outline = harness
+            .world
+            .get_component_for_entity::<UIMaterial>(marker)
+            .unwrap();
+        assert_eq!(outline.border_width, 1.0);
+        assert!(
+            outline.border_color.luminance() < 0.05,
+            "{:?}",
+            outline.border_color
+        );
+        let rings: Vec<Entity> = harness
+            .world
+            .get_component_for_entity::<Children>(marker)
+            .unwrap()
+            .iter()
+            .copied()
+            .collect();
+        assert_eq!(rings.len(), 1);
+        let ring = rings[0];
+        let white = harness
+            .world
+            .get_component_for_entity::<UIMaterial>(ring)
+            .unwrap();
+        assert_eq!(white.border_color, LinearRgba::WHITE);
+        assert_eq!(white.border_width, 2.0);
+        let layout = |entity| {
+            harness
+                .world
+                .get_component_for_entity::<UILayout>(entity)
+                .unwrap()
+                .rect
+        };
+        let (outer, inner) = (layout(marker), layout(ring));
+        assert_eq!(inner.min, outer.min + Vec2::ONE);
+        assert_eq!(inner.size, outer.size - Vec2::splat(2.0));
+    }
+
+    #[test]
+    fn a_still_picker_writes_nothing() {
+        use crate::testing::Watch;
+
+        let mut harness = Harness::new();
+        harness.picker(Color::rgba(3.0, 1.5, 0.3, 0.5));
+        for mut watch in [
+            Watch::new::<UITextInput, _>(&mut harness.world, sync_color_picker_parts),
+            Watch::new::<ColorPickerField, _>(&mut harness.world, sync_color_picker_parts),
+            Watch::new::<UINode, _>(&mut harness.world, sync_color_picker_parts),
+            Watch::new::<UIMaterial, _>(&mut harness.world, sync_color_picker_parts),
+        ] {
+            watch.run(&mut harness.world);
+            assert_eq!(
+                [watch.run(&mut harness.world), watch.run(&mut harness.world)],
+                [0, 0]
+            );
+        }
     }
 
     #[test]

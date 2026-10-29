@@ -28,4 +28,4 @@ Manual checks:
 - Open COLOR and drag across the square and both strips; the marker and thumbs
   follow the pointer and each change prints the color. Type a hex value or an
   intensity and press Enter. Escape closes the popup and prints the color it
-  opened with.
+  opened with. Each open spawns a fresh picker on the last color picked.

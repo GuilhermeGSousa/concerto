@@ -11,8 +11,12 @@ use concerto::{
     ecs::{
         CommandQueue, Component, Query, Res, ResMut, Resource, With,
         command::EntityCommandQueue,
+        entity::Entity,
         entity::hierarchy::Children,
-        signal::{On, listener::IntoListener},
+        signal::{
+            On,
+            listener::{IntoListener, Listener},
+        },
     },
     foundation::time::Time,
     ui::{
@@ -23,7 +27,7 @@ use concerto::{
         color_picker::{UIColorChanged, restore_on_escape},
         elements::{Label, Pressable, Text, prelude::*},
         focus::FocusedWidget,
-        interaction::{Interactable, UIInputState, UIInteractionStyle},
+        interaction::{Interactable, UIClick, UIInputState, UIInteractionStyle},
         items::{UIItem, UIItemContextMenu},
         list::UIList,
         node::{
@@ -73,6 +77,9 @@ struct StressTicker {
 struct DiagnosticsTimer {
     elapsed: f32,
 }
+
+#[derive(Resource)]
+struct PickedColor(Color);
 
 fn menu_row(theme: &UITheme, name: &str) -> (Pressable, Text) {
     (
@@ -249,8 +256,7 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
             theme
                 .button("COLOR  \u{25be}")
                 .width(UIValue::Px(120.0))
-                .font_size(12.0)
-                .on_click(toggle_owned_panels),
+                .font_size(12.0),
         )
         .entity();
 
@@ -529,20 +535,15 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         theme.text("").font_size(12.0),
     ));
 
-    let mut color_menu = cmd.spawn(
-        theme
-            .dropdown(color_trigger)
-            .width(UIValue::Px(260.0))
-            .padding(theme.spacing_sm),
-    );
-    let picker = color_menu
-        .spawn_child(
+    let color_menu = cmd
+        .spawn(
             theme
-                .color_picker(Color::rgba(2.0, 1.0, 0.25, 1.0))
-                .on_change(print_color),
+                .dropdown(color_trigger)
+                .width(UIValue::Px(260.0))
+                .padding(theme.spacing_sm),
         )
         .entity();
-    color_menu.insert(restore_on_escape(picker));
+    cmd.insert(toggle_color_menu(color_menu), color_trigger);
 
     let mut view_menu = cmd.spawn(
         theme
@@ -681,8 +682,34 @@ fn open_context_menu(
     }
 }
 
-fn print_color(on: On<UIColorChanged>) {
+fn toggle_color_menu(menu: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           theme: Res<UITheme>,
+           picked: Res<PickedColor>,
+           panels: Query<&mut UIAnchoredPanel>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let Some(mut panel) = panels.get_entity(menu) else {
+            return;
+        };
+        panel.open = !panel.open;
+        if !panel.open {
+            return;
+        }
+        let mut popup = cmd.entity(menu).despawn_children();
+        let picker = popup
+            .spawn_child(theme.color_picker(picked.0).on_change(pick_color))
+            .entity();
+        popup.insert(restore_on_escape(picker));
+    })
+    .into_listener()
+}
+
+fn pick_color(on: On<UIColorChanged>, mut picked: ResMut<PickedColor>) {
     println!("color picked: {:?}", on.signal().color);
+    picked.0 = on.signal().color;
 }
 
 fn restyle_tabs(
@@ -782,6 +809,7 @@ fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
         .insert_resource(StressTicker::default())
         .insert_resource(DiagnosticsTimer::default())
+        .insert_resource(PickedColor(Color::rgba(2.0, 1.0, 0.25, 1.0)))
         .add_system(Startup, spawn_showcase)
         .add_system(Update, (tick_stress_labels, update_diagnostics));
 }
