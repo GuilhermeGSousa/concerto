@@ -1,6 +1,5 @@
 use concerto_foundation::math::spring_damper::{
     angular_velocity, decay_spring_damper_exact, from_scaled_angle_axis, quat_abs,
-    to_scaled_angle_axis,
 };
 use glam::{Quat, Vec3};
 
@@ -44,6 +43,16 @@ impl PoseVelocity {
 
 const SETTLED_EPSILON: f32 = 1.0e-4;
 const MIN_HALFLIFE: f32 = 1.0e-5;
+
+fn rotation_vector(rotation: Quat) -> Vec3 {
+    let rotation = quat_abs(rotation);
+    let axis = Vec3::new(rotation.x, rotation.y, rotation.z);
+    let sine = axis.length();
+    if sine < 1.0e-8 {
+        return axis * 2.0;
+    }
+    2.0 * sine.atan2(rotation.w) * axis / sine
+}
 
 /// Per-bone offsets that start at the difference between two poses and decay to zero.
 pub struct Inertializer {
@@ -122,7 +131,7 @@ impl Inertializer {
                 self.offset_position[bone] = position;
                 self.offset_velocity[bone] = velocity;
                 let (rotation, angular_velocity) = decay_spring_damper_exact(
-                    to_scaled_angle_axis(self.offset_rotation[bone]),
+                    rotation_vector(self.offset_rotation[bone]),
                     self.offset_angular_velocity[bone],
                     halflife,
                     dt,
@@ -150,7 +159,7 @@ impl Inertializer {
         (0..self.offset_position.len()).all(|bone| {
             self.offset_position[bone].length() < SETTLED_EPSILON
                 && self.offset_velocity[bone].length() < SETTLED_EPSILON
-                && to_scaled_angle_axis(self.offset_rotation[bone]).length() < SETTLED_EPSILON
+                && rotation_vector(self.offset_rotation[bone]).length() < SETTLED_EPSILON
                 && self.offset_angular_velocity[bone].length() < SETTLED_EPSILON
         })
     }
