@@ -4,7 +4,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraphInstances, GraphId},
     pose::{Pose, PosePool},
-    transition::AnimationTransitionBlender,
+    transition::{AnimationTransitionBlender, TransitionBlend},
 };
 
 /// One active graph in the cross-fade. The stack is ordered oldest → newest; only the newest
@@ -97,7 +97,7 @@ impl AnimationTransitionBlender for BlendStack {
         &mut self,
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
-        transition_time: f32,
+        blend: &TransitionBlend,
         _context: &AnimationGraphContext<'_>,
     ) {
         if *self.current() == *next_graph {
@@ -113,10 +113,20 @@ impl AnimationTransitionBlender for BlendStack {
             graph_instance.reset();
         }
 
+        let (fade_speed, weight) = match *blend {
+            TransitionBlend::CrossFade { transition_time } => (1.0 / transition_time, 0.0),
+            TransitionBlend::Inertialize { .. } => (0.0, 1.0),
+        };
+
         self.entries.push(BlendStackEntry {
             graph_id: next_graph,
-            fade_speed: 1.0 / transition_time,
-            weight: 0.0,
+            fade_speed,
+            weight,
         });
+
+        if weight >= 1.0 {
+            let last = self.entries.len() - 1;
+            self.entries.drain(..last);
+        }
     }
 }

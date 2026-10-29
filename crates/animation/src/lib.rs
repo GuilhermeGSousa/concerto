@@ -11,6 +11,8 @@ pub mod root;
 pub mod target;
 pub mod transition;
 
+pub use transition::TransitionBlend;
+
 #[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{
@@ -30,6 +32,7 @@ mod tests {
         AnimationClipNode, AnimationClipNodeInstance, AnimationNodeInstance, AnimationNodeKind,
     };
     use crate::pose::PosePool;
+    use crate::transition::TransitionBlend;
 
     fn unit_duration_clip() -> AnimationClip {
         let mut clip = AnimationClip::default();
@@ -202,7 +205,11 @@ mod tests {
             );
         })
         .state("jump_start", jump_start, |transition| {
-            transition.to("air", AnimationFSMTrigger::OnAnimationEnd, 0.1);
+            transition.to(
+                "air",
+                AnimationFSMTrigger::OnAnimationEnd,
+                TransitionBlend::cross_fade(0.1),
+            );
         })
         .state("air", air, |transition| {
             transition.to(
@@ -212,7 +219,11 @@ mod tests {
             );
         })
         .state("land", land, |transition| {
-            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1);
+            transition.to(
+                "movement",
+                AnimationFSMTrigger::OnAnimationEnd,
+                TransitionBlend::cross_fade(0.1),
+            );
         })
         .build();
         let fsm = AnimationNodeKind::StateMachine(fsm);
@@ -314,7 +325,11 @@ mod tests {
         );
 
         let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
-            transition.to("b", AnimationFSMTrigger::on_bool("go", true), 0.1);
+            transition.to(
+                "b",
+                AnimationFSMTrigger::on_bool("go", true),
+                TransitionBlend::cross_fade(0.1),
+            );
         })
         .state("b", b, |_| {})
         .build();
@@ -410,10 +425,18 @@ mod tests {
         );
 
         let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
-            transition.to("jump", AnimationFSMTrigger::on_bool("jump", true), 0.01);
+            transition.to(
+                "jump",
+                AnimationFSMTrigger::on_bool("jump", true),
+                TransitionBlend::cross_fade(0.01),
+            );
         })
         .state("jump", jump, |transition| {
-            transition.to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.01);
+            transition.to(
+                "movement",
+                AnimationFSMTrigger::OnAnimationEnd,
+                TransitionBlend::cross_fade(0.01),
+            );
         })
         .build();
         let fsm = AnimationNodeKind::StateMachine(fsm);

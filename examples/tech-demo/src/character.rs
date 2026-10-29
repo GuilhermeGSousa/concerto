@@ -1,6 +1,7 @@
 use concerto::{asset_id, foundation::assets::AssetId};
 use std::f32::consts::PI;
 
+use concerto::animation::TransitionBlend;
 use concerto::animation::clip::AnimationClip;
 use concerto::animation::graph::AnimationGraph;
 use concerto::animation::node::AnimationPlayMode::PlayOnce;
@@ -174,7 +175,7 @@ pub(crate) fn setup_character_animations(
                         .to(
                             "air",
                             AnimationFSMTrigger::on_bool("is_grounded", false),
-                            0.1,
+                            TransitionBlend::cross_fade(0.1),
                         );
                 },
             )
@@ -188,12 +189,12 @@ pub(crate) fn setup_character_animations(
                         .to(
                             "land",
                             AnimationFSMTrigger::on_bool("is_grounded", true),
-                            0.1,
+                            TransitionBlend::cross_fade(0.1),
                         )
                         .to(
                             "movement",
                             AnimationFSMTrigger::on_bool("is_grounded", true),
-                            0.1,
+                            TransitionBlend::cross_fade(0.1),
                         );
                 },
             )
@@ -206,16 +207,20 @@ pub(crate) fn setup_character_animations(
                 ))),
                 |transition| {
                     transition
-                        .to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1)
+                        .to(
+                            "movement",
+                            AnimationFSMTrigger::OnAnimationEnd,
+                            TransitionBlend::cross_fade(0.1),
+                        )
                         .to(
                             "jump_start",
                             AnimationFSMTrigger::on_bool("jumped", true),
-                            0.1,
+                            TransitionBlend::cross_fade(0.1),
                         )
                         .to(
                             "movement",
                             AnimationFSMTrigger::on_non_zero_vec("movement"),
-                            0.1,
+                            TransitionBlend::cross_fade(0.1),
                         );
                 },
             )

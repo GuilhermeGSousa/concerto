@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::graph::{AnimationGraph, AnimationGraphInstance, AnimationGraphInstances, GraphId};
 use crate::pose::{EvaluatedPose, Pose, PosePool};
-use crate::transition::{AnimationTransitionBlender, blend_stack::BlendStack};
+use crate::transition::{AnimationTransitionBlender, TransitionBlend, blend_stack::BlendStack};
 use crate::{
     evaluation::AnimationGraphContext,
     node::{AnimationNodeInstance, AnimationNodeKind},
@@ -50,14 +50,14 @@ impl AnimationFSMTrigger {
 pub struct AnimationStateMachineTransitionDefinition<'a> {
     pub target_state: &'a str,
     pub trigger: AnimationFSMTrigger,
-    pub transition_time: f32,
+    pub blend: TransitionBlend,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationStateMachineTransition {
     next_state: StateId,
     trigger: AnimationFSMTrigger,
-    transition_time: f32,
+    blend: TransitionBlend,
 }
 
 #[derive(Clone, Copy, Deref, serde::Serialize, serde::Deserialize)]
@@ -116,7 +116,7 @@ impl AnimationStateMachine {
                             .get(transition_def.target_state)
                             .unwrap_or(&0.into()),
                         trigger: transition_def.trigger,
-                        transition_time: transition_def.transition_time,
+                        blend: transition_def.blend,
                     });
                 });
             });
@@ -147,6 +147,14 @@ impl AnimationStateMachine {
         };
         f(&mut tb);
         builder
+    }
+
+    /// Every transition's blend mode, flattened across states.
+    pub fn blends(&self) -> impl Iterator<Item = &TransitionBlend> + '_ {
+        self.transitions
+            .iter()
+            .flatten()
+            .map(|transition| &transition.blend)
     }
 
     pub(crate) fn get_state_transitions(
@@ -226,7 +234,7 @@ impl AnimationStateMachineInstance {
         self.blend_stack.transition(
             transition.next_state.as_graph_id(),
             &mut self.state_graph_instances,
-            transition.transition_time,
+            &transition.blend,
             context,
         );
 
@@ -328,7 +336,7 @@ struct FSMTransitionEntry {
     from: String,
     to: String,
     trigger: AnimationFSMTrigger,
-    transition_time: f32,
+    blend: TransitionBlend,
 }
 
 pub struct AnimationStateMachineBuilder {
@@ -378,7 +386,7 @@ impl AnimationStateMachineBuilder {
             transitions[*from_index].push(AnimationStateMachineTransition {
                 next_state: target_index,
                 trigger: entry.trigger,
-                transition_time: entry.transition_time,
+                blend: entry.blend,
             });
         }
 
@@ -405,13 +413,13 @@ impl TransitionBuilder<'_> {
         &mut self,
         state_name: &str,
         trigger: AnimationFSMTrigger,
-        transition_time: f32,
+        blend: TransitionBlend,
     ) -> &mut Self {
         self.builder.transitions.push(FSMTransitionEntry {
             from: self.from.clone(),
             to: state_name.to_string(),
             trigger,
-            transition_time,
+            blend,
         });
         self
     }
