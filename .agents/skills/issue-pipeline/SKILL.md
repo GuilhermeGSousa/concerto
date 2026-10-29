@@ -37,22 +37,28 @@ is `master`.
 | `agent` | Agents may take this issue. |
 | `agent:local` | Only the local runner takes it: the change needs a look at the running program. |
 | `agent:spec` | Questions, spec and plan, each approved by the owner. |
+| `agent:priority` | Runners take it before issues without it. |
 | `documentation`, `lint` | Sorting only; no effect on the path. |
 | `agent:filed` | An agent opened this issue. |
 | `agent:claimed-cloud`, `agent:claimed-local` | Which runner owns the issue. |
 | `agent:needs-owner` | The PR waits on the owner. |
 
 An issue is eligible when it is open, labelled `agent`, opened under the
-owner's account, and has neither claim label.
+owner's account, has neither claim label, and is not blocked. Its body is
+blocked while it has a line `Blocked by #a, #b` and any of those issues is
+open.
+
+Runners take eligible issues in two tiers: those labelled `agent:priority`
+first, then the rest, each tier oldest first.
 
 ## Cloud runner
 
 You are a fresh session started by the hourly scheduled task.
 
 1. Count open issues labelled `agent:claimed-cloud`. At 3 or more, end.
-2. List eligible issues without `agent:local`, oldest first. If there are none,
-   end without posting anything.
-3. Claim the oldest: add `agent:claimed-cloud`, then re-read its labels. If
+2. List eligible issues without `agent:local`, in tier order. If there are
+   none, end without posting anything.
+3. Claim the first: add `agent:claimed-cloud`, then re-read its labels. If
    `agent:claimed-local` is also there, remove `agent:claimed-cloud` and end.
 4. Comment on the issue with this session's link.
 5. Drive it, from "Start: a newly claimed issue".
@@ -85,7 +91,8 @@ Each tick:
 3. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
    an issue you already hold", up to the next wait.
 4. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
-   oldest eligible `agent:local` issue, else the oldest eligible issue. Add
+   first eligible issue in tier order, preferring `agent:local` ones within
+   each tier. Add
    `agent:claimed-local`, re-read its labels, and if `agent:claimed-cloud` is
    also there remove `agent:claimed-local` and stop here. Otherwise comment on
    the issue that the local runner took it, and drive it from "Start: a newly
