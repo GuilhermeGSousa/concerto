@@ -460,15 +460,18 @@ impl Drop for BuildJob {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::{ffi::OsStr, time::Instant};
     use std::{
-        ffi::OsStr,
         path::{Path, PathBuf},
-        time::{Duration, Instant},
+        time::Duration,
     };
 
+    #[cfg(unix)]
     use concerto_ecs::{World, events::event_channel::EventChannel};
 
     use super::*;
+    #[cfg(unix)]
     use crate::reload::{CancelReload, GameReload, ReloadFailed, ReloadPhase};
 
     const BIN_ARTIFACT: &str = r#"{"reason":"compiler-artifact","package_id":"path+file:///work/fixture#0.1.0","manifest_path":"/work/fixture/Cargo.toml","target":{"kind":["bin"],"crate_types":["bin"],"name":"fixture","src_path":"/work/fixture/src/main.rs","edition":"2021","doc":true,"doctest":false,"test":true},"profile":{"opt_level":"0","debuginfo":2,"debug_assertions":true,"overflow_checks":true,"test":false},"features":[],"filenames":["/work/target/debug/fixture"],"executable":"/work/target/debug/fixture","fresh":false}"#;
@@ -529,6 +532,19 @@ mod tests {
         }
     }
 
+    #[cfg(not(unix))]
+    #[test]
+    fn reloading_is_refused_on_a_platform_that_is_not_unix() {
+        let directory = tempfile::tempdir().unwrap();
+        let exe = built_into(&directory.path().join("target"), "debug");
+
+        assert_eq!(
+            ReloadTarget::locate(&editor("/editor", env!("CARGO")), &exe),
+            Err("Reloading game code is not supported on this platform yet".to_string())
+        );
+    }
+
+    #[cfg(unix)]
     #[test]
     fn a_debug_binary_builds_the_dev_profile_into_its_target_dir() {
         let directory = tempfile::tempdir().unwrap();
@@ -551,6 +567,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_release_binary_builds_the_release_profile() {
         let directory = tempfile::tempdir().unwrap();
@@ -563,6 +580,7 @@ mod tests {
         assert_eq!(located.target_dir, target);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_custom_profile_builds_under_its_own_name() {
         let directory = tempfile::tempdir().unwrap();
@@ -573,6 +591,7 @@ mod tests {
         assert_eq!(located.profile, "profiling");
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_cargo_that_is_gone_is_replaced_by_the_one_on_the_path() {
         let directory = tempfile::tempdir().unwrap();
@@ -583,6 +602,7 @@ mod tests {
         assert_eq!(located.cargo, PathBuf::from("cargo"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn an_editor_built_with_a_target_triple_cannot_reload() {
         let directory = tempfile::tempdir().unwrap();
@@ -596,6 +616,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_binary_outside_a_cargo_target_dir_cannot_reload() {
         let refusal = Err(
@@ -620,6 +641,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn the_build_command_names_the_manifest_package_bin_profile_and_target_dir() {
         let directory = tempfile::tempdir().unwrap();
@@ -851,11 +873,13 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     struct Fixture {
         directory: tempfile::TempDir,
         target: ReloadTarget,
     }
 
+    #[cfg(unix)]
     fn fixture(main: &str, build: Option<&str>) -> Fixture {
         let directory = tempfile::tempdir().unwrap();
         let crate_dir = directory.path().join("fixture");
@@ -878,6 +902,7 @@ mod tests {
         Fixture { directory, target }
     }
 
+    #[cfg(unix)]
     fn finish(job: &mut BuildJob) -> BuildOutcome {
         let deadline = Instant::now() + Duration::from_secs(300);
         loop {
@@ -889,6 +914,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn building_a_fixture_crate_reports_its_executable() {
         let fixture = fixture("fn main() {}\n", None);
@@ -904,6 +930,7 @@ mod tests {
         assert!(executable.is_file());
     }
 
+    #[cfg(unix)]
     #[test]
     fn building_a_broken_fixture_crate_reports_its_error() {
         let fixture = fixture("fn main() { x }\n", None);
