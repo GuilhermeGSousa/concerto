@@ -59,6 +59,7 @@ impl RenderTarget {
 
 #[derive(Component, concerto_reflect::Reflect)]
 #[reflect(Component, SceneComponent)]
+#[require(crate::components::render_entity::SyncWithRenderWorld)]
 pub struct Camera {
     pub aspect: f32,
     pub fovy: f32,

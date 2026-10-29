@@ -65,10 +65,7 @@ pub(crate) fn extract_meshes(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        components::render_entity::SyncWithRenderWorld, draw_target::DrawTarget, gpu::Gpu,
-        plugin::RenderPlugin,
-    };
+    use crate::{draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin};
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
@@ -96,7 +93,6 @@ mod tests {
                 handle: AssetHandle::weak(mesh),
             },
             Transform::IDENTITY,
-            SyncWithRenderWorld,
         ));
         app.finish_plugin_build();
         (app, entity)

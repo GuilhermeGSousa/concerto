@@ -505,8 +505,7 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 mod tests {
     use super::*;
     use crate::{
-        assets::material::StandardMaterial, components::render_entity::SyncWithRenderWorld,
-        draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
+        assets::material::StandardMaterial, draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
     };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
@@ -539,7 +538,6 @@ mod tests {
                 handle: AssetHandle::weak(material),
             },
             Transform::IDENTITY,
-            SyncWithRenderWorld,
         ));
         app.finish_plugin_build();
         (app, entity)

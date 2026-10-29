@@ -7,7 +7,7 @@ use concerto_color::Color;
 use concerto_ecs::events::event_channel::EventChannel;
 use concerto_foundation::transform::Transform;
 use concerto_render::{
-    components::{camera::Camera, render_entity::SyncWithRenderWorld},
+    components::camera::Camera,
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
@@ -42,7 +42,6 @@ fn hosted(gpu: &Gpu, target: DrawTarget, size: (u32, u32)) -> App {
             ..Default::default()
         },
         Transform::IDENTITY,
-        SyncWithRenderWorld,
     ));
     app.finish_plugin_build();
     app

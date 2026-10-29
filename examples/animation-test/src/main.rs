@@ -4,10 +4,7 @@ use concerto::{
         App,
     },
     ecs::command::CommandQueue,
-    render::components::{
-        light::{Light, LightType},
-        render_entity::SyncWithRenderWorld,
-    },
+    render::components::light::{Light, LightType},
     DefaultPlugins,
 };
 use concerto_color::Color;
@@ -55,20 +52,17 @@ fn main() {
 }
 
 fn spawn_camera(mut cmd: CommandQueue) {
-    cmd.spawn((WorldGrid::default(), SyncWithRenderWorld));
+    cmd.spawn(WorldGrid::default());
     // First-person fly camera with a headlight so the character is lit wherever you look.
     spawn_first_person_player(
         &mut cmd,
         Vec3::new(0.0, 1.0, 0.0),
-        (
-            Light {
-                color: Color::rgba(1.0, 1.0, 1.0, 1.0),
-                intensity: 20.0,
-                light_type: LightType::Point,
-                range: 0.0,
-                shadowmaps_enabled: false,
-            },
-            SyncWithRenderWorld,
-        ),
+        Light {
+            color: Color::rgba(1.0, 1.0, 1.0, 1.0),
+            intensity: 20.0,
+            light_type: LightType::Point,
+            range: 0.0,
+            shadowmaps_enabled: false,
+        },
     );
 }

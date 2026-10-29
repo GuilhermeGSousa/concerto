@@ -20,7 +20,7 @@ Check, in this order:
 2. **Constraints.** The design breaks none of the constraints in `AGENTS.md`.
    Look hardest for a game crate depending on the editor, a system that takes
    `&World` or `&mut World`, a render-world system added with `add_system`, and
-   a render-visible entity without `SyncWithRenderWorld`.
+   a render-visible entity that neither has nor requires `SyncWithRenderWorld`.
 3. **Gotchas.** The design does not rely on behaviour that
    `.agents/reference/gotchas.md` says does not hold: a `Changed<T>` filter that
    can never fire, a lifecycle hook on a component nothing queries, a

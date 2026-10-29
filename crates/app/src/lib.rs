@@ -32,7 +32,7 @@ use concerto_ecs::{
     resource::{ResMut, Resource},
     signal::Signal,
     system::schedule::{CompiledSchedules, ScheduleLabel, Schedules},
-    IntoSetConfig, IntoSystemConfig, SystemTag, TagFilter, World,
+    Component, IntoSetConfig, IntoSystemConfig, SystemTag, TagFilter, World,
 };
 use log::info;
 
@@ -225,6 +225,24 @@ impl App {
     /// Registers `T` in the main world's type registry with the type data its derive declared.
     pub fn register_type<T: concerto_reflect::GetTypeRegistration>(&mut self) -> &mut Self {
         self.main_mut().register_type::<T>();
+        self
+    }
+
+    /// Makes `T` require `U`, built with `U::default()`, in the main world.
+    pub fn register_required_components<T: Component, U: Component + Default>(
+        &mut self,
+    ) -> &mut Self {
+        self.main_mut().register_required_components::<T, U>();
+        self
+    }
+
+    /// Makes `T` require `U`, built by `constructor`, in the main world.
+    pub fn register_required_components_with<T: Component, U: Component>(
+        &mut self,
+        constructor: fn() -> U,
+    ) -> &mut Self {
+        self.main_mut()
+            .register_required_components_with::<T, U>(constructor);
         self
     }
 
@@ -604,10 +622,7 @@ mod thread_safety_tests {
 #[cfg(test)]
 mod type_registration_tests {
     use super::*;
-    use concerto_ecs::{
-        reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
-        Component,
-    };
+    use concerto_ecs::reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent};
     use concerto_foundation::transform::Transform;
     use concerto_reflect::{Reflect, ReflectDefault};
     use std::any::TypeId;
@@ -647,5 +662,32 @@ mod type_registration_tests {
         assert!(registration.data::<ReflectDefault>().is_some());
         assert!(registration.data::<ReflectSceneComponent>().is_none());
         let _ = Health::default().points;
+    }
+
+    #[derive(Component, Default)]
+    struct Anchor;
+
+    #[derive(Component, Default)]
+    struct Companion;
+
+    #[derive(Component, Default)]
+    struct Counted(u32);
+
+    #[test]
+    fn an_app_registers_a_required_component_from_outside() {
+        let mut app = App::new();
+
+        app.register_required_components::<Anchor, Companion>()
+            .register_required_components_with::<Anchor, Counted>(|| Counted(3));
+
+        let world = app.main_mut().world_mut();
+        let entity = world.spawn(Anchor);
+        assert!(world
+            .get_component_for_entity::<Companion>(entity)
+            .is_some());
+        assert_eq!(
+            world.get_component_for_entity::<Counted>(entity).unwrap().0,
+            3
+        );
     }
 }

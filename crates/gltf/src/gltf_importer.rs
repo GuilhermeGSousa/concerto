@@ -26,7 +26,6 @@ use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::components::camera::Camera;
 use concerto_render::components::light::{Light, LightType};
 use concerto_render::components::material::MaterialComponent;
-use concerto_render::components::render_entity::SyncWithRenderWorld;
 use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
@@ -455,7 +454,6 @@ impl Importer for GltfImporter {
                         range: light.range().unwrap_or(0.0),
                     },
                 )?;
-                push_node_component(&mut scene_node, &SyncWithRenderWorld)?;
             }
 
             nodes.push(scene_node);
@@ -558,7 +556,7 @@ fn push_node_component<T: Reflect>(node: &mut SceneNode, component: &T) -> Resul
         })
 }
 
-/// Pushes the mesh/material/render-sync trio a drawable node carries.
+/// Pushes the mesh and material pair a drawable node carries.
 fn push_mesh_components(
     node: &mut SceneNode,
     mesh_id: AssetId,
@@ -575,8 +573,7 @@ fn push_mesh_components(
         &MaterialComponent::<StandardMaterial> {
             handle: AssetHandle::weak(material_id),
         },
-    )?;
-    push_node_component(node, &SyncWithRenderWorld)
+    )
 }
 
 /// Resolves one glTF external resource `uri` against the source file's

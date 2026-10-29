@@ -634,7 +634,7 @@ mod tests {
     use crate::{
         components::{
             light::{Light, RenderLightSlot},
-            render_entity::{MainEntity, RenderEntity, SyncWithRenderWorld},
+            render_entity::{MainEntity, RenderEntity},
         },
         draw_target::DrawTarget,
         gpu::Gpu,
@@ -682,7 +682,7 @@ mod tests {
     fn spawn(app: &mut App, light: Light) -> Entity {
         app.main_mut()
             .world_mut()
-            .spawn((light, Transform::IDENTITY, SyncWithRenderWorld))
+            .spawn((light, Transform::IDENTITY))
     }
 
     fn render_entity(app: &App, main: Entity) -> Entity {

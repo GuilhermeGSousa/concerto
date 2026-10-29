@@ -33,7 +33,8 @@ One `App` holds two worlds, `main` and `render`, as fixed sub-apps
    then `world.tick()` marks the frame boundary for change detection read
    outside any system.
 2. Extract runs on the main thread with both worlds. It links each
-   `SyncWithRenderWorld` entity to a render-world mirror, despawns mirrors whose
+   `SyncWithRenderWorld` entity (required by the camera, light, mesh, material and
+   UI layout components) to a render-world mirror, despawns mirrors whose
    main entity is gone, then runs the render world's `Extract` schedule, where
    systems read the main world through `Extracted<T>`.
 3. The render world runs `RenderMain`: `Render`, then `LateRender`.

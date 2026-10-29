@@ -23,6 +23,7 @@ const MAX_LIGHTS: usize = 128;
 
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
+#[require(crate::components::render_entity::SyncWithRenderWorld)]
 pub struct Light {
     pub color: Color,
     pub intensity: f32,

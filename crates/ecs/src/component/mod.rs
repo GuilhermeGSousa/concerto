@@ -4,10 +4,13 @@ use std::{
 };
 
 pub mod bundle;
+pub(crate) mod components;
 pub mod name;
+pub mod required;
 pub mod scene;
 
 pub use concerto_ecs_macros::Component;
+pub use required::{RequiredComponent, RequiredComponents};
 
 use crate::{
     entity::Entity,
@@ -59,6 +62,11 @@ pub trait Component: Send + Sync + 'static {
         Self: Sized,
     {
         std::any::type_name::<Self>()
+    }
+
+    /// Registers the components this component requires; `#[require(..)]` overrides it.
+    fn register_required(required: &mut RequiredComponents) {
+        let _ = required;
     }
 
     /// Optional callback invoked immediately after this component is added to an entity.

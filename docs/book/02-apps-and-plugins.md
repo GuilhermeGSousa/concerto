@@ -86,10 +86,9 @@ the renderer needs to draw a frame. Each frame:
 
 1. The main world runs `First`, the fixed steps, `Update` and `LateUpdate`.
 2. **Extract** copies what changed from the main world into the render world.
-   Only entities with `SyncWithRenderWorld` get a mirror there. The engine adds
-   it to the live camera, to UI nodes, and to the mesh and light nodes of an
-   imported scene; add it yourself to lights, meshes and grids you spawn in
-   code.
+   Only entities with `SyncWithRenderWorld` get a mirror there. Cameras,
+   lights, meshes, materials, UI nodes and the world grid get it
+   automatically; see [required components](../required-components.md).
 3. The render world runs `Render` and `LateRender`, and draws.
 
 Game code almost never touches the render world. If you write a renderer

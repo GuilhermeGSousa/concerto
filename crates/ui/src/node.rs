@@ -426,6 +426,7 @@ impl Default for UINode {
 
 /// Computed read-only layout in logical pixels.
 #[derive(Component, Clone, PartialEq)]
+#[require(SyncWithRenderWorld)]
 pub struct UILayout {
     pub rect: UIBox,
     pub content_rect: UIBox,
@@ -1353,7 +1354,7 @@ fn write_layout(
         Some(mut current) => {
             current.set_if_neq(layout);
         }
-        None => cmd.insert((layout, SyncWithRenderWorld), entity),
+        None => cmd.insert(layout, entity),
     }
 }
 
@@ -2570,6 +2571,39 @@ mod tests {
             ui_text(label),
             ChildOf::new(parent),
         ))
+    }
+
+    #[test]
+    fn a_layout_requires_the_render_mirror_marker() {
+        let mut world = layout_world();
+        let entity = world.spawn(UILayout {
+            rect: UIBox::default(),
+            content_rect: UIBox::default(),
+            clip_rect: UIBox::default(),
+            paint_order: 0,
+        });
+
+        assert!(
+            world
+                .get_component_for_entity::<SyncWithRenderWorld>(entity)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_bare_child_text_gets_a_node_and_is_laid_out() {
+        let mut world = layout_world();
+        let root = column(&mut world);
+        let label = world.spawn((ui_text("Warren"), ChildOf::new(root)));
+
+        lay_out(&mut world);
+
+        assert_eq!(
+            world.get_component_for_entity::<UINode>(label),
+            Some(&UINode::default())
+        );
+        let layout = world.get_component_for_entity::<UILayout>(label).unwrap();
+        assert!(layout.rect.size.x > 0.0 && layout.rect.size.y > 0.0);
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::{assets::material::StandardMaterial, Material};
 /// without any change.  Custom materials use `MaterialComponent::<MyMaterial> { handle: … }`.
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
+#[require(crate::components::render_entity::SyncWithRenderWorld)]
 pub struct MaterialComponent<M: Material + Send + Sync + 'static = StandardMaterial> {
     pub handle: AssetHandle<M>,
 }
