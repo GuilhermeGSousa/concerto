@@ -8,3 +8,12 @@ license.workspace = true
 
 [dependencies]
 concerto-asset-import.workspace = true
+concerto-animation.workspace = true
+concerto-mesh.workspace = true
+glam = { version = "0.30.1" }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
+
+[dev-dependencies]
+bincode = "1.3"

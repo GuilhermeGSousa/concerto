@@ -1,7 +1,13 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 
-use concerto_asset_import::{ImportContext, ImportError, Importer};
+use concerto_animation::clip::AnimationClip;
+use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_bvh::bvh_importer::BvhImporter;
+use concerto_mesh::{JointPose, Skeleton};
+use glam::{Mat4, Quat, Vec3};
+use uuid::Uuid;
 
 const TWO_JOINTS: &str = "HIERARCHY
 ROOT Hips
@@ -140,4 +146,292 @@ fn more_than_one_root_is_rejected() {
 #[test]
 fn a_missing_hierarchy_header_is_rejected() {
     assert_malformed("header.bvh", "ROOT Hips\n", "HIERARCHY");
+}
+
+fn run(name: &str, text: &str, settings: &str) -> Result<ImportOutputs, ImportError> {
+    let path = write_source(name, text);
+    let table: toml::Table = settings.parse().unwrap();
+    let mut ctx = ImportContext::new(PathBuf::from(name)).with_settings(table);
+    BvhImporter.import(&path, &mut ctx)?;
+    Ok(ctx.into_parts())
+}
+
+fn import_ok(name: &str, text: &str, settings: &str) -> (Skeleton, AnimationClip) {
+    let outputs = run(name, text, settings).expect("the import should succeed");
+    let decode = |sub: &str| {
+        outputs
+            .sub_assets
+            .iter()
+            .find(|asset| asset.name == sub)
+            .unwrap_or_else(|| panic!("missing sub-asset {sub}"))
+            .bytes
+            .clone()
+    };
+    (
+        bincode::deserialize(&decode("skeleton/0")).unwrap(),
+        bincode::deserialize(&decode("animation/0")).unwrap(),
+    )
+}
+
+fn assert_malformed_with(name: &str, text: &str, settings: &str, expected: &str) {
+    match run(name, text, settings) {
+        Err(ImportError::MalformedSource { message, .. }) => assert!(
+            message.contains(expected),
+            "expected {expected:?} in {message:?}"
+        ),
+        other => panic!("expected MalformedSource for {name}, got {:?}", other.err()),
+    }
+}
+
+fn near(a: Vec3, b: Vec3) -> bool {
+    (a - b).length() < 1e-5
+}
+
+fn same_rotation(a: Quat, b: Quat) -> bool {
+    a.dot(b).abs() > 1.0 - 1e-5
+}
+
+fn path_id(path: &str) -> Uuid {
+    let mut hasher = DefaultHasher::new();
+    path.to_string().hash(&mut hasher);
+    Uuid::from_u128(hasher.finish() as u128)
+}
+
+fn sample(clip: &AnimationClip, id: &Uuid, time: f32) -> JointPose {
+    let mut pose = JointPose::IDENTITY;
+    for channel in clip.get_channels(id).expect("channels for the bone") {
+        channel.sample_transform(time, &mut pose);
+    }
+    pose
+}
+
+fn deg(value: f32) -> f32 {
+    value.to_radians()
+}
+
+const FRAME_TIME: f32 = 0.0333333;
+
+#[test]
+fn the_skeleton_holds_the_hierarchy_rest_pose_and_inverse_bind_poses() {
+    let (skeleton, _) = import_ok("skeleton.bvh", TWO_JOINTS, "");
+    assert_eq!(&*skeleton.names, &["Hips".to_string(), "Spine".to_string()]);
+    assert_eq!(&*skeleton.parents, &[None, Some(0)]);
+    assert!(near(
+        skeleton.rest_pose[0].translation,
+        Vec3::new(0.0, 0.9, 0.0)
+    ));
+    assert!(near(
+        skeleton.rest_pose[1].translation,
+        Vec3::new(0.0, 0.1, 0.0)
+    ));
+    for pose in skeleton.rest_pose.iter() {
+        assert_eq!(pose.rotation, Quat::IDENTITY);
+        assert_eq!(pose.scale, Vec3::ONE);
+    }
+    let expected = [
+        Mat4::from_translation(Vec3::new(0.0, -0.9, 0.0)),
+        Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)),
+    ];
+    for (actual, expected) in skeleton.inverse_bindposes.iter().zip(expected) {
+        assert!(
+            actual.abs_diff_eq(expected, 1e-5),
+            "{actual:?} != {expected:?}"
+        );
+    }
+}
+
+#[test]
+fn end_sites_produce_no_bone() {
+    let (skeleton, _) = import_ok("end_site.bvh", TWO_JOINTS, "");
+    assert_eq!(skeleton.bone_count(), 2);
+}
+
+#[test]
+fn sampling_at_each_frame_time_gives_the_authored_pose() {
+    let (skeleton, clip) = import_ok("sample.bvh", TWO_JOINTS, "");
+    let hips = skeleton.bone_ids[0];
+    let spine = skeleton.bone_ids[1];
+    for frame in 0..3 {
+        let time = frame as f32 * FRAME_TIME;
+        let hips_pose = sample(&clip, &hips, time);
+        assert!(near(
+            hips_pose.translation,
+            Vec3::new(frame as f32 * 0.01, 0.9, 0.0)
+        ));
+        assert!(same_rotation(
+            hips_pose.rotation,
+            Quat::from_rotation_z(deg(10.0 * frame as f32))
+        ));
+        let spine_pose = sample(&clip, &spine, time);
+        assert!(same_rotation(
+            spine_pose.rotation,
+            Quat::from_rotation_x(deg(5.0 * frame as f32))
+        ));
+    }
+    assert!((clip.duration() - 2.0 * FRAME_TIME).abs() < 1e-6);
+}
+
+#[test]
+fn rotation_channels_compose_in_the_order_they_are_listed() {
+    let text = "HIERARCHY
+ROOT Hips
+{
+\tOFFSET 0 0 0
+\tCHANNELS 6 Xposition Yposition Zposition Zrotation Yrotation Xrotation
+\tJOINT Spine
+\t{
+\t\tOFFSET 0 10 0
+\t\tCHANNELS 3 Xrotation Yrotation Zrotation
+\t\tEnd Site
+\t\t{
+\t\t\tOFFSET 0 5 0
+\t\t}
+\t}
+}
+MOTION
+Frames: 2
+Frame Time: 0.5
+0 0 0 30 40 50 10 20 30
+0 0 0 30 40 50 10 20 30
+";
+    let (skeleton, clip) = import_ok("order.bvh", text, "");
+    let hips = sample(&clip, &skeleton.bone_ids[0], 0.0);
+    let spine = sample(&clip, &skeleton.bone_ids[1], 0.0);
+    let expected_hips = Quat::from_rotation_z(deg(30.0))
+        * Quat::from_rotation_y(deg(40.0))
+        * Quat::from_rotation_x(deg(50.0));
+    let expected_spine = Quat::from_rotation_x(deg(10.0))
+        * Quat::from_rotation_y(deg(20.0))
+        * Quat::from_rotation_z(deg(30.0));
+    assert!(same_rotation(hips.rotation, expected_hips));
+    assert!(same_rotation(spine.rotation, expected_spine));
+}
+
+#[test]
+fn a_joint_with_some_position_axes_keeps_the_rest_offset_on_the_others() {
+    let text = "HIERARCHY
+ROOT Hips
+{
+\tOFFSET 100 200 300
+\tCHANNELS 2 Xposition Zposition
+}
+MOTION
+Frames: 2
+Frame Time: 1
+10 30
+20 40
+";
+    let (skeleton, clip) = import_ok("partial.bvh", text, "scale = 0.1");
+    let first = sample(&clip, &skeleton.bone_ids[0], 0.0);
+    let second = sample(&clip, &skeleton.bone_ids[0], 1.0);
+    assert!(near(first.translation, Vec3::new(1.0, 20.0, 3.0)));
+    assert!(near(second.translation, Vec3::new(2.0, 20.0, 4.0)));
+    assert_eq!(first.rotation, Quat::IDENTITY);
+}
+
+#[test]
+fn neighbouring_rotation_keys_stay_in_one_hemisphere() {
+    let text = "HIERARCHY
+ROOT Hips
+{
+\tOFFSET 0 0 0
+\tCHANNELS 3 Zrotation Yrotation Xrotation
+}
+MOTION
+Frames: 3
+Frame Time: 1
+0 0 0
+359 0 0
+358 0 0
+";
+    let (skeleton, clip) = import_ok("hemisphere.bvh", text, "");
+    let id = skeleton.bone_ids[0];
+    let keys: Vec<Quat> = (0..3)
+        .map(|i| sample(&clip, &id, i as f32).rotation)
+        .collect();
+    assert!(keys[0].dot(keys[1]) >= 0.0);
+    assert!(keys[1].dot(keys[2]) >= 0.0);
+    assert!(same_rotation(keys[1], Quat::from_rotation_z(deg(359.0))));
+}
+
+#[test]
+fn scale_applies_to_offsets_and_translation_keys() {
+    let (skeleton, clip) = import_ok("scaled.bvh", TWO_JOINTS, "scale = 1.0");
+    assert!(near(
+        skeleton.rest_pose[0].translation,
+        Vec3::new(0.0, 90.0, 0.0)
+    ));
+    assert!(near(
+        skeleton.rest_pose[1].translation,
+        Vec3::new(0.0, 10.0, 0.0)
+    ));
+    let pose = sample(&clip, &skeleton.bone_ids[0], 2.0 * FRAME_TIME);
+    assert!(near(pose.translation, Vec3::new(2.0, 90.0, 0.0)));
+    assert!(
+        skeleton.inverse_bindposes[1]
+            .abs_diff_eq(Mat4::from_translation(Vec3::new(0.0, -100.0, 0.0)), 1e-3)
+    );
+}
+
+#[test]
+fn a_frame_range_trims_the_clip_and_rebases_its_times() {
+    let (skeleton, clip) = import_ok("trim.bvh", TWO_JOINTS, "frame_range = [1, 3]");
+    let spine = skeleton.bone_ids[1];
+    let first = sample(&clip, &spine, 0.0);
+    let last = sample(&clip, &spine, FRAME_TIME);
+    assert!(same_rotation(
+        first.rotation,
+        Quat::from_rotation_x(deg(5.0))
+    ));
+    assert!(same_rotation(
+        last.rotation,
+        Quat::from_rotation_x(deg(10.0))
+    ));
+    assert!((clip.duration() - FRAME_TIME).abs() < 1e-6);
+}
+
+#[test]
+fn a_bone_id_is_the_hash_of_the_joint_name_path() {
+    let (skeleton, clip) = import_ok("ids.bvh", TWO_JOINTS, "");
+    assert_eq!(skeleton.bone_ids[0], path_id("Hips"));
+    assert_eq!(skeleton.bone_ids[1], path_id("Hips/Spine"));
+    for id in skeleton.bone_ids.iter() {
+        assert!(clip.get_channels(id).is_some());
+    }
+    assert_eq!(clip.target_ids().count(), 2);
+}
+
+#[test]
+fn invalid_settings_are_rejected() {
+    for scale in ["0", "-1.0", "nan", "inf"] {
+        assert_malformed_with(
+            "scale.bvh",
+            TWO_JOINTS,
+            &format!("scale = {scale}"),
+            "scale",
+        );
+    }
+    assert_malformed_with("unknown.bvh", TWO_JOINTS, "scal = 1.0", "scal");
+    for range in ["[2, 2]", "[2, 1]", "[0, 4]", "[3, 5]"] {
+        assert_malformed_with(
+            "range.bvh",
+            TWO_JOINTS,
+            &format!("frame_range = {range}"),
+            "frame_range",
+        );
+    }
+}
+
+#[test]
+fn fewer_than_two_frames_are_rejected() {
+    let one = TWO_JOINTS
+        .replace("Frames: 3", "Frames: 1")
+        .replace("1 90 0 10 0 0 5 0 0\n2 90 0 20 0 0 10 0 0\n", "");
+    assert_malformed_with("one.bvh", &one, "", "two frames");
+    assert_malformed_with(
+        "trimmed.bvh",
+        TWO_JOINTS,
+        "frame_range = [1, 2]",
+        "two frames",
+    );
 }

@@ -11,6 +11,10 @@ pub(crate) enum Channel {
 }
 
 impl Channel {
+    pub(crate) fn is_position(self) -> bool {
+        matches!(self, Self::XPosition | Self::YPosition | Self::ZPosition)
+    }
+
     fn parse(name: &str) -> Option<Self> {
         Some(match name {
             "Xposition" => Self::XPosition,
