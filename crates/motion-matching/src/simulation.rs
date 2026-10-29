@@ -159,7 +159,7 @@ mod tests {
             );
             assert!((sample.position - state.position).length() < EPS);
             assert!((sample.velocity - state.velocity).length() < EPS);
-            assert!(sample.rotation.angle_between(rotation) < EPS);
+            assert!(sample.rotation.abs_diff_eq(rotation, EPS));
         }
     }
 
