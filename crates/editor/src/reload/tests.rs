@@ -541,6 +541,9 @@ fn a_reload_waits_for_in_flight_work() {
         let release = hold(&mut r.f, document);
         let executable = r.executable("game-editor");
         r.start(built(&executable), built(&executable));
+        r.f.frames_until("the first build never ended", |f| {
+            !matches!(reload(f).phase, ReloadPhase::Building(_))
+        });
 
         for _ in 0..5 {
             r.f.frame();
@@ -548,7 +551,8 @@ fn a_reload_waits_for_in_flight_work() {
 
         assert!(
             matches!(reload(&r.f).phase, ReloadPhase::Waiting { .. }),
-            "{reason}"
+            "{reason}: {}",
+            where_it_is(&r.f)
         );
         assert_eq!(
             reload(&r.f).status(),
@@ -558,9 +562,25 @@ fn a_reload_waits_for_in_flight_work() {
         r.until_settled();
         assert!(
             matches!(reload(&r.f).phase, ReloadPhase::Closing),
-            "{reason}"
+            "{reason}: {}",
+            where_it_is(&r.f)
         );
     }
+}
+
+fn where_it_is(f: &SceneFixture) -> String {
+    let phase = match reload(f).phase {
+        ReloadPhase::Idle => "Idle",
+        ReloadPhase::Building(_) => "Building",
+        ReloadPhase::Waiting { .. } => "Waiting",
+        ReloadPhase::Confirming(_) => "Confirming",
+        ReloadPhase::Closing => "Closing",
+        ReloadPhase::Failed => "Failed",
+    };
+    format!(
+        "the phase is {phase} and Chatter says {:?}",
+        reload(f).status()
+    )
 }
 
 #[test]

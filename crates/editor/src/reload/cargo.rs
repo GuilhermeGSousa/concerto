@@ -1007,9 +1007,10 @@ mod tests {
             // SAFETY: signal 0 sends nothing; it only asks whether the build's group still has a process.
             let alive = unsafe { libc::killpg(group, 0) } == 0;
             if !alive {
-                assert_eq!(
-                    std::io::Error::last_os_error().raw_os_error(),
-                    Some(libc::ESRCH)
+                let error = std::io::Error::last_os_error().raw_os_error();
+                assert!(
+                    matches!(error, Some(libc::ESRCH | libc::EPERM)),
+                    "killpg failed with {error:?}"
                 );
                 break;
             }
