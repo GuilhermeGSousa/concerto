@@ -121,7 +121,6 @@ enum RowMenuItem {
     Delete,
 }
 
-const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
 const MENU_WIDTH: f32 = 168.0;
 
 pub struct HierarchyPlugin;
@@ -283,7 +282,6 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
     let mut menu = cmd.spawn((
         theme
             .context_menu()
-            .fill(MENU_FILL)
             .width(UIValue::Px(MENU_WIDTH))
             .padding(theme.spacing_xs),
         RowMenu { scene_target: None },
@@ -1150,6 +1148,15 @@ mod tests {
             anchor,
             UIAnchorTarget::Point { position } if position == Vec2::new(40.0, 60.0)
         ));
+        let fill = f
+            .scene
+            .world
+            .query::<&UIMaterial, With<RowMenu>>()
+            .iter(&mut f.scene.world)
+            .next()
+            .unwrap()
+            .color;
+        assert_eq!(fill, UITheme::default().surface_overlay.to_linear());
         for item in [
             RowMenuItem::AddChild,
             RowMenuItem::Duplicate,

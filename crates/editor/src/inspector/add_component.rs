@@ -2,7 +2,6 @@
 use super::*;
 
 use super::registry::InspectionSource;
-use concerto_color::Color;
 use concerto_ecs::{
     component::Tick, events::event_reader::EventReader, query::filter::With, signal::On,
 };
@@ -15,7 +14,6 @@ use concerto_window::input::MouseButton;
 
 const MENU_WIDTH: f32 = 272.0;
 const MENU_LIST_MAX_HEIGHT: f32 = 320.0;
-pub(crate) const MENU_FILL: Color = Color::srgba(0.090, 0.102, 0.157, 0.96);
 const ROW_HEIGHT: f32 = 30.0;
 const MARK_SIZE: f32 = 7.0;
 
@@ -116,7 +114,7 @@ fn spawn_row(cmd: &mut CommandQueue, stack: Entity, theme: &UITheme) -> Entity {
 }
 
 fn spawn_menu(cmd: &mut CommandQueue, row: Entity, theme: &UITheme) {
-    let mut menu = cmd.spawn(theme.popup().fill(MENU_FILL).width(UIValue::Px(MENU_WIDTH)));
+    let mut menu = cmd.spawn(theme.popup().width(UIValue::Px(MENU_WIDTH)));
 
     let mut header = menu.spawn_child(
         theme
