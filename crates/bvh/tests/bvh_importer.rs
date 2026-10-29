@@ -5,7 +5,12 @@ use std::path::PathBuf;
 use concerto_animation::clip::AnimationClip;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
 use concerto_bvh::bvh_importer::BvhImporter;
-use concerto_mesh::{JointPose, Skeleton};
+use concerto_ecs::component::scene::SceneEntityRef;
+use concerto_foundation::assets::AssetId;
+use concerto_foundation::transform::Transform;
+use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
+use concerto_reflect::{Reflect, apply_value};
+use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -433,5 +438,66 @@ fn fewer_than_two_frames_are_rejected() {
         TWO_JOINTS,
         "frame_range = [1, 2]",
         "two frames",
+    );
+}
+
+fn import_scene(name: &str, text: &str) -> Scene {
+    let outputs = run(name, text, "").expect("the import should succeed");
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|asset| asset.name == "scene")
+        .expect("missing sub-asset scene");
+    bincode::deserialize(&entry.bytes).unwrap()
+}
+
+fn decode<T: Reflect + Default>(node: &SceneNode) -> Option<T> {
+    let component = node
+        .components
+        .iter()
+        .find(|component| component.type_name == std::any::type_name::<T>())?;
+    let mut value = T::default();
+    let warnings = apply_value(&mut value, &component.value);
+    assert!(warnings.is_empty(), "{warnings:?}");
+    Some(value)
+}
+
+#[test]
+fn the_scene_has_one_node_per_joint_with_parents_first() {
+    let scene = import_scene("scene.bvh", TWO_JOINTS);
+    let names: Vec<&str> = scene.nodes.iter().map(|node| node.name.as_str()).collect();
+    assert_eq!(names, ["Hips", "Spine"]);
+    assert_eq!(scene.nodes[0].children, [1]);
+    assert!(scene.nodes[1].children.is_empty());
+}
+
+#[test]
+fn each_scene_node_carries_the_rest_pose_transform() {
+    let scene = import_scene("scene_pose.bvh", TWO_JOINTS);
+    let hips: Transform = decode(&scene.nodes[0]).unwrap();
+    let spine: Transform = decode(&scene.nodes[1]).unwrap();
+    assert!(near(hips.translation, Vec3::new(0.0, 0.9, 0.0)));
+    assert!(near(spine.translation, Vec3::new(0.0, 0.1, 0.0)));
+    assert_eq!(spine.rotation, Quat::IDENTITY);
+    assert_eq!(spine.scale, Vec3::ONE);
+}
+
+#[test]
+fn the_root_node_carries_the_rooted_skeleton_component() {
+    let scene = import_scene("scene_skeleton.bvh", TWO_JOINTS);
+    let skeleton: SkeletonComponent = decode(&scene.nodes[0]).unwrap();
+    assert_eq!(
+        skeleton.skeleton.id(),
+        AssetId::from_path("scene_skeleton.bvh#skeleton/0")
+    );
+    assert_eq!(
+        skeleton.bones,
+        [SceneEntityRef::Index(0), SceneEntityRef::Index(1)]
+    );
+    assert_eq!(skeleton.root, Some(SceneEntityRef::Index(0)));
+    assert!(decode::<SkeletonComponent>(&scene.nodes[1]).is_none());
+    assert_eq!(
+        scene.referenced_assets,
+        [AssetId::from_path("scene_skeleton.bvh#skeleton/0")]
     );
 }

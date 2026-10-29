@@ -4,7 +4,12 @@ use std::path::Path;
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_asset_import::{ImportContext, ImportError, Importer};
-use concerto_mesh::{JointPose, Skeleton};
+use concerto_ecs::component::scene::SceneEntityRef;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
+use concerto_foundation::transform::Transform;
+use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
+use concerto_reflect::Reflect;
+use concerto_scene::scene::{Scene, SceneNode};
 use glam::{Mat4, Quat, Vec3};
 use serde::Deserialize;
 use uuid::Uuid;
@@ -91,6 +96,8 @@ impl Importer for BvhImporter {
         let clip = build_clip(&bvh, settings.scale, start..end, &bone_ids);
         ctx.emit("skeleton/0", &skeleton)?;
         ctx.emit("animation/0", &clip)?;
+        let scene = build_scene(&bvh, &skeleton, ctx.sub_asset_id("skeleton/0"))?;
+        ctx.emit("scene", &scene)?;
         Ok(())
     }
 }
@@ -147,6 +154,52 @@ fn build_skeleton(bvh: &Bvh, scale: f32, bone_ids: &[Uuid]) -> Result<Skeleton, 
         bone_ids.to_vec(),
     )
     .map_err(|err| err.to_string())
+}
+
+fn push_node_component<T: Reflect>(node: &mut SceneNode, component: &T) -> Result<(), ImportError> {
+    node.push_component(component)
+        .map_err(|err| ImportError::SerializationFailed {
+            sub_asset_name: "scene".to_string(),
+            message: err.to_string(),
+        })
+}
+
+fn build_scene(bvh: &Bvh, skeleton: &Skeleton, skeleton_id: AssetId) -> Result<Scene, ImportError> {
+    let mut nodes: Vec<SceneNode> = Vec::with_capacity(bvh.joints.len());
+    for (index, joint) in bvh.joints.iter().enumerate() {
+        let mut node = SceneNode {
+            name: joint.name.clone(),
+            children: Vec::new(),
+            components: Vec::new(),
+        };
+        let pose = &skeleton.rest_pose[index];
+        push_node_component(
+            &mut node,
+            &Transform::from_translation_rotation_scale(
+                pose.translation,
+                pose.rotation,
+                pose.scale,
+            ),
+        )?;
+        if index == 0 {
+            push_node_component(
+                &mut node,
+                &SkeletonComponent {
+                    skeleton: AssetHandle::weak(skeleton_id),
+                    bones: (0..bvh.joints.len()).map(SceneEntityRef::Index).collect(),
+                    root: Some(SceneEntityRef::Index(0)),
+                },
+            )?;
+        }
+        nodes.push(node);
+        if let Some(parent) = joint.parent {
+            nodes[parent].children.push(index);
+        }
+    }
+    Ok(Scene {
+        nodes,
+        referenced_assets: vec![skeleton_id],
+    })
 }
 
 fn build_clip(
