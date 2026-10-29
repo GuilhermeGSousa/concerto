@@ -245,8 +245,10 @@ let hero: AssetHandle<Scene> = asset_server.load::<Scene>(HERO);
 The macro resolves paths against the **calling package's `CARGO_MANIFEST_DIR`**,
 reads the `.gasset` header, and emits the UUID's 16 bytes as a constant. It does
 not embed the file payload, import source assets, read the registry, or perform
-a runtime path lookup. Missing files, malformed headers, and unsupported file
-versions are compile errors at the macro invocation. It is also available as
+a runtime path lookup. A missing file expands to `AssetId::nil()` with a
+deprecation warning at the macro invocation, which a crate that denies warnings
+sees as an error. Malformed headers and unsupported file versions are compile
+errors there. It is also available as
 `concerto_foundation::asset_id!` and `concerto_foundation::assets::asset_id!`.
 
 Register the package's content directory for stable Rust build tracking, and

@@ -34,7 +34,8 @@ use concerto::{asset_id, foundation::assets::AssetId};
 const HERO: AssetId = asset_id!("content/hero/scene.gasset");
 ```
 
-A missing or broken file is a compile error at that line. The path is relative
+A missing file gives a nil id and a warning at that line; a broken file is a
+compile error there. The path is relative
 to the package. For the macro to see content changes, the game's `build.rs`
 calls `concerto_asset_build::track_assets("content")`; projects made by
 `cargo concerto new` already do.

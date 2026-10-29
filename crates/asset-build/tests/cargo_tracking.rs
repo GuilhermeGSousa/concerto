@@ -114,7 +114,13 @@ fn main() { println!("{}", ID.simple_hex()); }
     std::fs::write(root.join("content/fixture.gasset"), b"broken header").unwrap();
     assert_error(cargo(root), "missing the GRDY magic prefix");
     std::fs::remove_file(root.join("content/fixture.gasset")).unwrap();
-    assert_error(cargo(root), "cannot open");
+    let missing = cargo(root);
+    let stderr = String::from_utf8_lossy(&missing.stderr).into_owned();
+    assert!(
+        stderr.contains("warning") && stderr.contains("no asset at"),
+        "expected a missing-asset warning, got:\n{stderr}"
+    );
+    assert_id(missing, AssetId::nil());
 
     write_asset(root, second);
     std::fs::write(root.join("build.rs"), "fn main() {}").unwrap();
