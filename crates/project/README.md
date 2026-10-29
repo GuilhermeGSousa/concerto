@@ -42,14 +42,19 @@ and on `concerto-editor`. Its `main` is one call:
 
 ```rust
 fn main() {
-    concerto_editor::run(my_game::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run(my_game::game, concerto_editor::editor_crate!());
 }
 ```
 
-So the editor opens its own game's project by default; `--project <dir>`
-overrides that. `editor` requires `<dir>/Cargo.toml` and `<dir>/src/lib.rs`,
-refuses if `<dir>/editor` exists, and says that it assumes the recipe is
-`<crate>::game`. Run the editor with `cargo run -p <game>-editor`.
+`editor_crate!()` names the editor crate it is expanded in, and the editor opens
+the project above it, its own game's, by default; `--project <dir>` overrides
+that. `editor` requires `<dir>/Cargo.toml` and `<dir>/src/lib.rs`, refuses if
+`<dir>/editor` exists, and says that it assumes the recipe is `<crate>::game`.
+Run the editor with `cargo run -p <game>-editor`.
+
+An editor crate generated before `editor_crate!()` existed passes a project
+root instead and no longer compiles. Replace its `main` line with
+`concerto_editor::run(<crate>::game, concerto_editor::editor_crate!());`.
 
 If `editor` fails after writing `editor/`, it removes that directory, so the
 command can be run again once the cause is fixed. If `new` fails after writing,

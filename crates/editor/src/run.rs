@@ -10,6 +10,40 @@ use crate::EditorPlugin;
 
 const MCP_SIZE: (u32, u32) = (1600, 900);
 
+/// The editor crate a game's `main` lives in, as `editor_crate!()` names it at compile time.
+#[derive(Clone, Copy, Debug)]
+pub struct EditorCrate {
+    /// The editor crate's directory, holding its `Cargo.toml`.
+    pub manifest_dir: &'static str,
+    /// The editor crate's package name.
+    pub package: &'static str,
+    /// The name of the binary the editor runs as.
+    pub bin: &'static str,
+    /// The cargo that built the editor.
+    pub cargo: &'static str,
+}
+
+impl EditorCrate {
+    /// The game's directory, the parent of the editor crate's.
+    pub fn project_root(&self) -> PathBuf {
+        let manifest_dir = std::path::Path::new(self.manifest_dir);
+        manifest_dir.parent().unwrap_or(manifest_dir).to_path_buf()
+    }
+}
+
+/// Names the calling editor crate, for `concerto_editor::run`.
+#[macro_export]
+macro_rules! editor_crate {
+    () => {
+        $crate::EditorCrate {
+            manifest_dir: env!("CARGO_MANIFEST_DIR"),
+            package: env!("CARGO_PKG_NAME"),
+            bin: env!("CARGO_BIN_NAME"),
+            cargo: env!("CARGO"),
+        }
+    };
+}
+
 fn usage(program: Option<OsString>) -> String {
     let name = program
         .as_deref()
@@ -106,12 +140,12 @@ pub(crate) fn register_editor(
         .register_plugin(concerto_ui::plugin::UIPlugin);
 }
 
-/// Opens the editor for the game whose recipe is `recipe`, on the project at `project_root` unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
-pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
+/// Opens the editor for the game whose recipe is `recipe`, on the project above `editor`'s crate unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
+pub fn run(recipe: fn(&mut App), editor: EditorCrate) {
     let _ = env_logger::try_init();
     let mut arguments = std::env::args_os();
     let program = arguments.next();
-    let options = match parse_args(arguments, project_root.into()) {
+    let options = match parse_args(arguments, editor.project_root()) {
         Ok(options) => options,
         Err(ArgsError::Help) => {
             println!("{}", usage(program));
@@ -134,7 +168,7 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
 mod tests {
     use std::{ffi::OsString, path::PathBuf};
 
-    use super::{ArgsError, parse_args, usage};
+    use super::{ArgsError, EditorCrate, parse_args, usage};
 
     fn args(list: &[&str]) -> Vec<OsString> {
         list.iter().map(OsString::from).collect()
@@ -230,6 +264,17 @@ mod tests {
             parse_args(args(&["--nope"]), PathBuf::new()),
             Err(ArgsError::Usage(_))
         ));
+    }
+
+    #[test]
+    fn the_editor_crate_names_the_project_above_it() {
+        let editor = EditorCrate {
+            manifest_dir: "/games/my-game/editor",
+            package: "my-game-editor",
+            bin: "my-game-editor",
+            cargo: "/usr/bin/cargo",
+        };
+        assert_eq!(editor.project_root(), PathBuf::from("/games/my-game"));
     }
 
     #[test]

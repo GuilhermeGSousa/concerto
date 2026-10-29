@@ -8,7 +8,7 @@ compiled together with your game's library, by a small crate in your project,
 
 ```rust
 fn main() {
-    concerto_editor::run(my_game::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run(my_game::game, concerto_editor::editor_crate!());
 }
 ```
 

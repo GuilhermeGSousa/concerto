@@ -16,12 +16,15 @@ cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 Add `--decorated` to use the window manager's title bar.
 
 A game's `editor/` crate starts the editor with
-`concerto_editor::run(recipe, project_root)`. `recipe` is the game's
-`fn(&mut App)`, which builds the `App` of each scene being edited. `project_root`
-is the project the editor opens; `--project <directory>` on the command line
-overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
-prints the usage and exits with status 2. `run` sets up logging with
-`env_logger`, ignoring a logger that is already installed.
+`concerto_editor::run(recipe, concerto_editor::editor_crate!())`. `recipe` is
+the game's `fn(&mut App)`, which builds the `App` of each scene being edited.
+`editor_crate!()` expands, in the editor crate, to an `EditorCrate` naming that
+crate's manifest directory, package, binary and the cargo that built it. The
+editor opens the project above the editor crate, the game's directory;
+`--project <directory>` on the command line overrides it. `--decorated` and
+`--help`/`-h` work as above, and a bad argument prints the usage and exits with
+status 2. `run` sets up logging with `env_logger`, ignoring a logger that is
+already installed.
 
 ## Agents (MCP)
 

@@ -1,3 +1,3 @@
 fn main() {
-    concerto_editor::run({{crate}}::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run({{crate}}::game, concerto_editor::editor_crate!());
 }

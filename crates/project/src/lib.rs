@@ -723,7 +723,7 @@ mod tests {
         assert!(editor.contains(&format!("concerto-editor = \"{VERSION}\"")));
         assert_eq!(
             read(dir.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run(my_game::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n"
+            "fn main() {\n    concerto_editor::run(my_game::game, concerto_editor::editor_crate!());\n}\n"
         );
         assert!(!read(dir.join("build.rs")).contains("//"));
     }
@@ -847,7 +847,7 @@ mod tests {
         assert!(report.notes.iter().any(|note| note.contains("g::game")));
         assert_eq!(
             read(dir.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run(g::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n"
+            "fn main() {\n    concerto_editor::run(g::game, concerto_editor::editor_crate!());\n}\n"
         );
     }
 
