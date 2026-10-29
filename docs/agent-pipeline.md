@@ -14,6 +14,7 @@ Add `agent` to an issue you opened. Add as well:
 |---|---|
 | `agent:spec` | Questions, spec and plan, each approved by you in the PR. Without it, the agent goes straight to an implementation PR. |
 | `agent:local` | Only the runner on your machine takes it. Use it for rendering, UI and editor work, which needs a look at the running program. |
+| `agent:priority` | Runners take it before issues without it. |
 | `documentation` or `lint` | Sorting only; no effect on the path. |
 
 An agent that meets a design decision on an issue without `agent:spec` adds
@@ -25,6 +26,10 @@ Agents also file issues for work they find outside their task, and for
 follow-ups agreed in a session, without asking. Those carry `agent:filed`, and
 `agent:spec` when they need design, and enter the queue like yours. Remove
 `agent` from one to keep agents off it.
+
+An issue whose body has a line `Blocked by #a, #b` is not taken while any of
+those issues is open. Runners take `agent:priority` issues first, then the
+rest, each oldest first.
 
 The pipeline sets `agent:claimed-cloud` or `agent:claimed-local` on an issue it
 has taken, and `agent:needs-owner` on a PR that waits on you.
@@ -77,7 +82,7 @@ claude remote-control
 
 and in that session `/loop 1h /issue-pipeline`. You follow it from the Claude
 app. Each hour it moves its PRs forward from your comments and takes a new issue
-if it holds fewer than 2, preferring `agent:local` ones. It works in worktrees
+if it holds fewer than 2, preferring `agent:local` ones within each priority tier. It works in worktrees
 under `../concerto-issues/`, sharing one `target/` there, and never touches your
 checkout. It runs the full done gate and checks visual changes on screen. It
 stops when you close the session; its issues resume at the next start.
