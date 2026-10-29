@@ -11,6 +11,7 @@ use std::{
 use anyhow::Context;
 use concerto_ecs::{
     query::change_detection::DetectChanges,
+    reflect::AppTypeRegistry,
     resource::{Res, Resource},
     world,
 };
@@ -61,6 +62,7 @@ impl AssetLoadEvent {
 pub struct AssetLoadContext {
     asset_server: AssetServer,
     asset_id: AssetId,
+    type_registry: AppTypeRegistry,
 }
 
 impl AssetLoadContext {
@@ -72,10 +74,17 @@ impl AssetLoadContext {
         self.asset_id
     }
 
+    /// The type registry shared with the world; take one `read()` guard and register no type while holding it.
+    pub fn type_registry(&self) -> &AppTypeRegistry {
+        &self.type_registry
+    }
+
     pub(crate) fn new(asset_server: AssetServer, asset_id: AssetId) -> Self {
+        let type_registry = asset_server.data.type_registry.read().unwrap().clone();
         Self {
             asset_server,
             asset_id,
+            type_registry,
         }
     }
 }
@@ -96,6 +105,7 @@ pub(crate) struct AssetServerData {
     asset_load_event_sender: Sender<AssetLoadEvent>,
     asset_load_event_receiver: Receiver<AssetLoadEvent>,
     content: RwLock<ContentState>,
+    type_registry: RwLock<AppTypeRegistry>,
 }
 
 struct ContentState {
@@ -126,11 +136,17 @@ impl AssetServer {
                 root,
                 registry: Arc::default(),
             }),
+            type_registry: RwLock::new(AppTypeRegistry::default()),
         };
 
         Self {
             data: Arc::new(server_data),
         }
+    }
+
+    /// Replaces the type registry loads hand to `on_load`; every clone of the server sees it, and loads already running keep the one they started with.
+    pub fn set_type_registry(&self, registry: AppTypeRegistry) {
+        *self.data.type_registry.write().unwrap() = registry;
     }
 
     /// Configures the editor project root and its complete registry snapshot.
@@ -447,6 +463,7 @@ mod tests {
         registry::{AssetEntry, AssetRegistry},
     };
     use concerto_ecs::{component::Component, reflect::ReflectSceneComponent, world::World};
+    use concerto_reflect::ReflectDefault;
 
     fn temp_root(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("asset-server-{tag}-{}", std::process::id()));
@@ -970,6 +987,93 @@ mod tests {
         server.cancel_pending();
 
         assert!(!server.is_loading());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[derive(concerto_reflect::Reflect, Default)]
+    #[reflect(Default)]
+    struct Probed;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct ProbeAsset {
+        #[serde(skip)]
+        saw_default: bool,
+    }
+
+    impl Asset for ProbeAsset {
+        fn name() -> &'static str {
+            "ProbeAsset"
+        }
+    }
+
+    impl LoadableAsset for ProbeAsset {
+        fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+            self.saw_default = context
+                .type_registry()
+                .get_type_data::<ReflectDefault>(TypeId::of::<Probed>())
+                .is_some();
+            Ok(())
+        }
+    }
+
+    fn probe_server(dir: &std::path::Path) -> (AssetServer, World, AssetId) {
+        let mut registry = AssetRegistry::new();
+        let id = save_content_asset_into(
+            &ProbeAsset { saw_default: false },
+            dir,
+            "content/fixture/probe.gasset",
+            &mut registry,
+        )
+        .unwrap();
+        let mut server =
+            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
+        let store = AssetStore::<ProbeAsset>::new();
+        server.register_asset(&store);
+        server.publish_registry(registry);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        (server, world, id)
+    }
+
+    fn probe_saw_default(server: &AssetServer, world: &mut World, id: AssetId) -> bool {
+        let handle = server.load::<ProbeAsset>(id);
+        drive_pending_load(server, id);
+        handle_asset_load_events(world);
+        let store = world.get_resource::<AssetStore<ProbeAsset>>().unwrap();
+        store.get(&handle).expect("probe loaded").saw_default
+    }
+
+    #[test]
+    fn on_load_reads_type_data_from_the_registry_given_to_the_server() {
+        let dir = temp_root("on-load-registry");
+        let (server, mut world, id) = probe_server(&dir);
+        let registry = concerto_ecs::reflect::AppTypeRegistry::default();
+        registry.write().register::<Probed>();
+        server.set_type_registry(registry);
+
+        assert!(probe_saw_default(&server, &mut world, id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn on_load_sees_nothing_in_a_server_without_a_shared_registry() {
+        let dir = temp_root("on-load-empty-registry");
+        let (server, mut world, id) = probe_server(&dir);
+
+        assert!(!probe_saw_default(&server, &mut world, id));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_type_registered_after_the_registry_was_shared_is_visible_to_a_later_load() {
+        let dir = temp_root("on-load-late-type");
+        let (server, mut world, id) = probe_server(&dir);
+        let registry = concerto_ecs::reflect::AppTypeRegistry::default();
+        server.set_type_registry(registry.clone());
+        registry.write().register::<Probed>();
+
+        assert!(probe_saw_default(&server, &mut world, id));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
