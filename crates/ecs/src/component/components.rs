@@ -73,6 +73,20 @@ impl Components {
         });
     }
 
+    pub(crate) fn has_external<T: Component, U: Component>(&self, constructor: fn() -> U) -> bool {
+        self.infos
+            .get(&ComponentId::of::<T>())
+            .and_then(|info| info.requirements.as_ref())
+            .is_some_and(|requirements| {
+                requirements.direct.built_by(constructor)
+                    && !requirements
+                        .direct
+                        .iter()
+                        .take(requirements.declared)
+                        .any(|entry| entry.id() == ComponentId::of::<U>())
+            })
+    }
+
     /// Registers `U`, panics if `T` requiring it would form a cycle, and returns the components whose requirements change.
     pub(crate) fn prepare_external<T: Component, U: Component>(&mut self) -> Vec<ComponentId> {
         let target = ComponentId::of::<T>();
