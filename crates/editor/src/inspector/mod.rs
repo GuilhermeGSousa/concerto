@@ -48,7 +48,7 @@ pub use sync::{InspectedComponent, standard_row_node};
 use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
-use color::refresh_color_swatches;
+use color::{close_color_picker, refresh_color_swatches};
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields, refresh_numeric_labels,
 };
@@ -135,6 +135,7 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, refresh_numeric_fields)
             .add_system(LateUpdate, refresh_numeric_labels)
             .add_system(LateUpdate, refresh_color_swatches)
+            .add_system(LateUpdate, close_color_picker)
             .add_system(LateUpdate, refresh_bool_fields)
             .add_system(LateUpdate, refresh_variant_labels)
             .add_system(LateUpdate, refresh_option_fields)
@@ -149,6 +150,7 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(add_component::forget_scene);
     world.add_listener(component_menu::forget_scene);
     world.add_listener(variants::forget_scene);
+    world.add_listener(color::forget_scene);
 }
 
 fn forget_scene(

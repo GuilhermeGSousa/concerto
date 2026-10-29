@@ -1,5 +1,6 @@
 use concerto_color::{Color, LinearRgba, Srgba};
 use concerto_ecs::{
+    IntoSystem,
     command::CommandQueue,
     component::Component,
     entity::Entity,
@@ -10,6 +11,7 @@ use concerto_ecs::{
         EntitySignal, On, Signal,
         listener::{IntoListener, Listener},
     },
+    system::BoxedSystem,
 };
 use concerto_window::input::MouseButton;
 use glam::Vec2;
@@ -475,6 +477,11 @@ fn strip(
         press_area(picker, area),
         drag_area(picker, area),
     )
+}
+
+/// The system that spawns each new `UIColorPicker`'s parts, for a world run without `UIPlugin`.
+pub fn setup_color_pickers_system() -> BoxedSystem {
+    setup_color_pickers.into_boxed_system()
 }
 
 pub(crate) fn setup_color_pickers(

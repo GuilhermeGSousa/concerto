@@ -1894,11 +1894,15 @@ mod color_rows {
     use concerto_ecs::events::event_channel::EventChannel;
     use concerto_render::components::{CameraEnvironment, Light, camera_environment::Fog};
     use concerto_ui::{
+        anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelEscaped},
+        color_picker::{UIColorChanged, UIColorPicker, setup_color_pickers_system},
         focus::UIFocusLost,
+        interaction::UIPointerDown,
         material::UIMaterial,
         node::FlexWrap,
         text_input::{UITextInput, UITextInputSubmitted},
     };
+    use concerto_window::input::MouseButton;
 
     #[derive(Debug, PartialEq)]
     struct ColorRow {
@@ -2283,6 +2287,224 @@ mod color_rows {
                 .color,
             Color::srgba(0.5, 0.5, 0.25, 1.0)
         );
+    }
+
+    fn popup(world: &mut World) -> Option<Entity> {
+        let mut popups = world.query::<(Entity, &color::ColorPickerPopup), ()>();
+        let found: Vec<Entity> = popups.iter(world).map(|(entity, _)| entity).collect();
+        assert!(found.len() <= 1, "the color rows share one popup");
+        found.first().copied()
+    }
+
+    fn panel(world: &mut World) -> &UIAnchoredPanel {
+        let popup = popup(world).expect("the popup exists");
+        world
+            .get_component_for_entity::<UIAnchoredPanel>(popup)
+            .unwrap()
+    }
+
+    fn picker(world: &mut World) -> Entity {
+        only::<UIColorPicker>(world)
+    }
+
+    fn picked_color(world: &mut World) -> Color {
+        let picker = picker(world);
+        world
+            .get_component_for_entity::<UIColorPicker>(picker)
+            .unwrap()
+            .color()
+    }
+
+    fn open_picker(w: &mut Inspecting, path: &[&str]) -> Entity {
+        let swatch = color_row(&mut w.f.world, path).swatch;
+        click(&mut w.f.world, swatch);
+        let mut setup = setup_color_pickers_system();
+        setup.initialize(&mut w.f.world);
+        setup.run_and_apply((), &mut w.f.world);
+        picker(&mut w.f.world)
+    }
+
+    fn press_square(world: &mut World, picker: Entity, at: Vec2) {
+        let square = children(world, picker)[0];
+        world.insert(layout(150.0), square);
+        world.trigger_on(
+            square,
+            UIPointerDown {
+                position: at,
+                button: MouseButton::Left,
+            },
+        );
+    }
+
+    fn escape(world: &mut World) {
+        let popup = popup(world).expect("the popup exists");
+        world.trigger_on(popup, UIPanelEscaped);
+    }
+
+    #[test]
+    fn the_swatch_is_interactable_and_not_disabled() {
+        let (mut w, _) = fixture(Light::point_light());
+        let swatch = color_row(&mut w.f.world, &["color"]).swatch;
+
+        assert!(
+            w.f.world
+                .get_component_for_entity::<Interactable>(swatch)
+                .is_some()
+        );
+        assert!(
+            w.f.world
+                .get_component_for_entity::<UIDisabled>(swatch)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn clicking_the_swatch_opens_the_picker_below_it_and_a_second_click_closes_it() {
+        let color = Color::srgba(0.5, 0.25, 0.75, 1.0);
+        let (mut w, _) = fixture(light(color));
+        let swatch = color_row(&mut w.f.world, &["color"]).swatch;
+        assert_eq!(popup(&mut w.f.world), None);
+
+        click(&mut w.f.world, swatch);
+
+        let open = panel(&mut w.f.world);
+        assert!(open.open);
+        assert_eq!(open.owner, Some(swatch));
+        assert_eq!(open.target, UIAnchorTarget::from_node(swatch));
+        assert_eq!(open.side, UIAnchorSide::Below);
+        assert_eq!(open.align, UIAnchorAlign::Start);
+        assert_eq!(picked_color(&mut w.f.world), color);
+
+        click(&mut w.f.world, swatch);
+        assert!(!panel(&mut w.f.world).open);
+
+        click(&mut w.f.world, swatch);
+        assert!(panel(&mut w.f.world).open);
+        assert_eq!(picked_color(&mut w.f.world), color);
+    }
+
+    #[test]
+    fn clicking_another_color_swatch_retargets_the_picker() {
+        let ambient = Color::srgba(0.1, 0.2, 0.3, 1.0);
+        let (mut w, entity) = fixture(light(Color::srgba(0.5, 0.25, 0.75, 1.0)));
+        w.scene().insert(
+            CameraEnvironment {
+                ambient: Some(ambient),
+                ..Default::default()
+            },
+            entity,
+        );
+        refreshed(&mut w);
+        let light_swatch = color_row(&mut w.f.world, &["color"]).swatch;
+        let ambient_swatch = color_row(&mut w.f.world, &["ambient", "0"]).swatch;
+
+        click(&mut w.f.world, light_swatch);
+        let first = popup(&mut w.f.world);
+        click(&mut w.f.world, ambient_swatch);
+
+        assert_eq!(popup(&mut w.f.world), first);
+        let open = panel(&mut w.f.world);
+        assert!(open.open);
+        assert_eq!(open.owner, Some(ambient_swatch));
+        assert_eq!(picked_color(&mut w.f.world), ambient);
+
+        let picked = Color::srgba(0.9, 0.8, 0.7, 1.0);
+        let picker = picker(&mut w.f.world);
+        w.f.world
+            .trigger_on(picker, UIColorChanged { color: picked });
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(
+            w.get::<CameraEnvironment>(entity).unwrap().ambient,
+            Some(picked)
+        );
+        assert_eq!(light_color(&w, entity), Color::srgba(0.5, 0.25, 0.75, 1.0));
+    }
+
+    #[test]
+    fn a_color_changed_in_the_picker_is_committed_to_the_scene() {
+        let (mut w, entity) = fixture(light(Color::srgba(0.5, 0.25, 0.75, 1.0)));
+        let swatch = color_row(&mut w.f.world, &["color"]).swatch;
+        click(&mut w.f.world, swatch);
+        let picked = Color::srgba(0.2, 0.4, 0.6, 1.0);
+
+        let picker = picker(&mut w.f.world);
+        w.f.world
+            .trigger_on(picker, UIColorChanged { color: picked });
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(light_color(&w, entity), picked);
+        assert!(w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn an_hdr_color_keeps_its_intensity_through_a_drag() {
+        let (mut w, entity) = fixture(light(Color::rgba(3.0, 0.75, 0.0, 1.0)));
+        let picker = open_picker(&mut w, &["color"]);
+        let fields = children(&w.f.world, picker)[3];
+        let intensity = children(&w.f.world, fields)[2];
+        assert_eq!(
+            w.f.world
+                .get_component_for_entity::<UITextInput>(intensity)
+                .unwrap()
+                .value,
+            "3"
+        );
+
+        press_square(&mut w.f.world, picker, Vec2::new(200.0, 75.0));
+        run(&mut w.f.world, send_property_commits);
+
+        let Color::LinearRgba(stored) = light_color(&w, entity) else {
+            panic!("the color stays linear");
+        };
+        let expected = 3.0 * Color::srgba(0.5, 0.5, 0.5, 1.0).to_linear().r;
+        let largest = stored.r.max(stored.g).max(stored.b);
+        assert!(
+            (largest - expected).abs() < 1e-4,
+            "{largest} is not {expected}"
+        );
+    }
+
+    #[test]
+    fn escape_after_a_drag_commits_the_original_color_back() {
+        let original = Color::srgba(0.5, 0.25, 0.75, 1.0);
+        let (mut w, entity) = fixture(light(original));
+        let picker = open_picker(&mut w, &["color"]);
+
+        press_square(&mut w.f.world, picker, Vec2::new(20.0, 30.0));
+        run(&mut w.f.world, send_property_commits);
+        assert_ne!(light_color(&w, entity), original);
+
+        escape(&mut w.f.world);
+        run(&mut w.f.world, send_property_commits);
+        assert_eq!(light_color(&w, entity), original);
+    }
+
+    #[test]
+    fn the_picker_closes_when_the_selection_changes() {
+        let (mut w, _) = fixture(Light::point_light());
+        let swatch = color_row(&mut w.f.world, &["color"]).swatch;
+        click(&mut w.f.world, swatch);
+        assert!(panel(&mut w.f.world).open);
+
+        let other = w.spawn_in_scene((Transform::IDENTITY, Light::point_light()));
+        w.select(Some(other));
+        refreshed(&mut w);
+        run(&mut w.f.world, color::close_color_picker);
+
+        assert!(!panel(&mut w.f.world).open);
+    }
+
+    #[test]
+    fn the_picker_closes_when_the_scene_closes() {
+        let (mut w, _) = fixture(Light::point_light());
+        let swatch = color_row(&mut w.f.world, &["color"]).swatch;
+        click(&mut w.f.world, swatch);
+        assert!(panel(&mut w.f.world).open);
+
+        w.close();
+
+        assert!(!panel(&mut w.f.world).open);
     }
 }
 
