@@ -1,14 +1,17 @@
+use concerto_color::Color;
 use concerto_ecs::{
     component::bundle::IntoBundle,
     signal::listener::{IntoListener, Listener},
 };
+use glam::Vec2;
 
 use super::{Layout, Listening, Shape, Themed, Typography};
 use crate::{
     checkbox::{UICheckbox, UICheckboxChanged, toggle_checkbox},
+    color_picker::{UIColorChanged, UIColorPicker},
     interaction::{Interactable, UIClick, UIDrag, UIPointerDown},
     material::UIMaterial,
-    node::{UINode, UIRect},
+    node::{AlignItems, FlexDirection, UINode, UIRect},
     slider::{UISlider, UISliderChanged, drag_slider, press_slider},
     text::UIText,
     theme::UITheme,
@@ -30,6 +33,13 @@ pub struct Slider {
     node: UINode,
     material: UIMaterial,
     slider: UISlider,
+}
+
+/// A color picker laid out as a column; see [`UIColorPicker`].
+pub struct ColorPicker {
+    theme: UITheme,
+    node: UINode,
+    picker: UIColorPicker,
 }
 
 impl UITheme {
@@ -61,6 +71,18 @@ impl UITheme {
             slider: UISlider::new(value, min, max),
         }
     }
+
+    /// A [`UIColorPicker`] showing `color`.
+    pub fn color_picker(&self, color: Color) -> ColorPicker {
+        ColorPicker {
+            theme: self.clone(),
+            node: UINode::default()
+                .with_flex_direction(FlexDirection::Column)
+                .with_align_items(AlignItems::Start)
+                .with_gap(Vec2::splat(self.spacing_sm)),
+            picker: UIColorPicker::new(color),
+        }
+    }
 }
 
 impl Checkbox {
@@ -79,6 +101,16 @@ impl Slider {
         self,
         listener: impl IntoListener<UISliderChanged, M>,
     ) -> Listening<Self, UISliderChanged> {
+        Listening::new(self, listener)
+    }
+}
+
+impl ColorPicker {
+    /// Runs `listener` each time the user changes the color; attach it after the other modifiers.
+    pub fn on_change<M>(
+        self,
+        listener: impl IntoListener<UIColorChanged, M>,
+    ) -> Listening<Self, UIColorChanged> {
         Listening::new(self, listener)
     }
 }
@@ -127,6 +159,14 @@ impl IntoBundle for Slider {
     }
 }
 
+impl IntoBundle for ColorPicker {
+    type Bundle = (UINode, UIColorPicker);
+
+    fn into_bundle(self) -> Self::Bundle {
+        (self.node, self.picker)
+    }
+}
+
 impl Themed for Checkbox {
     fn theme(&self) -> &UITheme {
         &self.theme
@@ -166,5 +206,17 @@ impl Layout for Slider {
 impl Shape for Slider {
     fn material_mut(&mut self) -> &mut UIMaterial {
         &mut self.material
+    }
+}
+
+impl Themed for ColorPicker {
+    fn theme(&self) -> &UITheme {
+        &self.theme
+    }
+}
+
+impl Layout for ColorPicker {
+    fn node_mut(&mut self) -> &mut UINode {
+        &mut self.node
     }
 }

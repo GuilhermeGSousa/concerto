@@ -7,6 +7,7 @@ use concerto::{
         App,
         schedule_groups::{Startup, Update},
     },
+    color::Color,
     ecs::{
         CommandQueue, Component, Query, Res, ResMut, Resource, With,
         command::EntityCommandQueue,
@@ -19,6 +20,7 @@ use concerto::{
         anchor::{
             UIAnchorSide, UIAnchorTarget, UIAnchoredPanel, UIPanelStack, toggle_owned_panels,
         },
+        color_picker::{UIColorChanged, restore_on_escape},
         elements::{Label, Pressable, Text, prelude::*},
         focus::FocusedWidget,
         interaction::{Interactable, UIInputState, UIInteractionStyle},
@@ -226,16 +228,26 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         )
         .add_child(section_title(theme, "ANCHORED PANELS"));
 
-    let menu_trigger = layout
-        .spawn_child(
-            theme
-                .row()
-                .height(UIValue::Px(theme.control_height))
-                .fixed(),
-        )
+    let mut anchored = layout.spawn_child(
+        theme
+            .row()
+            .height(UIValue::Px(theme.control_height))
+            .fixed()
+            .gap(theme.spacing_sm),
+    );
+    let menu_trigger = anchored
         .spawn_child(
             theme
                 .button("MENU  \u{25be}")
+                .width(UIValue::Px(120.0))
+                .font_size(12.0)
+                .on_click(toggle_owned_panels),
+        )
+        .entity();
+    let color_trigger = anchored
+        .spawn_child(
+            theme
+                .button("COLOR  \u{25be}")
                 .width(UIValue::Px(120.0))
                 .font_size(12.0)
                 .on_click(toggle_owned_panels),
@@ -517,6 +529,21 @@ fn spawn_showcase(mut cmd: CommandQueue, theme: Res<UITheme>, mut window: ResMut
         theme.text("").font_size(12.0),
     ));
 
+    let mut color_menu = cmd.spawn(
+        theme
+            .dropdown(color_trigger)
+            .width(UIValue::Px(260.0))
+            .padding(theme.spacing_sm),
+    );
+    let picker = color_menu
+        .spawn_child(
+            theme
+                .color_picker(Color::rgba(2.0, 1.0, 0.25, 1.0))
+                .on_change(print_color),
+        )
+        .entity();
+    color_menu.insert(restore_on_escape(picker));
+
     let mut view_menu = cmd.spawn(
         theme
             .dropdown(view_trigger)
@@ -652,6 +679,10 @@ fn open_context_menu(
             None => String::from("Rename\nDuplicate\nDelete"),
         };
     }
+}
+
+fn print_color(on: On<UIColorChanged>) {
+    println!("color picked: {:?}", on.signal().color);
 }
 
 fn restyle_tabs(

@@ -25,3 +25,7 @@ Manual checks:
   active and must not emit a click after crossing the drag threshold.
 - Scroll the virtual list and confirm the visible range changes while its UI
   entity count remains constant.
+- Open COLOR and drag across the square and both strips; the marker and thumbs
+  follow the pointer and each change prints the color. Type a hex value or an
+  intensity and press Enter. Escape closes the popup and prints the color it
+  opened with.
