@@ -8,6 +8,7 @@ use concerto_ecs::{
     command::EntityCommandQueue,
     component::bundle::IntoBundle,
     entity::hierarchy::{ChildOf, Children},
+    query::filter::With,
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
     system::BoxedSystem,
 };
@@ -2382,5 +2383,33 @@ fn a_row_whose_editor_does_not_follow_its_snapshot_is_respawned_with_the_new_nod
     assert_eq!(
         w.f.world.get_component_for_entity::<UINode>(after).unwrap(),
         &standard_row_node(&theme).with_gap(Vec2::new(12.0, 0.0))
+    );
+}
+
+#[test]
+fn the_component_stack_leaves_room_for_the_scrollbar() {
+    fn build(mut cmd: CommandQueue, theme: Res<UITheme>) {
+        let parent = cmd.spawn(UINode::default()).entity();
+        spawn_panel(&mut cmd, parent, &theme);
+    }
+    let mut world = World::new();
+    world.register_component::<ChildOf>();
+    world.register_component::<Children>();
+    world.insert_resource(UITheme::default());
+    let mut panel = build.into_system();
+    panel.initialize(&mut world);
+    panel.run_and_apply((), &mut world);
+
+    let padding = world
+        .query::<&UINode, With<ComponentStack>>()
+        .iter(&mut world)
+        .next()
+        .expect("the panel spawns a component stack")
+        .padding;
+    assert!(
+        padding.right >= concerto_ui::scroll::SCROLLBAR_WIDTH,
+        "the scrollbar is drawn over the last {} px of the stack, which keeps only {} px clear",
+        concerto_ui::scroll::SCROLLBAR_WIDTH,
+        padding.right
     );
 }
