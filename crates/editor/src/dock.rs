@@ -110,11 +110,11 @@ impl Plugin for DockPlugin {
     }
 }
 
-const MARGIN: f32 = 18.0;
+pub(crate) const MARGIN: f32 = 18.0;
 const TOP: f32 = 34.0;
 /// Height of the band above the cards.
 pub const TOP_STRIP: f32 = TOP + MARGIN;
-const RAIL: f32 = 238.0;
+pub(crate) const RAIL: f32 = 238.0;
 const SIDE: f32 = 290.0;
 
 fn build_dock(

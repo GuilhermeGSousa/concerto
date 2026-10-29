@@ -82,4 +82,6 @@ pub mod glyph {
     pub const DOTS_THREE: char = '\u{E1FE}';
     /// `dot` — a leaf row with nothing to expand.
     pub const DOT: char = '\u{ECDE}';
+    /// `arrow-clockwise` — reloading game code.
+    pub const ARROW_CLOCKWISE: char = '\u{E036}';
 }

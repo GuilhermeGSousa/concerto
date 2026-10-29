@@ -53,6 +53,10 @@ define_action!(
     /// Close the unsaved-changes prompt without acting.
     DismissPrompt
 );
+define_action!(
+    /// Close the list of the last build's errors.
+    DismissBuildErrors
+);
 
 define_action!(
     /// Queue the staged imports and close the import dialog.
@@ -70,6 +74,10 @@ define_context!(
 define_context!(
     /// Active while the import dialog is open.
     ImportDialogContext
+);
+define_context!(
+    /// Active while the list of the last build's errors is open.
+    BuildErrorsContext
 );
 define_context!(
     /// Active while the pointer is over the 3D viewport.
@@ -93,6 +101,11 @@ fn install_default_bindings(mut actions: ResMut<ActionMap>) {
     actions.bind_global(TogglePlay, Shortcut::ctrl(KeyCode::KeyP));
     actions.bind_global(ReloadGameCode, Shortcut::ctrl(KeyCode::KeyR));
     actions.bind(DismissPrompt, Shortcut::key(KeyCode::Escape), PromptContext);
+    actions.bind(
+        DismissBuildErrors,
+        Shortcut::key(KeyCode::Escape),
+        BuildErrorsContext,
+    );
     actions.bind(
         ConfirmImport,
         Shortcut::key(KeyCode::Enter),

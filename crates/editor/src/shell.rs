@@ -7,6 +7,7 @@ use concerto_color::Color;
 use concerto_ecs::{Component, Query, Res, command::CommandQueue};
 use concerto_ui::{
     elements::prelude::*,
+    interaction::Interactable,
     node::{UINode, UIRect},
     text::UIText,
     theme::UITheme,
@@ -17,7 +18,7 @@ use taffy::FlexDirection;
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::fonts::{MEDIUM, glyph, icon};
 use crate::project::ProjectState;
-use crate::reload::GameReload;
+use crate::reload::{GameReload, set_build_errors_shown};
 use crate::scene::SceneState;
 use crate::tabs::{TabScroll, TabStrip, TabStripContent};
 
@@ -93,7 +94,7 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
                             .with_overflow_x(taffy::Overflow::Clip)
                             .with_overflow_y(taffy::Overflow::Clip),
                         TabStrip,
-                        concerto_ui::interaction::Interactable,
+                        Interactable,
                         crate::window_chrome::WindowChromeControl,
                         TabScroll::default(),
                     ),
@@ -120,14 +121,18 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
 
     if let Some(chatter) = registry.body(CHATTER_ID) {
         cmd.entity(chatter).add_child_with(
-            theme
-                .panel()
-                .radius_md()
-                .height(UIValue::Px(30.0))
-                .fixed()
-                .align_items(taffy::AlignItems::Center)
-                .padding(UIRect::axes(0.0, theme.spacing_md))
-                .clipped(),
+            (
+                theme
+                    .panel()
+                    .radius_md()
+                    .height(UIValue::Px(30.0))
+                    .fixed()
+                    .align_items(taffy::AlignItems::Center)
+                    .padding(UIRect::axes(0.0, theme.spacing_md))
+                    .clipped(),
+                Interactable,
+                set_build_errors_shown(true),
+            ),
             |mut strip| {
                 strip
                     .add_child((

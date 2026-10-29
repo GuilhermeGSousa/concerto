@@ -254,7 +254,7 @@ struct Prompt;
 #[derive(Component)]
 struct PromptMessage;
 
-const PROMPT_LAYER: i32 = 900;
+pub(crate) const PROMPT_LAYER: i32 = 900;
 
 fn build_prompt(mut cmd: CommandQueue, theme: Res<UITheme>) {
     cmd.spawn((

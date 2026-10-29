@@ -4,6 +4,7 @@ mod restart;
 mod session;
 #[cfg(test)]
 mod tests;
+mod ui;
 
 pub use cargo::{BuildDiagnostic, ReloadTarget};
 pub(crate) use restart::replace_process;
@@ -12,6 +13,7 @@ pub use session::{
     DocumentSession, SESSION_FORMAT, SceneSession, Session, SessionRestore, WindowLayout,
 };
 pub(crate) use session::{finish_restore, restore_documents};
+pub(crate) use ui::set_build_errors_shown;
 
 use std::{path::PathBuf, time::SystemTime};
 
@@ -87,7 +89,8 @@ impl Plugin for ReloadPlugin {
             .add_system(Update, update_reload_build)
             .add_system(Update, restart_when_ready)
             .add_system(Update, restore_documents)
-            .add_system(Update, finish_restore);
+            .add_system(Update, finish_restore)
+            .register_plugin(ui::ReloadUiPlugin);
         install_listeners(app.main_mut().world_mut());
     }
 }
@@ -115,6 +118,8 @@ pub struct GameReload {
     target: Result<ReloadTarget, String>,
     status: Option<(String, bool)>,
     started_at: Option<SystemTime>,
+    errors: Vec<BuildDiagnostic>,
+    errors_shown: bool,
     #[cfg(test)]
     fake_builds: std::collections::VecDeque<BuildJob>,
 }
@@ -126,6 +131,8 @@ impl GameReload {
             target,
             status: None,
             started_at: None,
+            errors: Vec::new(),
+            errors_shown: false,
             #[cfg(test)]
             fake_builds: std::collections::VecDeque::new(),
         }
@@ -134,6 +141,23 @@ impl GameReload {
     /// What Chatter shows about reloading, and whether it is a warning.
     pub fn status(&self) -> Option<(String, bool)> {
         self.status.clone()
+    }
+
+    /// The compiler errors of the last failed build, in the order rustc gave them.
+    pub fn errors(&self) -> &[BuildDiagnostic] {
+        &self.errors
+    }
+
+    /// Whether the list of the last failed build's errors is open.
+    pub fn errors_shown(&self) -> bool {
+        self.errors_shown
+    }
+
+    fn set_errors_shown(&mut self, shown: bool) {
+        let shown = shown && matches!(self.phase, ReloadPhase::Failed) && !self.errors.is_empty();
+        if self.errors_shown != shown {
+            self.errors_shown = shown;
+        }
     }
 
     fn show(&mut self, text: impl Into<String>, warning: bool) {
@@ -168,6 +192,8 @@ impl GameReload {
         }
         let count = errors.len();
         self.phase = ReloadPhase::Failed;
+        self.errors = errors;
+        self.set_errors_shown(true);
         self.fail(
             format!(
                 "Build failed: {count} {}",
@@ -215,6 +241,8 @@ fn start_reload(
     if !matches!(reload.phase, ReloadPhase::Idle | ReloadPhase::Failed) {
         return;
     }
+    reload.errors.clear();
+    reload.errors_shown = false;
     match reload.spawn_build() {
         Ok(job) => {
             let progress = job.progress();

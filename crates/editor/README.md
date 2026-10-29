@@ -257,8 +257,9 @@ steps, and drops. The crate has these parts:
   code, and restarts into it. `cargo.rs` finds the crate's profile and target
   directory, runs cargo and reads its JSON messages; `session.rs` captures,
   writes, reads and restores the session; `restart.rs` holds the restart slot
-  and replaces the process; `mod.rs` holds `GameReload`, its phases, the
-  signals and what Chatter says.
+  and replaces the process; `ui.rs` draws the Reload button and the list of
+  build errors; `mod.rs` holds `GameReload`, its phases, the signals and what
+  Chatter says.
 
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
@@ -448,10 +449,14 @@ from code.
 
 ## Reloading game code
 
-Ctrl+R builds the game's editor crate again: the crate whose `main` called
-`run`, with the game's library it links. Like every editor shortcut, it does
+The Reload button, left of the stats readout at the top right, or Ctrl+R,
+builds the game's editor crate again: the crate whose `main` called `run`,
+with the game's library it links. Like every editor shortcut, Ctrl+R does
 nothing while the game has the input; Shift+F1 or a click outside the viewport
-gives input back first. When the build succeeds, the editor saves every scene
+gives input back first. The button reads "Reload" while nothing is under way,
+"Cancel" while the reload builds, waits or confirms its build, and
+"Restarting…" once the window is closing; after a failed build its glyph is
+the warning one. When the build succeeds, the editor saves every scene
 with unsaved edits, writes its session, closes the window, and replaces its
 process with the new binary, which opens the same project and restores the
 session.
@@ -495,6 +500,12 @@ A failed build leaves the editor as it was. Chatter reads "Build failed: 3
 errors" with the warning glyph, and each error is logged at `error` as rustc
 prints it, with its location. When cargo fails without a compiler error, as
 on a bad manifest, the end of its stderr is the one error.
+
+The error list opens above Chatter when a build fails: "Build failed · 3
+errors", then each error in the monospace face as rustc prints it, with its
+`--> path:line:col`, in a list that scrolls. Its close button or Escape closes
+it, and a click on Chatter opens it again until the next reload starts, which
+empties it. `GameReload::errors()` holds the same list.
 
 A failed build leaves any game running; a successful one stops every game, as
 Stop does, so the scene restored is the edit scene from before Play and
@@ -558,7 +569,8 @@ stays. Fix the code and run the logged restore command, or start the editor as
 usual with `--restore-session <dir>`; nothing restores a kept session
 automatically. The scenes are safe in `content/`, saved before the restart.
 
-`CancelReload` stops a reload while it builds, waits, or confirms its build.
+Cancel, or the `CancelReload` signal, stops a reload while it builds, waits,
+or confirms its build.
 It sends SIGTERM to cargo's process group, which reaches cargo, rustc and
 build scripts, and SIGKILL after 2 s; Chatter reads "Reload cancelled".
 Quitting during a build stops it the same way. The build runs in a process

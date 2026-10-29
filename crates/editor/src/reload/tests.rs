@@ -47,10 +47,20 @@ fn fake_build(f: &mut SceneFixture, events: Vec<CargoEvent>) {
         ReloadPhase::Building(Box::new(BuildJob::for_test(updates, "game-editor")));
 }
 
+fn run_once<M>(world: &mut concerto_ecs::World, system: impl concerto_ecs::IntoSystem<(), M>) {
+    use concerto_ecs::System;
+    let mut system = system.into_system();
+    system.initialize(world);
+    system.run_and_apply((), world);
+}
+
 #[test]
 fn a_failed_build_keeps_the_editor_running_and_lists_its_errors() {
     let mut f = SceneFixture::new();
     let document = f.open();
+    f.world
+        .insert_resource(concerto_window::input::actions::ActionMap::default());
+    run_once(&mut f.world, super::ui::build_error_list);
     fake_build(
         &mut f,
         vec![
@@ -75,6 +85,14 @@ fn a_failed_build_keeps_the_editor_running_and_lists_its_errors() {
         [ReloadFailed {
             message: "Build failed: 2 errors".into()
         }]
+    );
+    run_once(&mut f.world, super::ui::sync_error_list);
+    assert_eq!(
+        super::ui::listed_errors(&mut f.world),
+        Some(vec![
+            "error: cannot find value `x` in this scope\n --> src/lib.rs:2:5".to_string(),
+            "error: cannot find value `y` in this scope\n --> src/lib.rs:3:5".to_string(),
+        ])
     );
 
     f.rename(document, "first", "renamed");
