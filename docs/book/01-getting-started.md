@@ -77,10 +77,7 @@ use concerto::{
     director::VirtualCamera,
     ecs::{CommandQueue, Component, Query, Res, With},
     foundation::{time::Time, transform::Transform},
-    render::components::{
-        light::{Light, LightType},
-        render_entity::SyncWithRenderWorld,
-    },
+    render::components::light::{Light, LightType},
     world_grid::WorldGrid,
 };
 use glam::{Quat, Vec3};
@@ -111,9 +108,8 @@ fn setup(mut cmd: CommandQueue) {
             shadowmaps_enabled: false,
         },
         Transform::from_translation(Vec3::new(0.0, 8.0, 4.0)),
-        SyncWithRenderWorld,
     ));
-    cmd.spawn((WorldGrid::default(), SyncWithRenderWorld));
+    cmd.spawn(WorldGrid::default());
 }
 
 fn orbit(time: Res<Time>, cameras: Query<(&mut Orbit, &mut Transform), With<VirtualCamera>>) {
@@ -137,9 +133,8 @@ What happened:
   has both `Orbit` and `Transform` and also a `VirtualCamera`, and changes
   them in place. `Res<Time>` reads the engine's clock.
 - `VirtualCamera` is a camera the camera director can make live; with only one,
-  it is the one you see. The light and the grid carry `SyncWithRenderWorld`,
-  which tells the engine to copy them to the renderer. Chapter 6 covers
-  cameras, lights and that marker.
+  it is the one you see. The light and the grid are copied to the renderer
+  automatically. Chapter 6 covers cameras, lights and how that works.
 
 ## Run it in the browser
 

@@ -82,15 +82,26 @@ fix the entry in the same commit as the change that made it false.
   filters call for the types they name. Spawning or inserting a component does
   not register it. A hook on a component that nothing in that world queries
   never runs.
+- **Spawning or inserting registers the requirement table, not the callbacks.**
+  `#[require]` takes effect on the first spawn or insert of the type, and a
+  requirement cycle panics then, not at startup. Call
+  `World::register_component` to fail early. See
+  [docs/required-components.md](../../docs/required-components.md).
+- **Scene loading inserts one component at a time,** so a component that
+  requires another can be inserted before the stored value of the required one.
+  The default is added first and the stored value replaces it
+  (`Replace<T>`, then `Add<T>`; `Added<T>` is false for the second write).
 
 ## Rendering
 
 - **`add_system(Extract | Render | LateRender, …)` is always a bug.** It adds
   the system to the main world, where those schedules never run. Nothing
   panics and nothing draws. Use `add_render_system`.
-- **No `SyncWithRenderWorld`, no render-world mirror.** Lights, cameras,
-  meshes, and the world grid all need it. A scene that renders black or has no
-  grid is usually missing it on a light or on the grid.
+- **No `SyncWithRenderWorld`, no render-world mirror.** Camera, light, mesh,
+  material, UI layout and the world grid require it, so spawning one adds it. A
+  mesh gets it only when `RenderPlugin` is built. An entity with none of these
+  still needs it explicitly, for example one the editor creates. A scene that
+  renders black is usually an entity that has none of them.
 - **Extract only inserts and updates.** Removing `Light`, `Camera`, a mesh, a
   material, or a skeleton from a living entity leaves its render-world copy in
   place, so a removed light keeps shining. Mirrors go away only when the main
@@ -108,9 +119,9 @@ fix the entry in the same commit as the change that made it false.
 ## UI
 
 - **`UILayout` is written only when it differs,** so `Changed<UILayout>` means
-  the rectangle, clip or paint order moved. It is inserted, with
-  `SyncWithRenderWorld`, the first time a node is laid out, so a node spawned
-  this frame has none until the layout set runs.
+  the rectangle, clip or paint order moved. It is inserted the
+  first time a node is laid out (it requires `SyncWithRenderWorld`), so a node
+  spawned this frame has none until the layout set runs.
 - **A scroll area's offset is applied in the layout walk,** not in Taffy. Every
   child of a node with `UIScrollArea` except its `UIWidgetPart`s is moved up by
   the offset, so a scrolled child's `UINode` says where it sits in unscrolled

@@ -58,7 +58,7 @@ is not reliable; input set inside the process is.
 | Symptom | Cause |
 |---|---|
 | Only the clear colour and the grid | Captured before the scene loaded |
-| Character renders black, no grid | Light or grid lacks `SyncWithRenderWorld` |
+| Character renders black, no grid | Entity has no camera, light, mesh, material or grid component, so no `SyncWithRenderWorld` |
 | Mesh folded into a point | A pose was applied without being evaluated |
 | Two identical captures | Stale frame, or the state did not change |
 | The capture shows the owner's own clicks | They are using the machine; ask before assuming your input worked |
