@@ -21,6 +21,8 @@ pub mod shape;
 
 mod simulation;
 
+pub use simulation::step_simulation;
+
 /// The physics engine compiled into this build. Exactly one exists per
 /// build; this alias is the only place the choice is made: Rapier on wasm
 /// (where Jolt's C++ cannot be compiled) or under `force-rapier`, Jolt
