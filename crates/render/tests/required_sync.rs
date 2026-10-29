@@ -101,3 +101,39 @@ fn a_scene_camera_under_an_exclusive_camera_is_mirrored_but_not_extracted() {
         .get_component_for_entity::<RenderCamera>(editor_mirror)
         .is_some());
 }
+
+#[test]
+fn a_bare_mesh_gets_the_marker() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let mut app = app(&gpu);
+    let mesh = app
+        .main_mut()
+        .world_mut()
+        .spawn(concerto_mesh::MeshComponent::default());
+
+    assert!(app
+        .main_mut()
+        .world_mut()
+        .get_component_for_entity::<SyncWithRenderWorld>(mesh)
+        .is_some());
+}
+
+#[test]
+fn a_bare_skeleton_gets_the_marker() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let mut app = app(&gpu);
+    let skeleton = app
+        .main_mut()
+        .world_mut()
+        .spawn(concerto_mesh::SkeletonComponent::default());
+
+    assert!(app
+        .main_mut()
+        .world_mut()
+        .get_component_for_entity::<SyncWithRenderWorld>(skeleton)
+        .is_some());
+}

@@ -90,7 +90,7 @@ where
     }
 
     fn register_required(world: &mut World) {
-        world.register_required_components::<T>();
+        world.register_required_table::<T>();
     }
 
     fn write_into<S: ComponentSink>(self, sink: &mut S, current_tick: u32) {

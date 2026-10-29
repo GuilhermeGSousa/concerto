@@ -1,6 +1,6 @@
 use concerto_ecs::{
     system::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules},
-    IntoSetConfig, IntoSystemConfig, Resource, World,
+    Component, IntoSetConfig, IntoSystemConfig, Resource, World,
 };
 
 use crate::{extractor::ExtractFn, schedule_groups::Startup};
@@ -92,6 +92,24 @@ impl SubApp {
     /// Registers `T` in this world's type registry with the type data its derive declared.
     pub fn register_type<T: concerto_reflect::GetTypeRegistration>(&mut self) -> &mut Self {
         self.world.register_type::<T>();
+        self
+    }
+
+    /// Makes `T` require `U`, built with `U::default()`, in this world.
+    pub fn register_required_components<T: Component, U: Component + Default>(
+        &mut self,
+    ) -> &mut Self {
+        self.world.register_required_components::<T, U>();
+        self
+    }
+
+    /// Makes `T` require `U`, built by `constructor`, in this world.
+    pub fn register_required_components_with<T: Component, U: Component>(
+        &mut self,
+        constructor: fn() -> U,
+    ) -> &mut Self {
+        self.world
+            .register_required_components_with::<T, U>(constructor);
         self
     }
 

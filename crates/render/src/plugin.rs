@@ -108,6 +108,9 @@ impl Plugin for RenderPlugin {
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
             .register_type::<concerto_mesh::SkeletonComponent>();
+        app.register_required_components::<concerto_mesh::MeshComponent, SyncWithRenderWorld>()
+            .register_required_components::<concerto_mesh::SkeletonComponent, SyncWithRenderWorld>(
+            );
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);

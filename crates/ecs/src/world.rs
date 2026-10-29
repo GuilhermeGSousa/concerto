@@ -63,6 +63,8 @@ pub struct World {
     archetype_index: HashMap<EntityType, usize>,
     component_lifetimes: TypeIdMap<ComponentLifecycleCallbacks>,
     required_components: TypeIdMap<RequiredComponents>,
+    declared_required: TypeIdMap<RequiredComponents>,
+    external_required: TypeIdMap<RequiredComponents>,
     listeners: Listeners,
     change_tick: AtomicU32,
     last_change_tick: Tick,
@@ -81,6 +83,8 @@ impl Default for World {
             archetype_index: HashMap::new(),
             component_lifetimes: TypeIdMap::default(),
             required_components: TypeIdMap::default(),
+            declared_required: TypeIdMap::default(),
+            external_required: TypeIdMap::default(),
             listeners: Listeners::default(),
             change_tick: AtomicU32::new(1),
             last_change_tick: Tick::new(0),
@@ -715,7 +719,7 @@ impl World {
     /// Panics if `T`'s requirements form a cycle.
     pub fn register_component<T: Component>(&mut self) {
         self.register_component_lifetimes::<T>();
-        self.register_required_components::<T>();
+        self.register_required_table::<T>();
     }
 
     /// The flattened required components of `id`, deepest first, or `None` if it is not registered.
@@ -723,7 +727,7 @@ impl World {
         self.required_components.get(&id)
     }
 
-    pub(crate) fn register_required_components<T: Component>(&mut self) {
+    pub(crate) fn register_required_table<T: Component>(&mut self) {
         self.register_required_in::<T>(&mut Vec::new());
     }
 
@@ -746,11 +750,81 @@ impl World {
         }
         let mut direct = RequiredComponents::default();
         T::register_required(&mut direct);
+        self.declared_required.insert(id, direct.clone());
+        if let Some(external) = self.external_required.get(&id) {
+            direct.extend_missing(external);
+        }
         stack.push((id, T::name()));
         direct.register_all(self, stack);
         stack.pop();
         let flattened = direct.flatten(&self.required_components);
         self.required_components.insert(id, flattened);
+    }
+
+    /// Makes `T` require `U`, built with `U::default()`, after `T` was defined.
+    ///
+    /// # Panics
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement forms a cycle.
+    pub fn register_required_components<T: Component, U: Component + Default>(&mut self) {
+        self.register_required_components_with::<T, U>(U::default);
+    }
+
+    /// Makes `T` require `U`, built by `constructor`, after `T` was defined.
+    ///
+    /// A requirement `T` declares itself wins over this one; a later call wins over an earlier one.
+    ///
+    /// # Panics
+    /// Panics if an entity holds `T` or a component that requires it, or if the requirement forms a cycle.
+    pub fn register_required_components_with<T: Component, U: Component>(
+        &mut self,
+        constructor: fn() -> U,
+    ) {
+        let target = ComponentId::of::<T>();
+        self.register_required_in::<U>(&mut Vec::new());
+        let cycles = target == ComponentId::of::<U>()
+            || self.required_components[&ComponentId::of::<U>()].contains(target);
+        if cycles {
+            panic!(
+                "required components form a cycle: {} -> {} -> {}",
+                T::name(),
+                U::name(),
+                T::name()
+            );
+        }
+        let mut affected: Vec<ComponentId> = self
+            .required_components
+            .iter()
+            .filter(|(id, table)| **id == target || table.contains(target))
+            .map(|(id, _)| *id)
+            .collect();
+        if let Some(archetype) = self.archetypes.iter().find(|archetype| {
+            !archetype.is_empty() && affected.iter().any(|id| archetype.contains(*id))
+        }) {
+            panic!(
+                "cannot make {} require {} while an entity holds {} or a component requiring it (archetype of {} entities)",
+                T::name(),
+                U::name(),
+                T::name(),
+                archetype.len()
+            );
+        }
+        self.external_required
+            .entry(target)
+            .or_default()
+            .set(constructor);
+        if !self.required_components.contains_key(&target) {
+            self.register_required_in::<T>(&mut Vec::new());
+            return;
+        }
+        affected.sort_by_key(|id| self.required_components[id].len());
+        for id in affected {
+            let mut direct = self.declared_required[&id].clone();
+            if let Some(external) = self.external_required.get(&id) {
+                direct.extend_missing(external);
+            }
+            let flattened = direct.flatten(&self.required_components);
+            self.required_components.insert(id, flattened);
+        }
     }
 
     /// Registers `T` in this world's [`AppTypeRegistry`] with the type data its derive declared.

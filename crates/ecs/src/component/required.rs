@@ -52,11 +52,15 @@ pub struct RequiredComponents {
 impl RequiredComponents {
     /// Declares that the owning component requires `T`, built by `constructor` when absent.
     pub fn register<T: Component>(&mut self, constructor: fn() -> T) {
-        let id = ComponentId::of::<T>();
-        if self.entries.iter().any(|entry| entry.id == id) {
+        if self.contains(ComponentId::of::<T>()) {
             return;
         }
-        self.entries.push(RequiredComponent {
+        self.set(constructor);
+    }
+
+    pub(crate) fn set<T: Component>(&mut self, constructor: fn() -> T) {
+        let id = ComponentId::of::<T>();
+        let entry = RequiredComponent {
             id,
             name: T::name(),
             add_column: Table::add_column::<T>,
@@ -66,7 +70,23 @@ impl RequiredComponents {
                 }
             }),
             register: World::register_required_in::<T>,
-        });
+        };
+        match self.entries.iter_mut().find(|existing| existing.id == id) {
+            Some(existing) => *existing = entry,
+            None => self.entries.push(entry),
+        }
+    }
+
+    pub(crate) fn contains(&self, id: ComponentId) -> bool {
+        self.entries.iter().any(|entry| entry.id == id)
+    }
+
+    pub(crate) fn extend_missing(&mut self, other: &RequiredComponents) {
+        for entry in &other.entries {
+            if !self.contains(entry.id) {
+                self.entries.push(entry.clone());
+            }
+        }
     }
 
     /// The required components, deepest requirement first.
