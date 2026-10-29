@@ -136,8 +136,9 @@ impl AnimationTransitionBlender for InertializationBlender {
         self.stack
             .transition(next_graph, graph_instances, blend, context);
 
-        if let TransitionBlend::Inertialize { halflife } = *blend {
-            self.pending_halflife = Some(halflife);
-        }
+        self.pending_halflife = match *blend {
+            TransitionBlend::Inertialize { halflife } => Some(halflife),
+            TransitionBlend::CrossFade { .. } => None,
+        };
     }
 }
