@@ -102,6 +102,17 @@ impl ReloadTarget {
         command
     }
 
+    pub(crate) fn session_dir(&self, at: std::time::SystemTime) -> PathBuf {
+        self.target_dir
+            .join("concerto-editor")
+            .join("sessions")
+            .join(format!(
+                "{}-{}",
+                self.package,
+                super::session::unix_millis(at)
+            ))
+    }
+
     #[cfg(test)]
     pub(crate) fn for_test(
         cargo: &Path,

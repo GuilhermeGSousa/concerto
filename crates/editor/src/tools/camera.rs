@@ -106,7 +106,7 @@ impl FlyCamera {
 }
 
 const LOOK_SENSITIVITY: f32 = 0.0025;
-const MAX_PITCH: f32 = 1.55;
+pub(crate) const MAX_PITCH: f32 = 1.55;
 const SPEED_STEP: f32 = 1.15;
 const MIN_SPEED: f32 = 0.05;
 const MAX_SPEED: f32 = 500.0;

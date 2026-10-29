@@ -8,7 +8,7 @@ use concerto_app::{
 
 use crate::{
     EditorPlugin,
-    reload::{ReloadSetup, ReloadTarget},
+    reload::{ReloadSetup, ReloadTarget, RestartSlot, Session, SessionRestore},
 };
 
 const MCP_SIZE: (u32, u32) = (1600, 900);
@@ -53,7 +53,7 @@ fn usage(program: Option<OsString>) -> String {
         .and_then(|program| std::path::Path::new(program).file_stem())
         .map_or_else(|| "editor".into(), |stem| stem.to_string_lossy());
     format!(
-        "Usage: {name} [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+        "Usage: {name} [--project <directory>] [--decorated] [--restore-session <directory>] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
     )
 }
 
@@ -61,6 +61,7 @@ pub(crate) struct Options {
     pub(crate) project: PathBuf,
     pub(crate) decorated: bool,
     pub(crate) mcp: Option<(u32, u32)>,
+    pub(crate) restore: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -89,6 +90,7 @@ pub(crate) fn parse_args(
     let mut decorated = false;
     let mut mcp = false;
     let mut mcp_size = None;
+    let mut restore = None;
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
         if argument == "--project" {
@@ -96,6 +98,14 @@ pub(crate) fn parse_args(
                 .next()
                 .ok_or_else(|| ArgsError::Usage("--project requires a directory".to_string()))?
                 .into();
+        } else if argument == "--restore-session" {
+            restore = Some(
+                args.next()
+                    .ok_or_else(|| {
+                        ArgsError::Usage("--restore-session requires a directory".to_string())
+                    })?
+                    .into(),
+            );
         } else if argument == "--decorated" {
             decorated = true;
         } else if argument == "--mcp" {
@@ -116,10 +126,16 @@ pub(crate) fn parse_args(
     if mcp_size.is_some() && !mcp {
         return Err(ArgsError::Usage("--mcp-size requires --mcp".to_string()));
     }
+    if restore.is_some() && mcp {
+        return Err(ArgsError::Usage(
+            "--restore-session cannot be used with --mcp".to_string(),
+        ));
+    }
     Ok(Options {
         project,
         decorated,
         mcp: mcp.then(|| mcp_size.unwrap_or(MCP_SIZE)),
+        restore,
     })
 }
 
@@ -150,7 +166,8 @@ pub fn run(recipe: fn(&mut App), editor: EditorCrate) {
     let _ = env_logger::try_init();
     let mut arguments = std::env::args_os();
     let program = arguments.next();
-    let options = match parse_args(arguments, editor.project_root()) {
+    let original: Vec<OsString> = arguments.collect();
+    let options = match parse_args(original.iter().cloned(), editor.project_root()) {
         Ok(options) => options,
         Err(ArgsError::Help) => {
             println!("{}", usage(program));
@@ -164,14 +181,34 @@ pub fn run(recipe: fn(&mut App), editor: EditorCrate) {
     match options.mcp {
         Some(size) => concerto_mcp::host::run(crate::mcp::editor(recipe, options.project), size),
         None => {
+            let restart = RestartSlot::default();
+            let (restore, restore_error) = match &options.restore {
+                None => (None, None),
+                Some(dir) => match Session::read(dir) {
+                    Ok(session) => (Some(SessionRestore::new(session, dir.clone())), None),
+                    Err(error) => (
+                        None,
+                        Some(format!(
+                            "Could not restore the session in {}: {error:#}",
+                            dir.display()
+                        )),
+                    ),
+                },
+            };
             let reload = ReloadSetup {
                 target: std::env::current_exe()
                     .map_err(|error| format!("Reload cannot find the running editor: {error}"))
                     .and_then(|exe| ReloadTarget::locate(&editor, &exe)),
+                restart: restart.clone(),
+                restore,
+                restore_error,
             };
             concerto_winit::run(move |app| {
                 register_editor(app, recipe, options.project, options.decorated, reload);
-            })
+            });
+            if let Some(restart) = restart.take() {
+                crate::reload::replace_process(restart, &original);
+            }
         }
     }
 }
@@ -293,11 +330,47 @@ mod tests {
     fn the_usage_names_the_running_binary() {
         assert_eq!(
             usage(Some(OsString::from("/game/target/debug/my-game-editor"))),
-            "Usage: my-game-editor [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+            "Usage: my-game-editor [--project <directory>] [--decorated] [--restore-session <directory>] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
         );
         assert_eq!(
             usage(None),
-            "Usage: editor [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+            "Usage: editor [--project <directory>] [--decorated] [--restore-session <directory>] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
         );
+    }
+
+    #[test]
+    fn restore_session_is_read() {
+        let options = parse_args(
+            args(&["--project", "copy", "--restore-session", "sessions/a"]),
+            PathBuf::from("game"),
+        )
+        .unwrap();
+        assert_eq!(options.restore, Some(PathBuf::from("sessions/a")));
+        assert_eq!(options.project, PathBuf::from("copy"));
+        assert_eq!(
+            parse_args(args(&[]), PathBuf::from("game"))
+                .unwrap()
+                .restore,
+            None
+        );
+    }
+
+    #[test]
+    fn restore_session_requires_a_directory() {
+        assert!(matches!(
+            parse_args(args(&["--restore-session"]), PathBuf::new()),
+            Err(ArgsError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn restore_session_is_refused_with_mcp() {
+        assert!(matches!(
+            parse_args(
+                args(&["--mcp", "--restore-session", "sessions/a"]),
+                PathBuf::new()
+            ),
+            Err(ArgsError::Usage(_))
+        ));
     }
 }

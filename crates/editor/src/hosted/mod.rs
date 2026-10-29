@@ -76,6 +76,10 @@ impl HostedApp {
         crate::tools::scene::capture_open_scene(self.app.main_mut().world_mut())
     }
 
+    pub(crate) fn scene_view(&self) -> crate::tools::scene::SceneView {
+        crate::tools::scene::scene_view(self.world())
+    }
+
     pub(crate) fn mark_saved(&mut self) {
         crate::tools::scene::mark_saved(self.app.main_mut().world_mut());
     }

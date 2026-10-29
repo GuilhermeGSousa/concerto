@@ -42,6 +42,10 @@ it to an AI agent (below).
 - **Play** with the button on the Scene tab, or Ctrl+P. The game is built from
   your recipe and starts in the open scene. Stop returns to the scene exactly
   as it was; changes made while playing are not kept.
+- **Reload** your game's code with Ctrl+R after changing it. The editor
+  builds its own crate again, saves your scenes first, then restarts into the
+  new build with the same scenes, tabs, selection, camera and window. A build
+  that fails leaves the editor running and says why.
 
 ## Three kinds of App
 

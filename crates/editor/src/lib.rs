@@ -99,11 +99,17 @@ impl Plugin for EditorPlugin {
         app.register_type::<MeshComponent>();
         app.register_plugin(AssetPickerPlugin);
 
-        if let Some(path) = &self.project {
+        let project = self
+            .reload
+            .restore
+            .as_ref()
+            .map(|restore| restore.project().to_path_buf())
+            .or_else(|| self.project.clone());
+        if let Some(path) = project {
             app.get_resource_mut::<project::EditorCommands>()
                 .expect("EditorCommands was just inserted")
                 .0
-                .push_back(project::EditorCommand::OpenProject(path.clone()));
+                .push_back(project::EditorCommand::OpenProject(path));
         }
     }
 }

@@ -21,7 +21,9 @@ the game's `fn(&mut App)`, which builds the `App` of each scene being edited.
 `editor_crate!()` expands, in the editor crate, to an `EditorCrate` naming that
 crate's manifest directory, package, binary and the cargo that built it. The
 editor opens the project above the editor crate, the game's directory;
-`--project <directory>` on the command line overrides it. `--decorated` and
+`--project <directory>` on the command line overrides it, and
+`--restore-session <directory>` restores a session a reload saved (see
+Reloading game code). `--decorated` and
 `--help`/`-h` work as above, and a bad argument prints the usage and exits with
 status 2. `run` sets up logging with `env_logger`, ignoring a logger that is
 already installed.
@@ -252,9 +254,11 @@ steps, and drops. The crate has these parts:
 - The panels (hierarchy, inspector, viewport, tabs, content, dock) run in the
   editor's `App`.
 - `src/reload/` builds the game's editor crate again when asked to reload game
-  code. `cargo.rs` finds the crate's profile and target directory, runs cargo
-  and reads its JSON messages; `mod.rs` holds `GameReload`, the signals and
-  what Chatter says.
+  code, and restarts into it. `cargo.rs` finds the crate's profile and target
+  directory, runs cargo and reads its JSON messages; `session.rs` captures,
+  writes, reads and restores the session; `restart.rs` holds the restart slot
+  and replaces the process; `mod.rs` holds `GameReload`, its phases, the
+  signals and what Chatter says.
 
 The recipe is the `recipe: fn(&mut App)` field of `EditorPlugin`.
 `concerto_editor::run` passes the game's recipe, such as `tech_demo::game`, the
@@ -447,9 +451,10 @@ from code.
 Ctrl+R builds the game's editor crate again: the crate whose `main` called
 `run`, with the game's library it links. Like every editor shortcut, it does
 nothing while the game has the input; Shift+F1 or a click outside the viewport
-gives input back first. For now the build is all a reload does. When it
-succeeds, Chatter reads "Game code built", and the editor keeps running the
-code it started with.
+gives input back first. When the build succeeds, the editor saves every scene
+with unsaved edits, writes its session, closes the window, and replaces its
+process with the new binary, which opens the same project and restores the
+session.
 
 The build is `cargo build --manifest-path <editor crate>/Cargo.toml --package
 <package> --bin <bin> --profile <profile> --target-dir <target dir>
@@ -478,7 +483,7 @@ Ctrl+R is refused, with the reason in Chatter and the warning glyph:
 - under `--mcp`;
 - with no project open: "Open a project before reloading".
 
-A second Ctrl+R while a build runs is ignored.
+A second Ctrl+R while a reload is under way is ignored.
 
 While cargo builds, Chatter reads "Building game code · 14 crates compiled ·
 tech_demo · 8 s". Fresh crates are not counted, and cargo gives no total.
@@ -491,15 +496,78 @@ errors" with the warning glyph, and each error is logged at `error` as rustc
 prints it, with its location. When cargo fails without a compiler error, as
 on a bad manifest, the end of its stderr is the one error.
 
-`CancelReload` stops a build. It sends SIGTERM to cargo's process group, which
-reaches cargo, rustc and build scripts, and SIGKILL after 2 s; Chatter reads
-"Reload cancelled". Quitting during a build stops it the same way. The build
-runs in a process group of its own, so Ctrl+C in the terminal does not reach
-it directly.
+A failed build leaves any game running; a successful one stops every game, as
+Stop does, so the scene restored is the edit scene from before Play and
+changes made while playing are lost. Then the reload waits, with Chatter
+reading "Built · waiting for <reason> to restart", while any of these hold:
+the question about unsaved changes is open, a project is opening, imports are
+running or queued, the import file picker is open, inspector edits are queued
+for the scene, or a scene is loading. It refuses, with "Reload failed: …",
+when no project is open any more or when a document of another asset type
+than Scene has unsaved changes, since a reload can only save scenes.
 
-Code learns how a reload ended from `ReloadFailed { message }`, written for a
-refused reload, a failed build and a cancelled one. `message` is the Chatter
-text.
+Once nothing is in flight, cargo builds again. That second build is a no-op
+unless something changed during the wait, and the binary it names is the one
+the editor restarts into, so a binary replaced in the meantime never runs
+stale. If it fails, the reload fails like any build.
+
+Then, in one step, the reload saves and closes:
+
+1. Every Scene document with unsaved edits is saved to its file in
+   `content/`, in tab order, as Ctrl+S saves it, writing `SceneSaved` or
+   `SaveFailed`. Nothing is asked. The first save that fails stops the
+   reload: Chatter reads "Reload failed: could not save <title>: <error>",
+   the document stays unsaved with the failed save's status on its tab, and
+   scenes saved before it stay saved. Nothing restarts.
+2. The session is written to
+   `<target dir>/concerto-editor/sessions/<package>-<unix millis>/session.json`,
+   never into the project. If that fails, Chatter reads "Reload failed: could
+   not save the session: <error>" and nothing restarts.
+3. The window closes. Once the event loop has ended and the `App`s, the GPU
+   device and the window are gone, `run` replaces the process with the new
+   binary through `exec`: same PID, terminal, environment and working
+   directory, with the original arguments plus `--restore-session <dir>`.
+   It logs the restore command at `info` first, and flushes the log, stdout
+   and stderr.
+
+The session holds no scene data. It names the project, the window's logical
+size and whether it was maximised, the open documents in tab order with the
+front tab, and for each scene the selection, as the path of child indices
+from the scene root, and the editor camera's position, angles and speed. What
+survives a reload is exactly that: the open scenes, reopened clean from the
+files just saved; the tabs and the front tab; the selection; the camera per
+scene; the window's size or maximised state. What does not: Play, changes made
+while playing, the window's position, and other panels' scroll, search and
+expansion.
+
+`--restore-session <directory>` is what a reload passes to the new binary,
+and a person can pass it by hand. It opens the session's project, whatever
+`--project` says, reopens its documents, then applies each scene's selection
+and camera once the scene has opened, and asks the window for its size, or to
+be maximised. When every document is back, the session directory is deleted
+and Chatter reads "Game code reloaded in 9.8 s". A document whose asset is no
+longer in the project, or whose scene fails to open, keeps the directory, and
+Chatter reads "Reloaded with problems: <first problem>; the session is kept in
+<dir>" with the warning glyph. A session that cannot be read, or one written
+in another format, leaves the editor on the project of its arguments, with
+"Could not restore the session in <dir>: <error>". The flag cannot be used
+with `--mcp`.
+
+If the new binary panics before it has restored the session, the directory
+stays. Fix the code and run the logged restore command, or start the editor as
+usual with `--restore-session <dir>`; nothing restores a kept session
+automatically. The scenes are safe in `content/`, saved before the restart.
+
+`CancelReload` stops a reload while it builds, waits, or confirms its build.
+It sends SIGTERM to cargo's process group, which reaches cargo, rustc and
+build scripts, and SIGKILL after 2 s; Chatter reads "Reload cancelled".
+Quitting during a build stops it the same way. The build runs in a process
+group of its own, so Ctrl+C in the terminal does not reach it directly.
+
+Code learns how a reload ended without a restart from `ReloadFailed { message
+}`, written for a refused reload, a failed build, a cancelled one, a scene
+that could not be saved and a session that could not be written. `message` is
+the Chatter text.
 
 Reload works on Linux. macOS takes the same path, enabled but untried. On
 Windows the editor builds, and Ctrl+R says "Reloading game code is not

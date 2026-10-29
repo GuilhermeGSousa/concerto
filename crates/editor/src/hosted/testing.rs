@@ -1,5 +1,5 @@
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -49,14 +49,15 @@ use super::{
 };
 use crate::{
     asset_editor::{
-        ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
-        Unsaved,
+        ActiveEditor, AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
+        EditorDocument, Unsaved,
     },
     guard::UnsavedGuard,
     hierarchy::HierarchyState,
+    import::{ImportPicker, ImportQueue},
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
-    project::{Project, ProjectState},
-    reload::{GameReload, ReloadFailed},
+    project::{Project, ProjectOpenFailed, ProjectOpened, ProjectState},
+    reload::{GameReload, ReloadFailed, RestartSlot},
     scene::{
         SaveFailed, SceneEditor, SceneEditorState, SceneOpenFailed, SceneOpened, SceneRecipe,
         SceneSaved, SceneState,
@@ -221,6 +222,39 @@ pub(crate) fn scene_entry(name: &str) -> AssetEntry {
     }
 }
 
+fn scene_entry_from_file(root: &Path, name: &str) -> AssetEntry {
+    let address = format!("{name}.gasset");
+    let bytes = std::fs::read(root.join(&address)).unwrap();
+    let (header, _) = read_content_asset(&bytes).unwrap();
+    AssetEntry {
+        id: header.asset_id,
+        address,
+        kind: header.kind,
+        provenance: header.provenance,
+    }
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub(crate) struct TestAsset;
+
+impl Asset for TestAsset {
+    fn name() -> &'static str {
+        "TestAsset"
+    }
+}
+
+struct TestAssetEditor;
+impl AssetEditor for TestAssetEditor {}
+
+pub(crate) fn test_asset_entry() -> AssetEntry {
+    AssetEntry {
+        id: AssetId::from_path("notes.gasset"),
+        address: "notes.gasset".into(),
+        kind: TestAsset::name().into(),
+        provenance: None,
+    }
+}
+
 pub(crate) fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&str]) {
     let nodes = nodes
         .iter()
@@ -265,17 +299,27 @@ pub(crate) struct SceneFixture {
     systems: Vec<BoxedSystem>,
     process_commands: usize,
     delivery: Vec<BoxedSystem>,
-    _directory: tempfile::TempDir,
+    _directory: Option<tempfile::TempDir>,
 }
 
 impl SceneFixture {
     pub(crate) fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
-        let project_root = directory.path().to_path_buf();
-        let scene = scene_entry("first");
-        let other = scene_entry("other");
-        write_scene_file(&project_root, &scene, &["first", "second"]);
-        write_scene_file(&project_root, &other, &["third"]);
+        write_scene_file(
+            directory.path(),
+            &scene_entry("first"),
+            &["first", "second"],
+        );
+        write_scene_file(directory.path(), &scene_entry("other"), &["third"]);
+        let mut fixture = Self::on(directory.path());
+        fixture._directory = Some(directory);
+        fixture
+    }
+
+    pub(crate) fn on(root: &Path) -> Self {
+        let project_root = root.to_path_buf();
+        let scene = scene_entry_from_file(&project_root, "first");
+        let other = scene_entry_from_file(&project_root, "other");
 
         let mut world = World::new();
         world.insert_resource(SceneState::default());
@@ -293,6 +337,7 @@ impl SceneFixture {
         world.insert_resource(UnsavedGuard::default());
         let mut editors = AssetEditorRegistry::default();
         editors.register::<Scene>(SceneEditor).unwrap();
+        editors.register::<TestAsset>(TestAssetEditor).unwrap();
         world.insert_resource(editors);
         let mut project = ProjectState::default();
         let mut registry = AssetRegistry::default();
@@ -321,9 +366,14 @@ impl SceneFixture {
         world.insert_resource(EventChannel::<SceneSaved>::new());
         world.insert_resource(EventChannel::<SaveFailed>::new());
         world.insert_resource(EventChannel::<ReloadFailed>::new());
+        world.insert_resource(EventChannel::<ProjectOpened>::new());
+        world.insert_resource(EventChannel::<ProjectOpenFailed>::new());
         world.insert_resource(GameReload::new(Err(
             "The fixture has no editor crate to build".into(),
         )));
+        world.insert_resource(RestartSlot::default());
+        world.insert_resource(ImportQueue::default());
+        world.insert_resource(ImportPicker::default());
         insert_play_outcomes(&mut world);
         world.register_component::<ChildOf>();
         world.register_component::<Children>();
@@ -359,6 +409,9 @@ impl SceneFixture {
             crate::inspector::collect_inspector_data.into_boxed_system(),
             crate::scene::show_play_failures.into_boxed_system(),
             crate::reload::update_reload_build.into_boxed_system(),
+            crate::reload::restart_when_ready.into_boxed_system(),
+            crate::reload::restore_documents.into_boxed_system(),
+            crate::reload::finish_restore.into_boxed_system(),
         ]);
         for system in &mut systems {
             system.initialize(&mut world);
@@ -386,8 +439,16 @@ impl SceneFixture {
             systems,
             process_commands,
             delivery,
-            _directory: directory,
+            _directory: None,
         }
+    }
+
+    pub(crate) fn project_opened(&mut self) {
+        let root = self.project_root.clone();
+        self.world
+            .get_resource_mut::<EventChannel<ProjectOpened>>()
+            .unwrap()
+            .push_event(ProjectOpened { root });
     }
 
     pub(crate) fn open(&mut self) -> Entity {

@@ -146,6 +146,18 @@ cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 `--project <dir>` opens that project's `content/` tree instead of the game's
 own.
 
+Reloading game code (`crates/editor/src/reload/`) is a restart, not a patch.
+Ctrl+R runs `cargo build` on the editor crate into the target directory the
+running binary came from, waits for in-flight work, builds again to confirm
+the binary, then a `SaveSession` listener saves every unsaved scene through
+`scene::save`, writes a `Session` (project, window, documents, selection and
+camera per scene; no scene data) under
+`<target dir>/concerto-editor/sessions/`, fills the `RestartSlot` and closes
+the window. After `concerto_winit::run` returns, `run` `exec`s the new binary
+with `--restore-session <dir>`, and the new process reopens the documents from
+their files and applies each scene's view through `RestoreView` in its edit
+`App`.
+
 The editor is a host as well as a hosted program. Three kinds of `App` exist
 while it runs:
 
