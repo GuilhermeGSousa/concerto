@@ -49,7 +49,7 @@ fn record(
 
 #[test]
 fn a_camera_pose_places_the_editor_camera_on_the_next_step() {
-    let Some(gpu) = pollster::block_on(Gpu::request(&Gpu::instance(), None)) else {
+    let Some(gpu) = Gpu::request_for_test() else {
         return;
     };
     let seen = Record::default();

@@ -9,6 +9,8 @@ pub struct UITheme {
     pub canvas: Color,
     pub surface: Color,
     pub surface_raised: Color,
+    /// The opaque fill of popups and menus.
+    pub surface_overlay: Color,
     pub surface_hovered: Color,
     pub text: Color,
     pub text_muted: Color,
@@ -147,6 +149,7 @@ impl UITheme {
             canvas: Color::srgba(0.063, 0.071, 0.125, 1.0),
             surface: Color::srgba(0.078, 0.086, 0.133, 0.72),
             surface_raised: Color::srgba(0.137, 0.145, 0.196, 0.85),
+            surface_overlay: Color::srgba(0.090, 0.102, 0.157, 1.0),
             surface_hovered: Color::srgba(0.212, 0.204, 0.318, 0.9),
             text: Color::srgba(0.914, 0.914, 0.929, 1.0),
             text_muted: Color::srgba(0.576, 0.592, 0.671, 1.0),

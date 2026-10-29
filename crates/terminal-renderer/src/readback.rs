@@ -101,24 +101,13 @@ pub fn readback_terminal_frame(
 #[cfg(test)]
 mod tests {
     use crate::ascii::pixels_to_ascii_into;
-    use concerto_render::readback::padded_bytes_per_row;
+    use concerto_render::{gpu::Gpu, readback::padded_bytes_per_row};
 
     #[test]
     fn test_headless_gpu_render_produces_output() {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::default(),
-            compatible_surface: None,
-            force_fallback_adapter: false,
-        }));
-        let adapter = match adapter {
-            Some(a) => a,
-            None => return, // No GPU available, skip
+        let Some(Gpu { device, queue, .. }) = Gpu::request_for_test() else {
+            return;
         };
-
-        let (device, queue) =
-            pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default(), None))
-                .unwrap();
 
         let width = 16u32;
         let height = 8u32;

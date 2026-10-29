@@ -18,7 +18,7 @@ use concerto_render::{
 use concerto_window::plugin::{Window, WindowPlugin};
 
 fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
+    Gpu::request_for_test()
 }
 
 fn two_cameras(gpu: &Gpu, exclusive: Option<usize>) -> App {

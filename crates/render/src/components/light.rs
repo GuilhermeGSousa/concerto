@@ -17,25 +17,9 @@ use encase::{ShaderSize, ShaderType, UniformBuffer};
 use glam::Vec3;
 use wgpu::{util::DeviceExt, Buffer};
 
-use crate::{
-    components::{
-        render_entity::RenderEntity,
-        shadows::{
-            RenderPointShadowMaps, RenderShadowCasterSlot, RenderShadowCasterViewProj,
-            RenderSpotDirectionalShadowMaps,
-        },
-    },
-    device::RenderDevice,
-    queue::RenderQueue,
-    shadow_pipeline::ShadowPipeline,
-};
+use crate::{components::render_entity::RenderEntity, queue::RenderQueue};
 
 const MAX_LIGHTS: usize = 128;
-
-/// Sentinel [`RenderLight::shadow_layer`] value set by [`light_added`] to ask
-/// [`RenderLight::on_add`] to allocate a shadow-caster slot. Never observed
-/// outside that same tick — resolved to either a real layer index or `-1`.
-const SHADOW_LAYER_REQUESTED: i32 = -2;
 
 #[derive(Component, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
@@ -180,12 +164,7 @@ impl RenderLightSlot {
 // lifecycle callbacks) rather than a `Query<&mut RenderLight>` — the former
 // bypasses `Mut`'s change-tick marking, so `update_changed_lights`'s
 // `Changed<RenderLight>` filter would never pick the write up otherwise.
-// `pub(crate)`: also called from `RenderShadowCasterSlot::on_remove`
-// (components/shadows.rs).
-pub(crate) fn push_render_light_to_gpu(
-    world: &concerto_ecs::world::RestrictedWorld<'_>,
-    entity: Entity,
-) {
+fn push_render_light_to_gpu(world: &concerto_ecs::world::RestrictedWorld<'_>, entity: Entity) {
     if let (Some(render_light), Some(render_light_slot), Some(lights), Some(queue)) = (
         world.get_component_for_entity::<RenderLight>(entity),
         world.get_component_for_entity::<RenderLightSlot>(entity),
@@ -196,7 +175,10 @@ pub(crate) fn push_render_light_to_gpu(
     }
 }
 
-#[derive(ShaderType, Clone, Copy)]
+#[derive(Component)]
+pub(crate) struct RenderShadowsEnabled(pub(crate) bool);
+
+#[derive(ShaderType, Clone, Copy, PartialEq)]
 pub struct RenderLight {
     pub(crate) translation: Vec3,
     pub(crate) intensity: f32,
@@ -211,6 +193,20 @@ pub struct RenderLight {
 }
 
 impl RenderLight {
+    fn synced_with(mut self, light: &Light, transform: &GlobalTransform) -> Self {
+        self.direction = -(transform.rotation() * Vec3::Z);
+        self.color = light.color.to_linear();
+        self.translation = transform.translation();
+        self.intensity = light.intensity;
+        self.light_type = light.light_type.index();
+        self.cos_cone_angle = match &light.light_type {
+            LightType::Spot { cone_angle } => f32::cos(*cone_angle),
+            _ => 0.0,
+        };
+        self.range = light.range;
+        self
+    }
+
     pub(crate) fn zeroed() -> Self {
         Self {
             translation: Vec3::ZERO,
@@ -229,63 +225,20 @@ impl Component for RenderLight {
     fn on_add() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         Some(|mut world, context| {
             let slot = if let Some(lights) = world.get_resource_mut::<RenderLights>() {
-                lights.push_light(context.entity);
-                RenderLightSlot(lights.len() as u32 - 1)
+                match lights.push_light(context.entity) {
+                    Some(slot) => slot,
+                    None => {
+                        log::warn!(
+                            "light limit of {MAX_LIGHTS} reached; the light is not rendered"
+                        );
+                        return;
+                    }
+                }
             } else {
                 return;
             };
 
             world.insert(slot, context.entity);
-
-            let casts_shadows = world
-                .get_component_for_entity::<RenderLight>(context.entity)
-                .is_some_and(|light| light.shadow_layer == SHADOW_LAYER_REQUESTED);
-
-            if casts_shadows {
-                let is_point = world
-                    .get_component_for_entity::<RenderLight>(context.entity)
-                    .is_some_and(|light| light.light_type == LightType::Point.index());
-
-                let shadow_slot = if is_point {
-                    world
-                        .get_resource_mut::<RenderPointShadowMaps>()
-                        .and_then(|shadow_maps| shadow_maps.push_caster(context.entity))
-                } else {
-                    world
-                        .get_resource_mut::<RenderSpotDirectionalShadowMaps>()
-                        .and_then(|shadow_maps| shadow_maps.push_caster(context.entity))
-                };
-
-                match shadow_slot {
-                    Some(shadow_slot) => {
-                        world.insert(RenderShadowCasterSlot(shadow_slot), context.entity);
-                        if let Some(render_light) =
-                            world.get_component_for_entity_mut::<RenderLight>(context.entity)
-                        {
-                            render_light.shadow_layer = shadow_slot as i32;
-                        }
-
-                        if let (Some(device), Some(shadow_pipeline)) = (
-                            world.get_resource::<RenderDevice>(),
-                            world.get_resource::<ShadowPipeline>(),
-                        ) {
-                            let view_proj = RenderShadowCasterViewProj::new(
-                                device,
-                                &shadow_pipeline.bind_group_layout,
-                            );
-                            world.insert(view_proj, context.entity);
-                        }
-                    }
-                    // Shadow-caster pool exhausted; fall back to unshadowed.
-                    None => {
-                        if let Some(render_light) =
-                            world.get_component_for_entity_mut::<RenderLight>(context.entity)
-                        {
-                            render_light.shadow_layer = -1;
-                        }
-                    }
-                }
-            }
 
             if let (Some(lights), Some(queue)) = (
                 world.get_resource::<RenderLights>(),
@@ -381,8 +334,10 @@ impl RenderLights {
         queue.write_buffer(&self.buffer, count_offset, &buffer.into_inner());
     }
 
-    pub(crate) fn push_light(&mut self, light: Entity) {
+    pub(crate) fn push_light(&mut self, light: Entity) -> Option<RenderLightSlot> {
+        let slot = next_light_slot(self.slots.len())?;
         self.slots.push(light);
+        Some(slot)
     }
 
     pub(crate) fn swap_remove_light(&mut self, slot: &RenderLightSlot) -> Option<Entity> {
@@ -390,10 +345,10 @@ impl RenderLights {
         self.slots.swap_remove(index);
         self.slots.get(index).copied()
     }
+}
 
-    pub(crate) fn len(&self) -> usize {
-        self.slots.len()
-    }
+fn next_light_slot(len: usize) -> Option<RenderLightSlot> {
+    (len < MAX_LIGHTS).then_some(RenderLightSlot(len as u32))
 }
 
 pub(crate) fn update_changed_lights(
@@ -408,54 +363,116 @@ pub(crate) fn update_changed_lights(
 
 pub(crate) fn extract_lights(
     lights: Extracted<Query<(&Light, &GlobalTransform, &RenderEntity)>>,
-    render_lights: Query<&mut RenderLight>,
+    render_lights: Query<(&mut RenderLight, &mut RenderShadowsEnabled)>,
     mut cmd: CommandQueue,
 ) {
     for (light, transform, render_entity) in lights.iter() {
         let render_entity = **render_entity;
-        let local_z = transform.rotation() * Vec3::Z;
-        let cos_cone_angle = match &light.light_type {
-            LightType::Spot { cone_angle } => f32::cos(*cone_angle),
-            _ => 0.0,
-        };
 
-        if let Some(mut render_light) = render_lights.get_entity(render_entity) {
-            render_light.direction = -local_z;
-            render_light.color = light.color.to_linear();
-            render_light.translation = transform.translation();
-            render_light.intensity = light.intensity;
-            render_light.light_type = light.light_type.index();
-            render_light.cos_cone_angle = cos_cone_angle;
-            render_light.range = light.range;
+        if let Some((mut render_light, mut shadows_enabled)) =
+            render_lights.get_entity(render_entity)
+        {
+            let synced = render_light.synced_with(light, transform);
+            render_light.set_if_neq(synced);
+            if shadows_enabled.0 != light.shadowmaps_enabled {
+                shadows_enabled.0 = light.shadowmaps_enabled;
+            }
             continue;
         }
 
-        let render_light = RenderLight {
-            translation: transform.translation(),
-            color: light.color.to_linear(),
-            intensity: light.intensity,
-            direction: -local_z,
-            light_type: light.light_type.index(),
-            cos_cone_angle,
-            range: light.range,
-            shadow_layer: if light.shadowmaps_enabled {
-                SHADOW_LAYER_REQUESTED
-            } else {
-                -1
-            },
-        };
+        let render_light = RenderLight::zeroed().synced_with(light, transform);
 
-        cmd.insert(render_light, render_entity);
+        cmd.insert(
+            (render_light, RenderShadowsEnabled(light.shadowmaps_enabled)),
+            render_entity,
+        );
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use concerto_app::extractor::extract;
+    use concerto_app::schedule_groups::Extract;
+    use concerto_ecs::{
+        system::{
+            executor::single_thread::SingleThreadedExecutor,
+            schedule::{ScheduleLabel, Schedules},
+        },
+        Query, ResMut, World,
+    };
     use glam::{Mat4, Quat};
 
     fn at(translation: Vec3, rotation: Quat) -> GlobalTransform {
         GlobalTransform::new(Mat4::from_rotation_translation(rotation, translation))
+    }
+
+    #[test]
+    fn syncing_an_unchanged_light_yields_an_equal_render_light() {
+        let light = Light::spot_light(0.5);
+        let transform = at(Vec3::new(1.0, 2.0, 3.0), Quat::from_rotation_x(0.5));
+        let render_light = RenderLight::zeroed().synced_with(&light, &transform);
+        assert!(render_light == render_light.synced_with(&light, &transform));
+        let moved = at(Vec3::new(1.0, 2.0, 4.0), Quat::from_rotation_x(0.5));
+        assert!(render_light != render_light.synced_with(&light, &moved));
+    }
+
+    #[derive(ScheduleLabel, Clone, PartialEq, Eq, Hash, Debug)]
+    struct CountChanged;
+
+    #[derive(Resource, Default)]
+    struct ChangedLights(usize);
+
+    fn count_changed(
+        lights: Query<Entity, Changed<RenderLight>>,
+        mut counted: ResMut<ChangedLights>,
+    ) {
+        counted.0 = lights.iter().count();
+    }
+
+    #[test]
+    fn extracting_a_still_light_does_not_mark_its_render_light_changed() {
+        let mut main = World::new();
+        let mut render = World::new();
+        render.insert_resource(ChangedLights::default());
+        let render_entity = render.spawn((RenderLight::zeroed(), RenderShadowsEnabled(false)));
+        let light = main.spawn((
+            Light::point_light(),
+            at(Vec3::ZERO, Quat::IDENTITY),
+            RenderEntity::new(render_entity),
+        ));
+
+        let mut schedules = Schedules::default();
+        schedules.add_system(Extract, extract_lights);
+        schedules.add_system(CountChanged, count_changed);
+        let compiled = schedules.compile::<SingleThreadedExecutor>(&mut render);
+        render.insert_resource(compiled);
+
+        let frame = |main: &mut World, render: &mut World| {
+            render.tick();
+            extract(main, render);
+            render.run_schedule(CountChanged);
+            render.get_resource::<ChangedLights>().unwrap().0
+        };
+
+        assert_eq!(frame(&mut main, &mut render), 1);
+        assert_eq!(frame(&mut main, &mut render), 0);
+
+        *main
+            .get_component_for_entity_mut::<GlobalTransform>(light)
+            .unwrap() = at(Vec3::X, Quat::IDENTITY);
+        assert_eq!(frame(&mut main, &mut render), 1);
+        assert_eq!(frame(&mut main, &mut render), 0);
+    }
+
+    #[test]
+    fn no_slot_is_handed_out_past_max_lights() {
+        assert_eq!(next_light_slot(0).map(|slot| *slot), Some(0));
+        assert_eq!(
+            next_light_slot(MAX_LIGHTS - 1).map(|slot| *slot),
+            Some(MAX_LIGHTS as u32 - 1)
+        );
+        assert!(next_light_slot(MAX_LIGHTS).is_none());
     }
 
     #[test]

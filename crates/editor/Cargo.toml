@@ -45,6 +45,5 @@ base64 = "0.22"
 concerto = { path = "../.." }
 tempfile = "3"
 glyphon = "0.8.0"
-pollster = "0.4.0"
 rmcp = { version = "3.5", features = ["client", "transport-io"] }
 tokio = { version = "1", features = ["rt", "io-util", "macros", "time"] }
