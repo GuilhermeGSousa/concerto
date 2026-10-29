@@ -76,11 +76,19 @@ jobs:
         # Runs the physics suite against the Jolt backend (the native
         # default); the same suite runs against the Rapier backend in the
         # test_physics_rapier job.
-        run: cargo test --workspace
+        run: cargo test --workspace${{ runner.os == 'Linux' && ' --exclude concerto-render' || '' }}
         env:
           CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_INCREMENTAL: 0
           CONCERTO_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
+
+      - name: Run the render tests on one thread
+        if: runner.os == 'Linux'
+        run: cargo test -p concerto-render -- --test-threads=1
+        env:
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_INCREMENTAL: 0
+          CONCERTO_REQUIRE_GPU: '1'
 
   test_physics_rapier:
     name: Test Physics (Rapier backend)
