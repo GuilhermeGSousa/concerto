@@ -6,7 +6,7 @@ use concerto_app::{
 use concerto_color::Color;
 use concerto_foundation::transform::Transform;
 use concerto_render::{
-    components::{camera::Camera, render_entity::SyncWithRenderWorld},
+    components::camera::Camera,
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
     plugin::RenderPlugin,
@@ -77,7 +77,6 @@ fn source(gpu: &Gpu, picture: SharedTexture) -> App {
             ..Default::default()
         },
         Transform::IDENTITY,
-        SyncWithRenderWorld,
     ));
     app.finish_plugin_build();
     app

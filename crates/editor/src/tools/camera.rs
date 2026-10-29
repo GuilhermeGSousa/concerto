@@ -238,7 +238,6 @@ fn spawn_editor_camera(cmd: &mut CommandQueue, fly: &FlyCamera) {
             ..Default::default()
         },
         transform,
-        SyncWithRenderWorld,
         EditorCamera,
         EditorHelper,
     ));

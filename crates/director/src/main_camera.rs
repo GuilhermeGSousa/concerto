@@ -1,6 +1,6 @@
 use concerto_ecs::{CommandQueue, Component, ResMut};
 use concerto_foundation::transform::Transform;
-use concerto_render::components::{camera::Camera, render_entity::SyncWithRenderWorld};
+use concerto_render::components::camera::Camera;
 
 use crate::{director::CameraDirector, virtual_camera::VirtualCamera};
 
@@ -18,12 +18,7 @@ pub struct MainCamera;
 /// stack is never empty and the window always has a view.
 pub(crate) fn spawn_main_camera(mut cmd: CommandQueue, mut director: ResMut<CameraDirector>) {
     let main_camera = cmd
-        .spawn((
-            MainCamera,
-            SyncWithRenderWorld,
-            Camera::default(),
-            Transform::default(),
-        ))
+        .spawn((MainCamera, Camera::default(), Transform::default()))
         .entity();
     director.set_main_camera(main_camera);
 

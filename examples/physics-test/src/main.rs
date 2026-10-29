@@ -77,7 +77,6 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             shadowmaps_enabled: false,
         },
         Transform::from_translation_rotation(Vec3::new(0.0, 8.0, 4.0), Quat::IDENTITY),
-        SyncWithRenderWorld,
     ));
 
     // Static floor: collider top surface sits at y = 0, with a matching plane mesh.
@@ -96,7 +95,6 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             handle: floor_material,
         },
         floor_transform,
-        SyncWithRenderWorld,
     ));
 
     // Low walls fence the balls into a 16 x 16 arena: rolling spheres never
@@ -121,7 +119,6 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
                 handle: wall_material.clone(),
             },
             wall_transform,
-            SyncWithRenderWorld,
         ));
     }
 
@@ -171,7 +168,6 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
             },
             MaterialComponent { handle: material },
             transform,
-            SyncWithRenderWorld,
         ));
     }
 

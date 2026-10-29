@@ -16,7 +16,6 @@ use concerto_render::{
     components::{
         camera::{Camera, RenderCamera},
         camera_environment::{CameraEnvironment, Fog},
-        render_entity::SyncWithRenderWorld,
     },
     draw_target::DrawTarget,
     gpu::Gpu,
@@ -44,7 +43,6 @@ fn camera_app(gpu: &Gpu) -> (App, Entity) {
         Camera::default(),
         CameraEnvironment::default(),
         Transform::IDENTITY,
-        SyncWithRenderWorld,
     ));
     app.finish_plugin_build();
     (app, camera)
