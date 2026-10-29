@@ -11,9 +11,9 @@ pub(crate) mod inertialization_blender;
 
 pub(crate) trait AnimationTransitionBlender {
     fn sample(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &AnimationGraphInstances,
+        graph_instances: &mut AnimationGraphInstances,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,

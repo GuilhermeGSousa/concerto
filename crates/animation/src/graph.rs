@@ -163,11 +163,11 @@ impl AnimationGraphInstance {
         }
     }
 
-    pub(crate) fn get_active_node_instance(
-        &self,
+    pub(crate) fn get_active_node_instance_mut(
+        &mut self,
         node_index: &AnimationNodeIndex,
-    ) -> Option<&ActiveNodeInstance> {
-        self.graph_state.get(node_index)
+    ) -> Option<&mut ActiveNodeInstance> {
+        self.graph_state.get_mut(node_index)
     }
 
     #[allow(dead_code)]
@@ -241,7 +241,7 @@ impl AnimationGraphInstance {
     }
 
     pub(crate) fn evaluate(
-        &self,
+        &mut self,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         pool: &mut PosePool,
@@ -258,7 +258,7 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let Some(node_state) = self.get_active_node_instance(&node_index) else {
+            let Some(node_state) = self.get_active_node_instance_mut(&node_index) else {
                 warn!(
                     "No node state found for node, make sure the animation player has been correctly initialized"
                 );

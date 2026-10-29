@@ -23,7 +23,7 @@ pub trait AnimationNodeInstance: AsAny + Sync + Send {
     fn reset(&mut self);
 
     fn evaluate(
-        &self,
+        &mut self,
         node: &AnimationNodeKind,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
@@ -91,7 +91,7 @@ impl AnimationNodeInstance for NoneInstance {
     }
 
     fn evaluate(
-        &self,
+        &mut self,
         _node: &AnimationNodeKind,
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
@@ -158,7 +158,7 @@ impl AnimationNodeInstance for AnimationClipNodeInstance {
     }
 
     fn evaluate(
-        &self,
+        &mut self,
         node: &AnimationNodeKind,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],

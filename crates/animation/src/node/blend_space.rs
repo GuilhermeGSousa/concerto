@@ -80,7 +80,7 @@ impl AnimationNodeInstance for BlendSpace2DInstanceNode {
     }
 
     fn evaluate(
-        &self,
+        &mut self,
         node: &AnimationNodeKind,
         _context: &crate::evaluation::AnimationGraphContext<'_>,
         _bone_ids: &[uuid::Uuid],

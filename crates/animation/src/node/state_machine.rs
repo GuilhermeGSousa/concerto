@@ -301,7 +301,7 @@ impl AnimationNodeInstance for AnimationStateMachineInstance {
     }
 
     fn evaluate(
-        &self,
+        &mut self,
         _node: &AnimationNodeKind,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
@@ -309,8 +309,13 @@ impl AnimationNodeInstance for AnimationStateMachineInstance {
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        self.blend_stack
-            .sample(bone_ids, &self.state_graph_instances, context, pool, output);
+        self.blend_stack.sample(
+            bone_ids,
+            &mut self.state_graph_instances,
+            context,
+            pool,
+            output,
+        );
     }
 }
 

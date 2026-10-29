@@ -41,9 +41,9 @@ impl BlendStack {
 
 impl AnimationTransitionBlender for BlendStack {
     fn sample(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &AnimationGraphInstances,
+        graph_instances: &mut AnimationGraphInstances,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,
@@ -53,7 +53,7 @@ impl AnimationTransitionBlender for BlendStack {
         };
 
         // The settled base pose goes straight into the output...
-        if let Some(graph_instance) = graph_instances.get(base.graph_id) {
+        if let Some(graph_instance) = graph_instances.get_mut(base.graph_id) {
             graph_instance.evaluate(context, bone_ids, pool, output);
         }
 
@@ -61,7 +61,7 @@ impl AnimationTransitionBlender for BlendStack {
         for entry in fading_in {
             let mut layer_pose = pool.acquire();
 
-            if let Some(graph_instance) = graph_instances.get(entry.graph_id) {
+            if let Some(graph_instance) = graph_instances.get_mut(entry.graph_id) {
                 graph_instance.evaluate(context, bone_ids, pool, &mut layer_pose);
             }
 
