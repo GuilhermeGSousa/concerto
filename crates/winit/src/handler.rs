@@ -12,10 +12,12 @@ use concerto_window::{
 };
 use glam::Vec2;
 #[cfg(not(target_arch = "wasm32"))]
-use winit::event::{ElementState, MouseButton};
+use winit::event::ElementState;
 use winit::{
-    application::ApplicationHandler, event::WindowEvent as WinitWindowEvent,
-    window::Window as WinitWindow,
+    application::ApplicationHandler,
+    event::WindowEvent as WinitWindowEvent,
+    event_loop::ActiveEventLoop,
+    window::{Window as WinitWindow, WindowAttributes},
 };
 
 use crate::{
@@ -28,8 +30,9 @@ use crate::{
 const DOUBLE_PRESS: Duration = Duration::from_millis(400);
 
 pub(crate) struct Handler {
+    build: Option<Box<dyn FnOnce(&mut App)>>,
     app: Rc<RefCell<Option<App>>>,
-    handle: Arc<WinitWindow>,
+    handle: Option<Arc<dyn WinitWindow>>,
     pending: Vec<WindowEvent>,
     cursor: Vec2,
     applied: Option<WindowSettings>,
@@ -40,10 +43,11 @@ pub(crate) struct Handler {
 }
 
 impl Handler {
-    pub(crate) fn new(app: Rc<RefCell<Option<App>>>, handle: Arc<WinitWindow>) -> Self {
+    pub(crate) fn new(build: impl FnOnce(&mut App) + 'static) -> Self {
         Self {
-            app,
-            handle,
+            build: Some(Box::new(build)),
+            app: Rc::new(RefCell::new(None)),
+            handle: None,
             pending: Vec::new(),
             cursor: Vec2::ZERO,
             applied: None,
@@ -53,14 +57,21 @@ impl Handler {
         }
     }
 
-    fn redraw(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn window(&self) -> Option<&Arc<dyn WinitWindow>> {
+        self.handle.as_ref()
+    }
+
+    fn redraw(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let Some(handle) = self.window().map(Arc::clone) else {
+            return;
+        };
         let slot = Rc::clone(&self.app);
         let mut slot = slot.borrow_mut();
         let Some(app) = slot.as_mut() else {
             return;
         };
 
-        let actual = self.handle.inner_size();
+        let actual = handle.surface_size();
         if let Some(resized) =
             apply::size_correction(app.get_resource::<Window>(), (actual.width, actual.height))
         {
@@ -75,10 +86,13 @@ impl Handler {
 
         drop(slot);
         self.apply_requests(event_loop);
-        self.handle.request_redraw();
+        handle.request_redraw();
     }
 
-    fn apply_requests(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+    fn apply_requests(&mut self, event_loop: &dyn ActiveEventLoop) {
+        let Some(handle) = self.window().map(Arc::clone) else {
+            return;
+        };
         let slot = Rc::clone(&self.app);
         let mut slot = slot.borrow_mut();
         let Some(app) = slot.as_mut() else {
@@ -90,27 +104,24 @@ impl Handler {
 
         for action in apply::settings_actions(self.applied.as_ref(), &settings) {
             match action {
-                WindowAction::Title(title) => self.handle.set_title(&title),
-                WindowAction::Decorations(decorations) => self.handle.set_decorations(decorations),
-                WindowAction::MinSize(size) => self.handle.set_min_inner_size(
-                    size.map(|size| winit::dpi::LogicalSize::new(size.x as f64, size.y as f64)),
-                ),
+                WindowAction::Title(title) => handle.set_title(&title),
+                WindowAction::Decorations(decorations) => handle.set_decorations(decorations),
+                WindowAction::MinSize(size) => {
+                    handle.set_min_surface_size(size.map(|size| {
+                        winit::dpi::LogicalSize::new(size.x as f64, size.y as f64).into()
+                    }))
+                }
                 WindowAction::Cursor(cursor) => {
-                    self.handle.set_cursor_visible(cursor.visible);
+                    handle.set_cursor_visible(cursor.visible);
                     if cursor.grabbed {
-                        if self
-                            .handle
+                        if handle
                             .set_cursor_grab(winit::window::CursorGrabMode::Confined)
                             .is_err()
                         {
-                            let _ = self
-                                .handle
-                                .set_cursor_grab(winit::window::CursorGrabMode::Locked);
+                            let _ = handle.set_cursor_grab(winit::window::CursorGrabMode::Locked);
                         }
                     } else {
-                        let _ = self
-                            .handle
-                            .set_cursor_grab(winit::window::CursorGrabMode::None);
+                        let _ = handle.set_cursor_grab(winit::window::CursorGrabMode::None);
                     }
                 }
             }
@@ -119,18 +130,18 @@ impl Handler {
 
         for command in commands {
             match command {
-                WindowCommand::Minimise => self.handle.set_minimized(true),
-                WindowCommand::SetMaximised(maximised) => self.handle.set_maximized(maximised),
+                WindowCommand::Minimise => handle.set_minimized(true),
+                WindowCommand::SetMaximised(maximised) => handle.set_maximized(maximised),
                 WindowCommand::RequestSize(size) => {
                     let requested = winit::dpi::LogicalSize::new(size.x as f64, size.y as f64);
-                    if let Some(applied) = self.handle.request_inner_size(requested) {
+                    if let Some(applied) = handle.request_surface_size(requested.into()) {
                         self.pending.push(WindowEvent::Resized {
                             width: applied.width,
                             height: applied.height,
                         });
                     }
                 }
-                WindowCommand::Focus => self.handle.focus_window(),
+                WindowCommand::Focus => handle.focus_window(),
                 WindowCommand::Close => event_loop.exit(),
             }
         }
@@ -143,6 +154,9 @@ impl Handler {
     /// instant you reach it still counts.
     #[cfg(not(target_arch = "wasm32"))]
     fn start_window_gesture(&mut self) {
+        let Some(handle) = self.window().map(Arc::clone) else {
+            return;
+        };
         let slot = Rc::clone(&self.app);
         let slot = slot.borrow();
         let Some(app) = slot.as_ref() else {
@@ -151,7 +165,6 @@ impl Handler {
         let Some(window) = app.get_resource::<Window>() else {
             return;
         };
-        let handle = Arc::clone(&self.handle);
         let pointer = window.physical_to_logical(self.cursor);
         let Some(gesture) = app
             .get_resource::<WindowGestureRegion>()
@@ -213,36 +226,68 @@ fn left_button_held() -> bool {
     true
 }
 
-impl ApplicationHandler for Handler {
-    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+impl Drop for Handler {
+    fn drop(&mut self) {
         self.app.borrow_mut().take();
     }
+}
 
-    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
-        let _ = event_loop;
+impl ApplicationHandler for Handler {
+    fn can_create_surfaces(&mut self, event_loop: &dyn ActiveEventLoop) {
+        if self.handle.is_some() {
+            return;
+        }
+
+        let attributes = WindowAttributes::default().with_title("Concerto");
+        #[cfg(target_arch = "wasm32")]
+        let attributes = attributes.with_platform_attributes(Box::new(
+            winit::platform::web::WindowAttributesWeb::default().with_append(true),
+        ));
+        let window: Arc<dyn WinitWindow> = Arc::from(
+            event_loop
+                .create_window(attributes)
+                .expect("create window err."),
+        );
+        window.set_cursor_visible(true);
+        self.handle = Some(Arc::clone(&window));
+
+        let Some(build) = self.build.take() else {
+            return;
+        };
+        let building = crate::build_app(window, build, Rc::clone(&self.app));
+        cfg_if::cfg_if! {
+            if #[cfg(target_arch = "wasm32")] {
+                wasm_bindgen_futures::spawn_local(building);
+            } else {
+                pollster::block_on(building);
+            }
+        }
     }
 
     fn window_event(
         &mut self,
-        event_loop: &winit::event_loop::ActiveEventLoop,
+        event_loop: &dyn ActiveEventLoop,
         window_id: winit::window::WindowId,
         event: winit::event::WindowEvent,
     ) {
         let _ = window_id;
+        let Some(handle) = self.window().map(Arc::clone) else {
+            return;
+        };
 
         let slot = Rc::clone(&self.app);
         let mut slot = slot.borrow_mut();
         let Some(app) = slot.as_mut() else {
             match translate::while_waiting(&event) {
-                Some(Waiting::Redraw) => self.handle.request_redraw(),
+                Some(Waiting::Redraw) => handle.request_redraw(),
                 Some(Waiting::Exit) => event_loop.exit(),
                 None => (),
             }
             return;
         };
 
-        if matches!(event, WinitWindowEvent::Resized(_)) {
-            let maximised = self.handle.is_maximized();
+        if matches!(event, WinitWindowEvent::SurfaceResized(_)) {
+            let maximised = handle.is_maximized();
             if maximised != self.maximised {
                 self.maximised = maximised;
                 self.pending.push(WindowEvent::Maximised(maximised));
@@ -274,11 +319,11 @@ impl ApplicationHandler for Handler {
                 self.redraw(event_loop);
             }
             #[cfg(not(target_arch = "wasm32"))]
-            WinitWindowEvent::MouseInput {
+            WinitWindowEvent::PointerButton {
                 state: ElementState::Pressed,
-                button: MouseButton::Left,
+                button,
                 ..
-            } => {
+            } if translate::is_mouse_left(&button) => {
                 drop(slot);
                 self.start_window_gesture();
             }
@@ -286,24 +331,34 @@ impl ApplicationHandler for Handler {
         }
     }
 
-    fn user_event(&mut self, event_loop: &winit::event_loop::ActiveEventLoop, event: ()) {
-        let _ = (event_loop, event);
-    }
-
     fn device_event(
         &mut self,
-        _event_loop: &winit::event_loop::ActiveEventLoop,
-        _device_id: winit::event::DeviceId,
+        _event_loop: &dyn ActiveEventLoop,
+        _device_id: Option<winit::event::DeviceId>,
         event: winit::event::DeviceEvent,
     ) {
-        if self.app.borrow().is_none() {
+        if self.window().is_none() || self.app.borrow().is_none() {
             return;
         }
 
-        if let winit::event::DeviceEvent::MouseMotion { delta } = event {
+        if let winit::event::DeviceEvent::PointerMotion { delta } = event {
             self.pending.push(WindowEvent::MouseMotion {
                 delta: Vec2::new(delta.0 as f32, delta.1 as f32),
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_the_handler_drops_its_app() {
+        let handler = Handler::new(|_: &mut App| {});
+        let slot = Rc::clone(&handler.app);
+        *slot.borrow_mut() = Some(App::new());
+        drop(handler);
+        assert!(slot.borrow().is_none());
     }
 }

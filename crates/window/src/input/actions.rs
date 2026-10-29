@@ -76,7 +76,7 @@ impl Modifiers {
             ctrl: held(KeyCode::ControlLeft, KeyCode::ControlRight),
             shift: held(KeyCode::ShiftLeft, KeyCode::ShiftRight),
             alt: held(KeyCode::AltLeft, KeyCode::AltRight),
-            logo: held(KeyCode::SuperLeft, KeyCode::SuperRight),
+            logo: held(KeyCode::MetaLeft, KeyCode::MetaRight),
         }
     }
 }
