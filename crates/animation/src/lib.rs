@@ -539,7 +539,7 @@ mod tests {
             a_to_b: TransitionBlend,
             b_to_c: TransitionBlend,
         ) -> Self {
-            let server = AssetServer::new();
+            let mut server = AssetServer::new();
             let mut clips = AssetStore::<AnimationClip>::new();
             let mut graphs = AssetStore::<AnimationGraph>::new();
             server.register_asset(&clips);
