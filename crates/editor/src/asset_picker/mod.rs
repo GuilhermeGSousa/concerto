@@ -21,7 +21,7 @@ use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
     interaction::UIClick,
     node::{UINode, UIRect},
-    scroll::UIScrollArea,
+    scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     text::UIText,
     theme::UITheme,
     transform::UIValue,
@@ -38,7 +38,7 @@ use crate::inspector::{
 const MENU_WIDTH: f32 = 240.0;
 const ITEM_HEIGHT: f32 = 26.0;
 const LIST_MAX_HEIGHT: f32 = 280.0;
-const SCROLLBAR_GUTTER: f32 = 10.0;
+const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
 
 /// Picks the asset a reflected asset handle names from the project's assets of its kind.
 pub struct AssetPicker {

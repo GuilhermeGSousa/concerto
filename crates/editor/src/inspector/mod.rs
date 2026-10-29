@@ -17,7 +17,7 @@ use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
     node::{UILayout, UINode, UIRect},
-    scroll::UIScrollArea,
+    scroll::{SCROLLBAR_WIDTH, UIScrollArea},
     theme::UITheme,
     transform::UIValue,
 };
@@ -215,7 +215,14 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 |mut view| {
                     let stack = view
                         .spawn_child((
-                            theme.column().fixed().gap(theme.spacing_xs + 2.0),
+                            theme
+                                .column()
+                                .fixed()
+                                .gap(theme.spacing_xs + 2.0)
+                                .padding(UIRect {
+                                    right: scrollbar_gutter(theme),
+                                    ..UIRect::all(0.0)
+                                }),
                             ComponentStack::default(),
                         ))
                         .entity();
@@ -227,6 +234,10 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity, theme: &UITheme) {
                 },
             );
         });
+}
+
+fn scrollbar_gutter(theme: &UITheme) -> f32 {
+    SCROLLBAR_WIDTH + theme.spacing_xs
 }
 
 fn sync_inspector_scroll(

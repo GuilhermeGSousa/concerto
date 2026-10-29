@@ -449,7 +449,8 @@ mod tests {
     }
 }
 
-const BAR_WIDTH: f32 = 8.0;
+/// The width of a scroll area's scrollbar, drawn over the right edge of its content.
+pub const SCROLLBAR_WIDTH: f32 = 8.0;
 const MIN_THUMB: f32 = 24.0;
 
 /// A scrollbar track, pinned to the right edge of its scroll area.
@@ -501,7 +502,7 @@ pub(crate) fn setup_scrollbars(
         let track = cmd
             .spawn((
                 UINode::default()
-                    .with_width(UIValue::Px(BAR_WIDTH))
+                    .with_width(UIValue::Px(SCROLLBAR_WIDTH))
                     .with_position(Position::Absolute)
                     .with_visible(false),
                 UIMaterial::flat(theme.canvas),
@@ -544,7 +545,7 @@ pub(crate) fn sync_scrollbar_tracks(
         }
         let inset = UIInset {
             top: UIValue::Px(0.0),
-            left: UIValue::Px((layout.content_rect.size.x - BAR_WIDTH).max(0.0)),
+            left: UIValue::Px((layout.content_rect.size.x - SCROLLBAR_WIDTH).max(0.0)),
             ..Default::default()
         };
         if node.inset != inset {

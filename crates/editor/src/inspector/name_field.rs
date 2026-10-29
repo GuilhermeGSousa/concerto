@@ -19,7 +19,13 @@ pub struct NameField {
 pub struct FocusNameField(pub bool);
 
 pub(super) fn name_field(theme: &UITheme) -> impl IntoBundle<Bundle: 'static> + use<> {
-    (theme.text_field("Name").hidden(), NameField::default())
+    (
+        theme.text_field("Name").hidden().margin(UIRect {
+            right: scrollbar_gutter(theme),
+            ..UIRect::all(0.0)
+        }),
+        NameField::default(),
+    )
 }
 
 pub(super) fn forget_scene(
