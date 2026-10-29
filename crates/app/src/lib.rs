@@ -524,6 +524,8 @@ mod tests {
         }
     }
 
+    impl concerto_foundation::assets::LoadableAsset for Note {}
+
     #[test]
     fn a_dropped_asset_is_freed_in_an_edit_app() {
         let mut app = App::for_editing();

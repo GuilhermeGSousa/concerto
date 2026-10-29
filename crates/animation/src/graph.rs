@@ -1,6 +1,6 @@
 use std::{collections::HashMap, ops::Deref};
 
-use concerto_foundation::assets::{Asset, handle::AssetHandle};
+use concerto_foundation::assets::{Asset, LoadableAsset, handle::AssetHandle};
 use log::warn;
 use petgraph::{
     Direction::Outgoing,
@@ -40,6 +40,8 @@ pub struct AnimationGraph {
     graph: AnimationDirectedGraph,
     result_node: AnimationNodeIndex,
 }
+
+impl LoadableAsset for AnimationGraph {}
 
 impl AnimationGraph {
     pub fn new() -> Self {

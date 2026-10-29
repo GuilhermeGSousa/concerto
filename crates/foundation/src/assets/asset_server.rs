@@ -225,14 +225,28 @@ impl AssetServer {
         self.data.handle_provider.is_registered::<A>()
     }
 
-    pub fn add<A: Asset>(&self, asset: A) -> AssetHandle<A> {
+    /// Adds a built asset, running its `on_load` inline before it reaches the world; a failing `on_load` is logged and the returned handle never resolves.
+    pub fn add<A: LoadableAsset>(&self, mut asset: A) -> AssetHandle<A> {
         let id = AssetId::new();
+        let handle = self.data.handle_provider.request_handle(id);
+
+        self.data.loaded_assets.write().unwrap().insert(id);
+        let context = AssetLoadContext::new(self.clone(), id);
+        if let Err(error) = asset.on_load(&context) {
+            log::error!(
+                "Failed to add asset (type {}): {:#}",
+                std::any::type_name::<A>(),
+                error
+            );
+            self.data.loaded_assets.write().unwrap().remove(&id);
+            return handle;
+        }
 
         let sender = self.data.asset_load_event_sender.clone();
         let _ = sender.send(AssetLoadEvent::Loaded {
             asset: LoadedAsset::new(id, asset),
         });
-        self.data.handle_provider.request_handle(id)
+        handle
     }
 
     /// Loads a stored asset using its persistent UUID, obtained from `asset_id!`
@@ -1151,6 +1165,114 @@ mod tests {
 
         let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
         assert_eq!(store.get(&handle).map(|asset| asset.value), Some(8));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn added_server<A: Asset>(dir: &std::path::Path) -> (AssetServer, World) {
+        let mut server =
+            AssetServer::with_content_root(ContentAssetRoot::Directory(dir.to_owned()));
+        let store = AssetStore::<A>::new();
+        server.register_asset(&store);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        (server, world)
+    }
+
+    #[test]
+    fn add_runs_on_load_before_the_asset_reaches_the_world() {
+        let dir = temp_root("add-on-load");
+        let (server, mut world) = fixture_server(&dir, AssetRegistry::new());
+        let handle = server.add(FixtureAsset {
+            value: 5,
+            initialized: false,
+        });
+
+        handle_asset_load_events(&mut world);
+
+        let store = world.get_resource::<AssetStore<FixtureAsset>>().unwrap();
+        let asset = store.get(&handle).expect("added asset loaded");
+        assert_eq!(asset.value, 5);
+        assert!(asset.initialized);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct FailingAsset;
+
+    impl Asset for FailingAsset {
+        fn name() -> &'static str {
+            "FailingAsset"
+        }
+    }
+
+    impl LoadableAsset for FailingAsset {
+        fn on_load(&mut self, _context: &AssetLoadContext) -> anyhow::Result<()> {
+            anyhow::bail!("refused")
+        }
+    }
+
+    #[test]
+    fn add_whose_on_load_fails_sends_no_loaded_event_and_the_handle_never_resolves() {
+        let dir = temp_root("add-on-load-fails");
+        let (server, mut world) = added_server::<FailingAsset>(&dir);
+
+        let handle = server.add(FailingAsset);
+
+        assert!(!server.is_loading());
+        assert!(!server
+            .data
+            .loaded_assets
+            .read()
+            .unwrap()
+            .contains(&handle.id()));
+        handle_asset_load_events(&mut world);
+        let store = world.get_resource::<AssetStore<FailingAsset>>().unwrap();
+        assert!(store.get(&handle).is_none());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct SelfLoadingAsset {
+        #[serde(skip)]
+        spawned_a_load: bool,
+    }
+
+    impl Asset for SelfLoadingAsset {
+        fn name() -> &'static str {
+            "SelfLoadingAsset"
+        }
+    }
+
+    impl LoadableAsset for SelfLoadingAsset {
+        fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+            let server = context.asset_server();
+            let _own = server.load::<SelfLoadingAsset>(context.asset_id());
+            self.spawned_a_load = !server.data.pending_tasks.read().unwrap().is_empty();
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn loading_an_added_asset_from_its_own_on_load_spawns_no_task() {
+        let dir = temp_root("add-self-load");
+        let (server, mut world) = added_server::<SelfLoadingAsset>(&dir);
+
+        let handle = server.add(SelfLoadingAsset {
+            spawned_a_load: false,
+        });
+        handle_asset_load_events(&mut world);
+
+        let store = world
+            .get_resource::<AssetStore<SelfLoadingAsset>>()
+            .unwrap();
+        assert!(
+            !store
+                .get(&handle)
+                .expect("added asset loaded")
+                .spawned_a_load
+        );
+        assert!(!server.is_loading());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
