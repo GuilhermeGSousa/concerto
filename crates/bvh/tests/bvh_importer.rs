@@ -112,6 +112,18 @@ fn fewer_frame_lines_than_declared_are_rejected() {
 }
 
 #[test]
+fn a_huge_frame_count_is_rejected_without_allocating() {
+    let text = TWO_JOINTS.replace("Frames: 3", "Frames: 99999999999999");
+    assert_malformed("huge_frames.bvh", &text, "Frames");
+}
+
+#[test]
+fn a_huge_channel_count_is_rejected_without_allocating() {
+    let text = TWO_JOINTS.replace("CHANNELS 3", "CHANNELS 99999999999999");
+    assert_malformed("huge_channels.bvh", &text, "channel");
+}
+
+#[test]
 fn unbalanced_braces_are_rejected() {
     let missing_close = TWO_JOINTS.replacen("}\nMOTION", "MOTION", 1);
     assert_malformed("open.bvh", &missing_close, "brace");

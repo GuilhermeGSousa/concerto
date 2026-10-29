@@ -1,4 +1,3 @@
-//! Covers the `[settings]` table of a source's sidecar.
 use std::path::PathBuf;
 
 use concerto_foundation::assets::AssetId;

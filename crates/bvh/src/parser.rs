@@ -253,7 +253,7 @@ fn parse_joint(
                 let count: usize = count
                     .parse()
                     .or_else(|_| error(count_line, format!("invalid channel count {count}")))?;
-                let mut channels = Vec::with_capacity(count);
+                let mut channels = Vec::new();
                 for _ in 0..count {
                     let (channel_line, channel) = tokens.expect_next("a channel name")?;
                     match Channel::parse(channel) {
@@ -337,7 +337,7 @@ fn parse_motion(
         );
     };
 
-    let mut frames = Vec::with_capacity(frame_count);
+    let mut frames = Vec::new();
     for _ in 0..frame_count {
         let Some((line_number, line)) = cursor.next() else {
             return error(
