@@ -17,10 +17,7 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform},
 };
 use concerto_mesh::Aabb;
-use concerto_render::{
-    ExclusiveCamera,
-    components::{camera::Camera, render_entity::SyncWithRenderWorld},
-};
+use concerto_render::{ExclusiveCamera, components::camera::Camera};
 use concerto_window::{
     events::{ScrollDelta, WindowEvent},
     input::{Input, KeyCode, MouseButton, PhysicalKey},
@@ -258,7 +255,6 @@ fn spawn_camera_and_grid(mut cmd: CommandQueue, fly: Res<FlyCamera>) {
             lit: false,
             ..Default::default()
         },
-        SyncWithRenderWorld,
         EditorHelper,
     ));
 }

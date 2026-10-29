@@ -8,7 +8,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::{MeshComponent, Vertex};
-use concerto_render::MaterialComponent;
+use concerto_render::{components::render_entity::SyncWithRenderWorld, MaterialComponent};
 
 use crate::material::{WorldGridMaterial, WorldGridUniform};
 
@@ -44,6 +44,10 @@ impl Component for WorldGrid {
 
     fn on_remove() -> Option<concerto_ecs::component::ComponentLifecycleCallback> {
         None
+    }
+
+    fn register_required(required: &mut concerto_ecs::component::RequiredComponents) {
+        required.register::<SyncWithRenderWorld>(SyncWithRenderWorld::default);
     }
 }
 

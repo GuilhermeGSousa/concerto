@@ -27,7 +27,6 @@ use concerto::{
         components::{
             camera::Camera,
             light::{Light, LightType},
-            render_entity::SyncWithRenderWorld,
         },
         resources::RenderContext,
         MaterialComponent,
@@ -171,7 +170,7 @@ fn spawn_scene(mut cmd: CommandQueue, asset_server: Res<AssetServer>) {
         ));
     }
 
-    cmd.spawn((WorldGrid::default(), SyncWithRenderWorld));
+    cmd.spawn(WorldGrid::default());
 }
 
 /// On left click, casts a ray through the clicked pixel and prints the color
