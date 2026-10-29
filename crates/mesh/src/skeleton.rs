@@ -162,7 +162,6 @@ impl LoadableAsset for Skeleton {}
 pub struct SkeletonComponent {
     pub skeleton: AssetHandle<Skeleton>,
     pub bones: Vec<SceneEntityRef>,
-    pub bone_ids: Vec<Uuid>,
     pub root: Option<SceneEntityRef>,
 }
 
@@ -170,13 +169,11 @@ impl SkeletonComponent {
     pub fn new(
         skeleton: AssetHandle<Skeleton>,
         bones: Vec<SceneEntityRef>,
-        bone_ids: Vec<Uuid>,
         root: Option<SceneEntityRef>,
     ) -> Self {
         Self {
             skeleton,
             bones,
-            bone_ids,
             root,
         }
     }
@@ -187,10 +184,6 @@ impl SkeletonComponent {
 
     pub fn bones(&self) -> &[SceneEntityRef] {
         &self.bones
-    }
-
-    pub fn bone_ids(&self) -> &[Uuid] {
-        &self.bone_ids
     }
 
     pub fn root(&self) -> Option<Entity> {

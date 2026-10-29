@@ -166,14 +166,14 @@ fn import_emits_skeleton_and_animation_sub_assets() {
         AssetId::from_path("skinned.gltf#skeleton/0"),
         "the skeleton handle must address the emitted skeleton sub-asset"
     );
-    assert_eq!(
-        scene_skeleton.bones.len(),
-        scene_skeleton.bone_ids.len(),
-        "every bone must have a matching stable id for animation channel lookup"
-    );
     assert!(
         !scene_skeleton.bones.is_empty(),
         "the fixture's skin has joints, so bones must not be empty"
+    );
+    assert_eq!(
+        scene_skeleton.bones.len(),
+        emitted_skeleton(&outputs, "skeleton/0").bone_count(),
+        "every bone must have a matching entry in the skeleton asset"
     );
 }
 
@@ -312,11 +312,13 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     );
     for binding in &bindings {
         assert_eq!(
-            binding.bone_ids, source_skel.bone_ids,
-            "primitive child binding must share the source skeleton's bone ids"
+            binding.bones, source_skel.bones,
+            "primitive child binding must share the source skeleton's bones"
         );
         assert_eq!(binding.skeleton.id(), source_skel.skeleton.id());
     }
+
+    let skeleton = emitted_skeleton(&outputs, "skeleton/0");
 
     // The Wiggle clip's channel key must be one of those bone ids, or animation
     // silently does nothing.
@@ -328,8 +330,7 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     let clip: concerto_animation::clip::AnimationClip =
         bincode::deserialize(&clip_entry.bytes).unwrap();
     assert!(
-        clip.target_ids()
-            .any(|id| source_skel.bone_ids.contains(id)),
+        clip.target_ids().any(|id| skeleton.bone_ids.contains(id)),
         "the animation clip must key at least one channel by a skeleton bone id"
     );
 }
@@ -362,21 +363,6 @@ fn skeleton_asset_carries_names_parents_rest_pose_and_ids() {
     let (result, ctx) = import_fixture("skinned.gltf");
     result.expect("importing the skinned fixture should succeed");
     let outputs = ctx.into_parts();
-    let scene_entry = outputs
-        .sub_assets
-        .iter()
-        .find(|s| s.name == "scene")
-        .unwrap();
-    let scene: Scene = bincode::deserialize(&scene_entry.bytes).unwrap();
-    let component: SkeletonComponent = decode(
-        scene
-            .nodes
-            .iter()
-            .flat_map(|node| node.components.iter())
-            .find(|c| c.type_name == SkeletonComponent::name())
-            .unwrap(),
-    );
-
     let skeleton = emitted_skeleton(&outputs, "skeleton/0");
 
     assert_eq!(skeleton.bone_count(), 2);
@@ -388,11 +374,6 @@ fn skeleton_asset_carries_names_parents_rest_pose_and_ids() {
         glam::Vec3::new(0.0, 1.0, 0.0)
     );
     assert_eq!(skeleton.bone_index("Joint"), Some(1));
-    assert_eq!(
-        &*skeleton.bone_ids,
-        component.bone_ids.as_slice(),
-        "the asset's bone ids must be the ids the scene component carries"
-    );
     assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
 }
 

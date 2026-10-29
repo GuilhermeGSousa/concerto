@@ -60,12 +60,11 @@ struct TextureKey {
 }
 
 /// One glTF skin resolved to what a `SkeletonComponent` needs: which emitted
-/// `skeleton/N` sub-asset holds its inverse bind matrices, the joint nodes as
-/// `SceneEntityRef`s, and the stable per-bone ids the animation clips key by.
+/// `skeleton/N` sub-asset holds its inverse bind matrices, and the joint nodes as
+/// `SceneEntityRef`s.
 struct SkinInfo {
     skeleton_index: usize,
     bones: Vec<SceneEntityRef>,
-    bone_ids: Vec<Uuid>,
 }
 
 /// The name path from a scene root down to a node, used to derive that node's
@@ -316,23 +315,18 @@ impl Importer for GltfImporter {
                 });
             }
 
-            let skeleton = Skeleton::new(
-                inverse_bind_matrices,
-                parents,
-                names,
-                rest_pose,
-                bone_ids.clone(),
-            )
-            .map_err(|err| ImportError::MalformedSource {
-                source_path: source_path.to_path_buf(),
-                message: format!("skin {skin_index}: {err}"),
-            })?;
+            let skeleton =
+                Skeleton::new(inverse_bind_matrices, parents, names, rest_pose, bone_ids).map_err(
+                    |err| ImportError::MalformedSource {
+                        source_path: source_path.to_path_buf(),
+                        message: format!("skin {skin_index}: {err}"),
+                    },
+                )?;
             ctx.emit(&format!("skeleton/{skin_index}"), &skeleton)?;
 
             skins.push(SkinInfo {
                 skeleton_index: skin_index,
                 bones,
-                bone_ids,
             });
         }
 
@@ -427,10 +421,10 @@ impl Importer for GltfImporter {
             // so they skin from the same bone entities without a second player.
             if let Some(skin) = gltf_node.skin() {
                 let skin_index = skin.index();
-                if let Some((bones, bone_ids)) = skins
+                if let Some(bones) = skins
                     .iter()
                     .find(|info| info.skeleton_index == skin_index)
-                    .map(|info| (info.bones.clone(), info.bone_ids.clone()))
+                    .map(|info| info.bones.clone())
                 {
                     let skeleton_id = ctx.sub_asset_id(&format!("skeleton/{skin_index}"));
                     let root = skin
@@ -447,7 +441,6 @@ impl Importer for GltfImporter {
                         &SkeletonComponent {
                             skeleton: AssetHandle::weak(skeleton_id),
                             bones,
-                            bone_ids,
                             root,
                         },
                     )?;
@@ -547,7 +540,6 @@ impl Importer for GltfImporter {
                                 (
                                     ctx.sub_asset_id(&format!("skeleton/{skin_index}")),
                                     info.bones.clone(),
-                                    info.bone_ids.clone(),
                                 )
                             })
                     });
@@ -568,13 +560,12 @@ impl Importer for GltfImporter {
                         referenced_assets.push(mesh_id);
                         referenced_assets.push(material_id);
 
-                        if let Some((skeleton_id, bones, bone_ids)) = &skin_binding {
+                        if let Some((skeleton_id, bones)) = &skin_binding {
                             push_node_component(
                                 &mut child,
                                 &SkeletonComponent {
                                     skeleton: AssetHandle::weak(*skeleton_id),
                                     bones: bones.clone(),
-                                    bone_ids: bone_ids.clone(),
                                     root: None,
                                 },
                             )?;
