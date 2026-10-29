@@ -1,10 +1,12 @@
 use std::collections::{HashMap, hash_map::Keys};
 
 use concerto_foundation::assets::{Asset, LoadableAsset};
+use concerto_foundation::math::spring_damper::angular_velocity;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::inertialization::PoseVelocity;
 use crate::pose::JointPose;
 
 #[derive(Serialize, Deserialize)]
@@ -154,6 +156,99 @@ impl AnimationClip {
     pub fn duration(&self) -> f32 {
         self.duration
     }
+
+    /// Writes the velocity of each bone in `bone_ids` between `time - dt` and `time`, both clamped to the clip.
+    pub fn sample_velocity(
+        &self,
+        time: f32,
+        dt: f32,
+        bone_ids: &[Uuid],
+        output: &mut PoseVelocity,
+    ) {
+        debug_assert_eq!(bone_ids.len(), output.linear.len());
+        debug_assert_eq!(bone_ids.len(), output.angular.len());
+        let end = time.clamp(0.0, self.duration);
+        let start = (time - dt).clamp(0.0, self.duration);
+        let elapsed = end - start;
+        for (bone, id) in bone_ids.iter().enumerate() {
+            if bone >= output.linear.len() || bone >= output.angular.len() {
+                break;
+            }
+            if elapsed <= 0.0 {
+                output.linear[bone] = Vec3::ZERO;
+                output.angular[bone] = Vec3::ZERO;
+                continue;
+            }
+            let mut before = JointPose {
+                translation: Vec3::ZERO,
+                rotation: Quat::IDENTITY,
+                scale: Vec3::ONE,
+            };
+            let mut after = before.clone();
+            if let Some(channels) = self.channels.get(id) {
+                for channel in channels {
+                    channel.sample_transform(start, &mut before);
+                    channel.sample_transform(end, &mut after);
+                }
+            }
+            output.linear[bone] = (after.translation - before.translation) / elapsed;
+            output.angular[bone] = angular_velocity(after.rotation, before.rotation, elapsed);
+        }
+    }
 }
 
 impl LoadableAsset for AnimationClip {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn linear_clip(id: Uuid) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            id,
+            AnimationChannel::new(
+                vec![0.0, 1.0],
+                AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(2.0, 0.0, -4.0)]),
+            ),
+        );
+        clip
+    }
+
+    #[test]
+    fn sample_velocity_gives_the_slope_of_a_linear_clip() {
+        let id = Uuid::from_u128(1);
+        let clip = linear_clip(id);
+        let mut velocity = PoseVelocity::zero(1);
+
+        clip.sample_velocity(0.5, 0.1, &[id], &mut velocity);
+
+        assert!(
+            velocity.linear[0].distance(Vec3::new(2.0, 0.0, -4.0)) < 1e-4,
+            "{:?}",
+            velocity.linear[0]
+        );
+        assert!(velocity.angular[0].length() < 1e-4);
+    }
+
+    #[test]
+    fn sample_velocity_is_one_sided_at_the_clip_start() {
+        let id = Uuid::from_u128(1);
+        let clip = linear_clip(id);
+        let mut velocity = PoseVelocity::zero(1);
+
+        clip.sample_velocity(0.05, 0.1, &[id], &mut velocity);
+
+        assert!(velocity.linear[0].distance(Vec3::new(2.0, 0.0, -4.0)) < 1e-3);
+    }
+
+    #[test]
+    fn sample_velocity_is_zero_for_a_bone_without_channels() {
+        let clip = linear_clip(Uuid::from_u128(1));
+        let mut velocity = PoseVelocity::zero(1);
+
+        clip.sample_velocity(0.5, 0.1, &[Uuid::from_u128(2)], &mut velocity);
+
+        assert!(velocity.linear[0].length() < 1e-4);
+    }
+}
