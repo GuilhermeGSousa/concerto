@@ -64,11 +64,12 @@ entity gets a `BodyId`, which `physics.add_impulse(body_id, impulse)` takes.
 
 ### Characters
 
-`CharacterMovement` drives a dynamic body toward a target velocity, and
-`GroundProbe` reports whether it stands on something:
+`CharacterSimulation` springs a dynamic body toward the `DesiredMotion` that
+other systems write, and `GroundProbe` reports whether it stands on something:
 
 ```rust
-use concerto::physics::{ground::GroundProbe, movement::CharacterMovement};
+use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
+use concerto::physics::ground::GroundProbe;
 
 let collider = Collider::capsule(2.0, 1.0);
 let offset = ColliderOffset::bottom_origin(&collider);
@@ -79,22 +80,29 @@ cmd.spawn((
         allowed_dofs: AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y,
         motion_type: MotionType::Dynamic,
     },
-    CharacterMovement::new(0.1),
+    CharacterSimulation::default(),
     collider,
     offset,
     GroundProbe::default(),
     Transform::from_translation(spawn_point),
 ));
 
-fn walk(input: Res<Input>, players: Query<(&mut CharacterMovement, &GroundProbe), With<Player>>) {
+fn walk(input: Res<Input>, players: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>) {
     let forward = if input.is_held(PhysicalKey::Code(KeyCode::KeyW)) { 1.0 } else { 0.0 };
-    for (mut movement, ground) in players.iter() {
+    for (mut desired, ground) in players.iter() {
         if ground.is_grounded() {
-            movement.set_target_velocity(Vec3::new(0.0, 0.0, -forward * 5.0));
+            desired.velocity = Vec3::new(0.0, 0.0, -forward * 5.0);
         }
     }
 }
 ```
+
+Each fixed step the simulation advances its velocity and facing springs
+(halflife 0.27 s by default) toward `DesiredMotion`, sets the body's
+horizontal velocity to the spring's, and reads the body's position back after
+collisions. It also fills `CharacterSimulation::trajectory` with
+`sample_count` predicted samples, `sample_dt` apart, assuming the desired
+motion holds.
 
 `ground.ground()` says more: `InAir`, `OnGround` or `OnSteepGround`. Input
 comes from the `Input` resource in `concerto::window::input`, with

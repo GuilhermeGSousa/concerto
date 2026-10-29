@@ -13,10 +13,10 @@ use concerto::ecs::{Entity, Query, ResMut, With, Without};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraPivot, EntityFollow};
 use concerto::mesh::MeshComponent;
+use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
 use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
-use concerto::physics::movement::CharacterMovement;
 use concerto::physics::physics_state::PhysicsState;
 use concerto::physics::rigid_body::MotionType::Dynamic;
 use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
@@ -84,7 +84,7 @@ pub(crate) fn spawn_character(
                     allowed_dofs: AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y,
                     motion_type: Dynamic,
                 },
-                CharacterMovement::new(0.1),
+                CharacterSimulation::default(),
                 collider,
                 // Origin at the capsule's bottom so the GLTF skeleton root sits on
                 // the ground instead of floating at the capsule center.
@@ -240,7 +240,7 @@ pub(crate) fn setup_character_animations(
 /// own rest pose already faces the opposite way from the engine's generic
 /// `-Z`-forward convention, so the two flips cancel out.
 pub(crate) fn face_camera_direction(
-    players: Query<&mut Transform, With<Player>>,
+    players: Query<(&mut Transform, &mut DesiredMotion), With<Player>>,
     pivots: Query<&CameraPivot>,
 ) {
     let Some(pivot) = pivots.iter().next() else {
@@ -248,18 +248,32 @@ pub(crate) fn face_camera_direction(
     };
 
     let facing = Quat::from_rotation_y(pivot.yaw());
-    for mut transform in players.iter() {
+    for (mut transform, mut desired) in players.iter() {
         transform.rotation = facing;
+        desired.rotation = facing;
     }
 }
 
+const PLAYER_SPEED: f32 = 5.0;
+
+fn desired_velocity(player_input: Vec2) -> Vec3 {
+    Vec3::new(player_input.x, 0.0, player_input.y) * PLAYER_SPEED
+}
+
 pub(crate) fn update_movement(
-    movement: Query<(&mut CharacterMovement, &GroundProbe, &BodyId), With<Player>>,
+    movement: Query<
+        (
+            &CharacterSimulation,
+            &mut DesiredMotion,
+            &GroundProbe,
+            &BodyId,
+        ),
+        With<Player>,
+    >,
     anim_players: Query<&mut AnimationPlayer>,
     input: Res<Input>,
     mut physics: ResMut<PhysicsState>,
 ) {
-    const PLAYER_SPEED: f32 = 5.0;
     let mut player_input = Vec2::ZERO;
     if input.is_held(PhysicalKey::Code(KeyCode::ArrowUp)) {
         player_input += Vec2::Y;
@@ -277,14 +291,14 @@ pub(crate) fn update_movement(
         player_input += Vec2::X;
     }
 
-    for (mut movement, ground, body_id) in movement.iter() {
+    for (simulation, mut desired, ground, body_id) in movement.iter() {
         // One skinned character, so the sole AnimationPlayer (on a spawned
         // descendant of the Player entity) is this character's.
         let Some(mut animation_player) = anim_players.iter().next() else {
             continue;
         };
 
-        let current_vel = movement.current_velocity();
+        let current_vel = simulation.state.velocity;
 
         let just_pressed_jump = input.is_just_pressed(PhysicalKey::Code(KeyCode::Space));
 
@@ -304,26 +318,35 @@ pub(crate) fn update_movement(
         animation_player.set_bool_param("is_grounded", is_grounded);
 
         if is_grounded {
-            movement
-                .set_target_velocity(Vec3::new(player_input.x, 0.0, player_input.y) * PLAYER_SPEED);
+            desired.velocity = desired_velocity(player_input);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use concerto::animation::player::AnimationPlayer;
     use concerto::ecs::{IntoSystem, System, With, World};
     use concerto::foundation::{
         assets::{asset_server::AssetServer, asset_store::AssetStore},
         transform::Transform,
     };
+    use concerto::gameplay::camera::CameraPivot;
     use concerto::mesh::MeshComponent;
+    use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
     use concerto::physics::physics_state::PhysicsState;
     use concerto::physics::{collider::Collider, shape::MeshCollider};
+    use concerto::physics::{
+        collider::register_colliders, ground::GroundProbe, rigid_body::RigidBody,
+    };
     use concerto::scene::scene::Scene;
-    use glam::{Quat, Vec3};
+    use concerto::window::input::{Input, KeyCode, PhysicalKey};
+    use glam::{Quat, Vec2, Vec3};
 
-    use super::{Player, PlayerSpawner, spawn_character};
+    use super::{
+        PLAYER_SPEED, Player, PlayerSpawner, desired_velocity, face_camera_direction,
+        spawn_character, update_movement,
+    };
 
     #[test]
     fn the_character_spawns_at_the_spawn_point() {
@@ -397,5 +420,98 @@ mod tests {
         system.run_and_apply((), &mut world);
 
         assert_eq!(characters(&mut world), vec![spawn_point]);
+    }
+
+    fn world_with_player(simulation: CharacterSimulation, desired: DesiredMotion) -> World {
+        let mut world = World::new();
+        world.register_component::<Collider>();
+        world.register_component::<Transform>();
+        world.insert_resource(PhysicsState::new());
+        world.spawn((
+            Player,
+            RigidBody::default(),
+            Collider::capsule(2.0, 1.0),
+            Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY),
+            simulation,
+            desired,
+            GroundProbe::default(),
+        ));
+        world.spawn(AnimationPlayer::new(1));
+        let mut registration = register_colliders.into_system();
+        registration.initialize(&mut world);
+        registration.run_and_apply((), &mut world);
+        world
+    }
+
+    fn holding_arrow_up() -> Input {
+        let mut input = Input::new();
+        input.update_key_input(PhysicalKey::Code(KeyCode::ArrowUp), true);
+        input
+    }
+
+    #[test]
+    fn arrow_input_maps_to_a_world_velocity_at_player_speed() {
+        assert_eq!(
+            desired_velocity(Vec2::new(-1.0, 1.0)),
+            Vec3::new(-PLAYER_SPEED, 0.0, PLAYER_SPEED)
+        );
+        assert_eq!(desired_velocity(Vec2::ZERO), Vec3::ZERO);
+    }
+
+    #[test]
+    fn the_movement_parameter_reads_the_simulation_velocity() {
+        let mut simulation = CharacterSimulation::default();
+        simulation.state.velocity = Vec3::new(2.5, 0.0, 1.0);
+        let mut world = world_with_player(simulation, DesiredMotion::default());
+        world.insert_resource(Input::new());
+
+        let mut system = update_movement.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let parameters: Vec<Option<Vec2>> = world
+            .query::<&AnimationPlayer, ()>()
+            .iter(&mut world)
+            .map(|player| player.get_vec2_param("movement"))
+            .collect();
+        assert_eq!(parameters, vec![Some(Vec2::new(-2.5, 1.0) / PLAYER_SPEED)]);
+    }
+
+    #[test]
+    fn input_in_the_air_does_not_change_the_desired_velocity() {
+        let mut world = world_with_player(CharacterSimulation::default(), DesiredMotion::default());
+        world.insert_resource(holding_arrow_up());
+
+        let mut system = update_movement.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let velocities: Vec<Vec3> = world
+            .query::<&DesiredMotion, With<Player>>()
+            .iter(&mut world)
+            .map(|desired| desired.velocity)
+            .collect();
+        assert_eq!(velocities, vec![Vec3::ZERO]);
+    }
+
+    #[test]
+    fn the_desired_rotation_follows_the_camera_yaw() {
+        let desired = DesiredMotion {
+            velocity: Vec3::ZERO,
+            rotation: Quat::from_rotation_y(1.0),
+        };
+        let mut world = world_with_player(CharacterSimulation::default(), desired);
+        world.spawn(CameraPivot::default());
+
+        let mut system = face_camera_direction.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let rotations: Vec<Quat> = world
+            .query::<&DesiredMotion, With<Player>>()
+            .iter(&mut world)
+            .map(|desired| desired.rotation)
+            .collect();
+        assert_eq!(rotations, vec![Quat::from_rotation_y(0.0)]);
     }
 }

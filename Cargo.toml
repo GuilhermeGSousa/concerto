@@ -90,6 +90,7 @@ concerto-foundation.workspace = true
 concerto-render.workspace = true
 concerto-director.workspace = true
 concerto-mesh.workspace = true
+concerto-motion-matching.workspace = true
 concerto-gameplay.workspace = true
 concerto-window.workspace = true
 concerto-winit.workspace = true
