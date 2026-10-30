@@ -414,6 +414,7 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
     host.spawn_child((
         UINode::default()
             .with_flex_grow(1.0)
+            .with_min_width(UIValue::Px(0.0))
             .with_padding(UIRect::all(theme.spacing_sm)),
         Timeline {
             duration: 0.0,

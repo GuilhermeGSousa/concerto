@@ -283,7 +283,7 @@ fn fill_menu(
             .height(UIValue::Px(extent.min(LIST_MAX_HEIGHT)))
             .clipped(),
         |mut view| {
-            let mut list = view.spawn_child(theme.column().padding(UIRect {
+            let mut list = view.spawn_child(theme.column().gap(0.0).padding(UIRect {
                 right: SCROLLBAR_GUTTER,
                 ..UIRect::all(0.0)
             }));

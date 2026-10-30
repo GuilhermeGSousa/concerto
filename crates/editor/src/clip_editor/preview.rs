@@ -205,13 +205,30 @@ impl FromWorld for FollowedRoot {
     }
 }
 
+fn middle_of_bones(
+    skeleton: &SkeletonComponent,
+    globals: &Query<&GlobalTransform>,
+) -> Option<Vec3> {
+    let mut joints = skeleton
+        .bones()
+        .iter()
+        .filter_map(|bone| bone.entity())
+        .filter_map(|bone| Some(globals.get_entity(bone)?.translation()));
+    let first = joints.next()?;
+    let (min, max) = joints.fold((first, first), |(min, max), joint| {
+        (min.min(joint), max.max(joint))
+    });
+    Some((min + max) * 0.5)
+}
+
 fn follow_root(
     skeletons: Query<(Entity, &SkeletonComponent)>,
     globals: Query<&GlobalTransform>,
     cameras: Query<&mut OrbitCamera>,
     mut followed: SystemLocal<FollowedRoot>,
 ) {
-    let found = first_rooted(skeletons.iter())
+    let skeleton = first_rooted(skeletons.iter());
+    let found = skeleton
         .and_then(SkeletonComponent::root)
         .and_then(|root| Some((root, globals.get_entity(root)?.translation())));
     let last = std::mem::replace(&mut followed.last, found);
@@ -224,7 +241,11 @@ fn follow_root(
                 let moved = at - from;
                 orbit.target += moved - Vec3::Y * moved.dot(Vec3::Y);
             }
-            _ => orbit.target = at,
+            _ => {
+                orbit.target = skeleton
+                    .and_then(|skeleton| middle_of_bones(skeleton, &globals))
+                    .unwrap_or(at)
+            }
         }
     }
 }
@@ -421,6 +442,7 @@ mod tests {
     const DRIVEN_REST: Vec3 = Vec3::new(0.0, 0.5, 0.0);
     const DRIVEN_END: Vec3 = Vec3::new(2.0, 0.5, 0.0);
     const STILL_AT: Vec3 = Vec3::new(7.0, 8.0, 9.0);
+    const BONES_MIDDLE: Vec3 = Vec3::new(3.5, 5.25, 4.5);
     const NEAR: f32 = 1e-4;
 
     fn keys(from: Vec3, to: Vec3) -> AnimationChannel {
@@ -801,14 +823,14 @@ mod tests {
     }
 
     #[test]
-    fn the_first_frame_with_a_root_targets_it() {
+    fn the_first_frame_with_a_root_targets_the_middle_of_its_bones() {
         let mut stage = Stage::new();
         let camera = stage.camera();
         stage.rig();
 
         stage.frame();
 
-        assert!(stage.target(camera).abs_diff_eq(ROOT_REST, NEAR));
+        assert!(stage.target(camera).abs_diff_eq(BONES_MIDDLE, NEAR));
     }
 
     #[test]
@@ -827,7 +849,7 @@ mod tests {
         assert!(
             stage
                 .target(camera)
-                .abs_diff_eq(ROOT_REST + Vec3::new(moved.x, 0.0, moved.z), NEAR)
+                .abs_diff_eq(BONES_MIDDLE + Vec3::new(moved.x, 0.0, moved.z), NEAR)
         );
     }
 
@@ -842,7 +864,7 @@ mod tests {
         stage.seek(2.0);
         stage.frame();
 
-        assert!(stage.target(camera).abs_diff_eq(ROOT_REST, NEAR));
+        assert!(stage.target(camera).abs_diff_eq(BONES_MIDDLE, NEAR));
     }
 
     #[test]
@@ -859,7 +881,7 @@ mod tests {
         stage.world.trigger(SetRootMotion(false));
         stage.frame();
 
-        assert!(stage.target(camera).abs_diff_eq(ROOT_REST, NEAR));
+        assert!(stage.target(camera).abs_diff_eq(BONES_MIDDLE, NEAR));
     }
 
     #[test]
@@ -877,7 +899,7 @@ mod tests {
         assert!(
             stage
                 .target(camera)
-                .abs_diff_eq(Vec3::new(5.0, 1.0, 0.0), NEAR)
+                .abs_diff_eq(BONES_MIDDLE + Vec3::new(5.0, 0.0, 0.0), NEAR)
         );
     }
 
@@ -1104,7 +1126,7 @@ mod tests {
             .iter(world)
             .next()
             .unwrap();
-        assert!(orbit.target.abs_diff_eq(ROOT_REST, 0.1));
+        assert!(orbit.target.abs_diff_eq(BONES_MIDDLE, 0.1));
         assert!(bones.contains(&ClipPreviewBones {
             bones: 3,
             driven: 2

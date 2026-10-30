@@ -493,3 +493,25 @@ fn a_handle_type_the_scene_never_registered_has_no_picker() {
     let properties = InspectorRegistry::default().collect(&MeshComponent::default(), &types);
     assert_eq!(properties[0].editor_type, None);
 }
+
+#[test]
+fn the_menus_rows_sit_edge_to_edge_so_its_height_fits_them() {
+    let mut p = picking();
+    let button = p.button();
+    p.click(button);
+    let (item, _) = p.items()[0].clone();
+
+    let list =
+        p.f.world
+            .get_component_for_entity::<ChildOf>(item)
+            .unwrap()
+            .parent();
+
+    assert_eq!(
+        p.f.world
+            .get_component_for_entity::<UINode>(list)
+            .unwrap()
+            .gap,
+        glam::Vec2::ZERO
+    );
+}
