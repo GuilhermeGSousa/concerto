@@ -420,6 +420,18 @@ fn a_frame_range_trims_the_clip_and_rebases_its_times() {
 }
 
 #[test]
+fn the_clip_stores_the_frame_rate_from_the_frame_time() {
+    let (_, clip) = import_ok("rate.bvh", TWO_JOINTS, "");
+    assert_eq!(clip.frame_rate(), Some(30.0));
+}
+
+#[test]
+fn a_trimmed_clip_stores_the_frame_rate() {
+    let (_, clip) = import_ok("rate_trim.bvh", TWO_JOINTS, "frame_range = [1, 3]");
+    assert_eq!(clip.frame_rate(), Some(30.0));
+}
+
+#[test]
 fn a_bone_id_is_the_hash_of_the_joint_name_path() {
     let (skeleton, clip) = import_ok("ids.bvh", TWO_JOINTS, "");
     assert_eq!(skeleton.bone_ids[0], path_id("Hips"));
