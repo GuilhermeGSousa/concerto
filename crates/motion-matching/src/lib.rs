@@ -8,6 +8,7 @@ pub mod features;
 pub mod filter;
 pub mod plugin;
 pub mod query;
+pub mod search;
 pub mod simulation;
 pub mod systems;
 
@@ -26,4 +27,5 @@ pub use features::{
 };
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
+pub use search::{excluded_tail, search};
 pub use simulation::{predict_trajectory, CharacterSimulation, DesiredMotion, TrajectorySample};
