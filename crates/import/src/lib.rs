@@ -220,7 +220,7 @@ fn import_placed(
             .collect(),
     ));
     let memo = Arc::clone(&ids);
-    let resolver: SubAssetIdResolver = Box::new(move |sub_name| {
+    let resolver: SubAssetIdResolver = Box::new(move |sub_name, _old_name| {
         *memo
             .lock()
             .expect("sub-asset identity memo poisoned")
