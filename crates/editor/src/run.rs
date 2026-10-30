@@ -6,9 +6,46 @@ use concerto_app::{
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
 };
 
-use crate::EditorPlugin;
+use crate::{
+    EditorPlugin,
+    reload::{ReloadSetup, ReloadTarget, RestartSlot, Session, SessionRestore},
+};
 
 const MCP_SIZE: (u32, u32) = (1600, 900);
+
+/// The editor crate a game's `main` lives in, as `editor_crate!()` names it at compile time.
+#[derive(Clone, Copy, Debug)]
+pub struct EditorCrate {
+    /// The editor crate's directory, holding its `Cargo.toml`.
+    pub manifest_dir: &'static str,
+    /// The editor crate's package name.
+    pub package: &'static str,
+    /// The name of the binary the editor runs as.
+    pub bin: &'static str,
+    /// The cargo that built the editor.
+    pub cargo: &'static str,
+}
+
+impl EditorCrate {
+    /// The game's directory, the parent of the editor crate's.
+    pub fn project_root(&self) -> PathBuf {
+        let manifest_dir = std::path::Path::new(self.manifest_dir);
+        manifest_dir.parent().unwrap_or(manifest_dir).to_path_buf()
+    }
+}
+
+/// Names the calling editor crate, for `concerto_editor::run`.
+#[macro_export]
+macro_rules! editor_crate {
+    () => {
+        $crate::EditorCrate {
+            manifest_dir: env!("CARGO_MANIFEST_DIR"),
+            package: env!("CARGO_PKG_NAME"),
+            bin: env!("CARGO_BIN_NAME"),
+            cargo: env!("CARGO"),
+        }
+    };
+}
 
 fn usage(program: Option<OsString>) -> String {
     let name = program
@@ -16,7 +53,7 @@ fn usage(program: Option<OsString>) -> String {
         .and_then(|program| std::path::Path::new(program).file_stem())
         .map_or_else(|| "editor".into(), |stem| stem.to_string_lossy());
     format!(
-        "Usage: {name} [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+        "Usage: {name} [--project <directory>] [--decorated] [--restore-session <directory>] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
     )
 }
 
@@ -24,6 +61,7 @@ pub(crate) struct Options {
     pub(crate) project: PathBuf,
     pub(crate) decorated: bool,
     pub(crate) mcp: Option<(u32, u32)>,
+    pub(crate) restore: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -52,6 +90,7 @@ pub(crate) fn parse_args(
     let mut decorated = false;
     let mut mcp = false;
     let mut mcp_size = None;
+    let mut restore = None;
     let mut args = args.into_iter();
     while let Some(argument) = args.next() {
         if argument == "--project" {
@@ -59,6 +98,14 @@ pub(crate) fn parse_args(
                 .next()
                 .ok_or_else(|| ArgsError::Usage("--project requires a directory".to_string()))?
                 .into();
+        } else if argument == "--restore-session" {
+            restore = Some(
+                args.next()
+                    .ok_or_else(|| {
+                        ArgsError::Usage("--restore-session requires a directory".to_string())
+                    })?
+                    .into(),
+            );
         } else if argument == "--decorated" {
             decorated = true;
         } else if argument == "--mcp" {
@@ -79,10 +126,16 @@ pub(crate) fn parse_args(
     if mcp_size.is_some() && !mcp {
         return Err(ArgsError::Usage("--mcp-size requires --mcp".to_string()));
     }
+    if restore.is_some() && mcp {
+        return Err(ArgsError::Usage(
+            "--restore-session cannot be used with --mcp".to_string(),
+        ));
+    }
     Ok(Options {
         project,
         decorated,
         mcp: mcp.then(|| mcp_size.unwrap_or(MCP_SIZE)),
+        restore,
     })
 }
 
@@ -91,6 +144,7 @@ pub(crate) fn register_editor(
     recipe: fn(&mut App),
     project: PathBuf,
     decorated: bool,
+    reload: ReloadSetup,
 ) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -102,16 +156,18 @@ pub(crate) fn register_editor(
             project: Some(project),
             decorated,
             recipe,
+            reload,
         })
         .register_plugin(concerto_ui::plugin::UIPlugin);
 }
 
-/// Opens the editor for the game whose recipe is `recipe`, on the project at `project_root` unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
-pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
+/// Opens the editor for the game whose recipe is `recipe`, on the project above `editor`'s crate unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
+pub fn run(recipe: fn(&mut App), editor: EditorCrate) {
     let _ = env_logger::try_init();
     let mut arguments = std::env::args_os();
     let program = arguments.next();
-    let options = match parse_args(arguments, project_root.into()) {
+    let original: Vec<OsString> = arguments.collect();
+    let options = match parse_args(original.iter().cloned(), editor.project_root()) {
         Ok(options) => options,
         Err(ArgsError::Help) => {
             println!("{}", usage(program));
@@ -124,9 +180,36 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
     };
     match options.mcp {
         Some(size) => concerto_mcp::host::run(crate::mcp::editor(recipe, options.project), size),
-        None => concerto_winit::run(move |app| {
-            register_editor(app, recipe, options.project, options.decorated);
-        }),
+        None => {
+            let restart = RestartSlot::default();
+            let (restore, restore_error) = match &options.restore {
+                None => (None, None),
+                Some(dir) => match Session::read(dir) {
+                    Ok(session) => (Some(SessionRestore::new(session, dir.clone())), None),
+                    Err(error) => (
+                        None,
+                        Some(format!(
+                            "Could not restore the session in {}: {error:#}",
+                            dir.display()
+                        )),
+                    ),
+                },
+            };
+            let reload = ReloadSetup {
+                target: std::env::current_exe()
+                    .map_err(|error| format!("Reload cannot find the running editor: {error}"))
+                    .and_then(|exe| ReloadTarget::locate(&editor, &exe)),
+                restart: restart.clone(),
+                restore,
+                restore_error,
+            };
+            concerto_winit::run(move |app| {
+                register_editor(app, recipe, options.project, options.decorated, reload);
+            });
+            if let Some(restart) = restart.take() {
+                crate::reload::replace_process(restart, &original);
+            }
+        }
     }
 }
 
@@ -134,7 +217,7 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
 mod tests {
     use std::{ffi::OsString, path::PathBuf};
 
-    use super::{ArgsError, parse_args, usage};
+    use super::{ArgsError, EditorCrate, parse_args, usage};
 
     fn args(list: &[&str]) -> Vec<OsString> {
         list.iter().map(OsString::from).collect()
@@ -233,14 +316,61 @@ mod tests {
     }
 
     #[test]
+    fn the_editor_crate_names_the_project_above_it() {
+        let editor = EditorCrate {
+            manifest_dir: "/games/my-game/editor",
+            package: "my-game-editor",
+            bin: "my-game-editor",
+            cargo: "/usr/bin/cargo",
+        };
+        assert_eq!(editor.project_root(), PathBuf::from("/games/my-game"));
+    }
+
+    #[test]
     fn the_usage_names_the_running_binary() {
         assert_eq!(
             usage(Some(OsString::from("/game/target/debug/my-game-editor"))),
-            "Usage: my-game-editor [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+            "Usage: my-game-editor [--project <directory>] [--decorated] [--restore-session <directory>] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
         );
         assert_eq!(
             usage(None),
-            "Usage: editor [--project <directory>] [--decorated] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
+            "Usage: editor [--project <directory>] [--decorated] [--restore-session <directory>] [--mcp [--mcp-size <width>x<height>]] [-h | --help]"
         );
+    }
+
+    #[test]
+    fn restore_session_is_read() {
+        let options = parse_args(
+            args(&["--project", "copy", "--restore-session", "sessions/a"]),
+            PathBuf::from("game"),
+        )
+        .unwrap();
+        assert_eq!(options.restore, Some(PathBuf::from("sessions/a")));
+        assert_eq!(options.project, PathBuf::from("copy"));
+        assert_eq!(
+            parse_args(args(&[]), PathBuf::from("game"))
+                .unwrap()
+                .restore,
+            None
+        );
+    }
+
+    #[test]
+    fn restore_session_requires_a_directory() {
+        assert!(matches!(
+            parse_args(args(&["--restore-session"]), PathBuf::new()),
+            Err(ArgsError::Usage(_))
+        ));
+    }
+
+    #[test]
+    fn restore_session_is_refused_with_mcp() {
+        assert!(matches!(
+            parse_args(
+                args(&["--mcp", "--restore-session", "sessions/a"]),
+                PathBuf::new()
+            ),
+            Err(ArgsError::Usage(_))
+        ));
     }
 }

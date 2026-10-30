@@ -34,7 +34,7 @@ const GRIP: f32 = 6.0;
 const CORNER: f32 = 14.0;
 const GRIP_LAYER: i32 = 100;
 const DRAG_LAYER: i32 = 50;
-const CONTROL_LAYER: i32 = 60;
+pub(crate) const CONTROL_LAYER: i32 = 60;
 
 /// Marks an interactive title-strip control that must block window dragging.
 #[derive(Component, Clone, Copy, Default)]

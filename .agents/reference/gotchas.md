@@ -291,6 +291,10 @@ fix the entry in the same commit as the change that made it false.
   schedule is safe only because `TaskPool::scope` re-raises a task's panic
   after every task it spawned has finished; the panicked system's dependants
   never run.
+- **A reload is a new process.** Only what the session holds survives it:
+  anything kept in a resource or a component of the editor `App` starts over,
+  so new state that must survive a reload goes into `Session`
+  (`crates/editor/src/reload/session.rs`).
 - **Asynchronous editor work must check its request** before it mutates
   anything: capture the `AssetEntry` it was started for and pass it to
   `asset_request_is_current`. A result for a replaced or cancelled request is

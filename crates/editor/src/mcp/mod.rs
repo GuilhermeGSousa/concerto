@@ -33,7 +33,8 @@ use crate::{
 /// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project`, with [`McpPlugin`] and [`EditorMcpPlugin`].
 pub fn editor(recipe: fn(&mut App), project: PathBuf) -> impl FnOnce(&mut App) {
     move |app| {
-        crate::run::register_editor(app, recipe, project, false);
+        let reload = crate::reload::ReloadSetup::unavailable("Reload is not available under --mcp");
+        crate::run::register_editor(app, recipe, project, false, reload);
         app.register_plugin(McpPlugin)
             .register_plugin(EditorMcpPlugin);
     }

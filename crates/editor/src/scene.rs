@@ -210,7 +210,7 @@ pub(crate) fn follow_unsaved_edits(
     }
 }
 
-fn has_unsaved_edits(world: &World, document: Entity) -> bool {
+pub(crate) fn has_unsaved_edits(world: &World, document: Entity) -> bool {
     world
         .get_component_for_entity::<Unsaved>(document)
         .is_some()
@@ -261,7 +261,7 @@ fn save_scene(on: On<SaveScene>, world: &mut World) {
     let _ = save(world, on.signal().document);
 }
 
-fn save(world: &mut World, document: Entity) -> Result<(), String> {
+pub(crate) fn save(world: &mut World, document: Entity) -> Result<(), String> {
     match save_document(world, document) {
         Ok(asset) => {
             set_status(world, document, format!("Saved {}", asset.address));

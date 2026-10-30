@@ -8,7 +8,7 @@ compiled together with your game's library, by a small crate in your project,
 
 ```rust
 fn main() {
-    concerto_editor::run(my_game::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run(my_game::game, concerto_editor::editor_crate!());
 }
 ```
 
@@ -42,6 +42,13 @@ it to an AI agent (below).
 - **Play** with the button on the Scene tab, or Ctrl+P. The game is built from
   your recipe and starts in the open scene. Stop returns to the scene exactly
   as it was; changes made while playing are not kept.
+- **Reload** your game's code with the Reload button at the top right, or
+  Ctrl+R, after changing it. The editor builds its own crate again, saves your
+  scenes first, then restarts into the new build with the same scenes, tabs,
+  selection, camera and window. While it builds, the button reads Cancel. A
+  build that fails leaves the editor running and opens a list of the
+  compiler's errors; Escape closes it, and a click on the status bar opens it
+  again.
 
 ## Three kinds of App
 

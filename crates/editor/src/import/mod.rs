@@ -218,6 +218,17 @@ impl ImportPicker {
     pub fn is_picking(&self) -> bool {
         self.job.is_some()
     }
+
+    #[cfg(test)]
+    pub(crate) fn picking_for_test(release: std::sync::mpsc::Receiver<()>) -> Self {
+        Self {
+            job: Some(std::thread::spawn(move || {
+                let _ = release.recv();
+                None
+            })),
+            requested: false,
+        }
+    }
 }
 
 /// Turns the picker's result into validated staging rows.

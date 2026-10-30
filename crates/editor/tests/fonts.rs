@@ -63,6 +63,7 @@ fn every_icon_constant_exists_in_the_phosphor_face() {
         ("X", X),
         ("DOTS_THREE", DOTS_THREE),
         ("DOT", DOT),
+        ("ARROW_CLOCKWISE", ARROW_CLOCKWISE),
     ];
     for (name, icon) in icons {
         let ids = glyph_ids(&icon.to_string(), concerto_editor::fonts::PHOSPHOR);

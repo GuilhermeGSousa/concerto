@@ -14,6 +14,7 @@ pub mod inspector;
 pub mod marks;
 pub mod mcp;
 pub mod project;
+pub mod reload;
 mod run;
 pub mod scene;
 pub mod shell;
@@ -25,7 +26,7 @@ pub mod window_chrome;
 mod workspace;
 
 use concerto_mesh::MeshComponent;
-pub use run::run;
+pub use run::{EditorCrate, run};
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
@@ -38,6 +39,8 @@ pub struct EditorPlugin {
     pub decorated: bool,
     /// What the `App` of each scene being edited is built from.
     pub recipe: fn(&mut App),
+    /// How the editor builds its own crate again when asked to reload game code.
+    pub reload: reload::ReloadSetup,
 }
 
 impl Plugin for EditorPlugin {
@@ -53,6 +56,7 @@ impl Plugin for EditorPlugin {
         app.register_plugin(hierarchy::HierarchyPlugin);
         app.register_plugin(content::ContentPlugin);
         app.register_plugin(import::ImportPlugin);
+        app.register_plugin(reload::ReloadPlugin(self.reload.clone()));
         app.register_plugin(diagnostics::DiagnosticsPlugin);
         app.register_plugin(inspector::InspectorPlugin);
         app.insert_resource(asset_editor::AssetEditorRegistry::default());
@@ -95,11 +99,17 @@ impl Plugin for EditorPlugin {
         app.register_type::<MeshComponent>();
         app.register_plugin(AssetPickerPlugin);
 
-        if let Some(path) = &self.project {
+        let project = self
+            .reload
+            .restore
+            .as_ref()
+            .map(|restore| restore.project().to_path_buf())
+            .or_else(|| self.project.clone());
+        if let Some(path) = project {
             app.get_resource_mut::<project::EditorCommands>()
                 .expect("EditorCommands was just inserted")
                 .0
-                .push_back(project::EditorCommand::OpenProject(path.clone()));
+                .push_back(project::EditorCommand::OpenProject(path));
         }
     }
 }

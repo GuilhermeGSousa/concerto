@@ -25,6 +25,11 @@ define_action!(
 );
 
 define_action!(
+    /// Build the game's editor crate again.
+    ReloadGameCode
+);
+
+define_action!(
     /// Delete the selected entity and its descendants.
     DeleteEntity
 );
@@ -48,6 +53,10 @@ define_action!(
     /// Close the unsaved-changes prompt without acting.
     DismissPrompt
 );
+define_action!(
+    /// Close the list of the last build's errors.
+    DismissBuildErrors
+);
 
 define_action!(
     /// Queue the staged imports and close the import dialog.
@@ -65,6 +74,10 @@ define_context!(
 define_context!(
     /// Active while the import dialog is open.
     ImportDialogContext
+);
+define_context!(
+    /// Active while the list of the last build's errors is open.
+    BuildErrorsContext
 );
 define_context!(
     /// Active while the pointer is over the 3D viewport.
@@ -86,7 +99,13 @@ impl Plugin for ActionsPlugin {
 fn install_default_bindings(mut actions: ResMut<ActionMap>) {
     actions.bind_global(Save, Shortcut::ctrl(KeyCode::KeyS));
     actions.bind_global(TogglePlay, Shortcut::ctrl(KeyCode::KeyP));
+    actions.bind_global(ReloadGameCode, Shortcut::ctrl(KeyCode::KeyR));
     actions.bind(DismissPrompt, Shortcut::key(KeyCode::Escape), PromptContext);
+    actions.bind(
+        DismissBuildErrors,
+        Shortcut::key(KeyCode::Escape),
+        BuildErrorsContext,
+    );
     actions.bind(
         ConfirmImport,
         Shortcut::key(KeyCode::Enter),
@@ -166,6 +185,18 @@ mod tests {
         assert_eq!(
             actions.resolve(Shortcut::ctrl(KeyCode::KeyP)),
             Some(TogglePlay.intern())
+        );
+    }
+
+    #[test]
+    fn ctrl_r_reloads_wherever_the_editor_is() {
+        let mut world = bound();
+        let actions = world.get_resource_mut::<ActionMap>().unwrap();
+        actions.push_context(ViewportContext);
+
+        assert_eq!(
+            actions.resolve(Shortcut::ctrl(KeyCode::KeyR)),
+            Some(ReloadGameCode.intern())
         );
     }
 
