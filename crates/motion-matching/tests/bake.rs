@@ -2,8 +2,8 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    bake, contacts, local_velocities, model_pose, model_velocities, plan_entries, reexpress_roots,
-    sample_pose, simulation_bone,
+    bake, contacts, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose,
+    simulation_bone,
 };
 use concerto_motion_matching::{
     BakeError, ContactSettings, FeatureChannel, FrameContext, MotionDatabaseDefinition,
@@ -388,18 +388,6 @@ fn moving_locals(frames: usize, step: Vec3, turn: f32) -> Vec<Vec<JointPose>> {
 }
 
 #[test]
-fn constant_velocity_is_recovered_including_at_the_ends() {
-    let locals = moving_locals(5, Vec3::new(0.0, 0.0, -0.5), 0.1);
-    let (linear, angular) = local_velocities(&locals, 10.0);
-    for (linear, angular) in linear.iter().zip(&angular) {
-        assert!(linear[0].distance(Vec3::new(0.0, 0.0, -5.0)) < 1e-4);
-        assert!(angular[0].distance(Vec3::new(0.0, 1.0, 0.0)) < 1e-4);
-        assert_eq!(linear[1], Vec3::ZERO);
-        assert_eq!(angular[1], Vec3::ZERO);
-    }
-}
-
-#[test]
 fn model_velocities_follow_the_parent_chain() {
     let skeleton = skeleton();
     let model: Vec<Vec<Transform>> = moving_locals(4, Vec3::new(1.0, 0.0, 0.0), 0.0)
@@ -477,6 +465,24 @@ impl FeatureChannel for ProbeChannel {
 
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
+struct PoseChannel {
+    unused: f32,
+}
+
+impl FeatureChannel for PoseChannel {
+    fn dims(&self) -> usize {
+        10
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0..3].copy_from_slice(&frame.local_pose[0].translation.to_array());
+        out[3..7].copy_from_slice(&frame.local_pose[0].rotation.to_array());
+        out[7..10].copy_from_slice(&frame.local_pose[1].translation.to_array());
+    }
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct PairChannel {
     gain: f32,
 }
@@ -496,6 +502,7 @@ fn probe_registry() -> TypeRegistry {
     let mut registry = TypeRegistry::default();
     registry.register::<ProbeChannel>();
     registry.register::<PairChannel>();
+    registry.register::<PoseChannel>();
     registry
 }
 
@@ -503,6 +510,13 @@ fn probe(tag: f32) -> StoredChannel {
     StoredChannel {
         type_name: "ProbeChannel".into(),
         value: to_value(&ProbeChannel { tag }).unwrap(),
+    }
+}
+
+fn pose_channel() -> StoredChannel {
+    StoredChannel {
+        type_name: "PoseChannel".into(),
+        value: to_value(&PoseChannel { unused: 0.0 }).unwrap(),
     }
 }
 
@@ -630,6 +644,7 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     assert_eq!(database.entry_of(30), Some(1));
     assert_eq!(database.range_of(30), Some(30..60));
     assert_eq!(database.clip_time(30), Some((1, 0.5)));
+    assert_eq!(database.contact_bones(), &[2]);
     assert_eq!(database.contacts(10).len(), 1);
     assert!(database.contacts(10)[0]);
     assert_eq!(database.feature_dims(), 5);
@@ -661,6 +676,130 @@ fn simulation_settings_are_checked_even_without_entries() {
         Some(BakeError::InvalidWindow {
             name: "facing_window",
             window: 4
+        })
+    );
+}
+
+fn turning_clip(duration: f32) -> AnimationClip {
+    let mut clip = walk_clip(duration);
+    clip.add_channel(
+        Uuid::from_u128(2),
+        AnimationChannel::new(
+            vec![0.0, duration],
+            AnimationChanelOutput::Rotation(vec![Quat::IDENTITY, Quat::from_rotation_y(1.0)]),
+        ),
+    );
+    clip
+}
+
+#[test]
+fn a_frames_pose_equals_the_pose_the_bake_gave_the_channels() {
+    let skeleton = body_skeleton();
+    let first = walk_clip(1.0);
+    let second = turning_clip(2.0);
+    let mut definition = baking_definition(
+        vec![entry(None), entry(Some((0.5, 1.5)))],
+        vec![pose_channel()],
+    );
+    definition.speed = 1.5;
+    let clips = [&first, &second];
+
+    let database = bake(&definition, &skeleton, &clips, &probe_registry()).unwrap();
+
+    assert!(database.frame_count() >= 40);
+    for frame in 0..database.frame_count() {
+        let pose = database.pose(frame, &skeleton, &clips).unwrap();
+        let features = database.features(frame);
+        assert_eq!(pose.len(), 3);
+        assert_eq!(pose[0].translation.to_array(), features[0..3]);
+        assert_eq!(pose[0].rotation.to_array(), features[3..7]);
+        assert_eq!(pose[1].translation.to_array(), features[7..10]);
+    }
+}
+
+#[test]
+fn a_pose_is_expressed_relative_to_the_simulation_bone() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(2.0);
+    let definition = baking_definition(vec![entry(None)], Vec::new());
+    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+
+    let pose = database.pose(20, &skeleton, &[&clip]).unwrap();
+
+    let (_, time) = database.clip_time(20).unwrap();
+    let model = model_pose(&skeleton, &sample_pose(&skeleton, &clip, time));
+    let root = Transform::from_translation_rotation_scale(
+        pose[0].translation,
+        pose[0].rotation,
+        pose[0].scale,
+    );
+    let composed = database.simulation(20) * root;
+    assert!((composed.translation - model[0].translation).length() < 1e-5);
+    assert!(composed.rotation.angle_between(model[0].rotation) < 1e-5);
+    assert_eq!(pose[1], skeleton.rest_pose[1]);
+}
+
+#[test]
+fn clip_time_follows_speed_and_rate() {
+    let skeleton = body_skeleton();
+    let first = walk_clip(1.0);
+    let second = walk_clip(2.0);
+    let mut definition = baking_definition(vec![entry(None), entry(Some((0.5, 1.5)))], Vec::new());
+    definition.speed = 2.0;
+
+    let database = bake(
+        &definition,
+        &skeleton,
+        &[&first, &second],
+        &probe_registry(),
+    )
+    .unwrap();
+
+    assert_eq!(database.frame_count(), 15 + 15);
+    assert_eq!(database.clip_time(0), Some((0, 0.0)));
+    assert_eq!(database.clip_time(3), Some((0, 0.2)));
+    assert_eq!(database.clip_time(15), Some((1, 0.5)));
+    let (entry, time) = database.clip_time(18).unwrap();
+    assert_eq!(entry, 1);
+    assert!((time - 0.7).abs() < 1e-5);
+    assert_eq!(database.clip_time(30), None);
+}
+
+#[test]
+fn a_skeleton_with_another_bone_count_is_an_error() {
+    let database_skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], Vec::new());
+    let database = bake(&definition, &database_skeleton, &[&clip], &probe_registry()).unwrap();
+
+    assert_eq!(
+        database.pose(0, &skeleton(), &[&clip]).err(),
+        Some(BakeError::BoneCountMismatch {
+            expected: 3,
+            actual: 2
+        })
+    );
+}
+
+#[test]
+fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], Vec::new());
+    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+
+    assert_eq!(
+        database.pose(0, &skeleton, &[&clip, &clip]).err(),
+        Some(BakeError::ClipCountMismatch {
+            expected: 1,
+            actual: 2
+        })
+    );
+    assert_eq!(
+        database.pose(30, &skeleton, &[&clip]).err(),
+        Some(BakeError::FrameOutOfRange {
+            frame: 30,
+            frame_count: 30
         })
     );
 }

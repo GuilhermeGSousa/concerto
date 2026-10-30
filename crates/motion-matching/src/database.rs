@@ -4,9 +4,11 @@ use std::ops::Range;
 use concerto_animation::clip::AnimationClip;
 use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
 use concerto_foundation::transform::Transform;
-use concerto_mesh::Skeleton;
+use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
+
+use crate::bake::{model_pose, reexpress_roots, sample_pose};
 
 /// Where one feature channel's values sit in a frame's feature vector.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +142,37 @@ impl MotionDatabase {
         Some((entry, self.clip_starts[entry] + offset))
     }
 
+    /// The local pose of `frame`, sampled from its clip with each parentless bone re-expressed under the simulation bone.
+    ///
+    /// Fails with `BoneCountMismatch` when the skeleton's bone count is not the baked one, `ClipCountMismatch` when `clips` is not one clip per entry, and `FrameOutOfRange` when `frame` is not a baked frame.
+    pub fn pose(
+        &self,
+        frame: usize,
+        skeleton: &Skeleton,
+        clips: &[&AnimationClip],
+    ) -> Result<Vec<JointPose>, BakeError> {
+        if skeleton.bone_count() != self.bone_count {
+            return Err(BakeError::BoneCountMismatch {
+                expected: self.bone_count,
+                actual: skeleton.bone_count(),
+            });
+        }
+        if clips.len() != self.clips.len() {
+            return Err(BakeError::ClipCountMismatch {
+                expected: self.clips.len(),
+                actual: clips.len(),
+            });
+        }
+        let (entry, time) = self.clip_time(frame).ok_or(BakeError::FrameOutOfRange {
+            frame,
+            frame_count: self.frame_count,
+        })?;
+        let mut local = sample_pose(skeleton, clips[entry], time);
+        let model = model_pose(skeleton, &local);
+        reexpress_roots(skeleton, &mut local, &model, self.simulation(frame));
+        Ok(local)
+    }
+
     /// The model-space simulation bone of `frame`.
     pub fn simulation(&self, frame: usize) -> Transform {
         let (translation, rotation) = self.simulation[frame];
@@ -168,6 +201,7 @@ pub enum BakeError {
     ClipHasNoBones { entry: usize },
     ClipCountMismatch { expected: usize, actual: usize },
     BoneCountMismatch { expected: usize, actual: usize },
+    FrameOutOfRange { frame: usize, frame_count: usize },
     UnregisteredChannel(String),
     ChannelValue { type_name: String, reason: String },
     RangeTooShort { entry: usize, frames: usize },
@@ -192,6 +226,9 @@ impl fmt::Display for BakeError {
             }
             BakeError::BoneCountMismatch { expected, actual } => {
                 write!(f, "the database has {expected} bones, {actual} given")
+            }
+            BakeError::FrameOutOfRange { frame, frame_count } => {
+                write!(f, "frame {frame} is outside the {frame_count} baked frames")
             }
             BakeError::UnregisteredChannel(name) => {
                 write!(f, "feature channel type `{name}` is not registered")

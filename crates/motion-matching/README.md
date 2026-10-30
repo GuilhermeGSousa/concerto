@@ -68,7 +68,9 @@ simulation bone. `bake` returns `BakeError`:
 |---|---|
 | `MissingJoint` | a simulation or contact joint name the skeleton lacks |
 | `ClipHasNoBones` | the clip animates none of the skeleton's bones |
-| `ClipCountMismatch` | `clips.len()` differs from `entries.len()` |
+| `ClipCountMismatch` | `clips.len()` differs from `entries.len()`, or from the database's clip count in `pose` |
+| `BoneCountMismatch` | `pose` was given a skeleton whose bone count differs from the baked one |
+| `FrameOutOfRange` | `pose` was given a frame the database did not bake |
 | `UnregisteredChannel` | a channel type name not in the registry, or without `ReflectFeatureChannel` |
 | `ChannelValue` | the stored value does not apply to the channel |
 | `RangeTooShort` | an entry bakes fewer than 2 frames |

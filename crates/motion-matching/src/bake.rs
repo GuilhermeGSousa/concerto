@@ -1,7 +1,6 @@
 use std::f32::consts::{PI, TAU};
 
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
@@ -233,42 +232,6 @@ fn difference_span(frame: usize, frames: usize) -> (usize, usize) {
 
 fn difference_dt(previous: usize, next: usize, rate: f32) -> f32 {
     (next - previous) as f32 / rate
-}
-
-/// Local-space linear and angular bone velocities per frame and bone, by central difference and one-sided at the ends.
-pub fn local_velocities(local: &[Vec<JointPose>], rate: f32) -> (Vec<Vec<Vec3>>, Vec<Vec<Vec3>>) {
-    let frames = local.len();
-    let mut linear = Vec::with_capacity(frames);
-    let mut angular = Vec::with_capacity(frames);
-    for frame in 0..frames {
-        let (previous, next) = difference_span(frame, frames);
-        let bones = local[frame].len();
-        if previous == next {
-            linear.push(vec![Vec3::ZERO; bones]);
-            angular.push(vec![Vec3::ZERO; bones]);
-            continue;
-        }
-        let dt = difference_dt(previous, next, rate);
-        linear.push(
-            (0..bones)
-                .map(|bone| {
-                    (local[next][bone].translation - local[previous][bone].translation) / dt
-                })
-                .collect(),
-        );
-        angular.push(
-            (0..bones)
-                .map(|bone| {
-                    angular_velocity(
-                        local[next][bone].rotation,
-                        local[previous][bone].rotation,
-                        dt,
-                    )
-                })
-                .collect(),
-        );
-    }
-    (linear, angular)
 }
 
 /// Model-space linear bone velocities per frame and bone, by central difference and one-sided at the ends.
