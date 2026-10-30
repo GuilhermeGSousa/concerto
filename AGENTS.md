@@ -50,8 +50,7 @@ cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 ```
 
-Examples are `animation-test`, `physics-test`, `render-test`, `tech-demo`, and
-`ui-showcase`. Sources are imported through the editor's Import…, over a
+Examples are `tech-demo` and `ui-showcase`. Sources are imported through the editor's Import…, over a
 scratch copy of the project; there is no import command line. An example may
 have an `editor/` crate, named `<game>-editor`, that runs the editor over the
 game's library; an editor exists only for a game that has one. Today that is
@@ -67,7 +66,6 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo clippy -p render-test --features terminal -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --workspace
 cargo test -p concerto-physics --no-default-features --features force-rapier

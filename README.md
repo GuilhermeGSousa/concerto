@@ -70,9 +70,6 @@ cargo run -p tech-demo
 | Example | What it shows |
 |---|---|
 | `tech-demo` | A forest with a playable character, a follow camera and animation; the one example with an editor |
-| `animation-test` | A skinned character driven by an animation graph |
-| `physics-test` | Falling spheres, collisions and ray casts, with meshes built in code |
-| `render-test` | Materials, lights and shadows in Sponza |
 | `ui-showcase` | Every UI element on one screen |
 
 The first build compiles Jolt and takes a while. In the browser:

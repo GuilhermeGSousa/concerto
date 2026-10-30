@@ -200,8 +200,8 @@ fix the entry in the same commit as the change that made it false.
 - **Examples share one `target/` directory.** Each copies its `content/` to its
   own `<package>-content/` directory beside the binary. After changing an
   example's sources or content, build that example, not just the workspace.
-- **Large scenes take a long time to load in a debug build.** `render-test`
-  loads Sponza and needs more than 40 seconds before anything but the clear
+- **Large scenes take a long time to load in a debug build.** A scene
+  such as Sponza can need more than 40 seconds before anything but the clear
   colour and the grid appears. That looks exactly like a broken renderer.
 
 ## Editor
