@@ -9,6 +9,7 @@ use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
+use crate::definition::TrajectorySettings;
 
 /// Where one feature channel's values sit in a frame's feature vector.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +27,7 @@ pub struct MotionDatabase {
     clips: Vec<AssetHandle<AnimationClip>>,
     rate: f32,
     speed: f32,
+    trajectory: TrajectorySettings,
     frame_count: usize,
     range_starts: Vec<usize>,
     range_stops: Vec<usize>,
@@ -46,6 +48,7 @@ impl MotionDatabase {
         clips: Vec<AssetHandle<AnimationClip>>,
         rate: f32,
         speed: f32,
+        trajectory: TrajectorySettings,
         frame_count: usize,
         range_starts: Vec<usize>,
         range_stops: Vec<usize>,
@@ -63,6 +66,7 @@ impl MotionDatabase {
             clips,
             rate,
             speed,
+            trajectory,
             frame_count,
             range_starts,
             range_stops,
@@ -104,6 +108,11 @@ impl MotionDatabase {
     /// Clip seconds per database second.
     pub fn speed(&self) -> f32 {
         self.speed
+    }
+
+    /// How the trajectory is sampled for the channels.
+    pub fn trajectory(&self) -> &TrajectorySettings {
+        &self.trajectory
     }
 
     /// The length of one feature vector.
@@ -209,6 +218,7 @@ pub enum BakeError {
     InvalidWindow { name: &'static str, window: usize },
     InvalidRate(f32),
     InvalidSpeed(f32),
+    InvalidSampleDt(f32),
 }
 
 impl fmt::Display for BakeError {
@@ -253,6 +263,9 @@ impl fmt::Display for BakeError {
             }
             BakeError::InvalidRate(rate) => write!(f, "rate {rate} must be positive"),
             BakeError::InvalidSpeed(speed) => write!(f, "speed {speed} must be positive"),
+            BakeError::InvalidSampleDt(dt) => {
+                write!(f, "trajectory sample_dt {dt} must be positive")
+            }
         }
     }
 }

@@ -8,6 +8,7 @@ use concerto_motion_matching::bake::{
 use concerto_motion_matching::{
     BakeError, ContactSettings, FeatureChannel, FrameContext, MotionDatabaseDefinition,
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
+    TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -458,8 +459,8 @@ impl FeatureChannel for ProbeChannel {
 
     fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
         out[0] = self.tag;
-        out[1] = frame.range_index as f32;
-        out[2] = frame.range_simulation.len() as f32;
+        out[1] = frame.model_pose.len() as f32;
+        out[2] = frame.trajectory.len() as f32;
     }
 }
 
@@ -556,7 +557,7 @@ fn a_channel_fills_its_span_for_every_frame() {
     assert_eq!(database.feature_dims(), 3);
     assert_eq!(database.frame_count(), 30);
     for frame in 0..database.frame_count() {
-        assert_eq!(database.features(frame), [7.0, frame as f32, 30.0]);
+        assert_eq!(database.features(frame), [7.0, 3.0, 0.0]);
     }
 }
 
@@ -583,7 +584,35 @@ fn channels_are_laid_out_in_list_order() {
     let features = database.features(4);
     assert_eq!(features[1], 3.0);
     assert_eq!(features[2], 1.0);
-    assert_eq!(features[3], 4.0);
+    assert_eq!(features[3], 3.0);
+}
+
+#[test]
+fn the_trajectory_settings_are_copied_from_the_definition() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let mut definition = baking_definition(vec![entry(None)], Vec::new());
+    definition.trajectory = TrajectorySettings {
+        sample_dt: 0.25,
+        sample_count: 4,
+    };
+
+    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+
+    assert_eq!(database.trajectory(), &definition.trajectory);
+}
+
+#[test]
+fn a_sample_dt_that_is_not_positive_fails_the_bake() {
+    let skeleton = body_skeleton();
+    for sample_dt in [0.0, -0.1, f32::NAN] {
+        let mut definition = baking_definition(Vec::new(), Vec::new());
+        definition.trajectory.sample_dt = sample_dt;
+        let error = bake(&definition, &skeleton, &[], &probe_registry())
+            .err()
+            .unwrap();
+        assert!(matches!(error, BakeError::InvalidSampleDt(_)));
+    }
 }
 
 #[test]
@@ -648,8 +677,8 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     assert_eq!(database.contacts(10).len(), 1);
     assert!(database.contacts(10)[0]);
     assert_eq!(database.feature_dims(), 5);
-    assert_eq!(database.features(31)[1], 1.0);
-    assert_eq!(database.features(31)[2], 30.0);
+    assert_eq!(database.features(31)[1], 3.0);
+    assert_eq!(database.features(31)[2], 0.0);
 
     let simulation = database.simulation(10);
     assert!(simulation.translation.y.abs() < 1e-6);

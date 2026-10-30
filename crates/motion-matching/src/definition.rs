@@ -59,6 +59,22 @@ impl Default for ContactSettings {
     }
 }
 
+/// How the trajectory a channel sees is sampled: `sample_count` points, `sample_dt` seconds apart, starting one step ahead.
+#[derive(Reflect, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TrajectorySettings {
+    pub sample_dt: f32,
+    pub sample_count: usize,
+}
+
+impl Default for TrajectorySettings {
+    fn default() -> Self {
+        Self {
+            sample_dt: 1.0 / 3.0,
+            sample_count: 3,
+        }
+    }
+}
+
 /// A feature channel as stored on a definition: its registered type name and its reflected value.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StoredChannel {
@@ -75,6 +91,7 @@ pub struct MotionDatabaseDefinition {
     pub speed: f32,
     pub simulation: SimulationBoneSettings,
     pub contacts: ContactSettings,
+    pub trajectory: TrajectorySettings,
     pub channels: Vec<StoredChannel>,
 }
 
@@ -87,6 +104,7 @@ impl Default for MotionDatabaseDefinition {
             speed: 1.1,
             simulation: SimulationBoneSettings::default(),
             contacts: ContactSettings::default(),
+            trajectory: TrajectorySettings::default(),
             channels: Vec::new(),
         }
     }

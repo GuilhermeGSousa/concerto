@@ -9,6 +9,7 @@ use crate::{
     database::MotionDatabase,
     definition::{
         ContactSettings, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
+        TrajectorySettings,
     },
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
     systems::{drive_body, predict_trajectory_system, read_back_body},
@@ -24,6 +25,7 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<MotionEntry>()
             .register_type::<SimulationBoneSettings>()
             .register_type::<ContactSettings>()
+            .register_type::<TrajectorySettings>()
             .register_type::<DesiredMotion>()
             .register_type::<TrajectorySample>()
             .register_type::<CharacterSimulation>()

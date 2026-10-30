@@ -5,7 +5,7 @@ use concerto_reflect::{
 };
 use glam::Vec3;
 
-use crate::{database::BakeError, definition::StoredChannel};
+use crate::{database::BakeError, definition::StoredChannel, simulation::TrajectorySample};
 
 /// One group of values a motion database stores per frame; implementors derive `Reflect` and `Default` and declare `#[reflect(FeatureChannel)]`.
 pub trait FeatureChannel: Reflect + Send + Sync + 'static {
@@ -23,8 +23,31 @@ pub struct FrameContext<'a> {
     pub model_pose: &'a [Transform],
     pub model_velocities: &'a [Vec3],
     pub simulation: Transform,
-    pub range_simulation: &'a [Transform],
-    pub range_index: usize,
+    pub body: BodyMotion,
+    pub trajectory: &'a [TrajectorySample],
+}
+
+/// The simulation bone's linear and angular velocity, in the space of `FrameContext::simulation`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BodyMotion {
+    pub velocity: Vec3,
+    pub angular_velocity: Vec3,
+}
+
+/// Runs every channel into its span of `out`, in list order.
+///
+/// `out` must hold exactly the sum of the channels' `dims()` values.
+pub fn extract_features(
+    channels: &[Box<dyn FeatureChannel>],
+    frame: &FrameContext,
+    out: &mut [f32],
+) {
+    let mut offset = 0;
+    for channel in channels {
+        let dims = channel.dims();
+        channel.extract(frame, &mut out[offset..offset + dims]);
+        offset += dims;
+    }
 }
 
 /// Builds a live [`FeatureChannel`] from a stored value and stores one back.

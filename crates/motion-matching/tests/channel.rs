@@ -1,9 +1,10 @@
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::channel::{
-    build_channels, FeatureChannel, FrameContext, ReflectFeatureChannel,
+    build_channels, extract_features, BodyMotion, FeatureChannel, FrameContext,
+    ReflectFeatureChannel,
 };
-use concerto_motion_matching::{BakeError, StoredChannel};
+use concerto_motion_matching::{BakeError, StoredChannel, TrajectorySample};
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
@@ -21,7 +22,7 @@ impl FeatureChannel for ConstantChannel {
     fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
         out[0] = self.value;
         out[1] = self.scale;
-        out[2] = frame.range_index as f32;
+        out[2] = frame.trajectory.len() as f32;
     }
 }
 
@@ -59,19 +60,60 @@ fn a_stored_channel_builds_and_extracts() {
     let locals: Vec<JointPose> = Vec::new();
     let models: Vec<Transform> = Vec::new();
     let velocities = Vec::new();
-    let range_simulation = vec![Transform::default(); 4];
+    let trajectory = vec![TrajectorySample::default(); 2];
     let frame = FrameContext {
         skeleton: &skeleton,
         local_pose: &locals,
         model_pose: &models,
         model_velocities: &velocities,
         simulation: Transform::default(),
-        range_simulation: &range_simulation,
-        range_index: 2,
+        body: BodyMotion::default(),
+        trajectory: &trajectory,
     };
     let mut out = [0.0; 3];
     built[0].extract(&frame, &mut out);
     assert_eq!(out, [2.0, 0.5, 2.0]);
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct TwinChannel {
+    first: f32,
+}
+
+impl FeatureChannel for TwinChannel {
+    fn dims(&self) -> usize {
+        2
+    }
+
+    fn extract(&self, _frame: &FrameContext, out: &mut [f32]) {
+        out[0] = self.first;
+        out[1] = -self.first;
+    }
+}
+
+#[test]
+fn extract_features_lays_channels_out_in_list_order() {
+    let channels: Vec<Box<dyn FeatureChannel>> = vec![
+        Box::new(TwinChannel { first: 9.0 }),
+        Box::new(ConstantChannel {
+            value: 1.0,
+            scale: 2.0,
+        }),
+    ];
+    let skeleton = Skeleton::new(vec![], vec![], vec![], vec![], vec![]).unwrap();
+    let frame = FrameContext {
+        skeleton: &skeleton,
+        local_pose: &[],
+        model_pose: &[],
+        model_velocities: &[],
+        simulation: Transform::default(),
+        body: BodyMotion::default(),
+        trajectory: &[],
+    };
+    let mut out = [f32::NAN; 5];
+    extract_features(&channels, &frame, &mut out);
+    assert_eq!(out, [9.0, -9.0, 1.0, 2.0, 0.0]);
 }
 
 #[test]

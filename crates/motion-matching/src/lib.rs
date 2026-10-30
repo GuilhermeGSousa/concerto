@@ -10,11 +10,14 @@ pub mod simulation;
 pub mod systems;
 
 pub use bake::bake;
-pub use channel::{build_channels, FeatureChannel, FrameContext, ReflectFeatureChannel};
+pub use channel::{
+    build_channels, extract_features, BodyMotion, FeatureChannel, FrameContext,
+    ReflectFeatureChannel,
+};
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{
     ContactSettings, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
-    TimeRange,
+    TimeRange, TrajectorySettings,
 };
 pub use plugin::MotionMatchingPlugin;
 pub use simulation::{predict_trajectory, CharacterSimulation, DesiredMotion, TrajectorySample};

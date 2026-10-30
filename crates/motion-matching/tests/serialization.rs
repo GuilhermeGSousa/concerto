@@ -3,7 +3,7 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
     ContactSettings, MotionDatabase, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
-    StoredChannel, TimeRange,
+    StoredChannel, TimeRange, TrajectorySettings,
 };
 use concerto_reflect::{ReflectedValue, TypeRegistry};
 use glam::{Mat4, Vec3};
@@ -90,6 +90,8 @@ fn definition_defaults_match_the_spec() {
     assert!(definition.contacts.bones.is_empty());
     assert_eq!(definition.contacts.speed_threshold, 0.15);
     assert_eq!(definition.contacts.median_window, 6);
+    assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);
+    assert_eq!(definition.trajectory.sample_count, 3);
 }
 
 #[test]
@@ -118,6 +120,10 @@ fn definition_round_trips_through_bincode() {
             bones: vec!["LeftFoot".into(), "RightFoot".into()],
             speed_threshold: 0.2,
             median_window: 4,
+        },
+        trajectory: TrajectorySettings {
+            sample_dt: 0.5,
+            sample_count: 5,
         },
         channels: vec![StoredChannel {
             type_name: "test::Channel".into(),

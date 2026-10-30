@@ -8,7 +8,7 @@ use glam::{Quat, Vec3};
 use concerto_reflect::TypeRegistry;
 
 use crate::{
-    channel::{build_channels, FrameContext},
+    channel::{build_channels, extract_features, BodyMotion, FrameContext},
     database::{BakeError, ChannelSpan, MotionDatabase},
     definition::{ContactSettings, MotionDatabaseDefinition, SimulationBoneSettings},
     filter::{median_filter, savitzky_golay},
@@ -45,6 +45,9 @@ pub fn plan_entries(
     }
     if !(definition.speed.is_finite() && definition.speed > 0.0) {
         return Err(BakeError::InvalidSpeed(definition.speed));
+    }
+    if !(definition.trajectory.sample_dt.is_finite() && definition.trajectory.sample_dt > 0.0) {
+        return Err(BakeError::InvalidSampleDt(definition.trajectory.sample_dt));
     }
     if clips.len() != definition.entries.len() {
         return Err(BakeError::ClipCountMismatch {
@@ -360,16 +363,11 @@ pub fn bake(
                 model_pose: &models[frame],
                 model_velocities: &model_speeds[frame],
                 simulation: simulation[frame].clone(),
-                range_simulation: &simulation,
-                range_index: frame,
+                body: BodyMotion::default(),
+                trajectory: &[],
             };
             let row = (plan.first_frame + frame) * feature_dims;
-            for (channel, span) in channels.iter().zip(&spans) {
-                channel.extract(
-                    &context,
-                    &mut features[row + span.offset..row + span.offset + span.dims],
-                );
-            }
+            extract_features(&channels, &context, &mut features[row..row + feature_dims]);
         }
         range_starts.push(plan.first_frame);
         range_stops.push(plan.first_frame + plan.frames);
@@ -386,6 +384,7 @@ pub fn bake(
             .collect(),
         rate,
         definition.speed,
+        definition.trajectory,
         frame_count,
         range_starts,
         range_stops,
