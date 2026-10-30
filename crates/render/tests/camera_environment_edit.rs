@@ -96,3 +96,32 @@ fn editing_a_camera_environment_changes_the_camera_uniform() {
     }
     assert_ne!(uniform(&mut app), before);
 }
+
+#[test]
+fn removing_a_camera_environment_restores_the_default_uniform() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let (mut app, camera) = camera_app(&gpu);
+    for _ in 0..3 {
+        app.update();
+    }
+    let before = uniform(&mut app);
+
+    *app.main_mut()
+        .world_mut()
+        .get_component_for_entity_mut::<CameraEnvironment>(camera)
+        .unwrap() = CameraEnvironment::default().with_ambient(Color::WHITE);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_ne!(uniform(&mut app), before);
+
+    app.main_mut()
+        .world_mut()
+        .remove_component::<CameraEnvironment>(camera);
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(uniform(&mut app), before);
+}

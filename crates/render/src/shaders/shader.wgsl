@@ -14,8 +14,6 @@ const SPOT_LIGHT = 1u;
 const DIRECTIONAL_LIGHT = 2u;
 
 const PI = 3.14159265359;
-// Mirrored on the CPU by `camera_environment::DEFAULT_AMBIENT_INTENSITY`.
-const AMBIENT_INTENSITY = 0.03;
 // Roughness below this produces a near-singular specular lobe.
 const MIN_ROUGHNESS = 0.045;
 
@@ -318,8 +316,7 @@ fn pbr_fs(in: VertexOutput) -> vec4<f32> {
         total_light += (kd * diffuse_color / PI + specular) * radiance * NdotL;
     }
 
-    let ambient_light = select(vec3<f32>(AMBIENT_INTENSITY), camera.ambient.rgb, camera.ambient.a > 0.0);
-    let ambient = ambient_light * base_color.rgb * occlusion;
+    let ambient = camera.ambient.rgb * base_color.rgb * occlusion;
     var color = ambient + total_light + emissive;
 
     if camera.fog_color.a > 0.0 {

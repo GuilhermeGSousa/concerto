@@ -3,7 +3,7 @@
 //! handles keeping the `AssetId` the scene referenced.
 use std::collections::HashMap;
 
-use concerto_color::Color;
+use concerto_color::{Color, LinearRgba};
 use concerto_ecs::{component::Component, reflect::SceneCapture, World};
 use concerto_foundation::{
     assets::{handle::AssetHandle, AssetId},
@@ -15,7 +15,7 @@ use concerto_render::{
     assets::material::StandardMaterial,
     components::{
         camera::{Camera, RenderTarget},
-        camera_environment::{CameraEnvironment, Fog},
+        camera_environment::{CameraEnvironment, Fog, DEFAULT_AMBIENT_INTENSITY},
         light::{Light, LightType},
         material::MaterialComponent,
         render_entity::SyncWithRenderWorld,
@@ -112,6 +112,42 @@ fn a_camera_environment_keeps_its_fog_and_ambient() {
         .with_ambient(Color::WHITE);
     let (stored, captured, _) = round_trip(&environment);
     assert_eq!(captured, stored);
+}
+
+#[test]
+fn a_stored_camera_environment_without_ambient_spawns_with_the_default() {
+    let ReflectedValue::Struct(mut fields) = to_value(&CameraEnvironment::default()).unwrap()
+    else {
+        panic!("a camera environment is a struct");
+    };
+    let ambient = fields
+        .iter()
+        .position(|(name, _)| name == "ambient")
+        .expect("ambient is stored");
+    let (_, ambient) = fields.remove(ambient);
+    assert!(matches!(ambient, ReflectedValue::Leaf(_)));
+
+    let mut world = world();
+    let entity = world.spawn(());
+    assert!(world.apply_scene_component(
+        std::any::type_name::<CameraEnvironment>(),
+        &ReflectedValue::Struct(fields),
+        entity,
+        &[entity]
+    ));
+
+    let spawned = world
+        .get_component_for_entity::<CameraEnvironment>(entity)
+        .unwrap();
+    assert_eq!(
+        spawned.ambient_light(),
+        LinearRgba::new(
+            DEFAULT_AMBIENT_INTENSITY,
+            DEFAULT_AMBIENT_INTENSITY,
+            DEFAULT_AMBIENT_INTENSITY,
+            1.0
+        )
+    );
 }
 
 #[test]

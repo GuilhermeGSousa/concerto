@@ -628,10 +628,11 @@ picking the active variant changes nothing and leaves the scene saved. An
 and unchecking it sets `None`. The active variant's fields, or the value's when
 an `Option` is `Some`, follow as rows of their own, so a switch that changes
 them rebuilds the card. A row under a tuple field such as `Some`'s `0` takes
-the label of the nearest named field above it, so `CameraEnvironment.ambient`
-shows an "Ambient" checkbox followed by an "Ambient" value row. An editor
-registered for the exact enum or `Option` type with `register_property_editor`
-still takes precedence, and its fields are not shown.
+the label of the nearest named field above it. `CameraEnvironment.fog` shows a
+"Fog" checkbox followed by rows for its fields, Color, Density and Start. An
+editor registered for the exact enum or `Option` type with
+`register_property_editor` still takes precedence, and its fields are not
+shown.
 
 ### Colors
 

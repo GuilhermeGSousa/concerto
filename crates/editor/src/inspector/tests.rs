@@ -1894,6 +1894,7 @@ mod color_rows {
     use concerto_ecs::events::event_channel::EventChannel;
     use concerto_render::components::{CameraEnvironment, Light, camera_environment::Fog};
     use concerto_ui::{
+        checkbox::UICheckbox,
         focus::UIFocusLost,
         material::UIMaterial,
         node::FlexWrap,
@@ -2230,35 +2231,33 @@ mod color_rows {
     }
 
     #[test]
-    fn ambient_is_a_color_row_under_its_toggle() {
+    fn ambient_is_a_color_row() {
         let (mut w, entity) = fixture(CameraEnvironment::default());
-        assert!(row(&mut w.f.world, &["ambient"]).is_some());
+        assert_eq!(
+            only::<UICheckbox>(&mut w.f.world),
+            widget(&mut w.f.world, &["fog"])
+        );
         assert!(row(&mut w.f.world, &["ambient", "0"]).is_none());
 
-        let checkbox = widget(&mut w.f.world, &["ambient"]);
-        click(&mut w.f.world, checkbox);
-        run(&mut w.f.world, send_property_commits);
-        refreshed(&mut w);
-
         assert_eq!(
-            w.get::<CameraEnvironment>(entity).unwrap().ambient,
-            Some(Color::WHITE)
-        );
-        assert_eq!(
-            editor_of(&mut w.f.world, &["ambient", "0"]),
+            editor_of(&mut w.f.world, &["ambient"]),
             Some(TypeId::of::<numeric::NumericFields>())
         );
-        let color = color_row(&mut w.f.world, &["ambient", "0"]);
+        let color = color_row(&mut w.f.world, &["ambient"]);
         let label = children(&w.f.world, color.row)[0];
         assert_eq!(text(&w.f.world, label), "Ambient");
         assert_eq!(letters(&w.f.world, &color), ["R", "G", "B", "A"]);
+        assert_eq!(
+            values(&w.f.world, &color),
+            ["0.030", "0.030", "0.030", "1.000"]
+        );
 
-        submit(&mut w, &["ambient", "0"], 0, "0.1");
+        submit(&mut w, &["ambient"], 0, "0.1");
         run(&mut w.f.world, send_property_commits);
 
         assert_eq!(
             w.get::<CameraEnvironment>(entity).unwrap().ambient,
-            Some(Color::rgba(0.1, 1.0, 1.0, 1.0))
+            Color::rgba(0.1, 0.03, 0.03, 1.0)
         );
     }
 

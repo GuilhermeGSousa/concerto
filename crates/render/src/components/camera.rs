@@ -20,7 +20,10 @@ use wgpu::util::DeviceExt;
 
 use crate::{
     assets::texture::Texture,
-    components::{camera_environment::CameraEnvironment, render_entity::RenderEntity},
+    components::{
+        camera_environment::{CameraEnvironment, DEFAULT_AMBIENT_INTENSITY},
+        render_entity::RenderEntity,
+    },
     device::RenderDevice,
     layouts::CameraLayout,
     queue::RenderQueue,
@@ -115,7 +118,7 @@ impl CameraUniform {
             view_proj: Mat4::IDENTITY,
             fog_color: Vec4::ZERO,
             fog_params: Vec4::ZERO,
-            ambient: Vec4::ZERO,
+            ambient: Vec3::splat(DEFAULT_AMBIENT_INTENSITY).extend(1.0),
         }
     }
 
