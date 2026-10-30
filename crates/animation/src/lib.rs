@@ -23,7 +23,7 @@ mod tests {
     use crate::blackboard::{AnimationBlackboard, AnimationBlackboardValue};
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::AnimationGraphContext;
-    use crate::graph::AnimationGraph;
+    use crate::graph::{AnimationGraph, made_live};
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
         AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineInstance,
@@ -181,26 +181,30 @@ mod tests {
         let movement = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationClipNode::new(movement_clip)),
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
+                movement_clip,
+            ))),
         );
         let jump_start = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(
+            made_live(AnimationGraph::from_node(
                 AnimationClipNode::new(jump_start_clip).with_play_mode(PlayOnce),
-            ),
+            )),
         );
         let air = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationClipNode::new(jump_loop_clip)),
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
+                jump_loop_clip,
+            ))),
         );
         let land = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(
+            made_live(AnimationGraph::from_node(
                 AnimationClipNode::new(jump_land_clip).with_play_mode(PlayOnce),
-            ),
+            )),
         );
 
         // The air state fades in slowly (0.1s) while land snaps in (0.01s), so landing early
@@ -310,12 +314,12 @@ mod tests {
         let a = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationClipNode::new(a_clip)),
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(a_clip))),
         );
         let b = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationClipNode::new(b_clip)),
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(b_clip))),
         );
 
         let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
@@ -397,12 +401,16 @@ mod tests {
         let movement = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationClipNode::new(movement_clip)),
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
+                movement_clip,
+            ))),
         );
         let jump = add_asset(
             &server,
             &mut graphs,
-            AnimationGraph::from_node(AnimationClipNode::new(jump_clip).with_play_mode(PlayOnce)),
+            made_live(AnimationGraph::from_node(
+                AnimationClipNode::new(jump_clip).with_play_mode(PlayOnce),
+            )),
         );
 
         let fsm = AnimationStateMachine::from_initial_state("movement", movement, |transition| {
@@ -515,7 +523,7 @@ mod tests {
                 add_asset(
                     &server,
                     &mut graphs,
-                    AnimationGraph::from_node(AnimationClipNode::new(clip)),
+                    made_live(AnimationGraph::from_node(AnimationClipNode::new(clip))),
                 )
             };
             let a = graph_for(a_clip);

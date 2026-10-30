@@ -9,8 +9,8 @@ use log::warn;
 use crate::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationNodeContext, AnimationNodeIndex},
-    node::{AnimationClipNode, AnimationNode, ErasedAnimationNode, ReflectAnimationNode},
+    graph::{AnimationGraph, AnimationNodeContext, AnimationNodeIndex, SerializedAnimationNode},
+    node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
 
@@ -127,7 +127,7 @@ pub struct BlendSpace2DBuilderContext<'a> {
     pub(crate) graph: &'a mut AnimationGraph,
     pub(crate) output_node_index: AnimationNodeIndex,
     pub(crate) points: Vec<Vec2>,
-    pub(crate) nodes: Vec<Box<dyn ErasedAnimationNode>>,
+    pub(crate) nodes: Vec<SerializedAnimationNode>,
     pub(crate) input: BlendInput,
 }
 
@@ -141,7 +141,7 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
             .index();
 
         for node in self.nodes.into_iter() {
-            self.graph.add_boxed_node(node, blend_space_node);
+            self.graph.add_stored_node(node, blend_space_node);
         }
 
         AnimationNodeContext {
@@ -152,7 +152,7 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
 
     pub fn input<T: AnimationNode>(&mut self, node: T, point: Vec2) -> &mut Self {
         self.points.push(point);
-        self.nodes.push(Box::new(node));
+        self.nodes.push(SerializedAnimationNode::of(&node));
         self
     }
 
@@ -162,7 +162,8 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
         point: Vec2,
     ) -> &mut Self {
         self.points.push(point);
-        self.nodes.push(Box::new(AnimationClipNode::new(clip)));
+        self.nodes
+            .push(SerializedAnimationNode::of(&AnimationClipNode::new(clip)));
         self
     }
 }
