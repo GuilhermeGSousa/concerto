@@ -1,10 +1,10 @@
 use concerto_animation::{
     evaluation::AnimationGraphContext,
-    node::AnimationNode,
+    node::{AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
 use concerto_foundation::assets::handle::AssetHandle;
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
@@ -95,8 +95,7 @@ impl AnimationNode for MotionMatchingNode {
 #[cfg(test)]
 mod tests {
     use concerto_animation::{
-        graph::AnimationGraph,
-        node::{ErasedAnimationNode, ReflectAnimationNode},
+        graph::AnimationGraph, node::ReflectAnimationNode, plugin::register_animation_types,
     };
     use concerto_foundation::assets::handle::AssetHandle;
     use concerto_reflect::TypeRegistry;
@@ -106,6 +105,7 @@ mod tests {
 
     fn registry() -> TypeRegistry {
         let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
         registry.register::<MotionMatchingNode>();
         registry.register::<MotionMatchingTrajectory>();
         registry.register::<AssetHandle<MotionDatabase>>();

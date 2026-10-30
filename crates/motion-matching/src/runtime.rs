@@ -386,7 +386,7 @@ mod tests {
         system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
     };
     use concerto_foundation::{
-        assets::{asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle},
+        assets::{asset_store::AssetStore, handle::AssetHandle, AssetId},
         time::Time,
         transform::Transform,
     };
@@ -795,22 +795,21 @@ mod tests {
         register_runtime(&mut app);
 
         let world = app.main_mut().world_mut();
-        let server = world.get_resource::<AssetServer>().unwrap().clone();
-        let skeleton_handle = server.add(skeleton());
-        let walk_handle = server.add(AnimationClip::default());
-        let turn_handle = server.add(AnimationClip::default());
+        let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
+        let walk_handle = AssetHandle::<AnimationClip>::weak(AssetId::new());
+        let turn_handle = AssetHandle::<AnimationClip>::weak(AssetId::new());
         let database = pace_database(
             1.0,
             skeleton_handle.clone(),
             [walk_handle.clone(), turn_handle.clone()],
         );
-        let database_handle = server.add(database.clone());
+        let database_handle = AssetHandle::<MotionDatabase>::weak(AssetId::new());
         world
             .get_resource_mut::<AssetStore<Skeleton>>()
             .unwrap()
             .insert(skeleton_handle.id(), skeleton());
         {
-            let mut clips = world
+            let clips = world
                 .get_resource_mut::<AssetStore<AnimationClip>>()
                 .unwrap();
             clips.insert(walk_handle.id(), walk_forward());
@@ -830,20 +829,14 @@ mod tests {
             ..Default::default()
         });
         graph.make_live(&type_registry, None).unwrap();
-        let graph_handle = server.add(concerto_animation::graph::AnimationGraph::default());
+        let graph_handle =
+            AssetHandle::<concerto_animation::graph::AnimationGraph>::weak(AssetId::new());
         world
             .get_resource_mut::<AssetStore<concerto_animation::graph::AnimationGraph>>()
             .unwrap()
             .insert(graph_handle.id(), graph);
 
-        let mut player = concerto_animation::player::AnimationPlayer::new(3);
-        {
-            let clips = world.get_resource::<AssetStore<AnimationClip>>().unwrap();
-            let graphs = world
-                .get_resource::<AssetStore<concerto_animation::graph::AnimationGraph>>()
-                .unwrap();
-            player.initialize_graph(graph_handle, clips, graphs);
-        }
+        let player = concerto_animation::player::AnimationPlayer::new(3);
         let entities: Vec<_> = (0..3).map(|_| world.spawn(Transform::IDENTITY)).collect();
         let hips = entities[1];
         let bones = entities
@@ -852,6 +845,7 @@ mod tests {
             .collect();
         world.spawn((
             player,
+            concerto_animation::player::AnimationHandleComponent::new(graph_handle),
             SkeletonComponent {
                 skeleton: skeleton_handle,
                 bones,
@@ -862,6 +856,7 @@ mod tests {
         let schedules = world.remove_resource::<Schedules>().unwrap();
         let compiled = schedules.compile::<SingleThreadedExecutor>(world);
         world.insert_resource(compiled);
+        world.run_schedule(LateUpdate);
         world.run_schedule(LateUpdate);
 
         let expected = database

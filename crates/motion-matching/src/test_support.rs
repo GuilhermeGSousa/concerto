@@ -201,8 +201,6 @@ pub(crate) fn two_clip_database() -> MotionDatabase {
     .unwrap()
 }
 
-pub(crate) const PACE_TAIL: usize = 6;
-
 pub(crate) fn pace_database(
     speed: f32,
     skeleton_handle: AssetHandle<Skeleton>,
