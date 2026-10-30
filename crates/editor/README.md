@@ -46,9 +46,11 @@ names another size. `--decorated` is ignored there, and `--mcp-size` without
 message naming lavapipe.
 
 Frames run on demand, only while a call needs one or the editor is busy: a
-project or scene opening, the edited scene's assets still loading, a game
-starting or playing, a save under way, or text in the panels changed in the
-last frame and may not be drawn yet. An idle editor runs none, so once
+project or scene opening, the assets of the edited scene or the preview in
+front still loading, a game starting or playing, a save under way, or text in
+the panels changed in the last frame and may not be drawn yet. A timeline's
+readout does not count, so a clip that is playing does not keep the editor busy
+and advances only while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
 loads and the panels show what they hold. The tools that look answer between frames, without running one; the
 tools that act run in frames, one at a time, and a second one waits until the

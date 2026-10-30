@@ -92,11 +92,11 @@ fn pause_at(state: &ClipDocument, document: Entity, time: f32, previews: &mut Pr
 
 fn at_the_end(state: &ClipDocument) -> bool {
     let duration = state.facts.duration;
-    state.time >= duration
-        || state
-            .facts
-            .rate
-            .is_some_and(|rate| frame_at(state.time, rate) >= frame_at(duration, rate))
+    let last_frame = state
+        .facts
+        .rate
+        .map(|rate| time_of_frame(frame_at(duration, rate), rate));
+    state.time >= last_frame.unwrap_or(duration).min(duration)
 }
 
 fn toggle_playing(document: Entity) -> Listener<UIClick> {
@@ -966,6 +966,27 @@ mod tests {
         tab.until("the clip never started again", |state| {
             state.playing && state.time < 0.5
         });
+    }
+
+    #[test]
+    fn play_in_the_last_frame_of_a_sparse_clip_carries_on_to_the_end() {
+        let times: Vec<f32> = (0..=3).map(|key| key as f32).collect();
+        let outputs = vec![glam::Vec3::ZERO; times.len()];
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            Uuid::from_u128(1),
+            AnimationChannel::new(times, AnimationChanelOutput::Translation(outputs)),
+        );
+        let mut tab = tab_of_clip(&clip);
+        let inspector = &tab.panels().inspector;
+        let (looping, play) = (inspector.looping, inspector.play);
+        tab.click(looping);
+        tab.paused_at(2.6);
+
+        tab.click(play);
+
+        tab.until("the clip never played", |state| state.playing);
+        assert!(tab.state().time >= 2.6);
     }
 
     #[test]

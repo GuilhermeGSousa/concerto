@@ -473,6 +473,26 @@ mod tests {
     }
 
     #[test]
+    fn the_host_plugin_keeps_a_preview_failure_shown() {
+        let (mut app, document) = editor_app();
+        app.main_mut().world_mut().insert(
+            PreviewFailed("Preview failed: it broke".to_owned()),
+            document,
+        );
+
+        app.update();
+
+        assert_eq!(
+            app.main_mut()
+                .world_mut()
+                .get_component_for_entity::<EditorDocument>(document)
+                .unwrap()
+                .status,
+            "Preview failed: it broke"
+        );
+    }
+
+    #[test]
     fn a_preview_failure_leaves_another_status_alone() {
         let mut f = SceneFixture::new();
         let document = f.request_kind(BrokenPreviewAsset::name());
