@@ -269,8 +269,12 @@ impl AssetServer {
         self.data.handle_provider.request_handle(id)
     }
 
-    pub(crate) fn process_handle_drop(&mut self, id: &AssetId) {
+    pub(crate) fn process_handle_drop(&mut self, id: &AssetId) -> bool {
+        if self.data.handle_provider.has_live_handle(id) {
+            return false;
+        }
         self.data.loaded_assets.write().unwrap().remove(id);
+        true
     }
 
     #[cfg(test)]
@@ -435,6 +439,14 @@ impl AssetHandleProvider {
             .read()
             .unwrap()
             .contains_key(&TypeId::of::<A>())
+    }
+
+    fn has_live_handle(&self, id: &AssetId) -> bool {
+        self.asset_handles
+            .read()
+            .unwrap()
+            .get(id)
+            .is_some_and(|info| info.handle.upgrade().is_some())
     }
 
     pub fn request_handle<A: Asset>(&self, id: AssetId) -> AssetHandle<A> {
