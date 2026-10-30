@@ -38,7 +38,7 @@ impl Collider {
         }
     }
 
-    /// A capsule collider (see [`Collider::Capsule`]).
+    /// A capsule collider: `half_height` is half the length of the cylinder, `radius` that of its caps.
     pub fn capsule(half_height: f32, radius: f32) -> Self {
         Self {
             shared_shape: SharedPhysicsShape::new(PhysicsShape::create_capsule_shape(
