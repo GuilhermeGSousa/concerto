@@ -11,7 +11,12 @@ use crate::{
 };
 
 pub mod blend_space;
+pub mod definition;
 pub mod state_machine;
+
+pub use definition::{
+    AnimationNode, ErasedAnimationNode, NodeInstance, PlaceholderNode, ReflectAnimationNode,
+};
 
 #[derive(Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationPlayMode {
