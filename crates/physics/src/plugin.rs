@@ -1,13 +1,12 @@
 use concerto_app::{
     plugins::Plugin,
-    schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate, Update},
+    schedule_groups::{LateFixedUpdate, LateUpdate, Update},
 };
 
 use crate::{
     collider::register_colliders,
     ground::probe_ground,
     interpolation::interpolate_body_transforms,
-    movement::apply_character_movement,
     physics_pipeline::PhysicsPipeline,
     physics_state::PhysicsState,
     shape::{
@@ -26,7 +25,6 @@ impl Plugin for PhysicsPlugin {
         }
         app.insert_resource(PhysicsState::new())
             .insert_resource(PhysicsMeshShapes::default())
-            .add_system(FixedUpdate, apply_character_movement)
             .add_system(LateFixedUpdate, step_simulation)
             .add_system(LateFixedUpdate, probe_ground)
             .add_system(Update, generate_mesh_shapes)

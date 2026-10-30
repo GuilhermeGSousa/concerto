@@ -1,0 +1,15 @@
+[package]
+name = "concerto-motion-matching"
+version.workspace = true
+edition = "2021"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-app.workspace = true
+concerto-ecs.workspace = true
+concerto-foundation.workspace = true
+concerto-physics.workspace = true
+concerto-reflect.workspace = true
+glam = { version = "0.30.1" }
