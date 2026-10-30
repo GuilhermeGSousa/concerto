@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::collections::HashMap;
 
 use crate::graph::{AnimationGraph, AnimationGraphInstance, AnimationGraphInstances, GraphId};
@@ -9,10 +8,11 @@ use crate::transition::{
 };
 use crate::{
     evaluation::AnimationGraphContext,
-    node::{AnimationNodeInstance, AnimationNodeKind},
+    node::{AnimationNode, ReflectAnimationNode},
 };
 
-use concerto_foundation::{assets::handle::AssetHandle, utils::AsAny};
+use concerto_foundation::assets::handle::AssetHandle;
+use concerto_reflect::Reflect;
 use derive_more::Deref;
 use uuid::Uuid;
 
@@ -21,18 +21,24 @@ pub struct AnimationFSMStateDefinition<'a> {
     pub graph: AssetHandle<AnimationGraph>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationFSMState {
     name: String,
     graph: AssetHandle<AnimationGraph>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationFSMTrigger {
+    #[default]
     Instant,
     OnAnimationEnd,
-    BoolEquals { param: String, value: bool },
-    Vec2NonZero { param: String },
+    BoolEquals {
+        param: String,
+        value: bool,
+    },
+    Vec2NonZero {
+        param: String,
+    },
 }
 
 impl AnimationFSMTrigger {
@@ -56,14 +62,14 @@ pub struct AnimationStateMachineTransitionDefinition<'a> {
     pub blend_time: f32,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationStateMachineTransition {
     next_state: StateId,
     trigger: AnimationFSMTrigger,
     blend_time: f32,
 }
 
-#[derive(Clone, Copy, Deref, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Default, Deref, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct StateId(usize);
 
 impl From<usize> for StateId {
@@ -78,7 +84,8 @@ impl StateId {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
+#[reflect(AnimationNode)]
 pub struct AnimationStateMachine {
     initial_state: StateId,
     states: Vec<AnimationFSMState>,
@@ -186,31 +193,7 @@ impl AnimationStateMachine {
     }
 }
 
-impl AnimationStateMachine {
-    pub(crate) fn create_instance_boxed(
-        &self,
-        creation_context: &AnimationGraphContext,
-    ) -> Box<dyn AnimationNodeInstance> {
-        let mut instanced_internal_graphs = Vec::new();
-        let mut state_names = Vec::new();
-        for fsm_state in &self.states {
-            let mut instanced_internal_graph = AnimationGraphInstance::default();
-            instanced_internal_graph.initialize(fsm_state.graph.clone(), creation_context);
-            instanced_internal_graphs.push(instanced_internal_graph);
-            state_names.push(fsm_state.name.clone());
-        }
-
-        Box::new(AnimationStateMachineInstance::new(
-            self.initial_state,
-            instanced_internal_graphs,
-            state_names,
-            self.blender,
-        ))
-    }
-}
-
-#[derive(AsAny)]
-pub(crate) struct AnimationStateMachineInstance {
+pub struct AnimationStateMachineInstance {
     state_graph_instances: AnimationGraphInstances,
     current_state: StateId,
     state_names: Vec<String>,
@@ -239,7 +222,7 @@ impl AnimationStateMachineInstance {
         }
     }
 
-    pub(crate) fn current_state_name(&self) -> &str {
+    pub fn current_state_name(&self) -> &str {
         self.state_names
             .get(*self.current_state)
             .map(String::as_str)
@@ -269,27 +252,44 @@ impl AnimationStateMachineInstance {
     }
 }
 
-impl AnimationNodeInstance for AnimationStateMachineInstance {
-    fn reset(&mut self) {}
+impl AnimationNode for AnimationStateMachine {
+    type Instance = AnimationStateMachineInstance;
+
+    fn create_instance(
+        &self,
+        context: &AnimationGraphContext<'_>,
+    ) -> AnimationStateMachineInstance {
+        let mut instanced_internal_graphs = Vec::new();
+        let mut state_names = Vec::new();
+        for fsm_state in &self.states {
+            let mut instanced_internal_graph = AnimationGraphInstance::default();
+            instanced_internal_graph.initialize(fsm_state.graph.clone(), context);
+            instanced_internal_graphs.push(instanced_internal_graph);
+            state_names.push(fsm_state.name.clone());
+        }
+
+        AnimationStateMachineInstance::new(
+            self.initial_state,
+            instanced_internal_graphs,
+            state_names,
+            self.blender,
+        )
+    }
 
     fn update(
-        &mut self,
-        node: &AnimationNodeKind,
+        &self,
+        instance: &mut AnimationStateMachineInstance,
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
-        let AnimationNodeKind::StateMachine(fsm) = node else {
-            return;
-        };
-
-        let Some(transitions) = fsm.get_state_transitions(self.current_state) else {
+        let Some(transitions) = self.get_state_transitions(instance.current_state) else {
             return;
         };
 
         for transition in transitions {
             match &transition.trigger {
                 AnimationFSMTrigger::Instant => {
-                    self.transition(context, transition);
+                    instance.transition(context, transition);
                     break;
                 }
                 AnimationFSMTrigger::BoolEquals { param, value } => {
@@ -298,7 +298,7 @@ impl AnimationNodeInstance for AnimationStateMachineInstance {
                         .get_bool(param)
                         .is_some_and(|v| v == *value)
                     {
-                        self.transition(context, transition);
+                        instance.transition(context, transition);
                         break;
                     }
                 }
@@ -308,44 +308,47 @@ impl AnimationNodeInstance for AnimationStateMachineInstance {
                         .get_vec2(param)
                         .is_some_and(|v| v.length_squared() > f32::EPSILON)
                     {
-                        self.transition(context, transition);
+                        instance.transition(context, transition);
                         break;
                     }
                 }
                 AnimationFSMTrigger::OnAnimationEnd => {
-                    if self
+                    if instance
                         .state_graph_instances
-                        .get(self.current_state.as_graph_id())
-                        .is_some_and(|current_graph| current_graph.is_finished())
+                        .get(instance.current_state.as_graph_id())
+                        .is_some_and(|current_graph| current_graph.is_finished(context))
                     {
-                        self.transition(context, transition);
+                        instance.transition(context, transition);
                         break;
                     }
                 }
             }
         }
 
-        self.blender
-            .update(delta_time, &mut self.state_graph_instances, context);
+        instance
+            .blender
+            .update(delta_time, &mut instance.state_graph_instances, context);
     }
 
     fn evaluate(
-        &mut self,
-        _node: &AnimationNodeKind,
+        &self,
+        instance: &mut AnimationStateMachineInstance,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedPose],
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        self.blender.sample(
+        instance.blender.sample(
             bone_ids,
-            &mut self.state_graph_instances,
+            &mut instance.state_graph_instances,
             context,
             pool,
             output,
         );
     }
+
+    fn reset(&self, _instance: &mut AnimationStateMachineInstance) {}
 }
 
 struct FSMStateEntry {

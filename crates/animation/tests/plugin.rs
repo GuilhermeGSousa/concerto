@@ -3,7 +3,7 @@ use std::{thread, time::Duration};
 use concerto_animation::{
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
     graph::AnimationGraph,
-    node::{AnimationClipNode, AnimationNodeKind},
+    node::AnimationClipNode,
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::AnimationPlugin,
 };
@@ -50,6 +50,45 @@ fn registering_the_skeleton_asset_twice_keeps_it_usable() {
     );
 }
 
+#[test]
+fn animation_plugin_registers_the_built_in_nodes_and_handle_types() {
+    use std::any::TypeId;
+
+    use concerto_animation::clip::AnimationClip;
+    use concerto_animation::graph::AnimationGraph;
+    use concerto_animation::node::blend_space::BlendSpace2DNode;
+    use concerto_animation::node::state_machine::AnimationStateMachine;
+    use concerto_animation::node::{
+        AnimationClipNode, BlendNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
+    };
+    use concerto_ecs::reflect::AppTypeRegistry;
+    use concerto_foundation::assets::handle::AssetHandle;
+
+    let mut app = App::new();
+    app.insert_resource(AssetServer::new());
+    app.register_plugin(AnimationPlugin);
+
+    let registry = app.get_resource::<AppTypeRegistry>().unwrap().read();
+    let has_node_data = |id: TypeId| registry.get_type_data::<ReflectAnimationNode>(id).is_some();
+
+    assert!(has_node_data(TypeId::of::<ResultNode>()));
+    assert!(has_node_data(TypeId::of::<BlendNode>()));
+    assert!(has_node_data(TypeId::of::<AnimationClipNode>()));
+    assert!(has_node_data(TypeId::of::<BlendSpace2DNode>()));
+    assert!(has_node_data(TypeId::of::<AnimationStateMachine>()));
+    assert!(has_node_data(TypeId::of::<PlaceholderNode>()));
+    assert!(
+        registry
+            .get(TypeId::of::<AssetHandle<AnimationClip>>())
+            .is_some()
+    );
+    assert!(
+        registry
+            .get(TypeId::of::<AssetHandle<AnimationGraph>>())
+            .is_some()
+    );
+}
+
 fn bone_x_after_a_few_frames(mut app: App) -> f32 {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
@@ -70,9 +109,7 @@ fn bone_x_after_a_few_frames(mut app: App) -> f32 {
         ),
     );
     let clip = server.add(clip);
-    let graph = server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(
-        AnimationClipNode::new(clip),
-    )));
+    let graph = server.add(AnimationGraph::from_node(AnimationClipNode::new(clip)));
     let skeleton = server.add(
         Skeleton::new(
             vec![Mat4::IDENTITY],
