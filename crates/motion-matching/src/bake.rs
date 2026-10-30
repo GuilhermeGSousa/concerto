@@ -318,14 +318,6 @@ pub fn contacts(
     Ok(result)
 }
 
-fn simulation_pose(simulation: &Transform) -> JointPose {
-    JointPose {
-        translation: simulation.translation,
-        rotation: simulation.rotation,
-        scale: simulation.scale,
-    }
-}
-
 /// Bakes a motion database from its definition, the skeleton, one resolved clip per entry and the registry that knows the feature channel types.
 pub fn bake(
     definition: &MotionDatabaseDefinition,
@@ -341,21 +333,8 @@ pub fn bake(
     let channels = build_channels(&definition.channels, registry)?;
     let rate = definition.rate;
 
-    let skeleton_bones = skeleton.bone_count();
-    let bone_count = skeleton_bones + 1;
+    let bone_count = skeleton.bone_count();
     let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
-
-    let mut names = Vec::with_capacity(bone_count);
-    names.push("Simulation".to_string());
-    names.extend(skeleton.names.iter().cloned());
-    let mut parents = Vec::with_capacity(bone_count);
-    parents.push(None);
-    parents.extend(
-        skeleton
-            .parents
-            .iter()
-            .map(|parent| Some(parent.map_or(0, |parent| parent + 1))),
-    );
 
     let contact_joints = definition
         .contacts
@@ -363,10 +342,7 @@ pub fn bake(
         .iter()
         .map(|name| find_joint(skeleton, name))
         .collect::<Result<Vec<_>, _>>()?;
-    let contact_bones: Vec<u16> = contact_joints
-        .iter()
-        .map(|joint| (*joint + 1) as u16)
-        .collect();
+    let contact_bones: Vec<u16> = contact_joints.iter().map(|joint| *joint as u16).collect();
 
     let mut spans = Vec::with_capacity(channels.len());
     let mut feature_dims = 0;
@@ -380,14 +356,12 @@ pub fn bake(
         feature_dims += dims;
     }
 
-    let mut positions = Vec::with_capacity(frame_count * bone_count);
-    let mut rotations = Vec::with_capacity(frame_count * bone_count);
-    let mut velocities = Vec::with_capacity(frame_count * bone_count);
-    let mut angular_velocities = Vec::with_capacity(frame_count * bone_count);
     let mut contact_flags = Vec::with_capacity(frame_count * contact_bones.len());
     let mut features = vec![0.0; frame_count * feature_dims];
     let mut range_starts = Vec::with_capacity(plans.len());
     let mut range_stops = Vec::with_capacity(plans.len());
+    let mut clip_starts = Vec::with_capacity(plans.len());
+    let mut simulation_frames = Vec::with_capacity(frame_count);
 
     for (plan, clip) in plans.iter().zip(clips) {
         let locals: Vec<Vec<JointPose>> = (0..plan.frames)
@@ -410,27 +384,11 @@ pub fn bake(
             reexpress_roots(skeleton, local, model, simulation.clone());
         }
 
-        let database_locals: Vec<Vec<JointPose>> = stored_locals
-            .iter()
-            .zip(&simulation)
-            .map(|(local, simulation)| {
-                let mut pose = Vec::with_capacity(bone_count);
-                pose.push(simulation_pose(simulation));
-                pose.extend(local.iter().cloned());
-                pose
-            })
-            .collect();
-        let (linear, angular) = local_velocities(&database_locals, rate);
         let model_speeds = model_velocities(&models, rate);
         let touching = contacts(&definition.contacts, skeleton, &model_speeds)?;
 
         for frame in 0..plan.frames {
-            for pose in &database_locals[frame] {
-                positions.push(pose.translation);
-                rotations.push(pose.rotation);
-            }
-            velocities.extend_from_slice(&linear[frame]);
-            angular_velocities.extend_from_slice(&angular[frame]);
+            simulation_frames.push((simulation[frame].translation, simulation[frame].rotation));
             contact_flags.extend_from_slice(&touching[frame]);
 
             let context = FrameContext {
@@ -452,24 +410,28 @@ pub fn bake(
         }
         range_starts.push(plan.first_frame);
         range_stops.push(plan.first_frame + plan.frames);
+        clip_starts.push(plan.start);
     }
 
-    Ok(MotionDatabase {
-        names,
-        parents,
-        rate,
+    Ok(MotionDatabase::new(
+        definition.skeleton.clone(),
         bone_count,
+        definition
+            .entries
+            .iter()
+            .map(|entry| entry.clip.clone())
+            .collect(),
+        rate,
+        definition.speed,
         frame_count,
-        positions,
-        rotations,
-        velocities,
-        angular_velocities,
-        contact_bones,
-        contacts: contact_flags,
         range_starts,
         range_stops,
+        clip_starts,
+        simulation_frames,
+        contact_bones,
+        contact_flags,
         features,
         feature_dims,
-        channels: spans,
-    })
+        spans,
+    ))
 }

@@ -539,9 +539,9 @@ fn a_channel_fills_its_span_for_every_frame() {
 
     let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
 
-    assert_eq!(database.feature_dims, 3);
-    assert_eq!(database.frame_count, 30);
-    for frame in 0..database.frame_count {
+    assert_eq!(database.feature_dims(), 3);
+    assert_eq!(database.frame_count(), 30);
+    for frame in 0..database.frame_count() {
         assert_eq!(database.features(frame), [7.0, frame as f32, 30.0]);
     }
 }
@@ -554,16 +554,16 @@ fn channels_are_laid_out_in_list_order() {
 
     let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
 
-    assert_eq!(database.feature_dims, 5);
-    assert_eq!(database.channels.len(), 2);
-    assert_eq!(database.channels[0].type_name, "PairChannel");
+    assert_eq!(database.feature_dims(), 5);
+    assert_eq!(database.channels().len(), 2);
+    assert_eq!(database.channels()[0].type_name, "PairChannel");
     assert_eq!(
-        (database.channels[0].offset, database.channels[0].dims),
+        (database.channels()[0].offset, database.channels()[0].dims),
         (0, 2)
     );
-    assert_eq!(database.channels[1].type_name, "ProbeChannel");
+    assert_eq!(database.channels()[1].type_name, "ProbeChannel");
     assert_eq!(
-        (database.channels[1].offset, database.channels[1].dims),
+        (database.channels()[1].offset, database.channels()[1].dims),
         (2, 3)
     );
     let features = database.features(4);
@@ -580,9 +580,9 @@ fn no_channels_gives_zero_dims() {
 
     let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
 
-    assert_eq!(database.feature_dims, 0);
-    assert!(database.features.is_empty());
-    assert!(database.channels.is_empty());
+    assert_eq!(database.feature_dims(), 0);
+    assert!(database.features(0).is_empty());
+    assert!(database.channels().is_empty());
     assert_eq!(database.features(3), &[] as &[f32]);
 }
 
@@ -622,31 +622,23 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     )
     .unwrap();
 
-    assert_eq!(database.bone_count, 4);
-    assert_eq!(database.frame_count, 60);
-    assert_eq!(database.names[0], "Simulation");
-    assert_eq!(&database.names[1..], ["Root", "Hips", "Spine2"]);
-    assert_eq!(database.parents, [None, Some(0), Some(1), Some(2)]);
-    assert_eq!(database.rate, 30.0);
-    assert_eq!(database.range_starts, [0, 30]);
-    assert_eq!(database.range_stops, [30, 60]);
-    assert_eq!(database.range_of(29), Some(0));
-    assert_eq!(database.range_of(30), Some(1));
-    assert_eq!(database.positions.len(), 60 * 4);
-    assert_eq!(database.rotations.len(), 60 * 4);
-    assert_eq!(database.velocities.len(), 60 * 4);
-    assert_eq!(database.angular_velocities.len(), 60 * 4);
-    assert_eq!(database.contact_bones, [3]);
-    assert_eq!(database.contacts.len(), 60);
+    assert_eq!(database.bone_count(), 3);
+    assert_eq!(database.frame_count(), 60);
+    assert_eq!(database.rate(), 30.0);
+    assert_eq!(database.clips().len(), 2);
+    assert_eq!(database.entry_of(29), Some(0));
+    assert_eq!(database.entry_of(30), Some(1));
+    assert_eq!(database.range_of(30), Some(30..60));
+    assert_eq!(database.clip_time(30), Some((1, 0.5)));
+    assert_eq!(database.contacts(10).len(), 1);
     assert!(database.contacts(10)[0]);
-    assert_eq!(database.feature_dims, 5);
+    assert_eq!(database.feature_dims(), 5);
     assert_eq!(database.features(31)[1], 1.0);
     assert_eq!(database.features(31)[2], 30.0);
 
-    let pose = database.pose(10);
-    assert!((pose.velocities[0].z + 1.0).abs() < 0.05);
-    assert!(pose.positions[0].y.abs() < 1e-6);
-    let facing = pose.rotations[0] * Vec3::Z;
+    let simulation = database.simulation(10);
+    assert!(simulation.translation.y.abs() < 1e-6);
+    let facing = simulation.rotation * Vec3::Z;
     assert!((facing - Vec3::NEG_Z).length() < 1e-3);
 }
 

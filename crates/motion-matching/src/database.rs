@@ -1,6 +1,10 @@
 use std::fmt;
+use std::ops::Range;
 
-use concerto_foundation::assets::{Asset, LoadableAsset};
+use concerto_animation::clip::AnimationClip;
+use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_foundation::transform::Transform;
+use concerto_mesh::Skeleton;
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -12,47 +16,134 @@ pub struct ChannelSpan {
     pub dims: usize,
 }
 
-/// One frame's local pose and velocities, one entry per bone.
-#[derive(Clone, Copy, Debug)]
-pub struct PoseView<'a> {
-    pub positions: &'a [Vec3],
-    pub rotations: &'a [Quat],
-    pub velocities: &'a [Vec3],
-    pub angular_velocities: &'a [Vec3],
-}
-
-/// Baked animation frames, dense and frame-major; bone 0 is the simulation bone and bone `i + 1` is skeleton bone `i`.
+/// Baked animation frames: per-frame features, simulation bone and contacts, and where each frame plays in its clip.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabase {
-    pub names: Vec<String>,
-    pub parents: Vec<Option<u16>>,
-    pub rate: f32,
-    pub bone_count: usize,
-    pub frame_count: usize,
-    pub positions: Vec<Vec3>,
-    pub rotations: Vec<Quat>,
-    pub velocities: Vec<Vec3>,
-    pub angular_velocities: Vec<Vec3>,
-    pub contact_bones: Vec<u16>,
-    pub contacts: Vec<bool>,
-    pub range_starts: Vec<usize>,
-    pub range_stops: Vec<usize>,
-    pub features: Vec<f32>,
-    pub feature_dims: usize,
-    pub channels: Vec<ChannelSpan>,
+    skeleton: AssetHandle<Skeleton>,
+    bone_count: usize,
+    clips: Vec<AssetHandle<AnimationClip>>,
+    rate: f32,
+    speed: f32,
+    frame_count: usize,
+    range_starts: Vec<usize>,
+    range_stops: Vec<usize>,
+    clip_starts: Vec<f32>,
+    simulation: Vec<(Vec3, Quat)>,
+    contact_bones: Vec<u16>,
+    contacts: Vec<bool>,
+    features: Vec<f32>,
+    feature_dims: usize,
+    channels: Vec<ChannelSpan>,
 }
 
 impl MotionDatabase {
-    /// The local pose and velocities of `frame`.
-    pub fn pose(&self, frame: usize) -> PoseView<'_> {
-        let start = frame * self.bone_count;
-        let end = start + self.bone_count;
-        PoseView {
-            positions: &self.positions[start..end],
-            rotations: &self.rotations[start..end],
-            velocities: &self.velocities[start..end],
-            angular_velocities: &self.angular_velocities[start..end],
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn new(
+        skeleton: AssetHandle<Skeleton>,
+        bone_count: usize,
+        clips: Vec<AssetHandle<AnimationClip>>,
+        rate: f32,
+        speed: f32,
+        frame_count: usize,
+        range_starts: Vec<usize>,
+        range_stops: Vec<usize>,
+        clip_starts: Vec<f32>,
+        simulation: Vec<(Vec3, Quat)>,
+        contact_bones: Vec<u16>,
+        contacts: Vec<bool>,
+        features: Vec<f32>,
+        feature_dims: usize,
+        channels: Vec<ChannelSpan>,
+    ) -> Self {
+        Self {
+            skeleton,
+            bone_count,
+            clips,
+            rate,
+            speed,
+            frame_count,
+            range_starts,
+            range_stops,
+            clip_starts,
+            simulation,
+            contact_bones,
+            contacts,
+            features,
+            feature_dims,
+            channels,
         }
+    }
+
+    /// The number of baked frames.
+    pub fn frame_count(&self) -> usize {
+        self.frame_count
+    }
+
+    /// The skeleton the database was baked for.
+    pub fn skeleton(&self) -> &AssetHandle<Skeleton> {
+        &self.skeleton
+    }
+
+    /// The skeleton's bone count at bake time.
+    pub fn bone_count(&self) -> usize {
+        self.bone_count
+    }
+
+    /// One clip per entry, in entry order.
+    pub fn clips(&self) -> &[AssetHandle<AnimationClip>] {
+        &self.clips
+    }
+
+    /// Database frames per second.
+    pub fn rate(&self) -> f32 {
+        self.rate
+    }
+
+    /// Clip seconds per database second.
+    pub fn speed(&self) -> f32 {
+        self.speed
+    }
+
+    /// The length of one feature vector.
+    pub fn feature_dims(&self) -> usize {
+        self.feature_dims
+    }
+
+    /// Where each feature channel sits in a feature vector.
+    pub fn channels(&self) -> &[ChannelSpan] {
+        &self.channels
+    }
+
+    /// The skeleton joint indices whose contacts are baked.
+    pub fn contact_bones(&self) -> &[u16] {
+        &self.contact_bones
+    }
+
+    /// The index of the entry whose range contains `frame`.
+    pub fn entry_of(&self, frame: usize) -> Option<usize> {
+        self.range_starts
+            .iter()
+            .zip(&self.range_stops)
+            .position(|(start, stop)| (*start..*stop).contains(&frame))
+    }
+
+    /// The database frames of the entry that contains `frame`.
+    pub fn range_of(&self, frame: usize) -> Option<Range<usize>> {
+        let entry = self.entry_of(frame)?;
+        Some(self.range_starts[entry]..self.range_stops[entry])
+    }
+
+    /// The entry of `frame` and the clip time in seconds that the frame plays.
+    pub fn clip_time(&self, frame: usize) -> Option<(usize, f32)> {
+        let entry = self.entry_of(frame)?;
+        let offset = (frame - self.range_starts[entry]) as f32 * self.speed / self.rate;
+        Some((entry, self.clip_starts[entry] + offset))
+    }
+
+    /// The model-space simulation bone of `frame`.
+    pub fn simulation(&self, frame: usize) -> Transform {
+        let (translation, rotation) = self.simulation[frame];
+        Transform::from_translation_rotation(translation, rotation)
     }
 
     /// Whether each contact bone touches the ground in `frame`, in `contact_bones` order.
@@ -66,14 +157,6 @@ impl MotionDatabase {
         let dims = self.feature_dims;
         &self.features[frame * dims..(frame + 1) * dims]
     }
-
-    /// The index of the entry whose range contains `frame`.
-    pub fn range_of(&self, frame: usize) -> Option<usize> {
-        self.range_starts
-            .iter()
-            .zip(&self.range_stops)
-            .position(|(start, stop)| (*start..*stop).contains(&frame))
-    }
 }
 
 impl LoadableAsset for MotionDatabase {}
@@ -84,6 +167,7 @@ pub enum BakeError {
     MissingJoint(String),
     ClipHasNoBones { entry: usize },
     ClipCountMismatch { expected: usize, actual: usize },
+    BoneCountMismatch { expected: usize, actual: usize },
     UnregisteredChannel(String),
     ChannelValue { type_name: String, reason: String },
     RangeTooShort { entry: usize, frames: usize },
@@ -105,6 +189,9 @@ impl fmt::Display for BakeError {
             }
             BakeError::ClipCountMismatch { expected, actual } => {
                 write!(f, "{actual} clips given for {expected} entries")
+            }
+            BakeError::BoneCountMismatch { expected, actual } => {
+                write!(f, "the database has {expected} bones, {actual} given")
             }
             BakeError::UnregisteredChannel(name) => {
                 write!(f, "feature channel type `{name}` is not registered")
