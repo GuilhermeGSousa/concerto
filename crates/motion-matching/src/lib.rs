@@ -13,6 +13,8 @@ pub mod query;
 pub mod search;
 pub mod simulation;
 pub mod systems;
+#[cfg(test)]
+mod test_support;
 
 pub use bake::bake;
 pub use channel::{
@@ -31,5 +33,5 @@ pub use instance::MotionMatchingInstance;
 pub use node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY};
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
-pub use search::{excluded_tail, search};
+pub use search::{cost_of, excluded_tail, search};
 pub use simulation::{predict_trajectory, CharacterSimulation, DesiredMotion, TrajectorySample};

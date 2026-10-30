@@ -30,6 +30,14 @@ fn cost(
     Some(sum)
 }
 
+/// The squared distance from `query` to `frame`, or `None` for a query of the wrong length or a frame outside the database.
+pub fn cost_of(database: &MotionDatabase, query: &[f32], frame: usize) -> Option<f32> {
+    if query.len() != database.feature_dims() || frame >= database.frame_count() {
+        return None;
+    }
+    cost(database, &database.divisors(), query, frame, f32::INFINITY)
+}
+
 /// The frame nearest `query` by squared distance and that distance; `current_cost_frame` seeds the best, and the last `tail` frames of each range are never candidates.
 pub fn search(
     database: &MotionDatabase,
@@ -66,162 +74,8 @@ pub fn search(
 
 #[cfg(test)]
 mod tests {
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-    use concerto_mesh::{JointPose, Skeleton};
-    use concerto_reflect::{to_value, Reflect, TypeRegistry};
-    use glam::{Mat4, Quat, Vec3};
-    use uuid::Uuid;
-
     use super::*;
-    use crate::{
-        bake::bake,
-        channel::{FeatureChannel, FrameContext, ReflectFeatureChannel},
-        definition::{
-            MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
-            TrajectorySettings,
-        },
-    };
-
-    const TURN_RATE: f32 = 1.5;
-
-    #[derive(Reflect, Default, Clone, Debug, PartialEq)]
-    #[reflect(FeatureChannel)]
-    struct YawRate {
-        weight: f32,
-    }
-
-    impl FeatureChannel for YawRate {
-        fn dims(&self) -> usize {
-            1
-        }
-
-        fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
-            out[0] = frame.body.angular_velocity.y;
-        }
-
-        fn weight(&self) -> f32 {
-            self.weight
-        }
-    }
-
-    #[derive(Reflect, Default, Clone, Debug, PartialEq)]
-    #[reflect(FeatureChannel)]
-    struct Speed {
-        weight: f32,
-    }
-
-    impl FeatureChannel for Speed {
-        fn dims(&self) -> usize {
-            1
-        }
-
-        fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
-            out[0] = frame.body.velocity.length();
-        }
-
-        fn weight(&self) -> f32 {
-            self.weight
-        }
-    }
-
-    fn skeleton() -> Skeleton {
-        Skeleton::new(
-            vec![Mat4::IDENTITY; 3],
-            vec![None, Some(0), Some(1)],
-            vec!["Root".into(), "Hips".into(), "Spine2".into()],
-            vec![
-                JointPose::IDENTITY,
-                JointPose {
-                    translation: Vec3::new(0.0, 1.0, 0.0),
-                    rotation: Quat::from_rotation_y(std::f32::consts::PI),
-                    ..JointPose::IDENTITY
-                },
-                JointPose {
-                    translation: Vec3::new(0.0, 0.3, 0.0),
-                    ..JointPose::IDENTITY
-                },
-            ],
-            vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
-        )
-        .unwrap()
-    }
-
-    fn walk_forward() -> AnimationClip {
-        let mut clip = AnimationClip::default();
-        clip.add_channel(
-            Uuid::from_u128(1),
-            AnimationChannel::new(
-                vec![0.0, 2.0],
-                AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, -2.0)]),
-            ),
-        );
-        clip
-    }
-
-    fn turn_left() -> AnimationClip {
-        let mut clip = AnimationClip::default();
-        let keys = 5;
-        let times = (0..keys).map(|key| key as f32 * 0.5).collect();
-        let rotations = (0..keys)
-            .map(|key| Quat::from_rotation_y(std::f32::consts::PI + TURN_RATE * key as f32 * 0.5))
-            .collect();
-        clip.add_channel(
-            Uuid::from_u128(2),
-            AnimationChannel::new(times, AnimationChanelOutput::Rotation(rotations)),
-        );
-        clip
-    }
-
-    fn registry() -> TypeRegistry {
-        let mut registry = TypeRegistry::default();
-        registry.register::<YawRate>();
-        registry.register::<Speed>();
-        registry
-    }
-
-    fn two_clip_database() -> MotionDatabase {
-        let definition = MotionDatabaseDefinition {
-            entries: vec![
-                MotionEntry {
-                    clip: Default::default(),
-                    range: None,
-                },
-                MotionEntry {
-                    clip: Default::default(),
-                    range: None,
-                },
-            ],
-            rate: 30.0,
-            speed: 1.0,
-            simulation: SimulationBoneSettings {
-                position_window: 5,
-                facing_window: 5,
-                ..Default::default()
-            },
-            trajectory: TrajectorySettings {
-                sample_dt: 0.25,
-                sample_count: 3,
-            },
-            channels: vec![
-                StoredChannel {
-                    type_name: "YawRate".into(),
-                    value: to_value(&YawRate { weight: 1.0 }).unwrap(),
-                },
-                StoredChannel {
-                    type_name: "Speed".into(),
-                    value: to_value(&Speed { weight: 1.0 }).unwrap(),
-                },
-            ],
-            ..Default::default()
-        };
-        bake(
-            &definition,
-            &skeleton(),
-            &[&walk_forward(), &turn_left()],
-            &registry(),
-        )
-        .unwrap()
-    }
+    use crate::test_support::{two_clip_database, TURN_RATE};
 
     fn normalised(database: &MotionDatabase, yaw_rate: f32, speed: f32) -> Vec<f32> {
         let mut query = vec![yaw_rate, speed];
@@ -363,5 +217,42 @@ mod tests {
         let (frame, _) = search(&database, &query, 3, 500).unwrap();
 
         assert_eq!(frame, 3);
+    }
+
+    #[test]
+    fn the_cost_of_a_frame_matches_the_search_cost_when_that_frame_wins() {
+        let database = two_clip_database();
+        let query = database.normalised_features(70);
+
+        let (frame, value) = search(&database, &query, 70, 0).unwrap();
+
+        assert_eq!(frame, 70);
+        assert_eq!(cost_of(&database, &query, 70), Some(value));
+    }
+
+    #[test]
+    fn the_cost_of_a_frame_is_its_distance_when_another_frame_wins() {
+        let database = two_clip_database();
+        let query = database.normalised_features(70);
+        let expected: f32 = database
+            .normalised_features(10)
+            .iter()
+            .zip(&query)
+            .map(|(feature, target)| (feature - target) * (feature - target))
+            .sum();
+
+        let value = cost_of(&database, &query, 10).unwrap();
+
+        assert!((value - expected).abs() < 1e-5);
+        assert!(value > cost_of(&database, &query, 70).unwrap());
+    }
+
+    #[test]
+    fn the_cost_of_a_bad_query_or_frame_is_none() {
+        let database = two_clip_database();
+        let query = database.normalised_features(0);
+
+        assert_eq!(cost_of(&database, &[0.0], 0), None);
+        assert_eq!(cost_of(&database, &query, database.frame_count()), None);
     }
 }
