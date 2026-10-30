@@ -8,20 +8,32 @@ use glam::Vec4;
 
 use super::camera::CameraUniform;
 
-/// Ambient light the standard material uses when a camera sets none; matches
-/// `AMBIENT_INTENSITY` in `shader.wgsl`.
+/// Ambient light the standard material uses when a camera sets none.
 pub const DEFAULT_AMBIENT_INTENSITY: f32 = 0.03;
 
 /// Fog and ambient light for everything a camera draws with the standard
 /// material. Goes on the same entity as the [`Camera`](super::camera::Camera);
 /// a camera without one gets no fog and the default ambient light.
-#[derive(Component, Clone, Copy, Debug, Default, PartialEq, Reflect)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Reflect)]
 #[reflect(Component, Default, SceneComponent)]
 pub struct CameraEnvironment {
     pub fog: Option<Fog>,
-    /// Ambient light, as a colour multiplied by each surface's albedo;
-    /// `None` uses [`DEFAULT_AMBIENT_INTENSITY`].
-    pub ambient: Option<Color>,
+    /// Ambient light, as a colour multiplied by each surface's albedo.
+    pub ambient: Color,
+}
+
+impl Default for CameraEnvironment {
+    fn default() -> Self {
+        Self {
+            fog: None,
+            ambient: Color::rgba(
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                1.0,
+            ),
+        }
+    }
 }
 
 impl CameraEnvironment {
@@ -31,27 +43,17 @@ impl CameraEnvironment {
     }
 
     pub fn with_ambient(mut self, ambient: Color) -> Self {
-        self.ambient = Some(ambient);
+        self.ambient = ambient;
         self
     }
 
-    /// The ambient light the standard material is drawn with:
-    /// [`CameraEnvironment::ambient`], or [`DEFAULT_AMBIENT_INTENSITY`] when
-    /// unset.
+    /// The ambient light the standard material is drawn with.
     pub fn ambient_light(&self) -> LinearRgba {
-        match self.ambient {
-            Some(color) => color.to_linear(),
-            None => LinearRgba::new(
-                DEFAULT_AMBIENT_INTENSITY,
-                DEFAULT_AMBIENT_INTENSITY,
-                DEFAULT_AMBIENT_INTENSITY,
-                1.0,
-            ),
-        }
+        self.ambient.to_linear()
     }
 
-    /// Writes the fog and ambient fields of `uniform`. A zero alpha tells the
-    /// shader to skip fog or use its default ambient.
+    /// Writes the fog and ambient fields of `uniform`. A zero fog alpha tells
+    /// the shader to skip fog.
     pub(crate) fn fill(&self, uniform: &mut CameraUniform) {
         match self.fog {
             Some(fog) => {
@@ -64,13 +66,8 @@ impl CameraEnvironment {
                 uniform.fog_params = Vec4::ZERO;
             }
         }
-        uniform.ambient = match self.ambient {
-            Some(color) => {
-                let c = color.to_linear();
-                Vec4::new(c.r, c.g, c.b, 1.0)
-            }
-            None => Vec4::ZERO,
-        };
+        let c = self.ambient_light();
+        uniform.ambient = Vec4::new(c.r, c.g, c.b, 1.0);
     }
 }
 
@@ -95,20 +92,58 @@ mod tests {
     use std::any::TypeId;
 
     use concerto_ecs::{reflect::AppTypeRegistry, world::World};
+    use concerto_foundation::transform::GlobalTransform;
     use concerto_reflect::{apply_value, to_value};
+    use glam::Mat4;
 
     use super::*;
+    use crate::components::camera::Camera;
 
     #[test]
     fn no_environment_means_no_fog_and_default_ambient() {
         let mut uniform = CameraUniform::new();
         CameraEnvironment::default().fill(&mut uniform);
         assert_eq!(uniform.fog_color.w, 0.0);
-        assert_eq!(uniform.ambient.w, 0.0);
+        assert_eq!(uniform.ambient.w, 1.0);
         assert_eq!(
             CameraEnvironment::default().ambient_light().r,
             DEFAULT_AMBIENT_INTENSITY
         );
+    }
+
+    #[test]
+    fn a_default_environment_has_the_default_ambient_not_white() {
+        assert_eq!(
+            CameraEnvironment::default().ambient.to_linear(),
+            LinearRgba::new(
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                DEFAULT_AMBIENT_INTENSITY,
+                1.0,
+            )
+        );
+    }
+
+    #[test]
+    fn a_uniform_with_no_environment_has_the_default_ambient() {
+        let default = Vec4::new(
+            DEFAULT_AMBIENT_INTENSITY,
+            DEFAULT_AMBIENT_INTENSITY,
+            DEFAULT_AMBIENT_INTENSITY,
+            1.0,
+        );
+        let mut uniform = CameraUniform::new();
+        assert_eq!(uniform.ambient, default);
+
+        CameraEnvironment::default()
+            .with_ambient(Color::WHITE)
+            .fill(&mut uniform);
+        uniform.update_view_proj(
+            &Camera::default(),
+            None,
+            &GlobalTransform::new(Mat4::IDENTITY),
+        );
+        assert_eq!(uniform.ambient, default);
     }
 
     #[test]
@@ -154,7 +189,7 @@ mod tests {
             .unwrap()
             .fill(&mut before);
         assert_eq!(before.fog_color.w, 0.0);
-        assert_eq!(before.ambient.w, 0.0);
+        assert_eq!(before.ambient.w, 1.0);
 
         let replacement = CameraEnvironment::default()
             .with_fog(Fog {
