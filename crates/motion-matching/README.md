@@ -267,3 +267,35 @@ fn walk(mut players: Query<&mut DesiredMotion, With<Player>>) {
 Capsule traces for collision-aware prediction, past samples, gamepad input,
 and synchronising the skeleton and the capsule with spring dampers are
 separate work. The simulation does not rotate the capsule.
+
+## Playing a database
+
+`MotionMatchingNode` is an animation graph node that plays a `MotionDatabase`.
+`MotionMatchingPlugin` registers it and its systems; the plugin is in
+`DefaultPlugins`, so a game needs nothing more than a graph that holds the
+node.
+
+| Field | Meaning | Default |
+|---|---|---|
+| `database` | the `MotionDatabase` to play | none |
+| `search_period` | seconds between searches | 0.1 |
+| `velocity_change_threshold`, `rotation_change_threshold` | the change per second of the first trajectory sample's velocity and facing that forces a search once it settles | 50 |
+| `same_frame_tolerance` | a search result this many frames or fewer from the playhead is ignored | 1 |
+| `blend_halflife` | inertialization halflife after a jump | 0.1 s |
+
+Each fixed step `publish_trajectory` copies a character's
+`CharacterSimulation` into its `AnimationPlayer`'s blackboard as a
+`MotionMatchingTrajectory` under the key `"trajectory"`. A player whose
+character has no simulation, or a preview `App`, has no trajectory; the node
+then plays the database without searching.
+
+Per frame `run_motion_matching` advances the playhead at the database `rate`,
+searches when the timer runs out, when a settled change in the trajectory asks
+for it, or when the playhead is in the last `ceil(sample_count * sample_dt *
+rate)` frames of its range, and on a better frame jumps with inertialization.
+The search is brute force: a squared distance over the normalised features of
+every frame, with an early out. `run_motion_matching` runs after
+`update_animation_players` and before `animate_targets`.
+
+`MotionMatchingInstance::root_motion` is the simulation bone's velocity and
+angular velocity at the playhead. Nothing reads it yet.
