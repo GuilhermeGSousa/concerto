@@ -41,7 +41,7 @@ use concerto_foundation::assets::{
 };
 
 use crate::{
-    edit_time::{AppListener, AtEditTime, EditTime},
+    edit_time::{AppListener, AtEditTime, EditTime, Preview},
     plugins::PluginsState,
     schedule_groups::{First, Update},
     subapp::{SubApp, SubApps},
@@ -76,13 +76,21 @@ fn compile(schedules: Schedules, world: &mut World, filter: &TagFilter) -> Compi
     }
 }
 
+/// What an [`App`] is for, which decides the systems and listeners it keeps.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AppMode {
+    Game,
+    Edit,
+    Preview,
+}
+
 /// The top-level container: the main and render [`SubApp`]s and the registered [`Plugin`]s.
 pub struct App {
     subapps: SubApps,
     plugins: Vec<Box<dyn Plugin>>,
     plugin_types: std::collections::HashSet<std::any::TypeId>,
     plugin_state: PluginsState,
-    editing: bool,
+    mode: AppMode,
 }
 
 impl App {
@@ -92,14 +100,22 @@ impl App {
             plugins: Vec::new(),
             plugin_types: Default::default(),
             plugin_state: PluginsState::Building,
-            editing: false,
+            mode: AppMode::Game,
         }
     }
 
     /// Creates an edit `App`: only main-world systems and listeners marked `at_edit_time` run in it.
     pub fn for_editing() -> App {
         App {
-            editing: true,
+            mode: AppMode::Edit,
+            ..App::new()
+        }
+    }
+
+    /// Creates a preview `App`: only main-world systems and listeners marked `at_edit_time` or `at_preview_time` run in it.
+    pub fn for_previewing() -> App {
+        App {
+            mode: AppMode::Preview,
             ..App::new()
         }
     }
@@ -109,9 +125,14 @@ impl App {
         self.insert_resource(StartupScene(id))
     }
 
-    /// Whether this `App` was created by [`App::for_editing`].
+    /// Whether this `App` was created by [`App::for_editing`] or [`App::for_previewing`].
     pub fn is_editing(&self) -> bool {
-        self.editing
+        self.mode != AppMode::Game
+    }
+
+    /// Whether this `App` was created by [`App::for_previewing`].
+    pub fn is_previewing(&self) -> bool {
+        self.mode == AppMode::Preview
     }
 
     /// Builds `plugin` immediately and keeps it for [`Plugin::ready`] and [`Plugin::finish`].
@@ -215,10 +236,10 @@ impl App {
         self
     }
 
-    /// Runs `listener` every time a `T` is triggered in the main world; an edit `App` keeps only marked ones.
+    /// Runs `listener` every time a `T` is triggered in the main world; an edit or preview `App` keeps only marked ones.
     pub fn add_listener<T: Signal, M>(&mut self, listener: impl AppListener<T, M>) -> &mut Self {
-        let editing = self.editing;
-        listener.add_to(self.main_mut().world_mut(), editing);
+        let mode = self.mode;
+        listener.add_to(self.main_mut().world_mut(), mode);
         self
     }
 
@@ -344,13 +365,16 @@ impl App {
             .remove_resource::<Schedules>()
             .expect("Schedules resource not found!");
 
-        let filter = if self.editing {
-            TagFilter {
+        let filter = match self.mode {
+            AppMode::Game => TagFilter::default(),
+            AppMode::Edit => TagFilter {
                 include: vec![EditTime.intern()],
                 exclude: Vec::new(),
-            }
-        } else {
-            TagFilter::default()
+            },
+            AppMode::Preview => TagFilter {
+                include: vec![EditTime.intern(), Preview.intern()],
+                exclude: Vec::new(),
+            },
         };
         let world = self.main_mut().world_mut();
         let compiled_schedules = compile(schedules, world, &filter);
@@ -401,7 +425,7 @@ mod tests {
         seen.0 += events.read().count();
     }
 
-    use crate::edit_time::AtEditTime;
+    use crate::edit_time::{AtEditTime, AtPreviewTime};
     use concerto_ecs::{
         signal::{On, Signal},
         system::schedule::ScheduleLabel,
@@ -422,27 +446,34 @@ mod tests {
         count.0 += 1;
     }
 
-    fn counted_after_one_frame(mut app: App, marked: bool) -> u32 {
+    #[derive(Clone, Copy)]
+    enum Mark {
+        None,
+        Edit,
+        Preview,
+    }
+
+    fn counted_after_one_frame(mut app: App, mark: Mark) -> u32 {
         app.register_plugin(main_schedule::MainSchedulePlugin)
             .register_plugin(plugins::TimePlugin)
             .insert_resource(Count::default());
-        if marked {
-            app.add_system(Update, count.at_edit_time());
-        } else {
-            app.add_system(Update, count);
-        }
+        match mark {
+            Mark::None => app.add_system(Update, count),
+            Mark::Edit => app.add_system(Update, count.at_edit_time()),
+            Mark::Preview => app.add_system(Update, count.at_preview_time()),
+        };
         app.finish_plugin_build();
         app.update();
         app.get_resource::<Count>().unwrap().0
     }
 
-    fn heard_after_one_ping(mut app: App, marked: bool) -> u32 {
+    fn heard_after_one_ping(mut app: App, mark: Mark) -> u32 {
         app.insert_resource(Count::default());
-        if marked {
-            app.add_listener(hear.at_edit_time());
-        } else {
-            app.add_listener(hear);
-        }
+        match mark {
+            Mark::None => app.add_listener(hear),
+            Mark::Edit => app.add_listener(hear.at_edit_time()),
+            Mark::Preview => app.add_listener(hear.at_preview_time()),
+        };
         app.main_mut().world_mut().trigger(Ping);
         app.get_resource::<Count>().unwrap().0
     }
@@ -450,15 +481,48 @@ mod tests {
     #[test]
     fn an_app_for_editing_reports_its_role() {
         assert!(App::for_editing().is_editing());
+        assert!(!App::for_editing().is_previewing());
         assert!(!App::new().is_editing());
+        assert!(!App::new().is_previewing());
+    }
+
+    #[test]
+    fn an_app_for_previewing_is_also_editing() {
+        assert!(App::for_previewing().is_editing());
+        assert!(App::for_previewing().is_previewing());
     }
 
     #[test]
     fn only_marked_systems_run_in_an_edit_app() {
-        assert_eq!(counted_after_one_frame(App::new(), false), 1);
-        assert_eq!(counted_after_one_frame(App::new(), true), 1);
-        assert_eq!(counted_after_one_frame(App::for_editing(), false), 0);
-        assert_eq!(counted_after_one_frame(App::for_editing(), true), 1);
+        assert_eq!(counted_after_one_frame(App::new(), Mark::None), 1);
+        assert_eq!(counted_after_one_frame(App::new(), Mark::Edit), 1);
+        assert_eq!(counted_after_one_frame(App::for_editing(), Mark::None), 0);
+        assert_eq!(counted_after_one_frame(App::for_editing(), Mark::Edit), 1);
+    }
+
+    #[test]
+    fn preview_time_systems_run_in_game_and_preview_apps_only() {
+        assert_eq!(counted_after_one_frame(App::new(), Mark::Preview), 1);
+        assert_eq!(
+            counted_after_one_frame(App::for_previewing(), Mark::Preview),
+            1
+        );
+        assert_eq!(
+            counted_after_one_frame(App::for_editing(), Mark::Preview),
+            0
+        );
+    }
+
+    #[test]
+    fn a_preview_app_runs_edit_time_systems_and_not_unmarked_ones() {
+        assert_eq!(
+            counted_after_one_frame(App::for_previewing(), Mark::Edit),
+            1
+        );
+        assert_eq!(
+            counted_after_one_frame(App::for_previewing(), Mark::None),
+            0
+        );
     }
 
     fn count_ten(mut count: ResMut<Count>) {
@@ -479,10 +543,26 @@ mod tests {
 
     #[test]
     fn only_marked_listeners_are_added_to_an_edit_app() {
-        assert_eq!(heard_after_one_ping(App::new(), false), 1);
-        assert_eq!(heard_after_one_ping(App::new(), true), 1);
-        assert_eq!(heard_after_one_ping(App::for_editing(), false), 0);
-        assert_eq!(heard_after_one_ping(App::for_editing(), true), 1);
+        assert_eq!(heard_after_one_ping(App::new(), Mark::None), 1);
+        assert_eq!(heard_after_one_ping(App::new(), Mark::Edit), 1);
+        assert_eq!(heard_after_one_ping(App::for_editing(), Mark::None), 0);
+        assert_eq!(heard_after_one_ping(App::for_editing(), Mark::Edit), 1);
+    }
+
+    #[test]
+    fn preview_time_listeners_are_added_to_game_and_preview_apps_only() {
+        assert_eq!(heard_after_one_ping(App::new(), Mark::Preview), 1);
+        assert_eq!(
+            heard_after_one_ping(App::for_previewing(), Mark::Preview),
+            1
+        );
+        assert_eq!(heard_after_one_ping(App::for_editing(), Mark::Preview), 0);
+    }
+
+    #[test]
+    fn a_preview_app_adds_edit_time_listeners_and_not_unmarked_ones() {
+        assert_eq!(heard_after_one_ping(App::for_previewing(), Mark::Edit), 1);
+        assert_eq!(heard_after_one_ping(App::for_previewing(), Mark::None), 0);
     }
 
     #[derive(Resource, Default)]

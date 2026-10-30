@@ -183,7 +183,7 @@ takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key i
 missing or holds another type; the typed methods are wrappers over those two.
 The tech demo's
 `examples/tech-demo/src/character.rs` builds a full locomotion graph with a
-jump state machine; `animation-test` is a smaller example.
+jump state machine.
 
 ### Your own nodes
 
@@ -235,8 +235,7 @@ until `assets.add(graph)` has run.
   player.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
-  system flies it with the keyboard and mouse, for looking around a scene as
-  `animation-test` does.
+  system flies it with the keyboard and mouse, for looking around a scene.
 
 ```rust
 cmd.spawn((

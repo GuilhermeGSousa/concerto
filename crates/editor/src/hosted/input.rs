@@ -21,7 +21,7 @@ use concerto_window::{
 };
 use glam::Vec2;
 
-use super::{HostedApp, ParkedEditApp, StopPlay, target::EditTarget};
+use super::{HostedApp, ParkedEditApp, StopPlay, target::ViewportTarget};
 
 /// Where a hosted `App` is told the pointer is once it has left the viewport.
 pub const POINTER_GONE: Vec2 = Vec2::splat(-1.0);
@@ -55,14 +55,14 @@ impl Routing {
     }
 }
 
-/// Marks the edit-target document while the viewport shows its picture.
+/// Marks the viewport-target document while the viewport shows its picture.
 #[derive(Component)]
 pub struct InViewport;
 
-/// Keeps [`InViewport`] on the edit target exactly while the viewport is shown.
+/// Keeps [`InViewport`] on the viewport target exactly while the viewport is shown.
 pub(crate) fn sync_in_viewport(
     shown: Res<ViewportShown>,
-    targets: Query<Entity, With<EditTarget>>,
+    targets: Query<Entity, With<ViewportTarget>>,
     marked: Query<Entity, With<InViewport>>,
     mut cmd: CommandQueue,
 ) {
@@ -114,7 +114,7 @@ pub(crate) fn blur_hidden_app(
 }
 
 pub(crate) fn focus_new_target(
-    on: On<Add<EditTarget>>,
+    on: On<Add<ViewportTarget>>,
     shown: Query<&InViewport>,
     hosted: Query<&mut HostedApp>,
     mut routing: ResMut<Routing>,
@@ -129,7 +129,7 @@ pub(crate) fn focus_new_target(
 }
 
 pub(crate) fn blur_old_target(
-    on: On<Remove<EditTarget>>,
+    on: On<Remove<ViewportTarget>>,
     shown: Query<&InViewport>,
     hosted: Query<&mut HostedApp>,
 ) {
@@ -235,7 +235,7 @@ pub(crate) fn release_input(
 
 pub(crate) fn route_play_input(
     _: NonSendMarker,
-    targets: Query<Entity, (With<EditTarget>, With<InViewport>)>,
+    targets: Query<Entity, (With<ViewportTarget>, With<InViewport>)>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
     hosted: Query<&mut HostedApp>,
@@ -389,9 +389,9 @@ pub fn scale_correction(editor: f64, hosted: f64) -> Option<WindowEvent> {
     (editor != hosted).then_some(WindowEvent::ScaleFactorChanged(editor))
 }
 
-pub(crate) fn step_edit_target(
+pub(crate) fn step_viewport_target(
     _: NonSendMarker,
-    targets: Query<Entity, (With<EditTarget>, With<InViewport>)>,
+    targets: Query<Entity, (With<ViewportTarget>, With<InViewport>)>,
     shown: Res<ViewportShown>,
     mut events: EventReader<WindowEvent>,
     hosted: Query<&mut HostedApp>,
