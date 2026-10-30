@@ -55,7 +55,13 @@ fix the entry in the same commit as the change that made it false.
 - **A system a `TagFilter` rejects is a silent stand-in.** Nothing is logged. A
   component that only stand-ins would have queried is never registered in that
   world, so its lifecycle callbacks never fire. Likewise, in an edit `App` an
-  unmarked listener given to `App::add_listener` is silently dropped.
+  unmarked listener given to `App::add_listener` is silently dropped. A game
+  `App` keeps everything. `App::for_editing()` keeps only what is marked
+  `.at_edit_time()` (the `EditTime` tag). `App::for_previewing()` keeps what is
+  marked `.at_edit_time()` or `.at_preview_time()` (the `Preview` tag), so a
+  preview plays animation but never spawns the startup scene or runs a game's
+  unmarked systems. Both marks work on systems and listeners. `is_editing()` is
+  true in a preview too; `is_previewing()` tells the two apart.
 - **Lifecycle signals run inside the operation.** `On<Add<T>>`, `Replace<T>`,
   `Remove<T>` and `Despawn<T>` listeners run right after `T`'s hook, in the
   middle of the spawn, insert, remove or despawn. They see the new value on add
