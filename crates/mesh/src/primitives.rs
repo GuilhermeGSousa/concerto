@@ -4,7 +4,7 @@ use glam::{Vec2, Vec3};
 
 use crate::{mesh::Mesh, vertex::Vertex};
 
-/// A rectangle of `size` on the XZ plane, centred on the origin and facing up.
+/// A rectangle on the XZ plane, `size.x` along X and `size.y` along Z, centred on the origin and facing up.
 pub fn plane(size: Vec2) -> Mesh {
     let mut mesh = empty();
     push_quad(
@@ -18,7 +18,7 @@ pub fn plane(size: Vec2) -> Mesh {
     mesh
 }
 
-/// A box of `size`, centred on the origin, with its own vertices on each face.
+/// A box of full extents `size`, centred on the origin, with its own vertices on each face.
 pub fn cuboid(size: Vec3) -> Mesh {
     let half = size * 0.5;
     let mut mesh = empty();
@@ -55,7 +55,7 @@ pub fn uv_sphere(radius: f32, rings: u32, segments: u32) -> Mesh {
     revolve(&profile, segments)
 }
 
-/// A capsule along Y: a cylinder of `half_height` either side of the origin, capped by hemispheres of at least 1 ring each, with at least 3 `segments`.
+/// A capsule along Y: a cylinder of `half_height` either side of the origin, capped by hemispheres of at least 1 ring each, with at least 3 `segments`; a `half_height` of 0 or less gives a sphere.
 pub fn capsule(radius: f32, half_height: f32, rings: u32, segments: u32) -> Mesh {
     let rings = rings.max(1);
     if half_height <= 0.0 {
@@ -114,8 +114,9 @@ fn push_quad(
     ] {
         let offset = tangent * (corner.x * 2.0 - 1.0) * half_width
             + bitangent * (corner.y * 2.0 - 1.0) * half_height;
+        let uv = Vec2::new(corner.x, 1.0 - corner.y);
         mesh.vertices
-            .push(vertex(center + offset, corner, normal, tangent));
+            .push(vertex(center + offset, uv, normal, tangent));
     }
     mesh.indices
         .extend([0, 1, 2, 0, 2, 3].map(|corner| first + corner));
@@ -125,17 +126,19 @@ fn revolve(profile: &[(Vec2, Vec2)], segments: u32) -> Mesh {
     let segments = segments.max(3);
     let rows = profile.len() as u32;
     let columns = segments + 1;
+    let mut travelled = vec![0.0; profile.len()];
+    for row in 1..profile.len() {
+        travelled[row] = travelled[row - 1] + profile[row].0.distance(profile[row - 1].0);
+    }
+    let length = travelled[profile.len() - 1];
     let mut mesh = empty();
     for (row, (point, normal)) in profile.iter().enumerate() {
         for column in 0..columns {
-            let (sin, cos) = (TAU * column as f32 / segments as f32).sin_cos();
+            let (sin, cos) = (TAU * (column % segments) as f32 / segments as f32).sin_cos();
             let around = Vec3::new(sin, 0.0, cos);
             mesh.vertices.push(vertex(
                 around * point.x + Vec3::Y * point.y,
-                Vec2::new(
-                    column as f32 / segments as f32,
-                    row as f32 / (rows - 1) as f32,
-                ),
+                Vec2::new(column as f32 / segments as f32, travelled[row] / length),
                 around * normal.x + Vec3::Y * normal.y,
                 Vec3::new(cos, 0.0, -sin),
             ));

@@ -40,6 +40,33 @@ fn assert_well_formed(mesh: &Mesh) {
     }
 }
 
+fn uv(mesh: &Mesh, index: u32) -> Vec2 {
+    Vec2::from(mesh.vertices[index as usize].uv_coords)
+}
+
+fn assert_uvs_follow_tangents(mesh: &Mesh) {
+    for triangle in mesh.indices.chunks(3) {
+        let [a, b, c] = [triangle[0], triangle[1], triangle[2]];
+        let (edge_1, edge_2) = (
+            position(mesh, b) - position(mesh, a),
+            position(mesh, c) - position(mesh, a),
+        );
+        let (delta_1, delta_2) = (uv(mesh, b) - uv(mesh, a), uv(mesh, c) - uv(mesh, a));
+        let scale = 1.0 / (delta_1.x * delta_2.y - delta_1.y * delta_2.x);
+        let along_u = (edge_1 * delta_2.y - edge_2 * delta_1.y) * scale;
+        let along_v = (edge_2 * delta_1.x - edge_1 * delta_2.x) * scale;
+        let vertex = &mesh.vertices[a as usize];
+        assert!(
+            Vec3::from(vertex.tangent).dot(along_u) > 0.0,
+            "u runs against the tangent in {triangle:?}"
+        );
+        assert!(
+            Vec3::from(vertex.bitangent).dot(along_v) < 0.0,
+            "v runs with the bitangent in {triangle:?}"
+        );
+    }
+}
+
 fn assert_bounds(mesh: &Mesh, half_extents: Vec3) {
     let bounds = mesh.local_aabb().unwrap();
     assert!(bounds.min.abs_diff_eq(-half_extents, EPSILON));
@@ -147,4 +174,47 @@ fn a_capsule_keeps_a_usable_shape_at_the_smallest_counts() {
     assert_eq!(mesh.vertices.len(), 4 * 4);
     assert_eq!(mesh.indices.len(), 6 * 3 * 2);
     assert_well_formed(&mesh);
+}
+
+#[test]
+fn texture_coordinates_start_at_the_top_left_of_every_shape() {
+    assert_uvs_follow_tangents(&plane(Vec2::new(4.0, 2.0)));
+    assert_uvs_follow_tangents(&cuboid(Vec3::new(2.0, 4.0, 6.0)));
+    assert_uvs_follow_tangents(&uv_sphere(1.5, 8, 16));
+    assert_uvs_follow_tangents(&capsule(0.5, 1.0, 4, 16));
+}
+
+#[test]
+fn a_capsule_spreads_texture_height_by_length() {
+    let (radius, half_height) = (0.3, 2.0);
+    let mesh = capsule(radius, half_height, 8, 16);
+    let cylinder: Vec<f32> = mesh
+        .vertices
+        .iter()
+        .filter(|vertex| vertex.pos_coords[1].abs() >= half_height - EPSILON)
+        .filter(|vertex| vertex.pos_coords[1].abs() <= half_height + EPSILON)
+        .map(|vertex| vertex.uv_coords[1])
+        .collect();
+    let span = cylinder.iter().copied().fold(f32::MIN, f32::max)
+        - cylinder.iter().copied().fold(f32::MAX, f32::min);
+    let length = 2.0 * half_height + std::f32::consts::PI * radius;
+
+    assert!((span - 2.0 * half_height / length).abs() < 1e-3, "{span}");
+}
+
+#[test]
+fn a_seam_joins_at_identical_positions() {
+    for mesh in [uv_sphere(50.0, 8, 16), capsule(50.0, 1.0, 4, 16)] {
+        for ring in mesh.vertices.chunks(17) {
+            assert_eq!(ring[0].pos_coords, ring[16].pos_coords);
+        }
+    }
+}
+
+#[test]
+fn a_capsule_with_a_negative_height_is_a_sphere() {
+    let mesh = capsule(1.0, -1.0, 2, 8);
+
+    assert_eq!(mesh.vertices.len(), 5 * 9);
+    assert_bounds(&mesh, Vec3::ONE);
 }
