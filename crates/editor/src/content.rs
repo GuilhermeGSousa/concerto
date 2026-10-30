@@ -20,11 +20,13 @@ use concerto_ecs::{
     },
 };
 use concerto_ui::{
-    anchor::{UIAnchorAlign, UIAnchoredPanel, toggle_owned_panels},
+    anchor::{UIAnchorAlign, UIAnchorTarget, UIAnchoredPanel, toggle_owned_panels},
     elements::prelude::*,
     focus::{FocusedWidget, UIFocusLost},
-    interaction::{UIClick, UIDisabled},
-    items::{UIHidden, UIItem, UIItemActivated, UIItemSelected, UIReveal, UISelected},
+    interaction::{Interactable, UIClick, UIDisabled},
+    items::{
+        UIHidden, UIItem, UIItemActivated, UIItemContextMenu, UIItemSelected, UIReveal, UISelected,
+    },
     material::UIMaterial,
     node::{UINode, UIRect},
     scroll::UIScrollArea,
@@ -61,6 +63,7 @@ const MENU_WIDTH: f32 = 168.0;
 const EXTENSION: &str = "gasset";
 
 type KindFilter = fn(&AssetEntry) -> bool;
+type NewMenus = Or<(With<NewMenu>, With<ContentMenu>)>;
 
 const KINDS: [(&str, Option<KindFilter>); 5] = [
     ("all", None),
@@ -105,7 +108,7 @@ pub struct ContentState {
     items: HashMap<ContentKey, Entity>,
     pending: Option<PendingAsset>,
     pending_error: Option<String>,
-    pending_reveal: bool,
+    reveal: Option<ContentKey>,
 }
 
 impl ContentState {
@@ -146,6 +149,14 @@ struct NewRow;
 
 #[derive(Component)]
 struct PendingField;
+
+#[derive(Component)]
+struct ContentMenu {
+    folder: String,
+}
+
+#[derive(Component)]
+struct ContentMenuRow;
 
 pub struct ContentPlugin;
 
@@ -303,7 +314,9 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
                 ..Default::default()
             },
             ContentView,
+            Interactable,
             order_items.into_listener(),
+            open_root_menu.into_listener(),
         ))
         .add_child((
             theme
@@ -331,6 +344,31 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
                     .padding(UIRect::axes(6.0, 8.0))
                     .on_click(start_from_dropdown(kind)),
                 NewRow,
+            ),
+            |mut entry| {
+                entry.add_child(theme.label(format!("New {kind}")).font_size(12.5).no_wrap());
+            },
+        );
+    }
+
+    let mut context_menu = cmd.spawn((
+        theme
+            .context_menu()
+            .width(UIValue::Px(MENU_WIDTH))
+            .padding(theme.spacing_xs),
+        ContentMenu {
+            folder: String::new(),
+        },
+    ));
+    for &kind in creatable {
+        context_menu.add_child_with(
+            (
+                theme
+                    .pressable()
+                    .row()
+                    .padding(UIRect::axes(6.0, 8.0))
+                    .on_click(start_from_menu(kind)),
+                ContentMenuRow,
             ),
             |mut entry| {
                 entry.add_child(theme.label(format!("New {kind}")).font_size(12.5).no_wrap());
@@ -439,7 +477,7 @@ fn start_from_dropdown(kind: &'static str) -> Listener<UIClick> {
            registry: Res<AssetRegistry>,
            mut state: ResMut<ContentState>,
            filters: Query<&mut UITextInput, With<Filter>>,
-           menus: Query<&mut UIAnchoredPanel, With<NewMenu>>| {
+           menus: Query<&mut UIAnchoredPanel, NewMenus>| {
         if on.signal().button != MouseButton::Left {
             return;
         }
@@ -457,6 +495,73 @@ fn start_from_dropdown(kind: &'static str) -> Listener<UIClick> {
     .into_listener()
 }
 
+fn start_from_menu(kind: &'static str) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           mut project: ResMut<ProjectState>,
+           registry: Res<AssetRegistry>,
+           mut state: ResMut<ContentState>,
+           filters: Query<&mut UITextInput, With<Filter>>,
+           menus: Query<&mut UIAnchoredPanel, NewMenus>,
+           targets: Query<&ContentMenu>| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let folder = targets.iter().next().map(|menu| menu.folder.clone());
+        start_new(
+            kind,
+            folder,
+            &mut project,
+            &registry,
+            &mut state,
+            &filters,
+            &menus,
+        );
+    })
+    .into_listener()
+}
+
+fn open_folder_menu(key: String) -> Listener<UIItemContextMenu> {
+    (move |on: On<UIItemContextMenu>,
+           project: Res<ProjectState>,
+           menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>| {
+        if let Some(open) = project.project.as_ref() {
+            let folder = format!("{}/{key}", open.content_root);
+            open_content_menu(folder, on.signal().position, Some(on.entity()), &menus);
+        }
+    })
+    .into_listener()
+}
+
+fn open_root_menu(
+    on: On<UIClick>,
+    project: Res<ProjectState>,
+    menus: Query<(&mut ContentMenu, &mut UIAnchoredPanel)>,
+) {
+    let click = on.signal();
+    if click.button != MouseButton::Right {
+        return;
+    }
+    if let Some(open) = project.project.as_ref() {
+        open_content_menu(open.content_root.clone(), click.position, None, &menus);
+    }
+}
+
+fn open_content_menu(
+    folder: String,
+    position: glam::Vec2,
+    owner: Option<Entity>,
+    menus: &Query<(&mut ContentMenu, &mut UIAnchoredPanel)>,
+) {
+    for (mut menu, mut panel) in menus.iter() {
+        if menu.folder != folder {
+            menu.folder = folder.clone();
+        }
+        panel.target = UIAnchorTarget::from_point(position);
+        panel.owner = owner;
+        panel.open = true;
+    }
+}
+
 fn start_new(
     kind: &'static str,
     folder: Option<String>,
@@ -464,7 +569,7 @@ fn start_new(
     registry: &AssetRegistry,
     state: &mut ContentState,
     filters: &Query<&mut UITextInput, With<Filter>>,
-    menus: &Query<&mut UIAnchoredPanel, With<NewMenu>>,
+    menus: &Query<&mut UIAnchoredPanel, NewMenus>,
 ) {
     for mut panel in menus.iter() {
         if panel.open {
@@ -491,7 +596,7 @@ fn start_new(
         prefill,
     });
     state.pending_error = None;
-    state.pending_reveal = true;
+    state.reveal = state.pending.as_ref().map(PendingAsset::key);
     state.filter.clear();
     state.kind = 0;
     for mut input in filters.iter() {
@@ -619,6 +724,7 @@ fn commit_pending_asset(
             finish_pending(&mut state, &mut focused, Some(field));
             state.selected = Some(id);
             state.selected_folder = None;
+            state.reveal = Some(ContentKey::Asset(id));
             commands.0.push_back(EditorCommand::OpenAsset(id));
         }
         Err(error) => {
@@ -635,7 +741,10 @@ fn commit_pending_asset(
 
 fn sync_new_items(
     project: Res<ProjectState>,
-    controls: Query<(Entity, Option<&UIDisabled>), Or<(With<NewButton>, With<NewRow>)>>,
+    controls: Query<
+        (Entity, Option<&UIDisabled>),
+        Or<(With<NewButton>, With<NewRow>, With<ContentMenuRow>)>,
+    >,
     mut cmd: CommandQueue,
 ) {
     let disabled = project.project.is_none() || project.busy();
@@ -798,6 +907,9 @@ fn spawn_item(cmd: &mut CommandQueue, theme: &UITheme, entry: &Listed, parent: E
             ChildOf::new(parent),
         ))
         .entity();
+    if let ContentKey::Folder(key) = &entry.key {
+        cmd.insert(open_folder_menu(key.clone()), item);
+    }
     for content in [mark_node, label] {
         cmd.add_child(item, content);
     }
@@ -872,7 +984,7 @@ fn reconcile_content_tree(
     if !project.is_changed()
         && !registry.is_changed()
         && !state.is_changed()
-        && !state.pending_reveal
+        && state.reveal.is_none()
     {
         return;
     }
@@ -982,21 +1094,16 @@ fn reconcile_content_tree(
     state.items = kept;
     cmd.entity(view).trigger(OrderItems(order));
 
-    if state.pending_reveal {
-        let pending = state
-            .pending
-            .as_ref()
-            .and_then(|pending| state.items.get(&pending.key()))
-            .copied();
-        match pending {
-            None => state.pending_reveal = false,
+    if let Some(key) = state.reveal.as_ref() {
+        match state.items.get(key).copied() {
+            None => state.reveal = None,
             Some(item)
                 if items
                     .get_entity(item)
                     .is_some_and(|(_, _, placed)| placed.is_some()) =>
             {
                 cmd.entity(item).trigger(UIReveal);
-                state.pending_reveal = false;
+                state.reveal = None;
             }
             Some(_) => {}
         }
@@ -1077,6 +1184,7 @@ mod tests {
         focus::{FocusedWidget, UIFocusLost},
         interaction::{UIDisabled, UIInteractionStyle},
         items::UIItem,
+        node::{UIBox, UILayout},
         text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
         tree::update_trees_system,
     };
@@ -1155,6 +1263,13 @@ mod tests {
 
     fn new_rows(world: &mut World) -> Vec<Entity> {
         world.query::<Entity, With<NewRow>>().iter(world).collect()
+    }
+
+    fn menu_rows(world: &mut World) -> Vec<Entity> {
+        world
+            .query::<Entity, With<ContentMenuRow>>()
+            .iter(world)
+            .collect()
     }
 
     fn pending_field(world: &mut World) -> Option<Entity> {
@@ -1360,6 +1475,48 @@ mod tests {
                 .is_some()
         }
 
+        fn content_menu(&mut self) -> Entity {
+            self.world
+                .query::<Entity, With<ContentMenu>>()
+                .iter(&mut self.world)
+                .next()
+                .unwrap()
+        }
+
+        fn menu_panel(&self, menu: Entity) -> &UIAnchoredPanel {
+            self.world
+                .get_component_for_entity::<UIAnchoredPanel>(menu)
+                .unwrap()
+        }
+
+        fn menu_folder(&self, menu: Entity) -> String {
+            self.world
+                .get_component_for_entity::<ContentMenu>(menu)
+                .unwrap()
+                .folder
+                .clone()
+        }
+
+        fn row_label(&self, row: Entity) -> String {
+            let label = *self
+                .world
+                .get_component_for_entity::<Children>(row)
+                .unwrap()
+                .iter()
+                .next()
+                .unwrap();
+            self.world
+                .get_component_for_entity::<UIText>(label)
+                .unwrap()
+                .text
+                .clone()
+        }
+
+        fn press(&mut self, entity: Entity, button: MouseButton, position: Vec2) {
+            self.world.trigger_on(entity, UIClick { position, button });
+            self.refresh();
+        }
+
         fn new_button(&mut self) -> Entity {
             self.world
                 .query::<Entity, With<NewButton>>()
@@ -1391,6 +1548,64 @@ mod tests {
 
         fn asset_item(&self, address: &str) -> Entity {
             self.item(&ContentKey::Asset(self.asset(address)))
+        }
+
+        fn area(&self, view: Entity) -> &UIScrollArea {
+            self.world
+                .get_component_for_entity::<UIScrollArea>(view)
+                .unwrap()
+        }
+
+        fn lay_out_view(&mut self, height: f32) {
+            let view = self.view();
+            let frame = UIBox {
+                min: Vec2::ZERO,
+                size: Vec2::new(300.0, height),
+            };
+            self.world.insert(
+                UILayout {
+                    rect: frame,
+                    content_rect: frame,
+                    clip_rect: frame,
+                    paint_order: 0,
+                },
+                view,
+            );
+            self.refresh();
+        }
+
+        fn scroll_view_to_end(&mut self) {
+            let view = self.view();
+            let height = self
+                .world
+                .get_component_for_entity::<UILayout>(view)
+                .unwrap()
+                .content_rect
+                .size
+                .y;
+            let end = self.area(view).content_extent - height;
+            assert!(end > 0.0);
+            self.world
+                .get_component_for_entity_mut::<UIScrollArea>(view)
+                .unwrap()
+                .offset = end;
+            self.refresh();
+            assert_eq!(self.area(view).offset, end);
+        }
+
+        fn in_view(&mut self, item: Entity) -> bool {
+            let view = self.view();
+            let height = self
+                .world
+                .get_component_for_entity::<UILayout>(view)
+                .unwrap()
+                .content_rect
+                .size
+                .y;
+            let placed = *self.world.get_component_for_entity::<UIItem>(item).unwrap();
+            let top = placed.index() as f32 * ROW_HEIGHT;
+            let offset = self.area(view).offset;
+            placed.is_shown() && offset <= top && top + ROW_HEIGHT <= offset + height
         }
 
         fn view(&mut self) -> Entity {
@@ -2263,8 +2478,123 @@ mod tests {
             }
             let row = f.item(&pending(&format!("content/{path}")));
             assert!(f.shown(row), "{path}");
-            assert!(!f.state().pending_reveal, "{path}");
+            assert_eq!(f.state().reveal, None, "{path}");
         }
+    }
+
+    #[test]
+    fn new_keeps_its_row_in_view_in_a_long_folder_before_and_after_it_is_created() {
+        let addresses: Vec<String> = (0..60)
+            .map(|n| format!("content/forest/mesh_{n:02}.gasset"))
+            .collect();
+        let assets: Vec<(&str, &str)> = addresses
+            .iter()
+            .map(|address| (address.as_str(), "Mesh"))
+            .collect();
+        let mut f = fixture(&assets);
+        f.lay_out_view(10.0 * ROW_HEIGHT);
+        let forest = f.item(&folder("forest"));
+        f.expand(forest);
+        f.click(forest);
+        f.scroll_view_to_end();
+
+        f.new_scene();
+        f.refresh();
+
+        let row = f.item(&pending("content/forest"));
+        assert!(f.in_view(row), "the pending row is out of view");
+
+        f.submit("New Scene");
+        f.refresh();
+
+        let created = f.asset_item("content/forest/New Scene.gasset");
+        assert!(f.ui_selected(created));
+        assert!(f.in_view(created), "the created asset is out of view");
+    }
+
+    #[test]
+    fn the_new_menu_on_a_folder_creates_in_that_folder() {
+        let mut f = level_and_forest();
+        let forest = f.item(&folder("forest"));
+        let menu = f.content_menu();
+        let rows = menu_rows(&mut f.world);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(f.row_label(rows[0]), "New Scene");
+        assert_eq!(parent(&f.world, rows[0]), menu);
+        assert!(f.world.get_component_for_entity::<ChildOf>(menu).is_none());
+        assert!(!f.menu_panel(menu).open);
+
+        f.press(forest, MouseButton::Right, Vec2::new(40.0, 90.0));
+
+        let panel = f.menu_panel(menu);
+        assert!(panel.open);
+        assert_eq!(
+            panel.target,
+            UIAnchorTarget::from_point(Vec2::new(40.0, 90.0))
+        );
+        assert_eq!(f.menu_folder(menu), "content/forest");
+
+        f.click(rows[0]);
+        f.refresh();
+
+        let field = f.field().expect("the menu shows a pending row");
+        let a = f.asset("content/forest/a.gasset");
+        assert_eq!(
+            f.keys_under(forest),
+            [pending("content/forest"), ContentKey::Asset(a)]
+        );
+        assert_eq!(f.focused(), Some(field));
+        assert_eq!(f.name_value(field), "New Scene");
+        assert!(!f.menu_panel(menu).open);
+
+        f.submit("Meadow");
+
+        assert!(f.root.path().join("content/forest/Meadow.gasset").is_file());
+        assert_eq!(f.files().len(), 1);
+    }
+
+    #[test]
+    fn the_new_menu_on_the_empty_space_creates_in_the_root() {
+        let mut f = level_and_forest();
+        let forest = f.item(&folder("forest"));
+        f.click(forest);
+        let view = f.view();
+        let menu = f.content_menu();
+
+        f.press(view, MouseButton::Left, Vec2::new(60.0, 200.0));
+        assert!(!f.menu_panel(menu).open);
+
+        f.press(view, MouseButton::Right, Vec2::new(60.0, 200.0));
+
+        let panel = f.menu_panel(menu);
+        assert!(panel.open);
+        assert_eq!(panel.owner, None);
+        assert_eq!(
+            panel.target,
+            UIAnchorTarget::from_point(Vec2::new(60.0, 200.0))
+        );
+        assert_eq!(f.menu_folder(menu), "content");
+
+        let row = menu_rows(&mut f.world)[0];
+        f.click(row);
+        f.refresh();
+
+        assert!(f.keys_under(view).contains(&pending("content")));
+        assert!(!f.menu_panel(menu).open);
+        f.submit("Clearing");
+        assert!(f.root.path().join("content/Clearing.gasset").is_file());
+    }
+
+    #[test]
+    fn a_right_click_on_an_asset_opens_no_new_menu() {
+        let mut f = level_and_forest();
+        let level = f.asset_item("content/level.gasset");
+        let menu = f.content_menu();
+
+        f.press(level, MouseButton::Right, Vec2::new(40.0, 90.0));
+
+        assert!(!f.menu_panel(menu).open);
+        assert!(f.state().pending.is_none());
     }
 
     #[test]
@@ -2272,23 +2602,28 @@ mod tests {
         let mut f = fixture(&[("content/level.gasset", "Scene")]);
         let button = f.new_button();
         let row = new_rows(&mut f.world)[0];
-        assert!(!f.disabled(button) && !f.disabled(row));
+        let menu_row = menu_rows(&mut f.world)[0];
+        assert!(!f.disabled(button) && !f.disabled(row) && !f.disabled(menu_row));
 
         let release = f.busy();
         f.refresh();
-        assert!(f.disabled(button) && f.disabled(row));
+        assert!(f.disabled(button) && f.disabled(row) && f.disabled(menu_row));
         f.click(row);
+        f.click(menu_row);
         assert!(f.state().pending.is_none());
         drop(release);
 
         f.world.insert_resource(ProjectState::default());
         f.refresh();
-        assert!(f.disabled(button) && f.disabled(row));
+        assert!(f.disabled(button) && f.disabled(row) && f.disabled(menu_row));
         f.click(row);
         f.refresh();
         assert!(f.state().pending.is_none());
         assert_eq!(f.field(), None);
         assert!(f.status().contains("project"), "{}", f.status());
+        f.click(menu_row);
+        f.refresh();
+        assert!(f.state().pending.is_none());
     }
 
     #[test]
