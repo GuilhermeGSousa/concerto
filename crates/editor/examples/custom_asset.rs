@@ -28,7 +28,7 @@ use concerto_editor::{
     scene::SceneRecipe,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId,
+    Asset, AssetId, CreatableAsset,
     asset_server::AssetServer,
     content::{
         CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, read_content_asset,
@@ -58,6 +58,13 @@ impl Asset for Dialogue {
         "ExampleDialogue"
     }
 }
+impl CreatableAsset for Dialogue {
+    fn new_asset() -> Self {
+        Dialogue {
+            text: "Hello".into(),
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct DialogueWidget {
@@ -80,6 +87,7 @@ pub struct Spin {
 pub struct SetSpin(pub f32);
 impl Signal for SetSpin {}
 
+#[derive(Default)]
 pub struct DialogueEditor;
 impl AssetEditor for DialogueEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
@@ -223,7 +231,7 @@ pub fn load_dialogue(
 
 pub fn register(app: &mut App) -> Result<()> {
     app.register_asset::<Dialogue>();
-    app.register_asset_editor::<Dialogue>(DialogueEditor)?;
+    app.register_creatable_asset_editor::<Dialogue, DialogueEditor>()?;
     app.add_system(Update, load_dialogue);
     Ok(())
 }

@@ -942,7 +942,9 @@ mod tests {
                 typing: false,
             })));
         let mut editors = AssetEditorRegistry::default();
-        editors.register::<PreviewedAsset>(PreviewedEditor).unwrap();
+        editors
+            .register::<PreviewedAsset, PreviewedEditor>()
+            .unwrap();
         app.insert_resource(editors);
         app.finish_plugin_build();
         let world = app.main_mut().world_mut();

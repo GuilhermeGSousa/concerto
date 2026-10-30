@@ -125,6 +125,11 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
     }
 }
 
+/// An asset the editor can create from nothing.
+pub trait CreatableAsset: Asset {
+    fn new_asset() -> Self;
+}
+
 pub trait LoadableAsset: Asset {
     /// Finishes runtime initialization after a cooked load deserializes the payload, or inline in `AssetServer::add`.
     fn on_load(&mut self, _context: &asset_server::AssetLoadContext) -> anyhow::Result<()> {

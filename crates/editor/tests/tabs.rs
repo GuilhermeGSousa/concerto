@@ -50,6 +50,7 @@ impl Asset for Notes {
         "Notes"
     }
 }
+#[derive(Default)]
 struct NotesEditor;
 impl AssetEditor for NotesEditor {}
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -59,6 +60,7 @@ impl Asset for Pinned {
         "Pinned"
     }
 }
+#[derive(Default)]
 struct PinnedEditor;
 impl AssetEditor for PinnedEditor {
     fn closable(&self) -> bool {
@@ -72,9 +74,9 @@ fn setup() -> (App, Entity, Entity) {
 fn setup_with(extra: impl FnOnce(&mut App)) -> (App, Entity, Entity) {
     let mut app = App::new();
     let mut registry = AssetEditorRegistry::default();
-    registry.register::<Scene>(SceneEditor).unwrap();
-    registry.register::<Notes>(NotesEditor).unwrap();
-    registry.register::<Pinned>(PinnedEditor).unwrap();
+    registry.register::<Scene, SceneEditor>().unwrap();
+    registry.register::<Notes, NotesEditor>().unwrap();
+    registry.register::<Pinned, PinnedEditor>().unwrap();
     app.insert_resource(registry);
     app.insert_resource(ActiveEditor::default());
     app.insert_resource(AssetEditorCommands::default());
