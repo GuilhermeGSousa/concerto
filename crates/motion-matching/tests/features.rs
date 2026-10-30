@@ -1,9 +1,12 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    BakeError, FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
-    ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
+    reference_channels, BakeError, BodyMotion, BonePositions, BoneVelocities, ChannelSource,
+    FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TrajectoryDirections,
+    TrajectoryPositions, TrajectorySample,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -205,4 +208,204 @@ fn features_still_returns_raw_values() {
 
     assert_eq!(database.features(0), [0.1]);
     assert_eq!(database.offset(), [0.1]);
+}
+
+fn yawed_simulation() -> Transform {
+    Transform::from_translation_rotation(
+        Vec3::new(1.0, 0.0, 2.0),
+        Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+    )
+}
+
+fn extract_with(channel: &dyn FeatureChannel, trajectory: &[TrajectorySample]) -> Vec<f32> {
+    let skeleton = skeleton();
+    let models = vec![
+        Transform::default(),
+        Transform::from_translation(Vec3::new(4.0, 5.0, 7.0)),
+        Transform::default(),
+    ];
+    let velocities = vec![Vec3::ZERO, Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO];
+    let locals = vec![JointPose::IDENTITY; 3];
+    let frame = FrameContext {
+        skeleton: &skeleton,
+        local_pose: &locals,
+        model_pose: &models,
+        model_velocities: &velocities,
+        simulation: yawed_simulation(),
+        body: BodyMotion::default(),
+        trajectory,
+    };
+    let mut out = vec![0.0; channel.dims()];
+    channel.extract(&frame, &mut out);
+    out
+}
+
+fn assert_close(actual: &[f32], expected: &[f32]) {
+    assert_eq!(actual.len(), expected.len());
+    for (a, e) in actual.iter().zip(expected) {
+        assert!((a - e).abs() < 1e-5, "{actual:?} != {expected:?}");
+    }
+}
+
+#[test]
+fn bone_positions_are_expressed_in_the_simulation_frame() {
+    let channel = BonePositions {
+        bones: vec!["Hips".into()],
+        weight: 0.75,
+    };
+
+    assert_eq!(channel.dims(), 3);
+    assert_eq!(channel.source(), ChannelSource::Pose);
+    assert_close(&extract_with(&channel, &[]), &[-5.0, 5.0, 3.0]);
+}
+
+#[test]
+fn bone_velocities_are_rotated_but_not_translated() {
+    let channel = BoneVelocities {
+        bones: vec!["Hips".into(), "Spine2".into()],
+        weight: 1.0,
+    };
+
+    assert_eq!(channel.dims(), 6);
+    assert_eq!(channel.source(), ChannelSource::Pose);
+    assert_close(
+        &extract_with(&channel, &[]),
+        &[-2.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    );
+}
+
+#[test]
+fn trajectory_positions_keep_the_ground_plane_in_the_simulation_frame() {
+    let channel = TrajectoryPositions {
+        samples: vec![1],
+        weight: 1.0,
+    };
+    let trajectory = [
+        TrajectorySample::default(),
+        TrajectorySample {
+            position: Vec3::new(1.0, 3.0, 6.0),
+            ..Default::default()
+        },
+    ];
+
+    assert_eq!(channel.dims(), 2);
+    assert_eq!(channel.source(), ChannelSource::Trajectory);
+    assert_close(&extract_with(&channel, &trajectory), &[-4.0, 0.0]);
+}
+
+#[test]
+fn trajectory_directions_are_relative_to_the_simulation_facing() {
+    let channel = TrajectoryDirections {
+        samples: vec![0, 1],
+        weight: 1.5,
+    };
+    let trajectory = [
+        TrajectorySample {
+            rotation: Quat::from_rotation_y(std::f32::consts::FRAC_PI_2),
+            ..Default::default()
+        },
+        TrajectorySample {
+            rotation: Quat::from_rotation_y(std::f32::consts::PI),
+            ..Default::default()
+        },
+    ];
+
+    assert_eq!(channel.dims(), 4);
+    assert_eq!(channel.source(), ChannelSource::Trajectory);
+    assert_close(&extract_with(&channel, &trajectory), &[0.0, 1.0, 1.0, 0.0]);
+}
+
+#[test]
+fn reference_channels_are_27_dimensions_with_the_reference_weights() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<BonePositions>();
+    registry.register::<BoneVelocities>();
+    registry.register::<TrajectoryPositions>();
+    registry.register::<TrajectoryDirections>();
+
+    let stored = reference_channels();
+    let built = concerto_motion_matching::build_channels(&stored, &registry).unwrap();
+
+    let dims: Vec<usize> = built.iter().map(|channel| channel.dims()).collect();
+    let weights: Vec<f32> = built.iter().map(|channel| channel.weight()).collect();
+    assert_eq!(dims, [6, 6, 3, 6, 6]);
+    assert_eq!(dims.iter().sum::<usize>(), 27);
+    assert_eq!(weights, [0.75, 1.0, 1.0, 1.0, 1.5]);
+    assert_eq!(MotionDatabaseDefinition::default().channels, stored);
+}
+
+fn bake_with(channel: StoredChannel) -> Result<MotionDatabase, BakeError> {
+    let mut registry = TypeRegistry::default();
+    registry.register::<BoneVelocities>();
+    registry.register::<TrajectoryPositions>();
+    let definition = MotionDatabaseDefinition {
+        entries: vec![MotionEntry {
+            clip: Default::default(),
+            range: None,
+        }],
+        rate: 30.0,
+        speed: 1.0,
+        simulation: SimulationBoneSettings {
+            position_window: 5,
+            facing_window: 5,
+            ..Default::default()
+        },
+        channels: vec![channel],
+        ..Default::default()
+    };
+    bake(&definition, &skeleton(), &[&walk_clip(1.0)], &registry)
+}
+
+#[test]
+fn a_missing_bone_fails_the_bake_with_a_channel_value_error() {
+    let missing = to_value(&BoneVelocities {
+        bones: vec!["Nope".into()],
+        weight: 1.0,
+    })
+    .unwrap();
+
+    let error = bake_with(StoredChannel {
+        type_name: "BoneVelocities".into(),
+        value: missing,
+    })
+    .unwrap_err();
+
+    assert!(matches!(error, BakeError::ChannelValue { .. }), "{error:?}");
+}
+
+#[test]
+fn a_sample_index_past_the_trajectory_fails_the_bake_with_a_channel_value_error() {
+    for samples in [vec![3], vec![0, 7]] {
+        let value = to_value(&TrajectoryPositions {
+            samples,
+            weight: 1.0,
+        })
+        .unwrap();
+
+        let error = bake_with(StoredChannel {
+            type_name: "TrajectoryPositions".into(),
+            value,
+        })
+        .unwrap_err();
+
+        assert!(matches!(error, BakeError::ChannelValue { .. }), "{error:?}");
+    }
+}
+
+#[test]
+fn valid_concrete_channels_bake() {
+    let value = to_value(&TrajectoryPositions {
+        samples: vec![0, 2],
+        weight: 1.0,
+    })
+    .unwrap();
+
+    let database = bake_with(StoredChannel {
+        type_name: "TrajectoryPositions".into(),
+        value,
+    })
+    .unwrap();
+
+    assert_eq!(database.feature_dims(), 4);
+    assert_eq!(database.channels()[0].source, ChannelSource::Trajectory);
 }
