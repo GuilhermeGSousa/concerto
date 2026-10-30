@@ -108,7 +108,8 @@ time. The running game never reads them.
   them. `AssetServer` resolves loads against a snapshot of it, refreshed by
   `sync_asset_registry` in `First` when the resource changes. The editor builds
   it by scanning headers once, when a project opens. An import inserts its
-  entries and a scene save upserts the scene's, both in memory, with no rescan.
+  entries, a New in the Asset Browser inserts the created asset's, and a scene
+  save upserts the scene's, all in memory, with no rescan.
   The editor gives each hosted `App` the project root and a copy when the
   `App` is created, and the new registry whenever it changes.
 - A scene is a tree of nodes whose components are stored by type name as

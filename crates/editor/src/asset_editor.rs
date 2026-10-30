@@ -49,6 +49,15 @@ pub struct AssetEditorRegistry {
 }
 
 /// Checks `name` against the rules for an asset name typed in the editor.
+pub(crate) const MAX_NEW_NUMBER: usize = 999;
+
+pub(crate) fn new_asset_name(kind: &str, number: usize) -> String {
+    match number {
+        0 => format!("New {kind}"),
+        number => format!("New {kind} {number}"),
+    }
+}
+
 pub fn valid_asset_name(name: &str) -> Result<(), String> {
     const RESERVED: [&str; 22] = [
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
@@ -93,8 +102,9 @@ impl AssetEditorRegistry {
         editor: impl AssetEditor,
         new: fn() -> T,
     ) -> Result<()> {
-        if let Err(error) = valid_asset_name(&format!("New {}", T::name())) {
-            bail!("New {} is not a valid asset name: {error}", T::name());
+        let longest = new_asset_name(T::name(), MAX_NEW_NUMBER);
+        if let Err(error) = valid_asset_name(&longest) {
+            bail!("{longest} is not a valid asset name: {error}");
         }
         self.register::<T>(editor)?;
         self.creators.insert(
@@ -817,6 +827,43 @@ mod tests {
 
         assert_eq!(registry.editor_kind(DottedAsset::name()), None);
         assert_eq!(registry.creatable().count(), 0);
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct LongestAsset;
+    impl Asset for LongestAsset {
+        fn name() -> &'static str {
+            "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct TooLongAsset;
+    impl Asset for TooLongAsset {
+        fn name() -> &'static str {
+            "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    }
+
+    #[test]
+    fn a_type_name_is_refused_when_its_last_numbered_prefill_is_too_long() {
+        assert_eq!(LongestAsset::name().len(), 56);
+        assert_eq!(TooLongAsset::name().len(), 57);
+        assert!(valid_asset_name(&format!("New {}", TooLongAsset::name())).is_ok());
+        let mut registry = AssetEditorRegistry::default();
+
+        assert!(registry.register_creatable(Fake, || LongestAsset).is_ok());
+        assert!(
+            registry
+                .register_creatable(OtherFake, || TooLongAsset)
+                .is_err()
+        );
+
+        assert_eq!(
+            valid_asset_name(&new_asset_name(LongestAsset::name(), MAX_NEW_NUMBER)),
+            Ok(())
+        );
+        assert_eq!(registry.editor_kind(TooLongAsset::name()), None);
     }
 
     #[test]

@@ -42,7 +42,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 use taffy::FlexDirection;
 
-use crate::asset_editor::{AssetEditorRegistry, valid_asset_name};
+use crate::asset_editor::{AssetEditorRegistry, MAX_NEW_NUMBER, new_asset_name, valid_asset_name};
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
 use crate::marks::{self, Mark};
 use crate::project::{EditorCommand, EditorCommands, ProjectOpened, ProjectState};
@@ -261,7 +261,7 @@ fn spawn_panel(cmd: &mut CommandQueue, body: Entity, theme: &UITheme, creatable:
                     .add_child(theme.label("⌕").muted().no_wrap())
                     .add_child((
                         theme
-                            .text_field("Find imported assets…")
+                            .text_field("Find assets…")
                             .bare()
                             .height(UIValue::Auto)
                             .padding(0.0)
@@ -440,6 +440,9 @@ fn select_item(
     let entity = on.entity();
     if project.busy() {
         cmd.remove::<UISelected>(entity);
+        if state.selected_folder.is_some() {
+            state.selected_folder = None;
+        }
         if let Some(&item) = state
             .selected
             .and_then(|id| state.items.get(&ContentKey::Asset(id)))
@@ -466,6 +469,9 @@ fn select_item(
             if state.selected_folder != folder {
                 state.selected_folder = folder;
             }
+        }
+        Some(ContentKey::Pending { .. }) if state.selected_folder.is_some() => {
+            state.selected_folder = None;
         }
         _ => {}
     }
@@ -585,11 +591,10 @@ fn start_new(
     };
     let folder = folder.unwrap_or_else(|| open.content_root.clone());
     let taken = taken_names(&folder, &open.root, registry);
-    let base = format!("New {kind}");
-    let prefill = std::iter::once(base.clone())
-        .chain((1..).map(|number| format!("{base} {number}")))
+    let prefill = (0..=MAX_NEW_NUMBER)
+        .map(|number| new_asset_name(kind, number))
         .find(|name| !taken.contains(&file_key(name)))
-        .unwrap_or(base);
+        .unwrap_or_else(|| new_asset_name(kind, 0));
     state.pending = Some(PendingAsset {
         kind,
         folder,
@@ -671,6 +676,9 @@ fn commit_pending_asset(
         if state.pending.is_some() || state.pending_error.is_some() {
             finish_pending(&mut state, &mut focused, field.map(|(field, _)| field));
         }
+        if state.selected_folder.is_some() {
+            state.selected_folder = None;
+        }
         return;
     }
     let (Some((field, input)), Some(pending)) = (field, state.pending.as_ref()) else {
@@ -725,6 +733,7 @@ fn commit_pending_asset(
             state.selected = Some(id);
             state.selected_folder = None;
             state.reveal = Some(ContentKey::Asset(id));
+            project.status = format!("Created {address}");
             commands.0.push_back(EditorCommand::OpenAsset(id));
         }
         Err(error) => {
@@ -949,6 +958,7 @@ fn spawn_pending_item(
                 mark_node,
                 label: field,
             },
+            select_item.into_listener(),
             ChildOf::new(parent),
         ))
         .entity();
@@ -2302,6 +2312,7 @@ mod tests {
         assert_eq!(f.state().selected_folder, None);
         assert!(f.ui_selected(created));
         assert_eq!(f.opened(), [id]);
+        assert_eq!(f.status(), "Created content/forest/Meadow.gasset");
         assert!(f.state().pending.is_none());
         assert_eq!(f.field(), None);
         assert!(!f.state().items.contains_key(&pending("content/forest")));
@@ -2583,6 +2594,100 @@ mod tests {
         assert!(!f.menu_panel(menu).open);
         f.submit("Clearing");
         assert!(f.root.path().join("content/Clearing.gasset").is_file());
+    }
+
+    #[test]
+    fn a_right_click_on_the_empty_space_with_no_project_opens_no_menu() {
+        let mut f = level_and_forest();
+        f.world.insert_resource(ProjectState::default());
+        f.refresh();
+        let view = f.view();
+        let menu = f.content_menu();
+
+        f.press(view, MouseButton::Right, Vec2::new(60.0, 200.0));
+
+        assert!(!f.menu_panel(menu).open);
+    }
+
+    #[test]
+    fn a_selected_folder_does_not_carry_over_to_another_project() {
+        let mut f = level_and_forest();
+        let forest = f.item(&folder("forest"));
+        f.click(forest);
+        assert_eq!(f.state().selected_folder.as_deref(), Some("content/forest"));
+        let other = tempfile::tempdir().unwrap();
+        let mut project = ProjectState::default();
+        project.project = Some(Project {
+            root: other.path().to_path_buf(),
+            content_root: "game/content".into(),
+        });
+        f.world.insert_resource(project);
+        f.world.insert_resource(AssetRegistry::default());
+        send(
+            &mut f.world,
+            ProjectOpened {
+                root: other.path().to_path_buf(),
+            },
+        );
+        f.refresh();
+
+        assert_eq!(f.state().selected_folder, None);
+        f.new_scene();
+        f.submit("Meadow");
+
+        assert!(other.path().join("game/content/Meadow.gasset").is_file());
+        assert_eq!(files_under(other.path()).len(), 1);
+        assert!(f.files().is_empty());
+    }
+
+    #[test]
+    fn the_selected_folder_goes_when_its_highlight_does() {
+        let mut f = level_and_forest();
+        let forest = f.item(&folder("forest"));
+        let level = f.asset_item("content/level.gasset");
+        f.click(forest);
+        f.new_scene();
+        let row = f.item(&pending("content/forest"));
+
+        f.click(row);
+
+        assert!(!f.ui_selected(forest));
+        assert_eq!(f.state().selected_folder, None);
+
+        f.click(forest);
+        assert!(f.state().selected_folder.is_some());
+        let release = f.busy();
+
+        f.click(level);
+
+        assert!(!f.ui_selected(forest));
+        assert_eq!(f.state().selected_folder, None);
+        drop(release);
+    }
+
+    #[test]
+    fn new_clears_the_search_the_filter_field_and_the_kind_chip() {
+        let mut f = level_and_forest();
+        let filter = f
+            .world
+            .query::<Entity, With<Filter>>()
+            .iter(&mut f.world)
+            .next()
+            .unwrap();
+        set_name(&mut f.world, filter, "level");
+        f.search("level");
+        let scene_chip = f.chip(1);
+        f.click(scene_chip);
+        assert!(f.filtering());
+
+        f.new_scene();
+
+        assert_eq!(f.state().filter, "");
+        assert_eq!(f.state().kind, 0);
+        assert_eq!(f.name_value(filter), "");
+        assert!(!f.filtering());
+        assert!(!f.hidden(f.asset_item("content/forest/a.gasset")));
+        assert!(f.shown(f.item(&pending("content"))));
     }
 
     #[test]

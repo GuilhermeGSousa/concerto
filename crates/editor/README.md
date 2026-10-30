@@ -310,7 +310,7 @@ and holds its subfolders and assets, and an asset shows its kind mark and name.
 A folder appears once it holds an asset at any depth; empty directories are not
 shown. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
-import or a save, the tree keeps the rows of folders and assets that still exist, so
+import, a New or a save, the tree keeps the rows of folders and assets that still exist, so
 expansion and scroll survive. Clicking a row selects it, folder or asset, but
 only an asset becomes the catalogue's selection; activating a folder, by
 double-clicking it or pressing Enter, expands or collapses it. A click while a
@@ -330,16 +330,19 @@ opens it for the content root. Right-clicking an asset opens no menu. Picking a
 row clears the search and the kind
 chip, and puts a row with a focused name field in that folder, ahead of its
 assets, expanding the folders above it and scrolling to it. The field starts as a free name: `New
-<kind>`, then `New <kind> 1`, `New <kind> 2`, and so on. Enter, or clicking
+<kind>`, then `New <kind> 1`, `New <kind> 2`, and so on up to `New <kind> 999`;
+when all of those are taken it shows `New <kind>`, which Enter refuses. Enter, or clicking
 away, writes `<folder>/<name>.gasset` with a fresh `AssetId`, adds it to the
-registry, selects it, scrolls to it and opens it in its editor; Escape cancels and writes
+registry, selects it, scrolls to it, says `Created <address>` in the status line
+and opens it in its editor; Escape cancels and writes
 nothing. A name follows `valid_asset_name`, and one already used in that folder,
 by a file on disk or a registry entry, ignoring case, is taken. Enter on a
 refused name keeps the field, outlines it in the error colour and puts the
 reason in the footer until the next keystroke; clicking away from a refused
 name cancels. New and the menu rows are disabled while no project is open or one is opening. The
 file is always a `.gasset`, even in a project whose `content.toml` sets another
-extension. If an unsaved Scene tab holds the open, the asset is already written
+extension; there the scan looks only for that extension, so the created asset
+is not listed after the project is reopened. If an unsaved Scene tab holds the open, the asset is already written
 and the unsaved-changes prompt decides when it opens.
 
 Activating a supported asset in the Asset Browser, by double-clicking it or pressing
@@ -717,8 +720,9 @@ app.register_creatable_asset_editor::<Dialogue>(DialogueEditor, || Dialogue {
 each with a `Creator`. `Creator::create(project_root, address, registry)`
 writes a new `.gasset` at the address with a fresh `AssetId` and no import
 provenance, adds it to the registry, and returns its id. Scenes are creatable,
-and a new scene is empty. Registration is refused when `New <kind>` is not a
-valid asset name. Each creatable kind gets a row in the Asset Browser's New
+and a new scene is empty. Registration is refused when `New <kind> 999`, the
+longest name the Asset Browser prefills, is not a valid asset name. Each
+creatable kind gets a row in the Asset Browser's New
 dropdown and in its right-click menu.
 
 `valid_asset_name` holds the name rules: 1 to 64 ASCII letters, digits, spaces,
