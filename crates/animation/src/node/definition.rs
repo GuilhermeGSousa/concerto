@@ -202,8 +202,9 @@ impl AnimationNode for PlaceholderNode {
         _: &mut PosePool,
         output: &mut Pose,
     ) {
-        if let Some(input) = evaluated_inputs.first() {
-            output.copy_from(&input.pose);
+        match evaluated_inputs.first() {
+            Some(input) => output.copy_from(&input.pose),
+            None => output.copy_from(&Pose::identity(output.len())),
         }
     }
 
@@ -365,6 +366,28 @@ mod tests {
         assert_eq!(output.joints()[0].translation.x, 3.0);
 
         let mut output = Pose::identity(1);
+        node.evaluate(&mut instance, &context, &[], &[], &mut pool, &mut output);
+        assert_eq!(output.joints()[0].translation.x, 0.0);
+    }
+
+    #[test]
+    fn placeholder_without_input_resets_a_recycled_pose_to_identity() {
+        let clips = AssetStore::new();
+        let graphs = AssetStore::new();
+        let blackboard = AnimationBlackboard::default();
+        let context = AnimationGraphContext {
+            animation_clips: &clips,
+            animation_graphs: &graphs,
+            blackboard: &blackboard,
+        };
+        let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
+        let mut instance = node.create_instance(&context);
+        let mut pool = PosePool::new(1);
+        let mut recycled = Pose::identity(1);
+        recycled.get_joint_pose_mut(0).unwrap().translation.x = 7.0;
+        pool.release(recycled);
+
+        let mut output = pool.acquire();
         node.evaluate(&mut instance, &context, &[], &[], &mut pool, &mut output);
         assert_eq!(output.joints()[0].translation.x, 0.0);
     }

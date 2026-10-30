@@ -221,9 +221,10 @@ value does not apply, becomes a `PlaceholderNode` that passes its first input
 through, and a warning is logged and kept in `AnimationGraph::load_warnings()`.
 The stored data is left as it was, so saving the graph does not lose the node.
 
-Handles inside a node (the clip of an `AnimationClipNode`) are stored as asset
-ids and loaded again by `make_live`. Keep the clip handles you give to a
-builder alive until `assets.add(graph)` has run.
+Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
+an `AnimationStateMachine`) are stored as asset ids and loaded again by
+`make_live`. Keep the clip and state graph handles you give to a builder alive
+until `assets.add(graph)` has run.
 
 ## Gameplay helpers
 
