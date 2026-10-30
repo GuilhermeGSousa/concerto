@@ -5,7 +5,7 @@ use concerto_motion_matching::channel::{
     ReflectFeatureChannel,
 };
 use concerto_motion_matching::{BakeError, StoredChannel, TrajectorySample};
-use concerto_reflect::{to_value, Reflect, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
@@ -144,5 +144,31 @@ fn an_unregistered_type_name_is_named_in_the_error() {
     assert_eq!(
         error,
         BakeError::UnregisteredChannel("NoSuchChannel".into())
+    );
+}
+
+#[test]
+fn a_stored_value_that_does_not_apply_is_a_channel_value_error() {
+    let unknown_field = StoredChannel {
+        type_name: "ConstantChannel".into(),
+        value: ReflectedValue::Struct(vec![("missing".into(), to_value(&1.0f32).unwrap())]),
+    };
+    let error = build_channels(&[unknown_field], &registry()).err().unwrap();
+    match error {
+        BakeError::ChannelValue { type_name, reason } => {
+            assert_eq!(type_name, "ConstantChannel");
+            assert!(reason.contains("missing"), "{reason}");
+        }
+        other => panic!("expected ChannelValue, got {other:?}"),
+    }
+
+    let wrong_kind = StoredChannel {
+        type_name: "ConstantChannel".into(),
+        value: ReflectedValue::Struct(vec![("value".into(), ReflectedValue::Struct(Vec::new()))]),
+    };
+    let error = build_channels(&[wrong_kind], &registry()).err().unwrap();
+    assert!(
+        matches!(&error, BakeError::ChannelValue { type_name, .. } if type_name == "ConstantChannel"),
+        "{error:?}"
     );
 }

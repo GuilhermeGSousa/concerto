@@ -16,7 +16,7 @@ pub trait FeatureChannel: Reflect + Send + Sync + 'static {
     fn extract(&self, frame: &FrameContext, out: &mut [f32]);
 }
 
-/// Everything known about one database frame while its features are extracted.
+/// Everything a channel reads to extract the features of one frame, baked offline or queried online.
 pub struct FrameContext<'a> {
     pub skeleton: &'a Skeleton,
     pub local_pose: &'a [JointPose],
@@ -34,9 +34,7 @@ pub struct BodyMotion {
     pub angular_velocity: Vec3,
 }
 
-/// Runs every channel into its span of `out`, in list order.
-///
-/// `out` must hold exactly the sum of the channels' `dims()` values.
+/// Runs every channel into its span of `out`, in list order; `out` holds exactly the sum of their `dims()`.
 pub fn extract_features(
     channels: &[Box<dyn FeatureChannel>],
     frame: &FrameContext,

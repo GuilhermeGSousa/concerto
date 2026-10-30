@@ -28,11 +28,6 @@ impl EntryPlan {
     pub fn frame_time(&self, index: usize, rate: f32, speed: f32) -> f32 {
         self.start + index as f32 * speed / rate
     }
-
-    /// The database frames of this entry as a half-open range.
-    pub fn range(&self) -> std::ops::Range<usize> {
-        self.first_frame..self.first_frame + self.frames
-    }
 }
 
 /// Checks the rate, speed, clips and ranges of a definition and lays out the frames of every entry.

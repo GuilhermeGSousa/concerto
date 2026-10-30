@@ -49,7 +49,9 @@ An entry bakes `floor((end - start) * rate / speed)` frames.
 (`"Hips"`) name skeleton joints; `facing_axis` (`Vec3::Z`) is the facing
 joint's forward in its own space; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
-ground projection smoothed, with the smoothed yaw of the facing joint.
+ground projection smoothed, with the smoothed yaw of the facing joint. A
+window longer than an entry's range is clamped to the largest odd size that
+fits the range; a range too short for a window above 3 is left unsmoothed.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -156,6 +158,10 @@ every bone index is a skeleton joint index.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
   `dims`).
+
+`simulation(frame)` and `features(frame)` panic on a frame outside
+`0..frame_count()`. `entry_of`, `range_of` and `clip_time` return `None` for
+it, and `pose` returns `Err(FrameOutOfRange)`.
 
 `pose(frame, &skeleton, &clips)` samples the frame's local pose from
 `clips[entry]` at `clip_time` and re-expresses each parentless joint relative

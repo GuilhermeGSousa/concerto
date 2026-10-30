@@ -141,8 +141,6 @@ impl MotionDatabase {
     }
 
     /// The local pose of `frame`, sampled from its clip with each parentless bone re-expressed under the simulation bone.
-    ///
-    /// Fails with `BoneCountMismatch` when the skeleton's bone count is not the baked one, `ClipCountMismatch` when `clips` is not one clip per entry, and `FrameOutOfRange` when `frame` is not a baked frame.
     pub fn pose(
         &self,
         frame: usize,
@@ -186,7 +184,7 @@ impl MotionDatabase {
 
 impl LoadableAsset for MotionDatabase {}
 
-/// Why a motion database could not be baked.
+/// Why a motion database could not be baked, or a baked frame's pose could not be sampled.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BakeError {
     MissingJoint(String),

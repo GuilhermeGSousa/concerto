@@ -955,25 +955,29 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
     let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
     let local_at = BODY_DIMS;
 
+    let yaw = Quat::from_rotation_y(1.2);
+    let offset = Vec3::new(4.0, 0.5, -7.0);
+    let place = |point: Vec3| yaw * point + offset;
+
     for frame in [0, 20, 50] {
         let features = database.features(frame);
         let mut simulation = CharacterSimulation {
             state: CharacterState {
-                position: vec3(features, 6),
-                velocity: vec3(features, 0),
+                position: place(vec3(features, 6)),
+                velocity: yaw * vec3(features, 0),
                 ..Default::default()
             },
-            rotation: quat(features, 9),
-            angular_velocity: vec3(features, 3),
+            rotation: yaw * quat(features, 9),
+            angular_velocity: yaw * vec3(features, 3),
             ..Default::default()
         };
         simulation.trajectory = (0..SAMPLES)
             .map(|k| {
                 let at = 13 + k * 10;
                 TrajectorySample {
-                    position: vec3(features, at),
-                    velocity: vec3(features, at + 3),
-                    rotation: quat(features, at + 6),
+                    position: place(vec3(features, at)),
+                    velocity: yaw * vec3(features, at + 3),
+                    rotation: yaw * quat(features, at + 6),
                 }
             })
             .collect();

@@ -1,11 +1,12 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    MotionDatabase, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
-    TimeRange, TrajectorySettings,
+    FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange, TrajectorySettings,
 };
-use concerto_reflect::{ReflectedValue, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
 
@@ -42,6 +43,23 @@ fn entry(range: Option<(f32, f32)>) -> MotionEntry {
     MotionEntry {
         clip: Default::default(),
         range: range.map(|(start, end)| TimeRange { start, end }),
+    }
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct HeightChannel {
+    scale: f32,
+}
+
+impl FeatureChannel for HeightChannel {
+    fn dims(&self) -> usize {
+        2
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = frame.simulation.translation.z * self.scale;
+        out[1] = frame.trajectory.len() as f32;
     }
 }
 
@@ -168,4 +186,52 @@ fn clip_time_follows_speed_and_rate() {
     assert_eq!(entry, 1);
     assert!((time - 0.9).abs() < 1e-5);
     assert_eq!(database.clip_time(15), None);
+}
+
+#[test]
+fn a_database_with_channels_and_handles_round_trips_through_bincode() {
+    let skeleton_id = AssetId::new();
+    let clip_ids = [AssetId::new(), AssetId::new()];
+    let definition = MotionDatabaseDefinition {
+        skeleton: AssetHandle::weak(skeleton_id),
+        entries: clip_ids
+            .iter()
+            .map(|id| MotionEntry {
+                clip: AssetHandle::weak(*id),
+                range: None,
+            })
+            .collect(),
+        rate: 10.0,
+        speed: 2.0,
+        simulation: SimulationBoneSettings {
+            position_joint: "Child".into(),
+            facing_joint: "Root".into(),
+            position_window: 5,
+            facing_window: 5,
+            ..Default::default()
+        },
+        channels: vec![StoredChannel {
+            type_name: "HeightChannel".into(),
+            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
+        }],
+        ..Default::default()
+    };
+    let mut registry = TypeRegistry::default();
+    registry.register::<HeightChannel>();
+    let first = walk_clip(2.0);
+    let second = walk_clip(2.0);
+    let database = bake(&definition, &skeleton(), &[&first, &second], &registry).unwrap();
+    assert_eq!(database.feature_dims(), 2);
+    assert_eq!(database.channels().len(), 1);
+    assert!(database.features(4)[0] != 0.0);
+
+    let bytes = bincode::serialize(&database).unwrap();
+    let decoded: MotionDatabase = bincode::deserialize(&bytes).unwrap();
+
+    assert_eq!(decoded, database);
+    assert_eq!(decoded.skeleton().id(), skeleton_id);
+    let decoded_clips: Vec<AssetId> = decoded.clips().iter().map(|clip| clip.id()).collect();
+    assert_eq!(decoded_clips, clip_ids);
+    assert_eq!(decoded.channels(), database.channels());
+    assert_eq!(decoded.features(4), database.features(4));
 }
