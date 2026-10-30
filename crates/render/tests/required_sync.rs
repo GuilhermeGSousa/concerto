@@ -17,10 +17,6 @@ use concerto_render::{
 };
 use concerto_window::plugin::{Window, WindowPlugin};
 
-fn gpu() -> Option<Gpu> {
-    pollster::block_on(Gpu::request(&Gpu::instance(), None))
-}
-
 fn app(gpu: &Gpu) -> App {
     let mut app = App::new();
     app.insert_resource(gpu.clone())
@@ -45,7 +41,7 @@ fn render_entity(app: &mut App, entity: Entity) -> Option<Entity> {
 
 #[test]
 fn a_bare_camera_gets_a_render_entity() {
-    let Some(gpu) = gpu() else {
+    let Some(gpu) = Gpu::request_for_test() else {
         return;
     };
     let mut app = app(&gpu);
@@ -69,7 +65,7 @@ fn a_bare_camera_gets_a_render_entity() {
 
 #[test]
 fn a_scene_camera_under_an_exclusive_camera_is_mirrored_but_not_extracted() {
-    let Some(gpu) = gpu() else {
+    let Some(gpu) = Gpu::request_for_test() else {
         return;
     };
     let mut app = app(&gpu);
