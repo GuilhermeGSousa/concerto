@@ -20,7 +20,7 @@ mod tests {
     };
     use uuid::Uuid;
 
-    use crate::blackboard::{AnimationBlackboard, AnimationBlackboardValue};
+    use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::AnimationGraphContext;
     use crate::graph::{AnimationGraph, made_live};
@@ -252,9 +252,9 @@ mod tests {
             state_name(instance)
         };
 
-        blackboard.set("jumped", AnimationBlackboardValue::Bool(true));
+        blackboard.set("jumped", true);
         assert_eq!(step(&mut instance, &blackboard), "jump_start");
-        blackboard.set("jumped", AnimationBlackboardValue::Bool(false));
+        blackboard.set("jumped", false);
 
         let mut state = String::new();
         for _ in 0..30 {
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(state, "air", "jump_start should end and hand off to air");
 
         // Land immediately, while the 0.1s air fade is only ~1 frame in.
-        blackboard.set("is_grounded", AnimationBlackboardValue::Bool(true));
+        blackboard.set("is_grounded", true);
         assert_eq!(step(&mut instance, &blackboard), "land");
 
         // The land clip must actually play out and end the state, rather than being frozen
@@ -330,7 +330,7 @@ mod tests {
         let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
-        blackboard.set("go", AnimationBlackboardValue::Bool(true));
+        blackboard.set("go", true);
 
         let mut instance = {
             let context = AnimationGraphContext {
@@ -445,9 +445,9 @@ mod tests {
         // Enter jump, then count frames from entry until OnAnimationEnd hands back to movement.
         let frames_in_jump =
             |instance: &mut NodeInstance, blackboard: &mut AnimationBlackboard| -> usize {
-                blackboard.set("jump", AnimationBlackboardValue::Bool(true));
+                blackboard.set("jump", true);
                 assert_eq!(step(instance, blackboard), "jump");
-                blackboard.set("jump", AnimationBlackboardValue::Bool(false));
+                blackboard.set("jump", false);
 
                 let mut frames = 0;
                 loop {
@@ -565,8 +565,7 @@ mod tests {
         }
 
         fn set(&mut self, name: &str, value: bool) {
-            self.blackboard
-                .set(name, AnimationBlackboardValue::Bool(value));
+            self.blackboard.set(name, value);
         }
 
         fn step(&mut self) -> f32 {

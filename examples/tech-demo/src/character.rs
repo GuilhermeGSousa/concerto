@@ -141,89 +141,99 @@ pub(crate) fn setup_character_animations(
     let jump_loop = server.load::<AnimationClip>(JUMP_LOOP);
     let jump_land = server.load::<AnimationClip>(JUMP_LAND);
 
+    let clips = [
+        idle.clone(),
+        jog.clone(),
+        jog_fw_l.clone(),
+        jog_fw_r.clone(),
+        jog_l.clone(),
+        jog_r.clone(),
+        jog_bw.clone(),
+        job_bw_l.clone(),
+        job_bw_r.clone(),
+        jump_loop.clone(),
+        jump_land.clone(),
+    ];
+
     let mut movement_graph = AnimationGraph::new();
     movement_graph
         .result_node()
         .with_blend_space_2d_input("movement", |context| {
             context
-                .animation_clip_input(idle, Vec2::ZERO)
-                .animation_clip_input(jog, Vec2::new(0.0, 1.0))
-                .animation_clip_input(jog_fw_l, Vec2::new(-1.0, 1.0))
-                .animation_clip_input(jog_fw_r, Vec2::new(1.0, 1.0))
-                .animation_clip_input(jog_l, Vec2::new(-1.0, 0.0))
-                .animation_clip_input(jog_r, Vec2::new(1.0, 0.0))
-                .animation_clip_input(jog_bw, Vec2::new(0.0, -1.0))
-                .animation_clip_input(job_bw_l, Vec2::new(-1.0, -1.0))
-                .animation_clip_input(job_bw_r, Vec2::new(1.0, -1.0));
+                .animation_clip_input(idle.clone(), Vec2::ZERO)
+                .animation_clip_input(jog.clone(), Vec2::new(0.0, 1.0))
+                .animation_clip_input(jog_fw_l.clone(), Vec2::new(-1.0, 1.0))
+                .animation_clip_input(jog_fw_r.clone(), Vec2::new(1.0, 1.0))
+                .animation_clip_input(jog_l.clone(), Vec2::new(-1.0, 0.0))
+                .animation_clip_input(jog_r.clone(), Vec2::new(1.0, 0.0))
+                .animation_clip_input(jog_bw.clone(), Vec2::new(0.0, -1.0))
+                .animation_clip_input(job_bw_l.clone(), Vec2::new(-1.0, -1.0))
+                .animation_clip_input(job_bw_r.clone(), Vec2::new(1.0, -1.0));
         });
+
+    let movement_handle = server.add(movement_graph);
+    let air_handle = server.add(AnimationGraph::from_node(AnimationClipNode::new(jump_loop)));
+    let land_handle = server.add(AnimationGraph::from_node(
+        AnimationClipNode::new(jump_land)
+            .with_play_mode(PlayOnce)
+            .with_start_time(0.1),
+    ));
+    let state_graphs = [
+        movement_handle.clone(),
+        air_handle.clone(),
+        land_handle.clone(),
+    ];
 
     let mut graph = AnimationGraph::new();
     graph.result_node().with_input(
-        AnimationStateMachine::from_initial_state(
-            "movement",
-            server.add(movement_graph),
-            |transition| {
-                transition
-                    // TODO: not supported yet, jump need to be triggered by an animation event
-                    // .to(
-                    //     "jump_start",
-                    //     AnimationFSMTrigger::on_bool("jumped", true),
-                    //     0.01,
-                    // );
-                    .to(
-                        "air",
-                        AnimationFSMTrigger::on_bool("is_grounded", false),
-                        0.1,
-                    );
-            },
-        )
-        .state(
-            "air",
-            server.add(AnimationGraph::from_node(AnimationClipNode::new(jump_loop))),
-            |transition| {
-                transition
-                    .to(
-                        "land",
-                        AnimationFSMTrigger::on_bool("is_grounded", true),
-                        0.1,
-                    )
-                    .to(
-                        "movement",
-                        AnimationFSMTrigger::on_bool("is_grounded", true),
-                        0.1,
-                    );
-            },
-        )
-        .state(
-            "land",
-            server.add(AnimationGraph::from_node(
-                AnimationClipNode::new(jump_land)
-                    .with_play_mode(PlayOnce)
-                    .with_start_time(0.1),
-            )),
-            |transition| {
-                transition
-                    .to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1)
-                    .to(
-                        "jump_start",
-                        AnimationFSMTrigger::on_bool("jumped", true),
-                        0.1,
-                    )
-                    .to(
-                        "movement",
-                        AnimationFSMTrigger::on_non_zero_vec("movement"),
-                        0.1,
-                    );
-            },
-        )
+        AnimationStateMachine::from_initial_state("movement", movement_handle, |transition| {
+            transition
+                // TODO: not supported yet, jump need to be triggered by an animation event
+                // .to(
+                //     "jump_start",
+                //     AnimationFSMTrigger::on_bool("jumped", true),
+                //     0.01,
+                // );
+                .to(
+                    "air",
+                    AnimationFSMTrigger::on_bool("is_grounded", false),
+                    0.1,
+                );
+        })
+        .state("air", air_handle, |transition| {
+            transition
+                .to(
+                    "land",
+                    AnimationFSMTrigger::on_bool("is_grounded", true),
+                    0.1,
+                )
+                .to(
+                    "movement",
+                    AnimationFSMTrigger::on_bool("is_grounded", true),
+                    0.1,
+                );
+        })
+        .state("land", land_handle, |transition| {
+            transition
+                .to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1)
+                .to(
+                    "jump_start",
+                    AnimationFSMTrigger::on_bool("jumped", true),
+                    0.1,
+                )
+                .to(
+                    "movement",
+                    AnimationFSMTrigger::on_non_zero_vec("movement"),
+                    0.1,
+                );
+        })
         .build(),
         |_node_context| {},
     );
 
-    cmd.insert(
-        AnimationHandleComponent::new(server.add(graph)),
-        player_entity,
-    );
+    let graph_handle = server.add(graph);
+    drop((clips, state_graphs));
+    cmd.insert(AnimationHandleComponent::new(graph_handle), player_entity);
     cmd.insert(AnimationsReady, player_entity);
 }
 

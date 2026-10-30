@@ -8,11 +8,12 @@ use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::Transform,
 };
+use concerto_reflect::Reflect;
 use glam::Vec2;
 use uuid::Uuid;
 
 use crate::{
-    blackboard::{AnimationBlackboard, AnimationBlackboardValue},
+    blackboard::AnimationBlackboard,
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
@@ -81,28 +82,28 @@ impl AnimationPlayer {
         self.graph_instance.set_node_weight(node_index, weight);
     }
 
-    pub fn set_param(&mut self, key: impl Into<String>, value: AnimationBlackboardValue) {
+    pub fn set_param<T: Reflect>(&mut self, key: impl Into<String>, value: T) {
         self.blackboard.set(key, value);
     }
 
     pub fn set_bool_param(&mut self, key: impl Into<String>, value: bool) {
-        self.set_param(key, AnimationBlackboardValue::Bool(value));
+        self.set_param(key, value);
     }
 
     pub fn set_int_param(&mut self, key: impl Into<String>, value: u32) {
-        self.set_param(key, AnimationBlackboardValue::Int(value));
+        self.set_param(key, value);
     }
 
     pub fn set_float_param(&mut self, key: impl Into<String>, value: f32) {
-        self.set_param(key, AnimationBlackboardValue::Float(value));
+        self.set_param(key, value);
     }
 
     pub fn set_vec2_param(&mut self, key: impl Into<String>, value: Vec2) {
-        self.set_param(key, AnimationBlackboardValue::Vec2(value));
+        self.set_param(key, value);
     }
 
-    pub fn get_param(&self, key: &str) -> Option<&AnimationBlackboardValue> {
-        self.blackboard.get(key)
+    pub fn get_param<T: Reflect>(&self, key: &str) -> Option<&T> {
+        self.blackboard.get::<T>(key)
     }
 
     pub fn get_bool_param(&self, key: &str) -> Option<bool> {
