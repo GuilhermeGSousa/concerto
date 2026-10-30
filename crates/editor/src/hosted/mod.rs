@@ -97,8 +97,8 @@ impl HostedApp {
         self.app.main().world()
     }
 
-    #[cfg(test)]
-    pub(crate) fn world_for_test(&self) -> &World {
+    #[doc(hidden)]
+    pub fn world_for_test(&self) -> &World {
         self.world()
     }
 

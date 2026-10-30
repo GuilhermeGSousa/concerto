@@ -693,8 +693,9 @@ recursively. Headless hosts have no UI containers.
 
 The [complete custom asset editor example](examples/custom_asset.rs) loads a
 non-Clone Dialogue asset, builds its own text widget, replaces its contents,
-rejects invalid input without mutation, and registers through the public API.
-Run its headless smoke test with:
+rejects invalid input without mutation, hosts a preview of a cube that it sets
+spinning with a signal, and registers through the public API. Run its headless
+smoke test with:
 
 ```sh
 cargo run -p concerto-editor --example custom_asset
@@ -777,7 +778,9 @@ Drive the preview with the `PreviewSignals` system parameter:
 `previews.trigger(document, signal)` queues the signal, and it is triggered in
 the preview's world in `First`, before the preview's next step. A signal sent
 before the preview is built waits for it; one for a closed document, a failed
-preview, or a document with no preview is dropped. Read back through the
+preview, or a document with no preview is dropped. A waiting signal is triggered
+before the preview's first step, so its `Startup` systems have not run yet:
+whatever a listener needs must exist by the end of `build`. Read back through the
 preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.
