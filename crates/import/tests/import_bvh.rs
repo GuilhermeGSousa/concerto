@@ -58,7 +58,7 @@ fn importing_a_bvh_writes_skeleton_clip_scene_and_a_sidecar() {
     let project = tempfile::tempdir().unwrap();
     let imported = import(&source(scratch.path()), project.path()).expect("import succeeds");
 
-    for name in ["skeleton_0", "animation_0", "scene"] {
+    for name in ["skeleton_0", "animation_walk", "scene"] {
         let address = format!("content/walk/{name}.gasset");
         assert!(
             imported.assets.iter().any(|asset| asset.address == address),
@@ -72,7 +72,7 @@ fn importing_a_bvh_writes_skeleton_clip_scene_and_a_sidecar() {
     let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));
     let metadata = SourceMetadata::load(&sidecar).expect("sidecar written");
     assert_eq!(metadata.importer, "bvh");
-    for key in ["skeleton/0", "animation/0", "scene"] {
+    for key in ["skeleton/0", "animation/walk", "scene"] {
         assert!(metadata.outputs.contains_key(key), "{key} in sidecar");
     }
 }
@@ -83,7 +83,7 @@ fn re_importing_after_a_scale_edit_changes_the_outputs_and_keeps_their_ids() {
     let project = tempfile::tempdir().unwrap();
     let first = import(&source(scratch.path()), project.path()).expect("first import");
     let skeleton = "content/walk/skeleton_0.gasset";
-    let clip = "content/walk/animation_0.gasset";
+    let clip = "content/walk/animation_walk.gasset";
     let before = (read(project.path(), skeleton), read(project.path(), clip));
 
     let sidecar = sidecar_path(&project.path().join("assets/walk.bvh"));

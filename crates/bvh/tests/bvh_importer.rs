@@ -1,6 +1,6 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use concerto_animation::clip::AnimationClip;
 use concerto_asset_import::{ImportContext, ImportError, ImportOutputs, Importer};
@@ -195,9 +195,10 @@ fn import_ok(name: &str, text: &str, settings: &str) -> (Skeleton, AnimationClip
             .bytes
             .clone()
     };
+    let stem = Path::new(name).file_stem().unwrap().to_str().unwrap();
     (
         bincode::deserialize(&decode("skeleton/0")).unwrap(),
-        bincode::deserialize(&decode("animation/0")).unwrap(),
+        bincode::deserialize(&decode(&format!("animation/{stem}"))).unwrap(),
     )
 }
 
@@ -522,5 +523,22 @@ fn the_root_node_carries_the_rooted_skeleton_component() {
     assert_eq!(
         scene.referenced_assets,
         [AssetId::from_path("scene_skeleton.bvh#skeleton/0")]
+    );
+}
+
+#[test]
+fn the_clip_is_named_after_the_source_file_stem() {
+    let outputs = run("Walk Cycle.bvh", TWO_JOINTS, "").expect("the import should succeed");
+    assert!(
+        outputs
+            .sub_assets
+            .iter()
+            .any(|asset| asset.name == "animation/Walk Cycle"),
+        "sub-assets: {:?}",
+        outputs
+            .sub_assets
+            .iter()
+            .map(|asset| asset.name.as_str())
+            .collect::<Vec<_>>()
     );
 }
