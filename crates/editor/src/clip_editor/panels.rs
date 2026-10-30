@@ -457,11 +457,16 @@ pub(crate) fn build_clip_panels(
     }
 }
 
-fn rate_fact(rate: f32) -> String {
-    if rate.fract() == 0.0 {
-        format!("{rate:.0} fps, detected")
+fn rate_fact(rate: f32, stored: bool) -> String {
+    let number = if rate.fract() == 0.0 {
+        format!("{rate:.0}")
     } else {
-        format!("{rate:.2} fps, detected")
+        format!("{rate:.2}")
+    };
+    if stored {
+        format!("{number} fps")
+    } else {
+        format!("{number} fps, detected")
     }
 }
 
@@ -546,7 +551,7 @@ pub(crate) fn sync_clip_panels(
         write_text(inspector.duration, &format!("{:.2} s", facts.duration));
         let frames = facts.frames.map(|frames| frames.to_string());
         write_text(inspector.frames, frames.as_deref().unwrap_or(NO_VALUE));
-        let rate = facts.rate.map(rate_fact);
+        let rate = facts.rate.map(|rate| rate_fact(rate, facts.rate_is_stored));
         write_text(inspector.rate, rate.as_deref().unwrap_or(NO_VALUE));
         write_text(inspector.clip_bones, &facts.clip_bones.to_string());
         let driven = format!("{} of {}", facts.driven, facts.skeleton_bones);
@@ -817,8 +822,10 @@ mod tests {
 
     #[test]
     fn a_fractional_rate_keeps_two_decimals() {
-        assert_eq!(rate_fact(29.97), "29.97 fps, detected");
-        assert_eq!(rate_fact(30.0), "30 fps, detected");
+        assert_eq!(rate_fact(29.97, false), "29.97 fps, detected");
+        assert_eq!(rate_fact(30.0, false), "30 fps, detected");
+        assert_eq!(rate_fact(29.97, true), "29.97 fps");
+        assert_eq!(rate_fact(30.0, true), "30 fps");
     }
 
     #[test]
