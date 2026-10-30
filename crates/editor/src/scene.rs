@@ -8,7 +8,7 @@ use concerto_app::{
     schedule_groups::{First, Update},
 };
 use concerto_ecs::{
-    Changed, Component, Entity, Event, IntoSystemConfig, Query, Resource, World,
+    Changed, Component, Entity, Event, IntoSystemConfig, Query, Resource, With, World,
     command::{CommandQueue, EntityCommandQueue},
     events::{event_reader::EventReader, event_writer::EventWriter},
     resource::{Res, ResMut},
@@ -195,7 +195,10 @@ fn forget_discarded_edits(on: On<DiscardEdits>, documents: Query<&mut HostedApp>
 
 /// Keeps a Scene document's `Unsaved` in step with its edit `App`'s `SceneDirty`.
 pub(crate) fn follow_unsaved_edits(
-    documents: Query<(Entity, &HostedApp, Option<&PlayState>, Option<&Unsaved>)>,
+    documents: Query<
+        (Entity, &HostedApp, Option<&PlayState>, Option<&Unsaved>),
+        With<SceneEditorState>,
+    >,
     mut cmd: CommandQueue,
 ) {
     for (document, hosted, state, unsaved) in documents.iter() {
@@ -873,6 +876,19 @@ mod tests {
                 .get_component_for_entity::<Unsaved>(document)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn an_unsaved_on_a_hosted_document_that_is_not_a_scene_stays() {
+        let mut f = SceneFixture::new();
+        let document = f.world.spawn((
+            crate::hosted::testing::preview_now(crate::hosted::testing::plain_recipe),
+            Unsaved,
+        ));
+
+        f.deliver();
+
+        assert!(f.unsaved(document));
     }
 
     #[test]

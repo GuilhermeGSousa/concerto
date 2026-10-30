@@ -112,6 +112,13 @@ pub(crate) fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     }
 }
 
+pub(crate) fn preview_request(recipe: fn(&mut App)) -> HostRequest<'static> {
+    HostRequest {
+        role: HostRole::Preview,
+        ..request(recipe)
+    }
+}
+
 pub(crate) fn start_play(
     world: &mut World,
     document: Entity,
@@ -148,6 +155,12 @@ pub(crate) fn play_state(world: &World, document: Entity) -> Option<PlayState> {
 
 pub(crate) fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedApp {
     super::begin(request(recipe), extra, |_| {})
+        .finish_now()
+        .expect("a recipe without asynchronous plugins is ready at once")
+}
+
+pub(crate) fn preview_now(recipe: fn(&mut App)) -> HostedApp {
+    super::begin(preview_request(recipe), |_| {}, |_| {})
         .finish_now()
         .expect("a recipe without asynchronous plugins is ready at once")
 }
@@ -340,7 +353,7 @@ impl SceneFixture {
             super::forward_registry.into_boxed_system(),
             super::finish_pending.into_boxed_system(),
             super::finish_pending_play.into_boxed_system(),
-            super::input::step_edit_target.into_boxed_system(),
+            super::input::step_viewport_target.into_boxed_system(),
         ];
         let process_commands = systems.len();
         systems.extend([

@@ -321,7 +321,7 @@ mod tests {
             .add_system(LateUpdate, lay_out_by_command.in_set(UiSet::Layout))
             .add_system(
                 concerto_app::schedule_groups::First,
-                note_what_the_step_saw.after(crate::hosted::input::step_edit_target),
+                note_what_the_step_saw.after(crate::hosted::input::step_viewport_target),
             );
         let world = app.main_mut().world_mut();
         let document = world.spawn(hosted_now(plain_recipe, |_| {}));

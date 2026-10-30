@@ -3,32 +3,46 @@ use concerto_ecs::{
     signal::{On, Signal},
 };
 
-use super::HostedApp;
+use super::{HostRole, HostedApp};
 use crate::asset_editor::ActiveEditor;
 
 /// Marks the document whose `App` the editor's panels read and send signals to.
 #[derive(Component)]
 pub struct EditTarget;
 
-/// Makes `document` the edit target, if it is the active tab and holds an `App`, or leaves none.
+/// Marks the active document whose hosted `App`, of any role, the viewport shows, takes input and is stepped.
+#[derive(Component)]
+pub struct ViewportTarget;
+
+/// Moves the targets to `document` if it holds an `App`, or clears them; a `document` that is not the active tab changes nothing.
 pub struct SetEditTarget(pub Option<Entity>);
 impl Signal for SetEditTarget {}
 
 pub(crate) fn move_edit_target(
     on: On<SetEditTarget>,
-    targets: Query<Entity, With<EditTarget>>,
+    edit_targets: Query<Entity, With<EditTarget>>,
+    viewport_targets: Query<Entity, With<ViewportTarget>>,
     hosted: Query<&HostedApp>,
     active: Res<ActiveEditor>,
     mut cmd: CommandQueue,
 ) {
-    for target in targets.iter() {
+    let wanted = on.signal().0;
+    if wanted.is_some_and(|document| active.0 != Some(document)) {
+        return;
+    }
+    for target in edit_targets.iter() {
         cmd.remove::<EditTarget>(target);
     }
-    if let Some(document) = on.signal().0
-        && active.0 == Some(document)
-        && hosted.get_entity(document).is_some()
+    for target in viewport_targets.iter() {
+        cmd.remove::<ViewportTarget>(target);
+    }
+    if let Some(document) = wanted
+        && let Some(app) = hosted.get_entity(document)
     {
-        cmd.insert(EditTarget, document);
+        cmd.insert(ViewportTarget, document);
+        if app.role() != HostRole::Preview {
+            cmd.insert(EditTarget, document);
+        }
     }
 }
 
@@ -98,6 +112,47 @@ mod tests {
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(first);
         world.trigger(SetEditTarget(Some(second)));
         assert!(targets(&mut world).is_empty());
+    }
+
+    fn viewport_targets(world: &mut World) -> Vec<Entity> {
+        world
+            .query::<(Entity, &ViewportTarget), ()>()
+            .iter(world)
+            .map(|(entity, _)| entity)
+            .collect()
+    }
+
+    #[test]
+    fn a_bare_hosted_app_gets_both_markers() {
+        let (mut world, first, _) = world_with_two_documents();
+
+        activate(&mut world, Some(first));
+
+        assert_eq!(targets(&mut world), [first]);
+        assert_eq!(viewport_targets(&mut world), [first]);
+    }
+
+    #[test]
+    fn a_preview_app_gets_only_the_viewport_target() {
+        let (mut world, first, _) = world_with_two_documents();
+        activate(&mut world, Some(first));
+        let preview = world.spawn(preview_now(plain_recipe));
+
+        activate(&mut world, Some(preview));
+
+        assert!(targets(&mut world).is_empty());
+        assert_eq!(viewport_targets(&mut world), [preview]);
+    }
+
+    #[test]
+    fn a_target_for_a_document_not_in_front_leaves_the_markers_alone() {
+        let (mut world, first, second) = world_with_two_documents();
+        activate(&mut world, Some(first));
+
+        world.trigger(SetEditTarget(Some(second)));
+
+        assert_eq!(targets(&mut world), [first]);
+        assert_eq!(viewport_targets(&mut world), [first]);
     }
 
     #[derive(Resource, Default)]

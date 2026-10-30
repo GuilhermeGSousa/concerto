@@ -38,15 +38,16 @@ use concerto_window::{
 
 pub use events::{Hosted, HostedAppEvents, HostedEventsAppExt};
 pub use seam::{EditWorld, EditWorldSignals};
-pub use target::{EditTarget, SetEditTarget};
+pub use target::{EditTarget, SetEditTarget, ViewportTarget};
 
 pub const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
-/// Whether a host builds an `App` to edit a scene in or to play the game.
+/// Whether a host builds an `App` to edit a scene in, to play the game, or to preview an asset in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HostRole {
     Edit,
     Game,
+    Preview,
 }
 
 /// What a host supplies when it builds an `App`.
@@ -64,9 +65,15 @@ pub struct HostRequest<'a> {
 pub struct HostedApp {
     app: App,
     picture: SharedTexture,
+    role: HostRole,
 }
 
 impl HostedApp {
+    /// The role this `App` was built for.
+    pub fn role(&self) -> HostRole {
+        self.role
+    }
+
     /// The texture this `App` draws its window into.
     pub fn picture(&self) -> &SharedTexture {
         &self.picture
@@ -214,6 +221,7 @@ pub fn begin(
     let mut app = match request.role {
         HostRole::Edit => App::for_editing(),
         HostRole::Game => App::new(),
+        HostRole::Preview => App::for_previewing(),
     };
     if let Some(gpu) = request.gpu {
         app.insert_resource(gpu.clone())
@@ -230,7 +238,14 @@ pub fn begin(
         }
     }));
     let (hosted, failure) = match built {
-        Ok(()) => (Some(HostedApp { app, picture }), None),
+        Ok(()) => (
+            Some(HostedApp {
+                app,
+                picture,
+                role: request.role,
+            }),
+            None,
+        ),
         Err(payload) => (None, Some(panic_message(payload, "the recipe"))),
     };
     PendingApp {
@@ -542,7 +557,7 @@ impl Plugin for HostedPlugin {
                     finish_pending,
                     finish_pending_play,
                     input::sync_in_viewport,
-                    input::step_edit_target,
+                    input::step_viewport_target,
                 )
                     .chain(),
             );
@@ -650,7 +665,7 @@ mod tests {
 
     fn stepper(world: &mut World) -> impl FnMut(&mut World) + use<> {
         let mut sync = concerto_ecs::IntoSystem::into_system(input::sync_in_viewport);
-        let mut step = concerto_ecs::IntoSystem::into_system(input::step_edit_target);
+        let mut step = concerto_ecs::IntoSystem::into_system(input::step_viewport_target);
         concerto_ecs::System::initialize(&mut sync, world);
         concerto_ecs::System::initialize(&mut step, world);
         move |world| {
@@ -1986,5 +2001,104 @@ mod tests {
         step(&mut world);
 
         assert!(!hosted_input(&world, document).is_held(KEY));
+    }
+
+    fn marked<T: Component>(world: &mut World) -> Vec<Entity> {
+        world
+            .query::<(Entity, &T), ()>()
+            .iter(world)
+            .map(|(entity, _)| entity)
+            .collect()
+    }
+
+    fn a_preview_in_front_of_a_scene() -> (World, Entity, Entity) {
+        let (mut world, scene) = host_world(plain_recipe);
+        let preview = world.spawn(preview_now(plain_recipe));
+        set_active(&mut world, Some(preview));
+        (world, preview, scene)
+    }
+
+    fn assert_the_preview_alone_is_targeted(world: &mut World, preview: Entity) {
+        assert_eq!(marked::<ViewportTarget>(world), [preview]);
+        assert!(marked::<EditTarget>(world).is_empty());
+    }
+
+    fn start_play_in_the_background(world: &mut World, document: Entity, recipe: fn(&mut App)) {
+        let pending = begin(play_request(recipe), |_| {}, |_| {});
+        world.insert(
+            (PendingPlayApp::new(pending), PlayState::Starting),
+            document,
+        );
+    }
+
+    #[test]
+    fn an_app_finishing_in_the_background_leaves_the_front_documents_markers_alone() {
+        let (mut world, preview, scene) = a_preview_in_front_of_a_scene();
+        world.insert(begin(request(plain_recipe), |_| {}, |_| {}), scene);
+
+        finish_edit_apps(&mut world);
+
+        assert!(
+            world
+                .get_component_for_entity::<PendingApp>(scene)
+                .is_none()
+        );
+        assert_the_preview_alone_is_targeted(&mut world, preview);
+    }
+
+    #[test]
+    fn a_play_app_finishing_in_the_background_leaves_the_front_documents_markers_alone() {
+        let (mut world, preview, scene) = a_preview_in_front_of_a_scene();
+        start_play_in_the_background(&mut world, scene, plain_recipe);
+
+        finish_play(&mut world);
+
+        assert_eq!(play_state(&world, scene), Some(PlayState::Playing));
+        assert_the_preview_alone_is_targeted(&mut world, preview);
+    }
+
+    #[test]
+    fn a_play_app_failing_in_the_background_leaves_the_front_documents_markers_alone() {
+        let (mut world, preview, scene) = a_preview_in_front_of_a_scene();
+        start_play_in_the_background(&mut world, scene, panicking_recipe);
+
+        finish_play(&mut world);
+
+        assert!(
+            world
+                .get_component_for_entity::<PlayFailure>(scene)
+                .is_some()
+        );
+        assert_the_preview_alone_is_targeted(&mut world, preview);
+    }
+
+    #[test]
+    fn stopping_a_background_document_leaves_the_front_documents_markers_alone() {
+        let (mut world, preview, scene) = a_preview_in_front_of_a_scene();
+        start_play_in_the_background(&mut world, scene, plain_recipe);
+        finish_play(&mut world);
+
+        world.trigger(StopPlay(scene));
+
+        assert_eq!(play_state(&world, scene), Some(PlayState::Editing));
+        assert_the_preview_alone_is_targeted(&mut world, preview);
+    }
+
+    #[test]
+    fn only_the_viewport_target_is_stepped() {
+        let (mut world, scene) = stepping_world();
+        let mut step = stepper(&mut world);
+        step(&mut world);
+        let preview = world.spawn(preview_now(plain_recipe));
+        set_active(&mut world, Some(preview));
+        step(&mut world);
+        let scene_frames = frames(&world, scene);
+
+        step(&mut world);
+        step(&mut world);
+
+        assert_eq!(frames(&world, scene), scene_frames);
+        assert_eq!(frames(&world, preview), 3);
+        assert_the_preview_alone_is_targeted(&mut world, preview);
     }
 }

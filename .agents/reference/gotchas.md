@@ -248,19 +248,25 @@ fix the entry in the same commit as the change that made it false.
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
 - **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
-  has `EditTarget`: no scene is open in the front tab, or its game is
-  starting. Whatever such a system drew stays on screen unless an
+  has `EditTarget`: no scene is open in the front tab, the front tab's `App` is
+  a preview, or its game is starting. Whatever such a system drew stays on screen unless an
   `On<Remove<EditTarget>>` listener empties it. A skipped system does not
   advance its event readers either, so on its next run it reads the events of
   the frame it missed.
 - **Change the edit target with `SetEditTarget`, never by moving the marker.**
-  Its one listener moves `EditTarget` and enforces that at most the front tab's
-  document holds it, and only once it has an `App`. Re-targeting the same
-  document removes the marker and adds it again, so Play and Stop are a
-  `Remove` followed by an `Add`.
-- **`InViewport` follows `EditTarget` while the viewport is shown.**
+  Its one listener moves `ViewportTarget` and `EditTarget` and enforces that at
+  most the front tab's document holds them, and only once it has an `App`.
+  `ViewportTarget` goes on any hosted `App`; `EditTarget` goes on every role but
+  `HostRole::Preview`. A `SetEditTarget(Some(document))` for a document that is
+  not the front tab changes nothing, so an `App` finishing, failing to play, or
+  stopping in the background leaves the front tab's markers alone.
+  Re-targeting the same document removes the markers and adds them again, so
+  Play and Stop are a `Remove` followed by an `Add`.
+- **`InViewport` follows `ViewportTarget` while the viewport is shown.**
   `sync_in_viewport` keeps it in step in `First`, before the step. Its `Add`
-  focuses the `App`; its `Remove` unfocuses it and steps it once.
+  focuses the `App`; its `Remove` unfocuses it and steps it once. Only the
+  document with both is stepped, by `step_viewport_target`, and only it gets
+  routed input.
 - **Only the editor camera draws in an edit `App`.** The viewport tools insert
   `ExclusiveCamera` naming it at `Startup`, and `extract_cameras` skips every
   other camera while the resource exists, so a scene camera never gets a render
@@ -318,7 +324,7 @@ fix the entry in the same commit as the change that made it false.
   (`hosted/input.rs`). That system decides the gate for the frame, so it runs
   before `concerto_window::FoldInput`; the click that releases input is then
   folded in the same frame and reaches the panel under it. While playing,
-  `step_edit_target` routes nothing, including on the frame Stop happens.
+  `step_viewport_target` routes nothing, including on the frame Stop happens.
 
 ## wasm
 
