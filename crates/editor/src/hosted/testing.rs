@@ -530,6 +530,11 @@ impl SceneFixture {
         }
     }
 
+    pub(crate) fn add_delivery(&mut self, mut system: BoxedSystem) {
+        system.initialize(&mut self.world);
+        self.delivery.push(system);
+    }
+
     pub(crate) fn frames_until_idle(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {

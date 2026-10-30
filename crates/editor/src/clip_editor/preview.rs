@@ -465,6 +465,19 @@ mod tests {
         .unwrap()
     }
 
+    #[test]
+    fn a_document_starts_with_the_previews_values() {
+        let document = crate::clip_editor::ClipDocument::default();
+        let preview = ClipPreview::default();
+
+        assert_eq!(document.time, preview.time);
+        assert_eq!(document.rate, preview.rate);
+        assert_eq!(document.playing, preview.playing);
+        assert_eq!(document.looping, preview.looping);
+        assert_eq!(document.root_motion, preview.root_motion);
+        assert_eq!(document.skeleton_gizmo, preview.skeleton_gizmo);
+    }
+
     #[derive(Clone, Copy)]
     struct Rig {
         owner: Entity,
