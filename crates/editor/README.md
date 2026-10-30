@@ -321,6 +321,24 @@ folders leading to each match, open; clearing them restores the expansion as it
 was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
 
+**New** beside Import… lists one row, `New <kind>`, per creatable asset kind
+(see [Custom asset editors](#custom-asset-editors)); Scene is the only one the
+editor ships. It creates in the selected folder, or in the content root when
+nothing or an asset is selected. Picking a row clears the search and the kind
+chip, and puts a row with a focused name field in that folder, ahead of its
+assets, expanding the folders above it. The field starts as a free name: `New
+<kind>`, then `New <kind> 1`, `New <kind> 2`, and so on. Enter, or clicking
+away, writes `<folder>/<name>.gasset` with a fresh `AssetId`, adds it to the
+registry, selects it and opens it in its editor; Escape cancels and writes
+nothing. A name follows `valid_asset_name`, and one already used in that folder,
+by a file on disk or a registry entry, ignoring case, is taken. Enter on a
+refused name keeps the field, outlines it in the error colour and puts the
+reason in the footer until the next keystroke; clicking away from a refused
+name cancels. New is disabled while no project is open or one is opening. The
+file is always a `.gasset`, even in a project whose `content.toml` sets another
+extension. If an unsaved Scene tab holds the open, the asset is already written
+and the unsaved-changes prompt decides when it opens.
+
 Activating a supported asset in the Asset Browser, by double-clicking it or pressing
 Enter on its row, opens its editor tab. Each asset type
 has one editor: another Scene reuses the Scene tab. The old preview, camera,
@@ -697,7 +715,8 @@ each with a `Creator`. `Creator::create(project_root, address, registry)`
 writes a new `.gasset` at the address with a fresh `AssetId` and no import
 provenance, adds it to the registry, and returns its id. Scenes are creatable,
 and a new scene is empty. Registration is refused when `New <kind>` is not a
-valid asset name.
+valid asset name. Each creatable kind gets a row in the Asset Browser's New
+dropdown.
 
 `valid_asset_name` holds the name rules: 1 to 64 ASCII letters, digits, spaces,
 `-` and `_`, with no leading or trailing space. The names Windows reserves,

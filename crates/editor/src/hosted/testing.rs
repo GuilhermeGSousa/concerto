@@ -291,7 +291,9 @@ impl SceneFixture {
         world.insert_resource(AssetEditorCommands::default());
         world.insert_resource(UnsavedGuard::default());
         let mut editors = AssetEditorRegistry::default();
-        editors.register::<Scene>(SceneEditor).unwrap();
+        editors
+            .register_creatable::<Scene>(SceneEditor, crate::scene::empty_scene)
+            .unwrap();
         world.insert_resource(editors);
         let mut project = ProjectState::default();
         let mut registry = AssetRegistry::default();
