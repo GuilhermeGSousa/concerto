@@ -42,7 +42,11 @@ pub struct MotionDatabase {
     features: Vec<f32>,
     feature_dims: usize,
     channels: Vec<ChannelSpan>,
+    offset: Vec<f32>,
+    deviations: Vec<f32>,
 }
+
+const DEVIATION_FLOOR: f32 = 1e-6;
 
 impl MotionDatabase {
     #[allow(clippy::too_many_arguments)]
@@ -61,6 +65,8 @@ impl MotionDatabase {
         features: Vec<f32>,
         feature_dims: usize,
         channels: Vec<ChannelSpan>,
+        offset: Vec<f32>,
+        deviations: Vec<f32>,
     ) -> Self {
         Self {
             skeleton,
@@ -77,6 +83,8 @@ impl MotionDatabase {
             features,
             feature_dims,
             channels,
+            offset,
+            deviations,
         }
     }
 
@@ -185,6 +193,63 @@ impl MotionDatabase {
     pub fn features(&self, frame: usize) -> &[f32] {
         let dims = self.feature_dims;
         &self.features[frame * dims..(frame + 1) * dims]
+    }
+
+    /// The mean of every feature dimension over all frames.
+    pub fn offset(&self) -> &[f32] {
+        &self.offset
+    }
+
+    /// The divisor of every feature dimension: its group's floored deviation over the group's weight.
+    pub fn scales(&self) -> Vec<f32> {
+        let mut scales = vec![1.0; self.feature_dims];
+        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
+            let scale = deviation.max(DEVIATION_FLOOR) / span.weight;
+            scales[span.offset..span.offset + span.dims].fill(scale);
+        }
+        scales
+    }
+
+    /// Subtracts the offset and divides by the scale in place; a group with no deviation becomes 0.
+    pub fn normalise(&self, features: &mut [f32]) {
+        let scales = self.scales();
+        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
+            let range = span.offset..span.offset + span.dims;
+            if *deviation < DEVIATION_FLOOR {
+                features[range].fill(0.0);
+                continue;
+            }
+            for dim in range {
+                features[dim] = (features[dim] - self.offset[dim]) / scales[dim];
+            }
+        }
+    }
+
+    /// The feature vector of `frame` after `normalise`.
+    pub fn normalised_features(&self, frame: usize) -> Vec<f32> {
+        let mut features = self.features(frame).to_vec();
+        self.normalise(&mut features);
+        features
+    }
+
+    /// Replaces every channel's weight, one per channel in order, without a re-bake.
+    pub fn set_weights(&mut self, weights: &[f32]) -> Result<(), BakeError> {
+        if weights.len() != self.channels.len() {
+            return Err(BakeError::WeightCountMismatch {
+                expected: self.channels.len(),
+                actual: weights.len(),
+            });
+        }
+        if let Some(weight) = weights
+            .iter()
+            .find(|weight| !(weight.is_finite() && **weight > 0.0))
+        {
+            return Err(BakeError::InvalidWeight(*weight));
+        }
+        for (span, weight) in self.channels.iter_mut().zip(weights) {
+            span.weight = *weight;
+        }
+        Ok(())
     }
 }
 
