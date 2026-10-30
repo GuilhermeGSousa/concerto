@@ -61,7 +61,7 @@ mod tests {
         system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
     };
     use concerto_foundation::{
-        assets::{asset_server::AssetServer, asset_store::AssetStore},
+        assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
         time::Time,
         transform::Transform,
     };
@@ -124,17 +124,7 @@ mod tests {
         app.register_plugin(AnimationPlugin);
 
         let world = app.main_mut().world_mut();
-        let server = world.get_resource::<AssetServer>().unwrap().clone();
-        let skeleton_handle = server.add(
-            Skeleton::new(
-                vec![Mat4::IDENTITY],
-                vec![None],
-                vec!["bone".to_string()],
-                vec![JointPose::IDENTITY],
-                vec![bone_id],
-            )
-            .unwrap(),
-        );
+        let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
         let skeleton = Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
@@ -153,7 +143,7 @@ mod tests {
         registry.register::<OrderProbe>();
         let mut graph = AnimationGraph::from_node(OrderProbe {});
         graph.make_live(&registry, None).unwrap();
-        let graph_handle = server.add(AnimationGraph::default());
+        let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
         world
             .get_resource_mut::<AssetStore<AnimationGraph>>()
             .unwrap()
