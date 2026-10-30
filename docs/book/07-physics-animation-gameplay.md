@@ -177,9 +177,54 @@ A graph is a tree of nodes under a result node:
   to the old one with `blend_time` as the halflife.
 
 Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
-`set_int_param`, `set_float_param` and `set_vec2_param`. The tech demo's
+`set_int_param`, `set_float_param` and `set_vec2_param`. They live on a
+blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
+takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
+missing or holds another type; the typed methods are wrappers over those two.
+The tech demo's
 `examples/tech-demo/src/character.rs` builds a full locomotion graph with a
 jump state machine.
+
+### Your own nodes
+
+The node set is open: any crate can define a node. Derive `Reflect` and
+`Default`, mark it `#[reflect(AnimationNode)]`, implement `AnimationNode`, and
+register the type with `app.register_type::<MyNode>()`.
+
+```rust
+#[derive(Default, Reflect)]
+#[reflect(AnimationNode)]
+struct Gain {
+    amount: f32,
+}
+
+impl AnimationNode for Gain {
+    type Instance = ();
+    // create_instance, update, evaluate, reset; is_finished defaults to true
+}
+```
+
+The node's fields are its data and are stored with the graph. `Instance` is the
+per-player runtime state (a playhead, say): `create_instance` makes one for each
+player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
+receive it. Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
+on the result node or on another node's context, or start a graph with
+`AnimationGraph::from_node`.
+
+A graph stores each node as its registry `type_name` plus its reflected value,
+which is what a `.gasset` file holds. The live nodes are built from that data
+by `make_live`, which the asset server runs in `on_load`, so a graph loaded
+from disk and a graph built in code both go live when they reach the asset
+server: `assets.add(graph)` runs it before the handle resolves. A player skips
+a graph that is not live. A node whose type is not registered, or whose stored
+value does not apply, becomes a `PlaceholderNode` that passes its first input
+through, and a warning is logged and kept in `AnimationGraph::load_warnings()`.
+The stored data is left as it was, so saving the graph does not lose the node.
+
+Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
+an `AnimationStateMachine`) are stored as asset ids and loaded again by
+`make_live`. Keep the clip and state graph handles you give to a builder alive
+until `assets.add(graph)` has run.
 
 ## Gameplay helpers
 

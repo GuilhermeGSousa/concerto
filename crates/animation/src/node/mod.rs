@@ -1,6 +1,5 @@
-use std::any::Any;
-
-use concerto_foundation::{assets::handle::AssetHandle, utils::AsAny};
+use concerto_foundation::assets::handle::AssetHandle;
+use concerto_reflect::Reflect;
 use uuid::Uuid;
 
 use crate::{
@@ -10,104 +9,80 @@ use crate::{
 };
 
 pub mod blend_space;
+pub mod definition;
 pub mod state_machine;
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+pub use definition::{
+    AnimationNode, ErasedAnimationNode, NodeInstance, PlaceholderNode, ReflectAnimationNode,
+};
+
+#[derive(Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationPlayMode {
     #[default]
     Loop,
     PlayOnce,
 }
 
-pub trait AnimationNodeInstance: AsAny + Sync + Send {
-    fn reset(&mut self);
+/// The graph's output: passes its first input through.
+#[derive(Default, Reflect)]
+#[reflect(AnimationNode)]
+pub struct ResultNode {}
 
-    fn evaluate(
-        &mut self,
-        node: &AnimationNodeKind,
-        context: &AnimationGraphContext<'_>,
-        bone_ids: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        pool: &mut PosePool,
-        output: &mut Pose,
-    );
+/// Passes its first input through.
+#[derive(Default, Reflect)]
+#[reflect(AnimationNode)]
+pub struct BlendNode {}
 
-    fn update(
-        &mut self,
-        node: &AnimationNodeKind,
-        delta_time: f32,
-        context: &AnimationGraphContext<'_>,
-    );
-
-    fn is_finished(&self) -> bool {
-        true
+fn pass_through(evaluated_inputs: &[EvaluatedPose], output: &mut Pose) {
+    if let Some(input) = evaluated_inputs.first() {
+        output.copy_from(&input.pose);
     }
 }
 
-/// Closed set of animation-graph node definitions. `Result` and `Blend` carry no
-/// data; the others wrap a definition struct.
-#[derive(serde::Serialize, serde::Deserialize)]
-pub enum AnimationNodeKind {
-    Result,
-    // TODO(asset-trait-merge): an imported-then-loaded graph carries Weak
-    // AssetHandles; needs an upgrade pass like scene components. No graph is
-    // imported yet.
-    Clip(AnimationClipNode),
-    Blend,
-    BlendSpace2D(crate::node::blend_space::BlendSpace2DNode),
-    StateMachine(crate::node::state_machine::AnimationStateMachine),
-}
+impl AnimationNode for ResultNode {
+    type Instance = ();
 
-impl AnimationNodeKind {
-    pub(crate) fn create_instance(
+    fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
+
+    fn update(&self, _: &mut (), _: f32, _: &AnimationGraphContext<'_>) {}
+
+    fn evaluate(
         &self,
-        creation_context: &AnimationGraphContext,
-    ) -> Box<dyn AnimationNodeInstance> {
-        match self {
-            AnimationNodeKind::Result | AnimationNodeKind::Blend => Box::new(NoneInstance),
-            AnimationNodeKind::Clip(def) => {
-                Box::new(AnimationClipNodeInstance::new().with_start_time(def.start_time))
-            }
-            AnimationNodeKind::BlendSpace2D(def) => Box::new(
-                crate::node::blend_space::BlendSpace2DInstanceNode::new(def.points()),
-            ),
-            AnimationNodeKind::StateMachine(fsm) => fsm.create_instance_boxed(creation_context),
-        }
-    }
-}
-
-#[derive(AsAny)]
-pub struct NoneInstance;
-
-impl AnimationNodeInstance for NoneInstance {
-    fn reset(&mut self) {}
-
-    fn update(
-        &mut self,
-        _node: &AnimationNodeKind,
-        _delta_time: f32,
-        _context: &AnimationGraphContext<'_>,
-    ) {
-    }
-
-    fn evaluate(
-        &mut self,
-        _node: &AnimationNodeKind,
-        _context: &AnimationGraphContext<'_>,
-        _bone_ids: &[Uuid],
+        _: &mut (),
+        _: &AnimationGraphContext<'_>,
+        _: &[Uuid],
         evaluated_inputs: &[EvaluatedPose],
-        _pool: &mut PosePool,
+        _: &mut PosePool,
         output: &mut Pose,
     ) {
-        // Pass-through: forward the first input pose if there is one, otherwise leave the
-        // output at its acquired (identity) state.
-        if let Some(input) = evaluated_inputs.first() {
-            output.copy_from(&input.pose);
-        }
+        pass_through(evaluated_inputs, output);
     }
+
+    fn reset(&self, _: &mut ()) {}
 }
 
-#[derive(AsAny)]
+impl AnimationNode for BlendNode {
+    type Instance = ();
+
+    fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
+
+    fn update(&self, _: &mut (), _: f32, _: &AnimationGraphContext<'_>) {}
+
+    fn evaluate(
+        &self,
+        _: &mut (),
+        _: &AnimationGraphContext<'_>,
+        _: &[Uuid],
+        evaluated_inputs: &[EvaluatedPose],
+        _: &mut PosePool,
+        output: &mut Pose,
+    ) {
+        pass_through(evaluated_inputs, output);
+    }
+
+    fn reset(&self, _: &mut ()) {}
+}
+
 pub struct AnimationClipNodeInstance {
     time: f32,
     start_time: f32,
@@ -150,26 +125,59 @@ impl Default for AnimationClipNodeInstance {
     }
 }
 
-impl AnimationNodeInstance for AnimationClipNodeInstance {
-    fn reset(&mut self) {
-        self.time = self.start_time;
-        self.is_finished = false;
-        self.is_paused = false;
+impl AnimationNode for AnimationClipNode {
+    type Instance = AnimationClipNodeInstance;
+
+    fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> AnimationClipNodeInstance {
+        AnimationClipNodeInstance::new().with_start_time(self.start_time)
+    }
+
+    fn update(
+        &self,
+        instance: &mut AnimationClipNodeInstance,
+        delta_time: f32,
+        context: &AnimationGraphContext<'_>,
+    ) {
+        if instance.is_finished {
+            instance.is_finished = false;
+        }
+
+        if instance.is_paused {
+            return;
+        }
+
+        let Some(clip) = context.animation_clips.get(&self.clip) else {
+            return;
+        };
+
+        instance.time += delta_time * instance.play_rate * self.play_rate;
+
+        match self.play_mode {
+            AnimationPlayMode::Loop => {
+                if instance.time > clip.duration() {
+                    instance.time = instance.start_time;
+                    instance.is_finished = true;
+                }
+            }
+            AnimationPlayMode::PlayOnce => {
+                if instance.time > clip.duration() {
+                    instance.is_paused = true;
+                    instance.is_finished = true;
+                }
+            }
+        }
     }
 
     fn evaluate(
-        &mut self,
-        node: &AnimationNodeKind,
+        &self,
+        instance: &mut AnimationClipNodeInstance,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedPose],
         _pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        let AnimationNodeKind::Clip(clip_node) = node else {
-            return;
-        };
-        let Some(animation_clip) = context.animation_clips.get(&clip_node.clip) else {
+        let Some(animation_clip) = context.animation_clips.get(&self.clip) else {
             return;
         };
 
@@ -187,62 +195,35 @@ impl AnimationNodeInstance for AnimationClipNodeInstance {
                 };
 
                 for animation_channel in animation_channels {
-                    animation_channel.sample_transform(self.current_time(), joint_pose);
+                    animation_channel.sample_transform(instance.current_time(), joint_pose);
                 }
             });
     }
 
-    fn update(
-        &mut self,
-        node: &AnimationNodeKind,
-        delta_time: f32,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        let AnimationNodeKind::Clip(clip_node) = node else {
-            return;
-        };
-
-        if self.is_finished {
-            self.is_finished = false;
-        }
-
-        if self.is_paused {
-            return;
-        }
-
-        let Some(clip) = context.animation_clips.get(&clip_node.clip) else {
-            return;
-        };
-
-        self.time += delta_time * self.play_rate * clip_node.play_rate;
-
-        match clip_node.play_mode {
-            AnimationPlayMode::Loop => {
-                if self.time > clip.duration() {
-                    self.time = self.start_time;
-                    self.is_finished = true;
-                }
-            }
-            AnimationPlayMode::PlayOnce => {
-                if self.time > clip.duration() {
-                    self.is_paused = true;
-                    self.is_finished = true;
-                }
-            }
-        }
+    fn reset(&self, instance: &mut AnimationClipNodeInstance) {
+        instance.time = instance.start_time;
+        instance.is_finished = false;
+        instance.is_paused = false;
     }
 
-    fn is_finished(&self) -> bool {
-        self.is_finished
+    fn is_finished(&self, instance: &AnimationClipNodeInstance) -> bool {
+        instance.is_finished
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
+#[reflect(AnimationNode)]
 pub struct AnimationClipNode {
     clip: AssetHandle<AnimationClip>,
     play_mode: AnimationPlayMode,
     start_time: f32,
     play_rate: f32,
+}
+
+impl Default for AnimationClipNode {
+    fn default() -> Self {
+        Self::new(AssetHandle::default())
+    }
 }
 
 impl AnimationClipNode {

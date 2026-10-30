@@ -106,7 +106,7 @@ impl AnimationTransitionBlender for BlendStack {
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
         transition_time: f32,
-        _context: &AnimationGraphContext<'_>,
+        context: &AnimationGraphContext<'_>,
     ) {
         if *self.current() == *next_graph {
             return;
@@ -118,7 +118,7 @@ impl AnimationTransitionBlender for BlendStack {
 
         // Anchor the target's clip (and OnAnimationEnd) to the moment of entry (invariant 3).
         if let Some(graph_instance) = graph_instances.get_mut(next_graph) {
-            graph_instance.reset();
+            graph_instance.reset(context);
         }
 
         self.entries.push(BlendStackEntry {

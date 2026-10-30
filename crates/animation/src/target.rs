@@ -104,8 +104,8 @@ mod tests {
     use super::{animate_targets, initialize_skeletons};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
-        graph::AnimationGraph,
-        node::{AnimationClipNode, AnimationNodeKind},
+        graph::{AnimationGraph, made_live},
+        node::AnimationClipNode,
         player::AnimationPlayer,
         root::AnimationRootBone,
     };
@@ -173,7 +173,9 @@ mod tests {
         let graph_handle = server.add(AnimationGraph::default());
         graphs.insert(
             graph_handle.id(),
-            AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(clip_handle))),
+            made_live(AnimationGraph::from_node(AnimationClipNode::new(
+                clip_handle,
+            ))),
         );
         let skeleton_handle = server.add(one_bone_skeleton(bone_id));
 
