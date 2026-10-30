@@ -16,8 +16,8 @@ pub use channel::{
 };
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{
-    ContactSettings, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
-    TimeRange, TrajectorySettings,
+    MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
+    TrajectorySettings,
 };
 pub use plugin::MotionMatchingPlugin;
 pub use simulation::{predict_trajectory, CharacterSimulation, DesiredMotion, TrajectorySample};

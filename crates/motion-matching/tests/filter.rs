@@ -1,4 +1,4 @@
-use concerto_motion_matching::filter::{median_filter, savitzky_golay};
+use concerto_motion_matching::filter::savitzky_golay;
 use concerto_motion_matching::BakeError;
 
 fn cubic(x: f32) -> f32 {
@@ -65,40 +65,4 @@ fn rejects_even_and_too_small_windows() {
         );
     }
     assert!(savitzky_golay(&values, 5, 3).is_ok());
-}
-
-#[test]
-fn median_removes_a_one_frame_glitch() {
-    let mut values = vec![true; 12];
-    values[6] = false;
-    assert_eq!(median_filter(&values, 5), vec![true; 12]);
-
-    let mut values = vec![false; 12];
-    values[6] = true;
-    assert_eq!(median_filter(&values, 5), vec![false; 12]);
-}
-
-#[test]
-fn median_keeps_the_edges() {
-    let values = [true, true, true, false, false, false];
-    assert_eq!(median_filter(&values, 3), values.to_vec());
-    let values = [false, false, true, true, true, true];
-    assert_eq!(median_filter(&values, 3), values.to_vec());
-}
-
-#[test]
-fn median_with_an_even_window_is_true_at_half() {
-    let values = [true, true, true, false, false, false, false, false];
-    let filtered = median_filter(&values, 6);
-    assert_eq!(filtered.len(), values.len());
-    assert!(filtered[0]);
-    assert!(!filtered[7]);
-}
-
-#[test]
-fn median_of_a_trivial_window_is_unchanged() {
-    let values = [true, false, true];
-    assert_eq!(median_filter(&values, 0), values.to_vec());
-    assert_eq!(median_filter(&values, 1), values.to_vec());
-    assert!(median_filter(&[], 5).is_empty());
 }

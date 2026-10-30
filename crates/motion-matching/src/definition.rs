@@ -41,24 +41,6 @@ impl Default for SimulationBoneSettings {
     }
 }
 
-/// The bones whose ground contact is baked, the speed below which one touches, and the median filter window.
-#[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ContactSettings {
-    pub bones: Vec<String>,
-    pub speed_threshold: f32,
-    pub median_window: usize,
-}
-
-impl Default for ContactSettings {
-    fn default() -> Self {
-        Self {
-            bones: Vec::new(),
-            speed_threshold: 0.15,
-            median_window: 6,
-        }
-    }
-}
-
 /// How the trajectory a channel sees is sampled: `sample_count` points, `sample_dt` seconds apart, starting one step ahead.
 #[derive(Reflect, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct TrajectorySettings {
@@ -82,7 +64,7 @@ pub struct StoredChannel {
     pub value: ReflectedValue,
 }
 
-/// What to bake into a [`MotionDatabase`](crate::MotionDatabase): the clips, sampling, simulation bone, contacts and feature channels.
+/// What to bake into a [`MotionDatabase`](crate::MotionDatabase): the clips, sampling, simulation bone, trajectory and feature channels.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabaseDefinition {
     pub skeleton: AssetHandle<Skeleton>,
@@ -90,7 +72,6 @@ pub struct MotionDatabaseDefinition {
     pub rate: f32,
     pub speed: f32,
     pub simulation: SimulationBoneSettings,
-    pub contacts: ContactSettings,
     pub trajectory: TrajectorySettings,
     pub channels: Vec<StoredChannel>,
 }
@@ -103,7 +84,6 @@ impl Default for MotionDatabaseDefinition {
             rate: 60.0,
             speed: 1.1,
             simulation: SimulationBoneSettings::default(),
-            contacts: ContactSettings::default(),
             trajectory: TrajectorySettings::default(),
             channels: Vec::new(),
         }

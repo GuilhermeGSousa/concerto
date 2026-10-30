@@ -28,8 +28,8 @@ trajectory.
 
 `MotionDatabaseDefinition` says what to bake; `bake` turns it into a
 `MotionDatabase`. Both are assets. The database stores no poses: it stores
-features, the simulation bone, contacts and, per frame, which clip and time the
-frame plays. `MotionDatabase::pose` samples the pose from the clip.
+features, the simulation bone and, per frame, which clip and time the frame
+plays. `MotionDatabase::pose` samples the pose from the clip.
 
 ### Definition
 
@@ -40,7 +40,6 @@ frame plays. `MotionDatabase::pose` samples the pose from the clip.
 | `rate` | frames per second of the database | 60 |
 | `speed` | clip seconds consumed per second of database time | 1.1 |
 | `simulation` | `SimulationBoneSettings` | see below |
-| `contacts` | `ContactSettings` | see below |
 | `trajectory` | `TrajectorySettings`: `sample_dt` (1/3 s) and `sample_count` (3) | 1/3 s, 3 |
 | `channels` | `StoredChannel`s: a registered type name and a reflected value, in feature order | empty |
 
@@ -51,10 +50,6 @@ An entry bakes `floor((end - start) * rate / speed)` frames.
 joint's forward in its own space; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
 ground projection smoothed, with the smoothed yaw of the facing joint.
-
-`ContactSettings`: `bones` names skeleton joints (empty); a bone touches the
-ground in a frame when its model-space speed is below `speed_threshold`
-(0.15 m/s), after a median filter of `median_window` (6) frames.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -73,7 +68,7 @@ no frame blends across two entries. `bake` returns `BakeError`:
 
 | Error | Cause |
 |---|---|
-| `MissingJoint` | a simulation or contact joint name the skeleton lacks |
+| `MissingJoint` | a simulation joint name the skeleton lacks |
 | `ClipHasNoBones` | the clip animates none of the skeleton's bones |
 | `ClipCountMismatch` | `clips.len()` differs from `entries.len()`, or from the database's clip count in `pose` |
 | `BoneCountMismatch` | `pose` was given a skeleton whose bone count differs from the baked one |
@@ -158,8 +153,6 @@ every bone index is a skeleton joint index.
 - `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
   `clip_start + (frame - range_start) * speed / rate`.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
-- `contact_bones()`: skeleton joint indices. `contacts(frame)` is one `bool`
-  per contact bone, in that order.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
   `dims`).

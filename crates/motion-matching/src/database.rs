@@ -19,7 +19,7 @@ pub struct ChannelSpan {
     pub dims: usize,
 }
 
-/// Baked animation frames: per-frame features, simulation bone and contacts, and where each frame plays in its clip.
+/// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabase {
     skeleton: AssetHandle<Skeleton>,
@@ -33,8 +33,6 @@ pub struct MotionDatabase {
     range_stops: Vec<usize>,
     clip_starts: Vec<f32>,
     simulation: Vec<(Vec3, Quat)>,
-    contact_bones: Vec<u16>,
-    contacts: Vec<bool>,
     features: Vec<f32>,
     feature_dims: usize,
     channels: Vec<ChannelSpan>,
@@ -54,8 +52,6 @@ impl MotionDatabase {
         range_stops: Vec<usize>,
         clip_starts: Vec<f32>,
         simulation: Vec<(Vec3, Quat)>,
-        contact_bones: Vec<u16>,
-        contacts: Vec<bool>,
         features: Vec<f32>,
         feature_dims: usize,
         channels: Vec<ChannelSpan>,
@@ -72,8 +68,6 @@ impl MotionDatabase {
             range_stops,
             clip_starts,
             simulation,
-            contact_bones,
-            contacts,
             features,
             feature_dims,
             channels,
@@ -123,11 +117,6 @@ impl MotionDatabase {
     /// Where each feature channel sits in a feature vector.
     pub fn channels(&self) -> &[ChannelSpan] {
         &self.channels
-    }
-
-    /// The skeleton joint indices whose contacts are baked.
-    pub fn contact_bones(&self) -> &[u16] {
-        &self.contact_bones
     }
 
     /// The index of the entry whose range contains `frame`.
@@ -186,12 +175,6 @@ impl MotionDatabase {
     pub fn simulation(&self, frame: usize) -> Transform {
         let (translation, rotation) = self.simulation[frame];
         Transform::from_translation_rotation(translation, rotation)
-    }
-
-    /// Whether each contact bone touches the ground in `frame`, in `contact_bones` order.
-    pub fn contacts(&self, frame: usize) -> &[bool] {
-        let count = self.contact_bones.len();
-        &self.contacts[frame * count..(frame + 1) * count]
     }
 
     /// The feature vector of `frame`.

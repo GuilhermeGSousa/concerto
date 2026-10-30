@@ -2,8 +2,8 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    ContactSettings, MotionDatabase, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
-    StoredChannel, TimeRange, TrajectorySettings,
+    MotionDatabase, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
+    TimeRange, TrajectorySettings,
 };
 use concerto_reflect::{ReflectedValue, TypeRegistry};
 use glam::{Mat4, Vec3};
@@ -57,11 +57,6 @@ fn database() -> MotionDatabase {
             facing_window: 5,
             ..Default::default()
         },
-        contacts: ContactSettings {
-            bones: vec!["Child".into()],
-            speed_threshold: 10.0,
-            median_window: 3,
-        },
         ..Default::default()
     };
     let first = walk_clip(2.0);
@@ -87,9 +82,6 @@ fn definition_defaults_match_the_spec() {
     assert_eq!(definition.simulation.facing_axis, Vec3::Z);
     assert_eq!(definition.simulation.position_window, 31);
     assert_eq!(definition.simulation.facing_window, 61);
-    assert!(definition.contacts.bones.is_empty());
-    assert_eq!(definition.contacts.speed_threshold, 0.15);
-    assert_eq!(definition.contacts.median_window, 6);
     assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);
     assert_eq!(definition.trajectory.sample_count, 3);
 }
@@ -115,11 +107,6 @@ fn definition_round_trips_through_bincode() {
             facing_axis: Vec3::X,
             position_window: 15,
             facing_window: 21,
-        },
-        contacts: ContactSettings {
-            bones: vec!["LeftFoot".into(), "RightFoot".into()],
-            speed_threshold: 0.2,
-            median_window: 4,
         },
         trajectory: TrajectorySettings {
             sample_dt: 0.5,
@@ -152,9 +139,6 @@ fn accessors_index_frame_major() {
     assert_eq!(database.rate(), 10.0);
     assert_eq!(database.speed(), 2.0);
     assert_eq!(database.clips().len(), 2);
-    assert_eq!(database.contact_bones(), &[1]);
-    assert_eq!(database.contacts(0).len(), 1);
-    assert_eq!(database.contacts(14).len(), 1);
     assert_eq!(database.feature_dims(), 0);
     assert!(database.channels().is_empty());
     assert!(database.features(3).is_empty());

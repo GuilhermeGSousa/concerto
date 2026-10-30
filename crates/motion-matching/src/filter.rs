@@ -84,23 +84,3 @@ fn solve(mut matrix: Vec<Vec<f64>>, size: usize) -> Vec<f64> {
         })
         .collect()
 }
-
-/// Filters booleans with a median window, replicating the nearest value at the edges; a sample is true when at least half the window is.
-pub fn median_filter(values: &[bool], window: usize) -> Vec<bool> {
-    if window <= 1 || values.is_empty() {
-        return values.to_vec();
-    }
-    let last = values.len() - 1;
-    let before = window / 2;
-    (0..values.len())
-        .map(|i| {
-            let trues = (0..window)
-                .filter(|k| {
-                    let index = (i + k).saturating_sub(before).min(last);
-                    values[index]
-                })
-                .count();
-            trues * 2 >= window
-        })
-        .collect()
-}

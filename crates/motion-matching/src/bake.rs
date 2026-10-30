@@ -10,10 +10,8 @@ use concerto_reflect::TypeRegistry;
 use crate::{
     channel::{build_channels, extract_features, BodyMotion, FrameContext},
     database::{BakeError, ChannelSpan, MotionDatabase},
-    definition::{
-        ContactSettings, MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings,
-    },
-    filter::{median_filter, savitzky_golay},
+    definition::{MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings},
+    filter::savitzky_golay,
     simulation::TrajectorySample,
 };
 
@@ -304,33 +302,6 @@ pub fn trajectory_samples(
         .collect()
 }
 
-/// Per frame and contact bone, whether the bone's model-space speed is below the threshold, after a median filter over the range.
-pub fn contacts(
-    settings: &ContactSettings,
-    skeleton: &Skeleton,
-    model_velocities: &[Vec<Vec3>],
-) -> Result<Vec<Vec<bool>>, BakeError> {
-    let joints = settings
-        .bones
-        .iter()
-        .map(|name| find_joint(skeleton, name))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut result = vec![Vec::with_capacity(joints.len()); model_velocities.len()];
-    for joint in joints {
-        let touching: Vec<bool> = model_velocities
-            .iter()
-            .map(|velocities| velocities[joint].length() < settings.speed_threshold)
-            .collect();
-        for (frame, value) in median_filter(&touching, settings.median_window)
-            .into_iter()
-            .enumerate()
-        {
-            result[frame].push(value);
-        }
-    }
-    Ok(result)
-}
-
 /// Bakes a motion database from its definition, the skeleton, one resolved clip per entry and the registry that knows the feature channel types.
 pub fn bake(
     definition: &MotionDatabaseDefinition,
@@ -349,14 +320,6 @@ pub fn bake(
     let bone_count = skeleton.bone_count();
     let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
 
-    let contact_joints = definition
-        .contacts
-        .bones
-        .iter()
-        .map(|name| find_joint(skeleton, name))
-        .collect::<Result<Vec<_>, _>>()?;
-    let contact_bones: Vec<u16> = contact_joints.iter().map(|joint| *joint as u16).collect();
-
     let mut spans = Vec::with_capacity(channels.len());
     let mut feature_dims = 0;
     for (stored, channel) in definition.channels.iter().zip(&channels) {
@@ -369,7 +332,6 @@ pub fn bake(
         feature_dims += dims;
     }
 
-    let mut contact_flags = Vec::with_capacity(frame_count * contact_bones.len());
     let mut features = vec![0.0; frame_count * feature_dims];
     let mut range_starts = Vec::with_capacity(plans.len());
     let mut range_stops = Vec::with_capacity(plans.len());
@@ -399,11 +361,9 @@ pub fn bake(
 
         let motion = body_motion(&simulation, rate);
         let model_speeds = model_velocities(&models, rate);
-        let touching = contacts(&definition.contacts, skeleton, &model_speeds)?;
 
         for frame in 0..plan.frames {
             simulation_frames.push((simulation[frame].translation, simulation[frame].rotation));
-            contact_flags.extend_from_slice(&touching[frame]);
 
             let trajectory =
                 trajectory_samples(&definition.trajectory, &simulation, &motion, rate, frame);
@@ -440,8 +400,6 @@ pub fn bake(
         range_stops,
         clip_starts,
         simulation_frames,
-        contact_bones,
-        contact_flags,
         features,
         feature_dims,
         spans,

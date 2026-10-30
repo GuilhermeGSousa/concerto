@@ -3,11 +3,10 @@ use concerto_foundation::math::spring_damper::CharacterState;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    bake, contacts, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose,
-    simulation_bone,
+    bake, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, BodyMotion, CharacterSimulation, ContactSettings, FeatureChannel, FrameContext,
+    BakeError, BodyMotion, CharacterSimulation, FeatureChannel, FrameContext,
     MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
     StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
 };
@@ -402,51 +401,6 @@ fn model_velocities_follow_the_parent_chain() {
     }
 }
 
-fn contact_settings(bones: &[&str], window: usize) -> ContactSettings {
-    ContactSettings {
-        bones: bones.iter().map(|name| name.to_string()).collect(),
-        speed_threshold: 0.15,
-        median_window: window,
-    }
-}
-
-#[test]
-fn contacts_are_true_at_rest_and_false_when_moving() {
-    let skeleton = skeleton();
-    let rest = vec![vec![Vec3::ZERO; 2]; 8];
-    let moving = vec![vec![Vec3::new(1.0, 0.0, 0.0); 2]; 8];
-    let settings = contact_settings(&["Child"], 3);
-    assert!(contacts(&settings, &skeleton, &rest)
-        .unwrap()
-        .iter()
-        .all(|frame| frame == &[true]));
-    assert!(contacts(&settings, &skeleton, &moving)
-        .unwrap()
-        .iter()
-        .all(|frame| frame == &[false]));
-}
-
-#[test]
-fn contacts_median_filter_removes_a_one_frame_glitch() {
-    let skeleton = skeleton();
-    let mut velocities = vec![vec![Vec3::ZERO; 2]; 9];
-    velocities[4][1] = Vec3::new(1.0, 0.0, 0.0);
-    let settings = contact_settings(&["Child"], 5);
-    let result = contacts(&settings, &skeleton, &velocities).unwrap();
-    assert!(result.iter().all(|frame| frame == &[true]));
-}
-
-#[test]
-fn contacts_reject_an_unknown_bone() {
-    let skeleton = skeleton();
-    let velocities = vec![vec![Vec3::ZERO; 2]; 4];
-    let settings = contact_settings(&["Nope"], 3);
-    assert!(matches!(
-        contacts(&settings, &skeleton, &velocities),
-        Err(BakeError::MissingJoint(name)) if name == "Nope"
-    ));
-}
-
 #[derive(Reflect, Default, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 struct ProbeChannel {
@@ -649,15 +603,10 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     let skeleton = body_skeleton();
     let first = walk_clip(1.0);
     let second = walk_clip(2.0);
-    let mut definition = baking_definition(
+    let definition = baking_definition(
         vec![entry(None), entry(Some((0.5, 1.5)))],
         vec![probe(2.0), pair()],
     );
-    definition.contacts = ContactSettings {
-        bones: vec!["Spine2".into()],
-        speed_threshold: 10.0,
-        median_window: 5,
-    };
 
     let database = bake(
         &definition,
@@ -675,9 +624,6 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     assert_eq!(database.entry_of(30), Some(1));
     assert_eq!(database.range_of(30), Some(30..60));
     assert_eq!(database.clip_time(30), Some((1, 0.5)));
-    assert_eq!(database.contact_bones(), &[2]);
-    assert_eq!(database.contacts(10).len(), 1);
-    assert!(database.contacts(10)[0]);
     assert_eq!(database.feature_dims(), 5);
     assert_eq!(database.features(31)[1], 3.0);
     assert_eq!(database.features(31)[2], 3.0);

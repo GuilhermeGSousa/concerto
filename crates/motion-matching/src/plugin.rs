@@ -8,7 +8,7 @@ use concerto_physics::step_simulation;
 use crate::{
     database::MotionDatabase,
     definition::{
-        ContactSettings, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
+        MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
         TrajectorySettings,
     },
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
@@ -24,7 +24,6 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<TimeRange>()
             .register_type::<MotionEntry>()
             .register_type::<SimulationBoneSettings>()
-            .register_type::<ContactSettings>()
             .register_type::<TrajectorySettings>()
             .register_type::<DesiredMotion>()
             .register_type::<TrajectorySample>()
