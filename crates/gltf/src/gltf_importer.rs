@@ -12,7 +12,7 @@ use std::path::Path;
 
 use anyhow::{Context, bail};
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_asset_import::{ImportContext, ImportError, Importer, hash_file_contents};
+use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names, hash_file_contents};
 use concerto_color::Color;
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
@@ -342,13 +342,16 @@ impl Importer for GltfImporter {
             });
         }
 
-        // Animations -> `animation/N` sub-assets. Channel targets are keyed by
+        // Animations -> `animation/{name}` sub-assets. Channel targets are keyed by
         // the same path hash as the skeleton bones, so clips and skeletons
         // agree on identity. Clip ids are not recorded in `referenced_assets`:
         // nothing in the imported scene points at a clip yet (a later task wires
         // that), and the import's reference-integrity pass only checks that
         // recorded references resolve, not that every sub-asset is referenced.
-        for (animation_index, animation) in document.animations().enumerate() {
+        let requested_clip_names: Vec<Option<&str>> =
+            document.animations().map(|a| a.name()).collect();
+        let animation_names = clip_names(&requested_clip_names);
+        for (animation, animation_name) in document.animations().zip(&animation_names) {
             let mut animation_clip = AnimationClip::default();
 
             for channel in animation.channels() {
@@ -401,7 +404,7 @@ impl Importer for GltfImporter {
                 }
             }
 
-            ctx.emit(&format!("animation/{animation_index}"), &animation_clip)?;
+            ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
         }
 
         // Node walk. `document.nodes()` yields nodes in index order, so the

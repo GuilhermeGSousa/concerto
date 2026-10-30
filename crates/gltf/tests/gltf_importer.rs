@@ -133,7 +133,7 @@ fn import_emits_skeleton_and_animation_sub_assets() {
         "expected a skeleton sub-asset, got: {names:?}"
     );
     assert!(
-        names.contains(&"animation/0"),
+        names.contains(&"animation/Wiggle"),
         "expected an animation sub-asset, got: {names:?}"
     );
 
@@ -325,7 +325,7 @@ fn multi_primitive_skinned_mesh_binds_every_primitive_child() {
     let clip_entry = outputs
         .sub_assets
         .iter()
-        .find(|s| s.name == "animation/0")
+        .find(|s| s.name == "animation/Wiggle")
         .unwrap();
     let clip: concerto_animation::clip::AnimationClip =
         bincode::deserialize(&clip_entry.bytes).unwrap();
@@ -418,5 +418,29 @@ fn skin_with_an_unreachable_joint_emits_no_skeleton() {
     assert!(
         !names.iter().any(|n| n.starts_with("skeleton/")),
         "a skipped skin must emit nothing, got: {names:?}"
+    );
+}
+
+#[test]
+fn import_names_animation_clips_after_the_gltf() {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/animations_named.gltf");
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("animations_named.gltf"));
+
+    GltfImporter
+        .import(&fixture, &mut ctx)
+        .expect("importing the animations fixture should succeed");
+    let outputs = ctx.into_parts();
+
+    let mut clips: Vec<&str> = outputs
+        .sub_assets
+        .iter()
+        .map(|s| s.name.as_str())
+        .filter(|n| n.starts_with("animation/"))
+        .collect();
+    clips.sort();
+    assert_eq!(
+        clips,
+        vec!["animation/1", "animation/Wiggle", "animation/Wiggle_2"]
     );
 }

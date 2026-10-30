@@ -2,365 +2,365 @@ version = 1
 source_id = "037dc7e7-da14-42de-87e2-e57a48771cc9"
 importer = "gltf"
 
-[outputs."animation/0"]
+[outputs."animation/A_TPose"]
 asset_id = "78faeb83-a594-5de2-acad-3e48deb4cdad"
 
-[outputs."animation/1"]
+[outputs."animation/BackFlip"]
 asset_id = "71739e46-9fe7-5cf1-b48f-d6590fb43079"
 
-[outputs."animation/10"]
-asset_id = "d367240d-42b2-52ea-9514-0c9055569421"
-
-[outputs."animation/100"]
-asset_id = "620a8104-e6a4-53ae-867b-7495afa6bdd3"
-
-[outputs."animation/101"]
-asset_id = "484373e0-be65-5c16-bb97-8975183b8749"
-
-[outputs."animation/102"]
-asset_id = "2093d7bc-1d1e-511a-a4d1-a736b330c238"
-
-[outputs."animation/103"]
-asset_id = "e586673b-7eb1-5a0b-9a1d-6fa28a868702"
-
-[outputs."animation/104"]
-asset_id = "c74f11c3-9e1d-514c-b407-4186468df578"
-
-[outputs."animation/105"]
-asset_id = "04055424-1580-5ce3-92a4-d416bec85732"
-
-[outputs."animation/106"]
-asset_id = "70e8bd93-9a64-51d6-943c-7a53a3dac94f"
-
-[outputs."animation/107"]
-asset_id = "76b0b48d-6493-5cbe-ba64-f8dd4671f1a8"
-
-[outputs."animation/108"]
-asset_id = "9afbc4e6-5eb2-548f-a168-4a98dc26eb6c"
-
-[outputs."animation/109"]
-asset_id = "743edf66-611a-5da9-9967-4839bf17ce97"
-
-[outputs."animation/11"]
-asset_id = "d87ace1d-0375-5524-8236-95f0d18df5eb"
-
-[outputs."animation/110"]
-asset_id = "d3061a9c-a1b8-5865-bdc6-70d5d541fb30"
-
-[outputs."animation/111"]
-asset_id = "fe82aa03-5510-54e7-9888-55e38d89e6f9"
-
-[outputs."animation/112"]
-asset_id = "764834d7-255f-5e8a-828d-119c62dbffbd"
-
-[outputs."animation/113"]
-asset_id = "3e49918b-c823-5994-aa8c-56d88e62b70e"
-
-[outputs."animation/114"]
-asset_id = "eef9e286-5c46-5418-87e5-15b9809aa4f1"
-
-[outputs."animation/115"]
-asset_id = "78c9be0b-4464-5bf4-bbbd-598197114779"
-
-[outputs."animation/116"]
-asset_id = "11cf82f1-3ee4-530d-8e13-2a28e819aefa"
-
-[outputs."animation/117"]
-asset_id = "dcff8622-26c3-577e-991e-7a0c55c559e9"
-
-[outputs."animation/118"]
-asset_id = "527a5de1-c74f-51a6-931d-d2b4339e4329"
-
-[outputs."animation/119"]
-asset_id = "e4fd8a66-00f4-5d99-8591-a62a35adc9ce"
-
-[outputs."animation/12"]
-asset_id = "e5eb03e0-3952-5c9c-b4aa-36c665e6d749"
-
-[outputs."animation/13"]
-asset_id = "f1dbb028-62da-5b39-b00a-c0551cf98e76"
-
-[outputs."animation/14"]
-asset_id = "2626dccc-ddd3-56c2-80ac-283cf4378c1d"
-
-[outputs."animation/15"]
-asset_id = "e2259c53-9b48-571a-8da6-b7a9a532d81c"
-
-[outputs."animation/16"]
-asset_id = "3f17765e-76a2-5976-92c6-c9a4d202ff81"
-
-[outputs."animation/17"]
-asset_id = "210a6772-302c-5d57-a220-90a35bc1e9f3"
-
-[outputs."animation/18"]
-asset_id = "81d56390-b7cb-5df1-88dc-fe65b21ccec5"
-
-[outputs."animation/19"]
-asset_id = "b7394ea4-f48b-5424-8773-4adc3c4d47c6"
-
-[outputs."animation/2"]
+[outputs."animation/Celebration"]
 asset_id = "cb6a2133-4245-58e6-8083-50ec3dc6a0e0"
 
-[outputs."animation/20"]
-asset_id = "dd48bc12-4625-521e-b5a9-b3ce4275afb4"
+[outputs."animation/ClimbLedge"]
+asset_id = "d367240d-42b2-52ea-9514-0c9055569421"
 
-[outputs."animation/21"]
-asset_id = "6d4f42ad-3822-5be7-a3e0-3f68094e346d"
-
-[outputs."animation/22"]
-asset_id = "bfc610de-7816-5dcd-8e13-b2351ad66cae"
-
-[outputs."animation/23"]
-asset_id = "0072e15a-6fcc-5c86-b2e3-400fc5a5d892"
-
-[outputs."animation/24"]
-asset_id = "1b610e5e-9d92-5477-89af-8b24cb4b38b5"
-
-[outputs."animation/25"]
-asset_id = "011df200-444f-5c81-a46d-f62b64be562b"
-
-[outputs."animation/26"]
-asset_id = "c2f7e8e8-2a7c-5bb6-9989-b8a7501e387e"
-
-[outputs."animation/27"]
-asset_id = "44e3f296-cd4f-5098-a170-e24339a0e4ac"
-
-[outputs."animation/28"]
-asset_id = "bf6950d5-b67a-597b-bf96-8abcc38be3a9"
-
-[outputs."animation/29"]
-asset_id = "8a31b966-c4cf-5cbe-94a6-06d677931b34"
-
-[outputs."animation/3"]
+[outputs."animation/Climb_Down_Loop"]
 asset_id = "408d652b-bbfc-5e0a-a35f-1db5694c74de"
 
-[outputs."animation/30"]
-asset_id = "668ef474-02d6-54f7-b9df-fd7c12e3082d"
-
-[outputs."animation/31"]
-asset_id = "14f4fbf0-d902-5824-84b5-bbe5812cb8ac"
-
-[outputs."animation/32"]
-asset_id = "af8ed957-c56a-5ab2-970a-2e6f74e7b024"
-
-[outputs."animation/33"]
-asset_id = "cc613d28-8ff3-515e-97ce-41e2d409642e"
-
-[outputs."animation/34"]
-asset_id = "e76eed18-e76a-55af-ab1d-9e6ae53d5941"
-
-[outputs."animation/35"]
-asset_id = "d1345a56-c298-5424-a762-c4a7ac2fa213"
-
-[outputs."animation/36"]
-asset_id = "78210f04-4388-5353-b5e4-ed7477990659"
-
-[outputs."animation/37"]
-asset_id = "6f42ce2b-8f97-5bb4-8d67-d6de24cb26fd"
-
-[outputs."animation/38"]
-asset_id = "cbb66918-4b96-57ac-bbce-149f507f618a"
-
-[outputs."animation/39"]
-asset_id = "1ae3b96e-8d0f-5bda-bd7a-0cbf0e3b0177"
-
-[outputs."animation/4"]
+[outputs."animation/Climb_Enter"]
 asset_id = "4607fdb8-d876-538f-976e-fba583504590"
 
-[outputs."animation/40"]
-asset_id = "2ab92215-df5e-5170-a24d-28a7cac2fc76"
-
-[outputs."animation/41"]
-asset_id = "11cb368d-9634-56f9-bda9-e5750fc29407"
-
-[outputs."animation/42"]
-asset_id = "6e9986e3-af17-5c12-9765-b167847f9d2d"
-
-[outputs."animation/43"]
-asset_id = "c32efd9e-29ab-5edb-b28e-d2d5c523c537"
-
-[outputs."animation/44"]
-asset_id = "d55f6716-472e-5d03-ae1e-64afc835bad0"
-
-[outputs."animation/45"]
-asset_id = "e844eb48-3470-5f44-a88d-5bd211a27802"
-
-[outputs."animation/46"]
-asset_id = "acafe9b3-9520-5021-89d6-eadb5c1348a2"
-
-[outputs."animation/47"]
-asset_id = "88a8f49b-59a9-5c17-aa11-040b7f64619d"
-
-[outputs."animation/48"]
-asset_id = "e5f86589-c4d4-5b37-8042-afb4c0bc4178"
-
-[outputs."animation/49"]
-asset_id = "cb2197e1-ec5a-5f6b-83c0-7d4d0ab0d1dc"
-
-[outputs."animation/5"]
+[outputs."animation/Climb_Exit"]
 asset_id = "e312d5c9-7f29-5444-8869-c790f04bed69"
 
-[outputs."animation/50"]
-asset_id = "beb65c4b-8cef-5c0b-8497-e2450907677d"
-
-[outputs."animation/51"]
-asset_id = "6ee95f17-c8f3-52c2-ae8b-ffdde76396af"
-
-[outputs."animation/52"]
-asset_id = "e85bca79-80f5-5a07-a058-2d6ec6ad9a1c"
-
-[outputs."animation/53"]
-asset_id = "83e98262-f197-577d-aa5c-4a7130a4cb42"
-
-[outputs."animation/54"]
-asset_id = "7f0e63c1-4ccd-51dd-917a-22b596c78344"
-
-[outputs."animation/55"]
-asset_id = "695b3b31-c4e4-5831-bd79-a8b426de5a02"
-
-[outputs."animation/56"]
-asset_id = "93bb6c3c-1b40-550b-b23c-9d18eb704b76"
-
-[outputs."animation/57"]
-asset_id = "41f59734-f940-5a1e-828f-f1aea9fc6e2d"
-
-[outputs."animation/58"]
-asset_id = "dfc391f0-8920-55cd-801e-6e49b4f2269b"
-
-[outputs."animation/59"]
-asset_id = "9ad59f9b-9da3-5040-8439-fc4e7ac3c467"
-
-[outputs."animation/6"]
+[outputs."animation/Climb_Idle_Loop"]
 asset_id = "99132540-8f5f-5ad7-98ee-7928b672f10e"
 
-[outputs."animation/60"]
-asset_id = "32aa3cab-8106-581b-9854-ea13a17ce6c4"
-
-[outputs."animation/61"]
-asset_id = "6f044aa5-687d-5c78-9be7-9e754fad84a2"
-
-[outputs."animation/62"]
-asset_id = "21c56693-be1d-52d2-b5a7-654bacadbe13"
-
-[outputs."animation/63"]
-asset_id = "c0d3d051-d28d-53c7-8215-62f97767ecc8"
-
-[outputs."animation/64"]
-asset_id = "38c573f2-6b53-59ac-ba94-99cbb96f4226"
-
-[outputs."animation/65"]
-asset_id = "53997a3a-62f3-5eeb-970c-133b75977c1e"
-
-[outputs."animation/66"]
-asset_id = "749023ab-76ef-510b-a157-a8c1a7547a61"
-
-[outputs."animation/67"]
-asset_id = "943a8ffe-4420-5959-b0c3-0970fafa633d"
-
-[outputs."animation/68"]
-asset_id = "4f46d902-dbe5-572d-8d94-3c87ed009be6"
-
-[outputs."animation/69"]
-asset_id = "7add6d17-d7ff-5a97-a51f-b40c9dbb9c63"
-
-[outputs."animation/7"]
+[outputs."animation/Climb_Left_Loop"]
 asset_id = "f86c83ac-6cf5-56fa-8ff5-085c177b0b9b"
 
-[outputs."animation/70"]
-asset_id = "fc1e24f8-bfc6-5c14-91ce-b31bf12db942"
-
-[outputs."animation/71"]
-asset_id = "072e896f-eef3-5587-ab67-0b2d12b87b8c"
-
-[outputs."animation/72"]
-asset_id = "4dbda82a-9333-52c7-82ad-2423dd3e93bf"
-
-[outputs."animation/73"]
-asset_id = "a8ce38d1-7b7e-510e-8b57-33007fde3aea"
-
-[outputs."animation/74"]
-asset_id = "a5df4442-a315-5099-bdbc-2053b00cfd1d"
-
-[outputs."animation/75"]
-asset_id = "6ded0f96-37d1-54ad-a341-1bd5d16e4bab"
-
-[outputs."animation/76"]
-asset_id = "6cd2451d-d62a-579c-a46d-b8d0382fd6be"
-
-[outputs."animation/77"]
-asset_id = "59d7cd72-69fc-5b99-930e-2374f460e4c9"
-
-[outputs."animation/78"]
-asset_id = "c24facef-c56a-55fb-afd9-ed1932926116"
-
-[outputs."animation/79"]
-asset_id = "eb9f9263-b0b3-585d-8abb-7d5f42e25324"
-
-[outputs."animation/8"]
+[outputs."animation/Climb_Right_Loop"]
 asset_id = "9284938c-6327-5256-8780-f73c25fe7a11"
 
-[outputs."animation/80"]
-asset_id = "d03c6c0d-059f-591f-9bf3-20d1a9f72ce1"
-
-[outputs."animation/81"]
-asset_id = "290ad9b9-7d78-569f-af3b-359455927a21"
-
-[outputs."animation/82"]
-asset_id = "ad52c176-16ca-5057-86ec-1f1456682b03"
-
-[outputs."animation/83"]
-asset_id = "41381642-8283-5616-a1f3-6e9739c987fc"
-
-[outputs."animation/84"]
-asset_id = "0f036aec-51dd-56c1-9a2e-90e3e9140562"
-
-[outputs."animation/85"]
-asset_id = "a04f0601-4eb2-5d36-8ca8-29284889415c"
-
-[outputs."animation/86"]
-asset_id = "980dd687-bbb7-5373-9cf6-2c01a5ee51fd"
-
-[outputs."animation/87"]
-asset_id = "da097d8f-f420-5cfa-807b-d2bf1a8f5c2d"
-
-[outputs."animation/88"]
-asset_id = "57347b64-a7fb-52fa-a5e9-bb8eb4b70d82"
-
-[outputs."animation/89"]
-asset_id = "c5603b7d-5022-5112-a677-3217d0567ecd"
-
-[outputs."animation/9"]
+[outputs."animation/Climb_Up_Loop"]
 asset_id = "061d8d75-fd6e-5b2e-8927-d8e335a2de7d"
 
-[outputs."animation/90"]
+[outputs."animation/Counter_Angry"]
+asset_id = "d87ace1d-0375-5524-8236-95f0d18df5eb"
+
+[outputs."animation/Counter_Enter"]
+asset_id = "e5eb03e0-3952-5c9c-b4aa-36c665e6d749"
+
+[outputs."animation/Counter_Exit"]
+asset_id = "f1dbb028-62da-5b39-b00a-c0551cf98e76"
+
+[outputs."animation/Counter_Give"]
+asset_id = "2626dccc-ddd3-56c2-80ac-283cf4378c1d"
+
+[outputs."animation/Counter_Idle_Loop"]
+asset_id = "e2259c53-9b48-571a-8da6-b7a9a532d81c"
+
+[outputs."animation/Counter_Show"]
+asset_id = "3f17765e-76a2-5976-92c6-c9a4d202ff81"
+
+[outputs."animation/Crawl_Bwd_Loop"]
+asset_id = "210a6772-302c-5d57-a220-90a35bc1e9f3"
+
+[outputs."animation/Crawl_Enter"]
+asset_id = "81d56390-b7cb-5df1-88dc-fe65b21ccec5"
+
+[outputs."animation/Crawl_Exit"]
+asset_id = "b7394ea4-f48b-5424-8773-4adc3c4d47c6"
+
+[outputs."animation/Crawl_Fwd_Loop"]
+asset_id = "dd48bc12-4625-521e-b5a9-b3ce4275afb4"
+
+[outputs."animation/Crawl_Idle_Loop"]
+asset_id = "6d4f42ad-3822-5be7-a3e0-3f68094e346d"
+
+[outputs."animation/Crawl_Left_Loop"]
+asset_id = "bfc610de-7816-5dcd-8e13-b2351ad66cae"
+
+[outputs."animation/Crawl_Right_Loop"]
+asset_id = "0072e15a-6fcc-5c86-b2e3-400fc5a5d892"
+
+[outputs."animation/Crouch_Bwd_L_Loop"]
+asset_id = "1b610e5e-9d92-5477-89af-8b24cb4b38b5"
+
+[outputs."animation/Crouch_Bwd_Loop"]
+asset_id = "011df200-444f-5c81-a46d-f62b64be562b"
+
+[outputs."animation/Crouch_Bwd_R_Loop"]
+asset_id = "c2f7e8e8-2a7c-5bb6-9989-b8a7501e387e"
+
+[outputs."animation/Crouch_Enter"]
+asset_id = "44e3f296-cd4f-5098-a170-e24339a0e4ac"
+
+[outputs."animation/Crouch_Exit"]
+asset_id = "bf6950d5-b67a-597b-bf96-8abcc38be3a9"
+
+[outputs."animation/Crouch_Fwd_L_Loop"]
+asset_id = "8a31b966-c4cf-5cbe-94a6-06d677931b34"
+
+[outputs."animation/Crouch_Fwd_Loop"]
+asset_id = "668ef474-02d6-54f7-b9df-fd7c12e3082d"
+
+[outputs."animation/Crouch_Fwd_R_Loop"]
+asset_id = "14f4fbf0-d902-5824-84b5-bbe5812cb8ac"
+
+[outputs."animation/Crouch_Idle_Loop"]
+asset_id = "af8ed957-c56a-5ab2-970a-2e6f74e7b024"
+
+[outputs."animation/Crouch_Left_Loop"]
+asset_id = "cc613d28-8ff3-515e-97ce-41e2d409642e"
+
+[outputs."animation/Crouch_Right_Loop"]
+asset_id = "e76eed18-e76a-55af-ab1d-9e6ae53d5941"
+
+[outputs."animation/Crying"]
+asset_id = "d1345a56-c298-5424-a762-c4a7ac2fa213"
+
+[outputs."animation/Dance_Loop"]
+asset_id = "78210f04-4388-5353-b5e4-ed7477990659"
+
+[outputs."animation/Death01"]
+asset_id = "6f42ce2b-8f97-5bb4-8d67-d6de24cb26fd"
+
+[outputs."animation/Death02"]
+asset_id = "cbb66918-4b96-57ac-bbce-149f507f618a"
+
+[outputs."animation/Dodge_Left"]
+asset_id = "1ae3b96e-8d0f-5bda-bd7a-0cbf0e3b0177"
+
+[outputs."animation/Dodge_Right"]
+asset_id = "2ab92215-df5e-5170-a24d-28a7cac2fc76"
+
+[outputs."animation/Drink"]
+asset_id = "11cb368d-9634-56f9-bda9-e5750fc29407"
+
+[outputs."animation/Driving_Loop"]
+asset_id = "6e9986e3-af17-5c12-9765-b167847f9d2d"
+
+[outputs."animation/Fixing_Kneeling"]
+asset_id = "c32efd9e-29ab-5edb-b28e-d2d5c523c537"
+
+[outputs."animation/GroundSit_Enter"]
+asset_id = "d55f6716-472e-5d03-ae1e-64afc835bad0"
+
+[outputs."animation/GroundSit_Exit"]
+asset_id = "e844eb48-3470-5f44-a88d-5bd211a27802"
+
+[outputs."animation/GroundSit_Idle_Loop"]
+asset_id = "acafe9b3-9520-5021-89d6-eadb5c1348a2"
+
+[outputs."animation/Hit_Chest"]
+asset_id = "88a8f49b-59a9-5c17-aa11-040b7f64619d"
+
+[outputs."animation/Hit_Head"]
+asset_id = "e5f86589-c4d4-5b37-8042-afb4c0bc4178"
+
+[outputs."animation/Hit_Shoulder_L"]
+asset_id = "cb2197e1-ec5a-5f6b-83c0-7d4d0ab0d1dc"
+
+[outputs."animation/Hit_Shoulder_R"]
+asset_id = "beb65c4b-8cef-5c0b-8497-e2450907677d"
+
+[outputs."animation/Hit_Stomach"]
+asset_id = "6ee95f17-c8f3-52c2-ae8b-ffdde76396af"
+
+[outputs."animation/Idle_LookAround_Loop"]
+asset_id = "e85bca79-80f5-5a07-a058-2d6ec6ad9a1c"
+
+[outputs."animation/Idle_Loop"]
+asset_id = "83e98262-f197-577d-aa5c-4a7130a4cb42"
+
+[outputs."animation/Idle_Paper"]
+asset_id = "7f0e63c1-4ccd-51dd-917a-22b596c78344"
+
+[outputs."animation/Idle_Rock"]
+asset_id = "695b3b31-c4e4-5831-bd79-a8b426de5a02"
+
+[outputs."animation/Idle_Scissors"]
+asset_id = "93bb6c3c-1b40-550b-b23c-9d18eb704b76"
+
+[outputs."animation/Idle_Talking_Loop"]
+asset_id = "41f59734-f940-5a1e-828f-f1aea9fc6e2d"
+
+[outputs."animation/Idle_Tired_Loop"]
+asset_id = "dfc391f0-8920-55cd-801e-6e49b4f2269b"
+
+[outputs."animation/Idle_Torch_Loop"]
+asset_id = "9ad59f9b-9da3-5040-8439-fc4e7ac3c467"
+
+[outputs."animation/Interact"]
+asset_id = "32aa3cab-8106-581b-9854-ea13a17ce6c4"
+
+[outputs."animation/Jog_Bwd_L_Loop"]
+asset_id = "6f044aa5-687d-5c78-9be7-9e754fad84a2"
+
+[outputs."animation/Jog_Bwd_Loop"]
+asset_id = "21c56693-be1d-52d2-b5a7-654bacadbe13"
+
+[outputs."animation/Jog_Bwd_R_Loop"]
+asset_id = "c0d3d051-d28d-53c7-8215-62f97767ecc8"
+
+[outputs."animation/Jog_Fwd_L_Loop"]
+asset_id = "38c573f2-6b53-59ac-ba94-99cbb96f4226"
+
+[outputs."animation/Jog_Fwd_LeanL_Loop"]
+asset_id = "53997a3a-62f3-5eeb-970c-133b75977c1e"
+
+[outputs."animation/Jog_Fwd_LeanR_Loop"]
+asset_id = "749023ab-76ef-510b-a157-a8c1a7547a61"
+
+[outputs."animation/Jog_Fwd_Loop"]
+asset_id = "943a8ffe-4420-5959-b0c3-0970fafa633d"
+
+[outputs."animation/Jog_Fwd_R_Loop"]
+asset_id = "4f46d902-dbe5-572d-8d94-3c87ed009be6"
+
+[outputs."animation/Jog_Left_Loop"]
+asset_id = "7add6d17-d7ff-5a97-a51f-b40c9dbb9c63"
+
+[outputs."animation/Jog_Right_Loop"]
+asset_id = "fc1e24f8-bfc6-5c14-91ce-b31bf12db942"
+
+[outputs."animation/Jump_Land"]
+asset_id = "072e896f-eef3-5587-ab67-0b2d12b87b8c"
+
+[outputs."animation/Jump_Loop"]
+asset_id = "4dbda82a-9333-52c7-82ad-2423dd3e93bf"
+
+[outputs."animation/Jump_Start"]
+asset_id = "a8ce38d1-7b7e-510e-8b57-33007fde3aea"
+
+[outputs."animation/Kick"]
+asset_id = "a5df4442-a315-5099-bdbc-2053b00cfd1d"
+
+[outputs."animation/PickUp_Kneeling"]
+asset_id = "6ded0f96-37d1-54ad-a341-1bd5d16e4bab"
+
+[outputs."animation/PickUp_Table"]
+asset_id = "6cd2451d-d62a-579c-a46d-b8d0382fd6be"
+
+[outputs."animation/Pistol_Aim_Down"]
+asset_id = "59d7cd72-69fc-5b99-930e-2374f460e4c9"
+
+[outputs."animation/Pistol_Aim_Neutral"]
+asset_id = "c24facef-c56a-55fb-afd9-ed1932926116"
+
+[outputs."animation/Pistol_Aim_Up"]
+asset_id = "eb9f9263-b0b3-585d-8abb-7d5f42e25324"
+
+[outputs."animation/Pistol_Idle_Loop"]
+asset_id = "d03c6c0d-059f-591f-9bf3-20d1a9f72ce1"
+
+[outputs."animation/Pistol_Reload"]
+asset_id = "290ad9b9-7d78-569f-af3b-359455927a21"
+
+[outputs."animation/Pistol_Shoot"]
+asset_id = "ad52c176-16ca-5057-86ec-1f1456682b03"
+
+[outputs."animation/PunchKick_Enter"]
+asset_id = "a04f0601-4eb2-5d36-8ca8-29284889415c"
+
+[outputs."animation/PunchKick_Exit"]
+asset_id = "980dd687-bbb7-5373-9cf6-2c01a5ee51fd"
+
+[outputs."animation/Punch_Cross"]
+asset_id = "41381642-8283-5616-a1f3-6e9739c987fc"
+
+[outputs."animation/Punch_Jab"]
+asset_id = "0f036aec-51dd-56c1-9a2e-90e3e9140562"
+
+[outputs."animation/Push_Enter"]
+asset_id = "da097d8f-f420-5cfa-807b-d2bf1a8f5c2d"
+
+[outputs."animation/Push_Exit"]
+asset_id = "57347b64-a7fb-52fa-a5e9-bb8eb4b70d82"
+
+[outputs."animation/Push_Loop"]
+asset_id = "c5603b7d-5022-5112-a677-3217d0567ecd"
+
+[outputs."animation/Roll"]
 asset_id = "2322c684-c45a-50d4-9806-58f6d9df129e"
 
-[outputs."animation/91"]
+[outputs."animation/Sitting_Enter"]
 asset_id = "eab0c759-ecef-5eda-a043-86edee44563a"
 
-[outputs."animation/92"]
+[outputs."animation/Sitting_Exit"]
 asset_id = "05032677-88dd-5abd-8ed9-ea50854e2bbf"
 
-[outputs."animation/93"]
+[outputs."animation/Sitting_Idle02_Loop"]
 asset_id = "5c509796-5d8e-5b00-8f50-a3db50223f18"
 
-[outputs."animation/94"]
+[outputs."animation/Sitting_Idle03_Loop"]
 asset_id = "1f4047b4-fd0c-5c53-924a-11f0de3c3ec5"
 
-[outputs."animation/95"]
+[outputs."animation/Sitting_Idle_Loop"]
 asset_id = "9efc5a58-c304-5768-94b1-ddb77e0bac10"
 
-[outputs."animation/96"]
+[outputs."animation/Sitting_Nodding_Loop"]
 asset_id = "ae9b15a3-1099-55f7-8f21-cd6f62fc2de9"
 
-[outputs."animation/97"]
+[outputs."animation/Sitting_Talking_Loop"]
 asset_id = "a222241e-ba53-5bdf-94fd-df8691b71014"
 
-[outputs."animation/98"]
+[outputs."animation/Spell_Double_Enter"]
 asset_id = "37e05f5a-947c-5476-9f5e-cf4fcc0f002d"
 
-[outputs."animation/99"]
+[outputs."animation/Spell_Double_Exit"]
 asset_id = "101e4590-47a5-5569-995a-d80c87f2d753"
+
+[outputs."animation/Spell_Double_Idle_Loop"]
+asset_id = "620a8104-e6a4-53ae-867b-7495afa6bdd3"
+
+[outputs."animation/Spell_Double_Shoot_Loop"]
+asset_id = "484373e0-be65-5c16-bb97-8975183b8749"
+
+[outputs."animation/Spell_Simple_Enter"]
+asset_id = "2093d7bc-1d1e-511a-a4d1-a736b330c238"
+
+[outputs."animation/Spell_Simple_Exit"]
+asset_id = "e586673b-7eb1-5a0b-9a1d-6fa28a868702"
+
+[outputs."animation/Spell_Simple_Idle_Loop"]
+asset_id = "c74f11c3-9e1d-514c-b407-4186468df578"
+
+[outputs."animation/Spell_Simple_Shoot"]
+asset_id = "04055424-1580-5ce3-92a4-d416bec85732"
+
+[outputs."animation/Sprint_Enter"]
+asset_id = "70e8bd93-9a64-51d6-943c-7a53a3dac94f"
+
+[outputs."animation/Sprint_Exit"]
+asset_id = "76b0b48d-6493-5cbe-ba64-f8dd4671f1a8"
+
+[outputs."animation/Sprint_Loop"]
+asset_id = "9afbc4e6-5eb2-548f-a168-4a98dc26eb6c"
+
+[outputs."animation/Swim_Fwd_Loop"]
+asset_id = "743edf66-611a-5da9-9967-4839bf17ce97"
+
+[outputs."animation/Swim_Idle_Loop"]
+asset_id = "d3061a9c-a1b8-5865-bdc6-70d5d541fb30"
+
+[outputs."animation/Sword_Attack"]
+asset_id = "fe82aa03-5510-54e7-9888-55e38d89e6f9"
+
+[outputs."animation/Sword_Attack_Standing"]
+asset_id = "764834d7-255f-5e8a-828d-119c62dbffbd"
+
+[outputs."animation/Sword_Enter"]
+asset_id = "3e49918b-c823-5994-aa8c-56d88e62b70e"
+
+[outputs."animation/Sword_Exit"]
+asset_id = "eef9e286-5c46-5418-87e5-15b9809aa4f1"
+
+[outputs."animation/Sword_Idle"]
+asset_id = "78c9be0b-4464-5bf4-bbbd-598197114779"
+
+[outputs."animation/Turn90_L"]
+asset_id = "11cf82f1-3ee4-530d-8e13-2a28e819aefa"
+
+[outputs."animation/Turn90_R"]
+asset_id = "dcff8622-26c3-577e-991e-7a0c55c559e9"
+
+[outputs."animation/Walk_Formal_Loop"]
+asset_id = "527a5de1-c74f-51a6-931d-d2b4339e4329"
+
+[outputs."animation/Walk_Loop"]
+asset_id = "e4fd8a66-00f4-5d99-8591-a62a35adc9ce"
 
 [outputs."material/0"]
 asset_id = "8d592ef8-53b6-591a-9ff6-44707119881f"
