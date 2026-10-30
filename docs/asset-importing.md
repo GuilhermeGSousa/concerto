@@ -204,13 +204,13 @@ u32   header length, little-endian
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-Format version 3 rejects every `.gasset` written at version 2. After upgrading, re-import each source through the editor over a scratch copy of the project, re-save any scene that stores `SkeletonComponent::bone_ids`, and commit the result.
+Format version 4 rejects every `.gasset` written at version 3. After upgrading, re-import every source through the editor over a scratch copy of the project and commit the result. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
 | Field            | Meaning                                                        |
 |------------------|---------------------------------------------------------------|
-| `format_version` | `CONTENT_FORMAT_VERSION` (currently `3`); a mismatch is rejected on read; there is no decoder for older files |
+| `format_version` | `CONTENT_FORMAT_VERSION` (currently `4`); a mismatch is rejected on read; there is no decoder for older files |
 | `asset_id`       | Persistent UUID, minted once and reused from source metadata; legacy UUIDs are preserved |
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |

@@ -80,3 +80,17 @@ fn rejects_an_unknown_format_version() {
         "error should name the unsupported version, got: {message}"
     );
 }
+
+#[test]
+fn rejects_a_version_3_header() {
+    let mut old = header();
+    old.format_version = 3;
+    let bytes = write_content_asset(&old, b"payload").expect("write");
+
+    let err = read_content_asset(&bytes).expect_err("a version 3 file must be rejected");
+    let message = format!("{err:#}");
+    assert!(
+        message.contains("version 3") && message.contains("expects 4"),
+        "error should name version 3 and the expected 4, got: {message}"
+    );
+}
