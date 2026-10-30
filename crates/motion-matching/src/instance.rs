@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use concerto_animation::{inertialization::Inertializer, pose::Pose};
+use concerto_animation::{
+    inertialization::{Inertializer, PoseVelocity},
+    pose::Pose,
+};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
@@ -9,6 +12,7 @@ use crate::{channel::BodyMotion, query::FeatureQuery};
 /// The per-player state of a motion matching node.
 pub struct MotionMatchingInstance {
     pub initialised: bool,
+    pub failed: bool,
     pub active: bool,
     pub delta_time: f32,
     pub frame: usize,
@@ -19,6 +23,13 @@ pub struct MotionMatchingInstance {
     pub desired_velocity: Vec3,
     pub previous_desired_rotation: Quat,
     pub desired_rotation: Quat,
+    pub velocity_change: f32,
+    pub rotation_change: f32,
+    pub pose: Pose,
+    pub velocity: PoseVelocity,
+    pub blended: Pose,
+    pub previous_blended: Pose,
+    pub last_delta: f32,
     pub inertializer: Option<Inertializer>,
     pub output: Pose,
     pub query: Option<FeatureQuery>,
@@ -30,6 +41,7 @@ impl MotionMatchingInstance {
     pub(crate) fn new(search_period: f32) -> Self {
         Self {
             initialised: false,
+            failed: false,
             active: false,
             delta_time: 0.0,
             frame: 0,
@@ -40,6 +52,13 @@ impl MotionMatchingInstance {
             desired_velocity: Vec3::ZERO,
             previous_desired_rotation: Quat::IDENTITY,
             desired_rotation: Quat::IDENTITY,
+            velocity_change: 0.0,
+            rotation_change: 0.0,
+            pose: Pose::identity(0),
+            velocity: PoseVelocity::zero(0),
+            blended: Pose::identity(0),
+            previous_blended: Pose::identity(0),
+            last_delta: 0.0,
             inertializer: None,
             output: Pose::identity(0),
             query: None,

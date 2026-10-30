@@ -1,4 +1,5 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::assets::handle::AssetHandle;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -6,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     bake::bake,
-    channel::{FeatureChannel, FrameContext, ReflectFeatureChannel},
+    channel::{ChannelSource, FeatureChannel, FrameContext, ReflectFeatureChannel},
     database::MotionDatabase,
     definition::{
         MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
@@ -104,37 +105,76 @@ pub(crate) fn turn_left() -> AnimationClip {
     clip
 }
 
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+pub(crate) struct Pace {
+    weight: f32,
+}
+
+impl FeatureChannel for Pace {
+    fn dims(&self) -> usize {
+        1
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = frame
+            .trajectory
+            .first()
+            .map_or(0.0, |sample| sample.velocity.length());
+    }
+
+    fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    fn source(&self) -> ChannelSource {
+        ChannelSource::Trajectory
+    }
+}
+
 pub(crate) fn registry() -> TypeRegistry {
     let mut registry = TypeRegistry::default();
     registry.register::<YawRate>();
     registry.register::<Speed>();
+    registry.register::<Pace>();
     registry
 }
 
-pub(crate) fn two_clip_database() -> MotionDatabase {
-    let definition = MotionDatabaseDefinition {
+fn two_clip_definition(
+    channels: Vec<StoredChannel>,
+    trajectory: TrajectorySettings,
+    speed: f32,
+    skeleton: AssetHandle<Skeleton>,
+    clips: [AssetHandle<AnimationClip>; 2],
+) -> MotionDatabaseDefinition {
+    let [walk, turn] = clips;
+    MotionDatabaseDefinition {
+        skeleton,
         entries: vec![
             MotionEntry {
-                clip: Default::default(),
+                clip: walk,
                 range: None,
             },
             MotionEntry {
-                clip: Default::default(),
+                clip: turn,
                 range: None,
             },
         ],
         rate: 30.0,
-        speed: 1.0,
+        speed,
         simulation: SimulationBoneSettings {
             position_window: 5,
             facing_window: 5,
             ..Default::default()
         },
-        trajectory: TrajectorySettings {
-            sample_dt: 0.25,
-            sample_count: 3,
-        },
-        channels: vec![
+        trajectory,
+        channels,
+    }
+}
+
+pub(crate) fn two_clip_database() -> MotionDatabase {
+    let definition = two_clip_definition(
+        vec![
             StoredChannel {
                 type_name: "YawRate".into(),
                 value: to_value(&YawRate { weight: 1.0 }).unwrap(),
@@ -144,8 +184,43 @@ pub(crate) fn two_clip_database() -> MotionDatabase {
                 value: to_value(&Speed { weight: 1.0 }).unwrap(),
             },
         ],
-        ..Default::default()
-    };
+        TrajectorySettings {
+            sample_dt: 0.25,
+            sample_count: 3,
+        },
+        1.0,
+        Default::default(),
+        Default::default(),
+    );
+    bake(
+        &definition,
+        &skeleton(),
+        &[&walk_forward(), &turn_left()],
+        &registry(),
+    )
+    .unwrap()
+}
+
+pub(crate) const PACE_TAIL: usize = 6;
+
+pub(crate) fn pace_database(
+    speed: f32,
+    skeleton_handle: AssetHandle<Skeleton>,
+    clip_handles: [AssetHandle<AnimationClip>; 2],
+) -> MotionDatabase {
+    let definition = two_clip_definition(
+        vec![StoredChannel {
+            type_name: "Pace".into(),
+            value: to_value(&Pace { weight: 1.0 }).unwrap(),
+        }],
+        TrajectorySettings {
+            sample_dt: 0.1,
+            sample_count: 2,
+        },
+        speed,
+        skeleton_handle,
+        clip_handles,
+    );
     bake(
         &definition,
         &skeleton(),
