@@ -107,7 +107,9 @@ pub fn load_dialogue(
 
 pub fn register(app: &mut concerto_app::App) -> Result<()> {
     app.register_asset::<Dialogue>();
-    app.register_asset_editor::<Dialogue>(DialogueEditor)?;
+    app.register_creatable_asset_editor::<Dialogue>(DialogueEditor, || Dialogue {
+        text: "Hello".into(),
+    })?;
     app.add_system(Update, load_dialogue);
     Ok(())
 }

@@ -156,12 +156,15 @@ impl Plugin for ScenePlugin {
             gpu,
             clipboard: self.clipboard,
         });
-        app.register_asset_editor::<Scene>(SceneEditor)
-            .expect("ScenePlugin requires the asset-editor registry")
-            .register_event::<SceneOpened>()
-            .register_event::<SceneOpenFailed>()
-            .register_event::<SceneSaved>()
-            .register_event::<SaveFailed>();
+        app.register_creatable_asset_editor::<Scene>(SceneEditor, || Scene {
+            nodes: vec![],
+            referenced_assets: vec![],
+        })
+        .expect("ScenePlugin requires the asset-editor registry")
+        .register_event::<SceneOpened>()
+        .register_event::<SceneOpenFailed>()
+        .register_event::<SceneSaved>()
+        .register_event::<SaveFailed>();
         install_listeners(app.main_mut().world_mut());
         app.forward_hosted_event::<SceneEdited>()
             .forward_hosted_event::<SceneStatus>()
@@ -1077,6 +1080,57 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn the_scene_creator_writes_an_empty_scene_with_a_fresh_id_and_records_it() {
+        use crate::{asset_editor::AssetEditorRegistry, hosted::testing::plain_recipe};
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(concerto_window::plugin::WindowPlugin)
+            .insert_resource(ActiveEditor::default())
+            .insert_resource(AssetEditorRegistry::default())
+            .insert_resource(HierarchyState::default())
+            .insert_resource(PropertyCommits::default())
+            .insert_resource(ComponentEdits::default())
+            .insert_resource(ProjectState::default())
+            .register_plugin(hosted::HostedPlugin)
+            .register_plugin(ScenePlugin {
+                recipe: plain_recipe,
+                clipboard: None,
+            });
+        let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
+        let (kind, creator) = editors.creatable().next().unwrap();
+        assert_eq!(kind, Scene::name());
+        let directory = tempfile::tempdir().unwrap();
+        let mut registry = AssetRegistry::default();
+
+        let first = creator
+            .create(
+                directory.path(),
+                "content/forest/New Scene.gasset",
+                &mut registry,
+            )
+            .unwrap();
+        let second = creator
+            .create(directory.path(), "content/New Scene.gasset", &mut registry)
+            .unwrap();
+
+        assert_ne!(first, second);
+        let bytes =
+            std::fs::read(directory.path().join("content/forest/New Scene.gasset")).unwrap();
+        let (header, payload) = read_content_asset(&bytes).unwrap();
+        assert_eq!(header.kind, Scene::name());
+        assert_eq!(header.asset_id, first);
+        assert!(header.provenance.is_none());
+        let scene: Scene = bincode::deserialize(payload).unwrap();
+        assert!(scene.nodes.is_empty());
+        assert!(scene.referenced_assets.is_empty());
+        let entry = registry.get(first).unwrap();
+        assert_eq!(entry.address, "content/forest/New Scene.gasset");
+        assert_eq!(entry.kind, Scene::name());
+        assert!(entry.provenance.is_none());
     }
 
     #[test]

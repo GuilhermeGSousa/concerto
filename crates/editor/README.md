@@ -683,6 +683,27 @@ Register after `EditorPlugin` installs its registry. Dispatch uses the asset's
 serialized kind (`Asset::name()`), which is what catalogue entries carry.
 Duplicate editor registrations are rejected.
 
+A type that has no source file can be made creatable instead. Register its
+editor with the value a new asset starts from:
+
+```rust,ignore
+app.register_creatable_asset_editor::<Dialogue>(DialogueEditor, || Dialogue {
+    text: "Hello".into(),
+})?;
+```
+
+`AssetEditorRegistry::creatable()` lists the creatable kinds in name order,
+each with a `Creator`. `Creator::create(project_root, address, registry)`
+writes a new `.gasset` at the address with a fresh `AssetId` and no import
+provenance, adds it to the registry, and returns its id. Scenes are creatable,
+and a new scene is empty. Registration is refused when `New <kind>` is not a
+valid asset name.
+
+`valid_asset_name` holds the name rules: 1 to 64 ASCII letters, digits, spaces,
+`-` and `_`, with no leading or trailing space. The names Windows reserves,
+`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, are refused
+in any case.
+
 Implement `AssetEditor::build` using its `EntityCommandQueue` to queue the
 editor's components and children. The
 editor entity carries `EditorDocument` and `EditorHosts`; custom systems use

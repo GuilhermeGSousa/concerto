@@ -8,10 +8,12 @@ use concerto_ecs::{
     command::{CommandQueue, EntityCommandQueue},
     resource::{Res, ResMut},
 };
-use concerto_foundation::assets::Asset;
+use concerto_foundation::assets::content::save_content_asset_into;
+use concerto_foundation::assets::{Asset, AssetId};
 use concerto_window::input::actions::ActionFired;
 use derive_more::Deref;
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::path::Path;
 
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 
@@ -24,10 +26,56 @@ pub trait AssetEditor: Send + Sync + 'static {
     }
 }
 
+/// Writes a new asset of one creatable type.
+pub struct Creator(Box<dyn Fn(&Path, &str, &mut AssetRegistry) -> Result<AssetId> + Send + Sync>);
+
+impl Creator {
+    /// Writes a new asset at `project_root/address`, records it in `registry`, and returns its id.
+    pub fn create(
+        &self,
+        project_root: &Path,
+        address: &str,
+        registry: &mut AssetRegistry,
+    ) -> Result<AssetId> {
+        (self.0)(project_root, address, registry)
+    }
+}
+
 /// Registered asset editor implementations, keyed by asset type.
 #[derive(Resource, Default)]
 pub struct AssetEditorRegistry {
     editors: HashMap<&'static str, Box<dyn AssetEditor>>,
+    creators: BTreeMap<&'static str, Creator>,
+}
+
+/// Checks `name` against the rules for an asset name typed in the editor.
+pub fn valid_asset_name(name: &str) -> Result<(), String> {
+    const RESERVED: [&str; 22] = [
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    ];
+    if name.is_empty() {
+        return Err("A name cannot be empty".into());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '-' | '_'))
+    {
+        return Err("A name holds only letters, digits, spaces, - and _".into());
+    }
+    if name.len() > 64 {
+        return Err("A name holds at most 64 characters".into());
+    }
+    if name.starts_with(' ') || name.ends_with(' ') {
+        return Err("A name cannot start or end with a space".into());
+    }
+    if RESERVED
+        .iter()
+        .any(|reserved| reserved.eq_ignore_ascii_case(name))
+    {
+        return Err(format!("{name} is a reserved name on Windows"));
+    }
+    Ok(())
 }
 
 impl AssetEditorRegistry {
@@ -37,6 +85,30 @@ impl AssetEditorRegistry {
         }
         self.editors.insert(T::name(), Box::new(editor));
         Ok(())
+    }
+
+    /// Registers `editor` for `T`, and lets the editor create a new `T` from `new`.
+    pub fn register_creatable<T: Asset>(
+        &mut self,
+        editor: impl AssetEditor,
+        new: fn() -> T,
+    ) -> Result<()> {
+        if let Err(error) = valid_asset_name(&format!("New {}", T::name())) {
+            bail!("New {} is not a valid asset name: {error}", T::name());
+        }
+        self.register::<T>(editor)?;
+        self.creators.insert(
+            T::name(),
+            Creator(Box::new(move |root, address, registry| {
+                save_content_asset_into(&new(), root, address, registry)
+            })),
+        );
+        Ok(())
+    }
+
+    /// The creatable asset kinds and their creators, ordered by kind.
+    pub fn creatable(&self) -> impl Iterator<Item = (&'static str, &Creator)> {
+        self.creators.iter().map(|(kind, creator)| (*kind, creator))
     }
 
     /// Returns the registered asset kind matching `kind`, if it has an editor.
@@ -55,12 +127,29 @@ impl AssetEditorRegistry {
 /// Application convenience API for asset editor registration.
 pub trait AssetEditorAppExt {
     fn register_asset_editor<T: Asset>(&mut self, editor: impl AssetEditor) -> Result<&mut Self>;
+    /// Registers `editor` for `T`, and lets the content browser create a new `T` from `new`.
+    fn register_creatable_asset_editor<T: Asset>(
+        &mut self,
+        editor: impl AssetEditor,
+        new: fn() -> T,
+    ) -> Result<&mut Self>;
 }
 impl AssetEditorAppExt for App {
     fn register_asset_editor<T: Asset>(&mut self, editor: impl AssetEditor) -> Result<&mut Self> {
         self.get_resource_mut::<AssetEditorRegistry>()
             .ok_or_else(|| anyhow::anyhow!("AssetEditorRegistry is not installed"))?
             .register::<T>(editor)?;
+        Ok(self)
+    }
+
+    fn register_creatable_asset_editor<T: Asset>(
+        &mut self,
+        editor: impl AssetEditor,
+        new: fn() -> T,
+    ) -> Result<&mut Self> {
+        self.get_resource_mut::<AssetEditorRegistry>()
+            .ok_or_else(|| anyhow::anyhow!("AssetEditorRegistry is not installed"))?
+            .register_creatable::<T>(editor, new)?;
         Ok(self)
     }
 }
@@ -690,6 +779,85 @@ mod tests {
             .push_back(AssetEditorCommand::Close(c));
         process_editor_commands(&mut w);
         assert!(w.get_resource::<ActiveEditor>().unwrap().0.is_none());
+    }
+
+    #[test]
+    fn only_a_creatable_registration_lists_its_type_in_name_order() {
+        let mut app = App::new();
+        app.insert_resource(AssetEditorRegistry::default());
+        app.register_creatable_asset_editor::<ThirdAsset>(OtherFake, || ThirdAsset)
+            .unwrap()
+            .register_asset_editor::<OtherAsset>(OtherFake)
+            .unwrap()
+            .register_creatable_asset_editor::<TestAsset>(Fake, || TestAsset)
+            .unwrap();
+        let registry = app.get_resource::<AssetEditorRegistry>().unwrap();
+
+        let creatable: Vec<_> = registry.creatable().map(|(kind, _)| kind).collect();
+
+        assert_eq!(creatable, ["TestAsset", "ThirdAsset"]);
+        for kind in ["TestAsset", "ThirdAsset", "OtherAsset"] {
+            assert_eq!(registry.editor_kind(kind), Some(kind));
+        }
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct DottedAsset;
+    impl Asset for DottedAsset {
+        fn name() -> &'static str {
+            "Dotted.Asset"
+        }
+    }
+
+    #[test]
+    fn a_type_whose_new_name_breaks_the_name_rules_is_refused() {
+        let mut registry = AssetEditorRegistry::default();
+
+        assert!(registry.register_creatable(Fake, || DottedAsset).is_err());
+
+        assert_eq!(registry.editor_kind(DottedAsset::name()), None);
+        assert_eq!(registry.creatable().count(), 0);
+    }
+
+    #[test]
+    fn asset_names_follow_the_name_rules() {
+        let longest = "a".repeat(64);
+        for name in [
+            "New Scene",
+            "New Scene 1",
+            "a",
+            "Forest_Path-2",
+            longest.as_str(),
+            "COM10",
+            "console",
+            "Null",
+        ] {
+            assert_eq!(valid_asset_name(name), Ok(()), "{name:?}");
+        }
+        let too_long = "a".repeat(65);
+        for name in [
+            "",
+            too_long.as_str(),
+            " scene",
+            "scene ",
+            "con",
+            "CON",
+            "Prn",
+            "aux",
+            "nul",
+            "Com1",
+            "COM9",
+            "lpt1",
+            "LPT9",
+            "a/b",
+            "a\\b",
+            "a.b",
+            "a*b",
+            "a\tb",
+            "\u{c9}COLE",
+        ] {
+            assert!(valid_asset_name(name).is_err(), "{name:?}");
+        }
     }
 
     #[test]
