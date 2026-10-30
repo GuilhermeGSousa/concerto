@@ -326,7 +326,7 @@ fn open_asset(
             .find(|(_, document)| document.asset_type == kind)
             .map(|(entity, _)| entity);
         if let Some(entity) = document {
-            if let Some(mut shown) = documents.get_entity(entity) {
+            if let Some((_, mut shown)) = documents.get_entity(entity) {
                 if shown
                     .current
                     .as_ref()
