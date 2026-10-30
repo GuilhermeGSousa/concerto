@@ -2,6 +2,7 @@
 
 pub mod database;
 pub mod definition;
+pub mod filter;
 pub mod plugin;
 pub mod simulation;
 pub mod systems;
