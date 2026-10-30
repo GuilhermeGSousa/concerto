@@ -15,7 +15,7 @@ use crate::{
     features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
     node::{MotionMatchingNode, MotionMatchingTrajectory},
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
-    systems::{drive_body, predict_trajectory_system, read_back_body},
+    systems::{drive_body, predict_trajectory_system, publish_trajectory, read_back_body},
 };
 
 pub struct MotionMatchingPlugin;
@@ -43,6 +43,10 @@ impl Plugin for MotionMatchingPlugin {
             .add_system(
                 LateFixedUpdate,
                 predict_trajectory_system.after(read_back_body),
+            )
+            .add_system(
+                LateFixedUpdate,
+                publish_trajectory.after(predict_trajectory_system),
             );
     }
 }
