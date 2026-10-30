@@ -107,6 +107,22 @@ metallic-roughness, emissive and occlusion textures, an alpha cutoff and a UV
 scale. Share one mesh or material handle between many entities by cloning the
 handle.
 
+`concerto::mesh::primitives` builds the common shapes, with normals, tangents
+and texture coordinates: `plane` on the XZ plane facing up, `cuboid`,
+`uv_sphere`, and `capsule` along Y. Each is centred on the origin, and sizes
+must be positive. A capsule's `half_height` is half the length of its cylinder,
+so its full height is `2.0 * (half_height + radius)`, and 0 or less gives a
+sphere. That is the same measure as
+`Collider::capsule`, but the arguments are the other way round: the mesh takes
+`radius` first. `cuboid` takes the full size, where `Collider::cuboid` takes
+half extents.
+
+```rust
+use concerto::mesh::primitives::capsule;
+
+let mesh = assets.add(capsule(0.3, 0.6, 8, 16));
+```
+
 ## The world grid and the sky
 
 `WorldGrid::default()`, from `concerto::world_grid`, draws an infinite ground
