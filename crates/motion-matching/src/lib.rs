@@ -7,6 +7,7 @@ pub mod definition;
 pub mod features;
 pub mod filter;
 pub mod plugin;
+pub mod query;
 pub mod simulation;
 pub mod systems;
 
@@ -24,4 +25,5 @@ pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,
 };
 pub use plugin::MotionMatchingPlugin;
+pub use query::FeatureQuery;
 pub use simulation::{predict_trajectory, CharacterSimulation, DesiredMotion, TrajectorySample};
