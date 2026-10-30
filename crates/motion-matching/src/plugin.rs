@@ -11,6 +11,7 @@ use crate::{
         MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
         TrajectorySettings,
     },
+    features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
     systems::{drive_body, predict_trajectory_system, read_back_body},
 };
@@ -25,6 +26,10 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<MotionEntry>()
             .register_type::<SimulationBoneSettings>()
             .register_type::<TrajectorySettings>()
+            .register_type::<BonePositions>()
+            .register_type::<BoneVelocities>()
+            .register_type::<TrajectoryPositions>()
+            .register_type::<TrajectoryDirections>()
             .register_type::<DesiredMotion>()
             .register_type::<TrajectorySample>()
             .register_type::<CharacterSimulation>()

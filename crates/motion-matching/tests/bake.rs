@@ -6,7 +6,7 @@ use concerto_motion_matching::bake::{
     bake, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, BodyMotion, CharacterSimulation, FeatureChannel, FrameContext,
+    BakeError, BodyMotion, ChannelSource, CharacterSimulation, FeatureChannel, FrameContext,
     MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
     StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
 };
@@ -1008,4 +1008,150 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
             );
         }
     }
+}
+
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct WeightedChannel {
+    weight: f32,
+    value: f32,
+}
+
+impl Default for WeightedChannel {
+    fn default() -> Self {
+        Self {
+            weight: 1.0,
+            value: 0.0,
+        }
+    }
+}
+
+impl FeatureChannel for WeightedChannel {
+    fn dims(&self) -> usize {
+        1
+    }
+
+    fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    fn source(&self) -> ChannelSource {
+        ChannelSource::Trajectory
+    }
+
+    fn extract(&self, _frame: &FrameContext, out: &mut [f32]) {
+        out[0] = self.value;
+    }
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct RejectingChannel {
+    reason: String,
+}
+
+impl FeatureChannel for RejectingChannel {
+    fn dims(&self) -> usize {
+        1
+    }
+
+    fn validate(
+        &self,
+        _skeleton: &Skeleton,
+        _trajectory: &TrajectorySettings,
+    ) -> Result<(), String> {
+        Err(self.reason.clone())
+    }
+
+    fn extract(&self, _frame: &FrameContext, out: &mut [f32]) {
+        out[0] = 0.0;
+    }
+}
+
+fn weighted_registry() -> TypeRegistry {
+    let mut registry = probe_registry();
+    registry.register::<WeightedChannel>();
+    registry.register::<RejectingChannel>();
+    registry
+}
+
+fn weighted(weight: f32, value: f32) -> StoredChannel {
+    StoredChannel {
+        type_name: "WeightedChannel".into(),
+        value: to_value(&WeightedChannel { weight, value }).unwrap(),
+    }
+}
+
+#[test]
+fn a_default_channel_weighs_one_and_reads_the_pose() {
+    let channel = ProbeChannel::default();
+    assert_eq!(channel.weight(), 1.0);
+    assert_eq!(channel.source(), ChannelSource::Pose);
+    assert_eq!(
+        channel.validate(&body_skeleton(), &TrajectorySettings::default()),
+        Ok(())
+    );
+}
+
+#[test]
+fn spans_carry_the_weight_source_and_value_of_their_channel() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![probe(7.0), weighted(2.5, 4.0)]);
+
+    let database = bake(&definition, &skeleton, &[&clip], &weighted_registry()).unwrap();
+
+    let spans = database.channels();
+    assert_eq!(spans[0].weight, 1.0);
+    assert_eq!(spans[0].source, ChannelSource::Pose);
+    assert_eq!(spans[0].value, definition.channels[0].value);
+    assert_eq!(spans[1].weight, 2.5);
+    assert_eq!(spans[1].source, ChannelSource::Trajectory);
+    assert_eq!(spans[1].value, definition.channels[1].value);
+}
+
+#[test]
+fn a_non_positive_or_non_finite_weight_is_rejected_before_extracting() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    for weight in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+        let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
+
+        let error = bake(&definition, &skeleton, &[&clip], &weighted_registry())
+            .err()
+            .unwrap();
+
+        match error {
+            BakeError::InvalidWeight(rejected) => {
+                assert!(rejected == weight || (rejected.is_nan() && weight.is_nan()))
+            }
+            other => panic!("expected InvalidWeight, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn a_channel_that_fails_validation_is_a_channel_value_error() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let rejecting = StoredChannel {
+        type_name: "RejectingChannel".into(),
+        value: to_value(&RejectingChannel {
+            reason: "no such bone".into(),
+        })
+        .unwrap(),
+    };
+    let definition = baking_definition(vec![entry(None)], vec![rejecting]);
+
+    let error = bake(&definition, &skeleton, &[&clip], &weighted_registry())
+        .err()
+        .unwrap();
+
+    assert_eq!(
+        error,
+        BakeError::ChannelValue {
+            type_name: "RejectingChannel".into(),
+            reason: "no such bone".into(),
+        }
+    );
 }

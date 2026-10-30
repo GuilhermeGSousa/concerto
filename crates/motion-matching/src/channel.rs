@@ -4,8 +4,13 @@ use concerto_reflect::{
     apply_value, to_value, EncodeError, FromType, Reflect, ReflectedValue, TypeData, TypeRegistry,
 };
 use glam::Vec3;
+use serde::{Deserialize, Serialize};
 
-use crate::{database::BakeError, definition::StoredChannel, simulation::TrajectorySample};
+use crate::{
+    database::BakeError,
+    definition::{StoredChannel, TrajectorySettings},
+    simulation::TrajectorySample,
+};
 
 /// One group of values a motion database stores per frame; implementors derive `Reflect` and `Default` and declare `#[reflect(FeatureChannel)]`.
 pub trait FeatureChannel: Reflect + Send + Sync + 'static {
@@ -14,6 +19,29 @@ pub trait FeatureChannel: Reflect + Send + Sync + 'static {
 
     /// Writes `dims()` values for `frame` into `out`.
     fn extract(&self, frame: &FrameContext, out: &mut [f32]);
+
+    /// How strongly the channel's group counts against the others; positive and finite.
+    fn weight(&self) -> f32 {
+        1.0
+    }
+
+    /// Whether the channel reads only the simulation bone and the trajectory, or the pose too.
+    fn source(&self) -> ChannelSource {
+        ChannelSource::Pose
+    }
+
+    /// Checks the channel against the skeleton and trajectory settings before a bake; the reason of an `Err` becomes `BakeError::ChannelValue`.
+    fn validate(&self, skeleton: &Skeleton, trajectory: &TrajectorySettings) -> Result<(), String> {
+        let _ = (skeleton, trajectory);
+        Ok(())
+    }
+}
+
+/// What a channel reads: `Trajectory` channels use only `FrameContext::simulation` and `FrameContext::trajectory`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ChannelSource {
+    Pose,
+    Trajectory,
 }
 
 /// Everything a channel reads to extract the features of one frame, baked offline or queried online.

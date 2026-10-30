@@ -8,15 +8,21 @@ use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use concerto_reflect::ReflectedValue;
+
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
+use crate::channel::ChannelSource;
 use crate::definition::TrajectorySettings;
 
 /// Where one feature channel's values sit in a frame's feature vector.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSpan {
     pub type_name: String,
     pub offset: usize,
     pub dims: usize,
+    pub weight: f32,
+    pub source: ChannelSource,
+    pub value: ReflectedValue,
 }
 
 /// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
@@ -36,7 +42,11 @@ pub struct MotionDatabase {
     features: Vec<f32>,
     feature_dims: usize,
     channels: Vec<ChannelSpan>,
+    offset: Vec<f32>,
+    deviations: Vec<f32>,
 }
+
+const DEVIATION_FLOOR: f32 = 1e-6;
 
 impl MotionDatabase {
     #[allow(clippy::too_many_arguments)]
@@ -55,6 +65,8 @@ impl MotionDatabase {
         features: Vec<f32>,
         feature_dims: usize,
         channels: Vec<ChannelSpan>,
+        offset: Vec<f32>,
+        deviations: Vec<f32>,
     ) -> Self {
         Self {
             skeleton,
@@ -71,6 +83,8 @@ impl MotionDatabase {
             features,
             feature_dims,
             channels,
+            offset,
+            deviations,
         }
     }
 
@@ -180,6 +194,63 @@ impl MotionDatabase {
         let dims = self.feature_dims;
         &self.features[frame * dims..(frame + 1) * dims]
     }
+
+    /// The mean of every feature dimension over all frames.
+    pub fn offset(&self) -> &[f32] {
+        &self.offset
+    }
+
+    /// The divisor of every feature dimension: its group's floored deviation over the group's weight.
+    pub fn scales(&self) -> Vec<f32> {
+        let mut scales = vec![1.0; self.feature_dims];
+        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
+            let scale = deviation.max(DEVIATION_FLOOR) / span.weight;
+            scales[span.offset..span.offset + span.dims].fill(scale);
+        }
+        scales
+    }
+
+    /// Subtracts the offset and divides by the scale in place; a group with no deviation becomes 0.
+    pub fn normalise(&self, features: &mut [f32]) {
+        let scales = self.scales();
+        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
+            let range = span.offset..span.offset + span.dims;
+            if *deviation < DEVIATION_FLOOR {
+                features[range].fill(0.0);
+                continue;
+            }
+            for dim in range {
+                features[dim] = (features[dim] - self.offset[dim]) / scales[dim];
+            }
+        }
+    }
+
+    /// The feature vector of `frame` after `normalise`.
+    pub fn normalised_features(&self, frame: usize) -> Vec<f32> {
+        let mut features = self.features(frame).to_vec();
+        self.normalise(&mut features);
+        features
+    }
+
+    /// Replaces every channel's weight, one per channel in order, without a re-bake.
+    pub fn set_weights(&mut self, weights: &[f32]) -> Result<(), BakeError> {
+        if weights.len() != self.channels.len() {
+            return Err(BakeError::WeightCountMismatch {
+                expected: self.channels.len(),
+                actual: weights.len(),
+            });
+        }
+        if let Some(weight) = weights
+            .iter()
+            .find(|weight| !(weight.is_finite() && **weight > 0.0))
+        {
+            return Err(BakeError::InvalidWeight(*weight));
+        }
+        for (span, weight) in self.channels.iter_mut().zip(weights) {
+            span.weight = *weight;
+        }
+        Ok(())
+    }
 }
 
 impl LoadableAsset for MotionDatabase {}
@@ -200,6 +271,10 @@ pub enum BakeError {
     InvalidRate(f32),
     InvalidSpeed(f32),
     InvalidSampleDt(f32),
+    InvalidWeight(f32),
+    WeightCountMismatch { expected: usize, actual: usize },
+    ChannelCountMismatch { expected: usize, actual: usize },
+    TrajectoryTooShort { needed: usize, actual: usize },
 }
 
 impl fmt::Display for BakeError {
@@ -246,6 +321,21 @@ impl fmt::Display for BakeError {
             BakeError::InvalidSpeed(speed) => write!(f, "speed {speed} must be positive"),
             BakeError::InvalidSampleDt(dt) => {
                 write!(f, "trajectory sample_dt {dt} must be positive")
+            }
+            BakeError::InvalidWeight(weight) => {
+                write!(f, "channel weight {weight} must be positive and finite")
+            }
+            BakeError::WeightCountMismatch { expected, actual } => {
+                write!(f, "{actual} weights given for {expected} channels")
+            }
+            BakeError::ChannelCountMismatch { expected, actual } => {
+                write!(f, "the database has {actual} channels, {expected} expected")
+            }
+            BakeError::TrajectoryTooShort { needed, actual } => {
+                write!(
+                    f,
+                    "the trajectory has {actual} samples, a channel reads {needed}"
+                )
             }
         }
     }

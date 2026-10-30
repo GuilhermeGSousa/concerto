@@ -41,7 +41,7 @@ plays. `MotionDatabase::pose` samples the pose from the clip.
 | `speed` | clip seconds consumed per second of database time | 1.1 |
 | `simulation` | `SimulationBoneSettings` | see below |
 | `trajectory` | `TrajectorySettings`: `sample_dt` (1/3 s) and `sample_count` (3) | 1/3 s, 3 |
-| `channels` | `StoredChannel`s: a registered type name and a reflected value, in feature order | empty |
+| `channels` | `StoredChannel`s: a registered type name and a reflected value, in feature order | `reference_channels()` |
 
 An entry bakes `floor((end - start) * rate / speed)` frames.
 
@@ -76,7 +76,11 @@ no frame blends across two entries. `bake` returns `BakeError`:
 | `BoneCountMismatch` | `pose` was given a skeleton whose bone count differs from the baked one |
 | `FrameOutOfRange` | `pose` was given a frame the database did not bake |
 | `UnregisteredChannel` | a channel type name not in the registry, or without `ReflectFeatureChannel` |
-| `ChannelValue` | the stored value does not apply to the channel |
+| `ChannelValue` | the stored value does not apply to the channel, or the channel's `validate` failed |
+| `InvalidWeight` | a channel weight, or one given to `set_weights`, that is not finite and positive |
+| `WeightCountMismatch` | `set_weights` was given a different number of weights than the database has channels |
+| `ChannelCountMismatch` | a `FeatureQuery` was used with a database of a different channel count |
+| `TrajectoryTooShort` | `FeatureQuery::build` was given fewer trajectory samples than the database's `sample_count` |
 | `RangeTooShort` | an entry bakes fewer than 2 frames |
 | `InvalidRange` | a range outside its clip, or with `start >= end` |
 | `InvalidWindow` | a window that is even or at most 3 |
@@ -141,6 +145,62 @@ app.register_type::<RootSpeed>();
 A channel needs `Reflect` and `Default`. The registered type name is what a
 `StoredChannel` refers to; a stored value is applied over `Default`.
 
+A channel may also override three methods:
+
+- `weight()` (default 1.0): how much its group counts in the search. It must be
+  finite and positive, or `bake` returns `InvalidWeight`.
+- `source()` (default `ChannelSource::Pose`): a `Trajectory` channel reads only
+  `simulation` and `trajectory` from its `FrameContext`, so the runtime query
+  can compute it from a predicted trajectory.
+- `validate(&skeleton, &trajectory_settings)` (default `Ok`): `bake` calls it
+  before extracting; an `Err` becomes `ChannelValue`.
+
+### Reference channels
+
+`reference_channels()` is the default `channels` of a definition: 27 floats,
+all in the simulation bone's frame, after `database_build_matching_features`
+in orangeduck/Motion-Matching.
+
+| Channel | Floats | Weight |
+|---|---|---|
+| `BonePositions { bones: ["LeftFoot", "RightFoot"] }` | 6 | 0.75 |
+| `BoneVelocities { bones: ["LeftFoot", "RightFoot"] }` | 6 | 1.0 |
+| `BoneVelocities { bones: ["Hips"] }` | 3 | 1.0 |
+| `TrajectoryPositions { samples: [0, 1, 2] }` | 6 (x, z) | 1.0 |
+| `TrajectoryDirections { samples: [0, 1, 2] }` | 6 (x, z) | 1.5 |
+
+`samples` index the trajectory; 0 is one `sample_dt` ahead. With the default
+`TrajectorySettings` at 60 Hz they sit at +20, +40 and +60 frames. A missing
+bone or an index at or past `sample_count` makes `bake` return `ChannelValue`.
+
+### Normalisation
+
+Each channel is a group. The bake stores the mean of every feature dimension
+(`offset`) and, per group, the mean over its dimensions of the standard
+deviation. A group's scale is `max(deviation, 1e-6) / weight`, and
+`normalised = (x - offset) / scale`, so the group's deviation after
+normalising equals its weight and the group keeps its geometry. A group whose
+deviation is below `1e-6` normalises to 0. `features(frame)` stays raw.
+
+- `offset()`, `scales()`: per feature dimension.
+- `normalise(&mut features)`, `normalised_features(frame)`.
+- `set_weights(&[f32])`: one weight per channel; changes the scales only, with
+  no re-bake. It does not rewrite the weight inside each channel's stored
+  value; the span's weight is the one in use.
+
+### FeatureQuery
+
+```rust
+let query = FeatureQuery::new(&database, &registry)?;
+let vector = query.build(&database, &skeleton, pose_frame, &simulation, &trajectory)?;
+```
+
+`build` returns the normalised query vector: `Pose` channels are copied from
+database frame `pose_frame`, as the reference does, and `Trajectory` channels
+are extracted from `trajectory` expressed in `simulation` (the character's
+world transform). It returns `FrameOutOfRange`, `BoneCountMismatch`,
+`ChannelCountMismatch` or `TrajectoryTooShort` instead of panicking.
+
 ### Layout
 
 `MotionDatabase` fields are private; read it through accessors. Frames are
@@ -157,7 +217,7 @@ every bone index is a skeleton joint index.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
-  `dims`).
+  `dims`, `weight`, `source`, `value`).
 
 `simulation(frame)` and `features(frame)` panic on a frame outside
 `0..frame_count()`. `entry_of`, `range_of` and `clip_time` return `None` for

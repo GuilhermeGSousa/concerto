@@ -5,6 +5,8 @@ use concerto_reflect::{Reflect, ReflectedValue};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
+use crate::features::reference_channels;
+
 /// A span of a clip in seconds, from `start` to `end`.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TimeRange {
@@ -85,7 +87,7 @@ impl Default for MotionDatabaseDefinition {
             speed: 1.1,
             simulation: SimulationBoneSettings::default(),
             trajectory: TrajectorySettings::default(),
-            channels: Vec::new(),
+            channels: reference_channels(),
         }
     }
 }

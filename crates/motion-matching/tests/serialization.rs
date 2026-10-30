@@ -3,8 +3,9 @@ use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
-    ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange, TrajectorySettings,
+    reference_channels, FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition,
+    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
+    TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Vec3};
@@ -75,6 +76,7 @@ fn database() -> MotionDatabase {
             facing_window: 5,
             ..Default::default()
         },
+        channels: Vec::new(),
         ..Default::default()
     };
     let first = walk_clip(2.0);
@@ -92,7 +94,8 @@ fn database() -> MotionDatabase {
 fn definition_defaults_match_the_spec() {
     let definition = MotionDatabaseDefinition::default();
     assert!(definition.entries.is_empty());
-    assert!(definition.channels.is_empty());
+    assert_eq!(definition.channels, reference_channels());
+    assert_eq!(definition.channels.len(), 5);
     assert_eq!(definition.rate, 60.0);
     assert_eq!(definition.speed, 1.1);
     assert_eq!(definition.simulation.position_joint, "Spine2");
