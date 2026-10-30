@@ -140,6 +140,7 @@ impl AnimationChannel {
 pub struct AnimationClip {
     channels: HashMap<Uuid, Vec<AnimationChannel>>,
     duration: f32,
+    frame_rate: Option<f32>,
 }
 
 impl Default for AnimationClip {
@@ -147,7 +148,17 @@ impl Default for AnimationClip {
         Self {
             channels: HashMap::new(),
             duration: 0.0,
+            frame_rate: None,
         }
+    }
+}
+
+fn snap_rate(rate: f32) -> f32 {
+    let whole = rate.round();
+    if (rate - whole).abs() <= 0.01 {
+        whole
+    } else {
+        rate
     }
 }
 
@@ -184,16 +195,19 @@ impl AnimationClip {
             })
             .map(|(_, spacing)| spacing)
             .filter(|spacing| *spacing > 0.0)
-            .map(|spacing| {
-                let rate = spacing.recip();
-                let whole = rate.round();
-                if (rate - whole).abs() <= 0.01 {
-                    whole
-                } else {
-                    rate
-                }
-            })
+            .map(|spacing| snap_rate(spacing.recip()))
             .filter(|rate| *rate > 0.0)
+    }
+
+    /// The authored frame rate, when the source recorded one.
+    pub fn frame_rate(&self) -> Option<f32> {
+        self.frame_rate
+    }
+
+    /// Stores the authored frame rate, snapping a rate within 0.01 of a whole number to it.
+    pub fn set_frame_rate(&mut self, frame_rate: f32) {
+        debug_assert!(frame_rate.is_finite() && frame_rate > 0.0);
+        self.frame_rate = Some(snap_rate(frame_rate));
     }
 
     /// Writes the velocity of each bone in `bone_ids` between `time - dt` and `time`, both clamped to the clip.
@@ -261,6 +275,47 @@ mod tests {
 
     fn channel_at(rate: f32, keys: u32) -> AnimationChannel {
         channel_with_keys((0..keys).map(|key| key as f32 / rate).collect())
+    }
+
+    #[test]
+    fn frame_rate_is_none_by_default() {
+        assert_eq!(AnimationClip::default().frame_rate(), None);
+    }
+
+    #[test]
+    fn set_frame_rate_stores_the_rate() {
+        let mut clip = AnimationClip::default();
+        clip.set_frame_rate(30.0);
+
+        assert_eq!(clip.frame_rate(), Some(30.0));
+    }
+
+    #[test]
+    fn set_frame_rate_snaps_float_noise_to_a_whole_rate() {
+        let mut clip = AnimationClip::default();
+        clip.set_frame_rate(30.0003);
+
+        assert_eq!(clip.frame_rate(), Some(30.0));
+    }
+
+    #[test]
+    fn set_frame_rate_keeps_a_rate_that_is_not_whole() {
+        let mut clip = AnimationClip::default();
+        clip.set_frame_rate(29.97);
+
+        assert_eq!(clip.frame_rate(), Some(29.97));
+    }
+
+    #[test]
+    fn frame_rate_survives_a_bincode_round_trip() {
+        let mut clip = linear_clip(Uuid::from_u128(1));
+        clip.set_frame_rate(24.0);
+
+        let bytes = bincode::serialize(&clip).unwrap();
+        let back: AnimationClip = bincode::deserialize(&bytes).unwrap();
+
+        assert_eq!(back.frame_rate(), Some(24.0));
+        assert_eq!(back.duration(), 1.0);
     }
 
     #[test]
