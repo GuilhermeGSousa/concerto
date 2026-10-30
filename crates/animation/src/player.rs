@@ -17,7 +17,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
     node::{
-        AnimationClipNodeInstance, AnimationNodeInstance, AnimationNodeKind,
+        AnimationClipNodeInstance, ErasedAnimationNode, NodeInstance,
         state_machine::AnimationStateMachineInstance,
     },
     pose::PosePool,
@@ -26,17 +26,17 @@ use crate::{
 
 pub struct ActiveNodeInstance {
     pub weight: f32,
-    pub(crate) node_instance: Box<dyn AnimationNodeInstance>,
+    pub(crate) node_instance: NodeInstance,
 }
 
 impl ActiveNodeInstance {
     pub(crate) fn update(
         &mut self,
-        node: &AnimationNodeKind,
+        node: &dyn ErasedAnimationNode,
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
-        self.node_instance.update(node, delta_time, context);
+        node.update(&mut self.node_instance, delta_time, context);
     }
 }
 

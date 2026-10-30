@@ -11,12 +11,15 @@ use uuid::Uuid;
 
 use crate::{
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
-    node::{AnimationNodeInstance, AnimationNodeKind, blend_space::BlendSpace2DBuilderContext},
+    node::{
+        AnimationNode, ErasedAnimationNode, NodeInstance, ResultNode,
+        blend_space::BlendSpace2DBuilderContext,
+    },
     player::ActiveNodeInstance,
     pose::{EvaluatedPose, Pose, PosePool},
 };
 
-type AnimationDirectedGraph = DiGraph<AnimationNodeKind, ()>;
+type AnimationDirectedGraph = DiGraph<Box<dyn ErasedAnimationNode>, ()>;
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AnimationNodeIndex(NodeIndex);
@@ -35,7 +38,7 @@ impl From<NodeIndex> for AnimationNodeIndex {
     }
 }
 
-#[derive(Asset, serde::Serialize, serde::Deserialize)]
+#[derive(Asset)]
 pub struct AnimationGraph {
     graph: AnimationDirectedGraph,
     result_node: AnimationNodeIndex,
@@ -43,10 +46,23 @@ pub struct AnimationGraph {
 
 impl LoadableAsset for AnimationGraph {}
 
+impl serde::Serialize for AnimationGraph {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AnimationGraph {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        <()>::deserialize(deserializer)?;
+        Ok(Self::new())
+    }
+}
+
 impl AnimationGraph {
     pub fn new() -> Self {
         let mut graph = AnimationDirectedGraph::new();
-        let result_node = graph.add_node(AnimationNodeKind::Result);
+        let result_node = graph.add_node(Box::new(ResultNode {}) as Box<dyn ErasedAnimationNode>);
 
         Self {
             graph,
@@ -54,16 +70,24 @@ impl AnimationGraph {
         }
     }
 
-    pub fn from_node(node: AnimationNodeKind) -> Self {
+    pub fn from_node<T: AnimationNode>(node: T) -> Self {
         let mut graph = Self::new();
         let result_node_index = graph.result_node().index();
         graph.add_node(node, result_node_index);
         graph
     }
 
-    pub fn add_node(
+    pub fn add_node<T: AnimationNode>(
         &mut self,
-        node: AnimationNodeKind,
+        node: T,
+        output_node: AnimationNodeIndex,
+    ) -> AnimationNodeContext<'_> {
+        self.add_boxed_node(Box::new(node), output_node)
+    }
+
+    pub(crate) fn add_boxed_node(
+        &mut self,
+        node: Box<dyn ErasedAnimationNode>,
         output_node: AnimationNodeIndex,
     ) -> AnimationNodeContext<'_> {
         let added_node = self.graph.add_node(node);
@@ -95,8 +119,8 @@ impl AnimationGraph {
             .map(|node_index| node_index.into())
     }
 
-    pub fn get_node(&self, node_index: AnimationNodeIndex) -> Option<&AnimationNodeKind> {
-        self.graph.node_weight(*node_index)
+    pub fn get_node(&self, node_index: AnimationNodeIndex) -> Option<&dyn ErasedAnimationNode> {
+        self.graph.node_weight(*node_index).map(|node| &**node)
     }
 
     pub fn get_node_inputs(&self, node_index: AnimationNodeIndex) -> Neighbors<'_, (), u32> {
@@ -120,9 +144,9 @@ impl<'a> AnimationNodeContext<'a> {
         self.node_index
     }
 
-    pub fn with_input(
+    pub fn with_input<T: AnimationNode>(
         &mut self,
-        node: AnimationNodeKind,
+        node: T,
         f: impl FnOnce(AnimationNodeContext<'_>),
     ) -> &mut Self {
         f(self.graph.add_node(node, self.node_index));
@@ -172,23 +196,19 @@ impl AnimationGraphInstance {
         self.graph_state.get_mut(node_index)
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn get_instance<T: AnimationNodeInstance>(
-        &self,
-        node_index: &AnimationNodeIndex,
-    ) -> Option<&T> {
+    pub(crate) fn get_instance<T: 'static>(&self, node_index: &AnimationNodeIndex) -> Option<&T> {
         self.graph_state
             .get(node_index)
-            .and_then(|node_state| node_state.node_instance.as_any().downcast_ref::<T>())
+            .and_then(|node_state| node_state.node_instance.downcast_ref::<T>())
     }
 
-    pub(crate) fn get_instance_mut<T: AnimationNodeInstance>(
+    pub(crate) fn get_instance_mut<T: 'static>(
         &mut self,
         node_index: &AnimationNodeIndex,
     ) -> Option<&mut T> {
         self.graph_state
             .get_mut(node_index)
-            .and_then(|node_state| node_state.node_instance.as_any_mut().downcast_mut::<T>())
+            .and_then(|node_state| node_state.node_instance.downcast_mut::<T>())
     }
 
     pub(crate) fn initialize(
@@ -209,7 +229,7 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let node_instance = anim_node.create_instance(creation_context);
+            let node_instance: NodeInstance = anim_node.create_instance(creation_context);
             self.graph_state.insert(
                 node_index,
                 ActiveNodeInstance {
@@ -220,10 +240,18 @@ impl AnimationGraphInstance {
         }
     }
 
-    pub(crate) fn reset(&mut self) {
-        self.graph_state.iter_mut().for_each(|(_, node_state)| {
-            node_state.node_instance.reset();
-        });
+    pub(crate) fn reset(&mut self, context: &AnimationGraphContext<'_>) {
+        let Some(graph) = self.get_animation_graph(context) else {
+            return;
+        };
+
+        self.graph_state
+            .iter_mut()
+            .for_each(|(node_index, node_state)| {
+                if let Some(node) = graph.get_node(*node_index) {
+                    node.reset(&mut node_state.node_instance);
+                }
+            });
     }
 
     pub(crate) fn update(&mut self, delta_time: f32, context: &AnimationGraphContext<'_>) {
@@ -273,8 +301,8 @@ impl AnimationGraphInstance {
 
             let mut node_output_pose = pool.acquire();
 
-            node_state.node_instance.evaluate(
-                node,
+            node.evaluate(
+                &mut node_state.node_instance,
                 context,
                 bone_ids,
                 graph_evaluator.view_stack(stack_start),
@@ -312,10 +340,16 @@ impl AnimationGraphInstance {
             .and_then(move |handle| context.animation_graphs().get(handle))
     }
 
-    pub(crate) fn is_finished(&self) -> bool {
-        self.graph_state
-            .values()
-            .all(|val| val.node_instance.is_finished())
+    pub(crate) fn is_finished(&self, context: &AnimationGraphContext<'_>) -> bool {
+        let Some(graph) = self.get_animation_graph(context) else {
+            return true;
+        };
+
+        self.graph_state.iter().all(|(node_index, node_state)| {
+            graph
+                .get_node(*node_index)
+                .is_none_or(|node| node.is_finished(&node_state.node_instance))
+        })
     }
 }
 

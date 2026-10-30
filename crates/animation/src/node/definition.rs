@@ -183,6 +183,7 @@ fn to_value_of<T: AnimationNode>(
 
 /// Stands in for a stored node whose type is not registered: passes its first input through.
 #[derive(Default, Reflect)]
+#[reflect(AnimationNode)]
 pub struct PlaceholderNode {}
 
 impl AnimationNode for PlaceholderNode {

@@ -3,9 +3,9 @@ use std::f32::consts::PI;
 
 use concerto::animation::clip::AnimationClip;
 use concerto::animation::graph::AnimationGraph;
+use concerto::animation::node::AnimationClipNode;
 use concerto::animation::node::AnimationPlayMode::PlayOnce;
 use concerto::animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
-use concerto::animation::node::{AnimationClipNode, AnimationNodeKind};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
 use concerto::director::VirtualCamera;
 use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
@@ -159,68 +159,64 @@ pub(crate) fn setup_character_animations(
 
     let mut graph = AnimationGraph::new();
     graph.result_node().with_input(
-        AnimationNodeKind::StateMachine(
-            AnimationStateMachine::from_initial_state(
-                "movement",
-                server.add(movement_graph),
-                |transition| {
-                    transition
-                        // TODO: not supported yet, jump need to be triggered by an animation event
-                        // .to(
-                        //     "jump_start",
-                        //     AnimationFSMTrigger::on_bool("jumped", true),
-                        //     0.01,
-                        // );
-                        .to(
-                            "air",
-                            AnimationFSMTrigger::on_bool("is_grounded", false),
-                            0.1,
-                        );
-                },
-            )
-            .state(
-                "air",
-                server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(
-                    AnimationClipNode::new(jump_loop),
-                ))),
-                |transition| {
-                    transition
-                        .to(
-                            "land",
-                            AnimationFSMTrigger::on_bool("is_grounded", true),
-                            0.1,
-                        )
-                        .to(
-                            "movement",
-                            AnimationFSMTrigger::on_bool("is_grounded", true),
-                            0.1,
-                        );
-                },
-            )
-            .state(
-                "land",
-                server.add(AnimationGraph::from_node(AnimationNodeKind::Clip(
-                    AnimationClipNode::new(jump_land)
-                        .with_play_mode(PlayOnce)
-                        .with_start_time(0.1),
-                ))),
-                |transition| {
-                    transition
-                        .to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1)
-                        .to(
-                            "jump_start",
-                            AnimationFSMTrigger::on_bool("jumped", true),
-                            0.1,
-                        )
-                        .to(
-                            "movement",
-                            AnimationFSMTrigger::on_non_zero_vec("movement"),
-                            0.1,
-                        );
-                },
-            )
-            .build(),
-        ),
+        AnimationStateMachine::from_initial_state(
+            "movement",
+            server.add(movement_graph),
+            |transition| {
+                transition
+                    // TODO: not supported yet, jump need to be triggered by an animation event
+                    // .to(
+                    //     "jump_start",
+                    //     AnimationFSMTrigger::on_bool("jumped", true),
+                    //     0.01,
+                    // );
+                    .to(
+                        "air",
+                        AnimationFSMTrigger::on_bool("is_grounded", false),
+                        0.1,
+                    );
+            },
+        )
+        .state(
+            "air",
+            server.add(AnimationGraph::from_node(AnimationClipNode::new(jump_loop))),
+            |transition| {
+                transition
+                    .to(
+                        "land",
+                        AnimationFSMTrigger::on_bool("is_grounded", true),
+                        0.1,
+                    )
+                    .to(
+                        "movement",
+                        AnimationFSMTrigger::on_bool("is_grounded", true),
+                        0.1,
+                    );
+            },
+        )
+        .state(
+            "land",
+            server.add(AnimationGraph::from_node(
+                AnimationClipNode::new(jump_land)
+                    .with_play_mode(PlayOnce)
+                    .with_start_time(0.1),
+            )),
+            |transition| {
+                transition
+                    .to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1)
+                    .to(
+                        "jump_start",
+                        AnimationFSMTrigger::on_bool("jumped", true),
+                        0.1,
+                    )
+                    .to(
+                        "movement",
+                        AnimationFSMTrigger::on_non_zero_vec("movement"),
+                        0.1,
+                    );
+            },
+        )
+        .build(),
         |_node_context| {},
     );
 
