@@ -1,5 +1,6 @@
 //! A character simulation that drives the physics body and predicts its trajectory.
 
+pub mod bake;
 pub mod channel;
 pub mod database;
 pub mod definition;
