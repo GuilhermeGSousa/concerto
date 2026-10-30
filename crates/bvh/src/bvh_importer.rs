@@ -3,7 +3,7 @@ use std::hash::{Hash, Hasher};
 use std::path::Path;
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_asset_import::{ImportContext, ImportError, Importer};
+use concerto_asset_import::{ImportContext, ImportError, Importer, clip_names};
 use concerto_ecs::component::scene::SceneEntityRef;
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_foundation::transform::Transform;
@@ -95,7 +95,9 @@ impl Importer for BvhImporter {
         let skeleton = build_skeleton(&bvh, settings.scale, &bone_ids).map_err(malformed)?;
         let clip = build_clip(&bvh, settings.scale, start..end, &bone_ids);
         ctx.emit("skeleton/0", &skeleton)?;
-        ctx.emit("animation/0", &clip)?;
+        let stem = source_path.file_stem().and_then(|stem| stem.to_str());
+        let clip_name = clip_names(&[stem]).remove(0);
+        ctx.emit(&format!("animation/{clip_name}"), &clip)?;
         let scene = build_scene(&bvh, &skeleton, ctx.sub_asset_id("skeleton/0"))?;
         ctx.emit("scene", &scene)?;
         Ok(())
