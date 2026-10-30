@@ -1,7 +1,15 @@
-use concerto_animation::clip::AnimationClip;
-use concerto_mesh::{JointPose, Skeleton};
+use std::f32::consts::{PI, TAU};
 
-use crate::{database::BakeError, definition::MotionDatabaseDefinition};
+use concerto_animation::clip::AnimationClip;
+use concerto_foundation::transform::Transform;
+use concerto_mesh::{JointPose, Skeleton};
+use glam::{Quat, Vec3};
+
+use crate::{
+    database::BakeError,
+    definition::{MotionDatabaseDefinition, SimulationBoneSettings},
+    filter::savitzky_golay,
+};
 
 /// Where one entry's frames sit in the database and which clip time its first frame samples.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -89,4 +97,128 @@ pub fn sample_pose(skeleton: &Skeleton, clip: &AnimationClip, time: f32) -> Vec<
         }
     }
     pose
+}
+
+/// The model-space transform of every bone for the given local poses.
+pub fn model_pose(skeleton: &Skeleton, local: &[JointPose]) -> Vec<Transform> {
+    let mut model: Vec<Transform> = Vec::with_capacity(local.len());
+    for (pose, parent) in local.iter().zip(skeleton.parents.iter()) {
+        let transform =
+            Transform::from_translation_rotation_scale(pose.translation, pose.rotation, pose.scale);
+        let transform = match parent {
+            Some(parent) => model[usize::from(*parent)].mul_transform(transform),
+            None => transform,
+        };
+        model.push(transform);
+    }
+    model
+}
+
+fn check_window(name: &'static str, window: usize) -> Result<(), BakeError> {
+    if window % 2 == 0 || window <= 3 {
+        return Err(BakeError::InvalidWindow { name, window });
+    }
+    Ok(())
+}
+
+fn find_joint(skeleton: &Skeleton, name: &str) -> Result<usize, BakeError> {
+    skeleton
+        .bone_index(name)
+        .ok_or_else(|| BakeError::MissingJoint(name.to_string()))
+}
+
+fn smooth(values: &[f32], window: usize) -> Result<Vec<f32>, BakeError> {
+    let mut window = window.min(values.len());
+    if window % 2 == 0 {
+        window = window.saturating_sub(1);
+    }
+    if window <= 3 {
+        return Ok(values.to_vec());
+    }
+    savitzky_golay(values, window, 3)
+}
+
+/// The simulation bone's model-space transform for every frame of one range, given each frame's model-space bone transforms.
+pub fn simulation_bone(
+    settings: &SimulationBoneSettings,
+    skeleton: &Skeleton,
+    model_poses: &[Vec<Transform>],
+) -> Result<Vec<Transform>, BakeError> {
+    check_window("position_window", settings.position_window)?;
+    check_window("facing_window", settings.facing_window)?;
+    let position_joint = find_joint(skeleton, &settings.position_joint)?;
+    let facing_joint = find_joint(skeleton, &settings.facing_joint)?;
+    if model_poses.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let xs: Vec<f32> = model_poses
+        .iter()
+        .map(|pose| pose[position_joint].translation.x)
+        .collect();
+    let zs: Vec<f32> = model_poses
+        .iter()
+        .map(|pose| pose[position_joint].translation.z)
+        .collect();
+    let xs = smooth(&xs, settings.position_window)?;
+    let zs = smooth(&zs, settings.position_window)?;
+
+    let mut yaws: Vec<f32> = Vec::with_capacity(model_poses.len());
+    for pose in model_poses {
+        let direction = pose[facing_joint].rotation * settings.facing_axis;
+        let flat = Vec3::new(direction.x, 0.0, direction.z);
+        let previous = yaws.last().copied();
+        let yaw = if flat.length() > 1e-6 {
+            let mut yaw = flat.x.atan2(flat.z);
+            if let Some(previous) = previous {
+                while yaw - previous > PI {
+                    yaw -= TAU;
+                }
+                while yaw - previous < -PI {
+                    yaw += TAU;
+                }
+            }
+            yaw
+        } else {
+            previous.unwrap_or(0.0)
+        };
+        yaws.push(yaw);
+    }
+    let yaws = smooth(&yaws, settings.facing_window)?;
+
+    Ok(xs
+        .iter()
+        .zip(&zs)
+        .zip(&yaws)
+        .map(|((x, z), yaw)| {
+            Transform::from_translation_rotation(
+                Vec3::new(*x, 0.0, *z),
+                Quat::from_rotation_y(*yaw),
+            )
+        })
+        .collect())
+}
+
+/// Rewrites each parentless bone's local pose as `inverse(simulation) * model`.
+pub fn reexpress_roots(
+    skeleton: &Skeleton,
+    local: &mut [JointPose],
+    model: &[Transform],
+    simulation: Transform,
+) {
+    let inverse_rotation = simulation.rotation.inverse();
+    let inverse = Transform::from_translation_rotation(
+        inverse_rotation * -simulation.translation,
+        inverse_rotation,
+    );
+    for ((pose, parent), model) in local.iter_mut().zip(skeleton.parents.iter()).zip(model) {
+        if parent.is_none() {
+            let relative = inverse.mul_transform(model.clone());
+            *pose = JointPose {
+                translation: relative.translation,
+                rotation: relative.rotation,
+                scale: relative.scale,
+            };
+        }
+    }
 }

@@ -1,8 +1,13 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
-use concerto_motion_matching::bake::{plan_entries, sample_pose};
-use concerto_motion_matching::{BakeError, MotionDatabaseDefinition, MotionEntry, TimeRange};
-use glam::{Mat4, Vec3};
+use concerto_motion_matching::bake::{
+    model_pose, plan_entries, reexpress_roots, sample_pose, simulation_bone,
+};
+use concerto_motion_matching::{
+    BakeError, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
+};
+use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
 fn skeleton() -> Skeleton {
@@ -204,4 +209,162 @@ fn a_range_under_two_frames_is_an_error() {
             frames: 1
         }
     );
+}
+
+fn body_skeleton() -> Skeleton {
+    Skeleton::new(
+        vec![Mat4::IDENTITY; 3],
+        vec![None, Some(0), Some(1)],
+        vec!["Root".into(), "Hips".into(), "Spine2".into()],
+        vec![
+            JointPose::IDENTITY,
+            JointPose {
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: Vec3::new(0.0, 0.3, 0.0),
+                ..JointPose::IDENTITY
+            },
+        ],
+        vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
+    )
+    .unwrap()
+}
+
+fn walk_model_poses(skeleton: &Skeleton, seconds: f32, rate: f32) -> Vec<Vec<Transform>> {
+    let clip = walk_clip(seconds);
+    let frames = (seconds * rate) as usize;
+    (0..frames)
+        .map(|frame| model_pose(skeleton, &sample_pose(skeleton, &clip, frame as f32 / rate)))
+        .collect()
+}
+
+#[test]
+fn a_straight_walk_faces_its_travel_and_moves_at_walk_speed() {
+    let skeleton = body_skeleton();
+    let poses = walk_model_poses(&skeleton, 2.0, 60.0);
+
+    let simulation =
+        simulation_bone(&SimulationBoneSettings::default(), &skeleton, &poses).unwrap();
+
+    assert_eq!(simulation.len(), poses.len());
+    for (frame, transform) in simulation.iter().enumerate() {
+        let facing = transform.rotation * Vec3::Z;
+        assert!((facing - Vec3::NEG_Z).length() < 1e-3, "frame {frame}");
+        assert!(transform.translation.y.abs() < 1e-6);
+    }
+    for pair in simulation.windows(2) {
+        let speed = (pair[1].translation - pair[0].translation).length() * 60.0;
+        assert!((speed - 1.0).abs() < 1e-2, "{speed}");
+    }
+}
+
+#[test]
+fn the_old_root_composes_back_to_its_model_transform() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(2.0);
+    let local = sample_pose(&skeleton, &clip, 0.75);
+    let model = model_pose(&skeleton, &local);
+    let simulation =
+        Transform::from_translation_rotation(Vec3::new(0.2, 0.0, -0.7), Quat::from_rotation_y(0.4));
+
+    let mut reexpressed = local.clone();
+    reexpress_roots(&skeleton, &mut reexpressed, &model, simulation.clone());
+
+    let root = Transform::from_translation_rotation_scale(
+        reexpressed[0].translation,
+        reexpressed[0].rotation,
+        reexpressed[0].scale,
+    );
+    let composed = simulation * root;
+    assert!((composed.translation - model[0].translation).length() < 1e-5);
+    assert!(composed.rotation.angle_between(model[0].rotation) < 1e-5);
+    assert_eq!(reexpressed[1], local[1]);
+    assert_eq!(reexpressed[2], local[2]);
+}
+
+#[test]
+fn a_missing_joint_is_an_error() {
+    let skeleton = body_skeleton();
+    let poses = walk_model_poses(&skeleton, 1.0, 60.0);
+
+    let position = SimulationBoneSettings {
+        position_joint: "Nope".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        simulation_bone(&position, &skeleton, &poses).err(),
+        Some(BakeError::MissingJoint("Nope".into()))
+    );
+
+    let facing = SimulationBoneSettings {
+        facing_joint: "Gone".into(),
+        ..Default::default()
+    };
+    assert_eq!(
+        simulation_bone(&facing, &skeleton, &poses).err(),
+        Some(BakeError::MissingJoint("Gone".into()))
+    );
+}
+
+#[test]
+fn smoothing_windows_must_be_odd_and_greater_than_three() {
+    let skeleton = body_skeleton();
+    let poses = walk_model_poses(&skeleton, 1.0, 60.0);
+
+    for window in [0, 3, 4, 32] {
+        let settings = SimulationBoneSettings {
+            position_window: window,
+            ..Default::default()
+        };
+        assert_eq!(
+            simulation_bone(&settings, &skeleton, &poses).err(),
+            Some(BakeError::InvalidWindow {
+                name: "position_window",
+                window
+            })
+        );
+        let settings = SimulationBoneSettings {
+            facing_window: window,
+            ..Default::default()
+        };
+        assert_eq!(
+            simulation_bone(&settings, &skeleton, &poses).err(),
+            Some(BakeError::InvalidWindow {
+                name: "facing_window",
+                window
+            })
+        );
+    }
+}
+
+#[test]
+fn a_window_longer_than_the_range_is_clamped() {
+    let skeleton = body_skeleton();
+    let poses = walk_model_poses(&skeleton, 0.1, 60.0);
+    assert_eq!(poses.len(), 6);
+
+    let simulation =
+        simulation_bone(&SimulationBoneSettings::default(), &skeleton, &poses).unwrap();
+
+    assert_eq!(simulation.len(), 6);
+    assert!((simulation[3].rotation * Vec3::Z - Vec3::NEG_Z).length() < 1e-3);
+}
+
+#[test]
+fn a_zero_length_facing_vector_holds_the_previous_yaw() {
+    let skeleton = body_skeleton();
+    let poses = walk_model_poses(&skeleton, 1.0, 60.0);
+    let settings = SimulationBoneSettings {
+        facing_axis: Vec3::Y,
+        ..Default::default()
+    };
+
+    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
+
+    for transform in &simulation {
+        assert!(transform.rotation.angle_between(Quat::IDENTITY) < 1e-5);
+    }
 }
