@@ -61,7 +61,7 @@ fn rename_outputs(project: &Path, destination: &str, renames: &[(&str, &str)]) {
         let file = std::fs::read(&path).unwrap();
         let (mut header, payload) = read_content_asset(&file).unwrap();
         header.provenance.as_mut().unwrap().sub_asset = (*to).to_string();
-        std::fs::write(&path, write_content_asset(&header, &payload).unwrap()).unwrap();
+        std::fs::write(&path, write_content_asset(&header, payload).unwrap()).unwrap();
         metadata.outputs.insert((*to).to_string(), output);
     }
     std::fs::write(&sidecar, toml::to_string_pretty(&metadata).unwrap()).unwrap();
