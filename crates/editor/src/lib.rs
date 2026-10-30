@@ -2,6 +2,7 @@
 pub mod actions;
 pub mod asset_editor;
 pub mod asset_picker;
+pub mod clip_editor;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
@@ -75,6 +76,7 @@ impl Plugin for EditorPlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
+        app.register_plugin(clip_editor::ClipEditorPlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,
