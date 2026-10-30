@@ -8,7 +8,7 @@ use concerto_app::{
     schedule_groups::{First, Update},
 };
 use concerto_ecs::{
-    Changed, Component, Entity, Event, IntoSystemConfig, Query, Resource, World,
+    Changed, Component, Entity, Event, IntoSystemConfig, Query, Resource, With, World,
     command::{CommandQueue, EntityCommandQueue},
     events::{event_reader::EventReader, event_writer::EventWriter},
     resource::{Res, ResMut},
@@ -88,7 +88,7 @@ pub struct SaveFailed {
     pub message: String,
 }
 
-/// What every edit `App` is built from.
+/// What every edit, play and preview `App` is built from.
 #[derive(Resource, Clone)]
 pub struct SceneRecipe {
     pub recipe: fn(&mut App),
@@ -116,6 +116,7 @@ struct SceneJob {
 }
 
 /// The built-in editor for `Scene`.
+#[derive(Default)]
 pub struct SceneEditor;
 impl AssetEditor for SceneEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
@@ -156,7 +157,7 @@ impl Plugin for ScenePlugin {
             gpu,
             clipboard: self.clipboard,
         });
-        app.register_asset_editor::<Scene>(SceneEditor)
+        app.register_creatable_asset_editor::<Scene, SceneEditor>()
             .expect("ScenePlugin requires the asset-editor registry")
             .register_event::<SceneOpened>()
             .register_event::<SceneOpenFailed>()
@@ -187,7 +188,10 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(forget_discarded_edits);
 }
 
-fn forget_discarded_edits(on: On<DiscardEdits>, documents: Query<&mut HostedApp>) {
+fn forget_discarded_edits(
+    on: On<DiscardEdits>,
+    documents: Query<&mut HostedApp, With<SceneEditorState>>,
+) {
     if let Some(mut hosted) = documents.get_entity(on.signal().0) {
         hosted.mark_saved();
     }
@@ -195,7 +199,10 @@ fn forget_discarded_edits(on: On<DiscardEdits>, documents: Query<&mut HostedApp>
 
 /// Keeps a Scene document's `Unsaved` in step with its edit `App`'s `SceneDirty`.
 pub(crate) fn follow_unsaved_edits(
-    documents: Query<(Entity, &HostedApp, Option<&PlayState>, Option<&Unsaved>)>,
+    documents: Query<
+        (Entity, &HostedApp, Option<&PlayState>, Option<&Unsaved>),
+        With<SceneEditorState>,
+    >,
     mut cmd: CommandQueue,
 ) {
     for (document, hosted, state, unsaved) in documents.iter() {
@@ -385,6 +392,11 @@ fn play(on: On<Play>, world: &mut World) {
     }
     let Some(loading) = world
         .get_component_for_entity::<EditorDocument>(document)
+        .filter(|_| {
+            world
+                .get_component_for_entity::<SceneEditorState>(document)
+                .is_some()
+        })
         .map(|doc| doc.pending.is_some())
     else {
         refuse_play(world, document, "No scene is open");
@@ -876,6 +888,19 @@ mod tests {
     }
 
     #[test]
+    fn an_unsaved_on_a_hosted_document_that_is_not_a_scene_stays() {
+        let mut f = SceneFixture::new();
+        let document = f.world.spawn((
+            crate::hosted::testing::preview_now(crate::hosted::testing::plain_recipe),
+            Unsaved,
+        ));
+
+        f.deliver();
+
+        assert!(f.unsaved(document));
+    }
+
+    #[test]
     fn a_save_writes_the_file_and_clears_unsaved() {
         let mut f = SceneFixture::new();
         let document = f.open();
@@ -1077,6 +1102,57 @@ mod tests {
                     .is_none()
             );
         }
+    }
+
+    #[test]
+    fn the_scene_creator_writes_an_empty_scene_with_a_fresh_id_and_records_it() {
+        use crate::{asset_editor::AssetEditorRegistry, hosted::testing::plain_recipe};
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(concerto_window::plugin::WindowPlugin)
+            .insert_resource(ActiveEditor::default())
+            .insert_resource(AssetEditorRegistry::default())
+            .insert_resource(HierarchyState::default())
+            .insert_resource(PropertyCommits::default())
+            .insert_resource(ComponentEdits::default())
+            .insert_resource(ProjectState::default())
+            .register_plugin(hosted::HostedPlugin)
+            .register_plugin(ScenePlugin {
+                recipe: plain_recipe,
+                clipboard: None,
+            });
+        let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
+        let (kind, creator) = editors.creatable().next().unwrap();
+        assert_eq!(kind, Scene::name());
+        let directory = tempfile::tempdir().unwrap();
+        let mut registry = AssetRegistry::default();
+
+        let first = creator
+            .create(
+                directory.path(),
+                "content/forest/New Scene.gasset",
+                &mut registry,
+            )
+            .unwrap();
+        let second = creator
+            .create(directory.path(), "content/New Scene.gasset", &mut registry)
+            .unwrap();
+
+        assert_ne!(first, second);
+        let bytes =
+            std::fs::read(directory.path().join("content/forest/New Scene.gasset")).unwrap();
+        let (header, payload) = read_content_asset(&bytes).unwrap();
+        assert_eq!(header.kind, Scene::name());
+        assert_eq!(header.asset_id, first);
+        assert!(header.provenance.is_none());
+        let scene: Scene = bincode::deserialize(payload).unwrap();
+        assert!(scene.nodes.is_empty());
+        assert!(scene.referenced_assets.is_empty());
+        let entry = registry.get(first).unwrap();
+        assert_eq!(entry.address, "content/forest/New Scene.gasset");
+        assert_eq!(entry.kind, Scene::name());
+        assert!(entry.provenance.is_none());
     }
 
     #[test]

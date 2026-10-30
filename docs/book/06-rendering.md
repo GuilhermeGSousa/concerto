@@ -107,9 +107,6 @@ metallic-roughness, emissive and occlusion textures, an alpha cutoff and a UV
 scale. Share one mesh or material handle between many entities by cloning the
 handle.
 
-`examples/physics-test/src/main.rs` has functions that build a plane, a box
-and a sphere this way, which you can copy.
-
 ## The world grid and the sky
 
 `WorldGrid::default()`, from `concerto::world_grid`, draws an infinite ground

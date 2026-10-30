@@ -108,7 +108,8 @@ time. The running game never reads them.
   them. `AssetServer` resolves loads against a snapshot of it, refreshed by
   `sync_asset_registry` in `First` when the resource changes. The editor builds
   it by scanning headers once, when a project opens. An import inserts its
-  entries and a scene save upserts the scene's, both in memory, with no rescan.
+  entries, a New in the Asset Browser inserts the created asset's, and a scene
+  save upserts the scene's, all in memory, with no rescan.
   The editor gives each hosted `App` the project root and a copy when the
   `App` is created, and the new registry whenever it changes.
 - A scene is a tree of nodes whose components are stored by type name as
@@ -146,7 +147,7 @@ cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 `--project <dir>` opens that project's `content/` tree instead of the game's
 own.
 
-The editor is a host as well as a hosted program. Three kinds of `App` exist
+The editor is a host as well as a hosted program. Four kinds of `App` exist
 while it runs:
 
 - **The editor `App`,** driven by the winit host, or by the MCP host under
@@ -175,12 +176,25 @@ while it runs:
   follow it. Stop drops it and puts the parked edit `App` back. The document's
   `PlayState` (`Editing`, `Starting`, `Playing`) says which is which, and
   `InputOwner` says whether the game or the editor has the window's input.
+- **A preview `App`,** one per open document whose asset editor returns a
+  `PreviewSpec` from `AssetEditor::preview`. `PreviewHostPlugin`
+  (`crates/editor/src/preview.rs`) builds it with the preview role,
+  `App::for_previewing()`, from the same recipe plus `PreviewPlugin` (an orbit
+  camera, the grid, a light) and the spec's `build`, and holds it as the
+  document's `HostedApp` with `HostRole::Preview`. It runs the main-world
+  systems and listeners marked `.at_edit_time()` or `.at_preview_time()` (the
+  `Preview` tag), so animation plays in it while the startup scene and the
+  game's unmarked systems stay out. It has no scene file and no scene tools.
+  The asset editor drives it with signals through `PreviewSignals` and reads
+  its events as `Hosted<E>`.
 
 `crates/editor/src/hosted/` is the host. Each frame, in `First`, it steps the
-document's `HostedApp` on the active tab, the edit `App` or, while playing,
-the play `App`, while the viewport is visible, after pushing the viewport's
-size and input into it. An edit `App` that is not stepped still
-takes signals, which is how a tab that is not in front is saved.
+document's `HostedApp` on the active tab, the edit `App`, the play `App` while
+playing, or the preview, while the viewport is visible, after pushing the
+viewport's size and input into it. That document carries `ViewportTarget`;
+every role but a preview also carries `EditTarget`, which the panels read. An
+edit `App` that is not stepped still takes signals, which is how a tab that is
+not in front is saved; a preview in the background is frozen.
 
 Panels reach the edit `App`, or the play `App` while playing, through two
 system parameters: `EditWorld<T>` reads its world, and `EditWorldSignals` triggers

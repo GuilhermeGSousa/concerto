@@ -16,16 +16,14 @@ Both need symbols. The stock `release` profile strips them, so use the
 `profiling` cargo profile (release speed + debug symbols):
 
 ```sh
-cargo build --profile profiling -p render-test
+cargo build --profile profiling -p tech-demo
 ```
 
 ## The benchmark scenes
 
 | Workload | Command | What it stresses |
 |---|---|---|
-| Rendering (Sponza) | `cargo run --profile profiling -p render-test` | draw submission, materials, wgpu |
 | Gameplay / animation | `cargo run --profile profiling -p tech-demo` | full stack: ECS, animation, physics, render |
-| Physics | `cargo run --profile profiling -p physics-test` | Jolt step, transform write-back |
 | UI | `cargo run --profile profiling -p ui-showcase`, then select the Stress tab | layout, text measurement, UI extraction |
 
 For comparable captures: keep the window size fixed, don't move the camera,
@@ -43,8 +41,8 @@ let the scene warm up ~10 s, then capture ~30 s.
 
 ```sh
 cargo install samply
-cargo build --profile profiling -p render-test
-samply record ./target/profiling/render-test
+cargo build --profile profiling -p tech-demo
+samply record ./target/profiling/tech-demo
 ```
 
 Opens the Firefox Profiler UI: per-thread timelines, flame graph, inverted
@@ -54,13 +52,13 @@ call tree. Worker threads show up by name (`compute-N`, `asset-load-N`).
 
 ```sh
 cargo install flamegraph
-cargo flamegraph --profile profiling -p render-test
+cargo flamegraph --profile profiling -p tech-demo
 ```
 
 or raw perf:
 
 ```sh
-perf record --call-graph dwarf ./target/profiling/render-test
+perf record --call-graph dwarf ./target/profiling/tech-demo
 perf report
 ```
 
@@ -74,8 +72,6 @@ The engine is instrumented with the `profiling` crate. The macros compile to
 cost. Enable the Tracy backend with the root `tracy` feature:
 
 ```sh
-cargo run --profile profiling --features tracy -p render-test
-# examples forward the feature; equivalently:
 cargo run --profile profiling -p tech-demo --features tracy
 ```
 
@@ -125,7 +121,7 @@ A `FrameStats` resource (inserted by `TimePlugin`) keeps a rolling window of
 CPU frame times and logs a summary once per second (avg / p99 / worst, FPS):
 
 ```sh
-RUST_LOG=info cargo run --profile profiling -p render-test
+RUST_LOG=info cargo run --profile profiling -p tech-demo
 ```
 
 Apps using `DefaultPlugins` also get a small on-screen
@@ -134,7 +130,7 @@ frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
 
 ## How to actually find "the code that needs improvement most"
 
-1. Run samply on `render-test` and `tech-demo`. Anything unexpected dominating
+1. Run samply on `tech-demo`. Anything unexpected dominating
    the inverted call tree is your first target.
 2. Run the same scene with Tracy. Sort *Statistics* by total self time;
    inspect the frame timeline for spikes and for scheduler gaps (threads idle
@@ -154,5 +150,5 @@ frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
   resolve queries before submit in `RenderDevice::finish`. With its `tracy`
   feature the GPU appears as its own row in Tracy.
 - Benchmark repeatability: present-mode override (e.g. `ENGINE_PRESENT_MODE`),
-  fixed-camera flag in render-test, and a headless scheduler micro-benchmark
+  fixed-camera flag in tech-demo, and a headless scheduler micro-benchmark
   built on `concerto::headless`.

@@ -5,6 +5,7 @@ use concerto_app::{
 };
 use concerto_color::Color;
 use concerto_ecs::{Component, Query, Res, command::CommandQueue};
+use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_ui::{
     elements::prelude::*,
     node::{UINode, UIRect},
@@ -144,14 +145,16 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
 
 fn refresh_chrome(
     project: Res<ProjectState>,
+    registry: Option<Res<AssetRegistry>>,
     scenes: Res<SceneState>,
     theme: Res<UITheme>,
     labels: Query<(&Label, &mut UIText)>,
 ) {
+    let line = project.line(registry.as_deref());
     let chatter = if project.busy() || scenes.status.is_empty() {
-        project.status.clone()
+        line
     } else {
-        format!("{} · {}", project.status, scenes.status)
+        format!("{line} · {}", scenes.status)
     };
     for (label, mut component) in labels.iter() {
         let value = match label {

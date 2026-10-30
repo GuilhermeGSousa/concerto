@@ -179,7 +179,7 @@ A graph is a tree of nodes under a result node:
 Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`. The tech demo's
 `examples/tech-demo/src/character.rs` builds a full locomotion graph with a
-jump state machine; `animation-test` is a smaller example.
+jump state machine.
 
 ## Gameplay helpers
 
@@ -190,8 +190,7 @@ jump state machine; `animation-test` is a smaller example.
   player.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
-  system flies it with the keyboard and mouse, for looking around a scene as
-  `animation-test` does.
+  system flies it with the keyboard and mouse, for looking around a scene.
 
 ```rust
 cmd.spawn((

@@ -310,7 +310,7 @@ and holds its subfolders and assets, and an asset shows its kind mark and name.
 A folder appears once it holds an asset at any depth; empty directories are not
 shown. In each folder, subfolders come first, then assets, each alphabetically
 ignoring case, and folders start collapsed. When the registry changes, after an
-import or a save, the tree keeps the rows of folders and assets that still exist, so
+import, a New or a save, the tree keeps the rows of folders and assets that still exist, so
 expansion and scroll survive. Clicking a row selects it, folder or asset, but
 only an asset becomes the catalogue's selection; activating a folder, by
 double-clicking it or pressing Enter, expands or collapses it. A click while a
@@ -320,6 +320,30 @@ hide every asset that does not match and show the
 folders leading to each match, open; clearing them restores the expansion as it
 was. The footer counts the matching assets. The navigation keys are the UI
 crate's list and tree actions, as in the hierarchy.
+
+**New** beside Import… lists one row, `New <kind>`, per creatable asset kind
+(see [Custom asset editors](#custom-asset-editors)); Scene is the only one the
+editor ships. It creates in the selected folder, or in the content root when
+nothing or an asset is selected. Right-clicking a folder opens a menu with the
+same rows, which create in that folder; right-clicking the tree's empty space
+opens it for the content root. Right-clicking an asset opens no menu. Picking a
+row clears the search and the kind
+chip, and puts a row with a focused name field in that folder, ahead of its
+assets, expanding the folders above it and scrolling to it. The field starts as a free name: `New
+<kind>`, then `New <kind> 1`, `New <kind> 2`, and so on up to `New <kind> 999`;
+when all of those are taken it shows `New <kind>`, which Enter refuses. Enter, or clicking
+away, writes `<folder>/<name>.gasset` with a fresh `AssetId`, adds it to the
+registry, selects it, scrolls to it, says `Created <address>` in the status line
+and opens it in its editor; Escape cancels and writes
+nothing. A name follows `valid_asset_name`, and one already used in that folder,
+by a file on disk or a registry entry, ignoring case, is taken. Enter on a
+refused name keeps the field, outlines it in the error colour and puts the
+reason in the footer until the next keystroke; clicking away from a refused
+name cancels. New and the menu rows are disabled while no project is open or one is opening. The
+file is always a `.gasset`, even in a project whose `content.toml` sets another
+extension; there the scan looks only for that extension, so the created asset
+is not listed after the project is reopened. If an unsaved Scene tab holds the open, the asset is already written
+and the unsaved-changes prompt decides when it opens.
 
 Activating a supported asset in the Asset Browser, by double-clicking it or pressing
 Enter on its row, opens its editor tab. Each asset type
@@ -676,12 +700,44 @@ Asset editors are separate from property editors. Register the asset with
 
 ```rust,ignore
 app.register_asset::<Dialogue>();
-app.register_asset_editor::<Dialogue>(DialogueEditor)?;
+app.register_asset_editor::<Dialogue, DialogueEditor>()?;
 ```
 
+The editor type implements `Default`, which is how the registry builds it.
 Register after `EditorPlugin` installs its registry. Dispatch uses the asset's
 serialized kind (`Asset::name()`), which is what catalogue entries carry.
 Duplicate editor registrations are rejected.
+
+A type that has no source file can be made creatable instead. Implement
+`CreatableAsset`, which lives in `concerto-foundation` so a game crate can
+implement it, to give the value a new asset starts from, and register with
+`register_creatable_asset_editor`:
+
+```rust,ignore
+impl CreatableAsset for Dialogue {
+    fn new_asset() -> Self {
+        Dialogue {
+            text: "Hello".into(),
+        }
+    }
+}
+
+app.register_creatable_asset_editor::<Dialogue, DialogueEditor>()?;
+```
+
+`AssetEditorRegistry::creatable()` lists the creatable kinds in name order,
+each with a `Creator`. `Creator::create(project_root, address, registry)`
+writes a new `.gasset` at the address with a fresh `AssetId` and no import
+provenance, adds it to the registry, and returns its id. Scenes are creatable,
+and a new scene is empty. Registration is refused when `New <kind> 999`, the
+longest name the Asset Browser prefills, is not a valid asset name. Each
+creatable kind gets a row in the Asset Browser's New
+dropdown and in its right-click menu.
+
+`valid_asset_name` holds the name rules: 1 to 64 ASCII letters, digits, spaces,
+`-` and `_`, with no leading or trailing space. The names Windows reserves,
+`CON`, `PRN`, `AUX`, `NUL`, `COM1` to `COM9` and `LPT1` to `LPT9`, are refused
+in any case.
 
 Implement `AssetEditor::build` using its `EntityCommandQueue` to queue the
 editor's components and children. The
@@ -693,8 +749,9 @@ recursively. Headless hosts have no UI containers.
 
 The [complete custom asset editor example](examples/custom_asset.rs) loads a
 non-Clone Dialogue asset, builds its own text widget, replaces its contents,
-rejects invalid input without mutation, and registers through the public API.
-Run its headless smoke test with:
+rejects invalid input without mutation, hosts a preview of a cube that it sets
+spinning with a signal, and registers through the public API. Run its headless
+smoke test with:
 
 ```sh
 cargo run -p concerto-editor --example custom_asset
@@ -724,7 +781,60 @@ Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
-Only the Scene editor hosts an `App`. Each open scene has one, with its own
-camera, selection, and tools; only the one on the active tab is stepped, and
-only while the viewport is visible. Hosting is not part of the `AssetEditor`
-contract.
+
+### Previews
+
+The Scene editor hosts an `App` for each open scene, with its own camera,
+selection, and tools. Any other asset editor can host one too, a preview, by
+returning a `PreviewSpec` from `AssetEditor::preview`, which is `None` unless
+it says otherwise:
+
+```rust,ignore
+impl AssetEditor for DialogueEditor {
+    fn preview(&self) -> Option<PreviewSpec> {
+        Some(PreviewSpec { build: dialogue_preview })
+    }
+}
+
+fn dialogue_preview(app: &mut App) {
+    app.add_system(Update, spin_cubes.at_preview_time())
+        .add_listener(set_spin.at_preview_time());
+}
+```
+
+When a document of that kind opens, the editor begins a preview `App`,
+`App::for_previewing()`, built from the recipe passed to `EditorPlugin`, then
+`PreviewPlugin`, then `build`. It runs only the systems and listeners marked
+`.at_edit_time()` or `.at_preview_time()`, so it plays animation but spawns no
+startup scene and runs none of the game's unmarked systems. It is built
+asynchronously, like a scene's, and gets the project's content and registry.
+A build that panics sets the document's status to `Preview failed: <message>`,
+and the preview is not built again until the tab is closed and reopened.
+Closing the tab drops the preview. Opening another asset of the same kind
+reuses the document and keeps its preview; reset it through signals when the
+asset changes.
+
+`PreviewPlugin` gives every preview an orbit camera around the origin
+(left-drag orbits, the wheel zooms, middle-drag pans), the world grid when the
+recipe has a renderer, one directional light, and the default
+`CameraEnvironment`. Only its camera draws, through `ExclusiveCamera`, so a
+camera the preview spawns, inside a character scene for instance, does not.
+None of the scene tools are added.
+
+The preview shows in the shared viewport, which stands in for the document's
+`canvas` host: a previewing document gets `left` and `inspector` hosts and no
+`canvas`. Build the editor's own controls in those two hosts; the hierarchy and
+inspector panels are hidden on a preview tab, as on any custom editor's tab. A
+preview carries only `ViewportTarget`, which the viewport shows, routes input
+to, and steps, and never `EditTarget`, which `EditWorld<T>` and
+`EditWorldSignals` read. A preview is stepped only while its tab is in front
+and the viewport is shown; a preview in the background is frozen.
+
+Drive the preview with the `PreviewSignals` system parameter:
+`previews.trigger(document, signal)` queues the signal, and it is triggered in
+the preview's world in `First`, before the preview's next step. A signal sent
+before the preview is built waits for it; one for a closed document, a failed
+preview, or a document with no preview is dropped. Read back through the
+preview's events: call `forward_hosted_event::<E>()` before the editor `App`
+finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
+which preview wrote it.

@@ -513,7 +513,7 @@ mod tests {
         world.insert_resource(project);
         let mut registry = AssetEditorRegistry::default();
         registry
-            .register::<Scene>(crate::scene::SceneEditor)
+            .register::<Scene, crate::scene::SceneEditor>()
             .unwrap();
         world.insert_resource(registry);
         let doc = document(&mut world, true);

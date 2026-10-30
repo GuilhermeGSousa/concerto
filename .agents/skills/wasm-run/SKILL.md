@@ -15,7 +15,7 @@ cd examples/tech-demo
 trunk serve
 ```
 
-It serves at `http://127.0.0.1:8080`. `tech-demo` and `animation-test` have a
+It serves at `http://127.0.0.1:8080`. `tech-demo` has a
 `Trunk.toml` and an `index.html`; an example without them does not run on the
 web yet.
 

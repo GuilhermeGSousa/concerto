@@ -26,13 +26,8 @@ editor with `--decorated` so the window manager frames it.
 
 | Binary | Wait before capturing (debug build) |
 |---|---|
-| `animation-test` | about 15 s; the known-good skinned character |
 | `tech-demo` | about 25 s |
 | `tech-demo-editor` | about 30 s after the forest scene is opened |
-| `render-test`, anything loading Sponza | more than 40 s |
-
-Sponza also needs a bright light: at intensity 10 the atrium is near black, at
-about 400 it reads.
 
 ## Proving something moves
 

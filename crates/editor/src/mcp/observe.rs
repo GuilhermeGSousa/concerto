@@ -165,6 +165,7 @@ pub(super) fn build(app: &mut App) {
 
 type StatusInputs = (
     Res<'static, ProjectState>,
+    Option<Res<'static, AssetRegistry>>,
     Res<'static, ActiveEditor>,
     Res<'static, ViewportShown>,
     Query<
@@ -217,13 +218,13 @@ fn status_of_edit_target(
 }
 
 fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bool) -> String {
-    let (project, active, viewport, documents, busy) = editor;
+    let (project, registry, active, viewport, documents, busy) = editor;
     let mut lines = vec![
         match &project.project {
             Some(open) => format!("project: {}", open.root.display()),
             None => "project: none".to_owned(),
         },
-        format!("project status: {}", project.status),
+        format!("project status: {}", project.line(registry.as_deref())),
     ];
     let mut open: Vec<_> = documents.iter().collect();
     open.sort_by_key(|(_, document, _, _)| document.order);
