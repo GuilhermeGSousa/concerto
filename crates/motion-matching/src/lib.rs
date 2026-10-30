@@ -9,6 +9,7 @@ pub mod plugin;
 pub mod simulation;
 pub mod systems;
 
+pub use bake::bake;
 pub use channel::{build_channels, FeatureChannel, FrameContext, ReflectFeatureChannel};
 pub use database::{BakeError, ChannelSpan, MotionDatabase, PoseView};
 pub use definition::{

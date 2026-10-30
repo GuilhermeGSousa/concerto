@@ -2,13 +2,14 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    contacts, local_velocities, model_pose, model_velocities, plan_entries, reexpress_roots,
+    bake, contacts, local_velocities, model_pose, model_velocities, plan_entries, reexpress_roots,
     sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, ContactSettings, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
-    TimeRange,
+    BakeError, ContactSettings, FeatureChannel, FrameContext, MotionDatabaseDefinition,
+    MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
 };
+use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -454,4 +455,197 @@ fn contacts_reject_an_unknown_bone() {
         contacts(&settings, &skeleton, &velocities),
         Err(BakeError::MissingJoint(name)) if name == "Nope"
     ));
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct ProbeChannel {
+    tag: f32,
+}
+
+impl FeatureChannel for ProbeChannel {
+    fn dims(&self) -> usize {
+        3
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = self.tag;
+        out[1] = frame.range_index as f32;
+        out[2] = frame.range_simulation.len() as f32;
+    }
+}
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct PairChannel {
+    gain: f32,
+}
+
+impl FeatureChannel for PairChannel {
+    fn dims(&self) -> usize {
+        2
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0] = frame.simulation.translation.z;
+        out[1] = frame.model_velocities.len() as f32;
+    }
+}
+
+fn probe_registry() -> TypeRegistry {
+    let mut registry = TypeRegistry::default();
+    registry.register::<ProbeChannel>();
+    registry.register::<PairChannel>();
+    registry
+}
+
+fn probe(tag: f32) -> StoredChannel {
+    StoredChannel {
+        type_name: "ProbeChannel".into(),
+        value: to_value(&ProbeChannel { tag }).unwrap(),
+    }
+}
+
+fn pair() -> StoredChannel {
+    StoredChannel {
+        type_name: "PairChannel".into(),
+        value: to_value(&PairChannel { gain: 1.0 }).unwrap(),
+    }
+}
+
+fn baking_definition(
+    entries: Vec<MotionEntry>,
+    channels: Vec<StoredChannel>,
+) -> MotionDatabaseDefinition {
+    MotionDatabaseDefinition {
+        entries,
+        rate: 30.0,
+        speed: 1.0,
+        simulation: SimulationBoneSettings {
+            position_window: 5,
+            facing_window: 5,
+            ..Default::default()
+        },
+        channels,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_channel_fills_its_span_for_every_frame() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![probe(7.0)]);
+
+    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+
+    assert_eq!(database.feature_dims, 3);
+    assert_eq!(database.frame_count, 30);
+    for frame in 0..database.frame_count {
+        assert_eq!(database.features(frame), [7.0, frame as f32, 30.0]);
+    }
+}
+
+#[test]
+fn channels_are_laid_out_in_list_order() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![pair(), probe(1.0)]);
+
+    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+
+    assert_eq!(database.feature_dims, 5);
+    assert_eq!(database.channels.len(), 2);
+    assert_eq!(database.channels[0].type_name, "PairChannel");
+    assert_eq!(
+        (database.channels[0].offset, database.channels[0].dims),
+        (0, 2)
+    );
+    assert_eq!(database.channels[1].type_name, "ProbeChannel");
+    assert_eq!(
+        (database.channels[1].offset, database.channels[1].dims),
+        (2, 3)
+    );
+    let features = database.features(4);
+    assert_eq!(features[1], 3.0);
+    assert_eq!(features[2], 1.0);
+    assert_eq!(features[3], 4.0);
+}
+
+#[test]
+fn no_channels_gives_zero_dims() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], Vec::new());
+
+    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+
+    assert_eq!(database.feature_dims, 0);
+    assert!(database.features.is_empty());
+    assert!(database.channels.is_empty());
+    assert_eq!(database.features(3), &[] as &[f32]);
+}
+
+#[test]
+fn an_unregistered_channel_fails_the_bake() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![probe(1.0)]);
+
+    let error = bake(&definition, &skeleton, &[&clip], &TypeRegistry::default())
+        .err()
+        .unwrap();
+
+    assert_eq!(error, BakeError::UnregisteredChannel("ProbeChannel".into()));
+}
+
+#[test]
+fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
+    let skeleton = body_skeleton();
+    let first = walk_clip(1.0);
+    let second = walk_clip(2.0);
+    let mut definition = baking_definition(
+        vec![entry(None), entry(Some((0.5, 1.5)))],
+        vec![probe(2.0), pair()],
+    );
+    definition.contacts = ContactSettings {
+        bones: vec!["Spine2".into()],
+        speed_threshold: 10.0,
+        median_window: 5,
+    };
+
+    let database = bake(
+        &definition,
+        &skeleton,
+        &[&first, &second],
+        &probe_registry(),
+    )
+    .unwrap();
+
+    assert_eq!(database.bone_count, 4);
+    assert_eq!(database.frame_count, 60);
+    assert_eq!(database.names[0], "Simulation");
+    assert_eq!(&database.names[1..], ["Root", "Hips", "Spine2"]);
+    assert_eq!(database.parents, [None, Some(0), Some(1), Some(2)]);
+    assert_eq!(database.rate, 30.0);
+    assert_eq!(database.range_starts, [0, 30]);
+    assert_eq!(database.range_stops, [30, 60]);
+    assert_eq!(database.range_of(29), Some(0));
+    assert_eq!(database.range_of(30), Some(1));
+    assert_eq!(database.positions.len(), 60 * 4);
+    assert_eq!(database.rotations.len(), 60 * 4);
+    assert_eq!(database.velocities.len(), 60 * 4);
+    assert_eq!(database.angular_velocities.len(), 60 * 4);
+    assert_eq!(database.contact_bones, [3]);
+    assert_eq!(database.contacts.len(), 60);
+    assert!(database.contacts(10)[0]);
+    assert_eq!(database.feature_dims, 5);
+    assert_eq!(database.features(31)[1], 1.0);
+    assert_eq!(database.features(31)[2], 30.0);
+
+    let pose = database.pose(10);
+    assert!((pose.velocities[0].z + 1.0).abs() < 0.05);
+    assert!(pose.positions[0].y.abs() < 1e-6);
+    let facing = pose.rotations[0] * Vec3::Z;
+    assert!((facing - Vec3::NEG_Z).length() < 1e-3);
 }

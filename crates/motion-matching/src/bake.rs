@@ -6,8 +6,11 @@ use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 
+use concerto_reflect::TypeRegistry;
+
 use crate::{
-    database::BakeError,
+    channel::{build_channels, FrameContext},
+    database::{BakeError, ChannelSpan, MotionDatabase},
     definition::{ContactSettings, MotionDatabaseDefinition, SimulationBoneSettings},
     filter::{median_filter, savitzky_golay},
 };
@@ -313,4 +316,156 @@ pub fn contacts(
         }
     }
     Ok(result)
+}
+
+fn simulation_pose(simulation: &Transform) -> JointPose {
+    JointPose {
+        translation: simulation.translation,
+        rotation: simulation.rotation,
+        scale: simulation.scale,
+    }
+}
+
+/// Bakes a motion database from its definition, the skeleton, one resolved clip per entry and the registry that knows the feature channel types.
+pub fn bake(
+    definition: &MotionDatabaseDefinition,
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip],
+    registry: &TypeRegistry,
+) -> Result<MotionDatabase, BakeError> {
+    let plans = plan_entries(definition, skeleton, clips)?;
+    let channels = build_channels(&definition.channels, registry)?;
+    let rate = definition.rate;
+
+    let skeleton_bones = skeleton.bone_count();
+    let bone_count = skeleton_bones + 1;
+    let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
+
+    let mut names = Vec::with_capacity(bone_count);
+    names.push("Simulation".to_string());
+    names.extend(skeleton.names.iter().cloned());
+    let mut parents = Vec::with_capacity(bone_count);
+    parents.push(None);
+    parents.extend(
+        skeleton
+            .parents
+            .iter()
+            .map(|parent| Some(parent.map_or(0, |parent| parent + 1))),
+    );
+
+    let contact_joints = definition
+        .contacts
+        .bones
+        .iter()
+        .map(|name| find_joint(skeleton, name))
+        .collect::<Result<Vec<_>, _>>()?;
+    let contact_bones: Vec<u16> = contact_joints
+        .iter()
+        .map(|joint| (*joint + 1) as u16)
+        .collect();
+
+    let mut spans = Vec::with_capacity(channels.len());
+    let mut feature_dims = 0;
+    for (stored, channel) in definition.channels.iter().zip(&channels) {
+        let dims = channel.dims();
+        spans.push(ChannelSpan {
+            type_name: stored.type_name.clone(),
+            offset: feature_dims,
+            dims,
+        });
+        feature_dims += dims;
+    }
+
+    let mut positions = Vec::with_capacity(frame_count * bone_count);
+    let mut rotations = Vec::with_capacity(frame_count * bone_count);
+    let mut velocities = Vec::with_capacity(frame_count * bone_count);
+    let mut angular_velocities = Vec::with_capacity(frame_count * bone_count);
+    let mut contact_flags = Vec::with_capacity(frame_count * contact_bones.len());
+    let mut features = vec![0.0; frame_count * feature_dims];
+    let mut range_starts = Vec::with_capacity(plans.len());
+    let mut range_stops = Vec::with_capacity(plans.len());
+
+    for (plan, clip) in plans.iter().zip(clips) {
+        let locals: Vec<Vec<JointPose>> = (0..plan.frames)
+            .map(|index| {
+                sample_pose(
+                    skeleton,
+                    clip,
+                    plan.frame_time(index, rate, definition.speed),
+                )
+            })
+            .collect();
+        let models: Vec<Vec<Transform>> = locals
+            .iter()
+            .map(|local| model_pose(skeleton, local))
+            .collect();
+        let simulation = simulation_bone(&definition.simulation, skeleton, &models)?;
+
+        let mut stored_locals = locals.clone();
+        for ((local, model), simulation) in stored_locals.iter_mut().zip(&models).zip(&simulation) {
+            reexpress_roots(skeleton, local, model, simulation.clone());
+        }
+
+        let database_locals: Vec<Vec<JointPose>> = stored_locals
+            .iter()
+            .zip(&simulation)
+            .map(|(local, simulation)| {
+                let mut pose = Vec::with_capacity(bone_count);
+                pose.push(simulation_pose(simulation));
+                pose.extend(local.iter().cloned());
+                pose
+            })
+            .collect();
+        let (linear, angular) = local_velocities(&database_locals, rate);
+        let model_speeds = model_velocities(&models, rate);
+        let touching = contacts(&definition.contacts, skeleton, &model_speeds)?;
+
+        for frame in 0..plan.frames {
+            for pose in &database_locals[frame] {
+                positions.push(pose.translation);
+                rotations.push(pose.rotation);
+            }
+            velocities.extend_from_slice(&linear[frame]);
+            angular_velocities.extend_from_slice(&angular[frame]);
+            contact_flags.extend_from_slice(&touching[frame]);
+
+            let context = FrameContext {
+                skeleton,
+                local_pose: &stored_locals[frame],
+                model_pose: &models[frame],
+                model_velocities: &model_speeds[frame],
+                simulation: simulation[frame].clone(),
+                range_simulation: &simulation,
+                range_index: frame,
+            };
+            let row = (plan.first_frame + frame) * feature_dims;
+            for (channel, span) in channels.iter().zip(&spans) {
+                channel.extract(
+                    &context,
+                    &mut features[row + span.offset..row + span.offset + span.dims],
+                );
+            }
+        }
+        range_starts.push(plan.first_frame);
+        range_stops.push(plan.first_frame + plan.frames);
+    }
+
+    Ok(MotionDatabase {
+        names,
+        parents,
+        rate,
+        bone_count,
+        frame_count,
+        positions,
+        rotations,
+        velocities,
+        angular_velocities,
+        contact_bones,
+        contacts: contact_flags,
+        range_starts,
+        range_stops,
+        features,
+        feature_dims,
+        channels: spans,
+    })
 }
