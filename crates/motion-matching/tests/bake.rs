@@ -1,4 +1,5 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::math::spring_damper::CharacterState;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
@@ -6,9 +7,9 @@ use concerto_motion_matching::bake::{
     simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, ContactSettings, FeatureChannel, FrameContext, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
-    TrajectorySettings,
+    BakeError, BodyMotion, CharacterSimulation, ContactSettings, FeatureChannel, FrameContext,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -557,7 +558,7 @@ fn a_channel_fills_its_span_for_every_frame() {
     assert_eq!(database.feature_dims(), 3);
     assert_eq!(database.frame_count(), 30);
     for frame in 0..database.frame_count() {
-        assert_eq!(database.features(frame), [7.0, 3.0, 0.0]);
+        assert_eq!(database.features(frame), [7.0, 3.0, 3.0]);
     }
 }
 
@@ -585,6 +586,7 @@ fn channels_are_laid_out_in_list_order() {
     assert_eq!(features[1], 3.0);
     assert_eq!(features[2], 1.0);
     assert_eq!(features[3], 3.0);
+    assert_eq!(features[4], 3.0);
 }
 
 #[test]
@@ -678,7 +680,7 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     assert!(database.contacts(10)[0]);
     assert_eq!(database.feature_dims(), 5);
     assert_eq!(database.features(31)[1], 3.0);
-    assert_eq!(database.features(31)[2], 0.0);
+    assert_eq!(database.features(31)[2], 3.0);
 
     let simulation = database.simulation(10);
     assert!(simulation.translation.y.abs() < 1e-6);
@@ -831,4 +833,229 @@ fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
             frame_count: 30
         })
     );
+}
+
+const SAMPLES: usize = 3;
+const BODY_DIMS: usize = 6 + 7 + SAMPLES * 10;
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct BodyChannel {
+    unused: f32,
+}
+
+impl FeatureChannel for BodyChannel {
+    fn dims(&self) -> usize {
+        BODY_DIMS
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        out[0..3].copy_from_slice(&frame.body.velocity.to_array());
+        out[3..6].copy_from_slice(&frame.body.angular_velocity.to_array());
+        out[6..9].copy_from_slice(&frame.simulation.translation.to_array());
+        out[9..13].copy_from_slice(&frame.simulation.rotation.to_array());
+        for (index, sample) in frame.trajectory.iter().enumerate() {
+            let at = 13 + index * 10;
+            out[at..at + 3].copy_from_slice(&sample.position.to_array());
+            out[at + 3..at + 6].copy_from_slice(&sample.velocity.to_array());
+            out[at + 6..at + 10].copy_from_slice(&sample.rotation.to_array());
+        }
+    }
+}
+
+const LOCAL_DIMS: usize = 6 + SAMPLES * 10;
+
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
+struct LocalChannel {
+    unused: f32,
+}
+
+impl FeatureChannel for LocalChannel {
+    fn dims(&self) -> usize {
+        LOCAL_DIMS
+    }
+
+    fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
+        let inverse = frame.simulation.rotation.inverse();
+        let origin = frame.simulation.translation;
+        out[0..3].copy_from_slice(&(inverse * frame.body.velocity).to_array());
+        out[3..6].copy_from_slice(&(inverse * frame.body.angular_velocity).to_array());
+        for (index, sample) in frame.trajectory.iter().enumerate() {
+            let at = 6 + index * 10;
+            out[at..at + 3].copy_from_slice(&(inverse * (sample.position - origin)).to_array());
+            out[at + 3..at + 6].copy_from_slice(&(inverse * sample.velocity).to_array());
+            out[at + 6..at + 10].copy_from_slice(&(inverse * sample.rotation).to_array());
+        }
+    }
+}
+
+fn body_registry() -> TypeRegistry {
+    let mut registry = probe_registry();
+    registry.register::<BodyChannel>();
+    registry.register::<LocalChannel>();
+    registry
+}
+
+fn body_channel() -> StoredChannel {
+    StoredChannel {
+        type_name: "BodyChannel".into(),
+        value: to_value(&BodyChannel { unused: 0.0 }).unwrap(),
+    }
+}
+
+fn local_channel() -> StoredChannel {
+    StoredChannel {
+        type_name: "LocalChannel".into(),
+        value: to_value(&LocalChannel { unused: 0.0 }).unwrap(),
+    }
+}
+
+fn vec3(features: &[f32], at: usize) -> Vec3 {
+    Vec3::from_slice(&features[at..at + 3])
+}
+
+fn quat(features: &[f32], at: usize) -> Quat {
+    Quat::from_slice(&features[at..at + 4])
+}
+
+fn trajectory_definition(
+    entries: Vec<MotionEntry>,
+    speed: f32,
+    channels: Vec<StoredChannel>,
+) -> MotionDatabaseDefinition {
+    let mut definition = baking_definition(entries, channels);
+    definition.speed = speed;
+    definition.trajectory = TrajectorySettings {
+        sample_dt: 0.2,
+        sample_count: SAMPLES,
+    };
+    definition
+}
+
+#[test]
+fn a_straight_walk_has_trajectory_samples_ahead_along_the_travel() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(3.0);
+    for speed in [1.0, 2.0] {
+        let definition = trajectory_definition(vec![entry(None)], speed, vec![body_channel()]);
+        let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
+
+        let features = database.features(5);
+        assert!((vec3(features, 0) - Vec3::new(0.0, 0.0, -speed)).length() < 1e-3);
+        assert!(vec3(features, 3).length() < 1e-3);
+        let origin = vec3(features, 6);
+        for k in 0..SAMPLES {
+            let at = 13 + k * 10;
+            let ahead = speed * 0.2 * (k + 1) as f32;
+            let position = vec3(features, at) - origin;
+            assert!(
+                (position - Vec3::new(0.0, 0.0, -ahead)).length() < 1e-3,
+                "{k}"
+            );
+            assert!((vec3(features, at + 3) - Vec3::new(0.0, 0.0, -speed)).length() < 1e-3);
+            let facing = quat(features, at + 6) * Vec3::Z;
+            assert!((facing - Vec3::NEG_Z).length() < 1e-3);
+        }
+    }
+}
+
+#[test]
+fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
+    let skeleton = body_skeleton();
+    let clip = turning_clip(2.0);
+    let definition = trajectory_definition(vec![entry(None)], 1.0, vec![body_channel()]);
+    let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
+
+    for frame in [0, 7, 30, database.frame_count() - 1] {
+        let angular = vec3(database.features(frame), 3);
+        assert!(angular.x.abs() < 1e-3 && angular.z.abs() < 1e-3, "{frame}");
+        assert!((angular.y.abs() - 0.5).abs() < 1e-2, "{frame}: {angular:?}");
+    }
+}
+
+#[test]
+fn a_sample_past_the_range_end_equals_the_last_simulation_frame() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(3.0);
+    let definition = trajectory_definition(
+        vec![entry(Some((0.0, 1.0))), entry(Some((1.0, 3.0)))],
+        1.0,
+        vec![body_channel()],
+    );
+    let database = bake(&definition, &skeleton, &[&clip, &clip], &body_registry()).unwrap();
+
+    let range = database.range_of(0).unwrap();
+    let last = database.simulation(range.end - 1);
+    let features = database.features(range.end - 8);
+    let end = 13 + (SAMPLES - 1) * 10;
+    assert_eq!(vec3(features, end), last.translation);
+    assert_eq!(quat(features, end + 6), last.rotation);
+    assert_eq!(vec3(features, 13 + 10), last.translation);
+    assert!(vec3(features, 13).distance(last.translation) > 0.0);
+    let in_range = database.features(range.start);
+    assert!(vec3(in_range, 13).distance(database.simulation(range.start).translation) > 0.1);
+}
+
+#[test]
+fn offline_features_equal_online_features_for_a_matching_simulation() {
+    let skeleton = body_skeleton();
+    let clip = turning_clip(3.0);
+    let definition = trajectory_definition(
+        vec![entry(None)],
+        1.0,
+        vec![body_channel(), local_channel()],
+    );
+    let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
+    let local_at = BODY_DIMS;
+
+    for frame in [0, 20, 50] {
+        let features = database.features(frame);
+        let mut simulation = CharacterSimulation {
+            state: CharacterState {
+                position: vec3(features, 6),
+                velocity: vec3(features, 0),
+                ..Default::default()
+            },
+            rotation: quat(features, 9),
+            angular_velocity: vec3(features, 3),
+            ..Default::default()
+        };
+        simulation.trajectory = (0..SAMPLES)
+            .map(|k| {
+                let at = 13 + k * 10;
+                TrajectorySample {
+                    position: vec3(features, at),
+                    velocity: vec3(features, at + 3),
+                    rotation: quat(features, at + 6),
+                }
+            })
+            .collect();
+        let context = FrameContext {
+            skeleton: &skeleton,
+            local_pose: &[],
+            model_pose: &[],
+            model_velocities: &[],
+            simulation: Transform::from_translation_rotation(
+                simulation.state.position,
+                simulation.rotation,
+            ),
+            body: BodyMotion {
+                velocity: simulation.state.velocity,
+                angular_velocity: simulation.angular_velocity,
+            },
+            trajectory: &simulation.trajectory,
+        };
+        let mut online = [0.0; LOCAL_DIMS];
+        LocalChannel::default().extract(&context, &mut online);
+
+        let offline = &features[local_at..local_at + LOCAL_DIMS];
+        assert!(offline.iter().any(|value| value.abs() > 0.1));
+        for (index, (a, b)) in offline.iter().zip(&online).enumerate() {
+            assert!(
+                (a - b).abs() < 1e-5,
+                "frame {frame} value {index}: {a} vs {b}"
+            );
+        }
+    }
 }

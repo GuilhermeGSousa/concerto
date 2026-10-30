@@ -1,7 +1,7 @@
 use std::f32::consts::{PI, TAU};
 
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::transform::Transform;
+use concerto_foundation::{math::spring_damper::angular_velocity, transform::Transform};
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 
@@ -10,8 +10,11 @@ use concerto_reflect::TypeRegistry;
 use crate::{
     channel::{build_channels, extract_features, BodyMotion, FrameContext},
     database::{BakeError, ChannelSpan, MotionDatabase},
-    definition::{ContactSettings, MotionDatabaseDefinition, SimulationBoneSettings},
+    definition::{
+        ContactSettings, MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings,
+    },
     filter::{median_filter, savitzky_golay},
+    simulation::TrajectorySample,
 };
 
 /// Where one entry's frames sit in the database and which clip time its first frame samples.
@@ -257,6 +260,50 @@ pub fn model_velocities(model: &[Vec<Transform>], rate: f32) -> Vec<Vec<Vec3>> {
         .collect()
 }
 
+/// The simulation bone's linear and angular velocity per frame, by central difference and one-sided at the ends.
+pub fn body_motion(simulation: &[Transform], rate: f32) -> Vec<BodyMotion> {
+    let frames = simulation.len();
+    (0..frames)
+        .map(|frame| {
+            let (previous, next) = difference_span(frame, frames);
+            if previous == next {
+                return BodyMotion::default();
+            }
+            let dt = difference_dt(previous, next, rate);
+            BodyMotion {
+                velocity: (simulation[next].translation - simulation[previous].translation) / dt,
+                angular_velocity: angular_velocity(
+                    simulation[next].rotation,
+                    simulation[previous].rotation,
+                    dt,
+                ),
+            }
+        })
+        .collect()
+}
+
+/// The trajectory samples ahead of `frame` of one range, clamped to the range's last frame.
+pub fn trajectory_samples(
+    settings: &TrajectorySettings,
+    simulation: &[Transform],
+    motion: &[BodyMotion],
+    rate: f32,
+    frame: usize,
+) -> Vec<TrajectorySample> {
+    let last = simulation.len() - 1;
+    (0..settings.sample_count)
+        .map(|k| {
+            let offset = (settings.sample_dt * (k + 1) as f32 * rate).round() as usize;
+            let target = frame.saturating_add(offset).min(last);
+            TrajectorySample {
+                position: simulation[target].translation,
+                velocity: motion[target].velocity,
+                rotation: simulation[target].rotation,
+            }
+        })
+        .collect()
+}
+
 /// Per frame and contact bone, whether the bone's model-space speed is below the threshold, after a median filter over the range.
 pub fn contacts(
     settings: &ContactSettings,
@@ -350,6 +397,7 @@ pub fn bake(
             reexpress_roots(skeleton, local, model, simulation.clone());
         }
 
+        let motion = body_motion(&simulation, rate);
         let model_speeds = model_velocities(&models, rate);
         let touching = contacts(&definition.contacts, skeleton, &model_speeds)?;
 
@@ -357,14 +405,16 @@ pub fn bake(
             simulation_frames.push((simulation[frame].translation, simulation[frame].rotation));
             contact_flags.extend_from_slice(&touching[frame]);
 
+            let trajectory =
+                trajectory_samples(&definition.trajectory, &simulation, &motion, rate, frame);
             let context = FrameContext {
                 skeleton,
                 local_pose: &stored_locals[frame],
                 model_pose: &models[frame],
                 model_velocities: &model_speeds[frame],
                 simulation: simulation[frame].clone(),
-                body: BodyMotion::default(),
-                trajectory: &[],
+                body: motion[frame],
+                trajectory: &trajectory,
             };
             let row = (plan.first_frame + frame) * feature_dims;
             extract_features(&channels, &context, &mut features[row..row + feature_dims]);
