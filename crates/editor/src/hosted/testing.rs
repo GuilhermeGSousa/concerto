@@ -431,6 +431,7 @@ impl SceneFixture {
             crate::scene::show_play_failures.into_boxed_system(),
             crate::preview::open_previews.into_boxed_system(),
             crate::preview::report_preview_failures.into_boxed_system(),
+            crate::preview::keep_preview_failures_shown.into_boxed_system(),
         ]);
         for system in &mut systems {
             system.initialize(&mut world);
@@ -528,6 +529,11 @@ impl SceneFixture {
         for system in &mut self.delivery {
             system.run_and_apply((), &mut self.world);
         }
+    }
+
+    pub(crate) fn add_delivery(&mut self, mut system: BoxedSystem) {
+        system.initialize(&mut self.world);
+        self.delivery.push(system);
     }
 
     pub(crate) fn frames_until_idle(&mut self) {

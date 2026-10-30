@@ -77,6 +77,21 @@ impl AnimationChannel {
         self.time_samples.last().copied()
     }
 
+    fn median_key_spacing(&self) -> Option<f32> {
+        let mut spacings: Vec<f32> = self
+            .time_samples
+            .windows(2)
+            .map(|keys| keys[1] - keys[0])
+            .collect();
+        spacings.sort_by(f32::total_cmp);
+        let upper = spacings.len() / 2;
+        match spacings.len() {
+            0 => None,
+            count if count % 2 == 0 => Some((spacings[upper - 1] + spacings[upper]) / 2.0),
+            _ => Some(spacings[upper]),
+        }
+    }
+
     fn interpolate_between(
         &self,
         transform: &mut JointPose,
@@ -157,6 +172,30 @@ impl AnimationClip {
         self.duration
     }
 
+    /// Estimates the sample rate from the median key spacing of the channel with the most keys.
+    pub fn detected_frame_rate(&self) -> Option<f32> {
+        self.channels
+            .values()
+            .flatten()
+            .filter_map(|channel| Some((channel.time_samples.len(), channel.median_key_spacing()?)))
+            .max_by(|(keys, spacing), (other_keys, other_spacing)| {
+                keys.cmp(other_keys)
+                    .then_with(|| other_spacing.total_cmp(spacing))
+            })
+            .map(|(_, spacing)| spacing)
+            .filter(|spacing| *spacing > 0.0)
+            .map(|spacing| {
+                let rate = spacing.recip();
+                let whole = rate.round();
+                if (rate - whole).abs() <= 0.01 {
+                    whole
+                } else {
+                    rate
+                }
+            })
+            .filter(|rate| *rate > 0.0)
+    }
+
     /// Writes the velocity of each bone in `bone_ids` between `time - dt` and `time`, both clamped to the clip.
     pub fn sample_velocity(
         &self,
@@ -213,6 +252,106 @@ mod tests {
             ),
         );
         clip
+    }
+
+    fn channel_with_keys(time_samples: Vec<f32>) -> AnimationChannel {
+        let outputs = vec![Vec3::ZERO; time_samples.len()];
+        AnimationChannel::new(time_samples, AnimationChanelOutput::Translation(outputs))
+    }
+
+    fn channel_at(rate: f32, keys: u32) -> AnimationChannel {
+        channel_with_keys((0..keys).map(|key| key as f32 / rate).collect())
+    }
+
+    #[test]
+    fn detected_frame_rate_is_none_when_the_rate_rounds_to_nothing() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(Uuid::from_u128(1), channel_with_keys(vec![0.0, 200.0]));
+
+        assert_eq!(clip.detected_frame_rate(), None);
+    }
+
+    #[test]
+    fn detected_frame_rate_is_the_reciprocal_of_the_key_spacing() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(Uuid::from_u128(1), channel_at(30.0, 31));
+
+        assert_eq!(clip.detected_frame_rate(), Some(30.0));
+    }
+
+    #[test]
+    fn detected_frame_rate_uses_the_channel_with_the_most_keys() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(Uuid::from_u128(1), channel_at(10.0, 4));
+        clip.add_channel(Uuid::from_u128(2), channel_at(60.0, 61));
+        clip.add_channel(Uuid::from_u128(3), channel_at(24.0, 5));
+
+        assert_eq!(clip.detected_frame_rate(), Some(60.0));
+    }
+
+    #[test]
+    fn detected_frame_rate_takes_the_middle_of_the_spacings() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            Uuid::from_u128(1),
+            channel_with_keys(vec![0.0, 0.5, 1.0, 5.0, 5.5]),
+        );
+
+        assert_eq!(clip.detected_frame_rate(), Some(2.0));
+    }
+
+    #[test]
+    fn detected_frame_rate_breaks_a_tie_on_the_smallest_spacing_in_any_order() {
+        let id = Uuid::from_u128(1);
+        let mut coarse_first = AnimationClip::default();
+        coarse_first.add_channel(id, channel_at(30.0, 10));
+        coarse_first.add_channel(id, channel_at(60.0, 10));
+        let mut fine_first = AnimationClip::default();
+        fine_first.add_channel(id, channel_at(60.0, 10));
+        fine_first.add_channel(id, channel_at(30.0, 10));
+
+        assert_eq!(coarse_first.detected_frame_rate(), Some(60.0));
+        assert_eq!(fine_first.detected_frame_rate(), Some(60.0));
+    }
+
+    #[test]
+    fn detected_frame_rate_rounds_float_noise_to_a_whole_rate() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            Uuid::from_u128(1),
+            channel_with_keys((0..100).map(|key| key as f32 * 0.033_333).collect()),
+        );
+
+        assert_eq!(clip.detected_frame_rate(), Some(30.0));
+    }
+
+    #[test]
+    fn detected_frame_rate_keeps_a_rate_that_is_not_whole() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(Uuid::from_u128(1), channel_at(29.97, 100));
+
+        let rate = clip.detected_frame_rate().expect("the clip has keys");
+        assert!((rate - 29.97).abs() < 1e-3, "{rate}");
+    }
+
+    #[test]
+    fn detected_frame_rate_is_none_without_a_channel_of_two_keys() {
+        let mut clip = AnimationClip::default();
+        assert_eq!(clip.detected_frame_rate(), None);
+
+        clip.add_channel(Uuid::from_u128(1), channel_with_keys(vec![0.5]));
+        assert_eq!(clip.detected_frame_rate(), None);
+    }
+
+    #[test]
+    fn detected_frame_rate_is_none_when_the_spacing_is_not_positive() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            Uuid::from_u128(1),
+            channel_with_keys(vec![0.5, 0.5, 0.5, 0.5]),
+        );
+
+        assert_eq!(clip.detected_frame_rate(), None);
     }
 
     #[test]

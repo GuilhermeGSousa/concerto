@@ -2,6 +2,7 @@
 pub mod actions;
 pub mod asset_editor;
 pub mod asset_picker;
+pub mod clip_editor;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
@@ -19,6 +20,7 @@ mod run;
 pub mod scene;
 pub mod shell;
 pub mod tabs;
+pub mod timeline;
 pub mod tools;
 mod tree_items;
 pub mod viewport;
@@ -75,6 +77,8 @@ impl Plugin for EditorPlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
+        app.register_plugin(clip_editor::ClipEditorPlugin);
+        app.register_plugin(timeline::TimelinePlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,
