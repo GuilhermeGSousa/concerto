@@ -1,3 +1,4 @@
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 
 use super::spring::SpringValue;
@@ -63,7 +64,8 @@ pub fn simple_spring_damper_exact_quat(
 }
 
 /// Position, velocity and acceleration of a character driven by [`spring_character_update`].
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Reflect)]
+#[reflect(Default)]
 pub struct CharacterState {
     pub position: Vec3,
     pub velocity: Vec3,
@@ -292,5 +294,33 @@ mod tests {
     fn damp_adjustment_closes_half_over_one_halflife() {
         let step = damp_adjustment_exact(Vec3::new(2.0, 0.0, 0.0), 0.25, 0.25, 1.0e-8);
         assert_close(step, Vec3::new(1.0, 0.0, 0.0), 1.0e-5);
+    }
+
+    #[test]
+    fn character_state_reflects_its_fields_and_defaults_to_zero() {
+        use concerto_reflect::{with_property, PropertyPath};
+        use std::any::Any;
+
+        let state = CharacterState {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            velocity: Vec3::new(4.0, 5.0, 6.0),
+            acceleration: Vec3::new(7.0, 8.0, 9.0),
+        };
+        for (name, expected) in [
+            ("position", state.position),
+            ("velocity", state.velocity),
+            ("acceleration", state.acceleration),
+        ] {
+            let mut seen = None;
+            with_property(&state, &PropertyPath::new([name]), &mut |value| {
+                seen = (value as &dyn Any).downcast_ref::<Vec3>().copied();
+            })
+            .unwrap();
+            assert_eq!(seen, Some(expected));
+        }
+        let default = CharacterState::default();
+        assert_eq!(default.position, Vec3::ZERO);
+        assert_eq!(default.velocity, Vec3::ZERO);
+        assert_eq!(default.acceleration, Vec3::ZERO);
     }
 }

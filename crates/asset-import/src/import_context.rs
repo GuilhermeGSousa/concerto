@@ -69,6 +69,7 @@ pub struct ImportContext {
     sub_assets: Vec<EmittedSubAsset>,
     dependencies: Vec<DependencyEntry>,
     sub_asset_id_resolver: Option<SubAssetIdResolver>,
+    settings: toml::Table,
 }
 
 impl ImportContext {
@@ -78,6 +79,7 @@ impl ImportContext {
             sub_assets: Vec::new(),
             dependencies: Vec::new(),
             sub_asset_id_resolver: None,
+            settings: toml::Table::new(),
         }
     }
 
@@ -94,7 +96,19 @@ impl ImportContext {
             sub_assets: Vec::new(),
             dependencies: Vec::new(),
             sub_asset_id_resolver: Some(resolver),
+            settings: toml::Table::new(),
         }
+    }
+
+    /// Sets the importer settings read from the source's sidecar.
+    pub fn with_settings(mut self, settings: toml::Table) -> Self {
+        self.settings = settings;
+        self
+    }
+
+    /// The importer settings from the source's sidecar; empty when it has none.
+    pub fn settings(&self) -> &toml::Table {
+        &self.settings
     }
 
     /// Computes the stable AssetId a sub-asset name resolves to *within this

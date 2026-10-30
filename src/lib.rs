@@ -8,6 +8,7 @@ pub use concerto_foundation::asset_id;
 pub use concerto_gameplay as gameplay;
 use concerto_gameplay::GameplayPlugin;
 pub use concerto_mesh as mesh;
+pub use concerto_motion_matching as motion_matching;
 pub use concerto_physics as physics;
 pub use concerto_reflect as reflect;
 pub use concerto_render as render;
@@ -24,6 +25,7 @@ use concerto_app::{
     App, Plugin,
 };
 use concerto_director::CameraDirectorPlugin;
+use concerto_motion_matching::MotionMatchingPlugin;
 use concerto_physics::plugin::PhysicsPlugin;
 use concerto_render::{
     assets::material::StandardMaterial, plugin::RenderPlugin,
@@ -84,6 +86,7 @@ impl Plugin for DefaultPlugins {
             .register_plugin(MaterialPlugin::<StandardMaterial>::default());
 
         app.register_plugin(PhysicsPlugin)
+            .register_plugin(MotionMatchingPlugin)
             .register_plugin(AnimationPlugin)
             .register_plugin(ScenePlugin)
             .register_plugin(WorldGridPlugin)

@@ -5,7 +5,7 @@ use std::{
 
 use concerto_app::{
     App,
-    edit_time::AtEditTime,
+    edit_time::{AtEditTime, AtPreviewTime},
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     schedule_groups::Update,
@@ -49,12 +49,13 @@ use super::{
 };
 use crate::{
     asset_editor::{
-        ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
-        Unsaved,
+        ActiveEditor, AssetEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry,
+        EditorDocument, PreviewSpec, Unsaved,
     },
     guard::UnsavedGuard,
     hierarchy::HierarchyState,
     inspector::{ComponentEdits, InspectorData, PropertyCommits},
+    preview::PreviewSignalQueue,
     project::{Project, ProjectState},
     scene::{
         SaveFailed, SceneEditor, SceneEditorState, SceneOpenFailed, SceneOpened, SceneRecipe,
@@ -84,6 +85,59 @@ fn count_frame(mut frames: ResMut<Frames>) {
     frames.0 += 1;
 }
 
+#[derive(Resource, Default)]
+pub(crate) struct Said(pub Vec<(u32, usize)>);
+
+pub(crate) fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
+    said.0.push((on.signal().0, frames.0));
+}
+
+fn previewed_build(app: &mut App) {
+    app.insert_resource(Said::default())
+        .add_listener(remember_said.at_preview_time());
+}
+
+fn broken_build(_: &mut App) {
+    panic!("the preview broke");
+}
+
+macro_rules! test_asset {
+    ($asset:ident, $editor:ident, $preview:expr) => {
+        #[derive(serde::Serialize, serde::Deserialize)]
+        pub(crate) struct $asset;
+
+        impl Asset for $asset {
+            fn name() -> &'static str {
+                stringify!($asset)
+            }
+        }
+
+        pub(crate) struct $editor;
+
+        impl AssetEditor for $editor {
+            fn preview(&self) -> Option<PreviewSpec> {
+                $preview
+            }
+        }
+    };
+}
+
+test_asset!(
+    PreviewedAsset,
+    PreviewedEditor,
+    Some(PreviewSpec {
+        build: previewed_build
+    })
+);
+test_asset!(
+    BrokenPreviewAsset,
+    BrokenPreviewEditor,
+    Some(PreviewSpec {
+        build: broken_build
+    })
+);
+test_asset!(PlainAsset, PlainEditor, None);
+
 pub(crate) fn plain_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
@@ -108,6 +162,13 @@ pub(crate) fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
 pub(crate) fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     HostRequest {
         role: HostRole::Game,
+        ..request(recipe)
+    }
+}
+
+pub(crate) fn preview_request(recipe: fn(&mut App)) -> HostRequest<'static> {
+    HostRequest {
+        role: HostRole::Preview,
         ..request(recipe)
     }
 }
@@ -148,6 +209,12 @@ pub(crate) fn play_state(world: &World, document: Entity) -> Option<PlayState> {
 
 pub(crate) fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedApp {
     super::begin(request(recipe), extra, |_| {})
+        .finish_now()
+        .expect("a recipe without asynchronous plugins is ready at once")
+}
+
+pub(crate) fn preview_now(recipe: fn(&mut App)) -> HostedApp {
+    super::begin(preview_request(recipe), |_| {}, |_| {})
         .finish_now()
         .expect("a recipe without asynchronous plugins is ready at once")
 }
@@ -294,7 +361,13 @@ impl SceneFixture {
         editors
             .register_creatable::<Scene>(SceneEditor, crate::scene::empty_scene)
             .unwrap();
+        editors.register::<PreviewedAsset>(PreviewedEditor).unwrap();
+        editors
+            .register::<BrokenPreviewAsset>(BrokenPreviewEditor)
+            .unwrap();
+        editors.register::<PlainAsset>(PlainEditor).unwrap();
         world.insert_resource(editors);
+        world.insert_resource(PreviewSignalQueue::default());
         let mut project = ProjectState::default();
         let mut registry = AssetRegistry::default();
         registry.insert(scene.clone());
@@ -342,7 +415,8 @@ impl SceneFixture {
             super::forward_registry.into_boxed_system(),
             super::finish_pending.into_boxed_system(),
             super::finish_pending_play.into_boxed_system(),
-            super::input::step_edit_target.into_boxed_system(),
+            crate::preview::deliver_preview_signals.into_boxed_system(),
+            super::input::step_viewport_target.into_boxed_system(),
         ];
         let process_commands = systems.len();
         systems.extend([
@@ -354,6 +428,8 @@ impl SceneFixture {
             crate::hierarchy::reconcile_content.into_boxed_system(),
             crate::inspector::collect_inspector_data.into_boxed_system(),
             crate::scene::show_play_failures.into_boxed_system(),
+            crate::preview::open_previews.into_boxed_system(),
+            crate::preview::report_preview_failures.into_boxed_system(),
         ]);
         for system in &mut systems {
             system.initialize(&mut world);
@@ -402,6 +478,35 @@ impl SceneFixture {
             "{}",
             self.status(document)
         );
+        document
+    }
+
+    pub(crate) fn request_kind(&mut self, kind: &str) -> Entity {
+        let asset = AssetEntry {
+            id: AssetId::new(),
+            address: format!("{kind}.gasset"),
+            kind: kind.into(),
+            provenance: Some(ImportProvenance {
+                source: "fixture".into(),
+                sub_asset: kind.into(),
+            }),
+        };
+        self.add_to_project(&asset);
+        self.request(&asset);
+        self.world
+            .get_resource::<ActiveEditor>()
+            .unwrap()
+            .0
+            .expect("opening an asset makes its document the active one")
+    }
+
+    pub(crate) fn open_preview(&mut self) -> Entity {
+        let document = self.request_kind(PreviewedAsset::name());
+        self.frames_until("the preview was never built", |f| {
+            f.world
+                .get_component_for_entity::<HostedApp>(document)
+                .is_some()
+        });
         document
     }
 

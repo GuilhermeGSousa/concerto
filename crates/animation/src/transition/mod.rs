@@ -9,11 +9,21 @@ use crate::{
 pub(crate) mod blend_stack;
 pub(crate) mod inertialization_blender;
 
-pub(crate) trait AnimationTransitionBlender {
+/// How a state machine moves between states: `blend_time` is the cross-fade duration or the inertialization halflife.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TransitionBlender {
+    #[default]
+    CrossFade,
+    Inertialization,
+}
+
+pub(crate) trait AnimationTransitionBlender: Send + Sync {
+    fn current(&self) -> GraphId;
+
     fn sample(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &AnimationGraphInstances,
+        graph_instances: &mut AnimationGraphInstances,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,
@@ -30,7 +40,7 @@ pub(crate) trait AnimationTransitionBlender {
         &mut self,
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
-        transition_time: f32,
+        blend_time: f32,
         context: &AnimationGraphContext<'_>,
     );
 }

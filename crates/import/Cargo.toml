@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 concerto-asset-format.workspace = true
 concerto-asset-import.workspace = true
+concerto-bvh.workspace = true
 concerto-foundation.workspace = true
 concerto-gltf.workspace = true
 concerto-obj.workspace = true

@@ -188,6 +188,19 @@ app.add_listener(on_select.at_edit_time());
 - An edit `App` has no `PhysicsPipeline`, so a marked system must not require it;
   `PhysicsState` is present and empty.
 
+An `App` created with `App::for_previewing()` is a preview `App`, which an asset
+editor uses to show an asset with no scene file behind it. `AtPreviewTime` gives
+`.at_preview_time()`, which adds the `Preview` tag to systems and marks listeners the
+same way.
+
+- A preview `App` compiles its main world with `include: [EditTime, Preview]`, and
+  `App::add_listener` keeps listeners marked with either. A game `App` runs
+  `.at_preview_time()` systems and listeners too; an edit `App` does not.
+- `is_editing()` is true in a preview `App` too, so it has no `PhysicsPipeline`;
+  `is_previewing()` tells it from an edit `App`.
+- `AnimationPlugin`'s systems are marked `.at_preview_time()`: animation plays in
+  games and previews, never while a scene is edited.
+
 ## Change detection
 
 `Changed<T>`, `Added<T>` and `is_changed()` mean "since this system last ran",

@@ -1,8 +1,11 @@
+use concerto_color::Color;
 use concerto_ecs::{
-    component::scene::SceneEntityRef, reflect::ReflectSceneComponent, Component, Entity,
+    component::scene::SceneEntityRef,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    Component, Entity,
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -188,5 +191,24 @@ impl SkeletonComponent {
 
     pub fn root(&self) -> Option<Entity> {
         self.root.and_then(SceneEntityRef::entity)
+    }
+}
+
+/// Draws the bones of the skeleton on this entity every frame: a line from each bone to its parent bone and a sphere at each joint.
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, Default, SceneComponent)]
+pub struct SkeletonGizmo {
+    pub color: Color,
+    pub joint_size: f32,
+    pub axes: bool,
+}
+
+impl Default for SkeletonGizmo {
+    fn default() -> Self {
+        Self {
+            color: Color::srgba(1.0, 0.8, 0.2, 1.0),
+            joint_size: 0.02,
+            axes: false,
+        }
     }
 }

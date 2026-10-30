@@ -199,7 +199,7 @@ impl ImportQueue {
     }
 }
 
-const SUPPORTED_EXTENSIONS: &[&str] = &["gltf", "glb", "obj", "png", "jpg", "jpeg"];
+const SUPPORTED_EXTENSIONS: &[&str] = &["gltf", "glb", "obj", "bvh", "png", "jpg", "jpeg"];
 
 /// The native file picker running on its own thread.
 #[derive(Resource, Default)]
@@ -470,7 +470,7 @@ mod tests {
         let candidates = [
             "png", "jpg", "jpeg", "gltf", "glb", "obj", "bmp", "tga", "gif", "webp", "tiff", "tif",
             "hdr", "exr", "dds", "ktx2", "fbx", "dae", "ply", "stl", "usd", "usdz", "blend", "3ds",
-            "mtl",
+            "mtl", "bvh",
         ];
         for extension in candidates {
             if concerto_import::supported_extension(extension) {

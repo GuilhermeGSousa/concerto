@@ -5,7 +5,7 @@ renderer, an offline asset pipeline, and an engine-native editor. Everything is
 work in progress; `concerto` 0.1.0 is on crates.io and predates the hosting
 work.
 
-The workspace is `crates/*` (30 engine crates, all named `concerto-<dir>`) plus
+The workspace is `crates/*` (31 engine crates, all named `concerto-<dir>`) plus
 `examples/*` (five standalone games). The root crate re-exports the engine and
 defines `DefaultPlugins`.
 
@@ -50,8 +50,7 @@ cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
 ```
 
-Examples are `animation-test`, `physics-test`, `render-test`, `tech-demo`, and
-`ui-showcase`. Sources are imported through the editor's Import…, over a
+Examples are `tech-demo` and `ui-showcase`. Sources are imported through the editor's Import…, over a
 scratch copy of the project; there is no import command line. An example may
 have an `editor/` crate, named `<game>-editor`, that runs the editor over the
 game's library; an editor exists only for a game that has one. Today that is
@@ -67,7 +66,6 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo clippy -p render-test --features terminal -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
 cargo test --workspace
 cargo test -p concerto-physics --no-default-features --features force-rapier
@@ -100,9 +98,10 @@ code they describe changes.
 an extract system, `Extracted`. In the editor crate a system may also take
 `EditWorld<T>`, which reads the world of the scene being edited, or of the running
 game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
-the system while no document is the edit target: no scene is open, or its game
-is starting. Nothing
-else reaches that world. Do not write a system that takes `&World` or
+the system while no document is the edit target: no scene is open, a preview is
+in front, or its game is starting. Nothing
+else reaches that world. An editor system may also take `PreviewSignals`, which
+sends signals to the preview `App` of a document it names. Do not write a system that takes `&World` or
 `&mut World`. Work that needs the whole world goes through commands, so it runs
 with exclusive access when the queue is applied: the typed `CommandQueue`
 methods (`spawn`, `insert`, `remove`, `despawn`, `insert_resource`), or

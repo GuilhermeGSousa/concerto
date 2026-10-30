@@ -2,7 +2,7 @@
 strip = true
 
 # Release-speed build that keeps debug symbols, for profilers (samply, perf,
-# flamegraph, Tracy). Usage: cargo run --profile profiling -p render-test
+# flamegraph, Tracy). Usage: cargo run --profile profiling -p tech-demo
 # See docs/profiling.md.
 [profile.profiling]
 inherits = "release"
@@ -47,6 +47,7 @@ concerto-app = { path = "crates/app", version = "0.1.0" }
 concerto-asset-build = { path = "crates/asset-build", version = "0.1.0" }
 concerto-asset-format = { path = "crates/asset-format", version = "0.1.0" }
 concerto-asset-import = { path = "crates/asset-import", version = "0.1.0" }
+concerto-bvh = { path = "crates/bvh", version = "0.1.0" }
 concerto-color = { path = "crates/color", version = "0.1.0" }
 concerto-debug-gizmos = { path = "crates/debug-gizmos", version = "0.1.0" }
 concerto-director = { path = "crates/director", version = "0.1.0" }
@@ -63,6 +64,7 @@ concerto-import = { path = "crates/import", version = "0.1.0" }
 concerto-jolt-ffi = { path = "crates/jolt-ffi", version = "0.1.0" }
 concerto-mcp = { path = "crates/mcp", version = "0.1.0" }
 concerto-mesh = { path = "crates/mesh", version = "0.1.0" }
+concerto-motion-matching = { path = "crates/motion-matching", version = "0.1.0" }
 concerto-obj = { path = "crates/obj", version = "0.1.0" }
 concerto-physics = { path = "crates/physics", version = "0.1.0" }
 concerto-render = { path = "crates/render", version = "0.1.0" }
@@ -89,6 +91,7 @@ concerto-foundation.workspace = true
 concerto-render.workspace = true
 concerto-director.workspace = true
 concerto-mesh.workspace = true
+concerto-motion-matching.workspace = true
 concerto-gameplay.workspace = true
 concerto-window.workspace = true
 concerto-winit.workspace = true
