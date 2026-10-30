@@ -184,9 +184,7 @@ fn forced_search(
     }
     instance.velocity_change = velocity_change;
     instance.rotation_change = rotation_change;
-    instance.previous_desired_velocity = instance.desired_velocity;
     instance.desired_velocity = first.velocity;
-    instance.previous_desired_rotation = instance.desired_rotation;
     instance.desired_rotation = first.rotation;
     fired
 }
