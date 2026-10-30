@@ -13,6 +13,7 @@ pub mod import;
 pub mod inspector;
 pub mod marks;
 pub mod mcp;
+pub mod preview;
 pub mod project;
 mod run;
 pub mod scene;
@@ -69,6 +70,7 @@ impl Plugin for EditorPlugin {
             asset_editor::request_save,
         );
         app.register_plugin(hosted::HostedPlugin);
+        app.register_plugin(preview::PreviewHostPlugin);
         app.register_plugin(scene::ScenePlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
@@ -85,7 +87,7 @@ impl Plugin for EditorPlugin {
             concerto_app::schedule_groups::Update,
             workspace::reset_workspace_input,
         );
-        app.add_listener(workspace::reset_input_for_edit_target);
+        app.add_listener(workspace::reset_input_for_viewport_target);
         app.register_plugin(viewport::ViewportPlugin);
         app.register_plugin(shell::ShellPlugin);
         app.register_plugin(tabs::TabsPlugin);

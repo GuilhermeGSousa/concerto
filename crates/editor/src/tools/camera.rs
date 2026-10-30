@@ -246,17 +246,18 @@ fn spawn_camera(mut cmd: CommandQueue, fly: Res<FlyCamera>) {
     spawn_editor_camera(&mut cmd, &fly);
 }
 
+pub(crate) fn editor_grid() -> concerto_world_grid::WorldGrid {
+    concerto_world_grid::WorldGrid {
+        line_color: GRID_LINES,
+        surface_color: GRID_SURFACE,
+        lit: false,
+        ..Default::default()
+    }
+}
+
 fn spawn_camera_and_grid(mut cmd: CommandQueue, fly: Res<FlyCamera>) {
     spawn_editor_camera(&mut cmd, &fly);
-    cmd.spawn((
-        concerto_world_grid::WorldGrid {
-            line_color: GRID_LINES,
-            surface_color: GRID_SURFACE,
-            lit: false,
-            ..Default::default()
-        },
-        EditorHelper,
-    ));
+    cmd.spawn((editor_grid(), EditorHelper));
 }
 
 fn apply_fly_transform(fly: &FlyCamera, transform: &mut Transform) {

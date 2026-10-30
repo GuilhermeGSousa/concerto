@@ -724,7 +724,60 @@ Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
 input. Loading and saving belong to the custom editor.
-Only the Scene editor hosts an `App`. Each open scene has one, with its own
-camera, selection, and tools; only the one on the active tab is stepped, and
-only while the viewport is visible. Hosting is not part of the `AssetEditor`
-contract.
+
+### Previews
+
+The Scene editor hosts an `App` for each open scene, with its own camera,
+selection, and tools. Any other asset editor can host one too, a preview, by
+returning a `PreviewSpec` from `AssetEditor::preview`, which is `None` unless
+it says otherwise:
+
+```rust,ignore
+impl AssetEditor for DialogueEditor {
+    fn preview(&self) -> Option<PreviewSpec> {
+        Some(PreviewSpec { build: dialogue_preview })
+    }
+}
+
+fn dialogue_preview(app: &mut App) {
+    app.add_system(Update, spin_cubes.at_preview_time())
+        .add_listener(set_spin.at_preview_time());
+}
+```
+
+When a document of that kind opens, the editor begins a preview `App`,
+`App::for_previewing()`, built from the recipe passed to `EditorPlugin`, then
+`PreviewPlugin`, then `build`. It runs only the systems and listeners marked
+`.at_edit_time()` or `.at_preview_time()`, so it plays animation but spawns no
+startup scene and runs none of the game's unmarked systems. It is built
+asynchronously, like a scene's, and gets the project's content and registry.
+A build that panics sets the document's status to `Preview failed: <message>`,
+and the preview is not built again until the tab is closed and reopened.
+Closing the tab drops the preview. Opening another asset of the same kind
+reuses the document and keeps its preview; reset it through signals when the
+asset changes.
+
+`PreviewPlugin` gives every preview an orbit camera around the origin
+(left-drag orbits, the wheel zooms, middle-drag pans), the world grid when the
+recipe has a renderer, one directional light, and the default
+`CameraEnvironment`. Only its camera draws, through `ExclusiveCamera`, so a
+camera the preview spawns, inside a character scene for instance, does not.
+None of the scene tools are added.
+
+The preview shows in the shared viewport, which stands in for the document's
+`canvas` host: a previewing document gets `left` and `inspector` hosts and no
+`canvas`. Build the editor's own controls in those two hosts. The hierarchy and
+inspector panels have nothing to show for a preview tab: a preview carries only
+`ViewportTarget`, which the viewport shows, routes input to, and steps, and
+never `EditTarget`, which `EditWorld<T>` and `EditWorldSignals` read. A preview
+is stepped only while its tab is in front and the viewport is shown; a preview
+in the background is frozen.
+
+Drive the preview with the `PreviewSignals` system parameter:
+`previews.trigger(document, signal)` queues the signal, and it is triggered in
+the preview's world in `First`, before the preview's next step. A signal sent
+before the preview is built waits for it; one for a closed document, a failed
+preview, or a document with no preview is dropped. Read back through the
+preview's events: call `forward_hosted_event::<E>()` before the editor `App`
+finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
+which preview wrote it.

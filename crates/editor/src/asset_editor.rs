@@ -22,6 +22,16 @@ pub trait AssetEditor: Send + Sync + 'static {
     fn closable(&self) -> bool {
         true
     }
+    /// The preview `App` this editor's documents host, if any.
+    fn preview(&self) -> Option<PreviewSpec> {
+        None
+    }
+}
+
+/// What an asset editor's preview `App` adds to the game's recipe.
+#[derive(Clone, Copy)]
+pub struct PreviewSpec {
+    pub build: fn(&mut App),
 }
 
 /// Registered asset editor implementations, keyed by asset type.
@@ -49,6 +59,11 @@ impl AssetEditorRegistry {
         self.editors
             .get(kind)
             .is_none_or(|editor| editor.closable())
+    }
+
+    /// The preview `App` a document of `kind` hosts; a kind with no editor has none.
+    pub fn preview(&self, kind: &str) -> Option<PreviewSpec> {
+        self.editors.get(kind).and_then(|editor| editor.preview())
     }
 }
 
