@@ -310,6 +310,18 @@ pub fn bake(
     find_joint(skeleton, &definition.simulation.position_joint)?;
     find_joint(skeleton, &definition.simulation.facing_joint)?;
     let channels = build_channels(&definition.channels, registry)?;
+    for (stored, channel) in definition.channels.iter().zip(&channels) {
+        channel
+            .validate(skeleton, &definition.trajectory)
+            .map_err(|reason| BakeError::ChannelValue {
+                type_name: stored.type_name.clone(),
+                reason,
+            })?;
+        let weight = channel.weight();
+        if !(weight.is_finite() && weight > 0.0) {
+            return Err(BakeError::InvalidWeight(weight));
+        }
+    }
     let rate = definition.rate;
 
     let bone_count = skeleton.bone_count();
@@ -323,6 +335,9 @@ pub fn bake(
             type_name: stored.type_name.clone(),
             offset: feature_dims,
             dims,
+            weight: channel.weight(),
+            source: channel.source(),
+            value: stored.value.clone(),
         });
         feature_dims += dims;
     }

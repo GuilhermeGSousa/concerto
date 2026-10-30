@@ -8,15 +8,21 @@ use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
+use concerto_reflect::ReflectedValue;
+
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
+use crate::channel::ChannelSource;
 use crate::definition::TrajectorySettings;
 
 /// Where one feature channel's values sit in a frame's feature vector.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ChannelSpan {
     pub type_name: String,
     pub offset: usize,
     pub dims: usize,
+    pub weight: f32,
+    pub source: ChannelSource,
+    pub value: ReflectedValue,
 }
 
 /// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
@@ -200,6 +206,10 @@ pub enum BakeError {
     InvalidRate(f32),
     InvalidSpeed(f32),
     InvalidSampleDt(f32),
+    InvalidWeight(f32),
+    WeightCountMismatch { expected: usize, actual: usize },
+    ChannelCountMismatch { expected: usize, actual: usize },
+    TrajectoryTooShort { needed: usize, actual: usize },
 }
 
 impl fmt::Display for BakeError {
@@ -246,6 +256,21 @@ impl fmt::Display for BakeError {
             BakeError::InvalidSpeed(speed) => write!(f, "speed {speed} must be positive"),
             BakeError::InvalidSampleDt(dt) => {
                 write!(f, "trajectory sample_dt {dt} must be positive")
+            }
+            BakeError::InvalidWeight(weight) => {
+                write!(f, "channel weight {weight} must be positive and finite")
+            }
+            BakeError::WeightCountMismatch { expected, actual } => {
+                write!(f, "{actual} weights given for {expected} channels")
+            }
+            BakeError::ChannelCountMismatch { expected, actual } => {
+                write!(f, "the database has {actual} channels, {expected} expected")
+            }
+            BakeError::TrajectoryTooShort { needed, actual } => {
+                write!(
+                    f,
+                    "the trajectory has {actual} samples, a channel reads {needed}"
+                )
             }
         }
     }

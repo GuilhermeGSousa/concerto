@@ -11,7 +11,7 @@ pub mod systems;
 
 pub use bake::bake;
 pub use channel::{
-    build_channels, extract_features, BodyMotion, FeatureChannel, FrameContext,
+    build_channels, extract_features, BodyMotion, ChannelSource, FeatureChannel, FrameContext,
     ReflectFeatureChannel,
 };
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
