@@ -51,9 +51,9 @@ The import picks the importer by file extension:
 
 | Extensions           | Importer        | Emits                                              |
 |----------------------|-----------------|---------------------------------------------------|
-| `.gltf` `.glb`       | `GltfImporter`  | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/*`, `scene` |
+| `.gltf` `.glb`       | `GltfImporter`  | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/<clip name>`, `scene` |
 | `.obj` (+ its `.mtl`)| `ObjImporter`   | `mesh/*`, one `material/<mtl stem>`, `scene`       |
-| `.bvh`               | `BvhImporter`   | `skeleton/0`, `animation/0`, `scene`               |
+| `.bvh`               | `BvhImporter`   | `skeleton/0`, `animation/<file stem>`, `scene`     |
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 
 ### `content.toml`
@@ -84,8 +84,24 @@ For a new sub-asset, the import chooses an initial address:
 - Source directories relative to the project are preserved, with a leading
   `assets/` removed: `assets/enemies/hero.glb` → `content/enemies/hero/…`.
 - `<source-file-stem>` is the source file name without its extension.
-- The sub-asset name (`mesh/0`, `animation/53`, `material/steel`) has `/`,
-  `\`, and `#` replaced with `_`, so `animation/53` → `animation_53.gasset`.
+- The sub-asset name (`mesh/0`, `animation/Idle_Loop`, `material/steel`) has
+  `/`, `\`, and `#` replaced with `_`, so `animation/Idle_Loop` →
+  `animation_Idle_Loop.gasset`.
+
+### Animation clip names
+
+A clip's sub-asset name is `animation/<name>`, where `<name>` comes from the
+source:
+
+- glTF uses the animation's name. BVH has no clip name, so it uses the source
+  file stem: `walk.bvh` → `animation/walk` → `animation_walk.gasset`.
+- `/`, `\`, `#`, `:`, `*`, `?`, `"`, `<`, `>`, `|` and control characters are
+  replaced with `_`, and whitespace and dots are trimmed from both ends.
+- A missing or empty name (after sanitising) falls back to the clip's index:
+  `animation/7`.
+- Names are unique case-insensitively. A clip whose name an earlier clip
+  already took gets `_{index}` appended (`animation/Walk_4`), and again if that
+  is taken too.
 
 Existing sub-assets are located by UUID, so an asset moved within the content
 tree is updated at its new location on re-import. Older imported assets keep
@@ -157,7 +173,7 @@ temporary files. The entire import is not a crash-safe multi-file transaction.
   its rest translation. Bone ids are derived from the joint's path from the
   root, so they stay the same across re-imports and across clips of the same
   rig.
-- `animation/0`: one translation channel for each joint with position channels
+- `animation/<file stem>`: one translation channel for each joint with position channels
   and one rotation channel for each joint with rotation channels, one key per
   frame at the file's `Frame Time`. Euler angles are in degrees, applied in the
   order the joint's `CHANNELS` line lists them. A quaternion that would flip
@@ -476,10 +492,12 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
   `todo!()` on I8/U8/I16/U16 rotation channels and morph-target weight
   outputs — re-export uncompressed for now.
 - **Sub-asset matching still uses importer keys** such as `mesh/0` and
-  `animation/0`. Reordering objects in a DCC export can change what these keys
+  `animation/Idle_Loop`. Reordering objects in a DCC export can change what these keys
   mean. Matching across such changes is deferred.
 - **Obsolete outputs are retained.** Re-import does not delete sub-assets
-  that the source stopped emitting.
+  that the source stopped emitting. Renaming clips therefore leaves the old
+  `animation_N` outputs and their metadata keys behind next to the new ones;
+  cleaning them up is tracked in issue #269.
 - **Moved content is seen at the next build.** A game finds a moved `.gasset`
   once it is rebuilt, and an open editor once the project is reopened; there
   is no runtime file watcher yet.

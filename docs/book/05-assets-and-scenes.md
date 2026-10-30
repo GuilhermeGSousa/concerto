@@ -11,14 +11,14 @@ assets/hero.glb  ──import──▶  content/hero/scene.gasset
                               content/hero/mesh_0.gasset
                               content/hero/material_0.gasset
                               content/hero/skeleton_0.gasset
-                              content/hero/animation_0.gasset
+                              content/hero/animation_Idle_Loop.gasset
 assets/hero.glb.import.toml
 ```
 
 Import with **Import…** in the editor. There is no import command line.
 
 A glTF yields meshes, materials, textures, skeletons, animations and one
-scene; an OBJ yields meshes, a material and a scene; an image yields a
+scene (each animation is named after its glTF clip, a BVH one after its file); an OBJ yields meshes, a material and a scene; an image yields a
 texture. A skeleton asset holds bone names, parent indices (parents first), inverse bind poses, the rest pose and the bone ids. A glTF skin whose joints are not ordered parents-first is rejected. Commit `content/` and every
 `<source>.import.toml`: the import file pins each sub-asset's id, so importing
 again after the artist changes the source keeps every reference intact.

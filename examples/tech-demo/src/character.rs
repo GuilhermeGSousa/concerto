@@ -32,19 +32,18 @@ use glam::{Quat, Vec2, Vec3};
 
 const CHAR_SCENE: AssetId = asset_id!("content/UAL1/scene.gasset");
 
-// TODO(asset-import-pipeline): magic indices — an animation-name manifest sub-asset would replace these.
-const IDLE_LOOP: AssetId = asset_id!("content/UAL1/animation_53.gasset");
-const JOG_FWD_LOOP: AssetId = asset_id!("content/UAL1/animation_67.gasset");
-const JOG_FWD_L_LOOP: AssetId = asset_id!("content/UAL1/animation_64.gasset");
-const JOG_FWD_R_LOOP: AssetId = asset_id!("content/UAL1/animation_68.gasset");
-const JOG_LEFT_LOOP: AssetId = asset_id!("content/UAL1/animation_69.gasset");
-const JOG_RIGHT_LOOP: AssetId = asset_id!("content/UAL1/animation_70.gasset");
-const JOG_BWD_LOOP: AssetId = asset_id!("content/UAL1/animation_62.gasset");
-const JOG_BWD_L_LOOP: AssetId = asset_id!("content/UAL1/animation_61.gasset");
-const JOG_BWD_R_LOOP: AssetId = asset_id!("content/UAL1/animation_63.gasset");
-const JUMP_START: AssetId = asset_id!("content/UAL1/animation_73.gasset");
-const JUMP_LOOP: AssetId = asset_id!("content/UAL1/animation_72.gasset");
-const JUMP_LAND: AssetId = asset_id!("content/UAL1/animation_71.gasset");
+const IDLE_LOOP: AssetId = asset_id!("content/UAL1/animation_Idle_Loop.gasset");
+const JOG_FWD_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Fwd_Loop.gasset");
+const JOG_FWD_L_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Fwd_L_Loop.gasset");
+const JOG_FWD_R_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Fwd_R_Loop.gasset");
+const JOG_LEFT_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Left_Loop.gasset");
+const JOG_RIGHT_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Right_Loop.gasset");
+const JOG_BWD_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Bwd_Loop.gasset");
+const JOG_BWD_L_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Bwd_L_Loop.gasset");
+const JOG_BWD_R_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Bwd_R_Loop.gasset");
+const JUMP_START: AssetId = asset_id!("content/UAL1/animation_Jump_Start.gasset");
+const JUMP_LOOP: AssetId = asset_id!("content/UAL1/animation_Jump_Loop.gasset");
+const JUMP_LAND: AssetId = asset_id!("content/UAL1/animation_Jump_Land.gasset");
 
 #[derive(Component)]
 pub(crate) struct Player;
