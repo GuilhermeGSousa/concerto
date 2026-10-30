@@ -79,6 +79,24 @@ impl ProjectState {
         self.job.is_some()
     }
 
+    /// The status line: the open project's asset and scene counts from `registry`, then the last message.
+    pub fn line(&self, registry: Option<&AssetRegistry>) -> String {
+        let (Some(project), Some(registry), false) = (&self.project, registry, self.busy()) else {
+            return self.status.clone();
+        };
+        let summary = format!(
+            "{} assets · {} scenes · {}",
+            registry.iter().count(),
+            registry.of_type::<Scene>().count(),
+            project.root.display()
+        );
+        if self.status.is_empty() {
+            summary
+        } else {
+            format!("{summary} · {}", self.status)
+        }
+    }
+
     #[cfg(test)]
     pub(crate) fn begin_job_for_test(&mut self, release: std::sync::mpsc::Receiver<()>) {
         self.job = Some(ProjectJob {
@@ -137,12 +155,7 @@ fn process_commands(
                     });
                     return;
                 }
-                state.status = format!(
-                    "{} assets · {} scenes · {}",
-                    discovered.iter().count(),
-                    discovered.of_type::<Scene>().count(),
-                    project.root.display()
-                );
+                state.status.clear();
                 opened.write(ProjectOpened {
                     root: project.root.clone(),
                 });
@@ -211,6 +224,7 @@ mod tests {
     use concerto_foundation::assets::content::{
         CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset,
     };
+    use concerto_foundation::assets::{Asset, registry::AssetEntry};
     #[test]
     fn discovers_imported_and_authored_assets_without_writing_registry() {
         let dir = tempfile::tempdir().unwrap();
@@ -342,6 +356,49 @@ mod tests {
 
     fn status(world: &concerto_ecs::World) -> String {
         world.get_resource::<ProjectState>().unwrap().status.clone()
+    }
+
+    #[test]
+    fn the_status_line_counts_the_registry_as_it_is_now() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut world = project_world();
+        settle(
+            &mut world,
+            Some(EditorCommand::OpenProject(dir.path().into())),
+        );
+        let line = |world: &concerto_ecs::World| {
+            world
+                .get_resource::<ProjectState>()
+                .unwrap()
+                .line(world.get_resource::<AssetRegistry>())
+        };
+        assert!(
+            line(&world).starts_with("0 assets · 0 scenes · "),
+            "{}",
+            line(&world)
+        );
+
+        world
+            .get_resource_mut::<AssetRegistry>()
+            .unwrap()
+            .insert(AssetEntry {
+                id: AssetId::new(),
+                address: "content/a.gasset".into(),
+                kind: Scene::name().into(),
+                provenance: None,
+            });
+        world.get_resource_mut::<ProjectState>().unwrap().status = "Created a.gasset".into();
+
+        assert!(
+            line(&world).starts_with("1 assets · 1 scenes · "),
+            "{}",
+            line(&world)
+        );
+        assert!(
+            line(&world).ends_with(" · Created a.gasset"),
+            "{}",
+            line(&world)
+        );
     }
 
     #[test]
