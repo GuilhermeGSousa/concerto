@@ -1,4 +1,4 @@
-//! A character simulation that drives the physics body and predicts its trajectory.
+//! A character simulation that drives the physics body and predicts its trajectory, and the bake of motion databases.
 
 pub mod bake;
 pub mod channel;

@@ -16,7 +16,7 @@ concerto-physics.workspace = true
 concerto-reflect.workspace = true
 glam = { version = "0.30.1", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
-uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }
 
 [dev-dependencies]
 bincode = "1.3"
+uuid = { version = "1.18.1", features = ["v4", "js", "serde"] }

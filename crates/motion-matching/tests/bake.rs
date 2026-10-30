@@ -649,3 +649,26 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
     let facing = pose.rotations[0] * Vec3::Z;
     assert!((facing - Vec3::NEG_Z).length() < 1e-3);
 }
+
+#[test]
+fn simulation_settings_are_checked_even_without_entries() {
+    let skeleton = body_skeleton();
+    let registry = probe_registry();
+
+    let mut missing = definition(Vec::new(), 60.0, 1.0);
+    missing.simulation.position_joint = "Nope".into();
+    assert_eq!(
+        bake(&missing, &skeleton, &[], &registry).err(),
+        Some(BakeError::MissingJoint("Nope".into()))
+    );
+
+    let mut even = definition(Vec::new(), 60.0, 1.0);
+    even.simulation.facing_window = 4;
+    assert_eq!(
+        bake(&even, &skeleton, &[], &registry).err(),
+        Some(BakeError::InvalidWindow {
+            name: "facing_window",
+            window: 4
+        })
+    );
+}

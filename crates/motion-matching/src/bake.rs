@@ -334,6 +334,10 @@ pub fn bake(
     registry: &TypeRegistry,
 ) -> Result<MotionDatabase, BakeError> {
     let plans = plan_entries(definition, skeleton, clips)?;
+    check_window("position_window", definition.simulation.position_window)?;
+    check_window("facing_window", definition.simulation.facing_window)?;
+    find_joint(skeleton, &definition.simulation.position_joint)?;
+    find_joint(skeleton, &definition.simulation.facing_joint)?;
     let channels = build_channels(&definition.channels, registry)?;
     let rate = definition.rate;
 
