@@ -2,10 +2,12 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    model_pose, plan_entries, reexpress_roots, sample_pose, simulation_bone,
+    contacts, local_velocities, model_pose, model_velocities, plan_entries, reexpress_roots,
+    sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
+    BakeError, ContactSettings, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
+    TimeRange,
 };
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
@@ -367,4 +369,89 @@ fn a_zero_length_facing_vector_holds_the_previous_yaw() {
     for transform in &simulation {
         assert!(transform.rotation.angle_between(Quat::IDENTITY) < 1e-5);
     }
+}
+
+fn moving_locals(frames: usize, step: Vec3, turn: f32) -> Vec<Vec<JointPose>> {
+    (0..frames)
+        .map(|frame| {
+            vec![
+                JointPose {
+                    translation: step * frame as f32,
+                    rotation: Quat::from_rotation_y(turn * frame as f32),
+                    ..JointPose::IDENTITY
+                },
+                JointPose::IDENTITY,
+            ]
+        })
+        .collect()
+}
+
+#[test]
+fn constant_velocity_is_recovered_including_at_the_ends() {
+    let locals = moving_locals(5, Vec3::new(0.0, 0.0, -0.5), 0.1);
+    let (linear, angular) = local_velocities(&locals, 10.0);
+    for (linear, angular) in linear.iter().zip(&angular) {
+        assert!(linear[0].distance(Vec3::new(0.0, 0.0, -5.0)) < 1e-4);
+        assert!(angular[0].distance(Vec3::new(0.0, 1.0, 0.0)) < 1e-4);
+        assert_eq!(linear[1], Vec3::ZERO);
+        assert_eq!(angular[1], Vec3::ZERO);
+    }
+}
+
+#[test]
+fn model_velocities_follow_the_parent_chain() {
+    let skeleton = skeleton();
+    let model: Vec<Vec<Transform>> = moving_locals(4, Vec3::new(1.0, 0.0, 0.0), 0.0)
+        .iter()
+        .map(|local| model_pose(&skeleton, local))
+        .collect();
+    let velocities = model_velocities(&model, 2.0);
+    for frame in &velocities {
+        assert!(frame[1].distance(Vec3::new(2.0, 0.0, 0.0)) < 1e-4);
+    }
+}
+
+fn contact_settings(bones: &[&str], window: usize) -> ContactSettings {
+    ContactSettings {
+        bones: bones.iter().map(|name| name.to_string()).collect(),
+        speed_threshold: 0.15,
+        median_window: window,
+    }
+}
+
+#[test]
+fn contacts_are_true_at_rest_and_false_when_moving() {
+    let skeleton = skeleton();
+    let rest = vec![vec![Vec3::ZERO; 2]; 8];
+    let moving = vec![vec![Vec3::new(1.0, 0.0, 0.0); 2]; 8];
+    let settings = contact_settings(&["Child"], 3);
+    assert!(contacts(&settings, &skeleton, &rest)
+        .unwrap()
+        .iter()
+        .all(|frame| frame == &[true]));
+    assert!(contacts(&settings, &skeleton, &moving)
+        .unwrap()
+        .iter()
+        .all(|frame| frame == &[false]));
+}
+
+#[test]
+fn contacts_median_filter_removes_a_one_frame_glitch() {
+    let skeleton = skeleton();
+    let mut velocities = vec![vec![Vec3::ZERO; 2]; 9];
+    velocities[4][1] = Vec3::new(1.0, 0.0, 0.0);
+    let settings = contact_settings(&["Child"], 5);
+    let result = contacts(&settings, &skeleton, &velocities).unwrap();
+    assert!(result.iter().all(|frame| frame == &[true]));
+}
+
+#[test]
+fn contacts_reject_an_unknown_bone() {
+    let skeleton = skeleton();
+    let velocities = vec![vec![Vec3::ZERO; 2]; 4];
+    let settings = contact_settings(&["Nope"], 3);
+    assert!(matches!(
+        contacts(&settings, &skeleton, &velocities),
+        Err(BakeError::MissingJoint(name)) if name == "Nope"
+    ));
 }
