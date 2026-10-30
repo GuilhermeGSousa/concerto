@@ -109,9 +109,9 @@ mod tests {
 
     #[test]
     fn a_long_multi_byte_name_is_cut_on_a_char_boundary() {
-        let address = address_for(&format!("a{}", "あ".repeat(100)));
+        let address = address_for(&format!("aa{}", "あ".repeat(100)));
         let name = file_name(&address);
-        assert_eq!(name.len(), 197, "got: {address}");
+        assert_eq!(name.len(), 198, "got: {address}");
         assert!(name.ends_with(".gasset"), "got: {address}");
     }
 
