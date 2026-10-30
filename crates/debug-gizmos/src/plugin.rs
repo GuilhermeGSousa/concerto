@@ -67,11 +67,15 @@ impl Plugin for DebugGizmosPlugin {
 
 #[cfg(test)]
 mod tests {
-    use concerto_app::{App, schedule_groups::LateUpdate};
+    use concerto_app::{App, edit_time::EditTime, schedule_groups::LateUpdate};
     use concerto_ecs::{
         component::scene::SceneEntityRef,
         entity::hierarchy::ChildOf,
-        system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
+        system::{
+            executor::single_thread::SingleThreadedExecutor,
+            schedule::Schedules,
+            tag::{SystemTag, TagFilter},
+        },
     };
     use concerto_foundation::transform::GlobalTransform;
     use concerto_mesh::{SkeletonComponent, SkeletonGizmo};
@@ -81,8 +85,8 @@ mod tests {
     use crate::GizmoStorage;
 
     #[test]
-    fn the_plugin_draws_skeleton_gizmos_in_late_update() {
-        let mut app = App::new();
+    fn the_plugin_draws_skeleton_gizmos_in_late_update_at_edit_time() {
+        let mut app = App::for_editing();
         app.register_plugin(DebugGizmosPlugin);
         let world = app.main_mut().world_mut();
         let hip = world.spawn(GlobalTransform::new(Mat4::from_translation(Vec3::Y)));
@@ -99,7 +103,11 @@ mod tests {
             SkeletonGizmo::default(),
         ));
         let schedules = world.remove_resource::<Schedules>().unwrap();
-        let compiled = schedules.compile::<SingleThreadedExecutor>(world);
+        let edit_time = TagFilter {
+            include: vec![EditTime.intern()],
+            exclude: Vec::new(),
+        };
+        let compiled = schedules.compile_filtered::<SingleThreadedExecutor>(world, &edit_time);
         world.insert_resource(compiled);
 
         world.run_schedule(LateUpdate);

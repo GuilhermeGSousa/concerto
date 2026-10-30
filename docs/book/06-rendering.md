@@ -143,7 +143,7 @@ fn draw_targets(mut gizmos: DebugGizmos, targets: Query<&GlobalTransform, With<E
 Gizmos are immediate mode: draw them every frame you want them seen.
 
 `SkeletonGizmo`, from `concerto::mesh`, draws a skeleton without a mesh. Put it
-on an entity with a `SkeletonComponent`, or tick it on in the editor's
+on an entity with a `SkeletonComponent`, or add it through the editor's
 inspector, and every frame it draws a line from each bone to its parent bone and
 a sphere at each joint. Its fields set the colour, the joint size, and whether
 each bone's axes are drawn. Every game built on `DefaultPlugins` keeps it in a
