@@ -19,11 +19,14 @@ struct VertexOutput {
 /// Filled by the engine each frame; users set border_width and corner_radius only.
 @group(0) @binding(2) var<uniform> border_params: vec4<f32>;
 
-/// Shape flags: [has_texture, rotation_radians, 0, 0].
+/// Shape flags: [has_texture, rotation_radians, gradient_kind, 0].
 @group(0) @binding(3) var<uniform> flags: vec4<f32>;
 
 @group(0) @binding(4) var node_texture: texture_2d<f32>;
 @group(0) @binding(5) var node_sampler: sampler;
+
+@group(0) @binding(6) var<uniform> gradient_params: vec4<f32>;
+@group(0) @binding(7) var<uniform> gradient_color: vec4<f32>;
 
 @vertex
 fn vs_main(model: VertexInput) -> VertexOutput {
@@ -42,6 +45,31 @@ fn rounded_box(point: vec2<f32>, half: vec2<f32>, radius: f32) -> f32 {
     return length(max(q, vec2<f32>(0.0, 0.0))) + min(max(q.x, q.y), 0.0) - radius;
 }
 
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
+}
+
+fn hsv_to_srgb(hue: f32, saturation: f32, value: f32) -> vec3<f32> {
+    let n = vec3<f32>(5.0, 3.0, 1.0) + hue / 60.0;
+    let k = n - 6.0 * floor(n / 6.0);
+    let t = clamp(min(k, 4.0 - k), vec3<f32>(0.0), vec3<f32>(1.0));
+    return value - value * saturation * t;
+}
+
+fn gradient_fill(uv: vec2<f32>, size: vec2<f32>) -> vec3<f32> {
+    let kind = flags.z;
+    if kind < 1.5 {
+        return srgb_to_linear(hsv_to_srgb(gradient_params.x, uv.x, 1.0 - uv.y));
+    }
+    if kind < 2.5 {
+        return srgb_to_linear(hsv_to_srgb(uv.x * 360.0, 1.0, 1.0));
+    }
+    let cell = floor(uv * size / max(gradient_params.y, 1.0));
+    let dark = (i32(cell.x) + i32(cell.y)) % 2 != 0;
+    let grey = vec3<f32>(select(0.8, 0.6, dark));
+    return srgb_to_linear(mix(grey, gradient_color.rgb, uv.x));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let border_w = border_params.x;
@@ -49,6 +77,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let node_h = border_params.z;
 
     var fill = color;
+    if flags.z > 0.5 {
+        fill = vec4<f32>(gradient_fill(in.uv, vec2<f32>(node_w, node_h)), color.a);
+    }
     if flags.x > 0.5 {
         fill = fill * textureSample(node_texture, node_sampler, in.uv);
     }

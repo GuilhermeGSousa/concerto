@@ -22,7 +22,7 @@ mod text;
 
 pub use button::{Button, Pressable};
 pub use chip::Chip;
-pub use controls::{Checkbox, Slider};
+pub use controls::{Checkbox, ColorPicker, Slider};
 pub use field::TextField;
 pub use listen::{Listen, Listening};
 pub use popup::Popup;

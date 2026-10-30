@@ -16,6 +16,7 @@ use glyphon::{Cache, SwashCache, Viewport};
 use crate::{
     anchor::{UIDismissPanel, UIPanelStack, dismiss_panels, track_panel_stack},
     checkbox::sync_checkbox_material,
+    color_picker::{commit_color_picker_fields, setup_color_pickers, sync_color_picker_parts},
     focus::{
         FocusedWidget, UIFocusGained, UIFocusLost, UIFocusNext, UIFocusPrevious, sync_text_capture,
         update_focus,
@@ -133,6 +134,7 @@ impl Plugin for UIPlugin {
             LateUpdate,
             (
                 update_text_inputs,
+                commit_color_picker_fields.after(update_text_inputs),
                 dismiss_panels.after(update_text_inputs),
                 sync_tab_bodies,
                 update_tooltips,
@@ -144,12 +146,19 @@ impl Plugin for UIPlugin {
         );
         app.add_system(
             LateUpdate,
-            (setup_slider_visuals, setup_scrollbars, setup_text_inputs).in_set(UiSet::Setup),
+            (
+                setup_slider_visuals,
+                setup_color_pickers,
+                setup_scrollbars,
+                setup_text_inputs,
+            )
+                .in_set(UiSet::Setup),
         );
         app.add_system(
             LateUpdate,
             (
                 sync_slider_fill,
+                sync_color_picker_parts.before(project_text_inputs),
                 project_text_inputs,
                 sync_scroll_content,
                 sync_split_panes,

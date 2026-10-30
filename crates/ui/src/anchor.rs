@@ -4,12 +4,13 @@
 use std::collections::{HashMap, HashSet};
 
 use concerto_ecs::{
+    command::CommandQueue,
     component::Component,
     entity::{Entity, hierarchy::ChildOf},
     events::{event_reader::EventReader, event_writer::EventWriter},
     query::{Query, filter::Without},
     resource::{Res, ResMut, Resource},
-    signal::On,
+    signal::{EntitySignal, On, Signal},
     system::input::SystemLocal,
 };
 use concerto_window::define_action;
@@ -563,6 +564,12 @@ define_action!(
     UIDismissPanel
 );
 
+/// Sent to an anchored panel that Escape closed.
+pub struct UIPanelEscaped;
+
+impl Signal for UIPanelEscaped {}
+impl EntitySignal for UIPanelEscaped {}
+
 struct EscapeDismissal {
     dismissed: bool,
     field_focused: bool,
@@ -599,6 +606,7 @@ pub(crate) fn dismiss_panels(
     text_inputs: Query<&UITextInput>,
     mut actions: EventReader<ActionFired>,
     mut cancelled_this_frame: EventReader<UITextInputCancelled>,
+    mut cmd: CommandQueue,
 ) {
     let pressed = [
         MouseButton::Left,
@@ -649,6 +657,7 @@ pub(crate) fn dismiss_panels(
         && let Some((mut panel, _)) = panels.get_entity(*top)
     {
         panel.open = false;
+        cmd.entity(*top).trigger(UIPanelEscaped);
     }
 }
 
@@ -724,5 +733,130 @@ mod dismiss_tests {
             field_cancelled_this_frame: false,
             stack_open: true,
         }));
+    }
+}
+
+#[cfg(test)]
+mod escape_tests {
+    use concerto_ecs::{
+        IntoSystem, System, World,
+        entity::Entity,
+        events::event_channel::EventChannel,
+        resource::{ResMut, Resource},
+        signal::{On, listener::IntoListener},
+    };
+    use concerto_window::input::{
+        Input, MouseButton,
+        actions::{ActionFired, ActionLabel},
+    };
+    use concerto_window::plugin::Window;
+    use glam::Vec2;
+
+    use super::{
+        UIAnchorTarget, UIAnchoredPanel, UIDismissPanel, UIPanelEscaped, UIPanelStack,
+        dismiss_panels,
+    };
+    use crate::{
+        focus::FocusedWidget,
+        node::{UIBox, UILayout, UINode},
+        text_input::{UITextInput, UITextInputCancelled},
+    };
+
+    #[derive(Resource, Default)]
+    struct Escaped(Vec<Entity>);
+
+    fn escape_world() -> (World, Entity) {
+        let mut world = World::new();
+        world.insert_resource(Window::new((800, 600), 1.0));
+        world.insert_resource(Input::new());
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(EventChannel::<ActionFired>::default());
+        world.insert_resource(EventChannel::<UITextInputCancelled>::default());
+        world.insert_resource(Escaped::default());
+        let rect = UIBox {
+            min: Vec2::new(100.0, 100.0),
+            size: Vec2::new(200.0, 150.0),
+        };
+        let panel = world.spawn((
+            UIAnchoredPanel::new(UIAnchorTarget::from_point(Vec2::new(100.0, 100.0)))
+                .with_open(true),
+            UINode::default(),
+            UILayout {
+                rect,
+                content_rect: rect,
+                clip_rect: rect,
+                paint_order: 0,
+            },
+            (|on: On<UIPanelEscaped>, mut escaped: ResMut<Escaped>| {
+                escaped.0.push(on.entity());
+            })
+            .into_listener(),
+        ));
+        world.insert_resource(UIPanelStack { open: vec![panel] });
+        (world, panel)
+    }
+
+    fn press_escape(world: &mut World) {
+        world
+            .get_resource_mut::<EventChannel<ActionFired>>()
+            .unwrap()
+            .push_event(ActionFired {
+                action: UIDismissPanel.intern(),
+            });
+    }
+
+    fn dismiss(world: &mut World) {
+        let mut system = dismiss_panels.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
+
+    fn escaped(world: &World) -> Vec<Entity> {
+        world.get_resource::<Escaped>().unwrap().0.clone()
+    }
+
+    fn is_open(world: &World, panel: Entity) -> bool {
+        world
+            .get_component_for_entity::<UIAnchoredPanel>(panel)
+            .unwrap()
+            .open
+    }
+
+    #[test]
+    fn escape_on_an_open_panel_tells_the_panel_once() {
+        let (mut world, panel) = escape_world();
+        press_escape(&mut world);
+
+        dismiss(&mut world);
+
+        assert!(!is_open(&world, panel));
+        assert_eq!(escaped(&world), [panel]);
+    }
+
+    #[test]
+    fn a_press_outside_closes_the_panel_without_telling_it_escape_did() {
+        let (mut world, panel) = escape_world();
+        world
+            .get_resource_mut::<Input>()
+            .unwrap()
+            .update_mouse_button(MouseButton::Left, true);
+
+        dismiss(&mut world);
+
+        assert!(!is_open(&world, panel));
+        assert!(escaped(&world).is_empty());
+    }
+
+    #[test]
+    fn escape_in_a_focused_text_field_tells_the_panel_nothing() {
+        let (mut world, panel) = escape_world();
+        let field = world.spawn(UITextInput::new(""));
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+        press_escape(&mut world);
+
+        dismiss(&mut world);
+
+        assert!(is_open(&world, panel));
+        assert!(escaped(&world).is_empty());
     }
 }

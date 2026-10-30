@@ -1,13 +1,26 @@
 use concerto_color::Color;
-use concerto_ecs::command::EntityCommandQueue;
-use concerto_ecs::{Component, Entity, Query};
+use concerto_ecs::command::{CommandQueue, EntityCommandQueue};
+use concerto_ecs::query::filter::With;
+use concerto_ecs::signal::{
+    On,
+    lifecycle::Remove,
+    listener::{IntoListener, Listener},
+};
+use concerto_ecs::{Component, Entity, Query, Res, ResMut};
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
-    interaction::UIDisabled, material::UIMaterial, theme::UITheme, transform::UIValue,
+    anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
+    color_picker::{UIColorChanged, restore_on_escape},
+    interaction::{Interactable, UIClick},
+    material::UIMaterial,
+    theme::UITheme,
+    transform::UIValue,
 };
+use concerto_window::input::MouseButton;
 
+use crate::hosted::EditTarget;
 use crate::inspector::numeric::{NumericEdit, NumericFields, NumericSnapshot, NumericValue};
-use crate::inspector::rows::{EditError, PropertyRowValue};
+use crate::inspector::rows::{EditError, PropertyCommits, PropertyRow, PropertyRowValue};
 
 /// The space a [`Color`] is stored in, which is the space its fields edit.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -144,9 +157,105 @@ pub(super) fn spawn_swatch(row: &mut EntityCommandQueue, color: Color, theme: &U
             .radius_sm()
             .size(side, side)
             .fixed(),
-        UIDisabled,
+        Interactable,
         ColorSwatch { row: entity },
+        toggle_color_picker(entity),
     ));
+}
+
+/// The popup every color row shares, holding a picker for the row whose swatch opened it last.
+#[derive(Component)]
+pub(crate) struct ColorPickerPopup {
+    row: Entity,
+}
+
+fn picker_panel(swatch: Entity) -> UIAnchoredPanel {
+    UIAnchoredPanel::new(UIAnchorTarget::from_node(swatch))
+        .with_owner(swatch)
+        .with_side(UIAnchorSide::Below)
+        .with_align(UIAnchorAlign::Start)
+        .with_gap(4.0)
+        .with_open(true)
+}
+
+fn toggle_color_picker(row: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           values: Query<&PropertyRowValue>,
+           popups: Query<(Entity, &mut ColorPickerPopup, &mut UIAnchoredPanel)>,
+           theme: Res<UITheme>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let Some(NumericSnapshot::Color(current)) = values
+            .get_entity(row)
+            .and_then(|value| value.downcast::<NumericSnapshot>())
+        else {
+            return;
+        };
+        let current = *current;
+        let mut popup = match popups.iter().next() {
+            Some((entity, mut popup, mut panel)) => {
+                if panel.open && panel.owner == Some(on.entity()) {
+                    panel.open = false;
+                    return;
+                }
+                if popup.row != row {
+                    popup.row = row;
+                }
+                **panel = picker_panel(on.entity());
+                cmd.entity(entity).despawn_children()
+            }
+            None => cmd.spawn((
+                theme.popup().padding(theme.spacing_sm),
+                picker_panel(on.entity()),
+                ColorPickerPopup { row },
+            )),
+        };
+        let picker = popup
+            .spawn_child(theme.color_picker(current).on_change(commit_picked(row)))
+            .entity();
+        popup.insert(restore_on_escape(picker));
+    })
+    .into_listener()
+}
+
+fn commit_picked(row: Entity) -> Listener<UIColorChanged> {
+    (move |on: On<UIColorChanged>,
+           rows: Query<&PropertyRow>,
+           mut commits: ResMut<PropertyCommits>| {
+        let Some(row) = rows.get_entity(row) else {
+            return;
+        };
+        let edit = NumericEdit::Whole(NumericSnapshot::Color(on.signal().color));
+        if let Err(error) = commits.push::<Color, NumericFields>(row, edit) {
+            log::warn!("Color pick dropped: {error}");
+        }
+    })
+    .into_listener()
+}
+
+/// Closes the color popup once the row it was opened for is gone.
+pub(crate) fn close_color_picker(
+    rows: Query<&PropertyRow>,
+    popups: Query<(&ColorPickerPopup, &mut UIAnchoredPanel)>,
+) {
+    for (popup, mut panel) in popups.iter() {
+        if panel.open && rows.get_entity(popup.row).is_none() {
+            panel.open = false;
+        }
+    }
+}
+
+pub(super) fn forget_scene(
+    _: On<Remove<EditTarget>>,
+    panels: Query<&mut UIAnchoredPanel, With<ColorPickerPopup>>,
+) {
+    for mut panel in panels.iter() {
+        if panel.open {
+            panel.open = false;
+        }
+    }
 }
 
 /// Writes each color row's value, at full alpha, into its swatch.
