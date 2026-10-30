@@ -76,6 +76,18 @@ pub trait Reflect: Any + Send + Sync {
     }
 }
 
+impl dyn Reflect {
+    /// The value as `T`, or `None` if it is another type.
+    pub fn downcast_ref<T: Reflect>(&self) -> Option<&T> {
+        (self as &dyn Any).downcast_ref::<T>()
+    }
+
+    /// The value as `T`, mutably, or `None` if it is another type.
+    pub fn downcast_mut<T: Reflect>(&mut self) -> Option<&mut T> {
+        (self as &mut dyn Any).downcast_mut::<T>()
+    }
+}
+
 pub trait PropertyVisitor {
     fn field(&mut self, name: &'static str, value: &dyn Reflect);
 }

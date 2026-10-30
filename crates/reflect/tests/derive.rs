@@ -123,3 +123,20 @@ fn paths_preserve_names_depth_and_segments() {
     assert_eq!(path.get_depth(2), None);
     assert_eq!(PropertyPath::default().name(), "");
 }
+
+#[test]
+fn downcast_reads_the_concrete_type_and_refuses_another() {
+    let mut value: Box<dyn Reflect> = Box::new(Inner {
+        weight: 2.0,
+        label: "a".into(),
+        enabled: false,
+    });
+    assert_eq!(
+        value.downcast_ref::<Inner>().map(|inner| inner.weight),
+        Some(2.0)
+    );
+    assert!(value.downcast_ref::<Outer>().is_none());
+    value.downcast_mut::<Inner>().unwrap().weight = 5.0;
+    assert_eq!(value.downcast_ref::<Inner>().unwrap().weight, 5.0);
+    assert!(value.downcast_mut::<f32>().is_none());
+}

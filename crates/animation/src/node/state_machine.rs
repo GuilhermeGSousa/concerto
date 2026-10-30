@@ -13,6 +13,7 @@ use crate::{
 };
 
 use concerto_foundation::{assets::handle::AssetHandle, utils::AsAny};
+use concerto_reflect::Reflect;
 use derive_more::Deref;
 use uuid::Uuid;
 
@@ -21,18 +22,24 @@ pub struct AnimationFSMStateDefinition<'a> {
     pub graph: AssetHandle<AnimationGraph>,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationFSMState {
     name: String,
     graph: AssetHandle<AnimationGraph>,
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationFSMTrigger {
+    #[default]
     Instant,
     OnAnimationEnd,
-    BoolEquals { param: String, value: bool },
-    Vec2NonZero { param: String },
+    BoolEquals {
+        param: String,
+        value: bool,
+    },
+    Vec2NonZero {
+        param: String,
+    },
 }
 
 impl AnimationFSMTrigger {
@@ -56,14 +63,14 @@ pub struct AnimationStateMachineTransitionDefinition<'a> {
     pub blend_time: f32,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub(crate) struct AnimationStateMachineTransition {
     next_state: StateId,
     trigger: AnimationFSMTrigger,
     blend_time: f32,
 }
 
-#[derive(Clone, Copy, Deref, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, Default, Deref, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct StateId(usize);
 
 impl From<usize> for StateId {
@@ -78,7 +85,7 @@ impl StateId {
     }
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct AnimationStateMachine {
     initial_state: StateId,
     states: Vec<AnimationFSMState>,

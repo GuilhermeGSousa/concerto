@@ -5,6 +5,7 @@ use concerto_foundation::{
     geometry::delauney::{TriangulatedPoint2D, Triangulation2D},
     utils::AsAny,
 };
+use concerto_reflect::Reflect;
 use glam::Vec2;
 use log::warn;
 
@@ -16,14 +17,14 @@ use crate::{
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
 /// `blackboard.get_vec2(&param).unwrap_or(Vec2::ZERO)`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct BlendInput {
     pub param: String,
 }
 
 /// A 2D blend space definition: the sample points and which blackboard `Vec2`
 /// param drives sampling. Triangulation is built on the instance, not here.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct BlendSpace2DNode {
     points: Vec<Vec2>,
     input: BlendInput,

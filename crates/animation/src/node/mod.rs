@@ -1,6 +1,7 @@
 use std::any::Any;
 
 use concerto_foundation::{assets::handle::AssetHandle, utils::AsAny};
+use concerto_reflect::Reflect;
 use uuid::Uuid;
 
 use crate::{
@@ -12,7 +13,7 @@ use crate::{
 pub mod blend_space;
 pub mod state_machine;
 
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationPlayMode {
     #[default]
     Loop,
@@ -237,12 +238,18 @@ impl AnimationNodeInstance for AnimationClipNodeInstance {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct AnimationClipNode {
     clip: AssetHandle<AnimationClip>,
     play_mode: AnimationPlayMode,
     start_time: f32,
     play_rate: f32,
+}
+
+impl Default for AnimationClipNode {
+    fn default() -> Self {
+        Self::new(AssetHandle::default())
+    }
 }
 
 impl AnimationClipNode {

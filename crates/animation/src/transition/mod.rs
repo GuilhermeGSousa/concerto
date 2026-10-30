@@ -10,7 +10,17 @@ pub(crate) mod blend_stack;
 pub(crate) mod inertialization_blender;
 
 /// How a state machine moves between states: `blend_time` is the cross-fade duration or the inertialization halflife.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    concerto_reflect::Reflect,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum TransitionBlender {
     #[default]
     CrossFade,
