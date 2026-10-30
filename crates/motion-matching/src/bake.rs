@@ -310,6 +310,18 @@ pub fn bake(
     find_joint(skeleton, &definition.simulation.position_joint)?;
     find_joint(skeleton, &definition.simulation.facing_joint)?;
     let channels = build_channels(&definition.channels, registry)?;
+    for (stored, channel) in definition.channels.iter().zip(&channels) {
+        channel
+            .validate(skeleton, &definition.trajectory)
+            .map_err(|reason| BakeError::ChannelValue {
+                type_name: stored.type_name.clone(),
+                reason,
+            })?;
+        let weight = channel.weight();
+        if !(weight.is_finite() && weight > 0.0) {
+            return Err(BakeError::InvalidWeight(weight));
+        }
+    }
     let rate = definition.rate;
 
     let bone_count = skeleton.bone_count();
@@ -323,6 +335,9 @@ pub fn bake(
             type_name: stored.type_name.clone(),
             offset: feature_dims,
             dims,
+            weight: channel.weight(),
+            source: channel.source(),
+            value: stored.value.clone(),
         });
         feature_dims += dims;
     }
@@ -379,6 +394,8 @@ pub fn bake(
         clip_starts.push(plan.start);
     }
 
+    let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);
+
     Ok(MotionDatabase::new(
         definition.skeleton.clone(),
         bone_count,
@@ -398,5 +415,52 @@ pub fn bake(
         features,
         feature_dims,
         spans,
+        offset,
+        deviations,
     ))
+}
+
+fn feature_statistics(
+    features: &[f32],
+    frame_count: usize,
+    feature_dims: usize,
+    spans: &[ChannelSpan],
+) -> (Vec<f32>, Vec<f32>) {
+    if frame_count == 0 {
+        return (vec![0.0; feature_dims], vec![0.0; spans.len()]);
+    }
+    let count = frame_count as f64;
+    let mut means = vec![0.0f64; feature_dims];
+    for row in features.chunks_exact(feature_dims.max(1)) {
+        for (mean, value) in means.iter_mut().zip(row) {
+            *mean += f64::from(*value);
+        }
+    }
+    for mean in &mut means {
+        *mean /= count;
+    }
+    let mut variances = vec![0.0f64; feature_dims];
+    for row in features.chunks_exact(feature_dims.max(1)) {
+        for ((variance, mean), value) in variances.iter_mut().zip(&means).zip(row) {
+            let delta = f64::from(*value) - mean;
+            *variance += delta * delta;
+        }
+    }
+    let deviations = spans
+        .iter()
+        .map(|span| {
+            if span.dims == 0 {
+                return 0.0;
+            }
+            let sum: f64 = variances[span.offset..span.offset + span.dims]
+                .iter()
+                .map(|variance| (variance / count).sqrt())
+                .sum();
+            (sum / span.dims as f64) as f32
+        })
+        .collect();
+    (
+        means.into_iter().map(|mean| mean as f32).collect(),
+        deviations,
+    )
 }

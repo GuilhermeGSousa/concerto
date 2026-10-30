@@ -82,4 +82,12 @@ pub mod glyph {
     pub const DOTS_THREE: char = '\u{E1FE}';
     /// `dot` — a leaf row with nothing to expand.
     pub const DOT: char = '\u{ECDE}';
+    /// `play` — starting playback.
+    pub const PLAY: char = '\u{E3D0}';
+    /// `pause` — pausing playback.
+    pub const PAUSE: char = '\u{E39E}';
+    /// `skip-back` — one frame back.
+    pub const SKIP_BACK: char = '\u{E5A4}';
+    /// `skip-forward` — one frame forward.
+    pub const SKIP_FORWARD: char = '\u{E5A6}';
 }

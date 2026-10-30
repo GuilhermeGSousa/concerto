@@ -13,6 +13,7 @@ use concerto_ui::{
     interaction::{HoveredNode, Interactable, UIInputState},
     node::UINode,
     theme::UITheme,
+    transform::UIValue,
 };
 use concerto_window::input::actions::ActionMap;
 
@@ -20,7 +21,10 @@ use crate::{
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, EditorHosts, EditorOwned},
     dock::PanelRegistry,
     hosted::ViewportTarget,
+    shell::CHATTER_ID,
 };
+
+const BOTTOM_HOST_HEIGHT: f32 = 132.0;
 
 /// Build contextual containers for new documents.
 pub(crate) fn create_editor_hosts(
@@ -34,6 +38,7 @@ pub(crate) fn create_editor_hosts(
     let bases = panel_bodies(&registry);
     for (editor, doc) in documents.iter() {
         let mut hosts = [None; 3];
+        let mut bottom = None;
         if doc.asset_type != concerto_scene::scene::Scene::name() {
             let previewing = editors.preview(doc.asset_type).is_some();
             for (index, base) in bases.iter().copied().enumerate() {
@@ -56,12 +61,29 @@ pub(crate) fn create_editor_hosts(
                     .entity();
                 hosts[index] = Some(host);
             }
+            if editors.bottom_host(doc.asset_type)
+                && let Some((_, chatter)) = registry
+                    .body(CHATTER_ID)
+                    .and_then(|chatter| nodes.get_entity(chatter))
+            {
+                let surface = theme
+                    .panel()
+                    .height(UIValue::Px(BOTTOM_HOST_HEIGHT))
+                    .fixed()
+                    .hidden();
+                let host = commands
+                    .entity(chatter.parent())
+                    .spawn_child((surface, EditorOwned(editor), Interactable))
+                    .entity();
+                bottom = Some(host);
+            }
         }
         commands.insert(
             EditorHosts {
                 canvas: hosts[0],
                 left: hosts[1],
                 inspector: hosts[2],
+                bottom,
             },
             editor,
         );
@@ -102,21 +124,40 @@ pub(crate) fn sync_workspace(
         }
     }
     for (entity, hosts) in hosts.iter() {
-        for host in [hosts.canvas, hosts.left, hosts.inspector]
+        for host in [hosts.canvas, hosts.left, hosts.inspector, hosts.bottom]
             .into_iter()
             .flatten()
         {
             set_visible(&nodes, host, active.0 == Some(entity));
         }
     }
-    if (hosts_changed || registry.is_changed())
-        && let Some(base) = bases[1]
-        && let Some(mut siblings) = parents
-            .get_entity(base)
-            .and_then(|parent| children.get_entity(parent.parent()))
+    if hosts_changed || registry.is_changed() {
+        if let Some(base) = bases[1] {
+            let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
+            sort_siblings(&parents, &children, base, |entity| {
+                usize::from(entity != base && !contextual.contains(&entity))
+            });
+        }
+        if let Some(chatter) = registry.body(CHATTER_ID) {
+            let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.bottom).collect();
+            sort_siblings(&parents, &children, chatter, |entity| {
+                usize::from(!contextual.contains(&entity))
+            });
+        }
+    }
+}
+
+fn sort_siblings(
+    parents: &Query<&ChildOf>,
+    children: &Query<&mut Children>,
+    entity: Entity,
+    key: impl FnMut(Entity) -> usize,
+) {
+    if let Some(mut siblings) = parents
+        .get_entity(entity)
+        .and_then(|parent| children.get_entity(parent.parent()))
     {
-        let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
-        siblings.sort_by_key(|entity| usize::from(entity != base && !contextual.contains(&entity)));
+        siblings.sort_by_key(key);
     }
 }
 
@@ -210,6 +251,21 @@ mod tests {
     #[derive(Default)]
     struct NotesEditor;
     impl AssetEditor for NotesEditor {}
+
+    #[derive(Serialize, Deserialize)]
+    struct Take;
+    impl Asset for Take {
+        fn name() -> &'static str {
+            "Take"
+        }
+    }
+    #[derive(Default)]
+    struct TakeEditor;
+    impl AssetEditor for TakeEditor {
+        fn bottom_host(&self) -> bool {
+            true
+        }
+    }
 
     fn resources(world: &mut World) {
         world.insert_resource(ActiveEditor::default());
@@ -443,6 +499,9 @@ mod tests {
     fn docked_world() -> World {
         use crate::dock::{DockPlugin, DockedApp, PanelDescriptor, Region};
         let mut app = concerto_app::App::new();
+        let world = app.main_mut().world_mut();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
         app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
             .insert_resource(concerto_window::plugin::Window::new((1280, 720), 1.0))
             .insert_resource(UITheme::default())
@@ -452,6 +511,7 @@ mod tests {
             (crate::viewport::PANEL_ID, Region::Scene),
             (crate::hierarchy::PANEL_ID, Region::Rail),
             (crate::inspector::PANEL_ID, Region::Side),
+            (crate::shell::CHATTER_ID, Region::Foot),
         ] {
             app.add_panel(PanelDescriptor {
                 id,
@@ -468,6 +528,110 @@ mod tests {
             .get_component_for_entity::<UINode>(node.unwrap())
             .unwrap()
             .visible
+    }
+
+    fn foot_children(world: &World, chatter: Entity) -> Vec<Entity> {
+        let region = world
+            .get_component_for_entity::<ChildOf>(chatter)
+            .unwrap()
+            .parent();
+        world
+            .get_component_for_entity::<Children>(region)
+            .unwrap()
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    #[test]
+    fn a_bottom_host_sits_above_chatter_follows_its_document_and_closes_with_it() {
+        let mut world = docked_world();
+        world.insert_resource(ActiveEditor::default());
+        world.insert_resource(AssetEditorCommands::default());
+        world.insert_resource(crate::guard::UnsavedGuard::default());
+        world.insert_resource(concerto_foundation::assets::registry::AssetRegistry::default());
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(HoveredNode::default());
+        world.insert_resource(UIInputState::default());
+        world.insert_resource(ActionMap::default());
+        let mut editors = AssetEditorRegistry::default();
+        editors.register::<Take, TakeEditor>().unwrap();
+        editors.register::<Notes, NotesEditor>().unwrap();
+        world.insert_resource(editors);
+        let chatter = world
+            .get_resource::<PanelRegistry>()
+            .unwrap()
+            .body(crate::shell::CHATTER_ID)
+            .unwrap();
+        let take = document_of(&mut world, Take::name());
+        let notes = document_of(&mut world, Notes::name());
+        let scene = document_of(&mut world, concerto_scene::scene::Scene::name());
+        let mut create = super::create_editor_hosts.into_system();
+        create.initialize(&mut world);
+        create.run_and_apply((), &mut world);
+
+        let hosts = *world.get_component_for_entity::<EditorHosts>(take).unwrap();
+        let bottom = hosts.bottom.unwrap();
+        for document in [notes, scene] {
+            assert!(
+                world
+                    .get_component_for_entity::<EditorHosts>(document)
+                    .unwrap()
+                    .bottom
+                    .is_none()
+            );
+        }
+        assert_eq!(
+            world.get_component_for_entity::<EditorOwned>(bottom),
+            Some(&EditorOwned(take))
+        );
+        assert!(
+            world
+                .get_component_for_entity::<Interactable>(bottom)
+                .is_some()
+        );
+        assert_eq!(
+            world
+                .get_component_for_entity::<UINode>(bottom)
+                .unwrap()
+                .height,
+            UIValue::Px(132.0)
+        );
+        assert!(!visible(&world, Some(bottom)));
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(take);
+        sync_workspace(&mut world);
+        assert_eq!(foot_children(&world, chatter), vec![bottom, chatter]);
+        assert!(visible(&world, Some(bottom)) && visible(&world, Some(chatter)));
+
+        for other in [notes, scene] {
+            world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(other);
+            sync_workspace(&mut world);
+            assert!(!visible(&world, Some(bottom)) && visible(&world, Some(chatter)));
+        }
+
+        let second = document_of(&mut world, Take::name());
+        create.run_and_apply((), &mut world);
+        let second_bottom = world
+            .get_component_for_entity::<EditorHosts>(second)
+            .unwrap()
+            .bottom
+            .unwrap();
+        sync_workspace(&mut world);
+        assert_eq!(
+            foot_children(&world, chatter),
+            vec![bottom, second_bottom, chatter]
+        );
+
+        world
+            .get_resource_mut::<AssetEditorCommands>()
+            .unwrap()
+            .0
+            .push_back(AssetEditorCommand::Close(take));
+        process_editor_commands(&mut world);
+        sync_workspace(&mut world);
+        assert!(!world.entity_is_valid(bottom));
+        assert_eq!(foot_children(&world, chatter), vec![second_bottom, chatter]);
     }
 
     #[test]
@@ -598,6 +762,7 @@ mod tests {
                 canvas: Some(canvas),
                 left: Some(left),
                 inspector: Some(inspector),
+                ..Default::default()
             },
             editor,
         );

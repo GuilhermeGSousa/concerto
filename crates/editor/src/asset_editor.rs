@@ -28,6 +28,10 @@ pub trait AssetEditor: Send + Sync + 'static {
     fn preview(&self) -> Option<PreviewSpec> {
         None
     }
+    /// Whether this editor's documents get a host along the bottom of the viewport.
+    fn bottom_host(&self) -> bool {
+        false
+    }
 }
 
 /// What an asset editor's preview `App` adds to the game's recipe.
@@ -145,6 +149,13 @@ impl AssetEditorRegistry {
     pub fn preview(&self, kind: &str) -> Option<PreviewSpec> {
         self.editors.get(kind).and_then(|editor| editor.preview())
     }
+
+    /// Whether a document of `kind` gets a `bottom` host; a kind with no editor does not.
+    pub fn bottom_host(&self, kind: &str) -> bool {
+        self.editors
+            .get(kind)
+            .is_some_and(|editor| editor.bottom_host())
+    }
 }
 
 /// Application convenience API for asset editor registration.
@@ -225,6 +236,7 @@ pub struct EditorHosts {
     pub canvas: Option<Entity>,
     pub left: Option<Entity>,
     pub inspector: Option<Entity>,
+    pub bottom: Option<Entity>,
 }
 
 pub enum AssetEditorCommand {
