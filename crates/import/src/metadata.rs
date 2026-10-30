@@ -14,6 +14,8 @@ pub struct SourceMetadata {
     pub importer: String,
     #[serde(default)]
     pub outputs: BTreeMap<String, OutputMetadata>,
+    #[serde(default, skip_serializing_if = "toml::Table::is_empty")]
+    pub settings: toml::Table,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,7 +43,7 @@ impl SourceMetadata {
                 path.display()
             );
         }
-        if !matches!(metadata.importer.as_str(), "gltf" | "obj" | "image") {
+        if !matches!(metadata.importer.as_str(), "gltf" | "obj" | "image" | "bvh") {
             bail!(
                 "unknown importer '{}' in '{}'",
                 metadata.importer,

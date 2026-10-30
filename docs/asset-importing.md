@@ -1,6 +1,6 @@
 # Asset importing
 
-The engine does not load DCC files (`.gltf`, `.glb`, `.obj`, `.png`, …)
+The engine does not load DCC files (`.gltf`, `.glb`, `.obj`, `.bvh`, `.png`, …)
 directly at runtime. They are **imported** once, ahead of time, into a tree
 of self-describing binary files that the game references by UUID. This is
 the Unreal/Godot model: a source artist file is an input to a build step,
@@ -53,6 +53,7 @@ The import picks the importer by file extension:
 |----------------------|-----------------|---------------------------------------------------|
 | `.gltf` `.glb`       | `GltfImporter`  | `mesh/*`, `material/*`, `texture/*`, `skeleton/*`, `animation/*`, `scene` |
 | `.obj` (+ its `.mtl`)| `ObjImporter`   | `mesh/*`, one `material/<mtl stem>`, `scene`       |
+| `.bvh`               | `BvhImporter`   | `skeleton/0`, `animation/0`, `scene`               |
 | `.png` `.jpg` `.jpeg`| `ImageImporter` | one `main` texture                                |
 
 ### `content.toml`
@@ -115,6 +116,24 @@ asset_id = "d6e76e64-a888-49cd-bc16-61f0566f36ab"
 asset_id = "abfdaec1-d105-4c4c-b37c-138a1231e4ac"
 ```
 
+An optional `[settings]` table holds importer-specific settings. The importer
+that owns the source reads it on every import; a sidecar without one uses the
+importer's defaults, and a first import writes none. The `gltf`, `obj` and
+`image` importers read no settings. The `bvh` importer's are described under
+[BVH motion capture](#bvh-motion-capture).
+
+```toml
+[settings]
+scale = 0.01
+frame_range = [10, 250]
+```
+
+Settings are edited by hand. To change them: import the source once, edit the
+`[settings]` table in its sidecar, then import the source again from the editor.
+The re-import keeps every asset ID and replaces the content with the new
+result. An unknown key or an invalid value fails that import with an error
+naming the source; nothing is written.
+
 The sidecar records ownership, the content header carries file identity, and
 the registry records location. Commit the sidecar with its source and move
 them together when renaming or reorganizing source files. A separate new
@@ -129,6 +148,34 @@ The importer validates content headers, metadata, and planned destinations
 before writing outputs. An unreadable existing header is an error; it never
 silently causes a replacement UUID. Individual files are replaced using
 temporary files. The entire import is not a crash-safe multi-file transaction.
+
+## BVH motion capture
+
+`BvhImporter` reads a `.bvh` file's `HIERARCHY` and `MOTION` sections and emits:
+
+- `skeleton/0`: one bone per joint, parents first, with each joint's `OFFSET` as
+  its rest translation. Bone ids are derived from the joint's path from the
+  root, so they stay the same across re-imports and across clips of the same
+  rig.
+- `animation/0`: one translation channel for each joint with position channels
+  and one rotation channel for each joint with rotation channels, one key per
+  frame at the file's `Frame Time`. Euler angles are in degrees, applied in the
+  order the joint's `CHANNELS` line lists them. A quaternion that would flip
+  sign against the previous frame is negated, so playback takes the short way
+  round.
+- `scene`: a node per joint with its rest transform, and a `SkeletonComponent`
+  on the root pointing at `skeleton/0`.
+
+Settings, in the sidecar's `[settings]` table:
+
+| Key           | Default | Meaning |
+|---------------|---------|---------|
+| `scale`       | `0.01`  | Multiplier applied to every offset and translation. The default turns the centimetres most BVH files use into metres. Must be finite and positive. |
+| `frame_range` | whole file | `[start, end)` frame indices to keep. Needs `start < end <= frame count` and at least two frames. Keys are timed from the first kept frame. |
+
+A `frame_range` outside the file, an empty or one-frame range, a bad `scale`,
+or an unknown key fails the import. The file's own timing is kept; there is no
+resampling setting.
 
 ## The `.gasset` file format
 

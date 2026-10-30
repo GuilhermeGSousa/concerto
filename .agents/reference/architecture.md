@@ -7,7 +7,7 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 | Layer | Crates | What they hold |
 |---|---|---|
 | Core | `ecs`, `tasks`, `app`, `foundation` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math |
-| Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF and OBJ importers |
+| Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
 | Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data, bounds, ray tests; extra passes; a renderer that draws to a terminal |
 | Simulation | `physics`, `jolt-ffi`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
@@ -89,7 +89,7 @@ A host never touches the render world once frames are running.
 
 ## Assets
 
-Source files (`.glb`, `.gltf`, `.obj`, images) are imported once, ahead of
+Source files (`.glb`, `.gltf`, `.obj`, `.bvh`, images) are imported once, ahead of
 time. The running game never reads them.
 
 - The editor's Import… writes one `.gasset` per sub-asset under
