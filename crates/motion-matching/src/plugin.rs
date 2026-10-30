@@ -3,6 +3,7 @@ use concerto_app::{
     schedule_groups::{FixedUpdate, LateFixedUpdate},
 };
 use concerto_ecs::IntoSystemConfig;
+use concerto_foundation::assets::handle::AssetHandle;
 use concerto_physics::step_simulation;
 
 use crate::{
@@ -12,6 +13,7 @@ use crate::{
         TrajectorySettings,
     },
     features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
+    node::{MotionMatchingNode, MotionMatchingTrajectory},
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
     systems::{drive_body, predict_trajectory_system, read_back_body},
 };
@@ -33,6 +35,9 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<DesiredMotion>()
             .register_type::<TrajectorySample>()
             .register_type::<CharacterSimulation>()
+            .register_type::<AssetHandle<MotionDatabase>>()
+            .register_type::<MotionMatchingTrajectory>()
+            .register_type::<MotionMatchingNode>()
             .add_system(FixedUpdate, drive_body)
             .add_system(LateFixedUpdate, read_back_body.after(step_simulation))
             .add_system(

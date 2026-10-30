@@ -6,6 +6,8 @@ pub mod database;
 pub mod definition;
 pub mod features;
 pub mod filter;
+pub mod instance;
+pub mod node;
 pub mod plugin;
 pub mod query;
 pub mod search;
@@ -25,6 +27,8 @@ pub use definition::{
 pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,
 };
+pub use instance::MotionMatchingInstance;
+pub use node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY};
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
 pub use search::{excluded_tail, search};
