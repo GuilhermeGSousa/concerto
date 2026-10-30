@@ -45,6 +45,8 @@ pub struct ImportedSource {
     pub assets: Vec<AssetEntry>,
     /// Project-relative paths of the files copied along with the source.
     pub siblings: Vec<String>,
+    /// Ids of the content assets deleted because the importer stopped emitting them.
+    pub removed: Vec<AssetId>,
 }
 
 /// Import a source and return an entry, with provenance, for every content asset
@@ -350,6 +352,53 @@ fn import_with(
             log::warn!("'{old_name}' was saved from the editor; the rename to '{new_name}' was not applied");
         }
     }
+    let mut removed = Vec::new();
+    let mut deletions = Vec::new();
+    let obsolete: Vec<(String, AssetId)> = metadata
+        .outputs
+        .iter()
+        .filter(|(_, output)| !emitted.contains(&output.asset_id))
+        .map(|(key, output)| (key.clone(), output.asset_id))
+        .collect();
+    for (key, id) in obsolete {
+        let Some(header) = headers.get(&id) else {
+            metadata.outputs.remove(&key);
+            continue;
+        };
+        if header.provenance.is_none() {
+            log::warn!(
+                "'{key}' is no longer emitted but was saved from the editor; leaving it in place"
+            );
+            continue;
+        }
+        let Some(entry) = registry.remove(id) else {
+            metadata.outputs.remove(&key);
+            continue;
+        };
+        metadata.outputs.remove(&key);
+        deletions.push((key, id, project_root.join(&entry.address)));
+        removed.push(id);
+    }
+    let rewritten: HashSet<AssetId> = written.iter().map(|entry| entry.id).collect();
+    for (key, id, _) in &deletions {
+        let id = *id;
+        for sub_asset in &outputs.sub_assets {
+            if rewritten.contains(&sub_asset.asset_id) && sub_asset.references.contains(&id) {
+                log::warn!(
+                    "'{key}' ({id:?}) is deleted but '{}' still references it",
+                    sub_asset.name
+                );
+            }
+        }
+        for (other, header) in &headers {
+            if !rewritten.contains(other)
+                && !removed.contains(other)
+                && header.references.contains(&id)
+            {
+                log::warn!("'{key}' ({id:?}) is deleted but {other:?} still references it");
+            }
+        }
+    }
     let copies = if read == source {
         Vec::new()
     } else {
@@ -376,6 +425,14 @@ fn import_with(
     for (path, file) in staged {
         replace(file, path)?;
     }
+    for (key, _, path) in &deletions {
+        if let Err(err) = std::fs::remove_file(path) {
+            log::warn!(
+                "could not delete obsolete output '{key}' at '{}': {err}",
+                path.display()
+            );
+        }
+    }
     let siblings = copies
         .iter()
         .skip(1)
@@ -389,6 +446,7 @@ fn import_with(
     Ok(ImportedSource {
         assets: written,
         siblings,
+        removed,
     })
 }
 
@@ -764,6 +822,182 @@ mod tests {
         ]);
 
         assert!(result.is_err());
+        assert_eq!(fixture.snapshot(), before);
+    }
+
+    static LOGS: Mutex<Vec<(std::thread::ThreadId, String)>> = Mutex::new(Vec::new());
+
+    struct Capture;
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            LOGS.lock()
+                .unwrap()
+                .push((std::thread::current().id(), record.args().to_string()));
+        }
+
+        fn flush(&self) {}
+    }
+
+    struct Logs;
+
+    impl Logs {
+        fn lines(&self) -> Vec<String> {
+            let me = std::thread::current().id();
+            LOGS.lock()
+                .unwrap()
+                .iter()
+                .filter(|(thread, _)| *thread == me)
+                .map(|(_, line)| line.clone())
+                .collect()
+        }
+    }
+
+    fn capture_logs() -> Logs {
+        static INSTALL: std::sync::Once = std::sync::Once::new();
+        INSTALL.call_once(|| {
+            log::set_logger(&Capture).unwrap();
+            log::set_max_level(log::LevelFilter::Warn);
+        });
+        let me = std::thread::current().id();
+        LOGS.lock().unwrap().retain(|(thread, _)| *thread != me);
+        Logs
+    }
+
+    fn strip_provenance(fixture: &Fixture, entry: &AssetEntry) {
+        let path = fixture.root().join(&entry.address);
+        let file = std::fs::read(&path).unwrap();
+        let (mut header, bytes) =
+            concerto_foundation::assets::content::read_content_asset(&file).unwrap();
+        header.provenance = None;
+        std::fs::write(&path, write_content_asset(&header, &bytes).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn an_output_the_importer_stops_emitting_is_deleted() {
+        let fixture = Fixture::new();
+        let first = fixture
+            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
+            .unwrap();
+        let dropped = entry(&first, "drop").clone();
+        let kept = entry(&first, "keep").clone();
+
+        let second = fixture.import(vec![("keep", None, vec![])]).unwrap();
+
+        assert_eq!(second.removed, vec![dropped.id]);
+        assert!(!fixture.root().join(&dropped.address).exists());
+        assert!(fixture.root().join(&kept.address).exists());
+        let outputs = fixture.outputs();
+        assert!(!outputs.contains_key("drop"));
+        assert_eq!(outputs.get("keep"), Some(&kept.id));
+    }
+
+    #[test]
+    fn an_obsolete_output_saved_from_the_editor_is_kept() {
+        let fixture = Fixture::new();
+        let first = fixture
+            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
+            .unwrap();
+        let dropped = entry(&first, "drop").clone();
+        strip_provenance(&fixture, &dropped);
+
+        let second = fixture.import(vec![("keep", None, vec![])]).unwrap();
+
+        assert!(second.removed.is_empty());
+        assert!(fixture.root().join(&dropped.address).exists());
+        assert_eq!(fixture.outputs().get("drop"), Some(&dropped.id));
+    }
+
+    #[test]
+    fn an_obsolete_output_whose_file_is_missing_only_loses_its_key() {
+        let fixture = Fixture::new();
+        let first = fixture
+            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
+            .unwrap();
+        let dropped = entry(&first, "drop").clone();
+        std::fs::remove_file(fixture.root().join(&dropped.address)).unwrap();
+
+        let second = fixture.import(vec![("keep", None, vec![])]).unwrap();
+
+        assert!(second.removed.is_empty());
+        assert!(!fixture.outputs().contains_key("drop"));
+    }
+
+    #[test]
+    fn an_editor_saved_file_under_a_hinted_rename_keeps_its_file_and_key() {
+        let fixture = Fixture::new();
+        let first = fixture.import(vec![("animation/0", None, vec![])]).unwrap();
+        let old = entry(&first, "animation/0").clone();
+        strip_provenance(&fixture, &old);
+
+        let second = fixture
+            .import(vec![("animation/clip", Some("animation/0"), vec![])])
+            .unwrap();
+
+        assert!(second.removed.is_empty());
+        assert!(fixture.root().join(&old.address).exists());
+        assert_eq!(fixture.outputs().get("animation/0"), Some(&old.id));
+    }
+
+    #[test]
+    fn pruning_warns_only_for_referrers_the_import_does_not_rewrite() {
+        let fixture = Fixture::new();
+        let first = fixture
+            .import(vec![
+                ("drop", None, vec![]),
+                ("rewritten", None, vec!["drop"]),
+                ("untouched", None, vec!["drop"]),
+            ])
+            .unwrap();
+        let untouched = entry(&first, "untouched").clone();
+        strip_provenance(&fixture, &untouched);
+        let logger = capture_logs();
+
+        fixture
+            .import(vec![
+                ("rewritten", None, vec![]),
+                ("untouched", None, vec![]),
+            ])
+            .unwrap();
+
+        let lines = logger.lines();
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.contains("drop") && line.contains(&format!("{:?}", untouched.id))),
+            "{lines:?}"
+        );
+        assert!(
+            !lines.iter().any(|line| line.contains("'rewritten'")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn a_staging_failure_leaves_the_obsolete_file_in_place() {
+        let fixture = Fixture::new();
+        let first = fixture
+            .import(vec![("keep", None, vec![]), ("drop", None, vec![])])
+            .unwrap();
+        let dropped = entry(&first, "drop").clone();
+        let before = fixture.snapshot();
+        let missing = fixture.root().join("elsewhere").join("a.test");
+
+        let result = import_with(
+            &Scripted(vec![("keep", None, vec![])]),
+            "bvh",
+            &missing,
+            &fixture.source,
+            &fixture.root(),
+            &fixture.config,
+        );
+
+        assert!(result.is_err());
+        assert!(fixture.root().join(&dropped.address).exists());
         assert_eq!(fixture.snapshot(), before);
     }
 }
