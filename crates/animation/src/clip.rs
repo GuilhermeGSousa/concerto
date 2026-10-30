@@ -193,6 +193,7 @@ impl AnimationClip {
                     rate
                 }
             })
+            .filter(|rate| *rate > 0.0)
     }
 
     /// Writes the velocity of each bone in `bone_ids` between `time - dt` and `time`, both clamped to the clip.
@@ -260,6 +261,14 @@ mod tests {
 
     fn channel_at(rate: f32, keys: u32) -> AnimationChannel {
         channel_with_keys((0..keys).map(|key| key as f32 / rate).collect())
+    }
+
+    #[test]
+    fn detected_frame_rate_is_none_when_the_rate_rounds_to_nothing() {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(Uuid::from_u128(1), channel_with_keys(vec![0.0, 200.0]));
+
+        assert_eq!(clip.detected_frame_rate(), None);
     }
 
     #[test]

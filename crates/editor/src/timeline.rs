@@ -100,6 +100,10 @@ pub fn frame_count(duration: f32, rate: f32) -> u32 {
     ((duration * rate).round() as u32).saturating_add(1)
 }
 
+/// On a timeline's readout, whose text changes on every frame of playback.
+#[derive(Component)]
+pub(crate) struct TimelineReadout;
+
 #[derive(Component)]
 struct TimelineParts {
     readout: Entity,
@@ -313,10 +317,11 @@ fn setup_timeline(
     for (timeline, mut node) in timelines.iter() {
         node.flex_direction = FlexDirection::Column;
         node.gap = Vec2::new(0.0, theme.spacing_xs);
+        node.min_width = UIValue::Px(0.0);
 
         let mut root = cmd.entity(timeline);
         let readout = root
-            .spawn_child(
+            .spawn_child((
                 theme
                     .label("")
                     .mono()
@@ -326,7 +331,8 @@ fn setup_timeline(
                         UIValue::Px(theme.line_height(theme.font_size_md)),
                     )
                     .fixed(),
-            )
+                TimelineReadout,
+            ))
             .entity();
         let mut bands = root.spawn_child(
             UINode::default()
@@ -724,10 +730,22 @@ mod tests {
         app.update();
 
         let world = app.main_mut().world_mut();
+        assert_eq!(
+            world
+                .get_component_for_entity::<UINode>(timeline)
+                .unwrap()
+                .min_width,
+            UIValue::Px(0.0)
+        );
         let readout = world
             .get_component_for_entity::<TimelineParts>(timeline)
             .unwrap()
             .readout;
+        assert!(
+            world
+                .get_component_for_entity::<TimelineReadout>(readout)
+                .is_some()
+        );
         assert_eq!(
             world
                 .get_component_for_entity::<UIText>(readout)

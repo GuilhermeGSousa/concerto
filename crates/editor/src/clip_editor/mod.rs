@@ -151,7 +151,7 @@ fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a
 
 fn read_shown_scene(
     root: &Path,
-    clip: &AssetEntry,
+    clip: Option<&AssetEntry>,
     picked: Option<AssetId>,
     assets: &AssetRegistry,
 ) -> anyhow::Result<Option<(AssetId, Scene)>> {
@@ -161,7 +161,7 @@ fn read_shown_scene(
                 .get(id)
                 .ok_or_else(|| anyhow::anyhow!("The picked scene is not in the project"))?,
         ),
-        None => default_scene(clip, assets),
+        None => clip.and_then(|clip| default_scene(clip, assets)),
     };
     entry
         .map(|entry| {
@@ -174,7 +174,7 @@ fn read_shown_scene(
 fn scene_signal(
     state: &mut ClipDocument,
     root: &Path,
-    clip: &AssetEntry,
+    clip: Option<&AssetEntry>,
     assets: &AssetRegistry,
 ) -> ShowClipScene {
     let shown = read_shown_scene(root, clip, state.picked_scene, assets);
@@ -222,7 +222,10 @@ pub(crate) fn load_clip(
                 rate: state.rate,
             },
         );
-        previews.trigger(entity, scene_signal(&mut state, &root, &asset, &assets));
+        previews.trigger(
+            entity,
+            scene_signal(&mut state, &root, Some(&asset), &assets),
+        );
         finish_asset_request(&mut document, &asset, Ok(()));
     }
 }

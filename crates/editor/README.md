@@ -880,7 +880,7 @@ The `inspector` host, titled Clip, has:
 - the facts: Duration, Frames, Rate, Clip bones and Driven. Rate is detected from
   the keys, so it reads `30 fps, detected`. Driven reads `60 of 65`, 60 of the
   skeleton's 65 bones, and uses the warning colour when it differs from Clip
-  bones: the clip then names bones this skeleton does not have, or the reverse;
+  bones: the clip then names bones this skeleton does not have;
 - the document's status on a line of its own when it is not empty, which covers
   a clip that failed to load and `Preview failed: …`.
 

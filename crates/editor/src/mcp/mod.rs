@@ -15,7 +15,7 @@ use concerto_app::{
 use concerto_ecs::{
     Entity, IntoSystemConfig, Query, Res, ResMut, Resource,
     command::CommandQueue,
-    query::filter::{Changed, Or, With},
+    query::filter::{Changed, Or, With, Without},
     signal::On,
     system::input::{StaticSystemInput, SystemInputData},
 };
@@ -28,6 +28,7 @@ use crate::{
     guard::{GuardChoice, UnsavedGuard},
     hosted::{EditWorld, PendingApp, PendingPlayApp, PlayState},
     project::ProjectState,
+    timeline::TimelineReadout,
 };
 
 /// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project`, with [`McpPlugin`] and [`EditorMcpPlugin`].
@@ -106,7 +107,10 @@ fn is_busy(
         || states.iter().any(|state| state.is_on())
 }
 
-fn note_text_changes(changes: Query<Entity, TextChanges>, mut changed: ResMut<PanelTextChanged>) {
+fn note_text_changes(
+    changes: Query<Entity, (TextChanges, Without<TimelineReadout>)>,
+    mut changed: ResMut<PanelTextChanged>,
+) {
     let now = changes.iter().next().is_some();
     if changed.0 != now {
         changed.0 = now;
@@ -140,5 +144,39 @@ fn quit_when_host_closes(
 fn discard_while_closing(closing: Option<Res<HostIsClosing>>, mut guard: ResMut<UnsavedGuard>) {
     if closing.is_some() && guard.asking() {
         guard.choose(GuardChoice::Discard);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_ecs::{IntoSystem, System, World};
+
+    use super::*;
+
+    fn notes_a_change(spawn: impl FnOnce(&mut World)) -> bool {
+        let mut world = World::new();
+        world.insert_resource(PanelTextChanged(false));
+        world.register_component::<UIText>();
+        world.register_component::<UITextInput>();
+        world.register_component::<TimelineReadout>();
+        spawn(&mut world);
+        let mut system = note_text_changes.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+        world.get_resource::<PanelTextChanged>().unwrap().0
+    }
+
+    #[test]
+    fn a_panels_text_changing_keeps_the_editor_busy() {
+        assert!(notes_a_change(|world| {
+            world.spawn(UIText::default());
+        }));
+    }
+
+    #[test]
+    fn a_timeline_readout_counting_through_playback_does_not() {
+        assert!(!notes_a_change(|world| {
+            world.spawn((UIText::default(), TimelineReadout));
+        }));
     }
 }

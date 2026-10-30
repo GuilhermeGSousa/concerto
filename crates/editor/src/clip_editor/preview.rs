@@ -57,7 +57,6 @@ impl Default for ClipPreview {
     }
 }
 
-/// The entity a preview's scene is spawned under; despawning it takes the scene with it.
 #[derive(Component)]
 struct ClipPreviewRoot;
 

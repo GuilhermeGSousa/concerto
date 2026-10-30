@@ -431,6 +431,7 @@ impl SceneFixture {
             crate::scene::show_play_failures.into_boxed_system(),
             crate::preview::open_previews.into_boxed_system(),
             crate::preview::report_preview_failures.into_boxed_system(),
+            crate::preview::keep_preview_failures_shown.into_boxed_system(),
         ]);
         for system in &mut systems {
             system.initialize(&mut world);

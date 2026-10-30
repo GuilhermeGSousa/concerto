@@ -39,8 +39,8 @@ use crate::{
 };
 
 /// On a document whose preview failed to build; it is not built again until the tab is reopened.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct PreviewFailed;
+#[derive(Component, Clone, Debug)]
+pub struct PreviewFailed(pub String);
 
 type QueuedSignal = Box<dyn FnOnce(&mut HostedApp) + Send + Sync>;
 
@@ -167,10 +167,18 @@ pub(crate) fn report_preview_failures(
         };
         let status = format!("Preview failed: {failure}");
         if doc.status != status {
-            doc.status = status;
+            doc.status = status.clone();
         }
         cmd.remove::<PendingApp>(document);
-        cmd.insert(PreviewFailed, document);
+        cmd.insert(PreviewFailed(status), document);
+    }
+}
+
+pub(crate) fn keep_preview_failures_shown(failed: Query<(&mut EditorDocument, &PreviewFailed)>) {
+    for (mut doc, failure) in failed.iter() {
+        if doc.status.is_empty() {
+            doc.status = failure.0.clone();
+        }
     }
 }
 
@@ -180,7 +188,14 @@ pub struct PreviewHostPlugin;
 impl Plugin for PreviewHostPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(PreviewSignalQueue::default())
-            .add_system(Update, (open_previews, report_preview_failures))
+            .add_system(
+                Update,
+                (
+                    open_previews,
+                    report_preview_failures,
+                    keep_preview_failures_shown,
+                ),
+            )
             .add_system(
                 First,
                 deliver_preview_signals
@@ -435,6 +450,45 @@ mod tests {
                 .get_component_for_entity::<PendingApp>(plain)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_preview_failure_comes_back_when_a_finished_request_clears_the_status() {
+        let mut f = SceneFixture::new();
+        let document = f.request_kind(BrokenPreviewAsset::name());
+        f.frames_until("the failure was never reported", |f| {
+            f.world
+                .get_component_for_entity::<PreviewFailed>(document)
+                .is_some()
+        });
+
+        f.world
+            .get_component_for_entity_mut::<EditorDocument>(document)
+            .unwrap()
+            .status
+            .clear();
+        f.frame();
+
+        assert_eq!(f.status(document), "Preview failed: the preview broke");
+    }
+
+    #[test]
+    fn a_preview_failure_leaves_another_status_alone() {
+        let mut f = SceneFixture::new();
+        let document = f.request_kind(BrokenPreviewAsset::name());
+        f.frames_until("the failure was never reported", |f| {
+            f.world
+                .get_component_for_entity::<PreviewFailed>(document)
+                .is_some()
+        });
+
+        f.world
+            .get_component_for_entity_mut::<EditorDocument>(document)
+            .unwrap()
+            .status = "Could not read the clip".to_owned();
+        f.frame();
+
+        assert_eq!(f.status(document), "Could not read the clip");
     }
 
     #[test]

@@ -90,6 +90,15 @@ fn pause_at(state: &ClipDocument, document: Entity, time: f32, previews: &mut Pr
     previews.trigger(document, SeekClip(time));
 }
 
+fn at_the_end(state: &ClipDocument) -> bool {
+    let duration = state.facts.duration;
+    state.time >= duration
+        || state
+            .facts
+            .rate
+            .is_some_and(|rate| frame_at(state.time, rate) >= frame_at(duration, rate))
+}
+
 fn toggle_playing(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>, documents: Query<&ClipDocument>, mut previews: PreviewSignals| {
         if on.signal().button != MouseButton::Left {
@@ -99,7 +108,7 @@ fn toggle_playing(document: Entity) -> Listener<UIClick> {
             return;
         };
         let playing = !state.playing;
-        if playing && !state.looping && state.time >= state.facts.duration {
+        if playing && !state.looping && at_the_end(state) {
             previews.trigger(document, SeekClip(0.0));
         }
         previews.trigger(
@@ -247,7 +256,8 @@ fn pick_scene(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
                 return;
             };
             state.picked_scene = Some(id);
-            if let (Some(project), Some(clip)) = (&project.project, &editor.current) {
+            if let Some(project) = &project.project {
+                let clip = editor.current.as_ref();
                 let scene = scene_signal(&mut state, &project.root, clip, &assets);
                 previews.trigger(document, scene);
             }
@@ -414,7 +424,6 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
     host.spawn_child((
         UINode::default()
             .with_flex_grow(1.0)
-            .with_min_width(UIValue::Px(0.0))
             .with_padding(UIRect::all(theme.spacing_sm)),
         Timeline {
             duration: 0.0,
@@ -937,6 +946,29 @@ mod tests {
     }
 
     #[test]
+    fn play_on_the_last_frame_of_a_clip_ending_between_frames_starts_again_from_zero() {
+        let mut times: Vec<f32> = (0..=30).map(|frame| frame as f32 / 30.0).collect();
+        times.push(1.01);
+        let outputs = vec![glam::Vec3::ZERO; times.len()];
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            Uuid::from_u128(1),
+            AnimationChannel::new(times, AnimationChanelOutput::Translation(outputs)),
+        );
+        let mut tab = tab_of_clip(&clip);
+        let inspector = &tab.panels().inspector;
+        let (looping, play) = (inspector.looping, inspector.play);
+        tab.click(looping);
+        tab.paused_at(1.0);
+
+        tab.click(play);
+
+        tab.until("the clip never started again", |state| {
+            state.playing && state.time < 0.5
+        });
+    }
+
+    #[test]
     fn play_away_from_the_end_carries_on_from_where_it_is() {
         let mut tab = walking_tab();
         let inspector = &tab.panels().inspector;
@@ -1165,6 +1197,28 @@ mod tests {
         assert!(!tab.f.scene_names(document).contains(&"sibling".to_owned()));
         assert!(tab.clean());
         assert_eq!(tab.clip_bytes(), on_disk);
+    }
+
+    #[test]
+    fn a_pick_on_a_tab_whose_clip_failed_shows_the_scene() {
+        let mut f = panels_fixture();
+        let level = write_scene(&mut f, "content/world/level.gasset", "level");
+        let walk = write_clip(&mut f, "content/hero/walk.gasset", &clip_of(1));
+        std::fs::write(f.project_root.join(&walk.address), b"not a clip").unwrap();
+        let mut tab = tab_of(f, &walk);
+        let document = tab.document;
+
+        tab.open_picker();
+        let item = tab.menu_item("level");
+        tab.click(item);
+        tab.f.frame();
+
+        assert_eq!(tab.state().shown_scene, Some(level.id));
+        assert_eq!(tab.text(tab.panels().left.scene).text, "level");
+        tab.f
+            .frames_until("the pick never reached the preview", |f| {
+                f.scene_names(document).contains(&"level".to_owned())
+            });
     }
 
     #[test]
