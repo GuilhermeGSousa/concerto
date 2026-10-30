@@ -6,7 +6,7 @@ use crate::{
     tools::selection::Select,
 };
 use concerto_ecs::{
-    Entity, IntoSystem, System, World,
+    Entity, IntoSystem, Resource, System, World,
     entity::hierarchy::{ChildOf, Children},
     reflect::AppTypeRegistry,
     system::BoxedSystem,
@@ -20,7 +20,7 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::{Mesh, MeshComponent};
 use concerto_reflect::TypeRegistry;
-use concerto_ui::{material::UIMaterial, node::UINode};
+use concerto_ui::{interaction::UIInteractionStyle, material::UIMaterial, node::UINode};
 use std::any::TypeId;
 
 struct Picking {
@@ -343,6 +343,115 @@ fn a_value_edit_to_a_handle_picks_the_asset_it_names() {
     assert_eq!(handle.id(), sphere);
     assert!(matches!(handle, AssetHandle::Strong(..)));
     assert_eq!(picker.edit_to(&7u32).err(), Some(EditError::TypeMismatch));
+}
+
+#[derive(Resource, Default)]
+struct Picks(Vec<AssetId>);
+
+fn note_pick(id: AssetId) -> Listener<UIClick> {
+    (move |_: On<UIClick>, mut picks: ResMut<Picks>| picks.0.push(id)).into_listener()
+}
+
+fn open_with_no_row(current: Option<AssetId>) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           menus: Query<(Entity, &mut AssetPickerMenu, &mut UIAnchoredPanel)>,
+           registry: Res<AssetRegistry>,
+           theme: Res<UITheme>,
+           mut cmd: CommandQueue| {
+        open_asset_menu(
+            on.entity(),
+            Mesh::name(),
+            None,
+            current,
+            note_pick,
+            &menus,
+            &registry,
+            &theme,
+            &mut cmd,
+        );
+    })
+    .into_listener()
+}
+
+fn rowless_button(p: &mut Picking, current: Option<AssetId>) -> Entity {
+    p.f.world.insert_resource(Picks::default());
+    p.f.world.spawn(open_with_no_row(current))
+}
+
+#[test]
+fn a_menu_with_no_row_lists_the_kind_and_runs_the_pick_it_was_given() {
+    let mut p = picking();
+    let cube = p.cube.id;
+    let sphere = p.sphere.id;
+    let button = rowless_button(&mut p, Some(cube));
+
+    p.click(button);
+
+    assert!(p.menu_open());
+    let menu_row =
+        p.f.world
+            .query::<&AssetPickerMenu, ()>()
+            .iter(&mut p.f.world)
+            .map(|menu| menu.row)
+            .next();
+    assert_eq!(menu_row, Some(None));
+    let items = p.items();
+    let names: Vec<_> = items.iter().map(|(_, name)| name.as_str()).collect();
+    assert_eq!(names, ["cube", "sphere"]);
+    let selection = UITheme::default().selection();
+    let fill = |p: &Picking, item: Entity| {
+        p.f.world
+            .get_component_for_entity::<UIInteractionStyle>(item)
+            .unwrap()
+            .normal
+    };
+    assert_eq!(fill(&p, items[0].0), selection);
+    assert_ne!(fill(&p, items[1].0), selection);
+
+    p.click(items[1].0);
+
+    assert_eq!(p.f.world.get_resource::<Picks>().unwrap().0, [sphere]);
+    assert!(
+        p.f.world
+            .get_resource::<PropertyCommits>()
+            .unwrap()
+            .0
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_button_that_opened_a_menu_with_no_row_closes_it() {
+    let mut p = picking();
+    let button = rowless_button(&mut p, None);
+
+    p.click(button);
+    p.click(button);
+
+    assert!(!p.menu_open());
+}
+
+#[test]
+fn the_inspector_takes_the_menu_back_from_a_menu_with_no_row() {
+    let mut p = picking();
+    let rowless = rowless_button(&mut p, None);
+    let button = p.button();
+    let sphere = p.sphere.id;
+    p.click(rowless);
+
+    p.click(button);
+    let (item, _) = p
+        .items()
+        .into_iter()
+        .find(|(_, name)| name == "sphere")
+        .unwrap();
+    p.click(item);
+    p.update();
+    p.update();
+
+    assert!(!p.menu_open());
+    assert_eq!(p.held().id(), sphere);
+    assert!(p.f.world.get_resource::<Picks>().unwrap().0.is_empty());
 }
 
 #[derive(Default)]

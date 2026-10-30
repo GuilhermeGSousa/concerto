@@ -33,14 +33,14 @@ use glam::Vec3;
 use crate::preview::OrbitCamera;
 
 #[derive(Resource)]
-struct ClipPreview {
+pub(super) struct ClipPreview {
     clip: Option<Arc<AnimationClip>>,
-    time: f32,
-    rate: f32,
+    pub(super) time: f32,
+    pub(super) rate: f32,
     playing: bool,
-    looping: bool,
-    root_motion: bool,
-    skeleton_gizmo: bool,
+    pub(super) looping: bool,
+    pub(super) root_motion: bool,
+    pub(super) skeleton_gizmo: bool,
 }
 
 impl Default for ClipPreview {

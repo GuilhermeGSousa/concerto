@@ -1,4 +1,5 @@
 //! The read-only editor of an animation clip.
+mod panels;
 pub mod preview;
 
 use std::{path::Path, sync::Arc};
@@ -26,6 +27,7 @@ use crate::{
     scene::load_scene,
     timeline::frame_count,
 };
+use panels::{build_clip_panels, sync_clip_panels};
 use preview::{
     ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
 };
@@ -234,7 +236,16 @@ impl Plugin for ClipEditorPlugin {
             .expect("ClipEditorPlugin requires the asset-editor registry")
             .forward_hosted_event::<ClipPreviewProgress>()
             .forward_hosted_event::<ClipPreviewBones>()
-            .add_system(Update, (sync_clip_preview, load_clip).chain());
+            .add_system(
+                Update,
+                (
+                    sync_clip_preview,
+                    load_clip,
+                    build_clip_panels,
+                    sync_clip_panels,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -262,6 +273,7 @@ mod tests {
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
     use concerto_mesh::skeleton::SkeletonComponent;
     use concerto_render::ExclusiveCamera;
+    use concerto_ui::theme::UITheme;
     use concerto_window::plugin::{Window, WindowPlugin};
     use glam::Vec2;
     use preview::SetClipTransport;
@@ -287,13 +299,13 @@ mod tests {
         )
     }
 
-    fn clip_of(seconds: usize) -> AnimationClip {
+    pub(super) fn clip_of(seconds: usize) -> AnimationClip {
         let mut clip = AnimationClip::default();
         clip.add_channel(Uuid::from_u128(1), keys(seconds));
         clip
     }
 
-    fn clip_fixture() -> SceneFixture {
+    pub(super) fn clip_fixture() -> SceneFixture {
         let mut f = SceneFixture::new();
         f.world
             .get_resource_mut::<AssetEditorRegistry>()
@@ -311,7 +323,11 @@ mod tests {
         f
     }
 
-    fn write_clip(f: &mut SceneFixture, address: &str, clip: &AnimationClip) -> AssetEntry {
+    pub(super) fn write_clip(
+        f: &mut SceneFixture,
+        address: &str,
+        clip: &AnimationClip,
+    ) -> AssetEntry {
         let root = f.project_root.clone();
         let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
         let id = save_content_asset_into(clip, &root, address, assets).unwrap();
@@ -329,19 +345,19 @@ mod tests {
         asset
     }
 
-    fn write_scene(f: &mut SceneFixture, address: &str, node: &str) -> AssetEntry {
+    pub(super) fn write_scene(f: &mut SceneFixture, address: &str, node: &str) -> AssetEntry {
         let asset = scene_at(f, address);
         write_scene_file(&f.project_root, &asset, &[node]);
         asset
     }
 
-    fn write_broken_scene(f: &mut SceneFixture, address: &str) -> AssetEntry {
+    pub(super) fn write_broken_scene(f: &mut SceneFixture, address: &str) -> AssetEntry {
         let asset = scene_at(f, address);
         std::fs::write(f.project_root.join(address), b"not a scene").unwrap();
         asset
     }
 
-    fn open_clip(f: &mut SceneFixture, clip: &AssetEntry) -> Entity {
+    pub(super) fn open_clip(f: &mut SceneFixture, clip: &AssetEntry) -> Entity {
         f.request(clip);
         let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
         f.frames_until("the clip never finished opening", |f| {
@@ -353,7 +369,7 @@ mod tests {
         document
     }
 
-    fn state(f: &SceneFixture, document: Entity) -> &ClipDocument {
+    pub(super) fn state(f: &SceneFixture, document: Entity) -> &ClipDocument {
         f.world
             .get_component_for_entity::<ClipDocument>(document)
             .expect("the document is a clip's")
@@ -382,7 +398,12 @@ mod tests {
         f.frames_until("the pause never came back", |f| !state(f, document).playing);
     }
 
-    fn report_bones(f: &mut SceneFixture, document: Entity, bones: usize, driven: usize) {
+    pub(super) fn report_bones(
+        f: &mut SceneFixture,
+        document: Entity,
+        bones: usize,
+        driven: usize,
+    ) {
         f.scene_world_mut(document)
             .get_resource_mut::<EventChannel<ClipPreviewBones>>()
             .unwrap()
@@ -694,6 +715,7 @@ mod tests {
             .insert_resource(AssetEditorRegistry::default())
             .insert_resource(project)
             .insert_resource(assets)
+            .insert_resource(UITheme::default())
             .insert_resource(SceneRecipe {
                 recipe: scene_recipe,
                 gpu: None,

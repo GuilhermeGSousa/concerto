@@ -31,7 +31,7 @@ const TICK_LABEL_OFFSET: f32 = 4.0;
 const WHOLE_TICK_TOLERANCE: f32 = 1e-3;
 
 /// A ruler and a track over a clip's length, drawn on the UI node that holds it.
-#[derive(Component)]
+#[derive(Component, PartialEq)]
 pub struct Timeline {
     pub duration: f32,
     pub rate: Option<f32>,
