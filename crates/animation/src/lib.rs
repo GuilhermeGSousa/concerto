@@ -2,6 +2,7 @@ pub mod blackboard;
 pub mod clip;
 pub mod evaluation;
 pub mod graph;
+pub mod inertialization;
 pub mod node;
 pub mod player;
 pub mod plugin;
@@ -9,6 +10,8 @@ pub mod pose;
 pub mod root;
 pub mod target;
 pub mod transition;
+
+pub use transition::TransitionBlender;
 
 #[cfg(test)]
 mod tests {
@@ -29,6 +32,7 @@ mod tests {
         AnimationClipNode, AnimationClipNodeInstance, AnimationNodeInstance, AnimationNodeKind,
     };
     use crate::pose::PosePool;
+    use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {
         let mut clip = AnimationClip::default();
@@ -340,7 +344,7 @@ mod tests {
             instance.update(&fsm, FRAME, &context);
         };
 
-        let sample_x = |instance: &dyn AnimationNodeInstance| -> f32 {
+        let sample_x = |instance: &mut dyn AnimationNodeInstance| -> f32 {
             let context = AnimationGraphContext {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
@@ -354,7 +358,7 @@ mod tests {
 
         // One frame into the 0.1s fade: a genuine blend between the two poses, not a hard cut.
         step(&mut instance);
-        let mid = sample_x(&*instance);
+        let mid = sample_x(&mut *instance);
         assert!(
             mid > 0.0 && mid < 10.0,
             "expected a cross-fade, got x={mid}"
@@ -364,7 +368,7 @@ mod tests {
         for _ in 0..30 {
             step(&mut instance);
         }
-        let settled = sample_x(&*instance);
+        let settled = sample_x(&mut *instance);
         assert!(
             (settled - 10.0).abs() < 1e-4,
             "expected to settle on the target pose, got x={settled}"
@@ -477,5 +481,229 @@ mod tests {
             (first as i32 - second as i32).abs() <= 3,
             "re-entry length {second} should match the first play {first}"
         );
+    }
+
+    const MACHINE_FRAME: f32 = 1.0 / 60.0;
+
+    fn linear_x_clip(bone: Uuid, slope: f32) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            bone,
+            AnimationChannel::new(
+                vec![0.0, 100.0],
+                AnimationChanelOutput::from_translation(
+                    [[0.0, 0.0, 0.0], [slope * 100.0, 0.0, 0.0]].into_iter(),
+                ),
+            ),
+        );
+        clip
+    }
+
+    struct Machine {
+        _server: AssetServer,
+        clips: AssetStore<AnimationClip>,
+        graphs: AssetStore<AnimationGraph>,
+        fsm: AnimationNodeKind,
+        blackboard: AnimationBlackboard,
+        instance: Box<dyn AnimationNodeInstance>,
+        bone: Uuid,
+        pool: PosePool,
+    }
+
+    impl Machine {
+        fn new(
+            bone: Uuid,
+            a_clip: AnimationClip,
+            b_clip: AnimationClip,
+            c_clip: AnimationClip,
+            blend_time: f32,
+            blender: TransitionBlender,
+        ) -> Self {
+            let mut server = AssetServer::new();
+            let mut clips = AssetStore::<AnimationClip>::new();
+            let mut graphs = AssetStore::<AnimationGraph>::new();
+            server.register_asset(&clips);
+            server.register_asset(&graphs);
+
+            let mut graph_for = |clip: AnimationClip| {
+                let clip = add_asset(&server, &mut clips, clip);
+                add_asset(
+                    &server,
+                    &mut graphs,
+                    AnimationGraph::from_node(AnimationNodeKind::Clip(AnimationClipNode::new(
+                        clip,
+                    ))),
+                )
+            };
+            let a = graph_for(a_clip);
+            let b = graph_for(b_clip);
+            let c = graph_for(c_clip);
+
+            let fsm = AnimationStateMachine::from_initial_state("a", a, |transition| {
+                transition.to("b", AnimationFSMTrigger::on_bool("to_b", true), blend_time);
+                transition.to("a", AnimationFSMTrigger::on_bool("again", true), 0.2);
+            })
+            .state("b", b, |transition| {
+                transition.to("c", AnimationFSMTrigger::on_bool("to_c", true), blend_time);
+            })
+            .state("c", c, |_| {})
+            .blender(blender)
+            .build();
+            let fsm = AnimationNodeKind::StateMachine(fsm);
+
+            let blackboard = AnimationBlackboard::default();
+            let instance = {
+                let context = AnimationGraphContext {
+                    animation_clips: &clips,
+                    animation_graphs: &graphs,
+                    blackboard: &blackboard,
+                };
+                fsm.create_instance(&context)
+            };
+
+            Self {
+                _server: server,
+                clips,
+                graphs,
+                fsm,
+                blackboard,
+                instance,
+                bone,
+                pool: PosePool::new(1),
+            }
+        }
+
+        fn set(&mut self, name: &str, value: bool) {
+            self.blackboard
+                .set(name, AnimationBlackboardValue::Bool(value));
+        }
+
+        fn step(&mut self) -> f32 {
+            let context = AnimationGraphContext {
+                animation_clips: &self.clips,
+                animation_graphs: &self.graphs,
+                blackboard: &self.blackboard,
+            };
+            self.instance.update(&self.fsm, MACHINE_FRAME, &context);
+            let mut pose = self.pool.acquire();
+            self.instance.evaluate(
+                &self.fsm,
+                &context,
+                &[self.bone],
+                &[],
+                &mut self.pool,
+                &mut pose,
+            );
+            let x = pose.get_joint_pose(0).unwrap().translation.x;
+            self.pool.release(pose);
+            x
+        }
+
+        fn run(&mut self, frames: usize) -> f32 {
+            let mut x = 0.0;
+            for _ in 0..frames {
+                x = self.step();
+            }
+            x
+        }
+
+        fn state(&self) -> String {
+            self.instance
+                .as_any()
+                .downcast_ref::<AnimationStateMachineInstance>()
+                .unwrap()
+                .current_state_name()
+                .to_string()
+        }
+    }
+
+    fn inertialize_machine(halflife: f32) -> Machine {
+        let bone = Uuid::new_v4();
+        Machine::new(
+            bone,
+            linear_x_clip(bone, 2.0),
+            constant_x_clip(bone, 10.0),
+            constant_x_clip(bone, -5.0),
+            halflife,
+            TransitionBlender::Inertialization,
+        )
+    }
+
+    #[test]
+    fn inertialize_outputs_the_source_pose_on_the_transition_frame() {
+        let mut machine = inertialize_machine(0.3);
+        let before = machine.run(10);
+
+        machine.set("to_b", true);
+        let on_transition = machine.step();
+
+        assert_eq!(machine.state(), "b");
+        assert!(
+            (on_transition - before).abs() < 1e-4,
+            "expected the source pose {before}, got {on_transition}"
+        );
+        assert!((on_transition - 10.0).abs() > 1.0);
+    }
+
+    #[test]
+    fn inertialize_converges_to_the_destination() {
+        let mut machine = inertialize_machine(0.1);
+        machine.run(10);
+        machine.set("to_b", true);
+        machine.step();
+        machine.set("to_b", false);
+
+        let mut previous_distance = f32::MAX;
+        let mut distances = Vec::new();
+        for _ in 0..30 {
+            let distance = (machine.step() - 10.0).abs();
+            distances.push(distance);
+        }
+        for distance in distances {
+            assert!(distance <= previous_distance + 1e-4);
+            previous_distance = distance;
+        }
+
+        let settled = machine.run(600);
+        assert!((settled - 10.0).abs() < 1e-3, "settled at {settled}");
+    }
+
+    #[test]
+    fn inertialize_velocity_step_is_bounded_by_the_destination_velocity() {
+        let mut machine = inertialize_machine(1.0);
+        machine.run(9);
+        let before_last = machine.step();
+        let last = machine.step();
+        let velocity_before = (last - before_last) / MACHINE_FRAME;
+        assert!((velocity_before - 2.0).abs() < 1e-2);
+
+        machine.set("to_b", true);
+        let on_transition = machine.step();
+        machine.set("to_b", false);
+        let after = machine.step();
+        let velocity_after = (after - on_transition) / MACHINE_FRAME;
+
+        let destination_velocity = 0.0;
+        assert!(
+            (velocity_after - velocity_before).abs() <= destination_velocity + 0.5,
+            "velocity went from {velocity_before} to {velocity_after}"
+        );
+    }
+
+    #[test]
+    fn inertialize_into_the_current_state_changes_nothing() {
+        let mut machine = inertialize_machine(0.3);
+        machine.run(5);
+        machine.set("again", true);
+
+        for frame in 6..=30 {
+            let x = machine.step();
+            let expected = 2.0 * frame as f32 * MACHINE_FRAME;
+            assert!(
+                (x - expected).abs() < 1e-3,
+                "frame {frame}: expected {expected}, got {x}"
+            );
+        }
+        assert_eq!(machine.state(), "a");
     }
 }

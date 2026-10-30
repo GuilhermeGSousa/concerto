@@ -30,20 +30,28 @@ impl BlendStack {
         }
     }
 
+    pub(crate) fn collapse(&mut self) {
+        if let Some(top) = self.entries.last_mut() {
+            top.weight = 1.0;
+        }
+        let last = self.entries.len().saturating_sub(1);
+        self.entries.drain(..last);
+    }
+}
+
+impl AnimationTransitionBlender for BlendStack {
     /// The state currently being transitioned into — the single source of truth the FSM reads.
-    pub(crate) fn current(&self) -> GraphId {
+    fn current(&self) -> GraphId {
         self.entries
             .last()
             .expect("blend stack always retains the current graph")
             .graph_id
     }
-}
 
-impl AnimationTransitionBlender for BlendStack {
     fn sample(
-        &self,
+        &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &AnimationGraphInstances,
+        graph_instances: &mut AnimationGraphInstances,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,
@@ -53,7 +61,7 @@ impl AnimationTransitionBlender for BlendStack {
         };
 
         // The settled base pose goes straight into the output...
-        if let Some(graph_instance) = graph_instances.get(base.graph_id) {
+        if let Some(graph_instance) = graph_instances.get_mut(base.graph_id) {
             graph_instance.evaluate(context, bone_ids, pool, output);
         }
 
@@ -61,7 +69,7 @@ impl AnimationTransitionBlender for BlendStack {
         for entry in fading_in {
             let mut layer_pose = pool.acquire();
 
-            if let Some(graph_instance) = graph_instances.get(entry.graph_id) {
+            if let Some(graph_instance) = graph_instances.get_mut(entry.graph_id) {
                 graph_instance.evaluate(context, bone_ids, pool, &mut layer_pose);
             }
 

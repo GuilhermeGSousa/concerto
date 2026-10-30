@@ -8,6 +8,21 @@ impl Pose {
         Pose(vec![JointPose::IDENTITY; bone_count].into_boxed_slice())
     }
 
+    /// The number of joints in this pose.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether this pose has no joints.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The joints of this pose, in bone order.
+    pub fn joints(&self) -> &[JointPose] {
+        &self.0
+    }
+
     pub fn get_joint_pose(&mut self, bone_index: usize) -> Option<&JointPose> {
         self.0.get(bone_index)
     }
