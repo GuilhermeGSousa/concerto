@@ -20,6 +20,7 @@ mod run;
 pub mod scene;
 pub mod shell;
 pub mod tabs;
+pub mod timeline;
 pub mod tools;
 mod tree_items;
 pub mod viewport;
@@ -77,6 +78,7 @@ impl Plugin for EditorPlugin {
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
         app.register_plugin(clip_editor::ClipEditorPlugin);
+        app.register_plugin(timeline::TimelinePlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
             workspace::create_editor_hosts,

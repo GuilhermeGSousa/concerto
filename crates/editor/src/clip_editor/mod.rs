@@ -24,6 +24,7 @@ use crate::{
     preview::PreviewSignals,
     project::ProjectState,
     scene::load_scene,
+    timeline::frame_count,
 };
 use preview::{
     ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
@@ -83,7 +84,7 @@ impl ClipFacts {
         Self {
             duration,
             rate,
-            frames: rate.map(|rate| ((duration * rate).round() as u32).saturating_add(1)),
+            frames: rate.map(|rate| frame_count(duration, rate)),
             clip_bones: clip.target_ids().len(),
             skeleton_bones: 0,
             driven: 0,
@@ -424,6 +425,16 @@ mod tests {
                 skeleton_bones: 0,
                 driven: 0,
             }
+        );
+    }
+
+    #[test]
+    fn the_frames_fact_is_the_timelines_frame_count() {
+        let facts = ClipFacts::of(&clip_of(10));
+
+        assert_eq!(
+            facts.frames,
+            Some(frame_count(facts.duration, facts.rate.unwrap()))
         );
     }
 
