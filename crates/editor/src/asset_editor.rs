@@ -48,7 +48,6 @@ pub struct AssetEditorRegistry {
     creators: BTreeMap<&'static str, Creator>,
 }
 
-/// Checks `name` against the rules for an asset name typed in the editor.
 pub(crate) const MAX_NEW_NUMBER: usize = 999;
 
 pub(crate) fn new_asset_name(kind: &str, number: usize) -> String {
@@ -58,6 +57,7 @@ pub(crate) fn new_asset_name(kind: &str, number: usize) -> String {
     }
 }
 
+/// Checks `name` against the rules for an asset name typed in the editor.
 pub fn valid_asset_name(name: &str) -> Result<(), String> {
     const RESERVED: [&str; 22] = [
         "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",

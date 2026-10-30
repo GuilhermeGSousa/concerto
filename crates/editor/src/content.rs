@@ -657,6 +657,8 @@ fn commit_pending_asset(
     mut state: ResMut<ContentState>,
     mut focused: ResMut<FocusedWidget>,
     mut commands: ResMut<EditorCommands>,
+    highlighted: Query<(Entity, &ContentItem), With<UISelected>>,
+    mut cmd: CommandQueue,
 ) {
     let field = fields.iter().next();
     let on_field = |entity: Entity| field.is_some_and(|(field, _)| field == entity);
@@ -678,6 +680,11 @@ fn commit_pending_asset(
         }
         if state.selected_folder.is_some() {
             state.selected_folder = None;
+        }
+        for (item, content) in highlighted.iter() {
+            if matches!(content.key, ContentKey::Folder(_)) {
+                cmd.remove::<UISelected>(item);
+            }
         }
         return;
     }
@@ -2638,6 +2645,28 @@ mod tests {
         assert!(other.path().join("game/content/Meadow.gasset").is_file());
         assert_eq!(files_under(other.path()).len(), 1);
         assert!(f.files().is_empty());
+    }
+
+    #[test]
+    fn reopening_the_same_project_drops_the_folder_highlight_with_the_selected_folder() {
+        let mut f = level_and_forest();
+        let forest = f.item(&folder("forest"));
+        f.click(forest);
+        let root = f
+            .world
+            .get_resource::<ProjectState>()
+            .unwrap()
+            .project
+            .as_ref()
+            .unwrap()
+            .root
+            .clone();
+
+        send(&mut f.world, ProjectOpened { root });
+        f.refresh();
+
+        assert!(!f.ui_selected(forest));
+        assert_eq!(f.state().selected_folder, None);
     }
 
     #[test]
