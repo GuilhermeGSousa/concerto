@@ -101,6 +101,7 @@ fn a_cuboid_has_its_own_vertices_on_each_face() {
                 .vertices
                 .iter()
                 .filter(|vertex| Vec3::from(vertex.normal) == side)
+                .filter(|vertex| Vec3::from(vertex.pos_coords).dot(side) > 0.0)
                 .count();
             assert_eq!(on_face, 4, "{side}");
         }
@@ -217,4 +218,28 @@ fn a_capsule_with_a_negative_height_is_a_sphere() {
 
     assert_eq!(mesh.vertices.len(), 5 * 9);
     assert_bounds(&mesh, Vec3::ONE);
+}
+
+#[test]
+fn a_cuboid_draws_its_side_faces_upright() {
+    let mesh = cuboid(Vec3::ONE);
+
+    for vertex in mesh
+        .vertices
+        .iter()
+        .filter(|vertex| vertex.normal[1] == 0.0)
+    {
+        let top = vertex.pos_coords[1] > 0.0;
+        assert_eq!(vertex.uv_coords[1], if top { 0.0 } else { 1.0 });
+    }
+}
+
+#[test]
+fn a_shape_of_no_size_keeps_finite_texture_coordinates() {
+    for mesh in [uv_sphere(0.0, 4, 8), capsule(0.0, 0.0, 2, 8)] {
+        assert!(mesh
+            .vertices
+            .iter()
+            .all(|vertex| vertex.uv_coords.iter().all(|value| value.is_finite())));
+    }
 }

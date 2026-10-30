@@ -130,7 +130,7 @@ fn revolve(profile: &[(Vec2, Vec2)], segments: u32) -> Mesh {
     for row in 1..profile.len() {
         travelled[row] = travelled[row - 1] + profile[row].0.distance(profile[row - 1].0);
     }
-    let length = travelled[profile.len() - 1];
+    let length = travelled[profile.len() - 1].max(f32::MIN_POSITIVE);
     let mut mesh = empty();
     for (row, (point, normal)) in profile.iter().enumerate() {
         for column in 0..columns {
