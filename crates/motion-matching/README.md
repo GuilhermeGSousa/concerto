@@ -27,7 +27,9 @@ trajectory.
 ## Motion database
 
 `MotionDatabaseDefinition` says what to bake; `bake` turns it into a
-`MotionDatabase`. Both are assets.
+`MotionDatabase`. Both are assets. The database stores no poses: it stores
+features, the simulation bone, contacts and, per frame, which clip and time the
+frame plays. `MotionDatabase::pose` samples the pose from the clip.
 
 ### Definition
 
@@ -39,6 +41,7 @@ trajectory.
 | `speed` | clip seconds consumed per second of database time | 1.1 |
 | `simulation` | `SimulationBoneSettings` | see below |
 | `contacts` | `ContactSettings` | see below |
+| `trajectory` | `TrajectorySettings`: `sample_dt` (1/3 s) and `sample_count` (3) | 1/3 s, 3 |
 | `channels` | `StoredChannel`s: a registered type name and a reflected value, in feature order | empty |
 
 An entry bakes `floor((end - start) * rate / speed)` frames.
@@ -53,6 +56,11 @@ ground projection smoothed, with the smoothed yaw of the facing joint.
 ground in a frame when its model-space speed is below `speed_threshold`
 (0.15 m/s), after a median filter of `median_window` (6) frames.
 
+`TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
+`sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
+frames ahead: offsets are rounded to whole database frames. A sample past the
+end of an entry's range is clamped to the range's last frame.
+
 ### Bake
 
 ```rust
@@ -61,8 +69,7 @@ let database = bake(&definition, &skeleton, &clips, &registry)?;
 
 `clips` holds one resolved clip per entry, in order; `registry` is the
 `TypeRegistry` that knows the channel types. Each entry is baked on its own, so
-no frame blends across two entries. Root bones are re-expressed relative to the
-simulation bone. `bake` returns `BakeError`:
+no frame blends across two entries. `bake` returns `BakeError`:
 
 | Error | Cause |
 |---|---|
@@ -76,14 +83,45 @@ simulation bone. `bake` returns `BakeError`:
 | `RangeTooShort` | an entry bakes fewer than 2 frames |
 | `InvalidRange` | a range outside its clip, or with `start >= end` |
 | `InvalidWindow` | a window that is even or at most 3 |
-| `InvalidRate`, `InvalidSpeed` | not finite and positive |
+| `InvalidRate`, `InvalidSpeed`, `InvalidSampleDt` | `rate`, `speed` or `trajectory.sample_dt` not finite and positive |
 
 ### Feature channels
 
-A `FeatureChannel` writes `dims()` values per frame from a `FrameContext`
-(skeleton, local and model pose, model velocities, all indexed by skeleton joint, the simulation bone, the
-simulation bones of the whole range and the frame's index in it). The channels
-of a definition are concatenated in order into one feature vector per frame.
+A `FeatureChannel` writes `dims()` values per frame from a `FrameContext`. The
+channels of a definition are concatenated in order into one feature vector per
+frame. `extract_features(&channels, &frame, &mut out)` runs them; `out` must
+hold exactly the sum of their `dims()`. `build_channels` turns a definition's
+`StoredChannel`s into live channels.
+
+`FrameContext` fields:
+
+| Field | Meaning |
+|---|---|
+| `skeleton` | the skeleton |
+| `local_pose` | local `JointPose`s by skeleton joint; parentless joints are re-expressed relative to `simulation` |
+| `model_pose` | model-space `Transform`s by skeleton joint |
+| `model_velocities` | model-space linear velocity by skeleton joint |
+| `simulation` | the simulation bone as a `Transform` |
+| `body` | `BodyMotion`: the simulation bone's `velocity` and `angular_velocity` |
+| `trajectory` | `TrajectorySample`s (position, velocity, rotation) ahead of the frame, future only |
+
+`simulation`, `body` and `trajectory` share one space, and trajectory
+positions are absolute in it, not relative to the frame. A channel that wants
+offsets subtracts `simulation.translation`, or converts with the inverse of
+`simulation`.
+
+The context is filled in two ways:
+
+- Offline, by `bake`, per database frame: the space is the clips' model space.
+  `simulation` is the smoothed simulation bone, `body` its central-difference
+  velocities per database second (one-sided at the ends of a range) and
+  `trajectory` the `TrajectorySettings` samples above.
+- Online, by the runtime query: the space is the world. `simulation` and `body`
+  come from `CharacterSimulation` and `trajectory` is its `trajectory`; pose
+  and velocities come from the animation system.
+
+Because both fills go through the same `extract`, a channel written in terms of
+the inverse of `simulation` yields the same features in both.
 
 ```rust
 #[derive(Reflect, Default)]
@@ -96,7 +134,7 @@ impl FeatureChannel for RootSpeed {
     fn dims(&self) -> usize { 1 }
 
     fn extract(&self, frame: &FrameContext, out: &mut [f32]) {
-        out[0] = frame.model_velocities[0].length() * self.scale;
+        out[0] = frame.body.velocity.length() * self.scale;
     }
 }
 
@@ -108,21 +146,29 @@ A channel needs `Reflect` and `Default`. The registered type name is what a
 
 ### Layout
 
-`MotionDatabase` is dense and frame-major. Bone 0 is the simulation bone; bone
-`i + 1` is skeleton joint `i`, and `names` and `parents` follow that numbering
-(a parentless joint has parent 0).
+`MotionDatabase` fields are private; read it through accessors. Frames are
+dense and frame-major. Nothing is indexed by a database-only bone numbering:
+every bone index is a skeleton joint index.
 
-- `positions`, `rotations`, `velocities`, `angular_velocities`: `bone_count`
-  entries per frame, local to the parent; root joints are relative to the
-  simulation bone. `pose(frame)` slices them.
-- `contact_bones`: database bone indices (skeleton joint index + 1), not
-  skeleton joint indices. `contacts` holds one `bool` per contact bone per
-  frame, in that order; `contacts(frame)` slices it.
-- `range_starts`, `range_stops`: the frames of each entry, half-open;
-  `range_of(frame)` finds the entry.
-- `features`, `feature_dims`: `feature_dims` values per frame;
-  `features(frame)` slices them. `channels` lists each `ChannelSpan`
-  (`type_name`, `offset`, `dims`).
+- `skeleton()`, `bone_count()`, `clips()`: the skeleton handle, its bone count
+  at bake time and one clip handle per entry, in entry order.
+- `rate()`, `speed()`, `trajectory()`: the sampling the bake used.
+- `frame_count()`; `entry_of(frame)`, `range_of(frame)`: the entry holding a
+  frame and its half-open frame range.
+- `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
+  `clip_start + (frame - range_start) * speed / rate`.
+- `simulation(frame)`: the simulation bone, a `Transform` in model space.
+- `contact_bones()`: skeleton joint indices. `contacts(frame)` is one `bool`
+  per contact bone, in that order.
+- `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
+  per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
+  `dims`).
+
+`pose(frame, &skeleton, &clips)` samples the frame's local pose from
+`clips[entry]` at `clip_time` and re-expresses each parentless joint relative
+to the simulation bone. `clips` is one clip per entry, as given to `bake`. It
+returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
+`Err(FrameOutOfRange)` instead of panicking.
 
 ## Systems
 
