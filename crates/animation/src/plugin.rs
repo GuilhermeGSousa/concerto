@@ -1,5 +1,5 @@
 use concerto_app::{edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
-use concerto_ecs::reflect::AppTypeRegistry;
+use concerto_ecs::{reflect::AppTypeRegistry, IntoSystemConfig};
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::TypeRegistry;
