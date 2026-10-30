@@ -874,7 +874,7 @@ mod tests {
         let (mut header, bytes) =
             concerto_foundation::assets::content::read_content_asset(&file).unwrap();
         header.provenance = None;
-        std::fs::write(&path, write_content_asset(&header, &bytes).unwrap()).unwrap();
+        std::fs::write(&path, write_content_asset(&header, bytes).unwrap()).unwrap();
     }
 
     #[test]
