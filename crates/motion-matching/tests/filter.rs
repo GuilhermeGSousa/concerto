@@ -22,7 +22,7 @@ fn reproduces_a_cubic_including_the_edges() {
 
 #[test]
 fn reduces_the_variance_of_a_noisy_line() {
-    let noise = |i: usize| if i % 2 == 0 { 0.5 } else { -0.5 };
+    let noise = |i: usize| if i.is_multiple_of(2) { 0.5 } else { -0.5 };
     let values: Vec<f32> = (0..60).map(|i| 0.1 * i as f32 + noise(i)).collect();
     let smoothed = savitzky_golay(&values, 11, 3).unwrap();
     let residual = |series: &[f32]| -> Vec<f32> {

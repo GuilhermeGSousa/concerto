@@ -7,7 +7,7 @@ use concerto_motion_matching::bake::{
 };
 use concerto_motion_matching::{
     BakeError, ContactSettings, FeatureChannel, FrameContext, MotionDatabaseDefinition,
-    MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
+    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};

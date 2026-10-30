@@ -2,7 +2,7 @@ use crate::database::BakeError;
 
 /// Smooths `values` with a Savitzky-Golay filter, fitting a polynomial over the first or last window at the edges.
 pub fn savitzky_golay(values: &[f32], window: usize, order: usize) -> Result<Vec<f32>, BakeError> {
-    if window % 2 == 0 || window <= 3 {
+    if window.is_multiple_of(2) || window <= 3 {
         return Err(BakeError::InvalidWindow {
             name: "smoothing",
             window,
@@ -13,7 +13,7 @@ pub fn savitzky_golay(values: &[f32], window: usize, order: usize) -> Result<Vec
         return Ok(Vec::new());
     }
     let mut window = window.min(count);
-    if window % 2 == 0 {
+    if window.is_multiple_of(2) {
         window -= 1;
     }
     let order = order.min(window - 1);

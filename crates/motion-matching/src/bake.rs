@@ -119,7 +119,7 @@ pub fn model_pose(skeleton: &Skeleton, local: &[JointPose]) -> Vec<Transform> {
 }
 
 fn check_window(name: &'static str, window: usize) -> Result<(), BakeError> {
-    if window % 2 == 0 || window <= 3 {
+    if window.is_multiple_of(2) || window <= 3 {
         return Err(BakeError::InvalidWindow { name, window });
     }
     Ok(())
@@ -133,7 +133,7 @@ fn find_joint(skeleton: &Skeleton, name: &str) -> Result<usize, BakeError> {
 
 fn smooth(values: &[f32], window: usize) -> Result<Vec<f32>, BakeError> {
     let mut window = window.min(values.len());
-    if window % 2 == 0 {
+    if window.is_multiple_of(2) {
         window = window.saturating_sub(1);
     }
     if window <= 3 {
