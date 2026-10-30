@@ -325,23 +325,23 @@ fn open_asset(
             .iter()
             .find(|(_, document)| document.asset_type == kind)
             .map(|(entity, _)| entity);
-        if let Some(entity) = document {
-            if let Some((_, mut shown)) = documents.get_entity(entity) {
-                if shown
-                    .current
-                    .as_ref()
-                    .is_some_and(|current| current.id == asset.id)
-                {
-                    reply.ok(opened(&asset, entity));
-                    continue;
-                }
-                if shown
-                    .failed
-                    .as_ref()
-                    .is_some_and(|failed| failed.id == asset.id)
-                {
-                    shown.failed = None;
-                }
+        if let Some(entity) = document
+            && let Some((_, mut shown)) = documents.get_entity(entity)
+        {
+            if shown
+                .current
+                .as_ref()
+                .is_some_and(|current| current.id == asset.id)
+            {
+                reply.ok(opened(&asset, entity));
+                continue;
+            }
+            if shown
+                .failed
+                .as_ref()
+                .is_some_and(|failed| failed.id == asset.id)
+            {
+                shown.failed = None;
             }
         }
         cmd.spawn((
