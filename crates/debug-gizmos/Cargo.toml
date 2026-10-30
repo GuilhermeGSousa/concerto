@@ -15,6 +15,7 @@ concerto-foundation.workspace = true
 concerto-ecs.workspace = true
 concerto-render.workspace = true
 concerto-color.workspace = true
+concerto-mesh.workspace = true
 glam = { version = "0.30.1" }
 bytemuck = { version = "1.22.0", features = ["derive"] }
 wgpu = { version = "24.0.1", default-features = false, features = [

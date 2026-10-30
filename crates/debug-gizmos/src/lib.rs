@@ -21,6 +21,7 @@ pub mod gizmos;
 pub mod pipeline;
 pub mod plugin;
 pub mod render;
+mod skeleton;
 pub mod storage;
 pub mod vertex;
 

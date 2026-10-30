@@ -1,9 +1,10 @@
 use concerto_app::{
     Plugin,
     edit_time::AtEditTime,
-    schedule_groups::{Extract, First, Render},
+    schedule_groups::{Extract, First, LateUpdate, Render},
 };
 use concerto_ecs::IntoSystemConfig;
+use concerto_foundation::transform::systems::propagate_global_transforms;
 use concerto_render::{
     device::RenderDevice, layouts::CameraLayout, resources::RenderContext, sets::RenderSet,
 };
@@ -11,6 +12,7 @@ use concerto_render::{
 use crate::{
     pipeline::GizmoPipeline,
     render::{clear_gizmos, extract_gizmos, render_gizmos},
+    skeleton::draw_skeleton_gizmos,
     storage::{GizmoStorage, RenderGizmos},
 };
 
@@ -28,6 +30,12 @@ impl Plugin for DebugGizmosPlugin {
     fn build(&self, app: &mut concerto_app::App) {
         app.insert_resource(GizmoStorage::default());
         app.add_system(First, clear_gizmos.at_edit_time());
+        app.add_system(
+            LateUpdate,
+            draw_skeleton_gizmos
+                .after(propagate_global_transforms)
+                .at_edit_time(),
+        );
         app.render_mut().insert_resource(RenderGizmos::default());
         app.add_render_system(Extract, extract_gizmos)
             .add_render_system(Render, render_gizmos.in_set(RenderSet::Overlay));
@@ -54,5 +62,57 @@ impl Plugin for DebugGizmosPlugin {
         let pipeline = GizmoPipeline::new(device, camera_layout, surface_format);
 
         app.render_mut().insert_resource(pipeline);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_app::{App, edit_time::EditTime, schedule_groups::LateUpdate};
+    use concerto_ecs::{
+        component::scene::SceneEntityRef,
+        entity::hierarchy::ChildOf,
+        system::{
+            executor::single_thread::SingleThreadedExecutor,
+            schedule::Schedules,
+            tag::{SystemTag, TagFilter},
+        },
+    };
+    use concerto_foundation::transform::GlobalTransform;
+    use concerto_mesh::{SkeletonComponent, SkeletonGizmo};
+    use glam::{Mat4, Vec3};
+
+    use super::DebugGizmosPlugin;
+    use crate::GizmoStorage;
+
+    #[test]
+    fn the_plugin_draws_skeleton_gizmos_in_late_update_at_edit_time() {
+        let mut app = App::for_editing();
+        app.register_plugin(DebugGizmosPlugin);
+        let world = app.main_mut().world_mut();
+        let hip = world.spawn(GlobalTransform::new(Mat4::from_translation(Vec3::Y)));
+        let knee = world.spawn((
+            GlobalTransform::new(Mat4::from_translation(Vec3::Y * 0.5)),
+            ChildOf::new(hip),
+        ));
+        world.spawn((
+            SkeletonComponent::new(
+                Default::default(),
+                vec![SceneEntityRef::Entity(hip), SceneEntityRef::Entity(knee)],
+                None,
+            ),
+            SkeletonGizmo::default(),
+        ));
+        let schedules = world.remove_resource::<Schedules>().unwrap();
+        let edit_time = TagFilter {
+            include: vec![EditTime.intern()],
+            exclude: Vec::new(),
+        };
+        let compiled = schedules.compile_filtered::<SingleThreadedExecutor>(world, &edit_time);
+        world.insert_resource(compiled);
+
+        world.run_schedule(LateUpdate);
+
+        let storage = world.get_resource::<GizmoStorage>().unwrap();
+        assert!(!storage.vertices.is_empty());
     }
 }

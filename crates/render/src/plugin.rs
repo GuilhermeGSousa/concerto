@@ -113,7 +113,8 @@ impl Plugin for RenderPlugin {
             .register_type::<SyncWithRenderWorld>()
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
-            .register_type::<concerto_mesh::SkeletonComponent>();
+            .register_type::<concerto_mesh::SkeletonComponent>()
+            .register_type::<concerto_mesh::SkeletonGizmo>();
         register_sync_requirements(app);
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
