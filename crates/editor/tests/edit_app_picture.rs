@@ -2,10 +2,12 @@
 use concerto_app::App;
 use concerto_editor::{
     hosted::{HostRequest, HostRole, begin},
+    preview::PreviewPlugin,
     tools::EditToolsPlugin,
 };
 use concerto_render::{gpu::Gpu, wgpu};
 use concerto_window::events::WindowEvent;
+use concerto_world_grid::WorldGrid;
 
 fn game(app: &mut App) {
     app.register_plugin(concerto::DefaultPlugins);
@@ -93,4 +95,45 @@ fn an_edit_app_draws_into_its_picture_and_follows_a_resize() {
     }
     let size = hosted.picture().get().unwrap().texture().size();
     assert_eq!((size.width, size.height), (128, 32));
+}
+
+#[test]
+fn a_preview_app_of_a_game_that_renders_has_a_grid_and_draws_into_its_picture() {
+    let Some(gpu) = gpu() else {
+        return;
+    };
+    let pending = begin(
+        HostRequest {
+            gpu: Some(&gpu),
+            recipe: game,
+            size: (64, 48),
+            scale_factor: 1.0,
+            role: HostRole::Preview,
+            clipboard: None,
+        },
+        |app| {
+            app.register_plugin(PreviewPlugin);
+        },
+        |_| {},
+    );
+    let mut hosted = concerto_editor::hosted::finish_blocking(pending);
+
+    for _ in 0..3 {
+        hosted.step_for_test();
+    }
+
+    let world = hosted.world_for_test();
+    let grids = world
+        .archetypes()
+        .iter()
+        .flat_map(|archetype| archetype.entities())
+        .filter(|entity| {
+            world
+                .get_component_for_entity::<WorldGrid>(**entity)
+                .is_some()
+        })
+        .count();
+    assert_eq!(grids, 1);
+    let drawn = hosted.picture().get().expect("the preview drew");
+    assert_ne!(first_pixel(&gpu, drawn.texture())[3], 0);
 }

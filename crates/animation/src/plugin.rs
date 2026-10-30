@@ -1,4 +1,4 @@
-use concerto_app::{plugins::Plugin, schedule_groups::LateUpdate};
+use concerto_app::{edit_time::AtPreviewTime, plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_mesh::skeleton::Skeleton;
 
 use crate::{
@@ -18,9 +18,9 @@ impl Plugin for AnimationPlugin {
         app.register_asset::<AnimationGraph>();
         app.register_asset::<Skeleton>();
 
-        app.add_system(LateUpdate, initialize_skeletons)
-            .add_system(LateUpdate, animate_targets)
-            .add_system(LateUpdate, initialize_animation_players)
-            .add_system(LateUpdate, update_animation_players);
+        app.add_system(LateUpdate, initialize_skeletons.at_preview_time())
+            .add_system(LateUpdate, animate_targets.at_preview_time())
+            .add_system(LateUpdate, initialize_animation_players.at_preview_time())
+            .add_system(LateUpdate, update_animation_players.at_preview_time());
     }
 }

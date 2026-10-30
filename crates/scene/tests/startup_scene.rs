@@ -45,3 +45,8 @@ fn an_edit_app_does_not_spawn_the_startup_scene() {
 fn without_a_declaration_nothing_is_spawned() {
     assert_eq!(spawners_after_startup(App::new(), false), 0);
 }
+
+#[test]
+fn a_preview_app_does_not_spawn_the_startup_scene() {
+    assert_eq!(spawners_after_startup(App::for_previewing(), true), 0);
+}
