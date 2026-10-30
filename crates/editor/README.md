@@ -97,8 +97,9 @@ viewport need an open scene. These six look.
 `open_project` opens `path` and answers once the catalogue is read.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
 editor: a scene answers once it has loaded, and at once if it is already shown;
-another kind answers once its document exists, and a kind with no editor
-answers `open_failed`. `close_document` closes the document `status` lists as
+another kind answers once its document exists, or `open_failed` with the
+document's status if the load failed, and a kind with no editor answers
+`open_failed`. `close_document` closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
 documents, once the prompt has closed, unless it says `unsaved`: `"discard"`

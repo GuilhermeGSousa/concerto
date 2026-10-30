@@ -108,6 +108,7 @@ fn document_of(world: &mut World, asset_type: &'static str, order: u64) -> Entit
         pending: None,
         order,
         status: String::new(),
+        failed: None,
     })
 }
 fn tick(app: &mut App) {
