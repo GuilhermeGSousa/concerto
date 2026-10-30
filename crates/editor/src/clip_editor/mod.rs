@@ -105,6 +105,10 @@ impl AssetEditor for AnimationClipEditor {
             build: clip_preview,
         })
     }
+
+    fn bottom_host(&self) -> bool {
+        true
+    }
 }
 
 pub(crate) fn sync_clip_preview(
@@ -262,6 +266,16 @@ mod tests {
     use preview::SetClipTransport;
     use std::time::{Duration, Instant};
     use uuid::Uuid;
+
+    #[test]
+    fn a_clip_tab_gets_a_bottom_host() {
+        let mut editors = AssetEditorRegistry::default();
+        editors
+            .register::<AnimationClip, AnimationClipEditor>()
+            .unwrap();
+        assert!(editors.bottom_host(AnimationClip::name()));
+        assert!(!editors.bottom_host("no editor"));
+    }
 
     fn keys(seconds: usize) -> AnimationChannel {
         let times: Vec<f32> = (0..=seconds * 30).map(|key| key as f32 / 30.0).collect();

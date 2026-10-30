@@ -747,6 +747,13 @@ components. Content browser and Chatter remain shared. Tag additional owned
 roots with `EditorOwned(document)` so closing the editor cleans them up
 recursively. Headless hosts have no UI containers.
 
+An editor that returns `true` from `AssetEditor::bottom_host`, which is `false`
+unless it says otherwise, also gets `EditorHosts::bottom`: a panel 132 px high
+in the `Foot` region, above Chatter, shown while its document is active. It
+spans the space between the cards and sits over the viewport, which keeps its
+full size, as it does under the cards. Chatter stays visible on every tab. A
+Scene document gets no `bottom` host.
+
 The [complete custom asset editor example](examples/custom_asset.rs) loads a
 non-Clone Dialogue asset, builds its own text widget, replaces its contents,
 rejects invalid input without mutation, hosts a preview of a cube that it sets
@@ -823,9 +830,9 @@ None of the scene tools are added.
 
 The preview shows in the shared viewport, which stands in for the document's
 `canvas` host: a previewing document gets `left` and `inspector` hosts and no
-`canvas`. Build the editor's own controls in those two hosts; the hierarchy and
-inspector panels are hidden on a preview tab, as on any custom editor's tab. A
-preview carries only `ViewportTarget`, which the viewport shows, routes input
+`canvas`. Build the editor's own controls in those two hosts, and in `bottom`
+when the editor asks for it; the hierarchy and inspector panels are hidden on a
+preview tab, as on any custom editor's tab. A preview carries only `ViewportTarget`, which the viewport shows, routes input
 to, and steps, and never `EditTarget`, which `EditWorld<T>` and
 `EditWorldSignals` read. A preview is stepped only while its tab is in front
 and the viewport is shown; a preview in the background is frozen.
