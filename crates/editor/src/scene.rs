@@ -88,7 +88,7 @@ pub struct SaveFailed {
     pub message: String,
 }
 
-/// What every edit `App` is built from.
+/// What every edit, play and preview `App` is built from.
 #[derive(Resource, Clone)]
 pub struct SceneRecipe {
     pub recipe: fn(&mut App),
@@ -187,7 +187,10 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(forget_discarded_edits);
 }
 
-fn forget_discarded_edits(on: On<DiscardEdits>, documents: Query<&mut HostedApp>) {
+fn forget_discarded_edits(
+    on: On<DiscardEdits>,
+    documents: Query<&mut HostedApp, With<SceneEditorState>>,
+) {
     if let Some(mut hosted) = documents.get_entity(on.signal().0) {
         hosted.mark_saved();
     }
@@ -388,6 +391,11 @@ fn play(on: On<Play>, world: &mut World) {
     }
     let Some(loading) = world
         .get_component_for_entity::<EditorDocument>(document)
+        .filter(|_| {
+            world
+                .get_component_for_entity::<SceneEditorState>(document)
+                .is_some()
+        })
         .map(|doc| doc.pending.is_some())
     else {
         refuse_play(world, document, "No scene is open");

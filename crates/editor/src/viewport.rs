@@ -1,4 +1,4 @@
-//! The viewport panel: shows the edit target's picture and tells the host where it is.
+//! The viewport panel: shows the active document's picture and tells the host where it is.
 use concerto_app::{
     App, Plugin,
     schedule_groups::{First, LateUpdate, Startup, Update},
@@ -52,10 +52,7 @@ impl Plugin for ViewportPlugin {
         app.add_system(Startup, build_panel)
             .add_system(Update, viewport_shortcuts)
             .add_system(LateUpdate, sync_viewport_context)
-            .add_system(
-                LateUpdate,
-                show_edit_target_picture.before(UiSet::Materials),
-            )
+            .add_system(LateUpdate, show_active_picture.before(UiSet::Materials))
             .add_system(LateUpdate, show_input_owner.before(UiSet::Materials))
             .add_system(
                 First,
@@ -104,7 +101,7 @@ pub fn spawn_panel(cmd: &mut CommandQueue, parent: Entity) -> Entity {
         .entity()
 }
 
-fn show_edit_target_picture(
+fn show_active_picture(
     active: Res<ActiveEditor>,
     hosted: Query<&HostedApp>,
     viewports: Query<(&ViewportRegion, &mut UISharedViewport, &mut UIMaterial)>,
@@ -418,7 +415,7 @@ mod tests {
         ));
         let shows = |world: &mut World, document: Option<Entity>| {
             world.get_resource_mut::<ActiveEditor>().unwrap().0 = document;
-            run(world, show_edit_target_picture);
+            run(world, show_active_picture);
             let shown = world
                 .get_component_for_entity::<UISharedViewport>(panel)
                 .unwrap()
@@ -442,7 +439,7 @@ mod tests {
 
         let bare = world.spawn(());
         world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(bare);
-        run(&mut world, show_edit_target_picture);
+        run(&mut world, show_active_picture);
         assert!(
             world
                 .get_component_for_entity::<UISharedViewport>(panel)
@@ -463,7 +460,7 @@ mod tests {
         build.initialize(&mut world);
         build.run_and_apply((), &mut world);
         let colour = |world: &mut World| {
-            run(world, show_edit_target_picture);
+            run(world, show_active_picture);
             world
                 .query::<(&ViewportRegion, &UIMaterial), ()>()
                 .iter(world)

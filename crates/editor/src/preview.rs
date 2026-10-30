@@ -183,7 +183,9 @@ impl Plugin for PreviewHostPlugin {
             .add_system(Update, (open_previews, report_preview_failures))
             .add_system(
                 First,
-                deliver_preview_signals.before(hosted::input::step_viewport_target),
+                deliver_preview_signals
+                    .after(hosted::finish_pending)
+                    .before(hosted::input::step_viewport_target),
             );
     }
 }
@@ -337,9 +339,14 @@ fn orbit_camera(
 mod tests {
     use super::*;
     use crate::{
-        asset_editor::{AssetEditorCommand, Unsaved},
-        hosted::{EditTarget, PlayState, StopPlay, ViewportTarget, input::InViewport, testing::*},
+        asset_editor::{AssetEditorCommand, Unsaved, finish_asset_request},
+        guard::DiscardEdits,
+        hosted::{
+            EditTarget, PendingPlayApp, PlayFailed, PlayState, StopPlay, ViewportTarget,
+            input::InViewport, testing::*,
+        },
         scene::Play,
+        tools::scene::SceneDirty,
     };
     use concerto_ecs::{Changed, IntoSystem, System, events::event_channel::EventChannel};
     use concerto_foundation::assets::Asset;
@@ -611,17 +618,102 @@ mod tests {
     #[test]
     fn a_signal_to_a_closed_document_or_one_without_a_preview_is_dropped() {
         let mut f = SceneFixture::new();
-        let scene = f.open();
+        let plain = f.request_kind(PlainAsset::name());
         let preview = f.open_preview();
         f.close(preview);
         f.frame();
 
         send(&mut f.world, preview, 1);
-        send(&mut f.world, scene, 2);
+        send(&mut f.world, plain, 2);
         f.frame();
 
         assert_eq!(queued(&f), 0);
-        assert!(f.scene_world(scene).get_resource::<Said>().is_none());
+    }
+
+    #[test]
+    fn a_signal_aimed_at_a_scene_document_does_not_reach_its_app() {
+        let mut f = SceneFixture::new();
+        let scene = f.open();
+        let world = f.scene_world_mut(scene);
+        world.insert_resource(Said::default());
+        world.add_listener(remember_said);
+
+        send(&mut f.world, scene, 2);
+        f.frame();
+
+        assert!(said(&f, scene).is_empty());
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn a_signal_to_a_failed_preview_is_dropped() {
+        let mut f = SceneFixture::new();
+        let document = f.request_kind(BrokenPreviewAsset::name());
+        f.frames_until("the failure was never reported", |f| {
+            f.world
+                .get_component_for_entity::<PreviewFailed>(document)
+                .is_some()
+        });
+
+        send(&mut f.world, document, 1);
+        f.frame();
+
+        assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn a_play_on_a_preview_document_is_refused_and_leaves_the_preview_in_place() {
+        let mut f = SceneFixture::new();
+        let preview = f.open_preview();
+        let asset = f.document(preview).pending.clone().unwrap();
+        let document = f
+            .world
+            .get_component_for_entity_mut::<EditorDocument>(preview)
+            .unwrap();
+        assert!(finish_asset_request(document, &asset, Ok(())));
+        let status = f.status(preview);
+
+        f.world.trigger(Play(preview));
+        for _ in 0..3 {
+            f.frame();
+        }
+
+        assert_eq!(
+            f.world
+                .get_component_for_entity::<HostedApp>(preview)
+                .unwrap()
+                .role(),
+            HostRole::Preview
+        );
+        assert_eq!(markers(&f, preview), (true, false));
+        assert!(
+            f.world
+                .get_component_for_entity::<PendingPlayApp>(preview)
+                .is_none()
+        );
+        assert_eq!(f.play_state(preview), None);
+        assert_eq!(f.status(preview), status);
+        assert_eq!(
+            f.written::<PlayFailed>(),
+            [PlayFailed {
+                document: preview,
+                message: "No scene is open".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn discarding_a_preview_documents_edits_leaves_its_world_without_a_scene_flag() {
+        let mut f = SceneFixture::new();
+        let preview = f.open_preview();
+
+        f.world.trigger(DiscardEdits(preview));
+
+        assert!(
+            f.scene_world(preview)
+                .get_resource::<SceneDirty>()
+                .is_none()
+        );
     }
 
     #[derive(Resource)]
@@ -726,6 +818,15 @@ mod tests {
             self.orbit()
         }
 
+        fn wheel(&mut self, delta: ScrollDelta) -> OrbitCamera {
+            self.world
+                .get_resource_mut::<EventChannel<WindowEvent>>()
+                .unwrap()
+                .push_event(WindowEvent::MouseWheel { delta });
+            self.run();
+            self.orbit()
+        }
+
         fn orbit(&self) -> OrbitCamera {
             *self
                 .world
@@ -754,15 +855,7 @@ mod tests {
             (start.target, start.distance)
         );
 
-        orbit
-            .world
-            .get_resource_mut::<EventChannel<WindowEvent>>()
-            .unwrap()
-            .push_event(WindowEvent::MouseWheel {
-                delta: ScrollDelta::Lines(Vec2::new(0.0, 1.0)),
-            });
-        orbit.run();
-        let zoomed = orbit.orbit();
+        let zoomed = orbit.wheel(ScrollDelta::Lines(Vec2::Y));
         assert!(zoomed.distance < orbited.distance);
         assert_eq!((zoomed.yaw, zoomed.target), (orbited.yaw, orbited.target));
 
@@ -777,6 +870,25 @@ mod tests {
             .get_component_for_entity::<Transform>(orbit.camera)
             .unwrap();
         assert_eq!(transform.translation, panned.translation());
+    }
+
+    #[test]
+    fn a_wheel_in_pixels_zooms_one_notch_every_thirty_two_pixels() {
+        let lines = Orbit::new().wheel(ScrollDelta::Lines(Vec2::Y));
+        let pixels = Orbit::new().wheel(ScrollDelta::Pixels(Vec2::new(0.0, 32.0)));
+
+        assert_eq!(pixels.distance, lines.distance);
+    }
+
+    #[test]
+    fn the_wheel_keeps_the_distance_between_its_limits() {
+        let mut orbit = Orbit::new();
+
+        let nearest = orbit.wheel(ScrollDelta::Lines(Vec2::Y * 1000.0));
+        assert_eq!(nearest.distance, MIN_DISTANCE);
+
+        let farthest = orbit.wheel(ScrollDelta::Lines(Vec2::Y * -1000.0));
+        assert_eq!(farthest.distance, MAX_DISTANCE);
     }
 
     #[test]
@@ -807,8 +919,7 @@ mod tests {
         assert!(app.get_resource::<PreviewSignalQueue>().is_some());
     }
 
-    #[test]
-    fn preview_signals_reach_a_preview_in_an_editor_app_built_with_the_host() {
+    fn editor_app() -> (App, Entity) {
         let mut app = App::new();
         app.register_plugin(concerto_app::main_schedule::MainSchedulePlugin)
             .register_plugin(concerto_app::plugins::TimePlugin)
@@ -847,37 +958,81 @@ mod tests {
             .get_resource_mut::<crate::asset_editor::ActiveEditor>()
             .unwrap()
             .0 = Some(document);
-        send(world, document, 5);
+        (app, document)
+    }
 
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        loop {
-            app.update();
-            let heard = app
-                .main()
-                .world()
-                .get_component_for_entity::<HostedApp>(document)
-                .and_then(|hosted| hosted.world_for_test().get_resource::<Said>())
-                .is_some_and(|said| said.0.iter().any(|(value, _)| *value == 5));
-            if heard {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "the signal never arrived"
-            );
-            std::thread::sleep(std::time::Duration::from_millis(1));
-        }
-        let hosted = app
-            .main()
+    fn preview_world(app: &App, document: Entity) -> Option<&World> {
+        app.main()
             .world()
             .get_component_for_entity::<HostedApp>(document)
-            .unwrap();
-        assert_eq!(hosted.role(), HostRole::Preview);
+            .map(HostedApp::world_for_test)
+    }
+
+    fn update_until_built(app: &mut App, document: Entity) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while preview_world(app, document).is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the preview was never built"
+            );
+            app.update();
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+
+    fn frames_in(app: &App, document: Entity) -> usize {
+        preview_world(app, document)
+            .unwrap()
+            .get_resource::<Frames>()
+            .unwrap()
+            .0
+    }
+
+    fn said_in(app: &App, document: Entity) -> Vec<(u32, usize)> {
+        preview_world(app, document)
+            .unwrap()
+            .get_resource::<Said>()
+            .unwrap()
+            .0
+            .clone()
+    }
+
+    #[test]
+    fn a_waiting_signal_reaches_the_preview_before_its_first_step_in_the_editors_schedule() {
+        let (mut app, document) = editor_app();
+        send(app.main_mut().world_mut(), document, 5);
+
+        update_until_built(&mut app, document);
+
+        assert_eq!(said_in(&app, document), [(5, 0)]);
+        assert_eq!(frames_in(&app, document), 1);
+        let world = app.main().world();
+        assert_eq!(
+            world
+                .get_component_for_entity::<HostedApp>(document)
+                .unwrap()
+                .role(),
+            HostRole::Preview
+        );
         assert!(
-            app.main()
-                .world()
+            world
                 .get_component_for_entity::<ViewportTarget>(document)
                 .is_some()
         );
+    }
+
+    #[test]
+    fn a_signal_reaches_the_preview_before_its_next_step_in_the_editors_schedule() {
+        let (mut app, document) = editor_app();
+        update_until_built(&mut app, document);
+        app.update();
+        let frames = frames_in(&app, document);
+        assert!(frames > 0);
+
+        send(app.main_mut().world_mut(), document, 7);
+        app.update();
+
+        assert_eq!(said_in(&app, document), [(7, frames)]);
+        assert_eq!(frames_in(&app, document), frames + 1);
     }
 }

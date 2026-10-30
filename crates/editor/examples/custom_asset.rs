@@ -1,11 +1,11 @@
-//! A downstream asset editor. Run with `cargo run -p editor --example custom_asset`.
+//! A downstream asset editor. Run with `cargo run -p concerto-editor --example custom_asset`.
 use anyhow::Result;
 use concerto_app::{
     App,
     edit_time::AtPreviewTime,
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin},
-    schedule_groups::Update,
+    schedule_groups::{Startup, Update},
 };
 use concerto_ecs::{
     Component, Entity, IntoSystem, Query, Res, System,
@@ -134,10 +134,17 @@ fn unit_cube() -> Mesh {
 }
 
 fn dialogue_preview(app: &mut App) {
-    let drawn = app
-        .get_resource::<AssetServer>()
-        .filter(|server| server.is_registered::<Mesh>())
-        .map(|server| {
+    app.add_system(Startup, spawn_cube.at_preview_time())
+        .add_system(Update, spin_cubes.at_preview_time())
+        .add_listener(set_spin.at_preview_time());
+}
+
+fn spawn_cube(server: Option<Res<AssetServer>>, mut cmd: CommandQueue) {
+    let cube = cmd
+        .spawn((Transform::IDENTITY, Spin { speed: 0.0 }))
+        .entity();
+    if let Some(server) = server.filter(|server| server.is_registered::<Mesh>()) {
+        cmd.insert(
             (
                 MeshComponent {
                     handle: server.add(unit_cube()),
@@ -145,16 +152,10 @@ fn dialogue_preview(app: &mut App) {
                 MaterialComponent::<StandardMaterial> {
                     handle: server.add(StandardMaterial::default()),
                 },
-            )
-        });
-    let world = app.main_mut().world_mut();
-    world.register_component::<Transform>();
-    let cube = world.spawn((Transform::IDENTITY, Spin { speed: 0.0 }));
-    if let Some(drawn) = drawn {
-        world.insert(drawn, cube);
+            ),
+            cube,
+        );
     }
-    app.add_system(Update, spin_cubes.at_preview_time())
-        .add_listener(set_spin.at_preview_time());
 }
 
 fn spin_cubes(time: Res<Time>, cubes: Query<(&Spin, &mut Transform)>) {

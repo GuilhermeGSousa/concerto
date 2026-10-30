@@ -100,9 +100,10 @@ code they describe changes.
 an extract system, `Extracted`. In the editor crate a system may also take
 `EditWorld<T>`, which reads the world of the scene being edited, or of the running
 game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
-the system while no document is the edit target: no scene is open, or its game
-is starting. Nothing
-else reaches that world. Do not write a system that takes `&World` or
+the system while no document is the edit target: no scene is open, a preview is
+in front, or its game is starting. Nothing
+else reaches that world. An editor system may also take `PreviewSignals`, which
+sends signals to the preview `App` of a document it names. Do not write a system that takes `&World` or
 `&mut World`. Work that needs the whole world goes through commands, so it runs
 with exclusive access when the queue is applied: the typed `CommandQueue`
 methods (`spawn`, `insert`, `remove`, `despawn`, `insert_resource`), or

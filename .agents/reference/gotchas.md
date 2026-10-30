@@ -76,8 +76,8 @@ fix the entry in the same commit as the change that made it false.
 - **A lifecycle callback maintains data and is not game behaviour.** It runs in
   every `App`. Put behaviour in a system or a listener.
 - **A plugin's `build` may check `app.is_editing()` only to skip resources that
-  its unmarked systems alone use.** Anything else it builds the same way in both
-  roles.
+  its unmarked systems alone use.** Anything else it builds the same way in
+  every role.
 - **`SystemLocal<T>` needs `T: FromWorld`,** and its field is private. Give the
   local type a named field and implement `FromWorld` for it.
 - **An entity carries one `Listener<S>` per signal type.** Two features that

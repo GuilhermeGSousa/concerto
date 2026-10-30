@@ -767,20 +767,18 @@ None of the scene tools are added.
 
 The preview shows in the shared viewport, which stands in for the document's
 `canvas` host: a previewing document gets `left` and `inspector` hosts and no
-`canvas`. Build the editor's own controls in those two hosts. The hierarchy and
-inspector panels have nothing to show for a preview tab: a preview carries only
-`ViewportTarget`, which the viewport shows, routes input to, and steps, and
-never `EditTarget`, which `EditWorld<T>` and `EditWorldSignals` read. A preview
-is stepped only while its tab is in front and the viewport is shown; a preview
-in the background is frozen.
+`canvas`. Build the editor's own controls in those two hosts; the hierarchy and
+inspector panels are hidden on a preview tab, as on any custom editor's tab. A
+preview carries only `ViewportTarget`, which the viewport shows, routes input
+to, and steps, and never `EditTarget`, which `EditWorld<T>` and
+`EditWorldSignals` read. A preview is stepped only while its tab is in front
+and the viewport is shown; a preview in the background is frozen.
 
 Drive the preview with the `PreviewSignals` system parameter:
 `previews.trigger(document, signal)` queues the signal, and it is triggered in
 the preview's world in `First`, before the preview's next step. A signal sent
 before the preview is built waits for it; one for a closed document, a failed
-preview, or a document with no preview is dropped. A waiting signal is triggered
-before the preview's first step, so its `Startup` systems have not run yet:
-whatever a listener needs must exist by the end of `build`. Read back through the
+preview, or a document with no preview is dropped. Read back through the
 preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.

@@ -88,7 +88,7 @@ fn count_frame(mut frames: ResMut<Frames>) {
 #[derive(Resource, Default)]
 pub(crate) struct Said(pub Vec<(u32, usize)>);
 
-fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
+pub(crate) fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
     said.0.push((on.signal().0, frames.0));
 }
 
