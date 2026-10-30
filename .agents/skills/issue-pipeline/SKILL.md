@@ -87,7 +87,12 @@ Each tick:
    `git show origin/master:.agents/skills/issue-pipeline/SKILL.md` and follow
    that version for the rest of the tick.
 2. For each worktree under `<parent>/concerto-issues/` whose issue is closed:
-   `git worktree remove` it and remove `agent:claimed-local` from the issue.
+   confirm `git status --porcelain` in it prints nothing, run
+   `git worktree remove --force` on it (a worktree with the Jolt submodule
+   initialised refuses removal without `--force`), and remove
+   `agent:claimed-local` from the issue. Ignored files go with the worktree.
+   If it prints anything, leave the worktree and the label, and comment on the
+   issue what is uncommitted, once.
 3. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
    an issue you already hold", up to the next wait.
 4. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
