@@ -9,7 +9,7 @@ use concerto_ecs::{
     resource::{Res, ResMut},
 };
 use concerto_foundation::assets::content::save_content_asset_into;
-use concerto_foundation::assets::{Asset, AssetId};
+use concerto_foundation::assets::{Asset, AssetId, CreatableAsset};
 use concerto_window::input::actions::ActionFired;
 use derive_more::Deref;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -98,29 +98,27 @@ pub fn valid_asset_name(name: &str) -> Result<(), String> {
 }
 
 impl AssetEditorRegistry {
-    pub fn register<T: Asset>(&mut self, editor: impl AssetEditor) -> Result<()> {
+    pub fn register<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<()> {
         if self.editors.contains_key(T::name()) {
             bail!("an editor is already registered for {}", T::name());
         }
-        self.editors.insert(T::name(), Box::new(editor));
+        self.editors.insert(T::name(), Box::new(E::default()));
         Ok(())
     }
 
-    /// Registers `editor` for `T`, and lets the editor create a new `T` from `new`.
-    pub fn register_creatable<T: Asset>(
+    /// Registers `E` for `T`, and lets the editor create a new `T` with `T::new_asset`.
+    pub fn register_creatable<T: CreatableAsset, E: AssetEditor + Default>(
         &mut self,
-        editor: impl AssetEditor,
-        new: fn() -> T,
     ) -> Result<()> {
         let longest = new_asset_name(T::name(), MAX_NEW_NUMBER);
         if let Err(error) = valid_asset_name(&longest) {
             bail!("{longest} is not a valid asset name: {error}");
         }
-        self.register::<T>(editor)?;
+        self.register::<T, E>()?;
         self.creators.insert(
             T::name(),
-            Creator(Box::new(move |root, address, registry| {
-                save_content_asset_into(&new(), root, address, registry)
+            Creator(Box::new(|root, address, registry| {
+                save_content_asset_into(&T::new_asset(), root, address, registry)
             })),
         );
         Ok(())
@@ -151,30 +149,26 @@ impl AssetEditorRegistry {
 
 /// Application convenience API for asset editor registration.
 pub trait AssetEditorAppExt {
-    fn register_asset_editor<T: Asset>(&mut self, editor: impl AssetEditor) -> Result<&mut Self>;
-    /// Registers `editor` for `T`, and lets the content browser create a new `T` from `new`.
-    fn register_creatable_asset_editor<T: Asset>(
+    fn register_asset_editor<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<&mut Self>;
+    /// Registers `E` for `T`, and lets the content browser create a new `T` with `T::new_asset`.
+    fn register_creatable_asset_editor<T: CreatableAsset, E: AssetEditor + Default>(
         &mut self,
-        editor: impl AssetEditor,
-        new: fn() -> T,
     ) -> Result<&mut Self>;
 }
 impl AssetEditorAppExt for App {
-    fn register_asset_editor<T: Asset>(&mut self, editor: impl AssetEditor) -> Result<&mut Self> {
+    fn register_asset_editor<T: Asset, E: AssetEditor + Default>(&mut self) -> Result<&mut Self> {
         self.get_resource_mut::<AssetEditorRegistry>()
             .ok_or_else(|| anyhow::anyhow!("AssetEditorRegistry is not installed"))?
-            .register::<T>(editor)?;
+            .register::<T, E>()?;
         Ok(self)
     }
 
-    fn register_creatable_asset_editor<T: Asset>(
+    fn register_creatable_asset_editor<T: CreatableAsset, E: AssetEditor + Default>(
         &mut self,
-        editor: impl AssetEditor,
-        new: fn() -> T,
     ) -> Result<&mut Self> {
         self.get_resource_mut::<AssetEditorRegistry>()
             .ok_or_else(|| anyhow::anyhow!("AssetEditorRegistry is not installed"))?
-            .register_creatable::<T>(editor, new)?;
+            .register_creatable::<T, E>()?;
         Ok(self)
     }
 }
@@ -444,8 +438,15 @@ mod tests {
             "OtherAsset"
         }
     }
+    impl CreatableAsset for TestAsset {
+        fn new_asset() -> Self {
+            TestAsset
+        }
+    }
+    #[derive(Default)]
     struct Fake;
     impl AssetEditor for Fake {}
+    #[derive(Default)]
     struct OtherFake;
     impl AssetEditor for OtherFake {}
     fn asset(path: &str) -> AssetEntry {
@@ -470,7 +471,7 @@ mod tests {
         }
         w.insert_resource(registry);
         let mut r = AssetEditorRegistry::default();
-        r.register::<TestAsset>(Fake).unwrap();
+        r.register::<TestAsset, Fake>().unwrap();
         w.insert_resource(r);
         w
     }
@@ -732,7 +733,7 @@ mod tests {
         let mut w = world();
         let registry = w.get_resource_mut::<AssetEditorRegistry>().unwrap();
         registry
-            .register::<concerto_scene::scene::Scene>(crate::scene::SceneEditor)
+            .register::<concerto_scene::scene::Scene, crate::scene::SceneEditor>()
             .unwrap();
         assert!(!registry.closable(concerto_scene::scene::Scene::name()));
         assert!(registry.closable(TestAsset::name()));
@@ -758,13 +759,18 @@ mod tests {
             "ThirdAsset"
         }
     }
+    impl CreatableAsset for ThirdAsset {
+        fn new_asset() -> Self {
+            ThirdAsset
+        }
+    }
 
     #[test]
     fn closing_prefers_left_neighbor_then_right_and_rejects_old_completions() {
         let mut w = world();
         let registry = w.get_resource_mut::<AssetEditorRegistry>().unwrap();
-        registry.register::<OtherAsset>(OtherFake).unwrap();
-        registry.register::<ThirdAsset>(OtherFake).unwrap();
+        registry.register::<OtherAsset, OtherFake>().unwrap();
+        registry.register::<ThirdAsset, OtherFake>().unwrap();
         let a = open(&mut w, "a");
         let mut other = asset("other");
         other.kind = OtherAsset::name().into();
@@ -810,11 +816,11 @@ mod tests {
     fn only_a_creatable_registration_lists_its_type_in_name_order() {
         let mut app = App::new();
         app.insert_resource(AssetEditorRegistry::default());
-        app.register_creatable_asset_editor::<ThirdAsset>(OtherFake, || ThirdAsset)
+        app.register_creatable_asset_editor::<ThirdAsset, OtherFake>()
             .unwrap()
-            .register_asset_editor::<OtherAsset>(OtherFake)
+            .register_asset_editor::<OtherAsset, OtherFake>()
             .unwrap()
-            .register_creatable_asset_editor::<TestAsset>(Fake, || TestAsset)
+            .register_creatable_asset_editor::<TestAsset, Fake>()
             .unwrap();
         let registry = app.get_resource::<AssetEditorRegistry>().unwrap();
 
@@ -833,12 +839,17 @@ mod tests {
             "Dotted.Asset"
         }
     }
+    impl CreatableAsset for DottedAsset {
+        fn new_asset() -> Self {
+            DottedAsset
+        }
+    }
 
     #[test]
     fn a_type_whose_new_name_breaks_the_name_rules_is_refused() {
         let mut registry = AssetEditorRegistry::default();
 
-        assert!(registry.register_creatable(Fake, || DottedAsset).is_err());
+        assert!(registry.register_creatable::<DottedAsset, Fake>().is_err());
 
         assert_eq!(registry.editor_kind(DottedAsset::name()), None);
         assert_eq!(registry.creatable().count(), 0);
@@ -851,12 +862,22 @@ mod tests {
             "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         }
     }
+    impl CreatableAsset for LongestAsset {
+        fn new_asset() -> Self {
+            LongestAsset
+        }
+    }
 
     #[derive(serde::Serialize, serde::Deserialize)]
     struct TooLongAsset;
     impl Asset for TooLongAsset {
         fn name() -> &'static str {
             "Aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    }
+    impl CreatableAsset for TooLongAsset {
+        fn new_asset() -> Self {
+            TooLongAsset
         }
     }
 
@@ -867,10 +888,10 @@ mod tests {
         assert!(valid_asset_name(&format!("New {}", TooLongAsset::name())).is_ok());
         let mut registry = AssetEditorRegistry::default();
 
-        assert!(registry.register_creatable(Fake, || LongestAsset).is_ok());
+        assert!(registry.register_creatable::<LongestAsset, Fake>().is_ok());
         assert!(
             registry
-                .register_creatable(OtherFake, || TooLongAsset)
+                .register_creatable::<TooLongAsset, OtherFake>()
                 .is_err()
         );
 
@@ -944,7 +965,7 @@ mod tests {
         assert!(
             w.get_resource_mut::<AssetEditorRegistry>()
                 .unwrap()
-                .register::<TestAsset>(Fake)
+                .register::<TestAsset, Fake>()
                 .is_err()
         );
     }

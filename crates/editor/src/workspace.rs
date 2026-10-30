@@ -207,6 +207,7 @@ mod tests {
             "Notes"
         }
     }
+    #[derive(Default)]
     struct NotesEditor;
     impl AssetEditor for NotesEditor {}
 
@@ -484,8 +485,10 @@ mod tests {
         world.insert_resource(ActionMap::default());
         world.insert_resource(Routing::default());
         let mut editors = AssetEditorRegistry::default();
-        editors.register::<PreviewedAsset>(PreviewedEditor).unwrap();
-        editors.register::<PlainAsset>(PlainEditor).unwrap();
+        editors
+            .register::<PreviewedAsset, PreviewedEditor>()
+            .unwrap();
+        editors.register::<PlainAsset, PlainEditor>().unwrap();
         world.insert_resource(editors);
         crate::hosted::install_listeners(&mut world);
         let bases = panel_bodies(world.get_resource::<PanelRegistry>().unwrap());
@@ -550,7 +553,7 @@ mod tests {
     fn contextual_hosts_follow_active_editor_and_are_removed_on_close() {
         let mut world = World::new();
         let mut registry = AssetEditorRegistry::default();
-        registry.register::<Notes>(NotesEditor).unwrap();
+        registry.register::<Notes, NotesEditor>().unwrap();
         world.insert_resource(registry);
         world.insert_resource(crate::project::ProjectState::default());
         world.insert_resource(ActiveEditor::default());

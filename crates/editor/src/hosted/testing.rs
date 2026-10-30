@@ -112,6 +112,7 @@ macro_rules! test_asset {
             }
         }
 
+        #[derive(Default)]
         pub(crate) struct $editor;
 
         impl AssetEditor for $editor {
@@ -358,14 +359,14 @@ impl SceneFixture {
         world.insert_resource(AssetEditorCommands::default());
         world.insert_resource(UnsavedGuard::default());
         let mut editors = AssetEditorRegistry::default();
+        editors.register_creatable::<Scene, SceneEditor>().unwrap();
         editors
-            .register_creatable::<Scene>(SceneEditor, crate::scene::empty_scene)
+            .register::<PreviewedAsset, PreviewedEditor>()
             .unwrap();
-        editors.register::<PreviewedAsset>(PreviewedEditor).unwrap();
         editors
-            .register::<BrokenPreviewAsset>(BrokenPreviewEditor)
+            .register::<BrokenPreviewAsset, BrokenPreviewEditor>()
             .unwrap();
-        editors.register::<PlainAsset>(PlainEditor).unwrap();
+        editors.register::<PlainAsset, PlainEditor>().unwrap();
         world.insert_resource(editors);
         world.insert_resource(PreviewSignalQueue::default());
         let mut project = ProjectState::default();

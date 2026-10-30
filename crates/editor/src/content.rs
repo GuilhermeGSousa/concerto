@@ -1186,7 +1186,7 @@ mod tests {
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::testing::SceneFixture,
         project::{Project, ProjectOpened, discover_project},
-        scene::{SceneEditor, empty_scene},
+        scene::SceneEditor,
     };
     use concerto_ecs::{
         Event, IntoSystem, System,
@@ -1357,9 +1357,7 @@ mod tests {
         world.insert_resource(UITheme::default());
         world.insert_resource(FocusedWidget::default());
         let mut editors = AssetEditorRegistry::default();
-        editors
-            .register_creatable::<Scene>(SceneEditor, empty_scene)
-            .unwrap();
+        editors.register_creatable::<Scene, SceneEditor>().unwrap();
         world.insert_resource(editors);
         let mut project = ProjectState::default();
         project.project = Some(Project {

@@ -1,4 +1,4 @@
-use concerto_foundation::assets::{Asset, AssetId, LoadableAsset};
+use concerto_foundation::assets::{Asset, AssetId, CreatableAsset, LoadableAsset};
 use concerto_reflect::{Reflect, ReflectedValue};
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +54,15 @@ impl Asset for Scene {
 
     fn referenced_sub_assets(&self) -> Vec<AssetId> {
         self.referenced_assets.clone()
+    }
+}
+
+impl CreatableAsset for Scene {
+    fn new_asset() -> Self {
+        Scene {
+            nodes: vec![],
+            referenced_assets: vec![],
+        }
     }
 }
 

@@ -116,6 +116,7 @@ struct SceneJob {
 }
 
 /// The built-in editor for `Scene`.
+#[derive(Default)]
 pub struct SceneEditor;
 impl AssetEditor for SceneEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
@@ -141,13 +142,6 @@ fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Sce
     Ok(bincode::deserialize(payload)?)
 }
 
-pub(crate) fn empty_scene() -> Scene {
-    Scene {
-        nodes: vec![],
-        referenced_assets: vec![],
-    }
-}
-
 /// Opens, hosts, and saves scenes; `recipe` is what each scene's edit `App` is built from.
 pub struct ScenePlugin {
     pub recipe: fn(&mut App),
@@ -163,7 +157,7 @@ impl Plugin for ScenePlugin {
             gpu,
             clipboard: self.clipboard,
         });
-        app.register_creatable_asset_editor::<Scene>(SceneEditor, empty_scene)
+        app.register_creatable_asset_editor::<Scene, SceneEditor>()
             .expect("ScenePlugin requires the asset-editor registry")
             .register_event::<SceneOpened>()
             .register_event::<SceneOpenFailed>()

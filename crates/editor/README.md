@@ -700,20 +700,29 @@ Asset editors are separate from property editors. Register the asset with
 
 ```rust,ignore
 app.register_asset::<Dialogue>();
-app.register_asset_editor::<Dialogue>(DialogueEditor)?;
+app.register_asset_editor::<Dialogue, DialogueEditor>()?;
 ```
 
+The editor type implements `Default`, which is how the registry builds it.
 Register after `EditorPlugin` installs its registry. Dispatch uses the asset's
 serialized kind (`Asset::name()`), which is what catalogue entries carry.
 Duplicate editor registrations are rejected.
 
-A type that has no source file can be made creatable instead. Register its
-editor with the value a new asset starts from:
+A type that has no source file can be made creatable instead. Implement
+`CreatableAsset`, which lives in `concerto-foundation` so a game crate can
+implement it, to give the value a new asset starts from, and register with
+`register_creatable_asset_editor`:
 
 ```rust,ignore
-app.register_creatable_asset_editor::<Dialogue>(DialogueEditor, || Dialogue {
-    text: "Hello".into(),
-})?;
+impl CreatableAsset for Dialogue {
+    fn new_asset() -> Self {
+        Dialogue {
+            text: "Hello".into(),
+        }
+    }
+}
+
+app.register_creatable_asset_editor::<Dialogue, DialogueEditor>()?;
 ```
 
 `AssetEditorRegistry::creatable()` lists the creatable kinds in name order,
