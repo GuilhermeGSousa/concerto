@@ -214,6 +214,7 @@ fn build_clip(
         .map(|frame| frame as f32 * bvh.frame_time)
         .collect();
     let mut clip = AnimationClip::default();
+    clip.set_frame_rate(bvh.frame_time.recip());
     for (joint, id) in bvh.joints.iter().zip(bone_ids) {
         let has_position = joint.channels.iter().any(|channel| channel.is_position());
         let has_rotation = joint.channels.iter().any(|channel| !channel.is_position());
