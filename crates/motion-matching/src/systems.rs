@@ -1,3 +1,4 @@
+use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{Query, Res, ResMut};
 use concerto_foundation::{
     math::spring_damper::{simple_spring_damper_exact_quat, spring_character_update},
@@ -6,7 +7,10 @@ use concerto_foundation::{
 use concerto_physics::{body::BodyId, physics_state::PhysicsState};
 use glam::Vec3;
 
-use crate::simulation::{predict_trajectory, CharacterSimulation, DesiredMotion};
+use crate::{
+    node::{MotionMatchingTrajectory, TRAJECTORY_KEY},
+    simulation::{predict_trajectory, CharacterSimulation, DesiredMotion},
+};
 
 /// Advances the spring one fixed step towards the desired motion and sets the body's horizontal velocity to it.
 pub fn drive_body(
@@ -59,6 +63,20 @@ pub fn predict_trajectory_system(
     for (mut simulation, desired, _) in query.iter() {
         let trajectory = predict_trajectory(&simulation, desired);
         simulation.trajectory = trajectory;
+    }
+}
+
+/// Copies each character's simulation transform and trajectory to its animation player's blackboard.
+pub fn publish_trajectory(query: Query<(&CharacterSimulation, &mut AnimationPlayer)>) {
+    for (simulation, mut player) in query.iter() {
+        player.set_param(
+            TRAJECTORY_KEY,
+            MotionMatchingTrajectory {
+                translation: simulation.state.position,
+                rotation: simulation.rotation,
+                samples: simulation.trajectory.clone(),
+            },
+        );
     }
 }
 
@@ -226,5 +244,39 @@ mod tests {
             .unwrap();
         assert!(simulation.trajectory.is_empty());
         assert_eq!(simulation.state.velocity, Vec3::ZERO);
+    }
+
+    #[test]
+    fn publish_trajectory_writes_the_simulation_into_the_players_blackboard() {
+        let mut simulation = CharacterSimulation::default();
+        simulation.state.position = Vec3::new(1.0, 0.0, 2.0);
+        simulation.rotation = Quat::from_rotation_y(0.5);
+        simulation.trajectory = predict_trajectory(&simulation, &DesiredMotion::default());
+        let mut world = World::new();
+        let entity = world.spawn((simulation.clone(), AnimationPlayer::new(1)));
+
+        run_once(&mut world, publish_trajectory);
+
+        let player = world
+            .get_component_for_entity::<AnimationPlayer>(entity)
+            .unwrap();
+        let published = player
+            .get_param::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
+            .unwrap();
+        assert_eq!(published.translation, simulation.state.position);
+        assert_eq!(published.rotation, simulation.rotation);
+        assert_eq!(published.samples, simulation.trajectory);
+    }
+
+    #[test]
+    fn publish_trajectory_skips_a_character_without_a_player() {
+        let mut world = World::new();
+        let entity = world.spawn((CharacterSimulation::default(),));
+
+        run_once(&mut world, publish_trajectory);
+
+        assert!(world
+            .get_component_for_entity::<AnimationPlayer>(entity)
+            .is_none());
     }
 }

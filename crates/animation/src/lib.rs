@@ -11,6 +11,7 @@ pub mod root;
 pub mod target;
 pub mod transition;
 
+pub use target::{animate_targets, update_animation_players};
 pub use transition::TransitionBlender;
 
 #[cfg(test)]

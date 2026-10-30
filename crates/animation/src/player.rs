@@ -18,7 +18,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
     node::{
-        AnimationClipNodeInstance, ErasedAnimationNode, NodeInstance,
+        AnimationClipNodeInstance, AnimationNode, ErasedAnimationNode, NodeInstance,
         state_machine::AnimationStateMachineInstance,
     },
     pose::PosePool,
@@ -128,6 +128,16 @@ impl AnimationPlayer {
             .map(AnimationStateMachineInstance::current_state_name)
     }
 
+    /// Calls `f` with each live node of type `N` in the player's graph, its instance and the blackboard.
+    pub fn for_each_instance_mut<N: AnimationNode>(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        f: impl FnMut(&N, &mut N::Instance, &AnimationBlackboard),
+    ) {
+        self.graph_instance
+            .for_each_instance_mut(graphs, &self.blackboard, f);
+    }
+
     pub(crate) fn initialize_graph(
         &mut self,
         animation_graph: AssetHandle<AnimationGraph>,
@@ -221,5 +231,110 @@ impl Deref for AnimationHandleComponent {
 
     fn deref(&self) -> &Self::Target {
         &self.handle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+
+    use super::AnimationPlayer;
+    use crate::{
+        clip::AnimationClip,
+        graph::{AnimationGraph, made_live},
+        node::{AnimationClipNode, BlendNode, ResultNode},
+    };
+
+    struct Fixture {
+        _server: AssetServer,
+        graphs: AssetStore<AnimationGraph>,
+        player: AnimationPlayer,
+    }
+
+    fn fixture() -> Fixture {
+        let mut server = AssetServer::new();
+        let mut clips = AssetStore::<AnimationClip>::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&clips);
+        server.register_asset(&graphs);
+
+        let first = server.add(AnimationClip::default());
+        clips.insert(first.id(), AnimationClip::default());
+        let second = server.add(AnimationClip::default());
+        clips.insert(second.id(), AnimationClip::default());
+
+        let mut graph = AnimationGraph::from_node(AnimationClipNode::new(first));
+        graph
+            .result_node()
+            .with_input(AnimationClipNode::new(second), |_| {});
+        let handle = server.add(AnimationGraph::default());
+        graphs.insert(handle.id(), made_live(graph));
+
+        let mut player = AnimationPlayer::new(1);
+        player.initialize_graph(handle, &clips, &graphs);
+        Fixture {
+            _server: server,
+            graphs,
+            player,
+        }
+    }
+
+    #[test]
+    fn for_each_instance_mut_visits_exactly_the_live_nodes_of_the_type() {
+        let mut fixture = fixture();
+
+        let mut clip_nodes = 0;
+        fixture
+            .player
+            .for_each_instance_mut::<AnimationClipNode>(&fixture.graphs, |_, _, _| {
+                clip_nodes += 1;
+            });
+        let mut result_nodes = 0;
+        fixture
+            .player
+            .for_each_instance_mut::<ResultNode>(&fixture.graphs, |_, _, _| {
+                result_nodes += 1;
+            });
+        let mut blend_nodes = 0;
+        fixture
+            .player
+            .for_each_instance_mut::<BlendNode>(&fixture.graphs, |_, _, _| {
+                blend_nodes += 1;
+            });
+
+        assert_eq!(clip_nodes, 2);
+        assert_eq!(result_nodes, 1);
+        assert_eq!(blend_nodes, 0);
+    }
+
+    #[test]
+    fn for_each_instance_mut_hands_each_node_its_instance_and_the_blackboard() {
+        let mut fixture = fixture();
+        fixture.player.set_bool_param("flag", true);
+        fixture.player.set_float_param("speed", 3.0);
+
+        let mut seen = Vec::new();
+        fixture.player.for_each_instance_mut::<AnimationClipNode>(
+            &fixture.graphs,
+            |_, instance, board| {
+                instance.play();
+                seen.push((board.get_bool("flag"), board.get_float("speed")));
+            },
+        );
+
+        assert_eq!(seen, vec![(Some(true), Some(3.0)); 2]);
+    }
+
+    #[test]
+    fn for_each_instance_mut_visits_nothing_before_the_graph_is_initialized() {
+        let fixture = fixture();
+        let mut player = AnimationPlayer::new(1);
+
+        let mut visits = 0;
+        player.for_each_instance_mut::<AnimationClipNode>(&fixture.graphs, |_, _, _| {
+            visits += 1;
+        });
+
+        assert_eq!(visits, 0);
     }
 }

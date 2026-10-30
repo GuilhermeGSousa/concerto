@@ -133,6 +133,14 @@ impl MotionDatabase {
         &self.channels
     }
 
+    /// The database frames of every entry, in entry order.
+    pub fn ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+        self.range_starts
+            .iter()
+            .zip(&self.range_stops)
+            .map(|(start, stop)| *start..*stop)
+    }
+
     /// The index of the entry whose range contains `frame`.
     pub fn entry_of(&self, frame: usize) -> Option<usize> {
         self.range_starts
@@ -208,6 +216,16 @@ impl MotionDatabase {
             scales[span.offset..span.offset + span.dims].fill(scale);
         }
         scales
+    }
+
+    pub(crate) fn divisors(&self) -> Vec<f32> {
+        let mut divisors = self.scales();
+        for (span, deviation) in self.channels.iter().zip(&self.deviations) {
+            if *deviation < DEVIATION_FLOOR {
+                divisors[span.offset..span.offset + span.dims].fill(f32::INFINITY);
+            }
+        }
+        divisors
     }
 
     /// Subtracts the offset and divides by the scale in place; a group with no deviation becomes 0.
