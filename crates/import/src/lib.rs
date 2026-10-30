@@ -656,7 +656,7 @@ mod tests {
         fn import(&self, entries: Vec<Entry>) -> anyhow::Result<ImportedSource> {
             import_with(
                 &Scripted(entries),
-                "test",
+                "bvh",
                 &self.source,
                 &self.source,
                 &self.root(),
