@@ -193,6 +193,8 @@ pub struct EditorDocument {
     pub pending: Option<AssetEntry>,
     pub order: u64,
     pub status: String,
+    /// The last request that failed to load, until a request replaces it.
+    pub failed: Option<AssetEntry>,
 }
 
 /// On a document whose content differs from what is on disk.
@@ -261,6 +263,7 @@ pub fn finish_asset_request(
     match result {
         Ok(()) => {
             doc.current = doc.pending.take();
+            doc.failed = None;
             if let Some(asset) = &doc.current {
                 doc.title = asset.name().to_owned();
             }
@@ -268,7 +271,7 @@ pub fn finish_asset_request(
         }
         Err(error) => {
             doc.status = format!("{error:#}");
-            doc.pending = None;
+            doc.failed = doc.pending.take();
         }
     }
     true
@@ -333,6 +336,7 @@ pub fn process_editor_commands(
                             doc.status.clear();
                         } else {
                             doc.status = format!("Opening {}…", asset.address);
+                            doc.failed = None;
                             doc.pending = Some(asset);
                         }
                         changed.insert(*entity);
@@ -347,6 +351,7 @@ pub fn process_editor_commands(
                             asset_type,
                             title: asset.name().to_owned(),
                             status: format!("Opening {}…", asset.address),
+                            failed: None,
                             current: None,
                             pending: Some(asset),
                             order,
@@ -560,6 +565,28 @@ mod tests {
 
         assert_eq!(w.query::<&EditorDocument, ()>().iter(&mut w).count(), 0);
         assert_eq!(w.get_resource::<ActiveEditor>().unwrap().0, None);
+    }
+
+    #[test]
+    fn a_failed_request_is_remembered_until_the_next_one() {
+        let mut w = world();
+        let e = open(&mut w, "a");
+
+        assert!(finish_asset_request(
+            &mut w,
+            e,
+            &asset("a"),
+            Err(anyhow::anyhow!("truncated"))
+        ));
+        let doc = w.get_component_for_entity::<EditorDocument>(e).unwrap();
+        assert!(doc.pending.is_none());
+        assert_eq!(doc.failed, Some(asset("a")));
+        assert_eq!(doc.status, "truncated");
+
+        push(&mut w, AssetEditorCommand::Open(asset("a")));
+        let doc = w.get_component_for_entity::<EditorDocument>(e).unwrap();
+        assert!(doc.failed.is_none());
+        assert_eq!(doc.pending, Some(asset("a")));
     }
 
     #[test]

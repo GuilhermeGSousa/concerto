@@ -1029,6 +1029,7 @@ mod tests {
             pending: None,
             order: 1,
             status: String::new(),
+            failed: None,
         });
         world
             .get_resource_mut::<crate::asset_editor::ActiveEditor>()

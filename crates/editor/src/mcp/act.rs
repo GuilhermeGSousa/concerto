@@ -291,7 +291,7 @@ fn open_asset(
     state: Res<ProjectState>,
     registry: Res<AssetRegistry>,
     editors: Res<AssetEditorRegistry>,
-    documents: Query<(Entity, &EditorDocument)>,
+    documents: Query<(Entity, &mut EditorDocument)>,
     mut commands: ResMut<EditorCommands>,
     mut cmd: CommandQueue,
 ) {
@@ -323,22 +323,33 @@ fn open_asset(
         commands.0.push_back(EditorCommand::OpenAsset(asset.id));
         let document = documents
             .iter()
-            .find(|(_, document)| document.asset_type == kind);
-        if let Some((entity, _)) = document.filter(|(_, document)| {
-            document
-                .current
-                .as_ref()
-                .is_some_and(|current| current.id == asset.id)
-        }) {
-            reply.ok(opened(&asset, entity));
-            continue;
+            .find(|(_, document)| document.asset_type == kind)
+            .map(|(entity, _)| entity);
+        if let Some(entity) = document {
+            if let Some(mut shown) = documents.get_entity(entity) {
+                if shown
+                    .current
+                    .as_ref()
+                    .is_some_and(|current| current.id == asset.id)
+                {
+                    reply.ok(opened(&asset, entity));
+                    continue;
+                }
+                if shown
+                    .failed
+                    .as_ref()
+                    .is_some_and(|failed| failed.id == asset.id)
+                {
+                    shown.failed = None;
+                }
+            }
         }
         cmd.spawn((
             PendingCall::new(reply, "the asset to open"),
             OpeningAsset {
                 asset,
                 kind,
-                document: document.map(|(entity, _)| entity),
+                document,
             },
             Guarded::new(arguments.unsaved),
         ));
@@ -386,6 +397,20 @@ fn answer_asset_opens(
         });
         if let Some((document, _)) = shown {
             pending.reply.ok(opened(&opening.asset, document));
+            cmd.despawn(entity);
+            continue;
+        }
+        let failed = documents.iter().find(|(_, document)| {
+            document.asset_type == opening.kind
+                && document
+                    .failed
+                    .as_ref()
+                    .is_some_and(|asset| asset.id == opening.asset.id)
+        });
+        if let Some((_, document)) = failed {
+            pending
+                .reply
+                .err(ToolError::new("open_failed", document.status.clone()));
             cmd.despawn(entity);
         }
     }

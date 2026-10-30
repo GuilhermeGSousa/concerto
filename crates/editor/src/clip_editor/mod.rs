@@ -741,6 +741,7 @@ mod tests {
                 pending: Some(walk),
                 order: 1,
                 status: String::new(),
+                failed: None,
             },
             ClipDocument::default(),
         ));

@@ -1060,6 +1060,7 @@ mod tests {
                 pending: Some(next.clone()),
                 order: 0,
                 status: String::new(),
+                failed: None,
             },
             SceneEditorState {
                 job: None,
