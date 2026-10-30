@@ -63,17 +63,25 @@ impl<A: Asset + 'static> AssetStore<A> {
         mut asset_server: ResMut<AssetServer>,
         mut events: EventWriter<AssetLifetimeEvent>,
     ) {
+        for event in self.drain_drops(&mut asset_server) {
+            events.write(event);
+        }
+    }
+
+    pub(crate) fn drain_drops(&mut self, server: &mut AssetServer) -> Vec<AssetLifetimeEvent> {
+        let mut processed = Vec::new();
         for event in self.drop_receiver.try_iter() {
             if self.assets.contains_key(&event.id()) {
-                events.write(event.clone());
                 match event {
                     AssetLifetimeEvent::Dropped(id) => {
+                        server.process_handle_drop(&id);
                         self.assets.remove(&id);
-                        asset_server.process_handle_drop(&id);
+                        processed.push(event);
                     }
                 }
             }
         }
+        processed
     }
 
     pub(crate) fn clone_drop_sender(&self) -> Sender<AssetLifetimeEvent> {
@@ -97,5 +105,125 @@ impl<'a, A: Asset + 'static> IntoIterator for &'a AssetStore<A> {
 impl<A: Asset + 'static> Default for AssetStore<A> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::assets::{asset_server::handle_asset_load_events, LoadableAsset};
+    use concerto_ecs::world::World;
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Pebble;
+
+    impl Asset for Pebble {
+        fn name() -> &'static str {
+            "Pebble"
+        }
+    }
+
+    impl LoadableAsset for Pebble {}
+
+    fn pebble_world() -> (AssetServer, World) {
+        let mut server = AssetServer::new();
+        let store = AssetStore::<Pebble>::new();
+        server.register_asset(&store);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        (server, world)
+    }
+
+    fn loaded_pebble(server: &AssetServer, world: &mut World) -> AssetHandle<Pebble> {
+        let handle = server.add(Pebble);
+        handle_asset_load_events(world);
+        handle
+    }
+
+    fn drain(server: &AssetServer, world: &mut World) -> Vec<AssetLifetimeEvent> {
+        let mut store = world.remove_resource::<AssetStore<Pebble>>().unwrap();
+        let events = store.drain_drops(&mut server.clone());
+        world.insert_resource(store);
+        events
+    }
+
+    fn holds(world: &World, id: AssetId) -> bool {
+        world
+            .get_resource::<AssetStore<Pebble>>()
+            .unwrap()
+            .assets
+            .contains_key(&id)
+    }
+
+    #[test]
+    fn a_handle_requested_before_the_drop_is_processed_keeps_the_asset_loaded() {
+        let (server, mut world) = pebble_world();
+        let handle = loaded_pebble(&server, &mut world);
+        let id = handle.id();
+        drop(handle);
+
+        let returned = server.load::<Pebble>(id);
+        let events = drain(&server, &mut world);
+
+        assert!(events.is_empty());
+        assert!(holds(&world, id));
+        assert!(server.is_loaded(&id));
+        assert!(!server.is_loading());
+        drop(returned);
+    }
+
+    #[test]
+    fn a_dropped_asset_with_no_returned_handle_unloads() {
+        let (server, mut world) = pebble_world();
+        let handle = loaded_pebble(&server, &mut world);
+        let id = handle.id();
+        drop(handle);
+
+        let events = drain(&server, &mut world);
+
+        assert!(
+            matches!(events.as_slice(), [AssetLifetimeEvent::Dropped(dropped)] if *dropped == id)
+        );
+        assert!(!holds(&world, id));
+        assert!(!server.is_loaded(&id));
+    }
+
+    #[test]
+    fn dropping_the_returned_handle_unloads_the_asset_on_the_next_drain() {
+        let (server, mut world) = pebble_world();
+        let handle = loaded_pebble(&server, &mut world);
+        let id = handle.id();
+        drop(handle);
+        let returned = server.load::<Pebble>(id);
+        assert!(drain(&server, &mut world).is_empty());
+
+        drop(returned);
+        let events = drain(&server, &mut world);
+
+        assert!(
+            matches!(events.as_slice(), [AssetLifetimeEvent::Dropped(dropped)] if *dropped == id)
+        );
+        assert!(!holds(&world, id));
+        assert!(!server.is_loaded(&id));
+    }
+
+    #[test]
+    fn a_duplicate_drop_event_for_an_unloaded_id_is_ignored() {
+        let (server, mut world) = pebble_world();
+        let handle = loaded_pebble(&server, &mut world);
+        let id = handle.id();
+        let sender = world
+            .get_resource::<AssetStore<Pebble>>()
+            .unwrap()
+            .clone_drop_sender();
+        drop(handle);
+        sender.send(AssetLifetimeEvent::Dropped(id)).unwrap();
+
+        let events = drain(&server, &mut world);
+
+        assert_eq!(events.len(), 1);
+        assert!(!holds(&world, id));
+        assert!(!server.is_loaded(&id));
     }
 }

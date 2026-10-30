@@ -274,6 +274,11 @@ impl AssetServer {
     }
 
     #[cfg(test)]
+    pub(crate) fn is_loaded(&self, id: &AssetId) -> bool {
+        self.data.loaded_assets.read().unwrap().contains(id)
+    }
+
+    #[cfg(test)]
     fn resolve_by_id(&self, id: AssetId) -> Option<String> {
         self.resolve_asset(id).map(|(_, entry)| entry.address)
     }
