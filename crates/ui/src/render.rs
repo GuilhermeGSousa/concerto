@@ -1,4 +1,4 @@
-#![allow(clippy::items_after_test_module, clippy::too_many_arguments)]
+#![allow(clippy::too_many_arguments)]
 
 use concerto_ecs::{
     Entity, Ref, World,
