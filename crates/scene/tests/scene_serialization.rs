@@ -1,10 +1,13 @@
 //! Covers Scene/SceneNode round-tripping directly through bincode and
 //! reporting the assets its component payloads reference for import-time
 //! validation.
+use std::path::Path;
+
 use concerto_ecs::component::Component;
+use concerto_foundation::assets::content::check_encoding;
 use concerto_foundation::assets::{handle::AssetHandle, Asset, AssetId, CreatableAsset};
 use concerto_mesh::mesh::MeshComponent;
-use concerto_reflect::{apply_value, to_value, Reflect};
+use concerto_reflect::{apply_value, to_value, Reflect, ReflectedValue};
 use concerto_render::assets::material::StandardMaterial;
 use concerto_render::components::material::MaterialComponent;
 use concerto_scene::scene::{Scene, SceneNode, SerializedComponent};
@@ -84,5 +87,47 @@ fn round_trips_and_reports_references() {
         sc.referenced_sub_assets(),
         vec![mesh_id, material_id],
         "referenced_sub_assets must report every AssetId the scene's components use"
+    );
+}
+
+#[test]
+fn scene_encoding_matches_its_fixture() {
+    let scene = Scene {
+        nodes: vec![
+            SceneNode {
+                name: "root".to_string(),
+                children: vec![1],
+                components: vec![],
+            },
+            SceneNode {
+                name: "child".to_string(),
+                children: vec![],
+                components: vec![
+                    SerializedComponent {
+                        type_name: "game::Health".to_string(),
+                        value: ReflectedValue::Struct(vec![
+                            ("current".to_string(), ReflectedValue::Leaf(vec![1, 2])),
+                            (
+                                "items".to_string(),
+                                ReflectedValue::List(vec![ReflectedValue::Leaf(vec![3])]),
+                            ),
+                        ]),
+                    },
+                    SerializedComponent {
+                        type_name: "game::Team".to_string(),
+                        value: ReflectedValue::Variant {
+                            name: "Red".to_string(),
+                            fields: vec![("size".to_string(), ReflectedValue::Leaf(vec![4]))],
+                        },
+                    },
+                ],
+            },
+        ],
+        referenced_assets: vec![AssetId::from_path("models/character.gltf#mesh/0")],
+    };
+
+    check_encoding(
+        &scene,
+        Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding")),
     );
 }

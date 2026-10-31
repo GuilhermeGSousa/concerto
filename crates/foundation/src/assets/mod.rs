@@ -116,7 +116,19 @@ pub use concerto_asset_format::AssetId;
 /// serialize (GPU descriptor handles, `&'static` refs) — never merely for an
 /// `AssetHandle<T>` field, which serializes to its bare `AssetId`.
 pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::DeserializeOwned {
+    /// The version of this type's payload encoding, stored in each content asset's header.
+    const FORMAT_VERSION: u32 = 1;
+
     fn name() -> &'static str;
+
+    /// Decodes a payload written at `version`, older than `FORMAT_VERSION`; the default rejects it.
+    fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
+        anyhow::bail!(
+            "{} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            Self::name(),
+            Self::FORMAT_VERSION
+        )
+    }
 
     /// AssetIds of every sub-asset this one references — the import tool's
     /// reference-integrity pass. Empty for leaf assets.

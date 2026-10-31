@@ -1,6 +1,15 @@
+use std::path::Path;
+
+use concerto_foundation::assets::content::check_encoding;
 use concerto_mesh::mesh::Mesh;
 use concerto_mesh::vertex::Vertex;
-use glam::{Mat4, Vec3};
+use concerto_mesh::{JointPose, Skeleton};
+use glam::{Mat4, Quat, Vec3};
+use uuid::Uuid;
+
+fn encoding_dir() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
+}
 
 fn sample_vertex(x: f32) -> Vertex {
     Vertex {
@@ -57,4 +66,47 @@ fn transformed_aabb_contains_all_rotated_and_scaled_corners() {
 
     assert!(bounds.min.abs_diff_eq(Vec3::new(8.0, 18.0, 28.5), 1e-5));
     assert!(bounds.max.abs_diff_eq(Vec3::new(12.0, 22.0, 31.5), 1e-5));
+}
+
+#[test]
+fn mesh_encoding_matches_its_fixture() {
+    let mesh = Mesh {
+        vertices: vec![Vertex {
+            pos_coords: [1.0, 2.0, 3.0],
+            uv_coords: [0.25, 0.75],
+            normal: [0.0, 1.0, 0.0],
+            tangent: [1.0, 0.0, 0.0],
+            bitangent: [0.0, 0.0, 1.0],
+            bone_indices: [1, 2, 3, 4],
+            bone_weights: [0.4, 0.3, 0.2, 0.1],
+        }],
+        indices: vec![0, 0, 0],
+    };
+
+    check_encoding(&mesh, encoding_dir());
+}
+
+#[test]
+fn skeleton_encoding_matches_its_fixture() {
+    let skeleton = Skeleton::new(
+        vec![Mat4::from_translation(Vec3::new(0.0, -1.0, 0.0)); 2],
+        vec![None, Some(0)],
+        vec!["Root".into(), "Child".into()],
+        vec![
+            JointPose {
+                translation: Vec3::new(0.5, 0.0, 0.0),
+                rotation: Quat::from_xyzw(0.0, 0.6, 0.0, 0.8),
+                scale: Vec3::splat(2.0),
+            },
+            JointPose {
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::from_xyzw(0.8, 0.0, 0.0, 0.6),
+                scale: Vec3::new(1.0, 1.5, 1.0),
+            },
+        ],
+        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+    )
+    .unwrap();
+
+    check_encoding(&skeleton, encoding_dir());
 }

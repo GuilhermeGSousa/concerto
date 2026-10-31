@@ -2,7 +2,7 @@
 //! path reads them back as the right type, and an editor-saved Scene
 //! round-trips.
 //!
-//! These drive `load_content_asset_bytes` — the exact helper every
+//! These drive `load_content_asset` — the exact helper every
 //! `AssetServer` calls — rather than asynchronous UUID loading, because completing
 //! an AssetServer load needs the LoadTaskPool plus a World to pump
 //! `handle_asset_load_events`, and no such harness exists in the test
@@ -13,7 +13,7 @@ use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset_into,
 };
 use concerto_foundation::assets::registry::AssetRegistry;
-use concerto_foundation::assets::utils::load_content_asset_bytes;
+use concerto_foundation::assets::utils::load_content_asset;
 use concerto_foundation::assets::{Asset, ContentAssetRoot};
 use concerto_mesh::mesh::Mesh;
 use concerto_scene::scene::{Scene, SceneNode};
@@ -36,24 +36,27 @@ fn imported_content_assets_load_back_as_their_type() {
     concerto_import::import_source(&fixture(&root), &root, &Default::default()).expect("import");
 
     let address = "content/triangle/mesh_0.gasset";
-    let bytes = pollster::block_on(load_content_asset_bytes(
+    assert_eq!(
+        read_content_asset_header(&root.join(address))
+            .unwrap()
+            .kind_version,
+        Mesh::FORMAT_VERSION,
+        "the written header carries the emitted type's version"
+    );
+    let mesh = pollster::block_on(load_content_asset::<Mesh>(
         &ContentAssetRoot::Directory(root.clone()),
         address,
-        Mesh::name(),
     ))
     .expect("the imported content asset loads");
-
-    let mesh: Mesh = bincode::deserialize(&bytes).expect("payload is a Mesh");
     assert_eq!(
         mesh.vertices.len(),
         3,
         "the triangle fixture's mesh survives import -> load"
     );
 
-    let err = pollster::block_on(load_content_asset_bytes(
+    let err = pollster::block_on(load_content_asset::<Scene>(
         &ContentAssetRoot::Directory(root.clone()),
         address,
-        Scene::name(),
     ))
     .expect_err("kind tag must reject a Scene load of a Mesh file");
     assert!(format!("{err:#}").contains("Mesh"));
@@ -76,13 +79,11 @@ fn an_editor_saved_scene_round_trips() {
     };
     save_content_asset_into(&scene, &root, address, &mut AssetRegistry::new()).expect("save");
 
-    let bytes = pollster::block_on(load_content_asset_bytes(
+    let restored = pollster::block_on(load_content_asset::<Scene>(
         &ContentAssetRoot::Directory(root.clone()),
         address,
-        Scene::name(),
     ))
     .expect("an editor-saved asset loads through the runtime path");
-    let restored: Scene = bincode::deserialize(&bytes).expect("payload is a Scene");
     assert_eq!(restored.nodes.len(), scene.nodes.len());
 
     let raw = std::fs::read(root.join(address)).unwrap();
@@ -122,13 +123,11 @@ fn a_baked_reference_resolves_to_the_minted_id_of_its_target() {
         .address;
 
     // Load the scene by address, exactly as game code would.
-    let bytes = pollster::block_on(load_content_asset_bytes(
+    let scene = pollster::block_on(load_content_asset::<Scene>(
         &ContentAssetRoot::Directory(root.clone()),
         scene_address,
-        Scene::name(),
     ))
     .expect("the scene loads by address");
-    let scene: Scene = bincode::deserialize(&bytes).expect("payload is a Scene");
 
     // The id it references is the mesh's *minted* id — not derivable from
     // either address — and the registry is what connects the two.

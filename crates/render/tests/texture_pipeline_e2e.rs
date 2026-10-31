@@ -1,11 +1,9 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
 use concerto_asset_import::{ImportContext, Importer};
-use concerto_foundation::assets::content::{
-    write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION,
-};
-use concerto_foundation::assets::utils::load_content_asset_bytes;
-use concerto_foundation::assets::{Asset, ContentAssetRoot};
+use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
+use concerto_foundation::assets::utils::load_content_asset;
+use concerto_foundation::assets::ContentAssetRoot;
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
 use concerto_render::importers::image_importer::ImageImporter;
 
@@ -34,10 +32,10 @@ fn an_imported_texture_is_reachable_at_its_conventional_address() {
 
     let address = "content/swatch/main.gasset";
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: sub_asset.asset_id,
         references: sub_asset.references.clone(),
         kind: sub_asset.type_name.to_string(),
+        kind_version: sub_asset.kind_version,
         provenance: None,
     };
     std::fs::create_dir_all(temp_dir.join("content/swatch")).unwrap();
@@ -47,14 +45,11 @@ fn an_imported_texture_is_reachable_at_its_conventional_address() {
     )
     .unwrap();
 
-    let bytes = pollster::block_on(load_content_asset_bytes(
+    let texture = pollster::block_on(load_content_asset::<Texture>(
         &ContentAssetRoot::Directory(temp_dir.clone()),
         address,
-        Texture::name(),
     ))
     .expect("the imported texture must load back through the runtime byte path");
-
-    let texture: Texture = bincode::deserialize(&bytes).expect("failed to deserialize texture");
     assert_eq!(texture.width, 1);
     assert_eq!(texture.height, 1);
     assert_eq!(texture.format, TextureFormat::Rgba8UnormSrgb);

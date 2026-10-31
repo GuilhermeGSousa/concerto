@@ -203,26 +203,114 @@ resampling setting.
 ```
 magic "GRDY" (4 bytes)
 u32   header length, little-endian
-      bincode(ContentAssetHeader)
+      bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-Format version 4 rejects every `.gasset` written at version 3. After upgrading, re-import every source through the editor over a scratch copy of the project and commit the result. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header. A version-4 file reads as kind version 1 and needs no re-import; it moves to version 5 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
 | Field            | Meaning                                                        |
 |------------------|---------------------------------------------------------------|
-| `format_version` | `CONTENT_FORMAT_VERSION` (currently `4`); a mismatch is rejected on read; there is no decoder for older files |
 | `asset_id`       | Persistent UUID, minted once and reused from source metadata; legacy UUIDs are preserved |
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
+| `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, `None` for editor-authored assets |
 
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
+
+## Changing an asset type's encoding
+
+Each asset type has its own payload version, `Asset::FORMAT_VERSION`, which
+starts at 1 and is written to `kind_version` in every header. Version 1 of a
+type is its encoding as committed at header version 4. Header scans
+(`scan_content`, `asset_id!`, the build script, project open and import) never
+check it; a file is checked only when it is decoded. Every decode goes through
+`decode_content_asset::<A>`, or `utils::load_content_asset::<A>` for a file
+under a `ContentAssetRoot`, which the `AssetServer` uses:
+
+| `kind_version`            | Result                                                      |
+|---------------------------|-------------------------------------------------------------|
+| equal to `FORMAT_VERSION` | the payload is decoded with bincode                         |
+| older                     | `A::migrate(version, payload)`; the default rejects it      |
+| newer                     | rejected: the file was written by a newer build             |
+
+A `kind` other than `A::name()` is rejected too. bincode is not
+self-describing, so a payload cannot absorb a new field with
+`#[serde(default)]`: any change to a type's serialized fields, their order or
+their types is a new encoding.
+
+Each content type's encoding is pinned by a test. `check_encoding(&value, dir)`
+(`concerto_foundation::assets::content`) serializes the value and compares the
+bytes with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`. The checks sit in each
+crate's serialization test, with the fixtures in its `tests/encoding/`:
+
+| Test file | Types |
+|---|---|
+| `crates/mesh/tests/mesh_serialization.rs` | `Mesh`, `Skeleton` |
+| `crates/render/tests/material_serialization.rs` | `Texture`, `StandardMaterial` |
+| `crates/animation/tests/graph_serialization.rs` | `AnimationClip`, `AnimationGraph` |
+| `crates/scene/tests/scene_serialization.rs` | `Scene` |
+| `crates/motion-matching/tests/serialization.rs` | `MotionDatabase`, `MotionDatabaseDefinition` |
+
+A missing fixture fails the test with a hint to bless it. Bytes that differ
+fail it with a message to raise the version. The value given to the check sets
+every field to something other than its default, and uses no `HashMap` with
+more than one entry, since bincode writes a map in iteration order. A type that
+becomes content, because an importer emits it or the editor creates it, adds
+its check in the same change.
+
+`AnimationGraph` stores each node's Rust type name, so moving or renaming a
+node type also fails its check. That is a change to the persisted form, but not
+to the field layout: old graphs need the old name to resolve, not a version
+bump.
+
+When you change one:
+
+1. Raise the version. A derived type writes `#[asset(version = N)]` next to
+   `#[derive(Asset)]`; a hand-written `impl Asset` sets
+   `const FORMAT_VERSION: u32 = N;`.
+2. Choose between migration and rejection. To keep reading older files,
+   implement `Asset` by hand and override `migrate`. Put frozen
+   `<Type>V<n>` structs, which only derive `Deserialize`, and their
+   conversions in a `legacy` module next to the type, in its own crate.
+   `migrate` matches on the version, decodes the frozen struct with bincode and
+   converts it; an older version converts through each newer one in turn.
+   Without a migration, older files fail to load with an error that says to
+   re-import their source or re-create them in the editor.
+3. Bless the new fixture with
+   `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <file>`, run the
+   test again without the variable, and commit the new `.bin` file. Keep the
+   old version's fixture while its `migrate` arm exists, with a test that
+   passes it through `decode_content_asset` and checks the converted value;
+   delete it when you choose rejection.
+4. Migration happens in memory: the file keeps its old version until it is
+   saved, and a save writes the current `FORMAT_VERSION`. Re-import the
+   affected sources, or re-save editor-authored assets, and commit the
+   rewritten content.
+5. A legacy struct and its `migrate` arm may be deleted once no committed
+   `.gasset` under `examples/*` carries that version. Its fixture and test go
+   with it, and the PR says so. After that, files at that version are
+   rejected.
+
+The editor reports outdated files when the first scene of a project opens.
+It compares each entry's `kind_version` with the `FORMAT_VERSION` that the
+scene's `AssetServer` records for that kind. That server is built from the
+game's recipe, so it knows every type the game registers. For each kind and
+file version that differs, it logs a warning with the count, and the status
+line reads `N content assets are outdated; see the log`. It reports once per
+opened project. A kind the game's recipe does not register is not reported;
+such a file still fails when it is loaded.
+
+`CONTENT_FORMAT_VERSION` is a different number. It changes only when the
+framing or `ContentAssetHeader` changes, never for a payload, and a new header
+version keeps the previous one readable where it can, as version 5 reads
+version 4.
 
 ## The asset registry
 

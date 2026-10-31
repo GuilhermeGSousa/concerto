@@ -1,5 +1,7 @@
+use std::path::Path;
+
 use concerto_animation::TransitionBlender;
-use concerto_animation::clip::AnimationClip;
+use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_animation::evaluation::AnimationGraphContext;
 use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::blend_space::BlendSpace2DNode;
@@ -12,6 +14,7 @@ use concerto_animation::pose::{EvaluatedPose, Pose, PosePool};
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::assets::asset_store::AssetStore;
+use concerto_foundation::assets::content::check_encoding;
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_reflect::{Reflect, TypeRegistry};
 use uuid::Uuid;
@@ -41,6 +44,10 @@ impl AnimationNode for Gain {
     }
 
     fn reset(&self, _: &mut ()) {}
+}
+
+fn encoding_dir() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
 }
 
 fn clip(name: &str) -> AssetHandle<AnimationClip> {
@@ -233,4 +240,27 @@ fn a_clip_handle_in_a_node_comes_back_strong() {
     let handle = live_node::<AnimationClipNode>(&graph).unwrap().clip();
     assert!(matches!(handle, AssetHandle::Strong(..)));
     assert_eq!(handle.id(), AssetId::from_path("outer_pose"));
+}
+
+#[test]
+fn animation_clip_encoding_matches_its_fixture() {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        Uuid::from_u128(7),
+        AnimationChannel::new(
+            vec![0.0, 0.5],
+            AnimationChanelOutput::Rotation(vec![
+                glam::Quat::IDENTITY,
+                glam::Quat::from_xyzw(0.0, 0.6, 0.0, 0.8),
+            ]),
+        ),
+    );
+    clip.set_frame_rate(30.0);
+
+    check_encoding(&clip, encoding_dir());
+}
+
+#[test]
+fn animation_graph_encoding_matches_its_fixture() {
+    check_encoding(&mixed_graph(), encoding_dir());
 }

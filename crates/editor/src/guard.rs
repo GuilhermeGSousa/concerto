@@ -522,6 +522,7 @@ mod tests {
             id: AssetId::new(),
             address: "next.gasset".into(),
             kind: Scene::name().into(),
+            kind_version: None,
             provenance: None,
         };
         let mut assets = concerto_foundation::assets::registry::AssetRegistry::default();

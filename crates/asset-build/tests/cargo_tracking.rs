@@ -3,9 +3,7 @@
 use std::path::Path;
 use std::process::{Command, Output};
 
-use concerto_asset_format::{
-    write_content_asset, AssetId, ContentAssetHeader, CONTENT_FORMAT_VERSION,
-};
+use concerto_asset_format::{write_content_asset, AssetId, ContentAssetHeader};
 
 fn cargo(project: &Path) -> Output {
     Command::new(env!("CARGO"))
@@ -20,10 +18,10 @@ fn cargo(project: &Path) -> Output {
 
 fn write_asset(project: &Path, id: AssetId) {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: vec![],
         kind: "Fixture".into(),
+        kind_version: 1,
         provenance: None,
     };
     // This recognizable large payload must never be embedded by the macro.
@@ -160,10 +158,10 @@ concerto-asset-build = {{ path = {:?} }}
 
 fn write_asset_at(project: &Path, address: &str, id: AssetId) {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: vec![],
         kind: "Fixture".into(),
+        kind_version: 1,
         provenance: None,
     };
     let path = project.join(address);

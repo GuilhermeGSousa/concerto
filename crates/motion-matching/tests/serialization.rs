@@ -1,4 +1,7 @@
+use std::path::Path;
+
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_foundation::assets::content::check_encoding;
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
@@ -10,6 +13,10 @@ use concerto_motion_matching::{
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
+
+fn encoding_dir() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
+}
 
 fn skeleton() -> Skeleton {
     Skeleton::new(
@@ -237,4 +244,62 @@ fn a_database_with_channels_and_handles_round_trips_through_bincode() {
     assert_eq!(decoded_clips, clip_ids);
     assert_eq!(decoded.channels(), database.channels());
     assert_eq!(decoded.features(4), database.features(4));
+}
+
+fn encoded_definition() -> MotionDatabaseDefinition {
+    MotionDatabaseDefinition {
+        skeleton: AssetHandle::weak(AssetId::from_path("content/hero/skeleton.gasset")),
+        entries: vec![
+            MotionEntry {
+                clip: AssetHandle::weak(AssetId::from_path("content/hero/walk.gasset")),
+                range: None,
+            },
+            MotionEntry {
+                clip: AssetHandle::weak(AssetId::from_path("content/hero/run.gasset")),
+                range: Some(TimeRange {
+                    start: 0.5,
+                    end: 1.5,
+                }),
+            },
+        ],
+        rate: 10.0,
+        speed: 2.0,
+        simulation: SimulationBoneSettings {
+            position_joint: "Child".into(),
+            facing_joint: "Root".into(),
+            facing_axis: Vec3::new(0.0, 0.0, 2.0),
+            position_window: 5,
+            facing_window: 7,
+        },
+        trajectory: TrajectorySettings {
+            sample_dt: 0.25,
+            sample_count: 2,
+        },
+        channels: vec![StoredChannel {
+            type_name: "HeightChannel".into(),
+            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
+        }],
+    }
+}
+
+#[test]
+fn definition_encoding_matches_its_fixture() {
+    check_encoding(&encoded_definition(), encoding_dir());
+}
+
+#[test]
+fn database_encoding_matches_its_fixture() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<HeightChannel>();
+    let first = walk_clip(2.0);
+    let second = walk_clip(2.0);
+    let database = bake(
+        &encoded_definition(),
+        &skeleton(),
+        &[&first, &second],
+        &registry,
+    )
+    .unwrap();
+
+    check_encoding(&database, encoding_dir());
 }

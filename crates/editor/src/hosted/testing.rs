@@ -24,10 +24,7 @@ use concerto_foundation::{
     assets::{
         Asset, AssetId,
         asset_server::AssetServer,
-        content::{
-            CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, read_content_asset,
-            write_content_asset,
-        },
+        content::{ContentAssetHeader, ImportProvenance, read_content_asset, write_content_asset},
         registry::{AssetEntry, AssetRegistry},
     },
     transform::Transform,
@@ -281,6 +278,7 @@ pub(crate) fn scene_entry(name: &str) -> AssetEntry {
         id: AssetId::new(),
         address: format!("{name}.gasset"),
         kind: Scene::name().into(),
+        kind_version: None,
         provenance: Some(ImportProvenance {
             source: "fixture".into(),
             sub_asset: name.into(),
@@ -306,10 +304,10 @@ pub(crate) fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes
         referenced_assets: vec![],
     };
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: asset.id,
         references: vec![],
         kind: Scene::name().into(),
+        kind_version: Scene::FORMAT_VERSION,
         provenance: asset.provenance.clone(),
     };
     std::fs::write(
@@ -488,6 +486,7 @@ impl SceneFixture {
             id: AssetId::new(),
             address: format!("{kind}.gasset"),
             kind: kind.into(),
+            kind_version: None,
             provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: kind.into(),

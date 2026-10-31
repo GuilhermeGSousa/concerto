@@ -15,6 +15,8 @@ pub struct AssetEntry {
     pub address: String,
     /// The `Asset::name()` of the type stored in the file.
     pub kind: String,
+    /// The header's `kind_version`; `None` for every entry parsed from registry text.
+    pub kind_version: Option<u32>,
     /// Where an imported asset came from; `None` for an authored asset, and for
     /// every entry parsed from registry text rather than from content headers.
     pub provenance: Option<ImportProvenance>,
@@ -52,6 +54,7 @@ impl From<ScannedEntry> for AssetEntry {
             id: entry.id,
             address: entry.address,
             kind: entry.kind,
+            kind_version: entry.kind_version,
             provenance: entry.provenance,
         }
     }
@@ -111,6 +114,7 @@ impl AssetRegistry {
                 id: entry.id,
                 address: entry.address.clone(),
                 kind: entry.kind.clone(),
+                kind_version: None,
                 provenance: None,
             })
             .collect();

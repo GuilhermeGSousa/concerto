@@ -8,7 +8,6 @@ use anyhow::{bail, Context};
 use concerto_asset_import::{DependencyEntry, ImportContext, Importer, SubAssetIdResolver};
 use concerto_foundation::assets::content::{
     read_content_asset_header, write_content_asset, ContentAssetHeader, ImportProvenance,
-    CONTENT_FORMAT_VERSION,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
@@ -279,10 +278,10 @@ fn import_placed(
             }
         }
         let header = ContentAssetHeader {
-            format_version: CONTENT_FORMAT_VERSION,
             asset_id: sub_asset.asset_id,
             references: sub_asset.references.clone(),
             kind: sub_asset.type_name.to_string(),
+            kind_version: sub_asset.kind_version,
             provenance: Some(ImportProvenance {
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
@@ -296,6 +295,7 @@ fn import_placed(
             id: sub_asset.asset_id,
             address,
             kind: header.kind,
+            kind_version: Some(header.kind_version),
             provenance: header.provenance,
         };
         registry.insert(entry.clone());

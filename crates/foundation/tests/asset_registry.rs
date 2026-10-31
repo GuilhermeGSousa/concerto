@@ -2,7 +2,7 @@
 //! minting and reusing ids.
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
-    ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
+    ContentAssetHeader, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::{Asset, AssetId};
@@ -13,6 +13,7 @@ fn entry(id: AssetId, address: &str, kind: &str) -> AssetEntry {
         id,
         address: address.into(),
         kind: kind.into(),
+        kind_version: None,
         provenance: None,
     }
 }
@@ -62,10 +63,10 @@ fn read_content_asset_header_does_not_read_the_payload() {
     let address = "content/big/thing.gasset";
     let id = AssetId::new();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: Vec::new(),
         kind: "Thing".to_string(),
+        kind_version: 1,
         provenance: None,
     };
     // A payload far larger than the header, so a whole-file read would be
@@ -124,10 +125,10 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id() {
             sub_asset: sub.into(),
         });
         let header = ContentAssetHeader {
-            format_version: CONTENT_FORMAT_VERSION,
             asset_id: id,
             references: Vec::new(),
             kind: kind.to_string(),
+            kind_version: 1,
             provenance: provenance.clone(),
         };
         std::fs::create_dir_all(dir.join("content/hero")).unwrap();
@@ -137,6 +138,7 @@ fn from_content_tree_indexes_every_gasset_by_its_header_id() {
         )
         .unwrap();
         expected.push(AssetEntry {
+            kind_version: Some(1),
             provenance,
             ..entry(id, &address, kind)
         });
@@ -161,10 +163,10 @@ fn from_content_tree_repoints_a_moved_file_at_its_new_address() {
     let dir = temp_root("scan-moved");
     let id = AssetId::new();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: Vec::new(),
         kind: "Mesh".to_string(),
+        kind_version: 1,
         provenance: None,
     };
     std::fs::create_dir_all(dir.join("content/hero")).unwrap();
@@ -201,10 +203,10 @@ fn from_content_tree_rejects_two_files_sharing_an_id() {
     let dir = temp_root("scan-dup-id");
     let id = AssetId::new();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: Vec::new(),
         kind: "Mesh".to_string(),
+        kind_version: 1,
         provenance: None,
     };
     let bytes = write_content_asset(&header, b"payload").unwrap();
