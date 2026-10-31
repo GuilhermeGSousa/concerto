@@ -2063,6 +2063,31 @@ mod list_rows {
         assert!(padding > 0.0);
     }
 
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Tints {
+        tints: Vec<concerto_color::Color>,
+    }
+
+    #[test]
+    fn a_wrapping_row_pins_its_remove_button_and_keeps_its_fields_full_width() {
+        let (mut w, _) = fixture(Tints {
+            tints: vec![concerto_color::Color::WHITE],
+        });
+        let path = [PathSegment::Field("tints"), PathSegment::Index(0)];
+        let remove = last_child(&mut w.f.world, &path);
+        assert!(pinned_right(&w.f.world, remove));
+
+        let row = row(&mut w.f.world, &path).unwrap();
+        let padding =
+            w.f.world
+                .get_component_for_entity::<UINode>(row)
+                .unwrap()
+                .padding
+                .right;
+        assert_eq!(padding, 0.0);
+    }
+
     #[test]
     fn add_appends_a_default_and_rebuilds_and_remove_takes_that_element_out() {
         let (mut w, entity) = fixture(Samples {

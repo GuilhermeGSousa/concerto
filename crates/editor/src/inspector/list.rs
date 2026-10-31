@@ -151,7 +151,6 @@ fn list_button(
     )
 }
 
-/// Commits `edit` to the list whose row is `row`.
 fn edit_list(row: Entity, edit: ListEdit) -> Listener<UIClick> {
     (move |on: On<UIClick>, rows: Query<&PropertyRow>, mut commits: ResMut<PropertyCommits>| {
         if on.signal().button != MouseButton::Left {

@@ -79,7 +79,7 @@ pub struct SetProperty {
     pub entity: String,
     /// The component, by short name such as Light, or by full type path when the short name is ambiguous.
     pub component: String,
-    /// The property, one of the paths inspect lists for the component, such as intensity, translation or values.2, or an element past where inspect cuts a long list; "" for a component inspect lists as one value; a list's own path takes the whole array; a path inspect marks enum takes the whole enum, such as "Point" or {"Spot": {"cone_angle": 40}}.
+    /// The property, one of the paths inspect lists for the component, such as intensity, translation or values.2, or an element past where inspect cuts a long list; "" for a component inspect lists as one value; a list's own path takes the whole array; a path inspect marks enum takes the whole enum, such as "Point" or {"Spot": {"cone_angle": 40}}, unless it sits under a list and its type has neither JSON nor a default, which answers not_editable.
     pub path: String,
     /// The value, as JSON in the shape inspect reports it; a struct may leave fields out to keep them.
     pub value: Value,
