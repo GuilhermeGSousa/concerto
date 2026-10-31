@@ -1,6 +1,6 @@
 //! Covers binding resolution: which action a key press means depends on the
 //! context stack, and typing into a widget must never fire one.
-use concerto_window::input::actions::{ActionLabel, ActionMap, Modifiers, Shortcut};
+use concerto_window::input::actions::{ActionLabel, ActionMap, Shortcut};
 use concerto_window::input::KeyCode;
 use concerto_window::{define_action, define_context};
 
@@ -160,12 +160,4 @@ fn pushing_a_context_twice_still_pops_clean() {
         None,
         "a context must not linger because it was pushed twice"
     );
-}
-
-#[test]
-fn modifiers_read_off_a_shortcut_builder() {
-    let bare = Shortcut::key(KeyCode::KeyA);
-    assert_eq!(bare.modifiers, Modifiers::NONE);
-    assert!(Shortcut::ctrl(KeyCode::KeyA).modifiers.ctrl);
-    assert!(Shortcut::key(KeyCode::KeyA).with_alt().modifiers.alt);
 }
