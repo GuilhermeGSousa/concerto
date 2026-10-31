@@ -899,15 +899,15 @@ spans the space between the cards and sits over the viewport, which keeps its
 full size, as it does under the cards. Chatter stays visible on every tab. A
 Scene document gets no `bottom` host.
 
-The [custom asset editor example](examples/custom_asset.rs), which does not take
-part in saving (see the rules below), loads a
+The [custom asset editor example](examples/custom_asset.rs) loads a
 non-Clone Dialogue asset, builds its own text widget, replaces its contents,
 rejects invalid input without mutation, hosts a preview of a cube that it sets
 spinning with a signal, publishes the `Dialogue` as a
 [document value](#document-values) whose edits mark the document unsaved and
 send the speed to the preview, and registers through the public API. `text`
-shows "Unsupported type", since there is no `String` editor. Run its headless
-smoke test with:
+shows "Unsupported type", since there is no `String` editor. It stops at marking:
+it never answers `SaveRequested`, so its edits cannot be saved. An editor that
+marks `Unsaved` must follow the rules below. Run its headless smoke test with:
 
 ```sh
 cargo run -p concerto-editor --example custom_asset

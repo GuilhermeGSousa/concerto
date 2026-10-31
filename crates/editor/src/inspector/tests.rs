@@ -2951,14 +2951,14 @@ fn addresses_share_a_target_through_one_arc_or_an_equal_component() {
     let transform = TypeId::of::<Transform>();
 
     let shown = component(entity, transform);
-    assert!(shown.same_target(&component(entity, transform)));
-    assert!(!shown.same_target(&component(other, transform)));
-    assert!(!shown.same_target(&component(entity, TypeId::of::<Tag>())));
+    assert!(shown.reaches(&component(entity, transform).target));
+    assert!(!shown.reaches(&component(other, transform).target));
+    assert!(!shown.reaches(&component(entity, TypeId::of::<Tag>()).target));
 
     let held: Arc<dyn PropertyTarget> = Arc::new(HeldElsewhere);
-    assert!(address_of(held.clone()).same_target(&address_of(held)));
-    assert!(!address_of(Arc::new(HeldElsewhere)).same_target(&address_of(Arc::new(HeldElsewhere))));
-    assert!(!address_of(Arc::new(HeldElsewhere)).same_target(&shown));
+    assert!(address_of(held.clone()).reaches(&held));
+    assert!(!address_of(Arc::new(HeldElsewhere)).reaches(&held));
+    assert!(!address_of(Arc::new(HeldElsewhere)).reaches(&shown.target));
 }
 
 #[test]
