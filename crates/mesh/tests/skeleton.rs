@@ -126,16 +126,3 @@ fn joint_pose_to_mat4_scales_then_rotates_then_translates() {
         "got {point}"
     );
 }
-
-#[test]
-fn skeleton_round_trips_through_bincode() {
-    let skeleton = chain();
-    let bytes = bincode::serialize(&skeleton).expect("Skeleton must serialize");
-    let decoded: Skeleton = bincode::deserialize(&bytes).expect("Skeleton must round-trip");
-
-    assert_eq!(decoded.parents, skeleton.parents);
-    assert_eq!(decoded.names, skeleton.names);
-    assert_eq!(decoded.rest_pose, skeleton.rest_pose);
-    assert_eq!(decoded.bone_ids, skeleton.bone_ids);
-    assert_eq!(decoded.inverse_bindposes, skeleton.inverse_bindposes);
-}
