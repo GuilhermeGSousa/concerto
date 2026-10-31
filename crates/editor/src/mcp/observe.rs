@@ -58,7 +58,7 @@ pub struct ListAssets {
     pub offset: usize,
 }
 
-/// The open scene's entities as an indented tree, one `id name [components]` line each; while a game plays, the game's.
+/// The open scene's entities as an indented tree, one `id name [components]` line each; while a game plays, the game's; in a preview that is edited, its top-level entities.
 #[derive(Deserialize, JsonSchema)]
 pub struct SceneTree {
     /// The entity to start from, such as 42v3, instead of the scene's top level.
@@ -71,7 +71,7 @@ pub struct SceneTree {
     pub limit: usize,
 }
 
-/// The open scene's entities that match a name and a component, each with its path of names from the top.
+/// The open scene's entities that match a name and a component, each with its path of names from the top; while a game plays, the game's; in a preview that is edited, the preview's.
 #[derive(Deserialize, JsonSchema)]
 pub struct FindEntities {
     /// Text to find in the entity's name, ignoring case.
@@ -441,11 +441,11 @@ impl SceneView<'_> {
 }
 
 fn top_of_scene(
-    playing: bool,
+    play: Option<&PlayState>,
     roots: &Query<Entity, With<SceneRoot>>,
     top_level: &SystemInputData<TopLevel>,
 ) -> Vec<Entity> {
-    let mut starts: Vec<Entity> = if playing {
+    let mut starts: Vec<Entity> = if play.is_none_or(|play| *play == PlayState::Playing) {
         top_level.iter().collect()
     } else {
         roots.iter().collect()
@@ -539,7 +539,6 @@ fn scene_tree(
         return;
     };
     let address = scene_address(document);
-    let playing = play == Some(&PlayState::Playing);
     let kids = |entity| children_of(&children, entity);
     let name = |entity| names.get_entity(entity).map(|name| name.as_str());
     let label = |entity| label_of(entity, &roots, &names, address);
@@ -553,7 +552,7 @@ fn scene_tree(
                     continue;
                 }
             },
-            None => top_of_scene(playing, &roots, &top_level),
+            None => top_of_scene(play, &roots, &top_level),
         };
         let view = SceneView {
             starts,
@@ -579,14 +578,13 @@ fn find_entities(
         return;
     };
     let address = scene_address(document);
-    let playing = play == Some(&PlayState::Playing);
     let kids = |entity| children_of(&children, entity);
     let name = |entity| names.get_entity(entity).map(|name| name.as_str());
     let label = |entity| label_of(entity, &roots, &names, address);
     let carried = |entity| components_of(&components, entity);
     for (arguments, reply) in calls.read() {
         let view = SceneView {
-            starts: top_of_scene(playing, &roots, &top_level),
+            starts: top_of_scene(play, &roots, &top_level),
             children: &kids,
             name: &name,
             label: &label,

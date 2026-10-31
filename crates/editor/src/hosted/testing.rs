@@ -62,6 +62,7 @@ use crate::{
         SceneSaved, SceneState,
     },
     tools::{
+        edits::{ComponentEdited, PropertyCommitted},
         entity_ops::EntityEdit,
         scene::{RevealEntity, SceneEdited, SceneRoot, SceneStatus},
         selection::Selection,
@@ -69,13 +70,13 @@ use crate::{
 };
 
 #[derive(Event, Clone, Debug, PartialEq)]
-pub(crate) struct Echo(pub u32);
+pub struct Echo(pub u32);
 
-pub(crate) struct Say(pub u32);
+pub struct Say(pub u32);
 impl Signal for Say {}
 
 #[derive(Resource, Default)]
-pub(crate) struct Frames(pub usize);
+pub struct Frames(pub usize);
 
 fn say(on: On<Say>, mut echo: EventWriter<Echo>) {
     echo.write(Echo(on.signal().0));
@@ -86,9 +87,9 @@ fn count_frame(mut frames: ResMut<Frames>) {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct Said(pub Vec<(u32, usize)>);
+pub struct Said(pub Vec<(u32, usize)>);
 
-pub(crate) fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
+pub fn remember_said(on: On<Say>, frames: Res<Frames>, mut said: ResMut<Said>) {
     said.0.push((on.signal().0, frames.0));
 }
 
@@ -102,9 +103,9 @@ fn broken_build(_: &mut App) {
 }
 
 macro_rules! test_asset {
-    ($asset:ident, $editor:ident, $preview:expr) => {
+    ($asset:ident, $editor:ident, $preview:expr, $edits_in_preview:expr) => {
         #[derive(serde::Serialize, serde::Deserialize)]
-        pub(crate) struct $asset;
+        pub struct $asset;
 
         impl Asset for $asset {
             fn name() -> &'static str {
@@ -113,11 +114,15 @@ macro_rules! test_asset {
         }
 
         #[derive(Default)]
-        pub(crate) struct $editor;
+        pub struct $editor;
 
         impl AssetEditor for $editor {
             fn preview(&self) -> Option<PreviewSpec> {
                 $preview
+            }
+
+            fn edits_in_preview(&self) -> bool {
+                $edits_in_preview
             }
         }
     };
@@ -128,18 +133,28 @@ test_asset!(
     PreviewedEditor,
     Some(PreviewSpec {
         build: previewed_build
-    })
+    }),
+    false
+);
+test_asset!(
+    EditedPreviewAsset,
+    EditedPreviewEditor,
+    Some(PreviewSpec {
+        build: previewed_build
+    }),
+    true
 );
 test_asset!(
     BrokenPreviewAsset,
     BrokenPreviewEditor,
     Some(PreviewSpec {
         build: broken_build
-    })
+    }),
+    false
 );
-test_asset!(PlainAsset, PlainEditor, None);
+test_asset!(PlainAsset, PlainEditor, None, false);
 
-pub(crate) fn plain_recipe(app: &mut App) {
+pub fn plain_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin)
@@ -149,7 +164,7 @@ pub(crate) fn plain_recipe(app: &mut App) {
         .add_listener(say.at_edit_time());
 }
 
-pub(crate) fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
+pub fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
     HostRequest {
         gpu: None,
         recipe,
@@ -160,21 +175,21 @@ pub(crate) fn request(recipe: fn(&mut App)) -> HostRequest<'static> {
     }
 }
 
-pub(crate) fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
+pub fn play_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     HostRequest {
         role: HostRole::Game,
         ..request(recipe)
     }
 }
 
-pub(crate) fn preview_request(recipe: fn(&mut App)) -> HostRequest<'static> {
+pub fn preview_request(recipe: fn(&mut App)) -> HostRequest<'static> {
     HostRequest {
         role: HostRole::Preview,
         ..request(recipe)
     }
 }
 
-pub(crate) fn start_play(
+pub fn start_play(
     world: &mut World,
     document: Entity,
     recipe: fn(&mut App),
@@ -186,13 +201,13 @@ pub(crate) fn start_play(
     world.trigger(SetEditTarget(None));
 }
 
-pub(crate) fn finish_play(world: &mut World) {
+pub fn finish_play(world: &mut World) {
     let mut system = super::finish_pending_play.into_system();
     system.initialize(world);
     system.run_and_apply((), world);
 }
 
-pub(crate) fn play_now(
+pub fn play_now(
     world: &mut World,
     document: Entity,
     recipe: fn(&mut App),
@@ -202,19 +217,19 @@ pub(crate) fn play_now(
     finish_play(world);
 }
 
-pub(crate) fn play_state(world: &World, document: Entity) -> Option<PlayState> {
+pub fn play_state(world: &World, document: Entity) -> Option<PlayState> {
     world
         .get_component_for_entity::<PlayState>(document)
         .copied()
 }
 
-pub(crate) fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedApp {
+pub fn hosted_now(recipe: fn(&mut App), extra: impl FnOnce(&mut App)) -> HostedApp {
     super::begin(request(recipe), extra, |_| {})
         .finish_now()
         .expect("a recipe without asynchronous plugins is ready at once")
 }
 
-pub(crate) fn preview_now(recipe: fn(&mut App)) -> HostedApp {
+pub fn preview_now(recipe: fn(&mut App)) -> HostedApp {
     super::begin(preview_request(recipe), |_| {}, |_| {})
         .finish_now()
         .expect("a recipe without asynchronous plugins is ready at once")
@@ -226,7 +241,7 @@ fn insert_play_outcomes(world: &mut World) {
     world.insert_resource(EventChannel::<PlayStopped>::new());
 }
 
-pub(crate) fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
+pub fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     let mut world = World::new();
     world.insert_resource(ActiveEditor::default());
     world.insert_resource(Routing::default());
@@ -238,7 +253,7 @@ pub(crate) fn host_world(recipe: fn(&mut App)) -> (World, Entity) {
     (world, document)
 }
 
-pub(crate) fn scene_recipe(app: &mut App) {
+pub fn scene_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
@@ -248,7 +263,7 @@ pub(crate) fn scene_recipe(app: &mut App) {
 }
 
 #[derive(Resource, Default)]
-pub(crate) struct GameRan(pub bool);
+pub struct GameRan(pub bool);
 
 fn note_game_ran(mut ran: ResMut<GameRan>) {
     ran.0 = true;
@@ -276,7 +291,7 @@ fn fixture_recipe(app: &mut App) {
         .add_system(Update, count_frame.at_edit_time());
 }
 
-pub(crate) fn scene_entry(name: &str) -> AssetEntry {
+pub fn scene_entry(name: &str) -> AssetEntry {
     AssetEntry {
         id: AssetId::new(),
         address: format!("{name}.gasset"),
@@ -288,7 +303,7 @@ pub(crate) fn scene_entry(name: &str) -> AssetEntry {
     }
 }
 
-pub(crate) fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&str]) {
+pub fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes: &[&str]) {
     let nodes = nodes
         .iter()
         .map(|name| {
@@ -324,7 +339,7 @@ fn build_hierarchy_panel(mut cmd: CommandQueue, theme: Res<UITheme>) {
     crate::hierarchy::spawn_panel(&mut cmd, parent, &theme);
 }
 
-pub(crate) struct SceneFixture {
+pub struct SceneFixture {
     pub world: World,
     pub project_root: PathBuf,
     pub scene: AssetEntry,
@@ -335,8 +350,14 @@ pub(crate) struct SceneFixture {
     _directory: tempfile::TempDir,
 }
 
+impl Default for SceneFixture {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneFixture {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let project_root = directory.path().to_path_buf();
         let scene = scene_entry("first");
@@ -362,6 +383,9 @@ impl SceneFixture {
         editors.register_creatable::<Scene, SceneEditor>().unwrap();
         editors
             .register::<PreviewedAsset, PreviewedEditor>()
+            .unwrap();
+        editors
+            .register::<EditedPreviewAsset, EditedPreviewEditor>()
             .unwrap();
         editors
             .register::<BrokenPreviewAsset, BrokenPreviewEditor>()
@@ -439,10 +463,14 @@ impl SceneFixture {
         world.insert_resource(EventChannel::<Hosted<SceneEdited>>::new());
         world.insert_resource(EventChannel::<Hosted<SceneStatus>>::new());
         world.insert_resource(EventChannel::<Hosted<RevealEntity>>::new());
+        world.insert_resource(EventChannel::<Hosted<PropertyCommitted>>::new());
+        world.insert_resource(EventChannel::<Hosted<ComponentEdited>>::new());
         let mut delivery = vec![
             forward_events::<SceneEdited>.into_boxed_system(),
             forward_events::<SceneStatus>.into_boxed_system(),
             forward_events::<RevealEntity>.into_boxed_system(),
+            forward_events::<PropertyCommitted>.into_boxed_system(),
+            forward_events::<ComponentEdited>.into_boxed_system(),
             crate::scene::follow_unsaved_edits.into_boxed_system(),
             crate::scene::show_status.into_boxed_system(),
             crate::scene::reveal.into_boxed_system(),
@@ -463,7 +491,7 @@ impl SceneFixture {
         }
     }
 
-    pub(crate) fn open(&mut self) -> Entity {
+    pub fn open(&mut self) -> Entity {
         let scene = self.scene.clone();
         self.request(&scene);
         self.frames_until_idle();
@@ -483,7 +511,7 @@ impl SceneFixture {
         document
     }
 
-    pub(crate) fn request_kind(&mut self, kind: &str) -> Entity {
+    pub fn request_kind(&mut self, kind: &str) -> Entity {
         let asset = AssetEntry {
             id: AssetId::new(),
             address: format!("{kind}.gasset"),
@@ -502,8 +530,12 @@ impl SceneFixture {
             .expect("opening an asset makes its document the active one")
     }
 
-    pub(crate) fn open_preview(&mut self) -> Entity {
-        let document = self.request_kind(PreviewedAsset::name());
+    pub fn open_preview(&mut self) -> Entity {
+        self.open_preview_of(PreviewedAsset::name())
+    }
+
+    pub fn open_preview_of(&mut self, kind: &str) -> Entity {
+        let document = self.request_kind(kind);
         self.frames_until("the preview was never built", |f| {
             f.world
                 .get_component_for_entity::<HostedApp>(document)
@@ -512,7 +544,7 @@ impl SceneFixture {
         document
     }
 
-    pub(crate) fn frame(&mut self) {
+    pub fn frame(&mut self) {
         for system in &mut self.systems {
             system.run_and_apply((), &mut self.world);
         }
@@ -520,23 +552,23 @@ impl SceneFixture {
         self.world.tick();
     }
 
-    pub(crate) fn activate(&mut self, document: Option<Entity>) {
+    pub fn activate(&mut self, document: Option<Entity>) {
         self.world.get_resource_mut::<ActiveEditor>().unwrap().0 = document;
         self.world.trigger(SetEditTarget(document));
     }
 
-    pub(crate) fn deliver(&mut self) {
+    pub fn deliver(&mut self) {
         for system in &mut self.delivery {
             system.run_and_apply((), &mut self.world);
         }
     }
 
-    pub(crate) fn add_delivery(&mut self, mut system: BoxedSystem) {
+    pub fn add_delivery(&mut self, mut system: BoxedSystem) {
         system.initialize(&mut self.world);
         self.delivery.push(system);
     }
 
-    pub(crate) fn frames_until_idle(&mut self) {
+    pub fn frames_until_idle(&mut self) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             self.frame();
@@ -565,7 +597,7 @@ impl SceneFixture {
                 .all(|(document, state)| document.pending.is_none() && state.idle())
     }
 
-    pub(crate) fn frames_until_building(&mut self, document: Entity) {
+    pub fn frames_until_building(&mut self, document: Entity) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while self
             .world
@@ -584,7 +616,7 @@ impl SceneFixture {
             .insert_resource(HoldReady);
     }
 
-    pub(crate) fn wait_until_the_build_is_ready(&mut self, document: Entity) {
+    pub fn wait_until_the_build_is_ready(&mut self, document: Entity) {
         if let Some(hosted) = self
             .world
             .get_component_for_entity_mut::<PendingApp>(document)
@@ -613,25 +645,25 @@ impl SceneFixture {
         }
     }
 
-    pub(crate) fn add_scene(&mut self, name: &str) -> AssetEntry {
+    pub fn add_scene(&mut self, name: &str) -> AssetEntry {
         let asset = scene_entry(name);
         write_scene_file(&self.project_root, &asset, &[name]);
         self.add_to_project(&asset);
         asset
     }
 
-    pub(crate) fn add_to_project(&mut self, asset: &AssetEntry) {
+    pub fn add_to_project(&mut self, asset: &AssetEntry) {
         self.world
             .get_resource_mut::<AssetRegistry>()
             .unwrap()
             .insert(asset.clone());
     }
 
-    pub(crate) fn request(&mut self, asset: &AssetEntry) {
+    pub fn request(&mut self, asset: &AssetEntry) {
         self.command(AssetEditorCommand::Open(asset.clone()));
     }
 
-    pub(crate) fn request_other_scene(&mut self, document: Entity) {
+    pub fn request_other_scene(&mut self, document: Entity) {
         let other = self.other.clone();
         self.request(&other);
         assert_eq!(
@@ -640,11 +672,11 @@ impl SceneFixture {
         );
     }
 
-    pub(crate) fn close(&mut self, document: Entity) {
+    pub fn close(&mut self, document: Entity) {
         self.command(AssetEditorCommand::Close(document));
     }
 
-    pub(crate) fn command(&mut self, command: AssetEditorCommand) {
+    pub fn command(&mut self, command: AssetEditorCommand) {
         self.world
             .get_resource_mut::<AssetEditorCommands>()
             .unwrap()
@@ -653,7 +685,7 @@ impl SceneFixture {
         self.systems[self.process_commands].run_and_apply((), &mut self.world);
     }
 
-    pub(crate) fn signal<S: Signal>(&mut self, signal: S) {
+    pub fn signal<S: Signal>(&mut self, signal: S) {
         let mut signal = Some(signal);
         let mut system = (move |mut scene: EditWorldSignals| {
             if let Some(signal) = signal.take() {
@@ -666,7 +698,7 @@ impl SceneFixture {
         self.deliver();
     }
 
-    pub(crate) fn rename(&mut self, document: Entity, name: &str, renamed: &str) {
+    pub fn rename(&mut self, document: Entity, name: &str, renamed: &str) {
         let entity = self.scene_entity(document, name);
         self.signal(EntityEdit::Rename {
             entity,
@@ -674,14 +706,14 @@ impl SceneFixture {
         });
     }
 
-    pub(crate) fn scene_world(&self, document: Entity) -> &World {
+    pub fn scene_world(&self, document: Entity) -> &World {
         self.world
             .get_component_for_entity::<HostedApp>(document)
             .expect("the document hosts a scene")
             .world()
     }
 
-    pub(crate) fn scene_world_mut(&mut self, document: Entity) -> &mut World {
+    pub fn scene_world_mut(&mut self, document: Entity) -> &mut World {
         self.world
             .get_component_for_entity_mut::<HostedApp>(document)
             .expect("the document hosts a scene")
@@ -690,7 +722,7 @@ impl SceneFixture {
             .world_mut()
     }
 
-    pub(crate) fn scene_names(&mut self, document: Entity) -> Vec<String> {
+    pub fn scene_names(&mut self, document: Entity) -> Vec<String> {
         let scene = self.scene_world_mut(document);
         scene
             .query::<&Name, ()>()
@@ -699,7 +731,7 @@ impl SceneFixture {
             .collect()
     }
 
-    pub(crate) fn scene_entity(&mut self, document: Entity, name: &str) -> Entity {
+    pub fn scene_entity(&mut self, document: Entity, name: &str) -> Entity {
         let scene = self.scene_world_mut(document);
         scene
             .query::<(Entity, &Name), ()>()
@@ -709,7 +741,7 @@ impl SceneFixture {
             .unwrap_or_else(|| panic!("the scene has no node called {name}"))
     }
 
-    pub(crate) fn scene_root(&mut self, document: Entity) -> Entity {
+    pub fn scene_root(&mut self, document: Entity) -> Entity {
         let scene = self.scene_world_mut(document);
         scene
             .query::<(Entity, &SceneRoot), ()>()
@@ -719,29 +751,29 @@ impl SceneFixture {
             .expect("an open scene has a root")
     }
 
-    pub(crate) fn selected(&self, document: Entity) -> Option<Entity> {
+    pub fn selected(&self, document: Entity) -> Option<Entity> {
         self.scene_world(document)
             .get_resource::<Selection>()
             .unwrap()
             .entity()
     }
 
-    pub(crate) fn unsaved(&mut self, document: Entity) -> bool {
+    pub fn unsaved(&mut self, document: Entity) -> bool {
         self.deliver();
         self.world
             .get_component_for_entity::<Unsaved>(document)
             .is_some()
     }
 
-    pub(crate) fn opened(&self) -> Vec<SceneOpened> {
+    pub fn opened(&self) -> Vec<SceneOpened> {
         self.written()
     }
 
-    pub(crate) fn open_failures(&self) -> Vec<SceneOpenFailed> {
+    pub fn open_failures(&self) -> Vec<SceneOpenFailed> {
         self.written()
     }
 
-    pub(crate) fn written<E: Event + Clone + 'static>(&self) -> Vec<E> {
+    pub fn written<E: Event + Clone + 'static>(&self) -> Vec<E> {
         self.world
             .get_resource::<EventChannel<E>>()
             .unwrap()
@@ -750,23 +782,23 @@ impl SceneFixture {
             .collect()
     }
 
-    pub(crate) fn status(&self, document: Entity) -> String {
+    pub fn status(&self, document: Entity) -> String {
         self.document(document).status.clone()
     }
 
-    pub(crate) fn document(&self, document: Entity) -> &EditorDocument {
+    pub fn document(&self, document: Entity) -> &EditorDocument {
         self.world
             .get_component_for_entity::<EditorDocument>(document)
             .expect("the document is open")
     }
 
-    pub(crate) fn saved_scene(&self) -> Scene {
+    pub fn saved_scene(&self) -> Scene {
         let bytes = std::fs::read(self.project_root.join(&self.scene.address)).unwrap();
         let (_, payload) = read_content_asset(&bytes).unwrap();
         bincode::deserialize(payload).unwrap()
     }
 
-    pub(crate) fn saved_scene_names(&self) -> Vec<String> {
+    pub fn saved_scene_names(&self) -> Vec<String> {
         self.saved_scene()
             .nodes
             .into_iter()
@@ -774,7 +806,7 @@ impl SceneFixture {
             .collect()
     }
 
-    pub(crate) fn make_project_unwritable(&mut self) {
+    pub fn make_project_unwritable(&mut self) {
         let file = self.project_root.join(&self.scene.address);
         self.world
             .get_resource_mut::<ProjectState>()
@@ -785,7 +817,7 @@ impl SceneFixture {
             .root = file;
     }
 
-    pub(crate) fn hosted_frames(&self, document: Entity) -> usize {
+    pub fn hosted_frames(&self, document: Entity) -> usize {
         self.scene_world(document)
             .get_resource::<Frames>()
             .unwrap()
@@ -793,7 +825,7 @@ impl SceneFixture {
     }
 
     /// Whether `world`'s registry and its asset server both know `id`.
-    pub(crate) fn knows(&self, world: &World, id: AssetId) -> bool {
+    pub fn knows(&self, world: &World, id: AssetId) -> bool {
         let resource = world
             .get_resource::<AssetRegistry>()
             .is_some_and(|registry| registry.get(id).is_some());
@@ -804,11 +836,11 @@ impl SceneFixture {
         resource && server
     }
 
-    pub(crate) fn play_state(&self, document: Entity) -> Option<PlayState> {
+    pub fn play_state(&self, document: Entity) -> Option<PlayState> {
         play_state(&self.world, document)
     }
 
-    pub(crate) fn parked_world(&self, document: Entity) -> &World {
+    pub fn parked_world(&self, document: Entity) -> &World {
         self.world
             .get_component_for_entity::<ParkedEditApp>(document)
             .expect("the edit App is parked")
@@ -816,7 +848,7 @@ impl SceneFixture {
             .world()
     }
 
-    pub(crate) fn hosted_is_editing(&self, document: Entity) -> bool {
+    pub fn hosted_is_editing(&self, document: Entity) -> bool {
         self.world
             .get_component_for_entity::<HostedApp>(document)
             .expect("the document hosts an App")
@@ -824,21 +856,21 @@ impl SceneFixture {
             .is_editing()
     }
 
-    pub(crate) fn starting_world(&self, document: Entity) -> Option<WorldId> {
+    pub fn starting_world(&self, document: Entity) -> Option<WorldId> {
         self.world
             .get_component_for_entity::<PendingPlayApp>(document)
             .and_then(|pending| pending.0.hosted.as_ref())
             .map(|hosted| hosted.world().id())
     }
 
-    pub(crate) fn game_ran(&self, document: Entity) -> bool {
+    pub fn game_ran(&self, document: Entity) -> bool {
         self.scene_world(document)
             .get_resource::<GameRan>()
             .unwrap()
             .0
     }
 
-    pub(crate) fn frames_until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
+    pub fn frames_until(&mut self, what: &str, mut done: impl FnMut(&mut Self) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             self.frame();
@@ -850,7 +882,7 @@ impl SceneFixture {
         }
     }
 
-    pub(crate) fn frames_until_playing(&mut self, document: Entity) {
+    pub fn frames_until_playing(&mut self, document: Entity) {
         self.frames_until("the game never started", |f| {
             f.play_state(document) == Some(PlayState::Playing)
         });
@@ -858,7 +890,7 @@ impl SceneFixture {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-pub(crate) struct GatedAsset;
+pub struct GatedAsset;
 
 impl concerto_foundation::assets::Asset for GatedAsset {
     fn name() -> &'static str {
@@ -866,22 +898,19 @@ impl concerto_foundation::assets::Asset for GatedAsset {
     }
 }
 
-pub(crate) static ENTERED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-pub(crate) static RELEASED: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
-pub(crate) static GATED_DROPS: std::sync::atomic::AtomicUsize =
-    std::sync::atomic::AtomicUsize::new(0);
+pub static ENTERED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static RELEASED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+pub static GATED_DROPS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static GATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub(crate) fn lock_gate() -> std::sync::MutexGuard<'static, ()> {
+pub fn lock_gate() -> std::sync::MutexGuard<'static, ()> {
     let guard = GATE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     ENTERED.store(false, std::sync::atomic::Ordering::SeqCst);
     RELEASED.store(false, std::sync::atomic::Ordering::SeqCst);
     guard
 }
 
-pub(crate) fn wait_for(what: &str, done: impl Fn() -> bool) {
+pub fn wait_for(what: &str, done: impl Fn() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(5);
     while !done() {
         assert!(Instant::now() < deadline, "{what}");

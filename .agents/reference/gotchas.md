@@ -244,12 +244,15 @@ fix the entry in the same commit as the change that made it false.
   there for its hooks to fire. A tool's system or listener must be marked
   `.at_edit_time()`, or it is a stand-in or is dropped there. A play `App`
   gets only `EditToolsCorePlugin`, the tools that select, edit, and capture,
-  so nothing from the viewport half runs in a game. Changes made while
+  so nothing from the viewport half runs in a game. `open_previews` gives a
+  preview the same plugin when its editor's `edits_in_preview` is true, so such
+  a preview has `Selection` and the edit path but no `FlyCamera`, and MCP
+  `frame` and `set_camera` answer `no_scene` there. Changes made while
   playing are made to the play `App`'s world and are lost on Stop; they never
   mark the document unsaved.
 - **`EditWorld<T>` and `EditWorldSignals` skip their system** while no document
   has `EditTarget`: no scene is open in the front tab, the front tab's `App` is
-  a preview, or its game is starting. Whatever such a system drew stays on screen unless an
+  a preview whose editor does not edit in it, or its game is starting. Whatever such a system drew stays on screen unless an
   `On<Remove<EditTarget>>` listener empties it. A skipped system does not
   advance its event readers either, so on its next run it reads the events of
   the frame it missed.
@@ -257,7 +260,8 @@ fix the entry in the same commit as the change that made it false.
   Its one listener moves `ViewportTarget` and `EditTarget` and enforces that at
   most the front tab's document holds them, and only once it has an `App`.
   `ViewportTarget` goes on any hosted `App`; `EditTarget` goes on every role but
-  `HostRole::Preview`. A `SetEditTarget(Some(document))` for a document that is
+  `HostRole::Preview`, and on a preview only when its editor's
+  `edits_in_preview` is true. A `SetEditTarget(Some(document))` for a document that is
   not the front tab changes nothing, so an `App` finishing, failing to play, or
   stopping in the background leaves the front tab's markers alone.
   Re-targeting the same document removes the markers and adds them again, so
@@ -281,6 +285,11 @@ fix the entry in the same commit as the change that made it false.
   same rule through `entity_ops::in_open_scene` and `scene_member_by`, so the
   editor camera and other helpers are out of reach while a scene is edited. Only the edit `App`'s `open_scene` may spawn a
   `SceneRoot`, and an edit world always has exactly one.
+- **`FixedEntities` makes a world's entities the document.** While the resource
+  exists, `EntityEdit` and `EditComponent` are refused and still write
+  `EntityEdited` and `ComponentEdited`, so MCP answers at once and nothing
+  changes. Property edits still apply. The inspector hides the name field, the
+  ⋯ button and the add-component row.
 - **The viewport tools learn about the pointer from one resource.** The fly
   camera, the wheel, picking, and the gizmo read `ViewportPointer`, which
   `fill_pointer_from_window` in `tools/camera.rs` fills at the start of
@@ -308,7 +317,9 @@ fix the entry in the same commit as the change that made it false.
   `asset_request_is_current`. A result for a replaced or cancelled request is
   discarded; a closed tab, and every tab after a project switch, is gone. A
   late result of a request repeated for the same asset is accepted, since it
-  read the same file.
+  read the same file. Work started after a document has opened cannot use it,
+  since `pending` is then empty: it compares `current` with the captured entry
+  and requires `pending` to be empty, as `finish_build` does.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
   keys, buttons, wheel, or raw motion, and closing the gate releases whatever
   was held; the cursor position is still folded. The editor closes its own

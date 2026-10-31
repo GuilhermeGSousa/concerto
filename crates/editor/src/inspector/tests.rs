@@ -1,7 +1,10 @@
 use super::*;
 use crate::{
-    hosted::{HostedApp, testing::SceneFixture},
-    tools::selection::Select,
+    hosted::{
+        HostedApp,
+        testing::{EditedPreviewAsset, SceneFixture},
+    },
+    tools::{entity_ops::FixedEntities, scene::SceneDirty, selection::Select},
 };
 use concerto_ecs::{
     IntoSystem, System, World,
@@ -12,7 +15,7 @@ use concerto_ecs::{
     reflect::{AppTypeRegistry, ReflectComponent, ReflectSceneComponent},
     system::BoxedSystem,
 };
-use concerto_foundation::transform::Transform;
+use concerto_foundation::{assets::Asset, transform::Transform};
 use concerto_reflect::{GetTypeRegistration, PathSegment, ReflectDefault};
 use concerto_ui::{node::UIBox, text::UIText};
 use glam::{Vec2, Vec3};
@@ -65,12 +68,27 @@ impl Inspecting {
 }
 
 fn inspecting() -> (Inspecting, Entity, Entity) {
+    let mut f = inspector_fixture();
+    let document = f.open();
+    let mut w = inspecting_document(f, document);
+    let entity = w.spawn_in_scene(Transform::IDENTITY);
+    w.select(Some(entity));
+    let stack =
+        w.f.world
+            .spawn((UINode::default(), ComponentStack::default()));
+    (w, entity, stack)
+}
+
+fn inspector_fixture() -> SceneFixture {
     let mut f = SceneFixture::new();
     f.world.register_component::<ChildOf>();
     f.world.register_component::<Children>();
     f.world.insert_resource(InspectorRegistry::default());
     f.world.insert_resource(UITheme::default());
-    let document = f.open();
+    f
+}
+
+fn inspecting_document(mut f: SceneFixture, document: Entity) -> Inspecting {
     let mut systems = [
         collect_inspector_data.into_boxed_system(),
         sync_inspected_components.into_boxed_system(),
@@ -79,17 +97,86 @@ fn inspecting() -> (Inspecting, Entity, Entity) {
     for system in &mut systems {
         system.initialize(&mut f.world);
     }
-    let mut w = Inspecting {
+    Inspecting {
         f,
         document,
         systems,
-    };
-    let entity = w.spawn_in_scene(Transform::IDENTITY);
+    }
+}
+
+#[test]
+fn a_preview_that_is_the_edit_target_is_inspected_and_an_edit_reaches_it() {
+    let mut f = inspector_fixture();
+    let document = f.open_preview_of(EditedPreviewAsset::name());
+    let mut w = inspecting_document(f, document);
+    let entity = w.scene().spawn(Transform::IDENTITY);
     w.select(Some(entity));
-    let stack =
-        w.f.world
-            .spawn((UINode::default(), ComponentStack::default()));
-    (w, entity, stack)
+    w.f.world
+        .spawn((UINode::default(), ComponentStack::default()));
+
+    w.update();
+    assert_eq!(w.data().scene_entity, Some(entity));
+    assert_eq!(card_names(&mut w.f.world), ["Transform"]);
+
+    let row = rows(&mut w.f.world)
+        .into_iter()
+        .find(|(_, row)| row.path.name() == "translation")
+        .unwrap()
+        .1;
+    w.f.world
+        .get_resource_mut::<PropertyCommits>()
+        .unwrap()
+        .push::<Vec3, numeric::NumericFields>(
+            &row,
+            numeric::NumericEdit::Slot {
+                slot: 0,
+                number: 8.0,
+                space: None,
+            },
+        )
+        .unwrap();
+    run(&mut w.f.world, send_property_commits);
+
+    assert_eq!(w.get::<Transform>(entity).unwrap().translation.x, 8.0);
+    assert!(
+        w.f.scene_world(document)
+            .get_resource::<SceneDirty>()
+            .unwrap()
+            .0
+    );
+}
+
+#[test]
+fn fixed_entities_have_no_menu_on_their_cards_and_no_add_component_row() {
+    let (mut w, entity, _) = structural();
+    assert_eq!(
+        component_menu_buttons(&mut w.f.world),
+        [TypeId::of::<Transform>()]
+    );
+    assert!(has_add_component_row(&mut w.f.world));
+
+    w.scene().insert_resource(FixedEntities);
+    w.scene().insert(Gain::default(), entity);
+    w.update();
+
+    assert_eq!(card_names(&mut w.f.world), ["Gain", "Transform"]);
+    assert!(component_menu_buttons(&mut w.f.world).is_empty());
+    assert!(!has_add_component_row(&mut w.f.world));
+}
+
+fn component_menu_buttons(world: &mut World) -> Vec<TypeId> {
+    world
+        .query::<&component_menu::ComponentMenuButton, ()>()
+        .iter(world)
+        .map(|button| button.component)
+        .collect()
+}
+
+fn has_add_component_row(world: &mut World) -> bool {
+    world
+        .query::<&UIText, ()>()
+        .iter(world)
+        .any(|text| text.text == "add component")
 }
 
 #[test]
@@ -1516,6 +1603,19 @@ mod name_field {
         f.select(f.root);
         assert!(!f.visible());
         assert_eq!(f.text(), "");
+    }
+
+    #[test]
+    fn the_field_stays_hidden_on_fixed_entities_and_takes_no_focus() {
+        let mut f = fixture();
+        assert!(f.visible());
+
+        f.w.scene().insert_resource(FixedEntities);
+        f.world().get_resource_mut::<FocusNameField>().unwrap().0 = true;
+        f.step();
+
+        assert!(!f.visible());
+        assert_eq!(f.focused(), None);
     }
 
     #[test]

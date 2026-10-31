@@ -32,6 +32,10 @@ pub trait AssetEditor: Send + Sync + 'static {
     fn bottom_host(&self) -> bool {
         false
     }
+    /// Whether this editor's preview `App` is the edit target, so the normal inspector edits its entities.
+    fn edits_in_preview(&self) -> bool {
+        false
+    }
 }
 
 /// What an asset editor's preview `App` adds to the game's recipe.
@@ -156,6 +160,13 @@ impl AssetEditorRegistry {
             .get(kind)
             .is_some_and(|editor| editor.bottom_host())
     }
+
+    /// Whether a document of `kind` edits in its preview `App`; a kind with no editor does not.
+    pub fn edits_in_preview(&self, kind: &str) -> bool {
+        self.editors
+            .get(kind)
+            .is_some_and(|editor| editor.edits_in_preview())
+    }
 }
 
 /// Application convenience API for asset editor registration.
@@ -200,6 +211,10 @@ pub struct EditorDocument {
 /// On a document whose content differs from what is on disk.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct Unsaved;
+
+/// On a document while one of its workers runs, so MCP `status` reads busy and frames keep running.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct BackgroundWork;
 
 /// Asks the editor owning this document to write it to disk; that editor removes the marker.
 #[derive(Component)]

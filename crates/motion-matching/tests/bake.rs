@@ -1,9 +1,11 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_foundation::math::spring_damper::CharacterState;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    bake, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose, simulation_bone,
+    bake, bake_with_progress, model_pose, model_velocities, plan_entries, reexpress_roots,
+    sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
     BakeError, BodyMotion, ChannelSource, CharacterSimulation, FeatureChannel, FrameContext,
@@ -401,8 +403,8 @@ fn model_velocities_follow_the_parent_chain() {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct ProbeChannel {
     tag: f32,
 }
@@ -419,8 +421,8 @@ impl FeatureChannel for ProbeChannel {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct PoseChannel {
     unused: f32,
 }
@@ -437,8 +439,8 @@ impl FeatureChannel for PoseChannel {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct PairChannel {
     gain: f32,
 }
@@ -784,8 +786,8 @@ fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
 const SAMPLES: usize = 3;
 const BODY_DIMS: usize = 6 + 7 + SAMPLES * 10;
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct BodyChannel {
     unused: f32,
 }
@@ -811,8 +813,8 @@ impl FeatureChannel for BodyChannel {
 
 const LOCAL_DIMS: usize = 6 + SAMPLES * 10;
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct LocalChannel {
     unused: f32,
 }
@@ -1010,8 +1012,8 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
     }
 }
 
-#[derive(Reflect, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct WeightedChannel {
     weight: f32,
     value: f32,
@@ -1044,8 +1046,8 @@ impl FeatureChannel for WeightedChannel {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct RejectingChannel {
     reason: String,
 }
@@ -1154,4 +1156,55 @@ fn a_channel_that_fails_validation_is_a_channel_value_error() {
             reason: "no such bone".into(),
         }
     );
+}
+
+#[test]
+fn bake_with_progress_reports_each_entry_once_in_order() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(
+        vec![entry(None), entry(None), entry(None)],
+        vec![weighted(1.0, 0.0)],
+    );
+    let mut reports = Vec::new();
+
+    let reported = bake_with_progress(
+        &definition,
+        &skeleton,
+        &[&clip, &clip, &clip],
+        &weighted_registry(),
+        |finished, total| reports.push((finished, total)),
+    )
+    .unwrap();
+
+    assert_eq!(reports, vec![(1, 3), (2, 3), (3, 3)]);
+    assert_eq!(
+        reported,
+        bake(
+            &definition,
+            &skeleton,
+            &[&clip, &clip, &clip],
+            &weighted_registry()
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![weighted(-1.0, 0.0)]);
+    let mut reports = 0;
+
+    let result = bake_with_progress(
+        &definition,
+        &skeleton,
+        &[&clip],
+        &weighted_registry(),
+        |_, _| reports += 1,
+    );
+
+    assert!(result.is_err());
+    assert_eq!(reports, 0);
 }

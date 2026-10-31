@@ -13,7 +13,10 @@ fn main() {
 ```
 
 `cargo concerto new` writes it, and `cargo concerto editor <dir>` adds it to
-an existing game. Because the editor holds your recipe, every scene it opens is
+an existing game. A game that lists editor extension crates in its `Cargo.toml`
+gets `concerto_editor::run_with` instead, which also takes their plugins; see
+the [project tool's README](../../crates/project/README.md#editor-plugins).
+Because the editor holds your recipe, every scene it opens is
 built from your recipe: your components appear in the inspector, and your
 edit-time systems run in the viewport. A game crate never depends on the
 editor; the editor depends on the game.

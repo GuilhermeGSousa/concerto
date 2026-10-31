@@ -5,10 +5,11 @@ use concerto_ecs::{
     Component, Entity,
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
-use concerto_reflect::{Reflect, ReflectDefault};
+use concerto_reflect::{JsonLeaf, Reflect, ReflectDefault, ReflectJson};
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use serde_json::Value;
+use std::{fmt, ops::Deref};
 use uuid::Uuid;
 
 /// Translation, rotation and scale of one bone relative to its parent.
@@ -73,6 +74,35 @@ impl fmt::Display for SkeletonError {
 }
 
 impl std::error::Error for SkeletonError {}
+
+/// The name of a bone of a [`Skeleton`], stored as a reflected leaf so an editor can offer the skeleton's bones.
+#[derive(Reflect, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[reflect(opaque, Default, Json)]
+pub struct JointName(pub String);
+
+impl Deref for JointName {
+    type Target = str;
+
+    fn deref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<&str> for JointName {
+    fn from(name: &str) -> Self {
+        Self(name.to_owned())
+    }
+}
+
+impl JsonLeaf for JointName {
+    fn to_json(&self) -> Value {
+        self.0.to_json()
+    }
+
+    fn from_json(value: &Value) -> Result<Self, String> {
+        String::from_json(value).map(Self)
+    }
+}
 
 /// Bone hierarchy, names, rest pose and bind data; every slice has one entry per bone.
 #[derive(Asset, Serialize, Deserialize)]

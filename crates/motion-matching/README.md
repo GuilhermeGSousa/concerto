@@ -27,7 +27,8 @@ trajectory.
 ## Motion database
 
 `MotionDatabaseDefinition` says what to bake; `bake` turns it into a
-`MotionDatabase`. Both are assets. The database stores no poses: it stores
+`MotionDatabase`. Both are assets, and the definition is a `CreatableAsset`
+whose `new_asset()` is its `Default`. The database stores no poses: it stores
 features, the simulation bone and, per frame, which clip and time the frame
 plays. `MotionDatabase::pose` samples the pose from the clip.
 
@@ -46,12 +47,16 @@ plays. `MotionDatabase::pose` samples the pose from the clip.
 An entry bakes `floor((end - start) * rate / speed)` frames.
 
 `SimulationBoneSettings`: `position_joint` (`"Spine2"`) and `facing_joint`
-(`"Hips"`) name skeleton joints; `facing_axis` (`Vec3::Z`) is the facing
+(`"Hips"`) are `JointName`s; `facing_axis` (`Vec3::Z`) is the facing
 joint's forward in its own space; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
 ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
+
+`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
+leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
+the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -66,7 +71,13 @@ let database = bake(&definition, &skeleton, &clips, &registry)?;
 
 `clips` holds one resolved clip per entry, in order; `registry` is the
 `TypeRegistry` that knows the channel types. Each entry is baked on its own, so
-no frame blends across two entries. `bake` returns `BakeError`:
+no frame blends across two entries.
+
+`bake_with_progress` takes one more argument, `on_entry(finished, total)`,
+called after each entry with `finished` counting from 1. It is not called for a
+definition that is refused before the first entry.
+
+`bake` returns `BakeError`:
 
 | Error | Cause |
 |---|---|
@@ -125,8 +136,8 @@ Because both fills go through the same `extract`, a channel written in terms of
 the inverse of `simulation` yields the same features in both.
 
 ```rust
-#[derive(Reflect, Default)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, FeatureChannel)]
 struct RootSpeed {
     scale: f32,
 }
@@ -142,13 +153,18 @@ impl FeatureChannel for RootSpeed {
 app.register_type::<RootSpeed>();
 ```
 
-A channel needs `Reflect` and `Default`. The registered type name is what a
-`StoredChannel` refers to; a stored value is applied over `Default`.
+A channel is a component, so the editor's inspector can show one: it needs
+`Component`, `Reflect` and `Default`, and `#[reflect(Component, FeatureChannel)]`.
+A channel without `Component` does not compile, in a game as in this crate.
+Leave `Default` out of `#[reflect(..)]`, or the channel joins every scene's Add
+Component menu. The registered type name is what a `StoredChannel` refers to; a
+stored value is applied over `Default`.
 
 A channel may also override three methods:
 
 - `weight()` (default 1.0): how much its group counts in the search. It must be
-  finite and positive, or `bake` returns `InvalidWeight`.
+  finite and positive, or `bake` returns `InvalidWeight`. A top-level field
+  named `weight` means this and nothing else: see [Stale databases](#stale-databases).
 - `source()` (default `ChannelSource::Pose`): a `Trajectory` channel reads only
   `simulation` and `trajectory` from its `FrameContext`, so the runtime query
   can compute it from a predicted trajectory.
@@ -188,6 +204,35 @@ deviation is below `1e-6` normalises to 0. `features(frame)` stays raw.
   no re-bake. It does not rewrite the weight inside each channel's stored
   value; the span's weight is the one in use.
 
+### Stale databases
+
+A `MotionDatabase` stores `source_hash()`, the hash of what it was baked from.
+`bake` leaves it at 0; the caller sets it with `with_source_hash`.
+
+```rust
+let hash = weightless_hash(&definition, &skeleton_bytes, &clip_bytes);
+let database = bake(&definition, &skeleton, &clips, &registry)?.with_source_hash(hash);
+```
+
+`clip_bytes` holds the stored bytes of one clip per entry. The hash is FNV-1a,
+so it is stable across Rust versions. It covers the skeleton's asset id, the
+skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
+`trajectory`, and each channel's type name and value with its top-level `weight`
+field left out.
+
+- `weights_of(&definition, &registry)`: each live channel's `weight()`, in order.
+- `is_stale(&database, &definition, hash, &registry)`: the hash differs from
+  `source_hash()`, or a `ChannelSpan` weight differs from `weights_of`, or a
+  channel cannot be built.
+- `weights_changed_only(&database, &definition, hash, &registry)`: the same test
+  with the hash equal, the case `set_weights(&weights_of(..)?)` fixes with no
+  re-bake.
+
+A channel's top-level `weight` field means the search weight and nothing else.
+A field called `weight` that feeds `extract` changes no hash, so features baked
+from its old value read as current. A weight stored under another name, or
+nested deeper, just changes the hash and asks for a full bake.
+
 ### FeatureQuery
 
 ```rust
@@ -210,14 +255,18 @@ every bone index is a skeleton joint index.
 - `skeleton()`, `bone_count()`, `clips()`: the skeleton handle, its bone count
   at bake time and one clip handle per entry, in entry order.
 - `rate()`, `speed()`, `trajectory()`: the sampling the bake used.
+- `source_hash()`: see [Stale databases](#stale-databases).
 - `frame_count()`; `entry_of(frame)`, `range_of(frame)`: the entry holding a
-  frame and its half-open frame range.
+  frame and its half-open frame range; `frames_of_entry(index)`: the frames an
+  entry baked, or `None` past the last entry.
 - `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
   `clip_start + (frame - range_start) * speed / rate`.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
   `dims`, `weight`, `source`, `value`).
+- `deviations()`: each channel's mean standard deviation, in channel order.
+- `size_in_bytes()`: the bytes held by the feature, simulation and range arrays.
 
 `simulation(frame)` and `features(frame)` panic on a frame outside
 `0..frame_count()`. `entry_of`, `range_of` and `clip_time` return `None` for

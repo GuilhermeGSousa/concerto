@@ -80,12 +80,13 @@ pub(crate) fn mark_saved(world: &mut World) {
 }
 
 /// Marks the scene dirty and tells whoever hosts it that it changed.
-pub(crate) fn report_edit(world: &mut World) {
+pub fn report_edit(world: &mut World) {
     world.insert_resource(SceneDirty(true));
     write(world, SceneEdited);
 }
 
-pub(crate) fn write<E: Event + 'static>(world: &mut World, event: E) {
+/// Writes `event` into `world`, for a listener that holds the world; dropped if nothing registered it.
+pub fn write<E: Event + 'static>(world: &mut World, event: E) {
     if let Some(channel) = world.get_resource_mut::<EventChannel<E>>() {
         channel.push_event(event);
     }

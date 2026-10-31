@@ -2,7 +2,7 @@
 use anyhow::{Context, bail};
 use concerto_app::{App, edit_time::AtEditTime};
 use concerto_ecs::{
-    Entity, World,
+    Entity, Resource, World,
     component::name::Name,
     entity::hierarchy::ChildOf,
     events::Event,
@@ -42,6 +42,10 @@ pub struct EntityEdited {
     pub edit: EntityEdit,
     pub result: Result<Option<Entity>, String>,
 }
+
+/// In a world whose entities are the document: a structural edit is refused, and only property edits apply.
+#[derive(Resource)]
+pub struct FixedEntities;
 
 pub(crate) fn build(app: &mut App) {
     app.register_event::<EntityEdited>()
@@ -94,7 +98,15 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
     );
 }
 
+pub(crate) fn not_fixed(world: &World) -> anyhow::Result<()> {
+    if world.get_resource::<FixedEntities>().is_some() {
+        bail!("the entities of this document are fixed");
+    }
+    Ok(())
+}
+
 fn apply(world: &mut World, edit: &EntityEdit) -> anyhow::Result<Applied> {
+    not_fixed(world)?;
     match edit {
         EntityEdit::Create { parent } => {
             new_parent(world, *parent)?;
@@ -318,6 +330,42 @@ mod tests {
         fn valid(&mut self, entity: Entity) -> bool {
             self.world().entity_is_valid(entity)
         }
+    }
+
+    #[test]
+    fn fixed_entities_refuse_every_entity_edit_and_each_still_writes_its_result() {
+        let mut f = fixture();
+        f.world().insert_resource(FixedEntities);
+        let (root, node) = (f.root, f.node);
+        let edits = [
+            EntityEdit::Create { parent: Some(root) },
+            EntityEdit::Delete(node),
+            EntityEdit::Duplicate(node),
+            EntityEdit::Rename {
+                entity: node,
+                name: "renamed".into(),
+            },
+        ];
+
+        for edit in &edits {
+            f.trigger(edit.clone());
+        }
+
+        let outcomes = f.outcomes();
+        assert_eq!(outcomes.len(), edits.len());
+        for (index, (edit, result)) in outcomes.into_iter().enumerate() {
+            assert_eq!(edit, edits[index]);
+            assert!(
+                result
+                    .unwrap_err()
+                    .ends_with("the entities of this document are fixed")
+            );
+        }
+        assert_eq!(f.statuses().len(), edits.len());
+        assert_eq!(f.edits(), 0);
+        assert_eq!(f.children(root), [node]);
+        assert_eq!(f.name(node), "node");
+        assert!(f.valid(node));
     }
 
     #[test]

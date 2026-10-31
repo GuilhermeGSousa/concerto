@@ -81,7 +81,8 @@ pub struct ClipFacts {
 }
 
 impl ClipFacts {
-    fn of(clip: &AnimationClip) -> Self {
+    /// What `clip` holds; the bones a skeleton uses are left at zero.
+    pub fn of(clip: &AnimationClip) -> Self {
         let duration = clip.duration();
         let stored = clip.frame_rate();
         let rate = stored.or_else(|| clip.detected_frame_rate());
@@ -136,7 +137,8 @@ pub(crate) fn sync_clip_preview(
     }
 }
 
-fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
+/// Reads the clip `asset` names under `root`, checking its id and its kind.
+pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
     let bytes = std::fs::read(root.join(&asset.address))?;
     let (header, payload) = read_content_asset(&bytes)?;
     anyhow::ensure!(
@@ -146,13 +148,15 @@ fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
     Ok(bincode::deserialize(payload)?)
 }
 
-fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
+/// The scene named `scene` in `clip`'s folder, which a preview shows unless another is picked.
+pub fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
     assets
         .of_type::<Scene>()
         .find(|entry| entry.name() == "scene" && entry.folder() == clip.folder())
 }
 
-fn read_shown_scene(
+/// Reads the `picked` scene, or else the [`default_scene`] of `clip`, with its id.
+pub fn read_shown_scene(
     root: &Path,
     clip: Option<&AssetEntry>,
     picked: Option<AssetId>,

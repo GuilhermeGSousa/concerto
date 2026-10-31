@@ -17,13 +17,14 @@ use crate::inspector::rows::{
     EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 
-/// One text field per number: one for `Number`, three for `Vec3`, and for `Color` a swatch beside the label with four labelled fields in the color's own space on a line below.
+/// One text field per number: one for `Number` and `Count`, three for `Vec3`, and for `Color` a swatch beside the label with four labelled fields in the color's own space on a line below.
 #[derive(Default)]
 pub(crate) struct NumericFields;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum NumericSnapshot {
     Number(f64),
+    Count(usize),
     Vec3([f64; 3]),
     Color(concerto_color::Color),
 }
@@ -41,6 +42,7 @@ pub(crate) enum NumericEdit {
 pub(crate) fn register_defaults(registry: &mut super::registry::InspectorRegistry) {
     registry.register_property_editor::<f32, NumericFields>();
     registry.register_property_editor::<f64, NumericFields>();
+    registry.register_property_editor::<usize, NumericFields>();
     registry.register_property_editor::<Vec3, NumericFields>();
     registry.register_property_editor::<Quat, NumericFields>();
 }
@@ -75,6 +77,27 @@ macro_rules! scalar {
 }
 scalar!(f32);
 scalar!(f64);
+
+fn count_of(number: f64) -> Option<usize> {
+    (number >= 0.0 && number.fract() == 0.0 && number < usize::MAX as f64)
+        .then_some(number as usize)
+}
+
+impl NumericValue for usize {
+    fn numbers(&self) -> NumericSnapshot {
+        NumericSnapshot::Count(*self)
+    }
+    fn edit(&mut self, edit: &NumericEdit) -> Result<(), EditError> {
+        *self = match *edit {
+            NumericEdit::Slot {
+                slot: 0, number, ..
+            } => count_of(number).ok_or(EditError::Rejected)?,
+            NumericEdit::Whole(NumericSnapshot::Count(count)) => count,
+            _ => return Err(EditError::Rejected),
+        };
+        Ok(())
+    }
+}
 
 impl NumericValue for Vec3 {
     fn numbers(&self) -> NumericSnapshot {
@@ -128,6 +151,8 @@ fn queue_numeric(
         commits.push::<f32, NumericFields>(row, edit)
     } else if row.type_id == TypeId::of::<f64>() {
         commits.push::<f64, NumericFields>(row, edit)
+    } else if row.type_id == TypeId::of::<usize>() {
+        commits.push::<usize, NumericFields>(row, edit)
     } else if row.type_id == TypeId::of::<Vec3>() {
         commits.push::<Vec3, NumericFields>(row, edit)
     } else if row.type_id == TypeId::of::<Quat>() {
@@ -137,6 +162,20 @@ fn queue_numeric(
     } else {
         Err(EditError::TypeMismatch)
     }
+}
+
+/// Queues `number` for a scalar `row`, as its field does when it loses focus.
+#[cfg(any(test, feature = "testing"))]
+pub fn commit_number(
+    commits: &mut PropertyCommits,
+    row: &PropertyRow,
+    number: f64,
+) -> Result<(), EditError> {
+    queue_numeric(
+        commits,
+        row,
+        NumericEdit::Whole(NumericSnapshot::Number(number)),
+    )
 }
 
 /// One field of a [`NumericFields`] row.
@@ -173,7 +212,9 @@ impl<T: NumericValue> PropertyEditor<T> for NumericFields {
         let node = super::sync::standard_row_node(theme);
         match value {
             NumericSnapshot::Color(_) => node.with_flex_wrap(FlexWrap::Wrap),
-            NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => node,
+            NumericSnapshot::Number(_) | NumericSnapshot::Count(_) | NumericSnapshot::Vec3(_) => {
+                node
+            }
         }
     }
     fn build(&self, row: &mut EntityCommandQueue, value: &NumericSnapshot, theme: &UITheme) {
@@ -243,7 +284,7 @@ fn field_leading(theme: &UITheme) -> f32 {
 
 fn slot_count(value: &NumericSnapshot) -> usize {
     match value {
-        NumericSnapshot::Number(_) => 1,
+        NumericSnapshot::Number(_) | NumericSnapshot::Count(_) => 1,
         NumericSnapshot::Vec3(_) => 3,
         NumericSnapshot::Color(_) => 4,
     }
@@ -251,6 +292,7 @@ fn slot_count(value: &NumericSnapshot) -> usize {
 
 pub(super) fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
     let number = match value {
+        NumericSnapshot::Count(count) => return count.to_string(),
         NumericSnapshot::Number(number) => (slot == 0).then_some(*number),
         NumericSnapshot::Vec3(components) => components.get(slot).copied(),
         NumericSnapshot::Color(value) => color::shown(value, slot),
@@ -260,7 +302,9 @@ pub(super) fn format_slot(value: &NumericSnapshot, slot: usize) -> String {
 
 pub(super) fn slot_label(value: &NumericSnapshot, slot: usize) -> Option<&'static str> {
     let letters = match value {
-        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => return None,
+        NumericSnapshot::Number(_) | NumericSnapshot::Count(_) | NumericSnapshot::Vec3(_) => {
+            return None;
+        }
         NumericSnapshot::Color(concerto_color::Color::Hsla(_)) => ["H", "S", "L", "A"],
         NumericSnapshot::Color(_) => ["R", "G", "B", "A"],
     };
@@ -270,6 +314,7 @@ pub(super) fn slot_label(value: &NumericSnapshot, slot: usize) -> Option<&'stati
 fn accepts(current: &NumericSnapshot, slot: usize, number: f64) -> bool {
     match current {
         NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => true,
+        NumericSnapshot::Count(_) => count_of(number).is_some(),
         NumericSnapshot::Color(value) => color::channel(value, slot, number).is_ok(),
     }
 }
@@ -289,7 +334,7 @@ fn numeric_commit(
     }
     let space = match current {
         NumericSnapshot::Color(value) => Some(ColorSpace::of(value)),
-        NumericSnapshot::Number(_) | NumericSnapshot::Vec3(_) => None,
+        NumericSnapshot::Number(_) | NumericSnapshot::Count(_) | NumericSnapshot::Vec3(_) => None,
     };
     Some(NumericEdit::Slot {
         slot,
@@ -531,6 +576,77 @@ mod tests {
             .unwrap();
         assert_eq!(small.numbers(), NumericSnapshot::Number(2.5));
         assert_eq!(large.numbers(), NumericSnapshot::Number(-7.25));
+    }
+
+    fn slot(number: f64) -> NumericEdit {
+        NumericEdit::Slot {
+            slot: 0,
+            number,
+            space: None,
+        }
+    }
+
+    #[test]
+    fn a_count_refuses_fractions_negatives_and_what_it_cannot_hold() {
+        let mut count = 3_usize;
+        for number in [0.5, 1.5, -1.0, f64::NAN, f64::INFINITY, 1e300] {
+            assert_eq!(count.edit(&slot(number)), Err(EditError::Rejected));
+        }
+        let bad_slot = NumericEdit::Slot {
+            slot: 1,
+            number: 1.0,
+            space: None,
+        };
+        assert_eq!(count.edit(&bad_slot), Err(EditError::Rejected));
+        assert_eq!(count, 3);
+
+        count.edit(&slot(12.0)).unwrap();
+        assert_eq!(count, 12);
+        count.edit(&slot(0.0)).unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn a_count_shows_whole_numbers_and_its_field_reverts_what_it_refuses() {
+        let value = 12_usize.numbers();
+        assert_eq!(format_slot(&value, 0), "12");
+        assert_eq!(slot_count(&value), 1);
+        assert_eq!(slot_label(&value, 0), None);
+        assert_eq!(numeric_commit(&value, 0, "1.5", "12"), None);
+        assert_eq!(numeric_commit(&value, 0, "-1", "12"), None);
+        assert_eq!(numeric_commit(&value, 0, "7", "12"), Some(slot(7.0)));
+    }
+
+    #[test]
+    fn a_count_is_edited_to_a_value_whole() {
+        let mut count = 3_usize;
+        let edit = <NumericFields as PropertyEditor<usize>>::edit_to(&NumericFields, &9).unwrap();
+
+        count.edit(&edit).unwrap();
+
+        assert_eq!(count, 9);
+    }
+
+    #[test]
+    fn a_usize_row_has_an_editor_and_queues_its_edits() {
+        let registry = crate::inspector::InspectorRegistry::default();
+        let editor = registry
+            .editor(std::any::TypeId::of::<usize>(), None)
+            .unwrap();
+        assert_eq!(editor.editor_type, std::any::TypeId::of::<NumericFields>());
+        let row = PropertyRow {
+            entity: concerto_ecs::World::new().spawn(()),
+            component: std::any::TypeId::of::<()>(),
+            path: concerto_reflect::PropertyPath::default(),
+            type_id: std::any::TypeId::of::<usize>(),
+            editor_type: Some(editor.editor_type),
+            registry_tick: Default::default(),
+        };
+        let mut commits = PropertyCommits::default();
+
+        queue_numeric(&mut commits, &row, slot(4.0)).unwrap();
+
+        assert_eq!(commits.0.len(), 1);
     }
 
     #[test]

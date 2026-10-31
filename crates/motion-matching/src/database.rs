@@ -44,6 +44,7 @@ pub struct MotionDatabase {
     channels: Vec<ChannelSpan>,
     offset: Vec<f32>,
     deviations: Vec<f32>,
+    source_hash: u64,
 }
 
 const DEVIATION_FLOOR: f32 = 1e-6;
@@ -85,7 +86,19 @@ impl MotionDatabase {
             channels,
             offset,
             deviations,
+            source_hash: 0,
         }
+    }
+
+    /// Records the hash of what the database was baked from, as [`weightless_hash`](crate::weightless_hash) gives it.
+    pub fn with_source_hash(mut self, source_hash: u64) -> Self {
+        self.source_hash = source_hash;
+        self
+    }
+
+    /// The hash of what the database was baked from; 0 until [`with_source_hash`](Self::with_source_hash) sets it.
+    pub fn source_hash(&self) -> u64 {
+        self.source_hash
     }
 
     /// The number of baked frames.
@@ -139,6 +152,11 @@ impl MotionDatabase {
             .iter()
             .zip(&self.range_stops)
             .map(|(start, stop)| *start..*stop)
+    }
+
+    /// The number of frames entry `index` baked.
+    pub fn frames_of_entry(&self, index: usize) -> Option<usize> {
+        self.ranges().nth(index).map(|range| range.len())
     }
 
     /// The index of the entry whose range contains `frame`.
@@ -206,6 +224,20 @@ impl MotionDatabase {
     /// The mean of every feature dimension over all frames.
     pub fn offset(&self) -> &[f32] {
         &self.offset
+    }
+
+    /// The mean standard deviation of each channel's group, one per channel in order.
+    pub fn deviations(&self) -> &[f32] {
+        &self.deviations
+    }
+
+    /// The bytes held by the feature, simulation and range arrays.
+    pub fn size_in_bytes(&self) -> usize {
+        size_of_val(self.features.as_slice())
+            + size_of_val(self.simulation.as_slice())
+            + size_of_val(self.range_starts.as_slice())
+            + size_of_val(self.range_stops.as_slice())
+            + size_of_val(self.clip_starts.as_slice())
     }
 
     /// The divisor of every feature dimension: its group's floored deviation over the group's weight.

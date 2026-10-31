@@ -102,7 +102,7 @@ pub(crate) struct SceneEditorState {
     building: Option<AssetEntry>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl SceneEditorState {
     pub(crate) fn idle(&self) -> bool {
         self.job.is_none() && self.building.is_none()
@@ -128,7 +128,8 @@ impl AssetEditor for SceneEditor {
     }
 }
 
-pub(crate) fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
+/// Reads the scene at `address` under `root`, checking its id and its kind.
+pub fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
     let bytes = std::fs::read(root.join(address))?;
     let (header, payload) = read_content_asset(&bytes)?;
     anyhow::ensure!(
@@ -767,7 +768,7 @@ mod tests {
         f.world
             .get_component_for_entity::<HostedApp>(document)
             .unwrap()
-            .world_for_test()
+            .world()
             .id()
     }
 
@@ -1049,7 +1050,7 @@ mod tests {
                 clipboard: None,
             });
         let old = hosted_now(plain_recipe, |_| {});
-        let before = old.world_for_test().id();
+        let before = old.world().id();
         let next = scene_entry("next");
         let world = app.main_mut().world_mut();
         let document = world.spawn((
@@ -1088,7 +1089,7 @@ mod tests {
                 world
                     .get_component_for_entity::<HostedApp>(document)
                     .unwrap()
-                    .world_for_test()
+                    .world()
                     .id(),
                 before
             );

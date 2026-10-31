@@ -23,6 +23,29 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+### Extension crates
+
+An editor crate extends the editor with a public `fn(&mut App)`, conventionally
+`install`, which registers its asset editors and anything else it needs. A game
+never depends on such a crate: it lists it under
+`[package.metadata.concerto.editor]` in its `Cargo.toml`, and `cargo concerto
+editor <dir> --update` regenerates `editor/` to call
+`concerto_editor::run_with(recipe, project_root, plugins)`, as the project
+tool's [README](../project/README.md#editor-plugins) describes. `run_with` is
+`run` with `plugins` added to the editor's `App` in order, after `EditorPlugin`
+and everything else the editor registers, and before the MCP plugins under
+`--mcp`. `run` is `run_with` with an empty list.
+
+An extension crate's tests can use the `testing` feature, which exposes
+`hosted::testing` and its `SceneFixture`, and `inspector::row_systems`, the
+systems that turn a selection into inspector rows and send their edits; take it
+as a dev-dependency:
+
+```toml
+[dev-dependencies]
+concerto-editor = { workspace = true, features = ["testing"] }
+```
+
 ## Agents (MCP)
 
 `--mcp` runs the editor for an agent: the whole editor, panels included, with
@@ -47,8 +70,9 @@ message naming lavapipe.
 
 Frames run on demand, only while a call needs one or the editor is busy: a
 project or scene opening, the assets of the edited scene or the preview in
-front still loading, a game starting or playing, a save under way, or text in
-the panels changed in the last frame and may not be drawn yet. A timeline's
+front still loading, a game starting or playing, a save under way, a document
+holding `BackgroundWork`, or text in the panels changed in the last frame and
+may not be drawn yet. A timeline's
 readout does not count, so a clip that is playing does not keep the editor busy
 and advances only while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
@@ -68,13 +92,15 @@ the editor is busy. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
 call that shows the rest. `scene_tree` shows the edited scene, or while a game
-plays its top-level entities as the hierarchy does, one `id name [components]`
-line per entity, indented, from `root` if given, `depth` levels deep (3) and at
-most `limit` entities (200); a cut subtree or a cut list ends with the call that
-continues it. `find_entities` lists the entities whose name contains `name`,
-ignoring case, and that carry `component`, by short name or full path, each with
-its path of names from the top, 50 unless `limit` says otherwise. `inspect`
-answers `entity` as JSON: its id, its name, and each component the inspector
+plays its top-level entities as the hierarchy does, or in a preview that is the
+edit target its top-level entities, the stage's camera and light among them, one
+`id name [components]` line per entity, indented, from `root` if given, `depth`
+levels deep (3) and at most `limit` entities (200); a cut subtree or a cut list
+ends with the call that continues it. `find_entities` looks through the same
+entities and lists those whose name contains `name`, ignoring case, and that
+carry `component`, by short name or full path, each with its path of names from
+the top, 50 unless `limit` says otherwise. `inspect` answers `entity` as JSON:
+its id, its name, and each component the inspector
 lists, or only those `components` names by short name, ignoring case, or full
 path. Each component has its short `name`, its full `type`, its `value`, and
 its `paths`: every property path, dot-separated, with `adapter` saying whether
@@ -122,7 +148,9 @@ finite in an `f32` (beyond about ±3.4e38) answers `invalid_arguments`. `frame` 
 position, yaw, pitch and the direction it looks along, once the edit `App` has
 stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
-no editor camera. All three need an open scene.
+no editor camera, and on a preview that is the edit target both answer
+`no_scene`, since a preview has no editor camera either. All three need an open
+scene.
 
 The edit tools change the edited scene, or the running game while it plays, by
 triggering the signal the panels trigger, and answer once the edit `App`
@@ -709,7 +737,7 @@ the same checks.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` and the
+holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool` and the
 asset picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
@@ -825,6 +853,11 @@ again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
 
+A worker thread that a custom editor polls for its result needs frames to be
+polled in, and an agent needs to know it is running: insert `BackgroundWork` on
+the document when it starts and remove it when it ends. `status` reads
+`busy: yes` while any document holds it.
+
 Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab
 switch, and a scene opening, being replaced, or closing, release transient
@@ -867,15 +900,15 @@ asset changes.
 recipe has a renderer, one directional light, and the default
 `CameraEnvironment`. Only its camera draws, through `ExclusiveCamera`, so a
 camera the preview spawns, inside a character scene for instance, does not.
-None of the scene tools are added.
+None of the scene tools are added, unless the editor edits in its preview, below.
 
 The preview shows in the shared viewport, which stands in for the document's
 `canvas` host: a previewing document gets `left` and `inspector` hosts and no
 `canvas`. Build the editor's own controls in those two hosts, and in `bottom`
 when the editor asks for it; the hierarchy and inspector panels are hidden on a
-preview tab, as on any custom editor's tab. A preview carries only `ViewportTarget`, which the viewport shows, routes input
-to, and steps, and never `EditTarget`, which `EditWorld<T>` and
-`EditWorldSignals` read. A preview is stepped only while its tab is in front
+preview tab, as on any custom editor's tab. A preview carries `ViewportTarget`, which the viewport shows, routes input
+to, and steps, but not `EditTarget`, which `EditWorld<T>` and
+`EditWorldSignals` read, unless the editor edits in it. A preview is stepped only while its tab is in front
 and the viewport is shown; a preview in the background is frozen.
 
 Drive the preview with the `PreviewSignals` system parameter:
@@ -886,6 +919,46 @@ preview, or a document with no preview is dropped. Read back through the
 preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.
+
+### Editing in a preview
+
+An editor whose document is edited as entities returns `true` from
+`AssetEditor::edits_in_preview`, which is `false` unless it says otherwise, and
+keeps those entities in its preview `App`. Such a preview differs from any other
+in four ways:
+
+- It is the edit target as well as the viewport target, so the normal inspector,
+  `EditWorld<T>`, `EditWorldSignals` and the MCP tools act on its world. An
+  extension crate's systems may use them too.
+- `open_previews` adds `EditToolsCorePlugin` before `build`, which gives it
+  `Selection` and the edit path, and no viewport tools. Select an entity with
+  the `Select` signal through `EditWorldSignals`.
+- The inspector panel stays on the tab, under the document's `inspector` host,
+  which is as tall as its content. The hierarchy stays hidden.
+- It has no scene and no `FlyCamera`: Play stays refused, and MCP `frame` and
+  `set_camera` answer `no_scene`.
+
+Its systems and listeners are marked `.at_preview_time()` as in any preview. An
+edit through the inspector marks the preview's `SceneDirty` and writes
+`PropertyCommitted` or `ComponentEdited`, which reach the editor as `Hosted<E>`
+events. Nothing marks the document `Unsaved` for it: the asset editor reads
+those events and does that itself, and it saves the document itself. A listener
+of the editor's own that changes the entities does what an edit does: it calls
+`tools::scene::report_edit` and writes the same event with `tools::scene::write`.
+
+A save reaches a background tab too, through the unsaved guard or MCP `save`,
+and `EditWorld<T>` reads only the front tab. So the editor reads `SaveRequested`
+on its document and triggers a signal whose listener takes the world. That
+listener reads the document's `App` through `HostedApp::world_mut`, writes
+`SceneSaved` or `SaveFailed` with `tools::scene::write`, which MCP `save` waits
+on, and calls `HostedApp::mark_saved`, which it also calls on `DiscardEdits`.
+
+When the entities are the document, so that nothing may add, remove or rename
+them, `build` inserts the `FixedEntities` resource. `EntityEdit` and
+`EditComponent` are then refused and still write `EntityEdited` and
+`ComponentEdited`, so Delete, Ctrl+D and the MCP entity tools answer at once and
+change nothing. The inspector hides the name field, the ⋯ button and the
+add-component row. Property edits still apply.
 
 ### The clip editor
 

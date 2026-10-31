@@ -122,7 +122,7 @@ fn a_preview_app_of_a_game_that_renders_has_a_grid_and_draws_into_its_picture() 
         hosted.step_for_test();
     }
 
-    let world = hosted.world_for_test();
+    let world = hosted.world();
     let grids = world
         .archetypes()
         .iter()

@@ -1851,7 +1851,7 @@ mod tests {
             .unwrap();
         assert!(!state.items().is_empty());
         for (scene_entity, item) in state.items() {
-            assert!(hosted.world_for_test().entity_is_valid(*scene_entity));
+            assert!(hosted.world().entity_is_valid(*scene_entity));
             assert!(
                 !f.world
                     .get_component_for_entity::<UITreeElement>(*item)

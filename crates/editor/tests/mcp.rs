@@ -11,7 +11,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use concerto_app::{
     App,
-    edit_time::AtEditTime,
+    edit_time::{AtEditTime, AtPreviewTime},
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     schedule_groups::{LateUpdate, Startup, Update},
@@ -27,7 +27,10 @@ use concerto_ecs::{
     signal::listener::GlobalListener,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, Unsaved},
+    asset_editor::{
+        AssetEditor, AssetEditorAppExt, AssetEditorRegistry, BackgroundWork, EditorDocument,
+        PreviewSpec, Unsaved,
+    },
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     inspector::{EditContext, EditError, EditableApp, PropertyEditor},
@@ -35,7 +38,7 @@ use concerto_editor::{
     scene::Play,
     tools::{
         camera::{EditorHelper, FlyCamera},
-        entity_ops::EntityEdit,
+        entity_ops::{EntityEdit, FixedEntities},
         scene::SceneRoot,
         selection::Select,
     },
@@ -361,6 +364,32 @@ struct EditFramesSoFar {}
 
 #[derive(Deserialize, JsonSchema)]
 struct TextFields {}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExtensionState {}
+
+#[derive(Resource)]
+struct ExtensionInstalled {
+    after_the_editor: bool,
+}
+
+fn extension(app: &mut App) {
+    let after_the_editor = app.get_resource::<AssetEditorRegistry>().is_some();
+    app.insert_resource(ExtensionInstalled { after_the_editor });
+}
+
+fn extension_state(
+    mut calls: ToolCalls<ExtensionState>,
+    installed: Option<Res<ExtensionInstalled>>,
+) {
+    for (_, reply) in calls.read() {
+        reply.ok(match &installed {
+            Some(installed) if installed.after_the_editor => "after the editor",
+            Some(_) => "before the editor",
+            None => "not installed",
+        });
+    }
+}
 
 fn state(
     mut calls: ToolCalls<State>,
@@ -734,7 +763,7 @@ where
     let served = run_with(
         server_io,
         move |app| {
-            concerto_editor::mcp::editor(recipe, root)(app);
+            concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
             app.insert_resource(log)
                 .insert_resource(FixtureScene(scene))
                 .add_tool::<State, _>(McpTool::read_only("state"), state)
@@ -767,6 +796,10 @@ where
                     edit_frames_so_far,
                 )
                 .add_tool::<TextFields, _>(McpTool::read_only("text_fields"), text_fields)
+                .add_tool::<ExtensionState, _>(
+                    McpTool::read_only("extension_state"),
+                    extension_state,
+                )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -864,6 +897,161 @@ async fn open(client: &Client) {
     until(client, "state", |state| state.starts_with("project")).await;
     assert_eq!(ok(client, "open_scene").await, "queued");
     until(client, "state", |state| state.contains("level target")).await;
+}
+
+#[derive(Asset, Serialize, Deserialize)]
+struct Tuning;
+
+#[derive(Default)]
+struct TuningEditor;
+
+impl AssetEditor for TuningEditor {
+    fn preview(&self) -> Option<PreviewSpec> {
+        Some(PreviewSpec {
+            build: tuning_preview,
+        })
+    }
+
+    fn edits_in_preview(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Component)]
+struct Tuned;
+
+fn spawn_tuned(mut cmd: CommandQueue) {
+    cmd.spawn((Name::new("Tuned"), Tuned));
+}
+
+fn tuning_preview(app: &mut App) {
+    app.insert_resource(FixedEntities)
+        .add_system(Startup, spawn_tuned.at_preview_time());
+}
+
+#[derive(Resource)]
+struct TuningAsset(AssetId);
+
+#[derive(Deserialize, JsonSchema)]
+struct OpenTuning {}
+
+#[derive(Deserialize, JsonSchema)]
+struct TunedId {}
+
+fn open_tuning(
+    mut calls: ToolCalls<OpenTuning>,
+    tuning: Res<TuningAsset>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for (_, reply) in calls.read() {
+        commands.0.push_back(EditorCommand::OpenAsset(tuning.0));
+        reply.ok("queued");
+    }
+}
+
+fn tuned_id(mut calls: ToolCalls<TunedId>, tuned: EditWorld<Query<Entity, With<Tuned>>>) {
+    for (_, reply) in calls.read() {
+        reply.ok(tuned
+            .iter()
+            .next()
+            .map_or("none".to_owned(), |entity| entity.to_id_string()));
+    }
+}
+
+#[test]
+fn a_preview_that_is_the_edit_target_has_no_camera_and_keeps_its_entities() {
+    let fixture = Fixture::new();
+    let tuning = fixture.add("content/tuning.gasset", Tuning::name());
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        move |app| {
+            app.register_asset_editor::<Tuning, TuningEditor>().unwrap();
+            app.insert_resource(TuningAsset(tuning))
+                .add_tool::<OpenTuning, _>(McpTool::new("open_tuning"), open_tuning)
+                .add_tool::<TunedId, _>(
+                    McpTool::read_only("tuned_id").needs(Needs::Scene),
+                    tuned_id,
+                );
+        },
+        |client| async move {
+            until(&client, "state", |state| state.starts_with("project")).await;
+            assert_eq!(ok(&client, "open_tuning").await, "queued");
+            until(&client, "state", |state| state.contains("tuning target")).await;
+            let tuned = until(&client, "tuned_id", |id| id != "none").await;
+            let frame = error(&client, "frame").await;
+            let camera = error_with(
+                &client,
+                "set_camera",
+                json!({ "position": [0.0, 1.0, 2.0], "yaw": 0.0, "pitch": 0.0 }),
+            )
+            .await;
+            let delete = error_with(&client, "delete_entity", json!({ "entity": tuned })).await;
+            let rename = error_with(
+                &client,
+                "rename_entity",
+                json!({ "entity": tuned, "name": "Other" }),
+            )
+            .await;
+            let kept = ok(&client, "tuned_id").await;
+            client.cancel().await.unwrap();
+            (frame, camera, delete, rename, tuned, kept)
+        },
+    ) else {
+        return;
+    };
+
+    let (frame, camera, delete, rename, tuned, kept) = served.result;
+    assert_eq!(frame["code"], "no_scene");
+    assert_eq!(camera["code"], "no_scene");
+    assert_eq!(delete["code"], "refused");
+    assert_eq!(
+        delete["message"],
+        "Delete failed: the entities of this document are fixed"
+    );
+    assert_eq!(rename["code"], "refused");
+    assert_eq!(kept, tuned);
+}
+
+#[test]
+fn a_preview_that_is_the_edit_target_lists_its_top_level_entities() {
+    let fixture = Fixture::new();
+    let tuning = fixture.add("content/tuning.gasset", Tuning::name());
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        move |app| {
+            app.register_asset_editor::<Tuning, TuningEditor>().unwrap();
+            app.insert_resource(TuningAsset(tuning))
+                .add_tool::<OpenTuning, _>(McpTool::new("open_tuning"), open_tuning)
+                .add_tool::<TunedId, _>(
+                    McpTool::read_only("tuned_id").needs(Needs::Scene),
+                    tuned_id,
+                );
+        },
+        |client| async move {
+            until(&client, "state", |state| state.starts_with("project")).await;
+            assert_eq!(ok(&client, "open_tuning").await, "queued");
+            until(&client, "state", |state| state.contains("tuning target")).await;
+            let tuned = until(&client, "tuned_id", |id| id != "none").await;
+            let tree = ok_with(&client, "scene_tree", json!({ "depth": 1 })).await;
+            let found = ok_with(&client, "find_entities", json!({ "name": "tuned" })).await;
+            client.cancel().await.unwrap();
+            (tuned, tree, found)
+        },
+    ) else {
+        return;
+    };
+
+    let (tuned, tree, found) = served.result;
+    assert!(tree.contains(&format!("{tuned} Tuned")), "{tree}");
+    assert!(tree.contains("Camera"), "{tree}");
+    assert!(tree.contains("Light"), "{tree}");
+    assert!(found.contains(&tuned), "{found}");
 }
 
 #[test]
@@ -1086,6 +1274,21 @@ fn status_and_list_assets_without_a_project() {
     assert_eq!(line(&status, "project: "), "none");
     assert_eq!(line(&status, "selection: "), "none");
     assert_eq!(error["code"], "no_project");
+}
+
+#[test]
+fn a_plugin_given_to_the_editor_is_installed_after_it() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        let state = ok(&client, "extension_state").await;
+        client.cancel().await.unwrap();
+        state
+    }) else {
+        return;
+    };
+
+    assert_eq!(served.result, "after the editor");
 }
 
 #[test]
@@ -4594,6 +4797,69 @@ fn save_answers_busy_while_the_scene_loads() {
         after.contains("unsaved changes were made while it loaded"),
         "{after}"
     );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct StartWork {}
+
+#[derive(Deserialize, JsonSchema)]
+struct EndWork {}
+
+#[derive(Component)]
+struct Worker;
+
+fn start_work(mut calls: ToolCalls<StartWork>, mut cmd: CommandQueue) {
+    for (_, reply) in calls.read() {
+        cmd.spawn((Worker, BackgroundWork));
+        reply.ok("started");
+    }
+}
+
+fn end_work(
+    mut calls: ToolCalls<EndWork>,
+    workers: Query<Entity, With<Worker>>,
+    mut cmd: CommandQueue,
+) {
+    for (_, reply) in calls.read() {
+        for worker in workers.iter() {
+            cmd.remove::<BackgroundWork>(worker);
+        }
+        reply.ok("ended");
+    }
+}
+
+#[test]
+fn status_is_busy_while_a_document_has_background_work() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        |app| {
+            app.add_tool::<StartWork, _>(McpTool::new("start_work"), start_work)
+                .add_tool::<EndWork, _>(McpTool::new("end_work"), end_work);
+        },
+        |client| async move {
+            open(&client).await;
+            until(&client, "status", |status| status.ends_with("busy: no")).await;
+            assert_eq!(ok(&client, "start_work").await, "started");
+            let working = until(&client, "status", |status| status.ends_with("busy: yes")).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let still = ok(&client, "status").await;
+            assert_eq!(ok(&client, "end_work").await, "ended");
+            let ended = until(&client, "status", |status| status.ends_with("busy: no")).await;
+            client.cancel().await.unwrap();
+            (working, still, ended)
+        },
+    ) else {
+        return;
+    };
+
+    let (working, still, ended) = served.result;
+    assert!(working.ends_with("busy: yes"), "{working}");
+    assert!(still.ends_with("busy: yes"), "{still}");
+    assert!(ended.ends_with("busy: no"), "{ended}");
 }
 
 fn drawless_game(app: &mut App) {

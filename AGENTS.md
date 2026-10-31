@@ -5,7 +5,7 @@ renderer, an offline asset pipeline, and an engine-native editor. Everything is
 work in progress; `concerto` 0.1.0 is on crates.io and predates the hosting
 work.
 
-The workspace is `crates/*` (31 engine crates, all named `concerto-<dir>`) plus
+The workspace is `crates/*` (33 engine crates, all named `concerto-<dir>`) plus
 `examples/*` (five standalone games). The root crate re-exports the engine and
 defines `DefaultPlugins`.
 
@@ -48,6 +48,7 @@ cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
+cargo concerto editor <dir> --update [--engine <path>]
 ```
 
 Examples are `tech-demo` and `ui-showcase`. Sources are imported through the editor's Import…, over a
@@ -103,12 +104,14 @@ code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
 `Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
-an extract system, `Extracted`. In the editor crate a system may also take
-`EditWorld<T>`, which reads the world of the scene being edited, or of the running
-game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
-the system while no document is the edit target: no scene is open, a preview is
-in front, or its game is starting. Nothing
-else reaches that world. An editor system may also take `PreviewSignals`, which
+an extract system, `Extracted`. In the editor crate and in editor extension
+crates a system may also take `EditWorld<T>`, which reads the world of the scene
+being edited, of the running game while playing, or of a preview whose editor
+edits in it, and `EditWorldSignals`, which sends signals to it. Both skip the
+system while no document is the edit target: no scene is open, another preview
+is in front, or its game is starting. Nothing
+else reaches that world, except that an asset editor may read a document out of
+it through `HostedApp`. An editor system may also take `PreviewSignals`, which
 sends signals to the preview `App` of a document it names. Do not write a system that takes `&World` or
 `&mut World`. Work that needs the whole world goes through commands, so it runs
 with exclusive access when the queue is applied: the typed `CommandQueue`
