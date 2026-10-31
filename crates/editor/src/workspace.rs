@@ -21,6 +21,7 @@ use crate::{
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, EditorHosts, EditorOwned},
     dock::PanelRegistry,
     hosted::ViewportTarget,
+    inspector::InspectedValues,
     shell::CHATTER_ID,
 };
 
@@ -106,21 +107,27 @@ pub(crate) fn sync_workspace(
     documents: Query<&EditorDocument>,
     hosts: Query<(Entity, &EditorHosts)>,
     changed_hosts: Query<&EditorHosts, Changed<EditorHosts>>,
+    values: Query<&InspectedValues>,
+    changed_values: Query<&InspectedValues, Changed<InspectedValues>>,
     nodes: Query<&mut UINode>,
     parents: Query<&ChildOf>,
     children: Query<&mut Children>,
 ) {
     let hosts_changed = changed_hosts.iter().next().is_some();
-    if !active.is_changed() && !registry.is_changed() && !hosts_changed {
+    let values_changed = changed_values.iter().next().is_some();
+    if !active.is_changed() && !registry.is_changed() && !hosts_changed && !values_changed {
         return;
     }
     let document = active.0.and_then(|entity| documents.get_entity(entity));
     let scene = document.is_none_or(|doc| doc.asset_type == concerto_scene::scene::Scene::name());
     let viewport = scene || document.is_some_and(|doc| editors.preview(doc.asset_type).is_some());
+    let inspected = active
+        .0
+        .is_some_and(|entity| values.get_entity(entity).is_some());
     let bases = panel_bodies(&registry);
-    for (index, entity) in bases.into_iter().enumerate() {
+    for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
         if let Some(entity) = entity {
-            set_visible(&nodes, entity, if index == 0 { viewport } else { scene });
+            set_visible(&nodes, entity, visible);
         }
     }
     for (entity, hosts) in hosts.iter() {
@@ -130,12 +137,29 @@ pub(crate) fn sync_workspace(
         {
             set_visible(&nodes, host, active.0 == Some(entity));
         }
+        if let Some(host) = hosts.inspector
+            && values.get_entity(entity).is_some()
+            && let Some(mut node) = nodes.get_entity(host)
+            && node.flex_grow != 0.0
+        {
+            node.flex_grow = 0.0;
+        }
     }
     if hosts_changed || registry.is_changed() {
         if let Some(base) = bases[1] {
             let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.left).collect();
             sort_siblings(&parents, &children, base, |entity| {
                 usize::from(entity != base && !contextual.contains(&entity))
+            });
+        }
+        if let Some(base) = bases[2] {
+            let contextual: Vec<_> = hosts.iter().filter_map(|(_, h)| h.inspector).collect();
+            sort_siblings(&parents, &children, base, |entity| {
+                if contextual.contains(&entity) {
+                    0
+                } else {
+                    usize::from(entity != base) + 1
+                }
             });
         }
         if let Some(chatter) = registry.body(CHATTER_ID) {
@@ -633,6 +657,59 @@ mod tests {
         sync_workspace(&mut world);
         assert!(!world.entity_is_valid(bottom));
         assert_eq!(foot_children(&world, chatter), vec![second_bottom, chatter]);
+    }
+
+    #[test]
+    fn a_value_document_shows_the_inspector_under_a_host_that_does_not_grow() {
+        let mut world = docked_world();
+        world.insert_resource(ActiveEditor::default());
+        world.insert_resource(FocusedWidget::default());
+        world.insert_resource(HoveredNode::default());
+        world.insert_resource(UIInputState::default());
+        world.insert_resource(ActionMap::default());
+        let mut editors = AssetEditorRegistry::default();
+        editors.register::<Notes, NotesEditor>().unwrap();
+        editors.register::<Take, TakeEditor>().unwrap();
+        world.insert_resource(editors);
+        let bases = panel_bodies(world.get_resource::<PanelRegistry>().unwrap());
+        let notes = document_of(&mut world, Notes::name());
+        let take = document_of(&mut world, Take::name());
+        let mut create = super::create_editor_hosts.into_system();
+        create.initialize(&mut world);
+        create.run_and_apply((), &mut world);
+        let hosts = *world
+            .get_component_for_entity::<EditorHosts>(notes)
+            .unwrap();
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(notes);
+        sync_workspace(&mut world);
+        assert!(!visible(&world, bases[2]));
+        world.tick();
+
+        world.insert(InspectedValues::default(), notes);
+        sync_workspace(&mut world);
+
+        assert!(visible(&world, bases[2]) && visible(&world, hosts.inspector));
+        assert!(!visible(&world, bases[1]) && visible(&world, hosts.left));
+        let host = hosts.inspector.unwrap();
+        let base = bases[2].unwrap();
+        let node = |world: &World, entity| {
+            world
+                .get_component_for_entity::<UINode>(entity)
+                .unwrap()
+                .flex_grow
+        };
+        assert_eq!(node(&world, host), 0.0);
+        assert_eq!(node(&world, base), 1.0);
+        let order = foot_children(&world, base);
+        let position = |entity| order.iter().position(|&child| child == entity).unwrap();
+        assert!(position(host) < position(base));
+        world.tick();
+
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(take);
+        sync_workspace(&mut world);
+        assert!(!visible(&world, bases[2]));
+        let other = world.get_component_for_entity::<EditorHosts>(take).unwrap();
+        assert_eq!(node(&world, other.inspector.unwrap()), 1.0);
     }
 
     #[test]

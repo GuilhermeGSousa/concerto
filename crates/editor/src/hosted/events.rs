@@ -16,7 +16,7 @@ use concerto_ecs::{
 
 use super::{HostedApp, ParkedEditApp};
 
-/// An event of a hosted `App`, re-written in the editor's world with the document it came from.
+/// An event about a document: re-written in the editor's world from its hosted `App`, or written there directly for a value it holds.
 #[derive(Clone)]
 pub struct Hosted<E> {
     pub document: Entity,

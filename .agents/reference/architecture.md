@@ -207,7 +207,8 @@ editor's world, which systems read with `EventReader<Hosted<E>>`. Whether the
 scene has unsaved edits is state, `SceneDirty`, kept in the edit `App`: edits set
 it and a successful save clears it, and the editor's `Unsaved` follows it. A save
 asks the edit `App` for the scene directly with `HostedApp::capture_scene`.
-The inspector edits components through `PropertyEditor<T>` adapters over
-`reflect`. Each asset type has one editor, registered with
-`register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
+The inspector edits reflected values through `PropertyEditor<T>` adapters over
+`reflect`: a `PropertyTarget` addresses each one, a component in the edit
+target's world or a value a document holds in the editor's. Each asset type has
+one editor, registered with `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
 covers all of it.

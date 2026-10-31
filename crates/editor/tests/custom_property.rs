@@ -12,8 +12,8 @@ use concerto_ecs::{
 };
 use concerto_editor::hosted::{EditWorld, Hosted, HostedEventsAppExt, trigger_on};
 use concerto_editor::inspector::{
-    ComponentEdit, EditContext, EditError, EditableApp, InspectorRegistry, PropertyCommit,
-    PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
+    ComponentEdit, ComponentTarget, EditContext, EditError, EditableApp, InspectorRegistry,
+    PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
 };
 use concerto_editor::tools::{
     edits::EditComponent,
@@ -179,7 +179,7 @@ impl Inspecting {
     fn setting_row(&mut self) -> (Entity, PropertyRow, PropertyRowValue) {
         self.rows()
             .into_iter()
-            .find(|(_, row, _)| row.type_id == TypeId::of::<Setting>())
+            .find(|(_, row, _)| row.address.type_id == TypeId::of::<Setting>())
             .expect("the inspector shows the selected entity's setting")
     }
     fn send(&mut self, commit: PropertyCommit) {
@@ -243,15 +243,19 @@ fn the_inspector_shows_a_registered_composite_of_the_scene_as_one_row() {
     w.select(w.a);
 
     let rows = w.all_rows();
-    let paths: Vec<_> = rows.iter().map(|row| row.path.clone()).collect();
+    let paths: Vec<_> = rows.iter().map(|row| row.address.path.clone()).collect();
     assert_eq!(
         paths,
         [PropertyPath::new(["setting"]), PropertyPath::new(["gain"])]
     );
-    let a = w.a;
-    assert!(rows.iter().all(|row| row.entity == a
-        && row.component == TypeId::of::<Container>()
-        && row.has_editor()));
+    let shown = Some(ComponentTarget {
+        entity: w.a,
+        component: TypeId::of::<Container>(),
+    });
+    assert!(
+        rows.iter()
+            .all(|row| row.address.target.component() == shown)
+    );
     let (_, _, shown) = w.setting_row();
     let snapshot = shown.snapshot::<Setting, SettingEditor>().unwrap();
     assert_eq!(snapshot.title, "Shadows");
@@ -330,8 +334,11 @@ fn root_editors_and_owned_snapshots_work_without_cloning_the_domain_type() {
     let mut w = inspecting();
     w.select(w.root);
     let (_, row, value) = w.setting_row();
-    assert_eq!(row.path, PropertyPath::default());
-    assert_eq!(row.component, TypeId::of::<Setting>());
+    assert_eq!(row.address.path, PropertyPath::default());
+    assert_eq!(
+        row.address.target.component().unwrap().component,
+        TypeId::of::<Setting>()
+    );
 
     w.send(commit(&row, SettingEdit::Toggle));
 
@@ -377,10 +384,10 @@ fn missing_targets_and_incompatible_paths_change_nothing_and_report_no_edit() {
     let row = w.setting_row().1;
 
     let mut wrong_type = commit(&row, SettingEdit::Toggle);
-    wrong_type.row.path = PropertyPath::new(["gain"]);
+    wrong_type.row.address.path = PropertyPath::new(["gain"]);
     w.send(wrong_type);
     let mut missing = commit(&row, SettingEdit::Toggle);
-    missing.row.path = PropertyPath::new(["absent"]);
+    missing.row.address.path = PropertyPath::new(["absent"]);
     w.send(missing);
     assert_eq!(w.container(w.a), Some(("Shadows".into(), false)));
 
@@ -471,7 +478,9 @@ fn custom_widget_build_click_commit_and_refresh_smoke_test() {
     let refreshed = w
         .rows()
         .into_iter()
-        .find(|(entity, found, _)| *entity != row && found.type_id == TypeId::of::<Setting>())
+        .find(|(entity, found, _)| {
+            *entity != row && found.address.type_id == TypeId::of::<Setting>()
+        })
         .map(|(_, _, value)| value)
         .expect("the inspector took a fresh snapshot");
     *w.world()
