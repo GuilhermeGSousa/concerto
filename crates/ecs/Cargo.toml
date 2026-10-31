@@ -10,9 +10,6 @@ license.workspace = true
 default = ["multithreaded"]
 multithreaded = ["dep:concerto-tasks", "dep:concurrent-queue"]
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 profiling = "1"
 concerto-tasks = { workspace = true, optional = true }

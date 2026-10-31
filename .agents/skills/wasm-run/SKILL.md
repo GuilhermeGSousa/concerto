@@ -25,6 +25,9 @@ The CI check is only that it builds:
 cargo build --target wasm32-unknown-unknown
 ```
 
+That compiles the libraries and links no program, so a link failure shows up
+only in `trunk`.
+
 A build that passes proves nothing about the browser. A wasm change is verified
 by loading the page and reading the console.
 

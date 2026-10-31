@@ -74,6 +74,14 @@ cargo build --target wasm32-unknown-unknown
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on macOS and Windows.
 
+Test builds carry line tables only and `cargo build` carries full debug info,
+so the two compile everything separately, third-party crates and Jolt
+included: the first `cargo build` or `cargo run` after `cargo test` takes
+minutes, and an edit rebuilds the affected crates once for each. To step through
+a test,
+`CARGO_PROFILE_TEST_DEBUG=true cargo test -p <crate> --test <name>` gives full
+debug info, rebuilding what that test needs.
+
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
 alone needs none of them. A cloud pipeline session runs only the first and
