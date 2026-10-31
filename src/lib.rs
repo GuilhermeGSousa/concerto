@@ -112,3 +112,13 @@ pub fn headless(build: impl FnOnce(&mut App)) -> Option<App> {
     app.finish_plugin_build();
     Some(app)
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn setting_up_logging_twice_does_not_panic() {
+        super::init_logging();
+        super::init_logging();
+    }
+}
