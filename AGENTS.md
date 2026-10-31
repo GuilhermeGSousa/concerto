@@ -74,9 +74,9 @@ cargo build --target wasm32-unknown-unknown
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on macOS and Windows.
 
-Test builds carry line tables only, so `cargo build` and `cargo test` no longer
-share build output: the first `cargo build` or `cargo run` after `cargo test`
-rebuilds the runtime crates. To step through a test,
+Test builds carry line tables only and `cargo build` carries full debug info,
+so the two compile the workspace's crates separately, and an edit rebuilds the
+affected crates once for each. To step through a test,
 `CARGO_PROFILE_TEST_DEBUG=true cargo test -p <crate> --test <name>` gives full
 debug info, rebuilding what that test needs.
 

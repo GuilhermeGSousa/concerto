@@ -95,10 +95,13 @@ Each tick:
    issue what is uncommitted, once.
 3. Let `<target>` be `<parent>/concerto-issues/target`. If the disk holding it
    has under 30 GB free, run
-   `flock -n <target>/debug/.cargo-lock rm -rf <target>/debug/incremental`. If
-   the lock is held, leave it for the next tick. If it's still under 30 GB,
-   remove the whole `<target>` the same way. If that fails, comment on an open
-   pipeline PR what's taking the space and add `agent:needs-owner`.
+   `flock -n <target>/debug/.cargo-lock rm -rf <target>/debug/incremental`,
+   which does nothing while a build holds the lock. If it's still under 30 GB,
+   run `rm -rf <target>`, but only when this session has no agent, build or
+   editor running; otherwise leave that for the next tick, because Cargo's lock
+   doesn't cover a test run or a running binary. If the disk is still under
+   30 GB with `<target>` gone, comment once on an open pipeline PR what's taking
+   the space, add `agent:needs-owner`, and skip step 5.
 4. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
    an issue you already hold", up to the next wait.
 5. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
