@@ -41,13 +41,19 @@ use concerto_motion_matching::{
     TrajectoryPositions, weightless_hash,
 };
 use concerto_reflect::{PropertyPath, Reflect, ReflectedValue};
+use concerto_ui::theme::UITheme;
 use concerto_window::plugin::{Window, WindowPlugin};
 use serde_json::{Value, json};
 
 use crate::{
     ChannelOrder, DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
     document::{follow_definition_edits, forget_discarded_edits, load_definition},
-    install, read_definition,
+    facts::{follow_skeleton, read_entry_facts},
+    install,
+    joint::JointNameEditor,
+    menu::close_name_menu,
+    panels::{build_definition_panels, sync_channel_rows, sync_definition_panels},
+    read_definition,
     save::{request_definition_saves, save_definition},
 };
 
@@ -77,11 +83,11 @@ fn database_recipe(app: &mut App) {
         .register_type::<NoChannel>();
 }
 
-fn broken_recipe(_: &mut App) {
+pub(crate) fn broken_recipe(_: &mut App) {
     panic!("the game broke");
 }
 
-fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
+pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     let mut f = SceneFixture::new();
     f.world.insert_resource(SceneRecipe {
         recipe,
@@ -93,19 +99,28 @@ fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
         .unwrap()
         .register_creatable::<MotionDatabaseDefinition, MotionDatabaseEditor>()
         .unwrap();
+    let mut inspector = InspectorRegistry::default();
+    inspector.register_property_editor::<JointName, JointNameEditor>();
+    f.world.insert_resource(inspector);
     f.world.add_listener(save_definition);
     f.world.add_listener(forget_discarded_edits);
+    f.world.add_listener(close_name_menu);
     f.add_delivery(follow_definition_edits.into_boxed_system());
     f.add_delivery(request_definition_saves.into_boxed_system());
     f.add_delivery(load_definition.into_boxed_system());
+    f.add_delivery(follow_skeleton.into_boxed_system());
+    f.add_delivery(read_entry_facts.into_boxed_system());
+    f.add_delivery(build_definition_panels.into_boxed_system());
+    f.add_delivery(sync_definition_panels.into_boxed_system());
+    f.add_delivery(sync_channel_rows.into_boxed_system());
     f
 }
 
-fn fixture() -> SceneFixture {
+pub(crate) fn fixture() -> SceneFixture {
     fixture_with(database_recipe)
 }
 
-fn entry(seconds: f32) -> MotionEntry {
+pub(crate) fn entry(seconds: f32) -> MotionEntry {
     MotionEntry {
         clip: AssetHandle::weak(AssetId::new()),
         range: Some(TimeRange {
@@ -115,7 +130,7 @@ fn entry(seconds: f32) -> MotionEntry {
     }
 }
 
-fn definition() -> MotionDatabaseDefinition {
+pub(crate) fn definition() -> MotionDatabaseDefinition {
     MotionDatabaseDefinition {
         skeleton: AssetHandle::weak(AssetId::new()),
         entries: vec![entry(1.0), entry(2.0)],
@@ -125,18 +140,22 @@ fn definition() -> MotionDatabaseDefinition {
     }
 }
 
-fn write_definition(
+pub(crate) fn write_asset<A: Asset>(f: &mut SceneFixture, address: &str, asset: &A) -> AssetEntry {
+    let root = f.project_root.clone();
+    let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
+    let id = save_content_asset_into(asset, &root, address, assets).unwrap();
+    assets.get(id).unwrap().clone()
+}
+
+pub(crate) fn write_definition(
     f: &mut SceneFixture,
     address: &str,
     definition: &MotionDatabaseDefinition,
 ) -> AssetEntry {
-    let root = f.project_root.clone();
-    let assets = f.world.get_resource_mut::<AssetRegistry>().unwrap();
-    let id = save_content_asset_into(definition, &root, address, assets).unwrap();
-    assets.get(id).unwrap().clone()
+    write_asset(f, address, definition)
 }
 
-fn request(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
+pub(crate) fn request(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
     f.request(asset);
     let document = f.world.get_resource::<ActiveEditor>().unwrap().0.unwrap();
     f.frames_until("the definition never finished opening", |f| {
@@ -145,20 +164,20 @@ fn request(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
     document
 }
 
-fn open(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
+pub(crate) fn open(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
     let document = request(f, asset);
     f.frame();
     f.frame();
     document
 }
 
-fn state(f: &SceneFixture, document: Entity) -> &DefinitionDocument {
+pub(crate) fn state(f: &SceneFixture, document: Entity) -> &DefinitionDocument {
     f.world
         .get_component_for_entity::<DefinitionDocument>(document)
         .expect("the document is a definition's")
 }
 
-fn settings_entity(f: &mut SceneFixture, document: Entity) -> Entity {
+pub(crate) fn settings_entity(f: &mut SceneFixture, document: Entity) -> Entity {
     let world = f.scene_world_mut(document);
     let found: Vec<Entity> = world
         .query::<(Entity, &DatabaseSettings), ()>()
@@ -169,7 +188,7 @@ fn settings_entity(f: &mut SceneFixture, document: Entity) -> Entity {
     found[0]
 }
 
-fn channels(f: &mut SceneFixture, document: Entity) -> Vec<Entity> {
+pub(crate) fn channels(f: &mut SceneFixture, document: Entity) -> Vec<Entity> {
     let world = f.scene_world_mut(document);
     let mut found: Vec<(ChannelOrder, Entity)> = world
         .query::<(Entity, &ChannelOrder), ()>()
@@ -180,14 +199,18 @@ fn channels(f: &mut SceneFixture, document: Entity) -> Vec<Entity> {
     found.into_iter().map(|(_, entity)| entity).collect()
 }
 
-fn component<T: Component + Clone>(f: &SceneFixture, document: Entity, entity: Entity) -> T {
+pub(crate) fn component<T: Component + Clone>(
+    f: &SceneFixture,
+    document: Entity,
+    entity: Entity,
+) -> T {
     f.scene_world(document)
         .get_component_for_entity::<T>(entity)
         .cloned()
         .expect("the entity carries it")
 }
 
-fn set<T: 'static>(
+pub(crate) fn set<T: 'static>(
     f: &mut SceneFixture,
     entity: Entity,
     path: impl IntoIterator<Item = &'static str>,
@@ -201,7 +224,7 @@ fn set<T: 'static>(
     });
 }
 
-fn save(f: &mut SceneFixture, document: Entity) {
+pub(crate) fn save(f: &mut SceneFixture, document: Entity) {
     f.world.insert(SaveRequested, document);
     f.deliver();
 }
@@ -853,6 +876,8 @@ fn install_opens_and_saves_a_definition_in_the_editors_schedule() {
         .insert_resource(project)
         .insert_resource(assets)
         .insert_resource(ViewportShown(None))
+        .insert_resource(InspectorRegistry::default())
+        .insert_resource(UITheme::default())
         .register_plugin(HostedPlugin)
         .register_plugin(PreviewHostPlugin)
         .register_plugin(ScenePlugin {

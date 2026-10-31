@@ -37,7 +37,9 @@ and everything else the editor registers, and before the MCP plugins under
 `--mcp`. `run` is `run_with` with an empty list.
 
 An extension crate's tests can use the `testing` feature, which exposes
-`hosted::testing` and its `SceneFixture`; take it as a dev-dependency:
+`hosted::testing` and its `SceneFixture`, and `inspector::row_systems`, the
+systems that turn a selection into inspector rows and send their edits; take it
+as a dev-dependency:
 
 ```toml
 [dev-dependencies]
@@ -934,7 +936,9 @@ Its systems and listeners are marked `.at_preview_time()` as in any preview. An
 edit through the inspector marks the preview's `SceneDirty` and writes
 `PropertyCommitted` or `ComponentEdited`, which reach the editor as `Hosted<E>`
 events. Nothing marks the document `Unsaved` for it: the asset editor reads
-those events and does that itself, and it saves the document itself.
+those events and does that itself, and it saves the document itself. A listener
+of the editor's own that changes the entities does what an edit does: it calls
+`tools::scene::report_edit` and writes the same event with `tools::scene::write`.
 
 A save reaches a background tab too, through the unsaved guard or MCP `save`,
 and `EditWorld<T>` reads only the front tab. So the editor reads `SaveRequested`

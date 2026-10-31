@@ -80,7 +80,7 @@ pub(crate) fn mark_saved(world: &mut World) {
 }
 
 /// Marks the scene dirty and tells whoever hosts it that it changed.
-pub(crate) fn report_edit(world: &mut World) {
+pub fn report_edit(world: &mut World) {
     world.insert_resource(SceneDirty(true));
     write(world, SceneEdited);
 }

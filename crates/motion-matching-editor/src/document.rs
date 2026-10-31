@@ -17,12 +17,15 @@ use concerto_editor::{
     tools::edits::{ComponentEdited, PropertyCommitted},
 };
 use concerto_foundation::assets::{
-    Asset, content::read_content_asset, handle::AssetHandle, registry::AssetEntry,
+    Asset, AssetId, content::read_content_asset, handle::AssetHandle, registry::AssetEntry,
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{MotionDatabaseDefinition, MotionEntry};
 
-use crate::preview::{DatabaseSettings, ShowDefinition, database_preview, live_channel};
+use crate::{
+    facts::{EntryFacts, FactsJob, ShownSkeleton},
+    preview::{DatabaseSettings, ShowDefinition, database_preview, live_channel},
+};
 
 /// What a definition's tab holds; its other settings and its channels live in the preview's world.
 #[derive(Component, Default)]
@@ -31,6 +34,19 @@ pub struct DefinitionDocument {
     pub entries: Vec<MotionEntry>,
     pub selected_entry: Option<usize>,
     pub loaded: Option<MotionDatabaseDefinition>,
+    pub entry_facts: Vec<EntryFacts>,
+    pub(crate) shown_skeleton: Option<ShownSkeleton>,
+    pub(crate) facts_job: Option<FactsJob>,
+}
+
+impl DefinitionDocument {
+    /// What was read of `clip` against the definition's skeleton, once it has been.
+    pub fn facts_of(&self, clip: AssetId) -> Option<&EntryFacts> {
+        let skeleton = self.skeleton.id();
+        self.entry_facts
+            .iter()
+            .find(|facts| facts.clip == clip && facts.skeleton == skeleton)
+    }
 }
 
 /// Opens a `MotionDatabaseDefinition` in a tab whose preview `App` holds what the inspector edits.
@@ -120,6 +136,8 @@ pub(crate) fn load_definition(
         state.skeleton = definition.skeleton.clone();
         state.entries = definition.entries.clone();
         state.selected_entry = (!definition.entries.is_empty()).then_some(0);
+        state.entry_facts.clear();
+        state.shown_skeleton = None;
         previews.trigger(
             entity,
             ShowDefinition {

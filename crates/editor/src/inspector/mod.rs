@@ -273,8 +273,8 @@ fn sync_inspector_scroll(
 }
 
 /// The systems that build the inspector's rows from the selection and send their edits.
-#[cfg(test)]
-pub(crate) fn row_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
+#[cfg(any(test, feature = "testing"))]
+pub fn row_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
     use concerto_ecs::IntoSystem;
     vec![
         collect_inspector_data.into_boxed_system(),
