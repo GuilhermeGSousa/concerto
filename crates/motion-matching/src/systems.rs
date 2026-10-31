@@ -1,80 +1,44 @@
 use concerto_animation::player::AnimationPlayer;
 use concerto_ecs::{Query, Res, ResMut};
-use concerto_foundation::{
-    math::spring_damper::{simple_spring_damper_exact_quat, spring_character_update},
-    time::Time,
-};
+use concerto_foundation::time::Time;
 use concerto_physics::{body::BodyId, physics_state::PhysicsState};
-use glam::Vec3;
 
 use crate::{
     node::{MotionMatchingTrajectory, TRAJECTORY_KEY},
-    simulation::{predict_trajectory, CharacterSimulation, DesiredMotion},
+    simulation::{CharacterSimulation, DesiredMotion},
 };
 
-/// Advances the spring one fixed step towards the desired motion and sets the body's horizontal velocity to it.
+/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's.
 pub fn drive_body(
     query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     for (mut simulation, desired, body_id) in query.iter() {
-        let desired_velocity = Vec3::new(desired.velocity.x, 0.0, desired.velocity.z);
-        let state = spring_character_update(
-            simulation.state,
-            desired_velocity,
-            simulation.velocity_halflife,
-            dt,
-        );
-        let (rotation, angular_velocity) = simple_spring_damper_exact_quat(
-            simulation.rotation,
-            simulation.angular_velocity,
-            desired.rotation,
-            simulation.rotation_halflife,
-            dt,
-        );
+        let velocity = simulation.advance(desired, dt);
         let vertical = physics.linear_velocity(*body_id).y;
-        physics.set_linear_velocity(
-            *body_id,
-            Vec3::new(state.velocity.x, vertical, state.velocity.z),
-        );
-        simulation.state = state;
-        simulation.rotation = rotation;
-        simulation.angular_velocity = angular_velocity;
+        physics.set_linear_velocity(*body_id, velocity.with_y(vertical));
     }
 }
 
-/// Sets the simulation's horizontal position to the body's position after collisions.
-pub fn read_back_body(
-    query: Query<(&mut CharacterSimulation, &BodyId)>,
+/// Predicts each character's path from where its body ended the step and writes it to its animation player's blackboard.
+pub fn publish_trajectory(
+    query: Query<(
+        &CharacterSimulation,
+        &DesiredMotion,
+        &BodyId,
+        &mut AnimationPlayer,
+    )>,
     physics: Res<PhysicsState>,
 ) {
-    for (mut simulation, body_id) in query.iter() {
-        let position = physics.body_transform(*body_id).translation;
-        simulation.state.position.x = position.x;
-        simulation.state.position.z = position.z;
-    }
-}
-
-/// Fills each simulation's trajectory from its current state and desired motion.
-pub fn predict_trajectory_system(
-    query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
-) {
-    for (mut simulation, desired, _) in query.iter() {
-        let trajectory = predict_trajectory(&simulation, desired);
-        simulation.trajectory = trajectory;
-    }
-}
-
-/// Copies each character's simulation transform and trajectory to its animation player's blackboard.
-pub fn publish_trajectory(query: Query<(&CharacterSimulation, &mut AnimationPlayer)>) {
-    for (simulation, mut player) in query.iter() {
+    for (simulation, desired, body_id, mut player) in query.iter() {
+        let translation = physics.body_transform(*body_id).translation;
         player.set_param(
             TRAJECTORY_KEY,
             MotionMatchingTrajectory {
-                translation: simulation.state.position,
-                rotation: simulation.rotation,
-                samples: simulation.trajectory.clone(),
+                translation,
+                rotation: simulation.facing.value,
+                samples: simulation.predict(translation, desired),
             },
         );
     }
@@ -86,10 +50,11 @@ mod tests {
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
     use concerto_ecs::Entity;
+    use concerto_foundation::math::spring_damper::halflife_to_damping;
     use concerto_foundation::transform::Transform;
     use concerto_physics::collider::{register_colliders, Collider};
     use concerto_physics::rigid_body::RigidBody;
-    use glam::Quat;
+    use glam::{Quat, Vec3};
 
     use super::*;
     use crate::simulation::CharacterSimulation;
@@ -131,6 +96,14 @@ mod tests {
         *world.get_component_for_entity::<BodyId>(entity).unwrap()
     }
 
+    fn published(world: &World, entity: Entity) -> Option<MotionMatchingTrajectory> {
+        world
+            .get_component_for_entity::<AnimationPlayer>(entity)
+            .unwrap()
+            .get_param::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
+            .cloned()
+    }
+
     #[test]
     fn drive_body_keeps_vertical_velocity_and_sets_horizontal_to_the_spring() {
         let desired = DesiredMotion {
@@ -138,12 +111,9 @@ mod tests {
             rotation: Quat::IDENTITY,
         };
         let simulation = CharacterSimulation::default();
-        let expected = spring_character_update(
-            simulation.state,
-            Vec3::new(4.0, 0.0, -2.0),
-            simulation.velocity_halflife,
-            Time::fixed_delta_time().as_secs_f32(),
-        );
+        let rate = halflife_to_damping(simulation.velocity_halflife) / 2.0
+            * Time::fixed_delta_time().as_secs_f32();
+        let covered = 1.0 - (1.0 + rate) * (-rate).exp();
         let (mut world, entity) = world_with_body(Vec3::new(0.0, 5.0, 0.0), simulation, desired);
         let body = body_of(&world, entity);
         world
@@ -157,15 +127,9 @@ mod tests {
             .get_resource::<PhysicsState>()
             .unwrap()
             .linear_velocity(body);
-        assert!((velocity.x - expected.velocity.x).abs() < EPS);
+        assert!((velocity.x - 4.0 * covered).abs() < EPS);
         assert!((velocity.y + 3.0).abs() < EPS);
-        assert!((velocity.z - expected.velocity.z).abs() < EPS);
-
-        let simulation = world
-            .get_component_for_entity::<CharacterSimulation>(entity)
-            .unwrap();
-        assert!((simulation.state.velocity - expected.velocity).length() < EPS);
-        assert!((simulation.state.position - expected.position).length() < EPS);
+        assert!((velocity.z + 2.0 * covered).abs() < EPS);
     }
 
     #[test]
@@ -186,97 +150,48 @@ mod tests {
             .get_component_for_entity::<CharacterSimulation>(entity)
             .unwrap();
         let before = Quat::IDENTITY.angle_between(desired.rotation);
-        assert!(simulation.rotation.angle_between(desired.rotation) < before);
-        assert!(simulation.angular_velocity.length() > 0.0);
-    }
-
-    #[test]
-    fn read_back_body_replaces_horizontal_position_and_keeps_velocity() {
-        let mut simulation = CharacterSimulation::default();
-        simulation.state.velocity = Vec3::new(1.0, 0.0, 2.0);
-        simulation.state.position = Vec3::new(9.0, 0.0, 9.0);
-        let (mut world, entity) = world_with_body(
-            Vec3::new(3.0, 5.0, -2.0),
-            simulation,
-            DesiredMotion::default(),
-        );
-
-        run_once(&mut world, read_back_body);
-
-        let simulation = world
-            .get_component_for_entity::<CharacterSimulation>(entity)
-            .unwrap();
-        assert!((simulation.state.position.x - 3.0).abs() < EPS);
-        assert!(simulation.state.position.y.abs() < EPS);
-        assert!((simulation.state.position.z + 2.0).abs() < EPS);
-        assert_eq!(simulation.state.velocity, Vec3::new(1.0, 0.0, 2.0));
-    }
-
-    #[test]
-    fn predict_trajectory_system_fills_the_trajectory() {
-        let desired = DesiredMotion {
-            velocity: Vec3::new(3.0, 0.0, 4.0),
-            rotation: Quat::from_rotation_y(1.0),
-        };
-        let simulation = CharacterSimulation::default();
-        let expected = predict_trajectory(&simulation, &desired);
-        let (mut world, entity) = world_with_body(Vec3::new(0.0, 5.0, 0.0), simulation, desired);
-
-        run_once(&mut world, predict_trajectory_system);
-
-        let simulation = world
-            .get_component_for_entity::<CharacterSimulation>(entity)
-            .unwrap();
-        assert_eq!(simulation.trajectory, expected);
+        assert!(simulation.facing.value.angle_between(desired.rotation) < before);
+        assert!(simulation.facing.velocity.length() > 0.0);
     }
 
     #[test]
     fn entity_without_a_body_is_skipped() {
         let mut world = World::new();
         world.insert_resource(PhysicsState::new());
-        let entity = world.spawn((CharacterSimulation::default(),));
+        let entity = world.spawn((CharacterSimulation::default(), AnimationPlayer::new(1)));
 
         run_once(&mut world, drive_body);
-        run_once(&mut world, predict_trajectory_system);
+        run_once(&mut world, publish_trajectory);
 
         let simulation = world
             .get_component_for_entity::<CharacterSimulation>(entity)
             .unwrap();
-        assert!(simulation.trajectory.is_empty());
-        assert_eq!(simulation.state.velocity, Vec3::ZERO);
+        assert_eq!(simulation.velocity.value, Vec3::ZERO);
+        assert_eq!(published(&world, entity), None);
     }
 
     #[test]
-    fn publish_trajectory_writes_the_simulation_into_the_players_blackboard() {
+    fn publish_trajectory_starts_the_path_at_the_body_and_keeps_the_facing() {
         let mut simulation = CharacterSimulation::default();
-        simulation.state.position = Vec3::new(1.0, 0.0, 2.0);
-        simulation.rotation = Quat::from_rotation_y(0.5);
-        simulation.trajectory = predict_trajectory(&simulation, &DesiredMotion::default());
-        let mut world = World::new();
-        let entity = world.spawn((simulation.clone(), AnimationPlayer::new(1)));
+        simulation.velocity.value = Vec3::new(1.0, 0.0, 2.0);
+        simulation.facing.value = Quat::from_rotation_y(0.5);
+        let desired = DesiredMotion {
+            velocity: Vec3::new(3.0, 0.0, 4.0),
+            rotation: Quat::from_rotation_y(1.0),
+        };
+        let (mut world, entity) =
+            world_with_body(Vec3::new(3.0, 5.0, -2.0), simulation.clone(), desired);
+        world.insert(AnimationPlayer::new(1), entity);
 
         run_once(&mut world, publish_trajectory);
 
-        let player = world
-            .get_component_for_entity::<AnimationPlayer>(entity)
-            .unwrap();
-        let published = player
-            .get_param::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
-            .unwrap();
-        assert_eq!(published.translation, simulation.state.position);
-        assert_eq!(published.rotation, simulation.rotation);
-        assert_eq!(published.samples, simulation.trajectory);
-    }
-
-    #[test]
-    fn publish_trajectory_skips_a_character_without_a_player() {
-        let mut world = World::new();
-        let entity = world.spawn((CharacterSimulation::default(),));
-
-        run_once(&mut world, publish_trajectory);
-
-        assert!(world
-            .get_component_for_entity::<AnimationPlayer>(entity)
-            .is_none());
+        let trajectory = published(&world, entity).unwrap();
+        assert!((trajectory.translation.x - 3.0).abs() < EPS);
+        assert!((trajectory.translation.z + 2.0).abs() < EPS);
+        assert_eq!(trajectory.rotation, Quat::from_rotation_y(0.5));
+        assert_eq!(
+            trajectory.samples,
+            simulation.predict(trajectory.translation, &desired)
+        );
     }
 }

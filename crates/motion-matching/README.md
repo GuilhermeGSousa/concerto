@@ -10,19 +10,26 @@ the crate as `concerto::motion_matching`.
 
 - `DesiredMotion`: a world velocity in m/s and a world facing. Other systems
   write it. It holds no gait or strafe. Default: zero velocity, identity.
-- `CharacterSimulation`: requires `DesiredMotion` and a physics body.
+- `CharacterSimulation`: requires `DesiredMotion` and a physics body. Its fields
+  are its tuning. The springs it steps and the trajectory it predicts are
+  internal: no field, accessor or reflection reaches them.
 
 | Field | Meaning | Default |
 |---|---|---|
-| `state` | position, velocity and acceleration of the velocity spring | zero |
-| `rotation`, `angular_velocity` | facing and its scaled angle-axis rate | identity, zero |
 | `velocity_halflife` | spring halflife for velocity | 0.27 s |
 | `rotation_halflife` | spring halflife for facing | 0.27 s |
 | `sample_dt`, `sample_count` | trajectory sampling | 1/3 s, 3 |
-| `trajectory` | predicted `TrajectorySample`s, `sample_dt * (i + 1)` ahead | empty |
+
+A halflife here is the one in orangeduck/Motion-Matching: a spring at rest covers
+about 40% of the distance in it, where
+`Spring::critically_damped_with_halflife` covers 50%.
 
 `sample_dt` and `sample_count` must match the motion database that queries the
 trajectory.
+
+A game that wants to know how a character moves asks its body:
+`PhysicsState::linear_velocity` and `body_transform` say where it went after
+collisions, which the springs do not know.
 
 ## Motion database
 
@@ -117,9 +124,10 @@ The context is filled in two ways:
   `simulation` is the smoothed simulation bone, `body` its central-difference
   velocities per database second (one-sided at the ends of a range) and
   `trajectory` the `TrajectorySettings` samples above.
-- Online, by the runtime query: the space is the world. `simulation` and `body`
-  come from `CharacterSimulation` and `trajectory` is its `trajectory`; pose
-  and velocities come from the animation system.
+- Online, by the runtime query: the space is the world. `simulation` is the
+  body's position with the simulation's facing and `trajectory` is the published
+  path. `body`, the pose and the velocities are left empty, since only
+  `Trajectory` channels run online and they do not read them.
 
 Because both fills go through the same `extract`, a channel written in terms of
 the inverse of `simulation` yields the same features in both.
@@ -231,20 +239,22 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
 
 ## Systems
 
-- `drive_body`, in `FixedUpdate`, before `step_simulation`: advances the spring
-  one fixed step toward `DesiredMotion::velocity`, with zero vertical velocity,
-  advances the facing, and sets the body's horizontal velocity to the
-  spring's. The body keeps its own vertical velocity.
-- `read_back_body`, in `LateFixedUpdate`, after `step_simulation`: sets the
-  simulation's horizontal position to the body's after collisions.
-- `predict_trajectory_system`, in `LateFixedUpdate`, after `read_back_body`:
-  fills `trajectory`.
+- `drive_body`, in `FixedUpdate`, before `step_simulation`: advances the
+  velocity spring one fixed step toward `DesiredMotion::velocity`, with zero
+  vertical velocity, advances the facing, and sets the body's horizontal
+  velocity to the spring's. The body keeps its own vertical velocity.
+- `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
+  the path from where the body ended the step and writes it to the character's
+  `AnimationPlayer`.
 
-An entity without a `BodyId` is skipped.
+An entity without a `BodyId` is skipped. The simulation holds no position: the
+body has it.
 
-`predict_trajectory` is the pure function behind the last system. It holds the
-current `DesiredMotion` constant: there is no input extrapolation and no
-collision, so the prediction does not see walls.
+The prediction starts from the springs and the body's position and holds the
+current `DesiredMotion` constant, sampling the same springs `drive_body` steps,
+so sample `i` is where the simulation gets to `sample_dt * (i + 1)` from now
+while that motion holds. There is no input extrapolation and no collision, so
+the prediction does not see walls. Its height is the body's, unchanged.
 
 ## Example
 
@@ -283,11 +293,10 @@ node.
 | `same_frame_tolerance` | a search result this many frames or fewer from the playhead is ignored | 1 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
-Each fixed step `publish_trajectory` copies a character's
-`CharacterSimulation` into its `AnimationPlayer`'s blackboard as a
-`MotionMatchingTrajectory` under the key `"trajectory"`. A player whose
-character has no simulation, or a preview `App`, has no trajectory; the node
-then plays the database without searching.
+Each fixed step `publish_trajectory` writes the character's predicted path to
+the blackboard of the `AnimationPlayer` on its entity, where only this crate
+reads it. A player with no simulation on its entity, or a preview `App`, has no
+trajectory; the node then plays the database without searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks

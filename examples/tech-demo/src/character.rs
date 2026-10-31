@@ -266,15 +266,7 @@ fn desired_velocity(player_input: Vec2) -> Vec3 {
 }
 
 pub(crate) fn update_movement(
-    movement: Query<
-        (
-            &CharacterSimulation,
-            &mut DesiredMotion,
-            &GroundProbe,
-            &BodyId,
-        ),
-        With<Player>,
-    >,
+    movement: Query<(&mut DesiredMotion, &GroundProbe, &BodyId), With<Player>>,
     anim_players: Query<&mut AnimationPlayer>,
     input: Res<Input>,
     mut physics: ResMut<PhysicsState>,
@@ -296,14 +288,14 @@ pub(crate) fn update_movement(
         player_input += Vec2::X;
     }
 
-    for (simulation, mut desired, ground, body_id) in movement.iter() {
+    for (mut desired, ground, body_id) in movement.iter() {
         // One skinned character, so the sole AnimationPlayer (on a spawned
         // descendant of the Player entity) is this character's.
         let Some(mut animation_player) = anim_players.iter().next() else {
             continue;
         };
 
-        let current_vel = simulation.state.velocity;
+        let current_vel = physics.linear_velocity(*body_id);
 
         let just_pressed_jump = input.is_just_pressed(PhysicalKey::Code(KeyCode::Space));
 
@@ -339,6 +331,7 @@ mod tests {
     use concerto::gameplay::camera::CameraPivot;
     use concerto::mesh::MeshComponent;
     use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
+    use concerto::physics::body::BodyId;
     use concerto::physics::physics_state::PhysicsState;
     use concerto::physics::{collider::Collider, shape::MeshCollider};
     use concerto::physics::{
@@ -427,7 +420,7 @@ mod tests {
         assert_eq!(characters(&mut world), vec![spawn_point]);
     }
 
-    fn world_with_player(simulation: CharacterSimulation, desired: DesiredMotion) -> World {
+    fn world_with_player(desired: DesiredMotion) -> World {
         let mut world = World::new();
         world.register_component::<Collider>();
         world.register_component::<Transform>();
@@ -437,7 +430,7 @@ mod tests {
             RigidBody::default(),
             Collider::capsule(2.0, 1.0),
             Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY),
-            simulation,
+            CharacterSimulation::default(),
             desired,
             GroundProbe::default(),
         ));
@@ -464,11 +457,19 @@ mod tests {
     }
 
     #[test]
-    fn the_movement_parameter_reads_the_simulation_velocity() {
-        let mut simulation = CharacterSimulation::default();
-        simulation.state.velocity = Vec3::new(2.5, 0.0, 1.0);
-        let mut world = world_with_player(simulation, DesiredMotion::default());
+    fn the_movement_parameter_reads_the_body_velocity() {
+        let mut world = world_with_player(DesiredMotion::default());
         world.insert_resource(Input::new());
+        let body = world
+            .query::<&BodyId, With<Player>>()
+            .iter(&mut world)
+            .next()
+            .copied()
+            .unwrap();
+        world
+            .get_resource_mut::<PhysicsState>()
+            .unwrap()
+            .set_linear_velocity(body, Vec3::new(2.5, 0.0, 1.0));
 
         let mut system = update_movement.into_system();
         system.initialize(&mut world);
@@ -484,7 +485,7 @@ mod tests {
 
     #[test]
     fn input_in_the_air_does_not_change_the_desired_velocity() {
-        let mut world = world_with_player(CharacterSimulation::default(), DesiredMotion::default());
+        let mut world = world_with_player(DesiredMotion::default());
         world.insert_resource(holding_arrow_up());
 
         let mut system = update_movement.into_system();
@@ -505,7 +506,7 @@ mod tests {
             velocity: Vec3::ZERO,
             rotation: Quat::from_rotation_y(1.0),
         };
-        let mut world = world_with_player(CharacterSimulation::default(), desired);
+        let mut world = world_with_player(desired);
         world.spawn(CameraPivot::default());
 
         let mut system = face_camera_direction.into_system();
