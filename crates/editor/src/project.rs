@@ -1,10 +1,13 @@
 use concerto_app::{App, Plugin, schedule_groups::Update};
-use concerto_ecs::{Event, ResMut, Resource, events::event_writer::EventWriter};
+use concerto_ecs::{
+    Event, Res, ResMut, Resource, World, events::event_writer::EventWriter,
+    system::input::SystemLocal, world::FromWorld,
+};
 use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
 use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     path::{Path, PathBuf},
     thread::JoinHandle,
 };
@@ -114,7 +117,87 @@ impl Plugin for ProjectPlugin {
     fn build(&self, app: &mut App) {
         app.register_event::<ProjectOpened>()
             .register_event::<ProjectOpenFailed>()
-            .add_system(Update, process_commands);
+            .add_system(Update, process_commands)
+            .add_system(Update, report_outdated_content);
+    }
+}
+
+/// Content assets of one kind whose header is at a type version other than this build's.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutdatedContent {
+    pub kind: String,
+    pub file_version: u32,
+    pub current: u32,
+    pub count: usize,
+}
+
+/// Groups `registry`'s entries whose `kind_version` differs from `current(kind)`, by kind then file version.
+pub fn outdated_content(
+    registry: &AssetRegistry,
+    current: impl Fn(&str) -> Option<u32>,
+) -> Vec<OutdatedContent> {
+    let mut groups = BTreeMap::<(&str, u32), (u32, usize)>::new();
+    for entry in registry.iter() {
+        let Some(file_version) = entry.kind_version else {
+            continue;
+        };
+        let Some(current) = current(&entry.kind) else {
+            continue;
+        };
+        if file_version != current {
+            groups
+                .entry((&entry.kind, file_version))
+                .or_insert((current, 0))
+                .1 += 1;
+        }
+    }
+    groups
+        .into_iter()
+        .map(|((kind, file_version), (current, count))| OutdatedContent {
+            kind: kind.into(),
+            file_version,
+            current,
+            count,
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct ReportedRoot(Option<PathBuf>);
+
+impl FromWorld for ReportedRoot {
+    fn from_world(_world: &World) -> Self {
+        Self::default()
+    }
+}
+
+fn report_outdated_content(
+    server: crate::hosted::EditWorld<Res<AssetServer>>,
+    registry: Res<AssetRegistry>,
+    mut state: ResMut<ProjectState>,
+    mut reported: SystemLocal<ReportedRoot>,
+) {
+    let Some(root) = state.project.as_ref().map(|project| &project.root) else {
+        return;
+    };
+    if reported.0.as_ref() == Some(root) {
+        return;
+    }
+    reported.0 = Some(root.clone());
+    let outdated = outdated_content(&registry, |kind| server.format_version(kind));
+    for group in &outdated {
+        log::warn!(
+            "{} {} content assets are at version {}; this build's {} is version {}. Loading migrates or rejects them; see docs/asset-importing.md",
+            group.count,
+            group.kind,
+            group.file_version,
+            group.kind,
+            group.current
+        );
+    }
+    let total: usize = outdated.iter().map(|group| group.count).sum();
+    if total > 0 {
+        state.status = format!("{total} content assets are outdated; see the log");
     }
 }
 
@@ -568,5 +651,108 @@ mod tests {
 
         assert_eq!(f.play_state(document), Some(PlayState::Editing));
         assert!(f.hosted_is_editing(document));
+    }
+
+    fn versioned(kind: &str, kind_version: Option<u32>) -> AssetEntry {
+        AssetEntry {
+            id: AssetId::new(),
+            address: format!("content/{:?}.gasset", AssetId::new()),
+            kind: kind.into(),
+            kind_version,
+            provenance: None,
+        }
+    }
+
+    #[test]
+    fn outdated_content_groups_by_kind_and_file_version() {
+        let mut registry = AssetRegistry::default();
+        for entry in [
+            versioned("Mesh", Some(1)),
+            versioned("Mesh", Some(1)),
+            versioned("Mesh", Some(2)),
+            versioned("Mesh", Some(3)),
+            versioned("Clip", Some(0)),
+            versioned("Clip", None),
+            versioned("Clip", Some(1)),
+            versioned("Unknown", Some(0)),
+        ] {
+            registry.insert(entry);
+        }
+        let versions = |kind: &str| match kind {
+            "Mesh" => Some(3),
+            "Clip" => Some(1),
+            _ => None,
+        };
+
+        assert_eq!(
+            outdated_content(&registry, versions),
+            [
+                OutdatedContent {
+                    kind: "Clip".into(),
+                    file_version: 0,
+                    current: 1,
+                    count: 1,
+                },
+                OutdatedContent {
+                    kind: "Mesh".into(),
+                    file_version: 1,
+                    current: 3,
+                    count: 2,
+                },
+                OutdatedContent {
+                    kind: "Mesh".into(),
+                    file_version: 2,
+                    current: 3,
+                    count: 1,
+                },
+            ]
+        );
+    }
+
+    fn animated_recipe(app: &mut App) {
+        crate::hosted::testing::scene_recipe(app);
+        app.register_plugin(concerto_animation::plugin::AnimationPlugin);
+    }
+
+    #[test]
+    fn a_project_with_outdated_content_is_reported_once_when_its_first_scene_opens() {
+        use crate::{asset_editor::AssetEditorCommand, hosted::testing::SceneFixture};
+        use concerto_animation::clip::AnimationClip;
+        use concerto_ecs::{IntoSystem, System};
+
+        let mut f = SceneFixture::new();
+        f.world
+            .get_resource_mut::<crate::scene::SceneRecipe>()
+            .unwrap()
+            .recipe = animated_recipe;
+        f.add_to_project(&versioned(AnimationClip::name(), Some(0)));
+        let mut report = report_outdated_content.into_system();
+        report.initialize(&mut f.world);
+        f.world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .status
+            .clear();
+
+        report.run_and_apply((), &mut f.world);
+        assert_eq!(status(&f.world), "");
+
+        let document = f.open();
+        report.run_and_apply((), &mut f.world);
+        assert_eq!(
+            status(&f.world),
+            "1 content assets are outdated; see the log"
+        );
+
+        f.world
+            .get_resource_mut::<ProjectState>()
+            .unwrap()
+            .status
+            .clear();
+        f.command(AssetEditorCommand::Close(document));
+        f.frames_until_idle();
+        f.open();
+        report.run_and_apply((), &mut f.world);
+        assert_eq!(status(&f.world), "");
     }
 }

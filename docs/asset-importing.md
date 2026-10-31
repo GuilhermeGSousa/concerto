@@ -293,6 +293,15 @@ When you change one:
    with it, and the PR says so. After that, files at that version are
    rejected.
 
+The editor reports outdated files when the first scene of a project opens.
+It compares each entry's `kind_version` with the `FORMAT_VERSION` that the
+scene's `AssetServer` records for that kind. That server is built from the
+game's recipe, so it knows every type the game registers. For each kind and
+file version that differs, it logs a warning with the count, and the status
+line reads `N content assets are outdated; see the log`. It reports once per
+opened project. A kind the game's recipe does not register is not reported;
+such a file still fails when it is loaded.
+
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
 framing or `ContentAssetHeader` changes, never for a payload, and a new header
 version keeps the previous one readable where it can, as version 5 reads

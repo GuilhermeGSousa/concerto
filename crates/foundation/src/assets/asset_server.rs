@@ -106,6 +106,7 @@ pub(crate) struct AssetServerData {
     asset_load_event_receiver: Receiver<AssetLoadEvent>,
     content: RwLock<ContentState>,
     type_registry: RwLock<AppTypeRegistry>,
+    format_versions: RwLock<HashMap<&'static str, u32>>,
 }
 
 struct ContentState {
@@ -137,6 +138,7 @@ impl AssetServer {
                 registry: Arc::default(),
             }),
             type_registry: RwLock::new(AppTypeRegistry::default()),
+            format_versions: RwLock::new(HashMap::new()),
         };
 
         Self {
@@ -218,6 +220,16 @@ impl AssetServer {
         self.data
             .handle_provider
             .register_asset::<A>(asset.clone_drop_sender());
+        self.data
+            .format_versions
+            .write()
+            .unwrap()
+            .insert(A::name(), A::FORMAT_VERSION);
+    }
+
+    /// The `FORMAT_VERSION` of the registered asset type named `kind`.
+    pub fn format_version(&self, kind: &str) -> Option<u32> {
+        self.data.format_versions.read().unwrap().get(kind).copied()
     }
 
     /// Whether `A` was registered, without which `load` and `add` panic.
