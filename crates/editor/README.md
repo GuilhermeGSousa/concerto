@@ -81,10 +81,15 @@ its `paths`: every property path, dot-separated, with `adapter` saying whether
 an inspector widget edits it. A path that names an enum or an `Option`, such
 as `light_type` above `light_type.cone_angle`, has `"enum": true` and no
 adapter, even where the inspector shows a variant picker for it, because
-`set_property` writes it whole (below). A component without reflection data has
-`"value": null, "unavailable": true` and no paths. A list longer than 16
-elements shows its first 16 and ends with a `"… N more, M in all"` string, so a
-cut list is not a value to write back. Ids are scene entities written as
+`set_property` writes it whole (below). A list has `adapter` false for the same
+reason, and each element follows it, by index from 0: `values.2`, or for an
+element with fields only those fields, `strides.0.length`. A component without
+reflection data has `"value": null, "unavailable": true` and no paths. A list
+longer than 16 elements shows its first 16 in `value` and ends with a
+`"… N more, M in all"` string, so a cut list is not a value to write back.
+`paths` shows the same 16 elements and then, among its entries, a
+`"… N more of values, M in all"` string naming the list; a cut element is still
+addressed by its index. Ids are scene entities written as
 `42v3`. `screenshot` answers a PNG: with `target` `viewport`, the picture the
 viewport draws, the edited scene or the game while it plays, followed by the
 camera's pose while editing; with `editor`, the whole editor, panels included,
@@ -97,8 +102,9 @@ viewport need an open scene. These six look.
 `open_project` opens `path` and answers once the catalogue is read.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
 editor: a scene answers once it has loaded, and at once if it is already shown;
-another kind answers once its document exists, and a kind with no editor
-answers `open_failed`. `close_document` closes the document `status` lists as
+another kind answers once its document exists, or `open_failed` with the
+document's status if the load failed, and a kind with no editor answers
+`open_failed`. `close_document` closes the document `status` lists as
 `document`. When one of these three would raise the unsaved-changes prompt,
 the call cancels the prompt and answers `unsaved_changes`, naming the
 documents, once the prompt has closed, unless it says `unsaved`: `"discard"`
@@ -151,10 +157,20 @@ one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
 left out of the new variant takes its default, and an unknown variant answers
 `invalid_value`, naming the variants. A path that names a struct above a property is
 not one `set_property` takes, so an adapter's validation holds for the fields
-it edits.
+it edits, and that includes a list element with fields.
+A list's own path takes the whole array, and an element's path takes that
+element. Under a list, a property whose type has no JSON form and no registered
+`Default` answers `not_editable`, naming the type; a nested list and an `Option`
+are such types, and their own elements and fields can still be written.
+`list_push` appends a default element to the list at `path`, and `list_remove`
+removes the element at `index`, as the inspector's add and remove buttons do.
+Each answers the list's new length: `Added an element to Samples.values; its
+length is 4.` A path that is not a list, or a `Vec` with an editor registered
+for its exact type, answers `not_a_list`, and an index past the end answers
+`index_out_of_range`, naming the length.
 A component that `inspect` lists as one value, a marker or an opaque type, has
 the path `""`. The scene root is the editor's wrapper and none of these change
-it. All seven need an open scene.
+it. All nine need an open scene.
 
 `save` writes `document`, or the active document without one, to its file as
 Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
@@ -222,7 +238,9 @@ A failed call is a tool result marked `isError` whose text is
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
 | `unknown_path` | The component has no such property path; the message lists those `inspect` shows |
 | `invalid_value` | The JSON does not decode to the property's type, whether an adapter edits the path or not; the message says why |
-| `not_editable` | The adapter that edits the path offers no value edit |
+| `not_editable` | The adapter that edits the path offers no value edit, or the path is under a list and its type has no JSON form and no registered `Default` |
+| `not_a_list` | `list_push` or `list_remove` on a path that is not a list, or on a `Vec` with an editor registered for its exact type |
+| `index_out_of_range` | `list_remove` with an index past the end; the message names the length |
 | `unknown_asset` | The asset is not in the catalogue |
 | `open_failed` | The project or asset did not open; the message is the editor's status |
 | `unsaved_changes` | The call would discard unsaved edits; retry with `unsaved` |
@@ -628,10 +646,31 @@ picking the active variant changes nothing and leaves the scene saved. An
 and unchecking it sets `None`. The active variant's fields, or the value's when
 an `Option` is `Some`, follow as rows of their own, so a switch that changes
 them rebuilds the card. A row under a tuple field such as `Some`'s `0` takes
-the label of the nearest named field above it, so `CameraEnvironment.ambient`
-shows an "Ambient" checkbox followed by an "Ambient" value row. An editor
-registered for the exact enum or `Option` type with `register_property_editor`
-still takes precedence, and its fields are not shown.
+the label of the nearest named field above it. `CameraEnvironment.fog` shows a
+"Fog" checkbox followed by rows for its fields, Color, Density and Start. An
+editor registered for the exact enum or `Option` type with
+`register_property_editor` still takes precedence, and its fields are not
+shown.
+
+### Lists
+
+A `Vec<T>` field is edited with nothing registered on the editor's `App`.
+`Vec<T>` registers `ReflectList`, and the field's row shows its length and an
+add button, which appends `T::default()`. Each element follows, labelled by its
+index from 0, in one of three shapes. An element with an editor gets that
+editor's row, with a remove button at the end. An element with fields, such as a
+struct, gets a heading with its index and the remove button, followed by a row
+per field. Anything else gets an "Unsupported type" row with a remove button, so
+whatever add creates can be removed; `Vec<String>` falls here, since there is no
+`String` editor. Elements cannot be reordered.
+
+Add and remove are property commits, so they mark the scene unsaved. The editor
+has no undo, so a removal stands until the scene is reloaded. A list in a list,
+or in an `Option`, works the same way. Every element is shown, and a list the
+game rewrites stays visible: a change of length rebuilds the card, and new
+values refresh in their rows. An editor registered for the exact `Vec` type with
+`register_property_editor` still takes precedence, and its elements are not
+shown.
 
 ### Colors
 

@@ -168,6 +168,14 @@ impl Inspecting {
             .map(|(entity, row, value)| (entity, row.clone(), value.clone()))
             .collect()
     }
+    fn all_rows(&mut self) -> Vec<PropertyRow> {
+        let world = self.world();
+        world
+            .query::<&PropertyRow, ()>()
+            .iter(world)
+            .cloned()
+            .collect()
+    }
     fn setting_row(&mut self) -> (Entity, PropertyRow, PropertyRowValue) {
         self.rows()
             .into_iter()
@@ -204,15 +212,9 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
             PropertyPath::new(["gain"])
         ]
     );
-    assert!(!fallback[0].has_editor());
-    assert!(fallback[1].has_editor());
-    assert!(fallback[2].has_editor());
-    assert!(
-        fallback[0]
-            .value
-            .snapshot::<Setting, SettingEditor>()
-            .is_none()
-    );
+    assert!(fallback[0].value().is_none());
+    assert!(fallback[1].value().is_some());
+    assert!(fallback[2].value().is_some());
 
     let mut registry = registry;
     registry.register_property_editor::<Setting, SettingEditor>();
@@ -221,15 +223,18 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
     assert_eq!(properties[0].path, PropertyPath::new(["setting"]));
     assert_eq!(properties[0].type_id, TypeId::of::<Setting>());
     let snapshot = properties[0]
-        .value
+        .value()
+        .unwrap()
         .snapshot::<Setting, SettingEditor>()
         .unwrap();
     assert_eq!(snapshot.title, "Shadows");
     assert!(!snapshot.enabled);
-    assert!(properties[0].value == registry.collect(&value, &TypeRegistry::default())[0].value);
+    let same = registry.collect(&value, &TypeRegistry::default());
+    assert!(properties[0].value() == same[0].value());
     let mut changed = value;
     changed.setting.enabled = true;
-    assert!(properties[0].value != registry.collect(&changed, &TypeRegistry::default())[0].value);
+    let different = registry.collect(&changed, &TypeRegistry::default());
+    assert!(properties[0].value() != different[0].value());
 }
 
 #[test]
@@ -237,17 +242,18 @@ fn the_inspector_shows_a_registered_composite_of_the_scene_as_one_row() {
     let mut w = inspecting();
     w.select(w.a);
 
-    let rows = w.rows();
-    let paths: Vec<_> = rows.iter().map(|(_, row, _)| row.path.clone()).collect();
+    let rows = w.all_rows();
+    let paths: Vec<_> = rows.iter().map(|row| row.path.clone()).collect();
     assert_eq!(
         paths,
         [PropertyPath::new(["setting"]), PropertyPath::new(["gain"])]
     );
     let a = w.a;
-    assert!(rows.iter().all(|(_, row, _)| row.entity == a
+    assert!(rows.iter().all(|row| row.entity == a
         && row.component == TypeId::of::<Container>()
         && row.has_editor()));
-    let snapshot = rows[0].2.snapshot::<Setting, SettingEditor>().unwrap();
+    let (_, _, shown) = w.setting_row();
+    let snapshot = shown.snapshot::<Setting, SettingEditor>().unwrap();
     assert_eq!(snapshot.title, "Shadows");
     assert!(!snapshot.enabled);
 }

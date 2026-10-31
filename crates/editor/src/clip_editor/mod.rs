@@ -73,6 +73,7 @@ impl Default for ClipDocument {
 pub struct ClipFacts {
     pub duration: f32,
     pub rate: Option<f32>,
+    pub rate_is_stored: bool,
     pub frames: Option<u32>,
     pub clip_bones: usize,
     pub skeleton_bones: usize,
@@ -82,10 +83,12 @@ pub struct ClipFacts {
 impl ClipFacts {
     fn of(clip: &AnimationClip) -> Self {
         let duration = clip.duration();
-        let rate = clip.detected_frame_rate();
+        let stored = clip.frame_rate();
+        let rate = stored.or_else(|| clip.detected_frame_rate());
         Self {
             duration,
             rate,
+            rate_is_stored: stored.is_some(),
             frames: rate.map(|rate| frame_count(duration, rate)),
             clip_bones: clip.target_ids().len(),
             skeleton_bones: 0,
@@ -444,12 +447,25 @@ mod tests {
             ClipFacts {
                 duration: 1.0,
                 rate: Some(30.0),
+                rate_is_stored: false,
                 frames: Some(31),
                 clip_bones: 2,
                 skeleton_bones: 0,
                 driven: 0,
             }
         );
+    }
+
+    #[test]
+    fn a_stored_rate_wins_over_the_detected_one() {
+        let mut clip = clip_of(10);
+        clip.set_frame_rate(24.0);
+
+        let facts = ClipFacts::of(&clip);
+
+        assert_eq!(facts.rate, Some(24.0));
+        assert!(facts.rate_is_stored);
+        assert_eq!(facts.frames, Some(frame_count(10.0, 24.0)));
     }
 
     #[test]
@@ -741,6 +757,7 @@ mod tests {
                 pending: Some(walk),
                 order: 1,
                 status: String::new(),
+                failed: None,
             },
             ClipDocument::default(),
         ));

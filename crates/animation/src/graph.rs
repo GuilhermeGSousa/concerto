@@ -3,6 +3,7 @@ use std::{collections::HashMap, ops::Deref};
 use concerto_foundation::assets::{
     Asset, LoadableAsset,
     asset_server::{AssetLoadContext, AssetServer},
+    asset_store::AssetStore,
     handle::{AssetHandle, LiveLeaves},
 };
 use concerto_reflect::{ReflectedValue, TypeRegistry, ValueWarning, to_value};
@@ -15,6 +16,7 @@ use petgraph::{
 use uuid::Uuid;
 
 use crate::{
+    blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
         AnimationNode, ErasedAnimationNode, NodeInstance, PlaceholderNode, ReflectAnimationNode,
@@ -305,6 +307,34 @@ impl AnimationGraphInstance {
         self.graph_state
             .get_mut(node_index)
             .and_then(|node_state| node_state.node_instance.downcast_mut::<T>())
+    }
+
+    pub(crate) fn for_each_instance_mut<N: AnimationNode>(
+        &mut self,
+        graphs: &AssetStore<AnimationGraph>,
+        blackboard: &AnimationBlackboard,
+        mut f: impl FnMut(&N, &mut N::Instance, &AnimationBlackboard),
+    ) {
+        let Some(graph) = self
+            .graph_handle
+            .as_ref()
+            .and_then(|handle| graphs.get(handle))
+        else {
+            return;
+        };
+
+        for (node_index, node_state) in self.graph_state.iter_mut() {
+            let Some(node) = graph
+                .live_node(*node_index)
+                .and_then(|node| node.as_reflect().downcast_ref::<N>())
+            else {
+                continue;
+            };
+            let Some(instance) = node_state.node_instance.downcast_mut::<N::Instance>() else {
+                continue;
+            };
+            f(node, instance, blackboard);
+        }
     }
 
     pub(crate) fn initialize(

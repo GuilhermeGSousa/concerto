@@ -13,7 +13,7 @@ use concerto_ecs::{
     system::BoxedSystem,
 };
 use concerto_foundation::transform::Transform;
-use concerto_reflect::{GetTypeRegistration, ReflectDefault};
+use concerto_reflect::{GetTypeRegistration, PathSegment, ReflectDefault};
 use concerto_ui::{node::UIBox, text::UIText};
 use glam::{Vec2, Vec3};
 
@@ -571,6 +571,29 @@ fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
     assert_eq!(
         label_for(&PropertyPath::new(["fog", "0", "density"])),
         "Density"
+    );
+}
+
+#[test]
+fn a_list_element_takes_the_label_of_its_index() {
+    let samples = PathSegment::Field("samples");
+    let element = PathSegment::Index(2);
+    assert_eq!(label_for(&PropertyPath::new([samples, element])), "2");
+    assert_eq!(
+        label_for(&PropertyPath::new([
+            samples,
+            element,
+            PathSegment::Field("0")
+        ])),
+        "2"
+    );
+    assert_eq!(
+        label_for(&PropertyPath::new([
+            samples,
+            element,
+            PathSegment::Field("max_weight")
+        ])),
+        "Max weight"
     );
 }
 
@@ -1667,10 +1690,11 @@ mod variant_rows {
         (w, entity)
     }
 
-    pub(super) fn row(world: &mut World, path: &[&str]) -> Option<Entity> {
+    pub(super) fn row(world: &mut World, path: &[impl Copy + Into<PathSegment>]) -> Option<Entity> {
+        let path = PropertyPath::new(path.iter().copied());
         rows(world)
             .into_iter()
-            .find(|(_, row)| row.path.segments() == path)
+            .find(|(_, row)| row.path == path)
             .map(|(entity, _)| entity)
     }
 
@@ -1681,7 +1705,7 @@ mod variant_rows {
             .unwrap_or_default()
     }
 
-    pub(super) fn widget(world: &mut World, path: &[&str]) -> Entity {
+    pub(super) fn widget(world: &mut World, path: &[&'static str]) -> Entity {
         let row = row(world, path).expect("the row exists");
         children(world, row)[1]
     }
@@ -1730,7 +1754,7 @@ mod variant_rows {
         world.get_resource::<PropertyCommits>().unwrap().0.len()
     }
 
-    fn checked(world: &mut World, path: &[&str]) -> bool {
+    fn checked(world: &mut World, path: &[&'static str]) -> bool {
         let checkbox = widget(world, path);
         world
             .get_component_for_entity::<UICheckbox>(checkbox)
@@ -1887,6 +1911,446 @@ mod variant_rows {
     }
 }
 
+mod list_rows {
+    use super::color_rows::editor_of;
+    use super::variant_rows::{children, row, text};
+    use super::*;
+    use crate::tools::edits::PropertyCommitted;
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
+    use list::{ListEdit, ListEditor};
+    use numeric::NumericFields;
+
+    const VALUES: PathSegment = PathSegment::Field("values");
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Samples {
+        values: Vec<f32>,
+    }
+
+    #[derive(concerto_reflect::Reflect, Default, Clone, Debug, PartialEq)]
+    struct Stop {
+        offset: f32,
+        on: bool,
+    }
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Stops {
+        entries: Vec<Stop>,
+    }
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Titles {
+        names: Vec<String>,
+    }
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Grid {
+        cells: Vec<Vec<f32>>,
+    }
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Curve {
+        points: Option<Vec<f32>>,
+    }
+
+    fn inspected<C: Component + GetTypeRegistration>(w: &mut Inspecting, component: C) -> Entity {
+        w.register::<C>();
+        let entity = w.spawn_in_scene(component);
+        w.select(Some(entity));
+        w.update();
+        w.update();
+        entity
+    }
+
+    fn fixture<C: Component + GetTypeRegistration>(component: C) -> (Inspecting, Entity) {
+        let (mut w, _, _) = inspecting();
+        let entity = inspected(&mut w, component);
+        (w, entity)
+    }
+
+    fn body(world: &mut World) -> Vec<Entity> {
+        let first = rows(world)[0].0;
+        let body = world
+            .get_component_for_entity::<ChildOf>(first)
+            .unwrap()
+            .parent();
+        children(world, body)
+    }
+
+    fn labels(world: &mut World) -> Vec<String> {
+        body(world)
+            .into_iter()
+            .map(|row| text(world, children(world, row)[0]))
+            .collect()
+    }
+
+    fn last_child(world: &mut World, path: &[impl Copy + Into<PathSegment>]) -> Entity {
+        let row = row(world, path).expect("the row exists");
+        *children(world, row).last().expect("the row has widgets")
+    }
+
+    fn press(w: &mut Inspecting, button: Entity) {
+        click(&mut w.f.world, button);
+        run(&mut w.f.world, send_property_commits);
+        w.update();
+        w.update();
+    }
+
+    fn committed(w: &Inspecting) -> usize {
+        w.f.scene_world(w.document)
+            .get_resource::<EventChannel<PropertyCommitted>>()
+            .unwrap()
+            .len()
+    }
+
+    fn values(w: &Inspecting, entity: Entity) -> Vec<f32> {
+        w.get::<Samples>(entity).unwrap().values.clone()
+    }
+
+    #[test]
+    fn a_list_shows_its_length_and_a_row_per_element_labelled_by_index() {
+        let (mut w, _) = fixture(Samples {
+            values: vec![1.0, 2.0, 3.0],
+        });
+        let world = &mut w.f.world;
+        assert_eq!(labels(world), ["Values", "0", "1", "2"]);
+        assert_eq!(
+            editor_of(world, &["values"]),
+            Some(TypeId::of::<ListEditor>())
+        );
+        let header = row(world, &["values"]).unwrap();
+        assert_eq!(text(world, children(world, header)[1]), "Length 3");
+        assert_eq!(
+            editor_of(world, &[VALUES, PathSegment::Index(2)]),
+            Some(TypeId::of::<NumericFields>())
+        );
+    }
+
+    #[test]
+    fn an_empty_list_shows_only_its_header() {
+        let (mut w, _) = fixture(Samples::default());
+        let world = &mut w.f.world;
+        assert_eq!(labels(world), ["Values"]);
+        let header = row(world, &["values"]).unwrap();
+        assert_eq!(text(world, children(world, header)[1]), "Length 0");
+    }
+
+    fn pinned_right(world: &World, button: Entity) -> bool {
+        let node = world.get_component_for_entity::<UINode>(button).unwrap();
+        node.position == taffy::Position::Absolute && node.inset.right == UIValue::Px(0.0)
+    }
+
+    #[test]
+    fn a_remove_button_is_pinned_to_the_end_of_its_row_and_the_row_leaves_room() {
+        let (mut w, _) = fixture(Samples { values: vec![1.0] });
+        let path = [VALUES, PathSegment::Index(0)];
+        let remove = last_child(&mut w.f.world, &path);
+        assert!(pinned_right(&w.f.world, remove));
+
+        let row = row(&mut w.f.world, &path).unwrap();
+        let padding =
+            w.f.world
+                .get_component_for_entity::<UINode>(row)
+                .unwrap()
+                .padding
+                .right;
+        assert!(padding > 0.0);
+    }
+
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Tints {
+        tints: Vec<concerto_color::Color>,
+    }
+
+    #[test]
+    fn a_wrapping_row_pins_its_remove_button_and_keeps_its_fields_full_width() {
+        let (mut w, _) = fixture(Tints {
+            tints: vec![concerto_color::Color::WHITE],
+        });
+        let path = [PathSegment::Field("tints"), PathSegment::Index(0)];
+        let remove = last_child(&mut w.f.world, &path);
+        assert!(pinned_right(&w.f.world, remove));
+
+        let row = row(&mut w.f.world, &path).unwrap();
+        let padding =
+            w.f.world
+                .get_component_for_entity::<UINode>(row)
+                .unwrap()
+                .padding
+                .right;
+        assert_eq!(padding, 0.0);
+    }
+
+    #[test]
+    fn add_appends_a_default_and_rebuilds_and_remove_takes_that_element_out() {
+        let (mut w, entity) = fixture(Samples {
+            values: vec![1.0, 2.0, 3.0],
+        });
+
+        let add = last_child(&mut w.f.world, &["values"]);
+        press(&mut w, add);
+        assert_eq!(values(&w, entity), [1.0, 2.0, 3.0, 0.0]);
+        assert_eq!(committed(&w), 1);
+        assert!(w.f.unsaved(w.document));
+        assert_eq!(labels(&mut w.f.world), ["Values", "0", "1", "2", "3"]);
+
+        let remove = last_child(&mut w.f.world, &[VALUES, PathSegment::Index(1)]);
+        press(&mut w, remove);
+        assert_eq!(values(&w, entity), [1.0, 3.0, 0.0]);
+        assert_eq!(committed(&w), 2);
+        assert_eq!(labels(&mut w.f.world), ["Values", "0", "1", "2"]);
+    }
+
+    #[test]
+    fn a_right_click_on_a_list_button_changes_nothing() {
+        let (mut w, entity) = fixture(Samples { values: vec![1.0] });
+        let add = last_child(&mut w.f.world, &["values"]);
+        w.f.world.trigger_on(
+            add,
+            concerto_ui::interaction::UIClick {
+                position: Vec2::ZERO,
+                button: concerto_window::input::MouseButton::Right,
+            },
+        );
+        assert!(
+            w.f.world
+                .get_resource::<PropertyCommits>()
+                .unwrap()
+                .0
+                .is_empty()
+        );
+        assert_eq!(values(&w, entity), [1.0]);
+    }
+
+    #[test]
+    fn a_remove_past_the_end_is_refused_and_keeps_the_list() {
+        let mut list = vec![1.0_f32];
+        let context = EditContext {
+            assets: &AssetServer::new(),
+            registry: &AssetRegistry::default(),
+        };
+        assert_eq!(
+            ListEditor.apply(&mut list, &ListEdit::Remove(1), &context),
+            Err(EditError::NotFound)
+        );
+        assert_eq!(list, [1.0]);
+    }
+
+    #[test]
+    fn a_list_offers_no_value_edit() {
+        assert!(matches!(ListEditor.edit_to(&vec![1.0_f32]), Ok(None)));
+    }
+
+    #[test]
+    fn a_list_of_structs_shows_a_heading_with_a_remove_button_and_field_rows() {
+        let first = Stop {
+            offset: 1.0,
+            on: true,
+        };
+        let second = Stop {
+            offset: 2.0,
+            on: false,
+        };
+        let (mut w, entity) = fixture(Stops {
+            entries: vec![first.clone(), second.clone()],
+        });
+        const ENTRIES: PathSegment = PathSegment::Field("entries");
+        const ON: PathSegment = PathSegment::Field("on");
+        assert_eq!(
+            labels(&mut w.f.world),
+            ["Entries", "0", "Offset", "On", "1", "Offset", "On"]
+        );
+
+        let world = &mut w.f.world;
+        assert_eq!(editor_of(world, &[ENTRIES, PathSegment::Index(1)]), None);
+        assert_eq!(
+            editor_of(world, &[ENTRIES, PathSegment::Index(1), ON]),
+            Some(TypeId::of::<boolean::BoolCheckbox>())
+        );
+        let mut texts = world.query::<&UIText, ()>();
+        assert!(
+            texts
+                .iter(world)
+                .all(|text| text.text != "Unsupported type")
+        );
+
+        let remove = last_child(world, &[ENTRIES, PathSegment::Index(0)]);
+        press(&mut w, remove);
+        assert_eq!(w.get::<Stops>(entity).unwrap().entries, [second]);
+        assert_eq!(labels(&mut w.f.world), ["Entries", "0", "Offset", "On"]);
+    }
+
+    #[test]
+    fn a_write_to_a_list_keeps_the_rows_that_show_no_value() {
+        let (mut w, entity) = fixture(Stops {
+            entries: vec![Stop::default()],
+        });
+        const OFFSET: [PathSegment; 3] = [
+            PathSegment::Field("entries"),
+            PathSegment::Index(0),
+            PathSegment::Field("offset"),
+        ];
+        let before = body(&mut w.f.world);
+        let offset = row(&mut w.f.world, &OFFSET).unwrap();
+        let shown =
+            w.f.world
+                .get_component_for_entity::<PropertyRowValue>(offset)
+                .unwrap()
+                .clone();
+
+        w.scene()
+            .get_component_for_entity_mut::<Stops>(entity)
+            .unwrap()
+            .entries[0]
+            .offset = 2.0;
+        w.tick();
+        w.update();
+
+        assert_eq!(body(&mut w.f.world), before);
+        assert!(
+            *w.f.world
+                .get_component_for_entity::<PropertyRowValue>(offset)
+                .unwrap()
+                != shown
+        );
+    }
+
+    #[test]
+    fn an_element_with_no_editor_and_no_fields_is_unsupported_and_can_be_removed() {
+        let (mut w, entity) = fixture(Titles {
+            names: vec!["first".into(), "second".into()],
+        });
+        const NAMES: PathSegment = PathSegment::Field("names");
+        let world = &mut w.f.world;
+        assert_eq!(labels(world), ["Names", "0", "1"]);
+        let first = row(world, &[NAMES, PathSegment::Index(0)]).unwrap();
+        assert_eq!(text(world, children(world, first)[1]), "Unsupported type");
+
+        let remove = last_child(world, &[NAMES, PathSegment::Index(0)]);
+        press(&mut w, remove);
+        assert_eq!(w.get::<Titles>(entity).unwrap().names, ["second"]);
+    }
+
+    #[test]
+    fn a_list_in_a_list_edits_each_level() {
+        let (mut w, entity) = fixture(Grid {
+            cells: vec![vec![1.0, 2.0], vec![]],
+        });
+        const CELLS: PathSegment = PathSegment::Field("cells");
+        let inner = |index| [CELLS, PathSegment::Index(index)];
+        let cells = |w: &Inspecting| w.get::<Grid>(entity).unwrap().cells.clone();
+        assert_eq!(labels(&mut w.f.world), ["Cells", "0", "0", "1", "1"]);
+
+        let remove = last_child(
+            &mut w.f.world,
+            &[CELLS, PathSegment::Index(0), PathSegment::Index(0)],
+        );
+        press(&mut w, remove);
+        assert_eq!(cells(&w), [vec![2.0], vec![]]);
+
+        let header = row(&mut w.f.world, &inner(1)).unwrap();
+        let children = children(&w.f.world, header);
+        press(&mut w, children[children.len() - 2]);
+        assert_eq!(cells(&w), [vec![2.0], vec![0.0]]);
+
+        let remove = last_child(&mut w.f.world, &inner(0));
+        press(&mut w, remove);
+        assert_eq!(cells(&w), [vec![0.0]]);
+    }
+
+    #[test]
+    fn a_list_in_an_option_is_added_to_and_removed_from() {
+        let (mut w, entity) = fixture(Curve {
+            points: Some(vec![1.0]),
+        });
+        const POINTS: PathSegment = PathSegment::Field("points");
+        const SOME: PathSegment = PathSegment::Field("0");
+        let points = |w: &Inspecting| w.get::<Curve>(entity).unwrap().points.clone();
+        assert_eq!(labels(&mut w.f.world), ["Points", "Points", "0"]);
+
+        let add = last_child(&mut w.f.world, &[POINTS, SOME]);
+        press(&mut w, add);
+        assert_eq!(points(&w), Some(vec![1.0, 0.0]));
+
+        let remove = last_child(&mut w.f.world, &[POINTS, SOME, PathSegment::Index(0)]);
+        press(&mut w, remove);
+        assert_eq!(points(&w), Some(vec![0.0]));
+    }
+
+    #[test]
+    fn a_list_the_game_rewrites_keeps_rows_for_new_values_and_rebuilds_for_a_new_length() {
+        let (mut w, entity) = fixture(Samples {
+            values: vec![1.0, 2.0],
+        });
+        let element = [VALUES, PathSegment::Index(1)];
+        let before = row(&mut w.f.world, &element).unwrap();
+        let shown = |w: &Inspecting, row| {
+            w.f.world
+                .get_component_for_entity::<PropertyRowValue>(row)
+                .unwrap()
+                .clone()
+        };
+        let old = shown(&w, before);
+
+        w.scene()
+            .get_component_for_entity_mut::<Samples>(entity)
+            .unwrap()
+            .values[1] = 5.0;
+        w.update();
+        w.update();
+        assert_eq!(row(&mut w.f.world, &element), Some(before));
+        assert!(shown(&w, before) != old);
+
+        w.scene()
+            .get_component_for_entity_mut::<Samples>(entity)
+            .unwrap()
+            .values
+            .push(9.0);
+        w.update();
+        w.update();
+        assert_ne!(row(&mut w.f.world, &element), Some(before));
+        assert_eq!(labels(&mut w.f.world), ["Values", "0", "1", "2"]);
+    }
+
+    #[derive(Default)]
+    struct WholeList;
+
+    impl PropertyEditor<Vec<f32>> for WholeList {
+        type Snapshot = ();
+        type Edit = ();
+        fn snapshot(&self, _: &Vec<f32>) {}
+        fn build(&self, _: &mut EntityCommandQueue, _: &(), _: &UITheme) {}
+        fn apply(&self, _: &mut Vec<f32>, _: &(), _: &EditContext) -> Result<(), EditError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn an_editor_registered_for_the_exact_list_type_wins_and_hides_the_elements() {
+        let (mut w, _, _) = inspecting();
+        registry_mut(&mut w.f.world).register_property_editor::<Vec<f32>, WholeList>();
+        inspected(
+            &mut w,
+            Samples {
+                values: vec![1.0, 2.0],
+            },
+        );
+        let world = &mut w.f.world;
+        assert_eq!(labels(world), ["Values"]);
+        assert_eq!(
+            editor_of(world, &["values"]),
+            Some(TypeId::of::<WholeList>())
+        );
+    }
+}
+
 mod color_rows {
     use super::variant_rows::{children, queued, row, text, widget};
     use super::*;
@@ -1894,6 +2358,7 @@ mod color_rows {
     use concerto_ecs::events::event_channel::EventChannel;
     use concerto_render::components::{CameraEnvironment, Light, camera_environment::Fog};
     use concerto_ui::{
+        checkbox::UICheckbox,
         focus::UIFocusLost,
         material::UIMaterial,
         node::FlexWrap,
@@ -1960,7 +2425,7 @@ mod color_rows {
         );
     }
 
-    fn color_row(world: &mut World, path: &[&str]) -> ColorRow {
+    fn color_row(world: &mut World, path: &[&'static str]) -> ColorRow {
         let row = row(world, path).expect("the row exists");
         let mut swatches = world.query::<(Entity, &color::ColorSwatch), ()>();
         let swatches: Vec<Entity> = swatches
@@ -2029,7 +2494,7 @@ mod color_rows {
             .color
     }
 
-    fn submit(w: &mut Inspecting, path: &[&str], slot: usize, text: &str) {
+    fn submit(w: &mut Inspecting, path: &[&'static str], slot: usize, text: &str) {
         let field = color_row(&mut w.f.world, path).fields[slot];
         let world = &mut w.f.world;
         world
@@ -2046,10 +2511,14 @@ mod color_rows {
         run(world, numeric::commit_numeric_fields);
     }
 
-    fn editor_of(world: &mut World, path: &[&str]) -> Option<TypeId> {
+    pub(super) fn editor_of(
+        world: &mut World,
+        path: &[impl Copy + Into<PathSegment>],
+    ) -> Option<TypeId> {
+        let path = PropertyPath::new(path.iter().copied());
         rows(world)
             .into_iter()
-            .find(|(_, row)| row.path.segments() == path)
+            .find(|(_, row)| row.path == path)
             .and_then(|(_, row)| row.editor_type)
     }
 
@@ -2230,35 +2699,33 @@ mod color_rows {
     }
 
     #[test]
-    fn ambient_is_a_color_row_under_its_toggle() {
+    fn ambient_is_a_color_row() {
         let (mut w, entity) = fixture(CameraEnvironment::default());
-        assert!(row(&mut w.f.world, &["ambient"]).is_some());
+        assert_eq!(
+            only::<UICheckbox>(&mut w.f.world),
+            widget(&mut w.f.world, &["fog"])
+        );
         assert!(row(&mut w.f.world, &["ambient", "0"]).is_none());
 
-        let checkbox = widget(&mut w.f.world, &["ambient"]);
-        click(&mut w.f.world, checkbox);
-        run(&mut w.f.world, send_property_commits);
-        refreshed(&mut w);
-
         assert_eq!(
-            w.get::<CameraEnvironment>(entity).unwrap().ambient,
-            Some(Color::WHITE)
-        );
-        assert_eq!(
-            editor_of(&mut w.f.world, &["ambient", "0"]),
+            editor_of(&mut w.f.world, &["ambient"]),
             Some(TypeId::of::<numeric::NumericFields>())
         );
-        let color = color_row(&mut w.f.world, &["ambient", "0"]);
+        let color = color_row(&mut w.f.world, &["ambient"]);
         let label = children(&w.f.world, color.row)[0];
         assert_eq!(text(&w.f.world, label), "Ambient");
         assert_eq!(letters(&w.f.world, &color), ["R", "G", "B", "A"]);
+        assert_eq!(
+            values(&w.f.world, &color),
+            ["0.030", "0.030", "0.030", "1.000"]
+        );
 
-        submit(&mut w, &["ambient", "0"], 0, "0.1");
+        submit(&mut w, &["ambient"], 0, "0.1");
         run(&mut w.f.world, send_property_commits);
 
         assert_eq!(
             w.get::<CameraEnvironment>(entity).unwrap().ambient,
-            Some(Color::rgba(0.1, 1.0, 1.0, 1.0))
+            Color::rgba(0.1, 0.03, 0.03, 1.0)
         );
     }
 

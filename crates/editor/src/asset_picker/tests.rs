@@ -478,7 +478,10 @@ fn an_editor_registered_for_the_handle_type_wins_over_the_picker() {
     types.register::<MeshComponent>();
     let mut registry = InspectorRegistry::default();
     let editor = |registry: &InspectorRegistry| {
-        registry.collect(&MeshComponent::default(), &types)[0].editor_type
+        let handle = registry.collect(&MeshComponent::default(), &types)[0].type_id;
+        registry
+            .editor(handle, Some(&types))
+            .map(|editor| editor.editor_type)
     };
     assert_eq!(editor(&registry), Some(TypeId::of::<AssetPicker>()));
 
@@ -491,7 +494,7 @@ fn an_editor_registered_for_the_handle_type_wins_over_the_picker() {
 fn a_handle_type_the_scene_never_registered_has_no_picker() {
     let types = TypeRegistry::default();
     let properties = InspectorRegistry::default().collect(&MeshComponent::default(), &types);
-    assert_eq!(properties[0].editor_type, None);
+    assert!(properties[0].value().is_none());
 }
 
 #[test]

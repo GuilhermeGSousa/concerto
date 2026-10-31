@@ -511,6 +511,7 @@ mod tests {
             pending: None,
             order: 0,
             status: String::new(),
+            failed: None,
         });
         world.insert(Unsaved, document);
         let mut system = process_commands.into_system();

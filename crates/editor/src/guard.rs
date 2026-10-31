@@ -401,6 +401,7 @@ mod tests {
             pending: None,
             order: 0,
             status: String::new(),
+            failed: None,
         });
         if dirty {
             world.insert(Unsaved, document);

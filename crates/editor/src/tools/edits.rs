@@ -17,7 +17,7 @@ use concerto_foundation::assets::{
     asset_server::AssetServer, handle::LiveLeaves, registry::AssetRegistry,
 };
 use concerto_reflect::{
-    PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, ReflectedValue,
+    PathSegment, PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, ReflectedValue,
     apply_value_with, json_to_value_with, with_property, with_property_mut,
 };
 use serde_json::Value;
@@ -107,6 +107,8 @@ pub struct PropertyCommitted {
 pub enum PropertyRefusal {
     /// The JSON value does not decode to the property's type.
     Undecodable(String),
+    /// No JSON can write the property: under a list, a type with no JSON form and no registered `Default`.
+    NotEditable(String),
     /// Anything else: the scene root, a missing target, or an adapter's validation.
     Refused(String),
 }
@@ -115,13 +117,14 @@ impl PropertyRefusal {
     /// The status text.
     pub fn status(&self) -> &str {
         match self {
-            Self::Undecodable(status) | Self::Refused(status) => status,
+            Self::Undecodable(status) | Self::NotEditable(status) | Self::Refused(status) => status,
         }
     }
 
     fn map(self, reword: impl FnOnce(String) -> String) -> Self {
         match self {
             Self::Undecodable(status) => Self::Undecodable(reword(status)),
+            Self::NotEditable(status) => Self::NotEditable(reword(status)),
             Self::Refused(status) => Self::Refused(reword(status)),
         }
     }
@@ -216,8 +219,7 @@ impl SetValue {
                 *field = (value as &dyn Any).type_id();
             })
             .map_err(|_| refused(EditError::NotFound))?;
-            self.decode(world, live, *field, &mut hook)
-                .map_err(PropertyRefusal::Undecodable)?
+            self.decode(world, live, *field, &mut hook)?
         };
         let mut warnings = Vec::new();
         (component.edit)(world, self.entity, &mut |value| {
@@ -244,16 +246,31 @@ impl SetValue {
         live: &dyn Reflect,
         field: TypeId,
         hook: &mut LiveLeaves,
-    ) -> Result<ReflectedValue, String> {
+    ) -> Result<ReflectedValue, PropertyRefusal> {
         let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
-            return Err(EditError::UnregisteredComponent.to_string());
+            return Err(PropertyRefusal::Undecodable(
+                EditError::UnregisteredComponent.to_string(),
+            ));
         };
         if registry.get_type_data::<ReflectJson>(field).is_some()
             || registry.get_type_data::<ReflectDefault>(field).is_some()
         {
-            return json_to_value_with(&self.value, field, &registry.read(), hook);
+            return json_to_value_with(&self.value, field, &registry.read(), hook)
+                .map_err(PropertyRefusal::Undecodable);
         }
         let segments = self.path.segments();
+        if segments
+            .iter()
+            .any(|segment| matches!(segment, PathSegment::Index(_)))
+        {
+            let name = registry
+                .read()
+                .get(field)
+                .map_or("the type", |registration| registration.type_path());
+            return Err(PropertyRefusal::NotEditable(format!(
+                "{name} has no JSON form and no registered Default, so JSON cannot build it inside a list"
+            )));
+        }
         let variants: Vec<Option<&'static str>> = (0..segments.len())
             .map(|depth| {
                 let mut variant = None;
@@ -281,7 +298,8 @@ impl SetValue {
                 }
             },
         );
-        let stored = json_to_value_with(&wrapped, self.component, &registry.read(), hook)?;
+        let stored = json_to_value_with(&wrapped, self.component, &registry.read(), hook)
+            .map_err(PropertyRefusal::Undecodable)?;
         segments
             .iter()
             .try_fold(stored, |stored, segment| {
@@ -292,10 +310,10 @@ impl SetValue {
                 };
                 fields
                     .into_iter()
-                    .find(|(name, _)| name == segment)
+                    .find(|(name, _)| *segment == name.as_str())
                     .map(|(_, value)| value)
             })
-            .ok_or_else(|| EditError::Rejected.to_string())
+            .ok_or_else(|| PropertyRefusal::Undecodable(EditError::Rejected.to_string()))
     }
 }
 
@@ -397,8 +415,8 @@ pub(crate) fn set_value(on: On<SetValue>, world: &mut World) {
 }
 
 fn property_name(world: &World, component: TypeId, path: &PropertyPath) -> String {
-    std::iter::once(component_name(world, component))
-        .chain(path.segments().iter().copied())
+    std::iter::once(component_name(world, component).to_string())
+        .chain(path.segments().iter().map(ToString::to_string))
         .collect::<Vec<_>>()
         .join(".")
 }
@@ -470,7 +488,7 @@ mod tests {
         },
         transform::Transform,
     };
-    use concerto_reflect::ReflectDefault;
+    use concerto_reflect::{PathSegment, ReflectDefault};
     use concerto_ui::theme::UITheme;
     use serde_json::{Value, json};
 
@@ -767,6 +785,12 @@ mod tests {
         color: Color,
     }
 
+    #[derive(Component, concerto_reflect::Reflect, Default)]
+    #[reflect(Component, Default)]
+    struct Track {
+        modes: Vec<Mode>,
+    }
+
     #[derive(serde::Serialize, serde::Deserialize)]
     struct Note;
 
@@ -806,10 +830,14 @@ mod tests {
     }
 
     fn set<C: 'static>(app: &mut App, entity: Entity, path: &[&'static str], value: Value) {
+        set_at::<C>(app, entity, PropertyPath::new(path.iter().copied()), value);
+    }
+
+    fn set_at<C: 'static>(app: &mut App, entity: Entity, path: PropertyPath, value: Value) {
         app.main_mut().world_mut().trigger(SetValue {
             entity,
             component: TypeId::of::<C>(),
-            path: PropertyPath::new(path.iter().copied()),
+            path,
             value,
         });
     }
@@ -897,6 +925,62 @@ mod tests {
                 heights: vec![1.0, 2.0],
             }
         );
+    }
+
+    #[test]
+    fn a_set_value_writes_one_element_of_a_list() {
+        let (mut app, entity) = values();
+        set::<Rig>(&mut app, entity, &["optics", "stops"], json!([1.4, 2.8]));
+        let element = PropertyPath::new([
+            PathSegment::Field("optics"),
+            PathSegment::Field("stops"),
+            PathSegment::Index(1),
+        ]);
+
+        set_at::<Rig>(&mut app, entity, element.clone(), json!(4));
+
+        assert_eq!(results(&app), [Ok(()), Ok(())]);
+        assert_eq!(
+            read(&mut app, entity, |rig: &Rig| rig.optics.stops.clone()),
+            [1.4, 4.0]
+        );
+        let outcomes = written::<PropertyCommitted>(&app);
+        assert_eq!(outcomes[1].row.path, element);
+        assert_eq!(outcomes[1].row.type_id, TypeId::of::<f32>());
+    }
+
+    #[test]
+    fn a_set_value_under_a_list_refuses_a_type_with_no_json_and_no_default() {
+        let (mut app, entity) = values();
+        app.register_type::<Track>();
+        app.main_mut().world_mut().insert(
+            Track {
+                modes: vec![Mode::Fixed],
+            },
+            entity,
+        );
+
+        set_at::<Track>(
+            &mut app,
+            entity,
+            PropertyPath::new([PathSegment::Field("modes"), PathSegment::Index(0)]),
+            json!({ "Orbit": { "distance": 4 } }),
+        );
+
+        let refused = format!(
+            "Set Track.modes.0 failed: {} has no JSON form and no registered Default, so JSON cannot build it inside a list",
+            std::any::type_name::<Mode>()
+        );
+        assert_eq!(
+            results(&app),
+            [Err(PropertyRefusal::NotEditable(refused.clone()))]
+        );
+        assert_eq!(statuses(&app), [refused]);
+        assert!(read(&mut app, entity, |track: &Track| matches!(
+            track.modes[0],
+            Mode::Fixed
+        )));
+        assert!(written::<SceneEdited>(&app).is_empty());
     }
 
     #[test]

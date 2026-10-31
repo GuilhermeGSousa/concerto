@@ -30,7 +30,7 @@ pub(crate) fn initialize_skeletons(
     }
 }
 
-pub(crate) fn animate_targets(
+pub fn animate_targets(
     animation_players: Query<(&mut AnimationPlayer, &SkeletonComponent)>,
     transforms: Query<&mut Transform>,
     root_bones: Query<&mut AnimationRootBone>,
@@ -56,7 +56,7 @@ pub(crate) fn animate_targets(
     }
 }
 
-pub(crate) fn update_animation_players(
+pub fn update_animation_players(
     animation_players: Query<&mut AnimationPlayer>,
     animation_clips: Res<AssetStore<AnimationClip>>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,

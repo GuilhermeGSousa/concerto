@@ -670,7 +670,8 @@ mod tests {
         use super::super::{InspectorRegistry, Property, send_property_commits};
         use crate::hosted::testing::SceneFixture;
         use concerto_ecs::{
-            IntoSystem, Res, Resource, System, World, events::event_channel::EventChannel,
+            IntoSystem, Res, Resource, System, World, component::Tick,
+            events::event_channel::EventChannel,
         };
         use concerto_foundation::transform::Transform;
         use concerto_ui::{
@@ -683,16 +684,19 @@ mod tests {
         struct Build {
             property: Property,
             entity: Entity,
+            tick: Tick,
         }
         fn build(data: Res<Build>, mut cmd: CommandQueue) {
             <NumericFields as PropertyEditor<Vec3>>::build(
                 &NumericFields,
                 &mut cmd.spawn((
-                    data.property.row(data.entity, TypeId::of::<Transform>()),
-                    data.property.value.clone(),
+                    data.property
+                        .row(data.entity, TypeId::of::<Transform>(), data.tick),
+                    data.property.value().unwrap().clone(),
                 )),
                 data.property
-                    .value
+                    .value()
+                    .unwrap()
                     .snapshot::<Vec3, NumericFields>()
                     .unwrap(),
                 &UITheme::default(),
@@ -702,14 +706,7 @@ mod tests {
             f.world
                 .get_resource::<InspectorRegistry>()
                 .unwrap()
-                .collect_component(
-                    f.world
-                        .resource_changed_tick::<InspectorRegistry>()
-                        .unwrap(),
-                    f.scene_world(document),
-                    entity,
-                    TypeId::of::<Transform>(),
-                )
+                .collect_component(f.scene_world(document), entity, TypeId::of::<Transform>())
                 .unwrap()
                 .remove(0)
         }
@@ -719,7 +716,12 @@ mod tests {
         let entity = f.scene_entity(document, "first");
         let property = translation(&f, document, entity);
         let world: &mut World = &mut f.world;
-        world.insert_resource(Build { property, entity });
+        let tick = world.resource_changed_tick::<InspectorRegistry>().unwrap();
+        world.insert_resource(Build {
+            property,
+            entity,
+            tick,
+        });
         world.insert_resource(FocusedWidget::default());
         world.insert_resource(EventChannel::<UITextInputSubmitted>::default());
         world.insert_resource(EventChannel::<UIFocusLost>::default());
@@ -778,7 +780,7 @@ mod tests {
                 .translation,
             Vec3::new(2.5, 0.0, 0.0)
         );
-        let snapshot = translation(&f, document, entity).value;
+        let snapshot = translation(&f, document, entity).value().unwrap().clone();
         let world: &mut World = &mut f.world;
         *world
             .get_component_for_entity_mut::<PropertyRowValue>(row)
