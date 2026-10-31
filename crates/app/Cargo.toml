@@ -10,9 +10,6 @@ license.workspace = true
 default = ["multithreaded"]
 multithreaded = ["concerto-ecs/multithreaded"]
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 profiling = "1"
 concerto-ecs.workspace = true

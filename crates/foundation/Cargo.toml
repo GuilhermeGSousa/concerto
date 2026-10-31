@@ -7,9 +7,6 @@ repository.workspace = true
 license.workspace = true
 build = "build.rs"
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 concerto-asset-format.workspace = true
 concerto-reflect.workspace = true
