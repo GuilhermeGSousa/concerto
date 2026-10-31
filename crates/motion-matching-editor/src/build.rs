@@ -25,7 +25,8 @@ use concerto_editor::{
 use concerto_foundation::assets::{
     Asset, AssetId,
     content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, read_content_asset, write_content_asset,
+        CONTENT_FORMAT_VERSION, ContentAssetHeader, read_content_asset, read_content_asset_header,
+        write_content_asset,
     },
     registry::{AssetEntry, AssetRegistry},
 };
@@ -327,6 +328,7 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
     let read = sources
         .read()
         .map_err(|asset| anyhow!("Can't read {asset}"))?;
+    refuse_another_asset(&sources.root.join(&address), &address)?;
     let hash = read.hash(&definition);
     let registry = types.read();
     if let Some(mut database) = read_baked(&sources.root, &address)
@@ -441,14 +443,15 @@ pub(crate) fn start_build(on: On<StartBuild>, world: &mut World) {
 }
 
 fn refuse_another_asset(path: &Path, address: &str) -> anyhow::Result<()> {
-    let Ok(bytes) = std::fs::read(path) else {
+    if !path.exists() {
         return Ok(());
-    };
-    let database =
-        read_content_asset(&bytes).is_ok_and(|(header, _)| header.kind == MotionDatabase::name());
+    }
+    let header = read_content_asset_header(path)
+        .map_err(|_| anyhow!("Can't tell what {address} holds, so Build left it alone"))?;
     ensure!(
-        database,
-        "{address} isn't a motion database, so Build left it alone"
+        header.kind == MotionDatabase::name(),
+        "{address} holds a {}, so Build left it alone",
+        header.kind
     );
     Ok(())
 }

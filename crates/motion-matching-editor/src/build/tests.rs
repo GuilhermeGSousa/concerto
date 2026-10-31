@@ -1,7 +1,7 @@
 use std::{any::TypeId, sync::atomic::AtomicUsize, time::Duration};
 
 use concerto_app::App;
-use concerto_ecs::reflect::ReflectComponent;
+use concerto_ecs::{IntoSystem, System, reflect::ReflectComponent};
 use concerto_editor::{
     asset_editor::Unsaved,
     hosted::{testing::SceneFixture, trigger_on},
@@ -404,7 +404,10 @@ fn a_build_leaves_another_kind_of_asset_at_the_baked_address_alone() {
     tab.click(build);
     tab.until_settled();
 
-    assert!(status(&tab).contains("isn't a motion database"));
+    assert_eq!(
+        status(&tab),
+        format!("Build failed: {BAKED} holds a MotionDatabaseDefinition, so Build left it alone")
+    );
     assert_eq!(
         std::fs::read(tab.f.project_root.join(BAKED)).unwrap(),
         before
@@ -412,6 +415,67 @@ fn a_build_leaves_another_kind_of_asset_at_the_baked_address_alone() {
     let assets = tab.world().get_resource::<AssetRegistry>().unwrap();
     assert_eq!(assets.get(other.id), Some(&other));
     assert!(registered(&tab).is_none());
+}
+
+#[test]
+fn a_file_build_cannot_identify_at_the_baked_address_is_left_alone() {
+    let mut tab = ready(fixture());
+    let path = tab.f.project_root.join(BAKED);
+    std::fs::write(&path, b"not a content asset").unwrap();
+
+    press_build(&mut tab);
+
+    assert_eq!(
+        status(&tab),
+        format!("Build failed: Can't tell what {BAKED} holds, so Build left it alone")
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), b"not a content asset");
+}
+
+#[test]
+fn a_build_pressed_as_another_definition_opens_is_dropped() {
+    let mut tab = ready(fixture());
+    let mut changed = crate::tests::definition();
+    buildable(&mut changed);
+    let other = write_definition(&mut tab.f, "content/hero/other.gasset", &changed);
+    let before = std::fs::read(tab.f.project_root.join(&other.address)).unwrap();
+    let build = tab.panels().build;
+
+    tab.f.request(&other);
+    tab.click(build);
+    let document = tab.document;
+    tab.f
+        .frames_until("the other definition never opened", |f| {
+            f.document(document).current.as_ref() == Some(&other)
+        });
+
+    assert!(!tab.state().build.is_running());
+    let after = std::fs::read(tab.f.project_root.join(&other.address)).unwrap();
+    assert_eq!(after, before);
+}
+
+#[test]
+fn a_job_finishing_while_another_definition_is_pending_is_dropped() {
+    let mut tab = ready(fixture());
+    let (job, release) = gated_job(&tab, 0, 1);
+    tab.state_mut().build.job = Some(job);
+    release.send(()).unwrap();
+    while !tab.state().build.is_finished() {
+        std::thread::yield_now();
+    }
+    let pending = tab.asset.clone();
+    tab.f
+        .world
+        .get_component_for_entity_mut::<EditorDocument>(tab.document)
+        .unwrap()
+        .pending = Some(pending);
+
+    let mut finish = finish_build.into_system();
+    finish.initialize(&mut tab.f.world);
+    finish.run_and_apply((), &mut tab.f.world);
+
+    assert!(!tab.state().build.is_running());
+    assert_eq!(status(&tab), "");
 }
 
 #[test]

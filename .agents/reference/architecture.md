@@ -56,9 +56,9 @@ An `App` does not run itself. A host builds it, feeds it, and steps it:
    read `Window` for what the game asked for.
 
 A host may also trigger signals on an `App` it holds, and read back the events
-that `App` wrote. It never borrows the `App`'s world to change it, apart from
-an asset editor's listener, which reads a document out of it through
-`HostedApp::world` or `world_mut`. Between
+that `App` wrote. It never borrows the `App`'s world to change it. An asset
+editor may read a document out of it through `HostedApp::world`, or `world_mut`
+from a listener. Between
 frames it may call `serve(label)`, which runs one main-world schedule without
 marking a frame boundary for change detection, extracting, or touching the
 render world.

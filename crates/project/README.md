@@ -105,8 +105,9 @@ those two files is lost. It refuses a missing `editor/`.
 Its engine is the one `editor/Cargo.toml` already names, so it never swaps a
 path dependency for the published crate; `--engine` replaces it. It refuses an
 `editor/Cargo.toml` it can't read an engine from, unless `--engine` is given:
-one with no `concerto-editor`, one that inherits it from the workspace, or one
-whose path doesn't end in `crates/editor`.
+one with no `concerto-editor`, one that inherits it from the workspace, one that
+takes it from a git repository or another registry, or one whose path doesn't
+end in `crates/editor`.
 
 `editor` and `editor --update` validate the whole list before writing anything.
 A malformed entry is quoted in the error.

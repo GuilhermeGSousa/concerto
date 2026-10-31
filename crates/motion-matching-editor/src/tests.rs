@@ -113,11 +113,11 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     f.world.add_listener(close_name_menu);
     f.add_delivery(follow_definition_edits.into_boxed_system());
     f.add_delivery(request_definition_saves.into_boxed_system());
+    f.add_delivery(request_builds.into_boxed_system());
     f.add_delivery(load_definition.into_boxed_system());
     f.add_delivery(follow_skeleton.into_boxed_system());
     f.add_delivery(read_entry_facts.into_boxed_system());
     f.add_delivery(finish_build.into_boxed_system());
-    f.add_delivery(request_builds.into_boxed_system());
     f.add_delivery(check_baked.into_boxed_system());
     f.add_delivery(follow_playback.into_boxed_system());
     f.add_delivery(follow_preview_time.into_boxed_system());

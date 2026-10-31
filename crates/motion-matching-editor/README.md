@@ -97,7 +97,9 @@ The main thread writes the file, its id derived from its path, and adds it to th
 registry, only if the document still shows the definition the build started for.
 Closing the tab or opening another definition drops the result, while the thread
 runs to its end. The baked file is an ordinary `.gasset`; the project decides
-whether to commit it.
+whether to commit it. Build refuses when that address holds another kind of
+asset, or a file whose header it can't read, which includes a baked file from an
+older format. It leaves that file alone, and it has to be removed by hand.
 
 The baked state compares that file with the definition as last saved. A worker
 works it out on open, after each save and after each build, so a changed weight

@@ -110,8 +110,8 @@ being edited, of the running game while playing, or of a preview whose editor
 edits in it, and `EditWorldSignals`, which sends signals to it. Both skip the
 system while no document is the edit target: no scene is open, another preview
 is in front, or its game is starting. Nothing
-else reaches that world from a system; a listener holding the editor's world may
-read a document through `HostedApp`. An editor system may also take `PreviewSignals`, which
+else reaches that world, except that an asset editor may read a document out of
+it through `HostedApp`. An editor system may also take `PreviewSignals`, which
 sends signals to the preview `App` of a document it names. Do not write a system that takes `&World` or
 `&mut World`. Work that needs the whole world goes through commands, so it runs
 with exclusive access when the queue is applied: the typed `CommandQueue`

@@ -491,7 +491,10 @@ fn engine_of_editor(editor: &Path) -> Result<Engine> {
     let table = dependency.as_table_like().with_context(unknown)?;
     let Some(path) = table.get("path") else {
         ensure!(
-            table.contains_key("version") && !table.contains_key("git"),
+            table.contains_key("version")
+                && !["git", "registry"]
+                    .iter()
+                    .any(|key| table.contains_key(key)),
             unknown()
         );
         return Ok(Engine::Published);
@@ -1711,6 +1714,7 @@ mod tests {
             "concerto-editor = { workspace = true }\n",
             "concerto-editor = { path = \"../somewhere/else\" }\n",
             "concerto-editor = { version = \"1\", git = \"https://example.com/e\" }\n",
+            "concerto-editor = { version = \"1\", registry = \"corp\" }\n",
             "serde = \"1\"\n",
         ] {
             let tmp = tempfile::tempdir().unwrap();
