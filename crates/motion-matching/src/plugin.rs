@@ -18,7 +18,7 @@ use crate::{
     node::{MotionMatchingNode, MotionMatchingTrajectory},
     runtime::run_motion_matching,
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
-    systems::{drive_body, predict_trajectory_system, publish_trajectory, read_back_body},
+    systems::{drive_body, publish_trajectory},
 };
 
 pub(crate) fn register_runtime(app: &mut concerto_app::App) {
@@ -52,15 +52,7 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<MotionMatchingTrajectory>()
             .register_type::<MotionMatchingNode>()
             .add_system(FixedUpdate, drive_body)
-            .add_system(LateFixedUpdate, read_back_body.after(step_simulation))
-            .add_system(
-                LateFixedUpdate,
-                predict_trajectory_system.after(read_back_body),
-            )
-            .add_system(
-                LateFixedUpdate,
-                publish_trajectory.after(predict_trajectory_system),
-            );
+            .add_system(LateFixedUpdate, publish_trajectory.after(step_simulation));
         register_runtime(app);
     }
 }

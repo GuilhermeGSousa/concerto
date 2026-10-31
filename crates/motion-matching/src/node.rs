@@ -13,12 +13,12 @@ use crate::{
 };
 
 /// The blackboard key under which the trajectory is published.
-pub const TRAJECTORY_KEY: &str = "trajectory";
+pub(crate) const TRAJECTORY_KEY: &str = "trajectory";
 
 /// The character's simulation transform and predicted path, published on the animation blackboard for the node to match against.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
-pub struct MotionMatchingTrajectory {
+pub(crate) struct MotionMatchingTrajectory {
     pub translation: Vec3,
     pub rotation: Quat,
     pub samples: Vec<TrajectorySample>,

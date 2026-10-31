@@ -31,9 +31,9 @@ pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,
 };
 pub use instance::MotionMatchingInstance;
-pub use node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY};
+pub use node::MotionMatchingNode;
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
 pub use runtime::run_motion_matching;
 pub use search::{cost_of, excluded_tail, search};
-pub use simulation::{predict_trajectory, CharacterSimulation, DesiredMotion, TrajectorySample};
+pub use simulation::{CharacterSimulation, DesiredMotion, TrajectorySample};
