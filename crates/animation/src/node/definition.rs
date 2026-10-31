@@ -304,6 +304,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(Gain { amount: 2.0 });
         let mut instance = node.create_instance(&context);
@@ -334,6 +335,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
         let mut instance = node.create_instance(&context);
@@ -370,6 +372,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
         let mut instance = node.create_instance(&context);
