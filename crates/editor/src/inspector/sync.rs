@@ -268,10 +268,16 @@ fn spawn_row(
     cmd: &mut CommandQueue,
     card: &InspectedComponent,
     property: Property,
-    row_node: UINode,
+    mut row_node: UINode,
     remove: Option<(Entity, usize)>,
     theme: &UITheme,
 ) -> Entity {
+    if remove.is_some() {
+        row_node.min_height = UIValue::Px(theme.control_height);
+        if row_node.flex_wrap == concerto_ui::node::FlexWrap::NoWrap {
+            row_node.padding.right = theme.control_height + theme.spacing_xs;
+        }
+    }
     let target = property.row(card.scene_entity, card.type_id);
     let label = if property.path.depth() == 0 {
         card.name.to_string()
@@ -336,12 +342,9 @@ pub(super) fn build_property_widgets(
             if let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme) {
                 log::warn!("Unable to build property widget: {error}");
             }
-        } else if build.heading {
+        } else if !build.heading {
             cmd.entity(entity)
-                .add_child(UINode::default().with_flex_grow(1.0));
-        } else {
-            cmd.entity(entity)
-                .add_child(theme.label("Unsupported type").grow());
+                .add_child(theme.label("Unsupported type"));
         }
         if let Some((list, index)) = build.remove {
             cmd.entity(entity)

@@ -10,8 +10,14 @@ use concerto_ecs::{
 };
 use concerto_reflect::{Reflect, ReflectMut, ReflectRef};
 use concerto_ui::elements::{Listening, Pressable, Text, prelude::*};
-use concerto_ui::{interaction::UIClick, node::UIRect, theme::UITheme, transform::UIValue};
+use concerto_ui::{
+    interaction::UIClick,
+    node::{UIInset, UINode, UIRect},
+    theme::UITheme,
+    transform::UIValue,
+};
 use concerto_window::input::MouseButton;
+use taffy::Position;
 
 use super::{
     EditContext, EditError, ErasedEditor, PropertyCommit, PropertyCommits, PropertyRow,
@@ -65,6 +71,7 @@ impl ErasedEditor for ListEditor {
                 theme,
                 glyph::PLUS,
                 edit_list(row, ListEdit::Push),
+                |node| node,
             ));
         Ok(())
     }
@@ -101,7 +108,7 @@ impl ErasedEditor for ListEditor {
     }
 }
 
-/// The button at the end of an element's row, which removes element `index` of the list whose row is `list`.
+/// The button pinned to the end of an element's row, which removes element `index` of the list whose row is `list`.
 pub(super) fn remove_button(
     theme: &UITheme,
     list: Entity,
@@ -111,6 +118,13 @@ pub(super) fn remove_button(
         theme,
         glyph::MINUS,
         edit_list(list, ListEdit::Remove(index)),
+        |node| {
+            node.with_position(Position::Absolute).with_inset(UIInset {
+                top: UIValue::Px(0.0),
+                right: UIValue::Px(0.0),
+                ..Default::default()
+            })
+        },
     )
 }
 
@@ -118,6 +132,7 @@ fn list_button(
     theme: &UITheme,
     mark: char,
     click: Listener<UIClick>,
+    place: impl FnOnce(UINode) -> UINode,
 ) -> (Listening<Pressable, UIClick>, Text) {
     let size = theme.font_size_md;
     let vertical = (theme.control_height - theme.line_height(size)) / 2.0;
@@ -130,6 +145,7 @@ fn list_button(
                 UIValue::Px(theme.control_height),
             )
             .padding(UIRect::axes(vertical, horizontal))
+            .node(place)
             .on_click(click),
         icon(theme, mark, size).muted(),
     )

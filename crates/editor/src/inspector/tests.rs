@@ -2041,6 +2041,28 @@ mod list_rows {
         assert_eq!(text(world, children(world, header)[1]), "Length 0");
     }
 
+    fn pinned_right(world: &World, button: Entity) -> bool {
+        let node = world.get_component_for_entity::<UINode>(button).unwrap();
+        node.position == taffy::Position::Absolute && node.inset.right == UIValue::Px(0.0)
+    }
+
+    #[test]
+    fn a_remove_button_is_pinned_to_the_end_of_its_row_and_the_row_leaves_room() {
+        let (mut w, _) = fixture(Samples { values: vec![1.0] });
+        let path = [VALUES, PathSegment::Index(0)];
+        let remove = last_child(&mut w.f.world, &path);
+        assert!(pinned_right(&w.f.world, remove));
+
+        let row = row(&mut w.f.world, &path).unwrap();
+        let padding =
+            w.f.world
+                .get_component_for_entity::<UINode>(row)
+                .unwrap()
+                .padding
+                .right;
+        assert!(padding > 0.0);
+    }
+
     #[test]
     fn add_appends_a_default_and_rebuilds_and_remove_takes_that_element_out() {
         let (mut w, entity) = fixture(Samples {
