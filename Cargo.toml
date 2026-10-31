@@ -113,3 +113,6 @@ console_error_panic_hook = "0.1.7"
 
 [profile.dev.package.concerto-jolt-ffi]
 opt-level = 3
+
+[profile.test]
+debug = "line-tables-only"

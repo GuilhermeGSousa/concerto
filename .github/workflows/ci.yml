@@ -74,7 +74,6 @@ jobs:
         # test_physics_rapier job.
         run: cargo test --workspace -- ${{ runner.os == 'Linux' && '--test-threads=1' || '' }}
         env:
-          CARGO_PROFILE_DEV_DEBUG: line-tables-only
           CARGO_INCREMENTAL: 0
 
   test_physics_rapier:
