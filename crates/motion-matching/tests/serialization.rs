@@ -1,5 +1,6 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_foundation::assets::{handle::AssetHandle, AssetId};
+use concerto_ecs::{reflect::ReflectComponent, Component};
+use concerto_foundation::assets::{handle::AssetHandle, AssetId, CreatableAsset};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
@@ -8,7 +9,7 @@ use concerto_motion_matching::{
     TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
 fn skeleton() -> Skeleton {
@@ -47,8 +48,8 @@ fn entry(range: Option<(f32, f32)>) -> MotionEntry {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct HeightChannel {
     scale: f32,
 }
@@ -98,13 +99,21 @@ fn definition_defaults_match_the_spec() {
     assert_eq!(definition.channels.len(), 5);
     assert_eq!(definition.rate, 60.0);
     assert_eq!(definition.speed, 1.1);
-    assert_eq!(definition.simulation.position_joint, "Spine2");
-    assert_eq!(definition.simulation.facing_joint, "Hips");
+    assert_eq!(definition.simulation.position_joint, "Spine2".into());
+    assert_eq!(definition.simulation.facing_joint, "Hips".into());
     assert_eq!(definition.simulation.facing_axis, Vec3::Z);
     assert_eq!(definition.simulation.position_window, 31);
     assert_eq!(definition.simulation.facing_window, 61);
     assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);
     assert_eq!(definition.trajectory.sample_count, 3);
+}
+
+#[test]
+fn a_new_definition_is_the_default() {
+    assert_eq!(
+        MotionDatabaseDefinition::new_asset(),
+        MotionDatabaseDefinition::default()
+    );
 }
 
 #[test]
@@ -150,6 +159,95 @@ fn database_round_trips_through_bincode() {
     let bytes = bincode::serialize(&database).unwrap();
     let decoded: MotionDatabase = bincode::deserialize(&bytes).unwrap();
     assert_eq!(decoded, database);
+}
+
+#[test]
+fn a_source_hash_is_zero_until_set_and_round_trips_through_bincode() {
+    let database = database();
+    assert_eq!(database.source_hash(), 0);
+
+    let hashed = database.with_source_hash(0xfeed);
+    let bytes = bincode::serialize(&hashed).unwrap();
+    let decoded: MotionDatabase = bincode::deserialize(&bytes).unwrap();
+
+    assert_eq!(hashed.source_hash(), 0xfeed);
+    assert_eq!(decoded.source_hash(), 0xfeed);
+}
+
+#[test]
+fn setting_weights_keeps_the_source_hash() {
+    let mut database = database().with_source_hash(0xfeed);
+
+    database.set_weights(&[]).unwrap();
+
+    assert_eq!(database.source_hash(), 0xfeed);
+}
+
+#[test]
+fn frames_of_entry_counts_each_range() {
+    let database = database();
+    assert_eq!(database.frames_of_entry(0), Some(10));
+    assert_eq!(database.frames_of_entry(1), Some(5));
+    assert_eq!(database.frames_of_entry(2), None);
+}
+
+#[test]
+fn size_in_bytes_counts_the_feature_simulation_and_range_arrays() {
+    let definition = MotionDatabaseDefinition {
+        entries: vec![entry(None), entry(Some((0.5, 1.5)))],
+        rate: 10.0,
+        speed: 2.0,
+        simulation: SimulationBoneSettings {
+            position_joint: "Child".into(),
+            facing_joint: "Root".into(),
+            position_window: 5,
+            facing_window: 5,
+            ..Default::default()
+        },
+        channels: vec![StoredChannel {
+            type_name: "HeightChannel".into(),
+            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
+        }],
+        ..Default::default()
+    };
+    let mut registry = TypeRegistry::default();
+    registry.register::<HeightChannel>();
+    let first = walk_clip(2.0);
+    let second = walk_clip(2.0);
+    let database = bake(&definition, &skeleton(), &[&first, &second], &registry).unwrap();
+
+    let features = 15 * 2 * size_of::<f32>();
+    let simulation = 15 * size_of::<(Vec3, Quat)>();
+    let ranges = 2 * (2 * size_of::<usize>() + size_of::<f32>());
+    assert_eq!(database.size_in_bytes(), features + simulation + ranges);
+}
+
+#[test]
+fn deviations_hold_one_value_per_channel() {
+    let definition = MotionDatabaseDefinition {
+        entries: vec![entry(None)],
+        rate: 10.0,
+        speed: 1.0,
+        simulation: SimulationBoneSettings {
+            position_joint: "Child".into(),
+            facing_joint: "Root".into(),
+            position_window: 5,
+            facing_window: 5,
+            ..Default::default()
+        },
+        channels: vec![StoredChannel {
+            type_name: "HeightChannel".into(),
+            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
+        }],
+        ..Default::default()
+    };
+    let mut registry = TypeRegistry::default();
+    registry.register::<HeightChannel>();
+    let clip = walk_clip(2.0);
+    let database = bake(&definition, &skeleton(), &[&clip], &registry).unwrap();
+
+    assert_eq!(database.deviations().len(), 1);
+    assert!(database.deviations()[0] > 0.0);
 }
 
 #[test]

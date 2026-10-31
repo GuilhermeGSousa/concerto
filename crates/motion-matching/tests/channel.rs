@@ -1,3 +1,4 @@
+use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::channel::{
@@ -7,8 +8,8 @@ use concerto_motion_matching::channel::{
 use concerto_motion_matching::{BakeError, StoredChannel, TrajectorySample};
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct ConstantChannel {
     value: f32,
     scale: f32,
@@ -75,8 +76,8 @@ fn a_stored_channel_builds_and_extracts() {
     assert_eq!(out, [2.0, 0.5, 2.0]);
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct TwinChannel {
     first: f32,
 }

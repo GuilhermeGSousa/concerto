@@ -1,4 +1,5 @@
-use concerto_mesh::Skeleton;
+use concerto_ecs::{reflect::ReflectComponent, Component};
+use concerto_mesh::{JointName, Skeleton};
 use concerto_reflect::{to_value, Reflect};
 use glam::{Quat, Vec3};
 
@@ -16,12 +17,12 @@ fn local_vector(frame: &FrameContext, vector: Vec3) -> Vec3 {
     rotation.inverse() * vector
 }
 
-fn check_bones(bones: &[String], skeleton: &Skeleton) -> Result<(), String> {
+fn check_bones(bones: &[JointName], skeleton: &Skeleton) -> Result<(), String> {
     match bones
         .iter()
         .find(|bone| skeleton.bone_index(bone).is_none())
     {
-        Some(bone) => Err(format!("the skeleton has no bone named {bone}")),
+        Some(bone) => Err(format!("the skeleton has no bone named {}", bone.0)),
         None => Ok(()),
     }
 }
@@ -40,10 +41,10 @@ fn check_samples(samples: &[usize], trajectory: &TrajectorySettings) -> Result<(
 }
 
 /// The model-space positions of bones, in the simulation bone's frame; 3 values per bone.
-#[derive(Reflect, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 pub struct BonePositions {
-    pub bones: Vec<String>,
+    pub bones: Vec<JointName>,
     pub weight: f32,
 }
 
@@ -86,10 +87,10 @@ impl FeatureChannel for BonePositions {
 }
 
 /// The model-space velocities of bones, in the simulation bone's frame; 3 values per bone.
-#[derive(Reflect, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 pub struct BoneVelocities {
-    pub bones: Vec<String>,
+    pub bones: Vec<JointName>,
     pub weight: f32,
 }
 
@@ -132,8 +133,8 @@ impl FeatureChannel for BoneVelocities {
 }
 
 /// The ground-plane positions of trajectory samples, in the simulation bone's frame; x and z per sample.
-#[derive(Reflect, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 pub struct TrajectoryPositions {
     pub samples: Vec<usize>,
     pub weight: f32,
@@ -182,8 +183,8 @@ impl FeatureChannel for TrajectoryPositions {
 }
 
 /// The ground-plane facing of trajectory samples, in the simulation bone's frame; x and z per sample.
-#[derive(Reflect, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 pub struct TrajectoryDirections {
     pub samples: Vec<usize>,
     pub weight: f32,
@@ -237,8 +238,8 @@ fn stored<T: FeatureChannel>(type_name: &str, channel: &T) -> StoredChannel {
     }
 }
 
-fn names(bones: &[&str]) -> Vec<String> {
-    bones.iter().map(|bone| (*bone).to_string()).collect()
+fn names(bones: &[&str]) -> Vec<JointName> {
+    bones.iter().map(|bone| (*bone).into()).collect()
 }
 
 /// The reference 27-value feature set: foot positions and velocities, hip velocity, and three trajectory positions and directions.

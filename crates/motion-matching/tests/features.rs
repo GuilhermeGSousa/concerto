@@ -1,4 +1,5 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_ecs::{reflect::ReflectComponent, Component, World};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{bake, trajectory_samples};
@@ -8,12 +9,12 @@ use concerto_motion_matching::{
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
     TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
-use concerto_reflect::{to_value, Reflect, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectDefault, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct RampChannel {
     weight: f32,
 }
@@ -33,8 +34,8 @@ impl FeatureChannel for RampChannel {
     }
 }
 
-#[derive(Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(FeatureChannel)]
+#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(Component, FeatureChannel)]
 struct FlatChannel {
     weight: f32,
 }
@@ -632,4 +633,74 @@ fn a_query_needs_every_channel_type_registered() {
         matches!(error, BakeError::UnregisteredChannel(_)),
         "{error:?}"
     );
+}
+
+fn reference_registry() -> TypeRegistry {
+    let mut registry = TypeRegistry::default();
+    registry.register::<BonePositions>();
+    registry.register::<BoneVelocities>();
+    registry.register::<TrajectoryPositions>();
+    registry.register::<TrajectoryDirections>();
+    registry
+}
+
+#[test]
+fn a_reference_channel_is_a_reflected_component_with_no_default() {
+    let registry = reference_registry();
+    for name in [
+        "BonePositions",
+        "BoneVelocities",
+        "TrajectoryPositions",
+        "TrajectoryDirections",
+    ] {
+        let registration = registry.get_by_name(name).unwrap();
+        assert!(registration.data::<ReflectComponent>().is_some(), "{name}");
+        assert!(
+            registration.data::<ReflectFeatureChannel>().is_some(),
+            "{name}"
+        );
+        assert!(registration.data::<ReflectDefault>().is_none(), "{name}");
+    }
+}
+
+#[test]
+fn a_channel_sits_on_an_entity_and_edits_through_its_reflected_component() {
+    let registry = reference_registry();
+    let component = registry
+        .get_by_name("BonePositions")
+        .unwrap()
+        .data::<ReflectComponent>()
+        .copied()
+        .unwrap();
+    let mut world = World::new();
+    let entity = world.spawn(BonePositions::default());
+
+    let found = (component.edit)(&mut world, entity, &mut |_| {});
+
+    assert!(found);
+}
+
+#[test]
+fn an_empty_stored_value_builds_a_channel_at_its_defaults() {
+    let registry = reference_registry();
+    let data = registry
+        .get_by_name("BonePositions")
+        .unwrap()
+        .data::<ReflectFeatureChannel>()
+        .copied()
+        .unwrap();
+
+    let built = (data.from_value)(&ReflectedValue::Struct(Vec::new())).unwrap();
+
+    assert_eq!(
+        (data.to_value)(built.as_ref()).unwrap(),
+        to_value(&BonePositions::default()).unwrap()
+    );
+}
+
+#[test]
+fn a_channel_registers_its_joint_names() {
+    let registry = reference_registry();
+
+    assert!(registry.get_by_name("JointName").is_some());
 }

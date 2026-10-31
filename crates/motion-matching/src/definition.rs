@@ -1,6 +1,6 @@
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
-use concerto_mesh::Skeleton;
+use concerto_foundation::assets::{handle::AssetHandle, Asset, CreatableAsset, LoadableAsset};
+use concerto_mesh::{JointName, Skeleton};
 use concerto_reflect::{Reflect, ReflectedValue};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,8 @@ pub struct MotionEntry {
 /// Which joints place and orient the simulation bone, and how much to smooth it.
 #[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimulationBoneSettings {
-    pub position_joint: String,
-    pub facing_joint: String,
+    pub position_joint: JointName,
+    pub facing_joint: JointName,
     pub facing_axis: Vec3,
     pub position_window: usize,
     pub facing_window: usize,
@@ -89,6 +89,12 @@ impl Default for MotionDatabaseDefinition {
             trajectory: TrajectorySettings::default(),
             channels: reference_channels(),
         }
+    }
+}
+
+impl CreatableAsset for MotionDatabaseDefinition {
+    fn new_asset() -> Self {
+        Self::default()
     }
 }
 

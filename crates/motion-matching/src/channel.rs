@@ -1,3 +1,4 @@
+use concerto_ecs::Component;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_reflect::{
@@ -12,7 +13,7 @@ use crate::{
     simulation::TrajectorySample,
 };
 
-/// One group of values a motion database stores per frame; implementors derive `Reflect` and `Default` and declare `#[reflect(FeatureChannel)]`.
+/// One group of values a motion database stores per frame; implementors derive `Component`, `Reflect` and `Default` and declare `#[reflect(Component, FeatureChannel)]`.
 pub trait FeatureChannel: Reflect + Send + Sync + 'static {
     /// How many `f32` values the channel writes per frame.
     fn dims(&self) -> usize;
@@ -85,7 +86,7 @@ pub struct ReflectFeatureChannel {
 
 impl TypeData for ReflectFeatureChannel {}
 
-impl<T: FeatureChannel + Default> FromType<T> for ReflectFeatureChannel {
+impl<T: FeatureChannel + Component + Default> FromType<T> for ReflectFeatureChannel {
     fn from_type() -> Self {
         Self {
             from_value: from_value::<T>,
