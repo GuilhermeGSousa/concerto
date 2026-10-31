@@ -6,9 +6,6 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [dependencies]
 concerto-app.workspace = true
 concerto-color.workspace = true

@@ -27,9 +27,6 @@ multithreaded = ["concerto-app/multithreaded"]
 # internals). Native only — never enable for wasm builds.
 tracy = ["profiling/profile-with-tracy"]
 
-[lib]
-crate-type = ["cdylib", "rlib"]
-
 [workspace]
 members = ["crates/*", "examples/*", "examples/*/editor"]
 
@@ -116,3 +113,6 @@ console_error_panic_hook = "0.1.7"
 
 [profile.dev.package.concerto-jolt-ffi]
 opt-level = 3
+
+[profile.test]
+debug = "line-tables-only"
