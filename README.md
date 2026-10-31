@@ -39,10 +39,14 @@ and animation, an engine-native UI, and an editor built on that same UI.
 
 - Rust, stable, from <https://rustup.rs>, and a C++ compiler: Jolt, the
   native physics library, is built from source.
+- [Git LFS](https://git-lfs.com), before you clone. The examples' `.gasset`
+  files are stored in it, and a game built from LFS pointers fails with
+  `missing the GRDY magic prefix`. In a clone made without it, run `git lfs pull`.
 - This repository with its Jolt submodule. Without the submodule every native
   build fails:
 
   ```sh
+  git lfs install
   git clone https://github.com/GuilhermeGSousa/concerto.git
   cd concerto
   git submodule update --init

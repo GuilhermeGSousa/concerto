@@ -3,8 +3,9 @@
 ## Install
 
 Follow the prerequisites in the [README](../../README.md#prerequisites): Rust,
-this repository with its Jolt submodule, the Linux system packages, and, for
-the browser, the wasm target and Trunk. Then check that an example runs:
+Git LFS, this repository with its Jolt submodule, the Linux system packages,
+and, for the browser, the wasm target and Trunk. Then check that an example
+runs:
 
 ```sh
 cargo run -p tech-demo
