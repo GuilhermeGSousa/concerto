@@ -14,6 +14,7 @@ use crate::{
         MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
         TrajectorySettings,
     },
+    displacement::CharacterDisplacement,
     features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
     node::{MotionMatchingNode, MotionMatchingTrajectory},
     runtime::run_motion_matching,
@@ -48,6 +49,7 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<DesiredMotion>()
             .register_type::<TrajectorySample>()
             .register_type::<CharacterSimulation>()
+            .register_type::<CharacterDisplacement>()
             .register_type::<AssetHandle<MotionDatabase>>()
             .register_type::<MotionMatchingTrajectory>()
             .register_type::<MotionMatchingNode>()
