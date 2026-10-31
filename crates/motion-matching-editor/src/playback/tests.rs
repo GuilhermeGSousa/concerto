@@ -454,10 +454,8 @@ fn a_preview_app_plays_the_database_in_its_schedule() {
     let rig = spawn_rig(world);
     world.trigger(ShowDatabase(Some(baked())));
 
-    for _ in 0..4 {
-        std::thread::sleep(Duration::from_millis(5));
-        app.update();
-    }
+    std::thread::sleep(Duration::from_secs_f32(2.0 / RATE));
+    app.update();
 
     let world = app.main_mut().world_mut();
     assert!(world.get_resource::<DatabasePlayback>().unwrap().frame() > 0);

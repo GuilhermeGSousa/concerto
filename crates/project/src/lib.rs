@@ -445,7 +445,7 @@ fn plugin_dependency(
         table.insert("version", version.as_str().into());
     }
     if let Some(path) = &plugin.path {
-        let written = if Path::new(path).is_absolute() {
+        let written = if Path::new(path).has_root() {
             path.clone()
         } else {
             relative(&editor, &absolute(&game.join(path))?)
