@@ -1,3 +1,7 @@
 [submodule "crates/jolt-sys/vendor/JoltPhysics"]
 	path = crates/jolt-ffi/vendor/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
+[submodule "examples/tech-demo/assets/lafan1"]
+	path = examples/tech-demo/assets/lafan1
+	url = https://github.com/ubisoft/ubisoft-laforge-animation-dataset.git
+	update = none
