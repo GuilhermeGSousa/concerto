@@ -66,11 +66,11 @@ while any of its workers runs, so under `--mcp` frames keep running and `status`
 reads `busy: yes` until the rows settle.
 
 The `bottom` host holds a `Timeline` of the selected entry, read from the same
-`EntryFacts`. A drag on its track writes the entry's `TimeRange`, from
-`time_of_frame` of the first and last frames, each capped at the clip's duration
-because rounding can land above it and `bake` refuses that. A click clears the
-range, so the entry uses the whole clip. A clip with no detected rate has no
-frames, so its range cannot be selected.
+`EntryFacts`. Its head follows the preview, as described below. A drag on its
+track writes the entry's `TimeRange`, from `time_of_frame` of the first and last
+frames, each capped at the clip's duration because rounding can land above it and
+`bake` refuses that. A click clears the range, so the entry uses the whole clip.
+A clip with no detected rate has no frames, so its range cannot be selected.
 
 The `inspector` host, above the normal inspector, holds **Build**, the line under
 it, the baked state, the stats of the baked file, in a list that scrolls past
@@ -108,6 +108,43 @@ channels cannot be built, and the line stays empty. The stats come from the bake
 file: the frames in all and per entry, the memory, and each channel's mean and
 standard deviation. An entry shorter than the trajectory looks ahead gets a
 warning.
+
+## The preview
+
+`database_preview` adds `clip_preview` to the game's recipe, so a definition's
+preview has the same stage as a clip's. It shows the scene named `scene` in the
+skeleton's folder, read again whenever the skeleton changes, with a
+`SkeletonGizmo` on each rooted skeleton. A folder with no such scene leaves the
+stage empty, and a scene that cannot be read says why under the skeleton picker.
+
+The worker that works out the baked state also loads what the baked file needs to
+play: the database, its skeleton and the clips it names, which may no longer be
+the definition's. They reach the preview as `Arc`s in a `ShowDatabase` signal, and
+the editor sends `ClearClip` with it, so only one system writes the bones. Then
+`play_database` steps a frame index at the database's `rate`, through all the
+frames in order and back to the first, and writes `database.pose(frame, ..)` to
+every bone with a match by id in the skeleton's `bone_ids`. That pose holds each
+parentless bone relative to the simulation bone, so it is placed by
+`database.simulation(frame)` first: the character goes where the clip takes it,
+the camera follows it, and the simulation bone, a yellow ring with an arrow along
+its facing, is drawn under it with `DebugGizmos`. An out-of-date file plays until
+the next build, and the baked state says so.
+
+With no baked data to play, the preview plays the selected entry's whole clip
+through `clip_preview`, read on a worker, and that is also the fallback for a
+baked file made for another skeleton, one whose clips cannot be read, or one the
+skeleton no longer fits. Picking another skeleton stops a database at once. Nothing
+plays until the baked state is known, so a definition with baked data never
+flashes a clip when it opens.
+
+The `Timeline` is always the selected entry's. With a clip its head is the
+preview's time and a scrub sends `SeekClip`. With a database, selecting an entry
+moves the playback to the entry's first frame, a scrub sends `SeekDatabase` to the
+nearest baked frame of that entry, and `DatabaseProgress` moves the head while the
+playback is inside the entry; once it moves on, the head waits at the entry's last
+frame until the playback comes round. An entry whose clip is not the one baked at
+its place is not sought, so the head stays where it is. The tab has no transport:
+the preview always plays, and a scrub moves it without pausing.
 
 ## Joint names
 

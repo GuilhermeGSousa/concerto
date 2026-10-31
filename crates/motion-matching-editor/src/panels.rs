@@ -41,6 +41,7 @@ use crate::{
     document::DefinitionDocument,
     facts::EntryFacts,
     menu::{NameMenu, close_menu, open_name_menu},
+    playback::scrub_entry,
     preview::{
         AddChannel, ChannelKind, ChannelOrder, DatabaseSettings, RemoveChannel, channel_types,
     },
@@ -65,7 +66,7 @@ pub(crate) struct DefinitionPanels {
     channels: Entity,
     add_channel: Entity,
     channel_rows: Vec<ChannelWidgets>,
-    timeline: Entity,
+    pub(crate) timeline: Entity,
     pub(crate) build: Entity,
     pub(crate) note: Entity,
     pub(crate) baked: Entity,
@@ -638,6 +639,7 @@ fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme
             selection: None,
         },
         select_range(document),
+        scrub_entry(document),
     ))
     .entity()
 }
@@ -970,7 +972,7 @@ pub(crate) fn sync_definition_panels(
             let shown = Timeline {
                 duration: facts.map_or(0.0, |facts| facts.duration),
                 rate,
-                time: 0.0,
+                time: state.time,
                 selection: entry_selection(entry, rate),
             };
             if **timeline != shown {

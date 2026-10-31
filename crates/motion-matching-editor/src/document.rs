@@ -25,6 +25,7 @@ use concerto_motion_matching::{MotionDatabaseDefinition, MotionEntry};
 use crate::{
     build::{BakedJob, BakedState, BakedStats, BuildState},
     facts::{EntryFacts, FactsJob, ShownSkeleton},
+    playback::{BakedPlayback, ClipJob, ShowDatabase},
     preview::{DatabaseSettings, ShowDefinition, database_preview, live_channel},
 };
 
@@ -39,10 +40,15 @@ pub struct DefinitionDocument {
     pub baked: BakedState,
     pub stats: Option<BakedStats>,
     pub entry_facts: Vec<EntryFacts>,
+    pub time: f32,
     pub(crate) shown_skeleton: Option<ShownSkeleton>,
     pub(crate) facts_job: Option<FactsJob>,
     pub(crate) baked_wanted: bool,
     pub(crate) baked_job: Option<BakedJob>,
+    pub(crate) playback: Option<BakedPlayback>,
+    pub(crate) sought_entry: Option<usize>,
+    pub(crate) shown_clip: Option<AssetId>,
+    pub(crate) clip_job: Option<ClipJob>,
 }
 
 impl DefinitionDocument {
@@ -149,6 +155,10 @@ pub(crate) fn load_definition(
         state.stats = None;
         state.baked_job = None;
         state.baked_wanted = true;
+        state.time = 0.0;
+        state.playback = None;
+        state.sought_entry = None;
+        previews.trigger(entity, ShowDatabase(None));
         previews.trigger(
             entity,
             ShowDefinition {

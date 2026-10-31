@@ -56,6 +56,7 @@ use crate::{
     joint::JointNameEditor,
     menu::close_name_menu,
     panels::{build_definition_panels, sync_channel_rows, sync_definition_panels},
+    playback::{follow_playback, follow_preview_time},
     read_definition,
     save::{SaveDefinition, request_definition_saves, save_definition},
 };
@@ -118,6 +119,8 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     f.add_delivery(finish_build.into_boxed_system());
     f.add_delivery(request_builds.into_boxed_system());
     f.add_delivery(check_baked.into_boxed_system());
+    f.add_delivery(follow_playback.into_boxed_system());
+    f.add_delivery(follow_preview_time.into_boxed_system());
     f.add_delivery(mark_background_work.into_boxed_system());
     f.add_delivery(build_definition_panels.into_boxed_system());
     f.add_delivery(sync_definition_panels.into_boxed_system());

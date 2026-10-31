@@ -3,7 +3,7 @@ use std::{path::Path, sync::Arc, thread::JoinHandle};
 use anyhow::Context;
 use concerto_ecs::{Entity, Query, Res};
 use concerto_editor::{
-    clip_editor::{ClipFacts, read_clip},
+    clip_editor::{ClipFacts, preview::ShowClipScene, read_clip, read_shown_scene},
     preview::PreviewSignals,
     project::ProjectState,
 };
@@ -73,6 +73,19 @@ fn read_shown(id: AssetId, root: &Path, assets: &AssetRegistry) -> ShownSkeleton
     shown
 }
 
+fn scene_of(shown: &mut ShownSkeleton, root: &Path, assets: &AssetRegistry) -> ShowClipScene {
+    let Some(skeleton) = assets.get(shown.id) else {
+        return ShowClipScene(None);
+    };
+    match read_shown_scene(root, Some(skeleton), None, assets) {
+        Ok(scene) => ShowClipScene(scene.map(|(_, scene)| scene)),
+        Err(error) => {
+            shown.error = Some(format!("{error:#}"));
+            ShowClipScene(None)
+        }
+    }
+}
+
 pub(crate) fn follow_skeleton(
     documents: Query<(Entity, &mut DefinitionDocument)>,
     project: Res<ProjectState>,
@@ -91,7 +104,8 @@ pub(crate) fn follow_skeleton(
         {
             continue;
         }
-        let shown = read_shown(id, &project.root, &assets);
+        let mut shown = read_shown(id, &project.root, &assets);
+        previews.trigger(document, scene_of(&mut shown, &project.root, &assets));
         let bones = shown
             .skeleton
             .as_ref()

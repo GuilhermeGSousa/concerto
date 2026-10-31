@@ -8,17 +8,22 @@ use concerto_ecs::{
     signal::{On, Signal},
     system::input::ComponentMetadata,
 };
-use concerto_editor::tools::{
-    edits::{ComponentEdit, ComponentEdited},
-    entity_ops::FixedEntities,
-    scene::{SceneStatus, report_edit, write},
-    selection::{Select, Selection},
+use concerto_editor::{
+    clip_editor::preview::clip_preview,
+    tools::{
+        edits::{ComponentEdit, ComponentEdited},
+        entity_ops::FixedEntities,
+        scene::{SceneStatus, report_edit, write},
+        selection::{Select, Selection},
+    },
 };
 use concerto_motion_matching::{
     MotionDatabaseDefinition, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
     TrajectorySettings,
 };
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistration, TypeRegistry, to_value};
+
+use crate::playback::database_playback;
 
 /// A definition's settings that belong to no channel, as the inspector edits them.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
@@ -280,6 +285,8 @@ pub(crate) fn capture_definition(
 
 /// What a definition's preview adds to the game's recipe.
 pub fn database_preview(app: &mut App) {
+    clip_preview(app);
+    database_playback(app);
     app.register_type::<DatabaseSettings>()
         .insert_resource(FixedEntities)
         .add_listener(spawn_database_entities.at_preview_time())

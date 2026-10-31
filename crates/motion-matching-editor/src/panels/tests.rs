@@ -6,7 +6,7 @@ use concerto_ecs::{
 use concerto_editor::{
     asset_editor::{BackgroundWork, EditorDocument, EditorHosts},
     asset_picker::AssetPickerMenu,
-    clip_editor::ClipFacts,
+    clip_editor::{ClipFacts, preview::SetClipTransport},
     hosted::testing::SceneFixture,
     timeline::{Timeline, TimelineSelected, time_of_frame},
     tools::selection::{Select, Selection},
@@ -62,7 +62,7 @@ pub(crate) fn stat_warnings(stats: &BakedStats, assets: &AssetRegistry) -> Vec<S
         .collect()
 }
 
-fn bone_id(bone: usize) -> Uuid {
+pub(crate) fn bone_id(bone: usize) -> Uuid {
     Uuid::from_u128(bone as u128 + 1)
 }
 
@@ -196,7 +196,7 @@ impl Tab {
             .unwrap()
     }
 
-    fn timeline(&self) -> &Timeline {
+    pub(crate) fn timeline(&self) -> &Timeline {
         self.world()
             .get_component_for_entity::<Timeline>(self.panels().timeline)
             .unwrap()
@@ -370,6 +370,7 @@ impl Tab {
                 && !state.build.is_running()
                 && state.baked_job.is_none()
                 && !state.baked_wanted
+                && state.clip_job.is_none()
         });
         self.f.frame();
         self.f.frame();
@@ -1313,6 +1314,14 @@ fn a_settled_panel_writes_nothing() {
     f.add_delivery(count_writes.into_boxed_system());
     let mut tab = tab_with(f);
     tab.until_read();
+    tab.until_settled();
+    let document = tab.document;
+    tab.f.scene_world_mut(document).trigger(SetClipTransport {
+        playing: false,
+        looping: true,
+        rate: 1.0,
+    });
+    tab.f.frame();
     tab.f.frame();
     tab.f.frame();
     tab.f.frame();

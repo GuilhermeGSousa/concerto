@@ -19,6 +19,7 @@ use concerto_editor::{
     asset_editor::{BackgroundWork, EditorDocument, Unsaved},
     hosted::HostedApp,
     inspector::{ComponentEdits, PropertyCommits},
+    preview::PreviewSignals,
     project::ProjectState,
 };
 use concerto_foundation::assets::{
@@ -37,6 +38,7 @@ use concerto_motion_matching::{
 use crate::{
     document::DefinitionDocument,
     facts::{decode, read_bytes},
+    playback::{BakedPlayback, ShowDatabase},
     save::{captured, save_and_report, set_status},
 };
 
@@ -169,7 +171,13 @@ impl BuildState {
     }
 }
 
-pub(crate) type BakedJob = JoinHandle<(BakedState, Option<BakedStats>)>;
+pub(crate) struct Checked {
+    pub(crate) baked: BakedState,
+    pub(crate) stats: Option<BakedStats>,
+    pub(crate) playback: Option<BakedPlayback>,
+}
+
+pub(crate) type BakedJob = JoinHandle<Checked>;
 
 pub(crate) fn progress_line(finished: usize, total: usize) -> String {
     format!("Baking {} of {total}", (finished + 1).min(total))
@@ -503,43 +511,86 @@ struct CheckInput {
     sources: Sources,
     address: String,
     types: AppTypeRegistry,
+    assets: AssetRegistry,
 }
 
-fn run_check(input: CheckInput) -> (BakedState, Option<BakedStats>) {
-    let Some(database) = read_baked(&input.sources.root, &input.address) else {
-        return (BakedState::NotBuilt, None);
-    };
-    let stats = Some(BakedStats::of(&database));
+fn baked_state(database: &MotionDatabase, input: &CheckInput) -> BakedState {
     let read = match input.sources.read() {
         Ok(read) => read,
-        Err(asset) => return (BakedState::CantRead(asset), stats),
+        Err(asset) => return BakedState::CantRead(asset),
     };
     let hash = read.hash(&input.definition);
-    let state = if is_stale(&database, &input.definition, hash, &input.types.read()) {
+    if is_stale(database, &input.definition, hash, &input.types.read()) {
         BakedState::OutOfDate
     } else {
         BakedState::UpToDate
+    }
+}
+
+fn read_playback(database: MotionDatabase, input: &CheckInput) -> Option<BakedPlayback> {
+    if database.skeleton().id() != input.definition.skeleton.id() {
+        return None;
+    }
+    let root = &input.sources.root;
+    let skeleton: Skeleton = decode(&input.sources.skeleton.read::<Skeleton>(root).ok()?).ok()?;
+    let clips = database
+        .clips()
+        .iter()
+        .map(|clip| {
+            let source = Source::of(clip.id(), String::new(), &input.assets);
+            let bytes = source.read::<AnimationClip>(root).ok()?;
+            Some(Arc::new(decode::<AnimationClip>(&bytes).ok()?))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    let sampled: Vec<&AnimationClip> = clips.iter().map(Arc::as_ref).collect();
+    database.pose(0, &skeleton, &sampled).ok()?;
+    Some(BakedPlayback {
+        database: Arc::new(database),
+        skeleton: Arc::new(skeleton),
+        clips,
+    })
+}
+
+fn run_check(input: CheckInput) -> Checked {
+    let Some(database) = read_baked(&input.sources.root, &input.address) else {
+        return Checked {
+            baked: BakedState::NotBuilt,
+            stats: None,
+            playback: None,
+        };
     };
-    (state, stats)
+    Checked {
+        baked: baked_state(&database, &input),
+        stats: Some(BakedStats::of(&database)),
+        playback: read_playback(database, &input),
+    }
 }
 
 pub(crate) fn check_baked(
-    documents: Query<(&EditorDocument, &mut DefinitionDocument, Option<&HostedApp>)>,
+    documents: Query<(
+        Entity,
+        &EditorDocument,
+        &mut DefinitionDocument,
+        Option<&HostedApp>,
+    )>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
+    mut previews: PreviewSignals,
 ) {
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (document, mut state, hosted) in documents.iter() {
+    for (entity, document, mut state, hosted) in documents.iter() {
         if state
             .baked_job
             .as_ref()
             .is_some_and(JoinHandle::is_finished)
-            && let Some(Ok((baked, stats))) = state.baked_job.take().map(JoinHandle::join)
+            && let Some(Ok(checked)) = state.baked_job.take().map(JoinHandle::join)
         {
-            state.baked = baked;
-            state.stats = stats;
+            state.baked = checked.baked;
+            state.stats = checked.stats;
+            state.playback = checked.playback.clone();
+            previews.trigger(entity, ShowDatabase(checked.playback));
         }
         if !state.baked_wanted || state.baked_job.is_some() {
             continue;
@@ -555,6 +606,7 @@ pub(crate) fn check_baked(
             sources: Sources::of(definition, project.root.clone(), &assets),
             address: baked_address(asset),
             types: types.clone(),
+            assets: assets.clone(),
         };
         state.baked_wanted = false;
         state.baked_job = Some(std::thread::spawn(move || run_check(input)));
@@ -566,8 +618,10 @@ pub(crate) fn mark_background_work(
     mut cmd: CommandQueue,
 ) {
     for (document, state, marked) in documents.iter() {
-        let working =
-            state.facts_job.is_some() || state.baked_job.is_some() || state.build.is_running();
+        let working = state.facts_job.is_some()
+            || state.baked_job.is_some()
+            || state.clip_job.is_some()
+            || state.build.is_running();
         match (working, marked.is_some()) {
             (true, false) => cmd.insert(BackgroundWork, document),
             (false, true) => cmd.remove::<BackgroundWork>(document),

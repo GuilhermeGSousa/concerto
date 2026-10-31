@@ -730,7 +730,11 @@ fn every_worker_marks_the_document_until_it_ends() {
     let (release, wait) = std::sync::mpsc::channel::<()>();
     tab.state_mut().baked_job = Some(std::thread::spawn(move || {
         let _ = wait.recv();
-        (BakedState::NotBuilt, None)
+        Checked {
+            baked: BakedState::NotBuilt,
+            stats: None,
+            playback: None,
+        }
     }));
 
     tab.f.frame();
