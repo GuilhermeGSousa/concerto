@@ -255,6 +255,9 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
   the path from where the body ended the step and writes it to the character's
   `AnimationPlayer`, which is on the simulation's entity, or on or under an
   entity whose `DisplacementSimulation` names it.
+- `apply_character_displacement`, in `LateUpdate`, after `animate_targets` and
+  before `propagate_global_transforms`: places each character; see
+  [Displacement](#displacement).
 
 An entity without a `BodyId` is skipped. The simulation holds no position: the
 body has it.
@@ -283,9 +286,8 @@ fn walk(mut players: Query<&mut DesiredMotion, With<Player>>) {
 
 ## Not here
 
-Capsule traces for collision-aware prediction, past samples, gamepad input,
-and synchronising the skeleton and the capsule with spring dampers are
-separate work. The simulation does not rotate the capsule.
+Capsule traces for collision-aware prediction, past samples and gamepad input
+are separate work. The simulation does not rotate the capsule.
 
 ## Playing a database
 
@@ -329,3 +331,97 @@ clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
 the same way. The root joint is the database skeleton's first without a parent.
 A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`, and so
 does a frame that holds the pose at the end of its range.
+
+## Displacement
+
+The visible character and the capsule are two entities, and they drift apart:
+root motion moves one and the player moves the other. `CharacterDisplacement`
+goes on the character and reconciles the two each frame.
+`DisplacementSimulation` names the capsule, which holds `CharacterSimulation`,
+`DesiredMotion` and the body, and needs `ColliderOffset::bottom_origin` for the
+character to stand on the ground. The game inserts it at spawn.
+
+```rust
+commands.spawn((
+    CharacterDisplacement::Clamp(Clamp::default()),
+    DisplacementSimulation(capsule),
+    Transform::default(),
+));
+```
+
+The skeleton goes anywhere under the character: each `AnimationRootBone` climbs
+`ChildOf` to the nearest entity with a `CharacterDisplacement`, so a
+scene-spawned skeleton needs no link. A character with two skeletons uses the
+first one found. A character whose skeleton has not spawned has no root motion
+and still gets its method's correction.
+
+A character's `Transform` is written in world space. It is not a child of its
+capsule: one under it would move twice, so the system skips it and warns once
+for that entity. A `DisplacementSimulation` naming an entity with no
+`CharacterSimulation` gets the same. A character without a
+`DisplacementSimulation` does not move.
+
+### Methods
+
+The variants are mutually exclusive. orangeduck's demo combines adjustment with
+clamping; here a character has one or the other. Each holds a struct, so a
+variant switch in the inspector gives that struct's defaults and loses tuned
+numbers in the old variant.
+
+| Variant | Each frame | Against a wall |
+|---|---|---|
+| `Synchronization` | The character's position and yaw are a weighted average of its own, moved by root motion, and the capsule's, and the capsule gets the same target. | The capsule stops. The character goes on as far as `data_factor` lets it, and the pull does not take the capsule through the wall while `max_pull_speed` keeps one step under its radius. |
+| `Adjustment` | The character moves by root motion and is damped towards the capsule. | The capsule stops. The character keeps going on its root motion, pulled back only as far as the ratios allow. |
+| `Clamp` | The character moves by root motion and is kept within reach of the capsule. | The capsule stops, and the character stops within `max_distance` of it. |
+
+| Field | Meaning | Default |
+|---|---|---|
+| `Synchronization::data_factor` | 0 puts the character on the capsule, code-driven; 1 follows root motion and pulls the capsule to it, data-driven | 1.0 |
+| `Adjustment::by_velocity` | cut each correction to its ratio of this frame's root motion, so a standing character is not dragged | on |
+| `Adjustment::position_halflife`, `rotation_halflife` | seconds to close half the gap | 0.1 s, 0.2 s |
+| `Adjustment::position_max_ratio`, `rotation_max_ratio` | the most a correction may be, as a ratio of this frame's root motion, with `by_velocity` | 0.5 |
+| `Clamp::max_distance` | the furthest the character gets from the capsule, on the plane | 0.15 m |
+| `Clamp::max_angle` | the furthest its yaw gets from the simulation's | `FRAC_PI_2` radians |
+
+`CharacterDisplacement` defaults to `Adjustment`.
+
+A clip whose root does not move gives no root motion, so a `Clamp` or
+`Adjustment` character on such clips stands still while the capsule walks off,
+as far as the method lets it. Such a game wants `Synchronization { data_factor:
+0.0 }`.
+
+### Height, pull and yaw
+
+Height is always the capsule's, in every method. The vertical part of root
+motion is ignored, as is any turn out of yaw.
+
+Only `Synchronization` moves the capsule. `apply_character_displacement` sets
+the simulation's pull to the offset from the capsule to the target each frame,
+and every other method leaves it at zero. `drive_body` takes it and adds half
+of it as velocity, capped at `max_pull_speed`, so physics still resolves
+collisions. The capsule shows the body up to a step late, which is why it adds
+half: a full correction would be issued again before the last one showed. So
+the capsule closes the gap over a few steps, and lags the character by a little
+more than a fixed step.
+
+Yaw needs no pull, since the facing is not physics. Under `Synchronization` the
+system turns the simulation's facing and the facing it interpolates from by the
+same amount, so the simulation's yaw lands on the target while the spring keeps
+its velocity. At a `data_factor` of 0 that turn is zero and the spring is left
+to itself.
+
+The capsule's position is its interpolated `Transform`, and the simulation's
+yaw is interpolated between fixed steps the same way, so neither ticks at the
+fixed rate.
+
+### Transform order
+
+Writing the character's `Transform` before propagation means its skeleton and
+model reach rendering in the same frame. The two orderings on
+`apply_character_displacement` also put `propagate_global_transforms` after
+`animate_targets` in every `App` with both `MotionMatchingPlugin` and
+`AnimationPlugin`, so bones reach their globals a frame sooner there than in an
+`App` with `AnimationPlugin` alone.
+
+The system is not marked `.at_preview_time()`, since a preview has no physics.
+Its orderings still hold there, so a preview has the same transform order.

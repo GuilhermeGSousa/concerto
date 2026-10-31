@@ -84,19 +84,19 @@ pub struct DisplacementSimulation(pub Entity);
 
 /// Where a body stands and how it faces, in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Placement {
-    pub position: Vec3,
-    pub rotation: Quat,
+pub(crate) struct Placement {
+    pub(crate) position: Vec3,
+    pub(crate) rotation: Quat,
 }
 
 /// A character's placement for this frame, and the world-space offset on the plane that takes the capsule to it.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Displaced {
-    pub character: Placement,
-    pub pull: Vec3,
+pub(crate) struct Displaced {
+    pub(crate) character: Placement,
+    pub(crate) pull: Vec3,
 }
 
-fn yaw_of(rotation: Quat) -> Quat {
+pub(crate) fn yaw_of(rotation: Quat) -> Quat {
     let twist = Quat::from_xyzw(0.0, rotation.y, 0.0, rotation.w);
     if twist.length_squared() < f32::EPSILON {
         return Quat::IDENTITY;
@@ -152,7 +152,7 @@ impl Clamp {
 
 impl CharacterDisplacement {
     /// Moves `character` by `delta`, this frame's world-space root motion, and reconciles it with `capsule` by this method.
-    pub fn displace(
+    pub(crate) fn displace(
         &self,
         dt: f32,
         capsule: Placement,
