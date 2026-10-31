@@ -292,7 +292,7 @@ impl SetValue {
                 };
                 fields
                     .into_iter()
-                    .find(|(name, _)| name == segment)
+                    .find(|(name, _)| *segment == name.as_str())
                     .map(|(_, value)| value)
             })
             .ok_or_else(|| EditError::Rejected.to_string())
@@ -397,8 +397,8 @@ pub(crate) fn set_value(on: On<SetValue>, world: &mut World) {
 }
 
 fn property_name(world: &World, component: TypeId, path: &PropertyPath) -> String {
-    std::iter::once(component_name(world, component))
-        .chain(path.segments().iter().copied())
+    std::iter::once(component_name(world, component).to_string())
+        .chain(path.segments().iter().map(ToString::to_string))
         .collect::<Vec<_>>()
         .join(".")
 }

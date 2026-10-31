@@ -471,6 +471,7 @@ mod tests {
         assets::{asset_server::AssetServer, registry::AssetRegistry},
         transform::Transform,
     };
+    use concerto_reflect::PathSegment;
     use glam::Vec3;
 
     struct Sending {
@@ -1004,7 +1005,15 @@ mod tests {
             .into_iter()
             .map(|property| {
                 (
-                    property.path.segments().to_vec(),
+                    property
+                        .path
+                        .segments()
+                        .iter()
+                        .map(|segment| match *segment {
+                            PathSegment::Field(name) => name,
+                            PathSegment::Index(index) => panic!("element {index} of no list"),
+                        })
+                        .collect(),
                     property.editor_type.expect("every row has an editor"),
                 )
             })

@@ -445,12 +445,12 @@ fn registered_component(types: &TypeRegistry, name: &str) -> Result<Named, ToolE
 }
 
 fn shown_path(path: &PropertyPath) -> String {
-    path.segments().join(".")
+    path.to_string()
 }
 
 fn property_name(component: &str, path: &PropertyPath) -> String {
-    std::iter::once(component)
-        .chain(path.segments().iter().copied())
+    std::iter::once(component.to_string())
+        .chain(path.segments().iter().map(ToString::to_string))
         .collect::<Vec<_>>()
         .join(".")
 }

@@ -864,7 +864,7 @@ pub(super) fn component_json(
                 .iter()
                 .map(|listed| {
                     let mut path = Map::new();
-                    path.insert("path".into(), listed.path.segments().join(".").into());
+                    path.insert("path".into(), listed.path.to_string().into());
                     path.insert(
                         "adapter".into(),
                         (!listed.names_enum && listed.row.is_some_and(Property::has_editor)).into(),

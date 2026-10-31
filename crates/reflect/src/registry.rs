@@ -186,3 +186,8 @@ impl TypeData for ReflectEnumInfo {}
 pub struct ReflectOption;
 
 impl TypeData for ReflectOption {}
+
+/// Marks a type whose values are a [`List`](crate::List).
+pub struct ReflectList;
+
+impl TypeData for ReflectList {}

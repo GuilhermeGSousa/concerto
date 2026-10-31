@@ -13,7 +13,7 @@ use concerto_ecs::{
     system::BoxedSystem,
 };
 use concerto_foundation::transform::Transform;
-use concerto_reflect::{GetTypeRegistration, ReflectDefault};
+use concerto_reflect::{GetTypeRegistration, PathSegment, ReflectDefault};
 use concerto_ui::{node::UIBox, text::UIText};
 use glam::{Vec2, Vec3};
 
@@ -571,6 +571,29 @@ fn a_tuple_index_takes_the_label_of_the_nearest_named_segment() {
     assert_eq!(
         label_for(&PropertyPath::new(["fog", "0", "density"])),
         "Density"
+    );
+}
+
+#[test]
+fn a_list_element_takes_the_label_of_its_index() {
+    let samples = PathSegment::Field("samples");
+    let element = PathSegment::Index(2);
+    assert_eq!(label_for(&PropertyPath::new([samples, element])), "2");
+    assert_eq!(
+        label_for(&PropertyPath::new([
+            samples,
+            element,
+            PathSegment::Field("0")
+        ])),
+        "2"
+    );
+    assert_eq!(
+        label_for(&PropertyPath::new([
+            samples,
+            element,
+            PathSegment::Field("max_weight")
+        ])),
+        "Max weight"
     );
 }
 

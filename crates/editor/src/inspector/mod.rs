@@ -12,7 +12,7 @@ use concerto_ecs::{
 };
 use std::any::TypeId;
 
-use concerto_reflect::PropertyPath;
+use concerto_reflect::{PathSegment, PropertyPath};
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
@@ -81,9 +81,11 @@ fn label_for(path: &PropertyPath) -> String {
         .segments()
         .iter()
         .rev()
-        .find(|segment| segment.parse::<usize>().is_err())
-        .copied()
-        .unwrap_or(path.name())
+        .find(|segment| match segment {
+            PathSegment::Field(name) => name.parse::<usize>().is_err(),
+            PathSegment::Index(_) => true,
+        })
+        .map_or(path.name().to_string(), ToString::to_string)
         .split('_')
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()

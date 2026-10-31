@@ -1,8 +1,8 @@
 use std::{any::TypeId, sync::Mutex};
 
 use concerto_reflect::{
-    FromType, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectOption, ReflectRef,
-    TypeData, TypeRegistry,
+    FromType, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectList,
+    ReflectOption, ReflectRef, TypeData, TypeRegistry,
 };
 
 static WARNINGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
@@ -378,6 +378,35 @@ fn an_option_registers_none_and_some_and_the_option_marker() {
         ["None", "Some"]
     );
     assert!(registry.get_type_data::<ReflectOption>(id).is_some());
+}
+
+#[test]
+fn a_vec_field_registers_as_a_list_with_nothing_declared() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Tree>();
+
+    assert!(
+        registry
+            .get_type_data::<ReflectList>(TypeId::of::<Vec<Twig>>())
+            .is_some()
+    );
+    assert!(
+        registry
+            .get_type_data::<ReflectList>(TypeId::of::<Tree>())
+            .is_none()
+    );
+}
+
+#[test]
+fn an_option_is_not_a_list() {
+    let mut registry = TypeRegistry::default();
+    registry.register::<Option<f32>>();
+
+    assert!(
+        registry
+            .get_type_data::<ReflectList>(TypeId::of::<Option<f32>>())
+            .is_none()
+    );
 }
 
 #[test]
