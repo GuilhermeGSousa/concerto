@@ -723,9 +723,10 @@ with `EditError::MissingAssets`. That is a limit on handles: the editor's server
 knows only what its own `App` registered, which is `RenderPlugin`'s `Mesh`,
 `Texture` and `Skeleton` and whatever an extension adds with `register_asset`.
 So a value holding another handle type cannot take a picker edit, even when its
-types come from a preview that knows the asset. A commit queued before the editor registrations changed is
-refused and reported, where a component's is only logged. The outcome is one
-`Hosted<PropertyCommitted>`, naming the value's document and not the active one,
+types come from a preview that knows the asset. A commit queued before the
+editor registrations changed is refused and reported, where a component's is
+only logged. The outcome is one `Hosted<PropertyCommitted>`, naming the value's
+document and not the active one,
 so a tab switch cannot credit an edit to the wrong tab. A refusal also sets that
 document's `EditorDocument::status`, which only a scene's chrome shows by itself,
 so an asset editor puts it in one of its own panels. Nothing else happens by
