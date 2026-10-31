@@ -13,9 +13,10 @@ use concerto_ecs::{
     system::BoxedSystem,
 };
 use concerto_foundation::transform::Transform;
-use concerto_reflect::{GetTypeRegistration, PathSegment, ReflectDefault};
+use concerto_reflect::{GetTypeRegistration, PathSegment, Reflect, ReflectDefault};
 use concerto_ui::{node::UIBox, text::UIText};
 use glam::{Vec2, Vec3};
+use std::{any::Any, sync::Arc};
 
 struct Inspecting {
     f: SceneFixture,
@@ -284,6 +285,18 @@ fn rows(world: &mut World) -> Vec<(Entity, PropertyRow)> {
         .collect()
 }
 
+fn plain_rows(world: &mut World) -> Vec<(Entity, PlainRow)> {
+    let mut query = world.query::<(Entity, &PlainRow), ()>();
+    query
+        .iter(world)
+        .map(|(entity, row)| (entity, row.clone()))
+        .collect()
+}
+
+fn component_of(row: &PropertyRow) -> ComponentTarget {
+    row.address.target.component().unwrap()
+}
+
 #[derive(Component, concerto_reflect::Reflect, Default)]
 #[reflect(SceneComponent)]
 struct Tag;
@@ -315,7 +328,7 @@ fn lists_reflected_and_scene_components_as_queryable_cards_and_hides_plumbing() 
     assert!(
         rows(&mut w.f.world)
             .iter()
-            .all(|(_, row)| row.component == TypeId::of::<Transform>())
+            .all(|(_, row)| component_of(row).component == TypeId::of::<Transform>())
     );
 }
 
@@ -406,7 +419,7 @@ fn value_changes_keep_numeric_rows_and_registering_an_adapter_rebuilds_the_stack
     w.update();
     let translation = rows(&mut w.f.world)
         .iter()
-        .find(|(_, row)| row.path.name() == "translation")
+        .find(|(_, row)| row.address.path.name() == "translation")
         .unwrap()
         .0;
     assert!(
@@ -447,7 +460,7 @@ fn value_changes_keep_numeric_rows_and_registering_an_adapter_rebuilds_the_stack
     );
     let root_rows = rows(&mut w.f.world);
     assert_eq!(root_rows.len(), 1);
-    assert_eq!(root_rows[0].1.path, PropertyPath::default());
+    assert_eq!(root_rows[0].1.address.path, PropertyPath::default());
     let mut texts = w.f.world.query::<&UIText, ()>();
     assert!(
         texts
@@ -464,7 +477,7 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     let original_rows = rows(&mut w.f.world);
     let row = &original_rows
         .iter()
-        .find(|(_, row)| row.path.name() == "translation")
+        .find(|(_, row)| row.address.path.name() == "translation")
         .unwrap()
         .1;
     let commit = PropertyCommit::new::<Vec3, numeric::NumericFields>(
@@ -498,7 +511,11 @@ fn switching_selection_despawns_old_widgets_but_queued_commits_keep_their_target
     assert_eq!(w.get::<Transform>(a).unwrap().translation.x, 5.0);
     assert_eq!(w.get::<Transform>(b).unwrap().translation.x, 0.0);
     assert!(w.f.unsaved(w.document));
-    assert!(rows(&mut w.f.world).iter().all(|(_, row)| row.entity == b));
+    assert!(
+        rows(&mut w.f.world)
+            .iter()
+            .all(|(_, row)| component_of(row).entity == b)
+    );
     w.select(None);
     w.update();
     assert!(cards(&mut w.f.world).is_empty());
@@ -524,9 +541,8 @@ fn unsupported_values_build_an_explicit_read_only_row() {
     });
     w.select(Some(entity));
     w.update();
-    let all_rows = rows(&mut w.f.world);
-    assert_eq!(all_rows.len(), 1);
-    assert!(!all_rows[0].1.has_editor());
+    assert!(rows(&mut w.f.world).is_empty());
+    assert_eq!(plain_rows(&mut w.f.world).len(), 1);
     let mut texts = w.f.world.query::<&UIText, ()>();
     assert!(
         texts
@@ -676,12 +692,12 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
     let original = rows(&mut w.f.world);
     let a = original
         .iter()
-        .find(|(_, row)| row.path.name() == "a")
+        .find(|(_, row)| row.address.path.name() == "a")
         .unwrap()
         .0;
     let b = original
         .iter()
-        .find(|(_, row)| row.path.name() == "b")
+        .find(|(_, row)| row.address.path.name() == "b")
         .unwrap()
         .0;
     let body =
@@ -711,6 +727,7 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
             w.f.world
                 .get_component_for_entity::<PropertyRow>(row)
                 .unwrap()
+                .address
                 .path
                 .name()
         })
@@ -724,7 +741,7 @@ fn changed_property_layout_recreates_rows_in_visitor_order() {
     assert!(reordered.iter().all(|&row| !w.f.world.entity_is_valid(row)));
     let remaining = rows(&mut w.f.world);
     assert_eq!(remaining.len(), 1);
-    assert_eq!(remaining[0].1.path.name(), "a");
+    assert_eq!(remaining[0].1.address.path.name(), "a");
     assert_eq!(body_rows(&w.f.world), [remaining[0].0]);
 }
 
@@ -902,7 +919,7 @@ fn a_card_built_for_a_component_unchanged_since_the_last_run_reads_it_in_full() 
 
     let shown: Vec<Entity> = rows(&mut w.f.world)
         .into_iter()
-        .map(|(_, row)| row.entity)
+        .map(|(_, row)| component_of(&row).entity)
         .collect();
     assert_eq!(shown, [other; 3]);
 }
@@ -1214,7 +1231,7 @@ fn readonly_components_are_edited_and_removed_but_never_added() {
     assert!(
         rows(&mut w.f.world)
             .iter()
-            .any(|(_, row)| row.component == lens)
+            .any(|(_, row)| component_of(row).component == lens)
     );
     let mut buttons =
         w.f.world
@@ -1280,7 +1297,7 @@ fn edits_still_queued_when_the_edit_target_changes_are_never_sent() {
     w.update();
     let row = rows(&mut w.f.world)
         .into_iter()
-        .find(|(_, row)| row.path.name() == "translation")
+        .find(|(_, row)| row.address.path.name() == "translation")
         .unwrap()
         .1;
     w.f.world
@@ -1329,7 +1346,7 @@ fn a_commit_still_queued_when_a_replacement_is_ready_refuses_it_and_is_sent() {
     w.update();
     let row = rows(&mut w.f.world)
         .into_iter()
-        .find(|(_, row)| row.path.name() == "translation")
+        .find(|(_, row)| row.address.path.name() == "translation")
         .unwrap()
         .1;
     let before = w.f.scene_world(w.document).id();
@@ -1694,8 +1711,14 @@ mod variant_rows {
         let path = PropertyPath::new(path.iter().copied());
         rows(world)
             .into_iter()
-            .find(|(_, row)| row.path == path)
+            .find(|(_, row)| row.address.path == path)
             .map(|(entity, _)| entity)
+            .or_else(|| {
+                plain_rows(world)
+                    .into_iter()
+                    .find(|(_, row)| row.path == path)
+                    .map(|(entity, _)| entity)
+            })
     }
 
     pub(super) fn children(world: &World, entity: Entity) -> Vec<Entity> {
@@ -2170,6 +2193,7 @@ mod list_rows {
 
         let world = &mut w.f.world;
         assert_eq!(editor_of(world, &[ENTRIES, PathSegment::Index(1)]), None);
+        assert_eq!(plain_rows(world).len(), 2);
         assert_eq!(
             editor_of(world, &[ENTRIES, PathSegment::Index(1), ON]),
             Some(TypeId::of::<boolean::BoolCheckbox>())
@@ -2518,8 +2542,8 @@ mod color_rows {
         let path = PropertyPath::new(path.iter().copied());
         rows(world)
             .into_iter()
-            .find(|(_, row)| row.path == path)
-            .and_then(|(_, row)| row.editor_type)
+            .find(|(_, row)| row.address.path == path)
+            .map(|(_, row)| row.editor_type)
     }
 
     fn light_color(w: &Inspecting, entity: Entity) -> Color {
@@ -2761,7 +2785,7 @@ fn a_non_color_numeric_row_keeps_the_standard_node() {
     let theme = UITheme::default();
     let (translation, _) = rows(&mut w.f.world)
         .into_iter()
-        .find(|(_, row)| row.path.name() == "translation")
+        .find(|(_, row)| row.address.path.name() == "translation")
         .unwrap();
 
     assert_eq!(
@@ -2888,4 +2912,412 @@ fn the_component_stack_leaves_room_for_the_scrollbar() {
         name_margin.right, padding.right,
         "the name field ends where the component cards end"
     );
+}
+
+struct HeldElsewhere;
+
+impl PropertyTarget for HeldElsewhere {
+    fn name(&self) -> String {
+        "Held elsewhere".to_string()
+    }
+    fn world(&self) -> TargetWorld {
+        TargetWorld::Editor
+    }
+    fn read(&self, _: &World, _: &mut dyn FnMut(&dyn Reflect)) -> bool {
+        false
+    }
+    fn edit(&self, _: &mut World, _: &mut dyn FnMut(&mut dyn Reflect)) -> bool {
+        false
+    }
+    fn types(&self, _: &World) -> Option<AppTypeRegistry> {
+        None
+    }
+}
+
+fn address_of(target: Arc<dyn PropertyTarget>) -> PropertyAddress {
+    PropertyAddress {
+        target,
+        path: PropertyPath::default(),
+        type_id: TypeId::of::<f32>(),
+    }
+}
+
+#[test]
+fn addresses_share_a_target_through_one_arc_or_an_equal_component() {
+    let mut world = World::new();
+    let entity = world.spawn(());
+    let other = world.spawn(());
+    let component = |entity, component| address_of(Arc::new(ComponentTarget { entity, component }));
+    let transform = TypeId::of::<Transform>();
+
+    let shown = component(entity, transform);
+    assert!(shown.reaches(&component(entity, transform).target));
+    assert!(!shown.reaches(&component(other, transform).target));
+    assert!(!shown.reaches(&component(entity, TypeId::of::<Tag>()).target));
+
+    let held: Arc<dyn PropertyTarget> = Arc::new(HeldElsewhere);
+    assert!(address_of(held.clone()).reaches(&held));
+    assert!(!address_of(Arc::new(HeldElsewhere)).reaches(&held));
+    assert!(!address_of(Arc::new(HeldElsewhere)).reaches(&shown.target));
+}
+
+#[test]
+fn a_component_target_reaches_its_component_until_it_is_gone() {
+    let (mut w, entity, _) = inspecting();
+    let target = ComponentTarget {
+        entity,
+        component: TypeId::of::<Transform>(),
+    };
+    let moved = Vec3::new(1.0, 2.0, 3.0);
+    assert!(target.edit(w.scene(), &mut |value| {
+        (value as &mut dyn Any)
+            .downcast_mut::<Transform>()
+            .unwrap()
+            .translation = moved;
+    }));
+    assert_eq!(w.get::<Transform>(entity).unwrap().translation, moved);
+
+    let mut read = None;
+    assert!(target.read(w.scene(), &mut |value| {
+        read = (value as &dyn Any)
+            .downcast_ref::<Transform>()
+            .map(|transform| transform.translation);
+    }));
+    assert_eq!(read, Some(moved));
+
+    w.scene().despawn(entity);
+    assert!(!target.read(w.scene(), &mut |_| panic!("the entity is gone")));
+    assert!(!target.edit(w.scene(), &mut |_| panic!("the entity is gone")));
+}
+
+mod value_cards {
+    use super::*;
+    use crate::asset_editor::{AssetEditor, AssetEditorRegistry};
+    use concerto_foundation::assets::Asset;
+
+    #[derive(Reflect, Default)]
+    #[reflect(Default)]
+    enum Mode {
+        #[default]
+        Calm,
+        Loud,
+    }
+
+    #[derive(Reflect, Default)]
+    #[reflect(Default)]
+    struct Part {
+        gain: f32,
+    }
+
+    #[derive(Reflect, Default)]
+    struct Tuning {
+        gain: f32,
+        parts: Vec<Part>,
+        label: String,
+        mode: Mode,
+    }
+
+    #[derive(Component)]
+    struct Held(Tuning);
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Tuned;
+    impl Asset for Tuned {
+        fn name() -> &'static str {
+            "Tuned"
+        }
+    }
+
+    fn tuning_of(document: Entity) -> Arc<dyn PropertyTarget> {
+        Arc::new(DocumentValue::<Held> {
+            name: "Tuning".into(),
+            document,
+            read: Box::new(|held| Some(&held.0)),
+            edit: Box::new(|held| Some(&mut held.0)),
+        })
+    }
+
+    #[derive(Default)]
+    struct TunedEditor;
+    impl AssetEditor for TunedEditor {
+        fn build(&self, editor: &mut EntityCommandQueue) {
+            let document = editor.entity();
+            editor.insert((
+                Held(Tuning {
+                    gain: 2.0,
+                    parts: vec![Part { gain: 1.0 }],
+                    label: "Lead".into(),
+                    mode: Mode::Loud,
+                }),
+                InspectedValues(vec![tuning_of(document)]),
+            ));
+        }
+    }
+
+    struct Valued {
+        w: Inspecting,
+        stack: Entity,
+        document: Entity,
+        systems: Vec<BoxedSystem>,
+    }
+
+    impl Valued {
+        fn update(&mut self) {
+            for system in &mut self.systems {
+                system.run_and_apply((), &mut self.w.f.world);
+            }
+            self.w.tick();
+        }
+        fn show_value(&mut self) {
+            self.w.f.activate(Some(self.document));
+            self.update();
+        }
+        fn show_scene(&mut self) {
+            self.w.f.activate(Some(self.w.document));
+            self.update();
+        }
+        fn world(&mut self) -> &mut World {
+            &mut self.w.f.world
+        }
+        fn stacked(&self) -> Vec<Entity> {
+            self.w
+                .f
+                .world
+                .get_component_for_entity::<Children>(self.stack)
+                .map(|children| children.iter().copied().collect())
+                .unwrap_or_default()
+        }
+        fn value_cards(&mut self) -> Vec<Entity> {
+            let world = self.world();
+            world
+                .query::<(Entity, &ValueCard), ()>()
+                .iter(world)
+                .map(|(entity, _)| entity)
+                .collect()
+        }
+        fn row_at(&mut self, depth: usize, name: &str) -> (Entity, PropertyRow) {
+            rows(self.world())
+                .into_iter()
+                .find(|(_, row)| {
+                    row.address.path.depth() == depth && row.address.path.name() == name
+                })
+                .unwrap_or_else(|| panic!("no row {name} at depth {depth}"))
+        }
+        fn widget_count(&self, row: Entity) -> usize {
+            self.w
+                .f
+                .world
+                .get_component_for_entity::<Children>(row)
+                .map_or(0, |children| children.iter().count())
+        }
+        fn set_gain(&mut self, gain: f32) {
+            let document = self.document;
+            self.world()
+                .get_component_for_entity_mut::<Held>(document)
+                .unwrap()
+                .0
+                .gain = gain;
+        }
+    }
+
+    fn valued_in_order(value_cards_first: bool) -> Valued {
+        let (mut w, _, stack) = inspecting();
+        let world = &mut w.f.world;
+        world.insert_resource(InspectedSnapshots::default());
+        world
+            .get_resource_mut::<AssetEditorRegistry>()
+            .unwrap()
+            .register::<Tuned, TunedEditor>()
+            .unwrap();
+        world.register_type::<Tuning>();
+        let document = w.f.request_kind(Tuned::name());
+        let (first, second) = (
+            sync_inspected_components.into_boxed_system(),
+            sync_value_cards.into_boxed_system(),
+        );
+        let (first, second) = if value_cards_first {
+            (second, first)
+        } else {
+            (first, second)
+        };
+        let mut systems = vec![
+            collect_inspector_data.into_boxed_system(),
+            values::refresh_inspected_values.into_boxed_system(),
+            first,
+            second,
+            build_property_widgets.into_boxed_system(),
+            build_value_widgets.into_boxed_system(),
+        ];
+        for system in &mut systems {
+            system.initialize(&mut w.f.world);
+        }
+        Valued {
+            w,
+            stack,
+            document,
+            systems,
+        }
+    }
+
+    fn valued() -> Valued {
+        valued_in_order(false)
+    }
+
+    #[test]
+    fn value_systems_do_not_request_exclusive_access() {
+        for system in [
+            values::refresh_inspected_values.into_boxed_system(),
+            sync_value_cards.into_boxed_system(),
+            build_value_widgets.into_boxed_system(),
+        ] {
+            let mut meta = concerto_ecs::system::meta::SystemMetadata::default();
+            let mut access = concerto_ecs::system::access::SystemAccess::default();
+            system.fill_access(&mut meta, &mut access);
+            assert!(!access.is_exclusive());
+        }
+    }
+
+    #[test]
+    fn a_value_card_is_all_the_stack_holds_and_has_no_menu() {
+        let mut v = valued();
+
+        v.show_value();
+
+        assert_eq!(v.stacked(), v.value_cards());
+        assert_eq!(v.value_cards().len(), 1);
+        assert!(cards(v.world()).is_empty());
+        let world = v.world();
+        assert_eq!(
+            world
+                .query::<&component_menu::ComponentMenuButton, ()>()
+                .iter(world)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn each_tab_keeps_its_own_cards_in_either_order_of_the_frame() {
+        for value_cards_first in [false, true] {
+            let mut v = valued_in_order(value_cards_first);
+            for _ in 0..2 {
+                v.show_scene();
+                assert_eq!(v.value_cards().len(), 0, "{value_cards_first}");
+                assert_eq!(cards(v.world()).len(), 1, "{value_cards_first}");
+                let translation = v.row_at(1, "translation").0;
+                assert!(v.widget_count(translation) > 1, "{value_cards_first}");
+
+                v.show_value();
+                assert_eq!(v.stacked(), v.value_cards(), "{value_cards_first}");
+                assert_eq!(v.value_cards().len(), 1, "{value_cards_first}");
+                assert!(cards(v.world()).is_empty(), "{value_cards_first}");
+                let gain = v.row_at(1, "gain").0;
+                assert!(v.widget_count(gain) > 1, "{value_cards_first}");
+            }
+        }
+    }
+
+    #[test]
+    fn value_cards_are_left_alone_while_a_scene_is_the_edit_target() {
+        let mut v = valued();
+        v.show_value();
+        let card = v.value_cards()[0];
+        let scene = v.w.document;
+        v.w.f.activate(Some(scene));
+        v.w.f.world.insert_resource(InspectedSnapshots::default());
+
+        run(&mut v.w.f.world, sync_value_cards);
+
+        assert!(v.w.f.world.entity_is_valid(card));
+    }
+
+    #[test]
+    fn a_heading_on_a_value_keeps_its_remove_button_and_only_edited_rows_carry_property_row() {
+        let mut v = valued();
+
+        v.show_value();
+
+        let plain = plain_rows(v.world());
+        let heading = plain
+            .iter()
+            .find(|(_, row)| row.path.depth() == 2 && row.path.name() == "parts")
+            .expect("the element's heading is plain")
+            .0;
+        assert!(v.widget_count(heading) > 1);
+        assert!(
+            plain.iter().any(|(_, row)| row.path.name() == "label"),
+            "a string has no editor"
+        );
+        let mode = v.row_at(1, "mode").0;
+        assert!(v.widget_count(mode) > 1);
+        let list = v.row_at(1, "parts").0;
+        assert!(v.widget_count(list) > 1);
+        for (_, row) in rows(v.world()) {
+            assert_eq!(row.address.target.world(), TargetWorld::Editor);
+            assert_eq!(row.address.target.document(), Some(v.document));
+        }
+    }
+
+    #[test]
+    fn a_value_with_no_registry_shows_what_needs_one_as_unsupported() {
+        let mut v = valued();
+        v.world().remove_resource::<AppTypeRegistry>();
+
+        v.show_value();
+
+        let plain = plain_rows(v.world());
+        assert!(plain.iter().any(|(_, row)| row.path.name() == "mode"));
+        assert!(
+            v.row_at(1, "gain")
+                .1
+                .address
+                .target
+                .types(v.world())
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_new_value_reaches_the_rows_a_refresh_keeps() {
+        let mut v = valued();
+        v.show_value();
+        let card = v.value_cards();
+        let (gain, _) = v.row_at(1, "gain");
+        let before = v
+            .world()
+            .get_component_for_entity::<PropertyRowValue>(gain)
+            .cloned()
+            .unwrap();
+
+        v.set_gain(9.0);
+        v.update();
+        assert!(
+            v.world().get_component_for_entity::<PropertyRowValue>(gain) == Some(&before),
+            "nothing reads a value that nothing said had changed"
+        );
+
+        v.world().trigger(RefreshInspector);
+        v.update();
+
+        assert_eq!(v.row_at(1, "gain").0, gain);
+        assert_eq!(v.value_cards(), card);
+        assert!(v.world().get_component_for_entity::<PropertyRowValue>(gain) != Some(&before));
+    }
+
+    #[test]
+    fn registering_an_editor_rebuilds_a_value_cards_rows_and_keeps_the_card() {
+        let mut v = valued();
+        v.show_value();
+        let card = v.value_cards();
+        let (gain, row) = v.row_at(1, "gain");
+
+        registry_mut(v.world()).register_property_editor::<Transform, WholeTransform>();
+        v.update();
+
+        assert_eq!(v.value_cards(), card);
+        let (rebuilt, new_row) = v.row_at(1, "gain");
+        assert_ne!(rebuilt, gain);
+        assert_ne!(new_row.registry_tick(), row.registry_tick());
+        assert!(v.widget_count(rebuilt) > 1);
+    }
 }

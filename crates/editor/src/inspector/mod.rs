@@ -3,7 +3,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
     command::CommandQueue,
     component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
@@ -24,8 +24,8 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::hosted::{EditTarget, EditWorld, EditWorldSignals};
-use crate::tools::{scene::SceneRoot, selection::Selection};
+use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, HostedEventsAppExt};
+use crate::tools::{edits::PropertyCommitted, scene::SceneRoot, selection::Selection};
 
 mod add_component;
 mod boolean;
@@ -37,6 +37,8 @@ mod numeric;
 mod registry;
 mod rows;
 mod sync;
+mod target;
+mod values;
 mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
@@ -61,8 +63,17 @@ use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
 pub use rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    EditContext, EditError, PlainRow, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyKind, PropertyRow, PropertyRowValue,
+};
+pub use target::{ComponentTarget, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld};
+pub use values::{
+    CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ValueCard, ValueSnapshot,
+};
+pub(crate) use values::{apply_value_commit, report_value_edit};
+use values::{
+    build_value_widgets, commit_value, read_inspected_values, refresh_inspected_values,
+    refresh_on_new_app, send_value_commits, sync_value_cards,
 };
 
 pub const PANEL_ID: &str = "concerto.ecs";
@@ -118,14 +129,17 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(PropertyCommits::default());
         app.insert_resource(ComponentEdits::default());
         app.insert_resource(FocusNameField::default());
+        app.insert_resource(InspectedSnapshots::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
             region: Region::Side,
         });
+        app.forward_hosted_event::<PropertyCommitted>();
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
         app.add_system(Update, send_property_commits)
+            .add_system(Update, send_value_commits)
             .add_system(Update, send_component_edits);
         app.add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
@@ -133,6 +147,15 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(
+                LateUpdate,
+                (
+                    refresh_inspected_values,
+                    sync_value_cards,
+                    build_value_widgets,
+                )
+                    .chain(),
+            )
             .add_system(LateUpdate, add_highlighted_component)
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
@@ -153,6 +176,9 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(add_component::forget_scene);
     world.add_listener(component_menu::forget_scene);
     world.add_listener(variants::forget_scene);
+    world.add_listener(read_inspected_values);
+    world.add_listener(refresh_on_new_app);
+    world.add_listener(commit_value);
 }
 
 fn forget_scene(
@@ -164,8 +190,8 @@ fn forget_scene(
     if *data != InspectorData::default() {
         *data = InspectorData::default();
     }
-    if !commits.0.is_empty() {
-        commits.0.clear();
+    if commits.holds_for(TargetWorld::EditTarget) {
+        commits.take_for(TargetWorld::EditTarget);
     }
     if !edits.0.is_empty() {
         edits.0.clear();

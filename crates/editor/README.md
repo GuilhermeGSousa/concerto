@@ -63,8 +63,9 @@ edits keeps them by saving first, with `save`.
 ### Tools
 
 `status` reports the project and its status line, the open documents, the
-active one, the selection in the edited scene, the viewport's size, and whether
-the editor is busy. `list_assets` lists the project's assets as
+active one, the selection in the edited scene, the viewport's size, whether the
+editor is busy, and under `values:` the names of the front document's inspected
+values, or `none`. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
 call that shows the rest. `scene_tree` shows the edited scene, or while a game
@@ -96,8 +97,8 @@ camera's pose while editing; with `editor`, the whole editor, panels included,
 at its window size. A picture longer than `max_edge` pixels (1024) on either
 side is scaled down to it, keeping its shape; a smaller one keeps its size. It
 is the last frame drawn: the viewport's picture changes only when the edit
-`App` steps. `scene_tree`, `find_entities`, `inspect` and `screenshot`'s
-viewport need an open scene. These six look.
+`App` steps. `scene_tree`, `find_entities`, `inspect` of an entity and
+`screenshot`'s viewport need an open scene. These six look.
 
 `open_project` opens `path` and answers once the catalogue is read.
 `open_asset` opens `asset`, an address or an id from `list_assets`, in its
@@ -170,7 +171,33 @@ for its exact type, answers `not_a_list`, and an index past the end answers
 `index_out_of_range`, naming the length.
 A component that `inspect` lists as one value, a marker or an opaque type, has
 the path `""`. The scene root is the editor's wrapper and none of these change
-it. All nine need an open scene.
+it. All nine need an open scene, unless a call names a `target`.
+
+`inspect`, `set_property`, `list_push` and `list_remove` also reach a document's
+values, the ones its asset editor publishes through `InspectedValues` (see
+[Document values](#document-values)). `target` names a value of the front
+document, one of the names `status` lists under `values:`, and takes the place
+of `entity` and `component`, or for `inspect` of `entity` and `components`. A
+name matches exactly, unlike a component's. These calls need no open scene and
+answer straight away, with no scene as the edit target. `target` with any of
+those arguments, neither `target` nor `entity`, and `entity` without a
+`component` the tool requires each answer `invalid_arguments`, a name the front
+document does not have answers `unknown_target`, listing the names it has, and a
+name two of its values share answers `ambiguous_target`.
+
+`inspect` with `target` answers in a component's form with no entity: `name`,
+`type`, `value` and `paths`. A value that is gone, such as one its document has
+not loaded, answers `{name, value: null, unavailable: true}`. This is the one
+read that uses commands, because its answer needs the whole world and a
+read-only tool's system must only read: its system is added with `add_system`
+to `McpServe` and `McpRead`, after `receive_read_only_calls`, not with
+`add_tool`.
+`set_property` takes a value as it takes a component: a path with an adapter
+goes through it, any other path is written from the JSON, and the answer is
+`inspect`'s form. A JSON write refuses a value whose root type is not registered
+in the registry its target names. `list_push` and `list_remove` answer the new
+length. An edit reports `Hosted<PropertyCommitted>`, as one from the inspector
+does, and what it means to the document is up to its asset editor.
 
 `save` writes `document`, or the active document without one, to its file as
 Ctrl+S does, and answers `Saved <address>.` once it is written. A document with
@@ -230,13 +257,15 @@ A failed call is a tool result marked `isError` whose text is
 
 | Code | Meaning |
 | --- | --- |
-| `invalid_arguments` | The arguments do not match the tool's input schema |
+| `invalid_arguments` | The arguments do not match the tool's input schema, or `target`, `entity`, `component` and `components` are given in a combination the tool does not take |
 | `no_project`, `no_scene`, `not_playing` | The tool needs an open project, an open scene, or a game playing |
 | `busy` | `open_project` while a project is opening, `save` of a scene still loading, or `screenshot` of a picture not drawn yet |
 | `unknown_entity`, `stale_entity` | The id names no live entity of the open scene, such as the editor's camera, or of the game while it plays; or a slot that now holds a newer one |
 | `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
-| `unknown_path` | The component has no such property path; the message lists those `inspect` shows |
+| `unknown_target` | The front document has no value of that name; the message lists those it has |
+| `ambiguous_target` | The front document has more than one value of that name |
+| `unknown_path` | The component or value has no such property path; the message lists those `inspect` shows |
 | `invalid_value` | The JSON does not decode to the property's type, whether an adapter edits the path or not; the message says why |
 | `not_editable` | The adapter that edits the path offers no value edit, or the path is under a list and its type has no JSON form and no registered `Default` |
 | `not_a_list` | `list_push` or `list_remove` on a path that is not a list, or on a `Vec` with an editor registered for its exact type |
@@ -536,7 +565,7 @@ document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
 scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
 `RevealEntity`, which the hierarchy scrolls to; and one outcome per applied
 edit signal: `EntityEdited { edit, result }`, whose result is the entity a
-create or duplicate made; `PropertyCommitted { row, result }`, whose refusal
+create or duplicate made; `PropertyCommitted { address, result }`, whose refusal
 is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
 `Refused` for any other reason; and
 `ComponentEdited { edit, result }`. A refused edit's result is the text its
@@ -544,14 +573,17 @@ is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
 the shape `inspect` reports, into the field at `path` of a component, or into
 the whole component when `path` is empty, with no inspector adapter involved,
-and reports `PropertyCommitted` (its row has no editor) and `SceneEdited` as a
+and reports `PropertyCommitted` and `SceneEdited` as a
 property commit does. Fields the JSON leaves out keep their values. Entity
 references are live entity ids such as `42v3`, asset handles are asset ids and
 load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors
 are their linear `[r, g, b, a]`. It refuses the scene root, an unknown path, a
 value that does not decode, and an entity or component that is not there, and
 a refused set leaves the component as it was. An outcome written by a signal reaches the editor a frame later, as
-any forwarded event does. `HostedAppEvents<E>` is the
+any forwarded event does. An edit of a document's value does not pass through a
+hosted `App`: its `Hosted<PropertyCommitted>` is written straight into the
+editor's world, naming the value's document, with no frame's lag.
+`HostedAppEvents<E>` is the
 system input that reads `E` from every hosted `App`, keeping one cursor per
 hosted world, and `forward_hosted_event::<E>()` forwards a type of your own.
 Whether the scene has unsaved edits is state kept in the edit `App`
@@ -589,7 +621,8 @@ Shift-F frames the scene.
 
 ## Custom property editors
 
-The inspector edits live component values through typed `PropertyEditor<T>`
+The inspector edits live reflected values, a scene's components and the
+[values a document holds](#document-values), through typed `PropertyEditor<T>`
 adapters. `concerto-reflect` provides structural access; adapters own snapshots,
 widgets, and validated edits. A registered editor can handle a whole struct or
 an opaque type, and can replace any built-in editor, including the numeric
@@ -629,10 +662,82 @@ again. An editor whose node depends on the snapshot must return `false` from
 `follows_snapshot`, so a value change rebuilds the row.
 
 A widget queues its edit on `PropertyCommits`. The inspector checks it against
-the widget registry and sends it to the scene, where the tools write the value.
+the widget registry and sends it to the world the value lives in. A component's
+edit goes to the scene, where the tools write the value.
 `PropertyEditor::apply` runs there, and its `EditContext` holds the scene
 world's `AssetServer` and `AssetRegistry`, which `AssetManagerPlugin` provides.
 A scene `App` without either refuses every edit with `EditError::MissingAssets`.
+A document's value is edited in the editor's world, as the next section says.
+
+### Document values
+
+The inspector shows and edits anything that implements `PropertyTarget`: a
+reflected value with a name, a `TargetWorld` saying where it lives, and ways to
+read and edit it. Entity cards use `ComponentTarget`. An asset editor shows a
+value its document holds with `DocumentValue<C>`, which reaches into `C`, a
+component on the document in the editor's world, and lists its targets in the
+`InspectedValues` component on the document:
+
+```rust,ignore
+fn build(&self, editor: &mut EntityCommandQueue) {
+    let document = editor.entity();
+    editor.insert((
+        DialogueDocument { dialogue: None },
+        InspectedValues(vec![Arc::new(DocumentValue::<DialogueDocument> {
+            name: "Dialogue".into(),
+            document,
+            read: Box::new(|held| held.dialogue.as_ref().map(|d| d as &dyn Reflect)),
+            edit: Box::new(|held| held.dialogue.as_mut().map(|d| d as &mut dyn Reflect)),
+        })]),
+    ));
+}
+```
+
+While that document is the active one, the panel shows one card per target,
+titled by its name, with no name field, add-component row or ⋯ menu, since those
+belong to entity cards. `read` or `edit` returning `None` means the value is
+gone: its card has no rows and an edit is refused with
+`EditError::MissingTarget`. The workspace shows the inspector with the document's
+`inspector` host above it, and the host stops growing while `InspectedValues` is
+there, so the two do not split the card in half. `InspectedValues` is replaced,
+never removed, because a removal is not noticed; an empty list shows no cards.
+
+A value's types are the ones registered in the document's preview `App` when it
+has one, because a game's types are registered there, and otherwise in the
+editor's `App`. `HostedApp::type_registry` gives the preview's. Register the
+value's type with `register_type` in the `App`s it is read through: what the
+registry does not hold reads "Unsupported type", and MCP refuses to write JSON
+into a value whose root type is missing.
+
+A value has no change detection and is not polled. It is read when an edit lands,
+when `ActiveEditor`, `InspectedValues` or the editor registrations change, when a
+preview arrives, and on the public signal `RefreshInspector`. Anything else that
+writes the value, such as a load replacing it, triggers `RefreshInspector`
+itself; the cost of forgetting is a panel that stays stale until the next edit.
+Targets that are the same `Arc`s keep their cards and their rows, so a focused
+field keeps its text. Different targets rebuild the cards and reset the scroll.
+
+A value's edit runs in the editor's world, and its `EditContext` holds the
+editor's `AssetServer` and `AssetRegistry`; without either every edit is refused
+with `EditError::MissingAssets`. That is a limit on handles: the editor's server
+knows only what its own `App` registered, which is `RenderPlugin`'s `Mesh`,
+`Texture` and `Skeleton` and whatever an extension adds with `register_asset`.
+So a value holding another handle type cannot take a picker edit, even when its
+types come from a preview that knows the asset. A commit queued before the
+editor registrations changed is refused and reported, where a component's is
+only logged. The outcome is one `Hosted<PropertyCommitted>`, naming the value's
+document and not the active one,
+so a tab switch cannot credit an edit to the wrong tab. A refusal also sets that
+document's `EditorDocument::status`, which only a scene's chrome shows by itself,
+so an asset editor puts it in one of its own panels. Nothing else happens by
+itself: an asset editor reads the event to insert `Unsaved` and to tell its
+preview.
+
+A custom editor on a value row must not use `EditWorld`, which skips its system
+while no scene is the edit target. It reaches its document through
+`Res<ActiveEditor>`, because value rows exist only for the front document, and
+closes its menus on a change of `ActiveEditor`, because `Remove<EditTarget>`
+does not fire between value tabs.
 
 ### Enums and options
 
@@ -795,11 +900,15 @@ spans the space between the cards and sits over the viewport, which keeps its
 full size, as it does under the cards. Chatter stays visible on every tab. A
 Scene document gets no `bottom` host.
 
-The [complete custom asset editor example](examples/custom_asset.rs) loads a
+The [custom asset editor example](examples/custom_asset.rs) loads a
 non-Clone Dialogue asset, builds its own text widget, replaces its contents,
 rejects invalid input without mutation, hosts a preview of a cube that it sets
-spinning with a signal, and registers through the public API. Run its headless
-smoke test with:
+spinning with a signal, publishes the `Dialogue` as a
+[document value](#document-values) whose edits mark the document unsaved and
+send the speed to the preview, and registers through the public API. `text`
+shows "Unsupported type", since there is no `String` editor. It stops at marking:
+it never answers `SaveRequested`, so its edits cannot be saved. An editor that
+marks `Unsaved` must follow the rules below. Run its headless smoke test with:
 
 ```sh
 cargo run -p concerto-editor --example custom_asset
@@ -872,8 +981,9 @@ None of the scene tools are added.
 The preview shows in the shared viewport, which stands in for the document's
 `canvas` host: a previewing document gets `left` and `inspector` hosts and no
 `canvas`. Build the editor's own controls in those two hosts, and in `bottom`
-when the editor asks for it; the hierarchy and inspector panels are hidden on a
-preview tab, as on any custom editor's tab. A preview carries only `ViewportTarget`, which the viewport shows, routes input
+when the editor asks for it; the hierarchy panel is hidden on a preview tab, as
+on any custom editor's tab, and so is the inspector panel unless the document
+has `InspectedValues`. A preview carries only `ViewportTarget`, which the viewport shows, routes input
 to, and steps, and never `EditTarget`, which `EditWorld<T>` and
 `EditWorldSignals` read. A preview is stepped only while its tab is in front
 and the viewport is shown; a preview in the background is frozen.

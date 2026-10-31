@@ -3,6 +3,7 @@ mod edit;
 mod input;
 mod observe;
 mod run;
+mod value;
 
 pub use run::PlayTimeout;
 
@@ -77,6 +78,7 @@ impl Plugin for EditorMcpPlugin {
         observe::build(app);
         act::build(app);
         edit::build(app);
+        value::build(app);
         run::build(app);
         input::build(app);
     }

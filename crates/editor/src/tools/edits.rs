@@ -18,12 +18,13 @@ use concerto_foundation::assets::{
 };
 use concerto_reflect::{
     PathSegment, PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, ReflectedValue,
-    apply_value_with, json_to_value_with, with_property, with_property_mut,
+    TypeRegistry, ValueWarning, apply_value_with, json_to_value_with, with_property,
+    with_property_mut,
 };
 use serde_json::Value;
 
 use crate::{
-    inspector::ErasedEditor,
+    inspector::{ComponentTarget, ErasedEditor, PropertyAddress, PropertyTarget},
     tools::{
         entity_ops::in_open_scene,
         scene::{SceneRoot, SceneStatus, report_edit, write},
@@ -49,9 +50,9 @@ impl std::fmt::Display for EditError {
             Self::TypeMismatch => "the value has the wrong type",
             Self::NotFound => "the property was not found",
             Self::StaleEditor => "its editor changed since it was read",
-            Self::MissingTarget => "the entity or its component no longer exists",
+            Self::MissingTarget => "its entity, component or document no longer exists",
             Self::UnregisteredComponent => "the component type is not registered",
-            Self::MissingAssets => "the scene's App has no asset server or asset registry",
+            Self::MissingAssets => "its App has no asset server or asset registry",
         })
     }
 }
@@ -63,23 +64,15 @@ pub struct EditContext<'w> {
     pub registry: &'w AssetRegistry,
 }
 
-/// Captured at rebuild, so a queued edit always addresses its original target.
-#[derive(Component, Clone, Debug)]
+/// A row an editor built.
+#[derive(Component, Clone)]
 pub struct PropertyRow {
-    pub entity: Entity,
-    pub component: TypeId,
-    pub path: PropertyPath,
-    pub type_id: TypeId,
-    pub(crate) editor_type: Option<TypeId>,
+    pub address: PropertyAddress,
+    pub(crate) editor_type: TypeId,
     pub(crate) registry_tick: Tick,
 }
 
 impl PropertyRow {
-    /// Whether an adapter claimed this row when it was collected.
-    pub fn has_editor(&self) -> bool {
-        self.editor_type.is_some()
-    }
-
     /// The registry's change tick at collection, which later edits are checked against.
     pub fn registry_tick(&self) -> Tick {
         self.registry_tick
@@ -95,10 +88,10 @@ pub struct CommitProperty {
 
 impl Signal for CommitProperty {}
 
-/// What one `CommitProperty` or `SetValue` did to the row it addressed, or why it was refused.
+/// What one edit of a property did to the row it addressed, or why it was refused.
 #[derive(Event, Clone)]
 pub struct PropertyCommitted {
-    pub row: PropertyRow,
+    pub address: PropertyAddress,
     pub result: Result<(), PropertyRefusal>,
 }
 
@@ -121,7 +114,8 @@ impl PropertyRefusal {
         }
     }
 
-    fn map(self, reword: impl FnOnce(String) -> String) -> Self {
+    /// The same refusal with its text reworded.
+    pub(crate) fn map(self, reword: impl FnOnce(String) -> String) -> Self {
         match self {
             Self::Undecodable(status) => Self::Undecodable(reword(status)),
             Self::NotEditable(status) => Self::NotEditable(reword(status)),
@@ -143,23 +137,58 @@ fn refused(reason: impl ToString) -> PropertyRefusal {
 impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
-        let component = reflected(world, self.row.component)?;
-        let mut result = Err(EditError::MissingAssets);
-        world.resource_scope::<AssetServer>(|world, assets| {
-            world.resource_scope::<AssetRegistry>(|world, registry| {
-                result = apply_through(
-                    world,
-                    component,
-                    self.row.entity,
-                    &self.row.path,
-                    self.editor.as_ref(),
-                    self.edit.as_ref(),
-                    &EditContext { assets, registry },
-                );
-            });
-        });
-        result
+        let target = self
+            .row
+            .address
+            .target
+            .component()
+            .ok_or(EditError::MissingTarget)?;
+        let component = reflected(world, target.component)?;
+        with_edit_context(world, |world, context| {
+            apply_through(
+                world,
+                component,
+                target.entity,
+                &self.row.address.path,
+                self.editor.as_ref(),
+                self.edit.as_ref(),
+                context,
+            )
+        })
     }
+}
+
+/// Runs `edit` with the world's asset server and registry, or answers `MissingAssets` without either.
+pub(crate) fn with_edit_context(
+    world: &mut World,
+    edit: impl FnOnce(&mut World, &EditContext) -> Result<(), EditError>,
+) -> Result<(), EditError> {
+    let mut result = Err(EditError::MissingAssets);
+    world.resource_scope::<AssetServer>(|world, assets| {
+        world.resource_scope::<AssetRegistry>(|world, registry| {
+            result = edit(world, &EditContext { assets, registry });
+        });
+    });
+    result
+}
+
+/// Applies `edit` through `editor` to the property at `path` of `value`.
+pub(crate) fn apply_at(
+    value: &mut dyn Reflect,
+    path: &PropertyPath,
+    editor: &dyn ErasedEditor,
+    edit: &dyn Any,
+    context: &EditContext,
+) -> Result<(), EditError> {
+    let mut result = Err(EditError::NotFound);
+    if with_property_mut(value, path, &mut |value| {
+        result = editor.apply(value, edit, context);
+    })
+    .is_err()
+    {
+        result = Err(EditError::NotFound);
+    }
+    result
 }
 
 fn apply_through(
@@ -173,13 +202,7 @@ fn apply_through(
 ) -> Result<(), EditError> {
     let mut result = Err(EditError::NotFound);
     let found = (component.edit)(world, entity, &mut |value| {
-        if with_property_mut(value, path, &mut |value| {
-            result = editor.apply(value, edit, context);
-        })
-        .is_err()
-        {
-            result = Err(EditError::NotFound);
-        }
+        result = apply_at(value, path, editor, edit, context);
     });
     if found {
         result
@@ -199,6 +222,23 @@ pub struct SetValue {
 impl Signal for SetValue {}
 
 impl SetValue {
+    /// The component this writes to.
+    pub(crate) fn target(&self) -> Arc<dyn PropertyTarget> {
+        Arc::new(ComponentTarget {
+            entity: self.entity,
+            component: self.component,
+        })
+    }
+
+    /// The address of this write, whose value has type `type_id`.
+    pub(crate) fn address(&self, type_id: TypeId) -> PropertyAddress {
+        PropertyAddress {
+            target: self.target(),
+            path: self.path.clone(),
+            type_id,
+        }
+    }
+
     fn write(&self, world: &mut World, field: &mut TypeId) -> Result<(), PropertyRefusal> {
         let component = reflected(world, self.component).map_err(refused)?;
         if !world.entity_is_valid(self.entity) {
@@ -219,7 +259,20 @@ impl SetValue {
                 *field = (value as &dyn Any).type_id();
             })
             .map_err(|_| refused(EditError::NotFound))?;
-            self.decode(world, live, *field, &mut hook)?
+            let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
+                return Err(PropertyRefusal::Undecodable(
+                    EditError::UnregisteredComponent.to_string(),
+                ));
+            };
+            decode_property(
+                &self.value,
+                live,
+                self.component,
+                &self.path,
+                *field,
+                &registry.read(),
+                &mut hook,
+            )?
         };
         let mut warnings = Vec::new();
         (component.edit)(world, self.entity, &mut |value| {
@@ -227,68 +280,73 @@ impl SetValue {
                 warnings = apply_value_with(value, &stored, &mut hook);
             });
         });
-        if warnings.is_empty() {
-            Ok(())
-        } else {
-            Err(PropertyRefusal::Undecodable(
-                warnings
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            ))
-        }
+        applied(&warnings)
     }
+}
 
-    fn decode(
-        &self,
-        world: &World,
-        live: &dyn Reflect,
-        field: TypeId,
-        hook: &mut LiveLeaves,
-    ) -> Result<ReflectedValue, PropertyRefusal> {
-        let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
-            return Err(PropertyRefusal::Undecodable(
-                EditError::UnregisteredComponent.to_string(),
-            ));
-        };
-        if registry.get_type_data::<ReflectJson>(field).is_some()
-            || registry.get_type_data::<ReflectDefault>(field).is_some()
-        {
-            return json_to_value_with(&self.value, field, &registry.read(), hook)
-                .map_err(PropertyRefusal::Undecodable);
-        }
-        let segments = self.path.segments();
-        if segments
+/// `Ok` unless applying a decoded value left `warnings`.
+pub(crate) fn applied(warnings: &[ValueWarning]) -> Result<(), PropertyRefusal> {
+    if warnings.is_empty() {
+        Ok(())
+    } else {
+        Err(PropertyRefusal::Undecodable(
+            warnings
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        ))
+    }
+}
+
+/// Decodes `json` for the property at `path` of `live`, a value of type `root`, where the property has type `field`.
+pub(crate) fn decode_property(
+    json: &Value,
+    live: &dyn Reflect,
+    root: TypeId,
+    path: &PropertyPath,
+    field: TypeId,
+    types: &TypeRegistry,
+    hook: &mut LiveLeaves,
+) -> Result<ReflectedValue, PropertyRefusal> {
+    if types.get_type_data::<ReflectJson>(field).is_some()
+        || types.get_type_data::<ReflectDefault>(field).is_some()
+    {
+        return json_to_value_with(json, field, types, hook).map_err(PropertyRefusal::Undecodable);
+    }
+    let segments = path.segments();
+    if segments
+        .iter()
+        .any(|segment| matches!(segment, PathSegment::Index(_)))
+    {
+        let name = types
+            .get(field)
+            .map_or("the type", |registration| registration.type_path());
+        return Err(PropertyRefusal::NotEditable(format!(
+            "{name} has no JSON form and no registered Default, so JSON cannot build it inside a list"
+        )));
+    }
+    let variants: Vec<Option<&'static str>> = (0..segments.len())
+        .map(|depth| {
+            let mut variant = None;
+            let _ = with_property(
+                live,
+                &PropertyPath::new(segments[..depth].iter().copied()),
+                &mut |owner| {
+                    if let ReflectRef::Enum(owner) = owner.reflect_ref() {
+                        variant = Some(owner.variant_name());
+                    }
+                },
+            );
+            variant
+        })
+        .collect();
+    let wrapped =
+        segments
             .iter()
-            .any(|segment| matches!(segment, PathSegment::Index(_)))
-        {
-            let name = registry
-                .read()
-                .get(field)
-                .map_or("the type", |registration| registration.type_path());
-            return Err(PropertyRefusal::NotEditable(format!(
-                "{name} has no JSON form and no registered Default, so JSON cannot build it inside a list"
-            )));
-        }
-        let variants: Vec<Option<&'static str>> = (0..segments.len())
-            .map(|depth| {
-                let mut variant = None;
-                let _ = with_property(
-                    live,
-                    &PropertyPath::new(segments[..depth].iter().copied()),
-                    &mut |owner| {
-                        if let ReflectRef::Enum(owner) = owner.reflect_ref() {
-                            variant = Some(owner.variant_name());
-                        }
-                    },
-                );
-                variant
-            })
-            .collect();
-        let wrapped = segments.iter().zip(&variants).rev().fold(
-            self.value.clone(),
-            |inner, (segment, variant)| {
+            .zip(&variants)
+            .rev()
+            .fold(json.clone(), |inner, (segment, variant)| {
                 let field = Value::Object([(segment.to_string(), inner)].into_iter().collect());
                 match variant {
                     Some(variant) => {
@@ -296,25 +354,22 @@ impl SetValue {
                     }
                     None => field,
                 }
-            },
-        );
-        let stored = json_to_value_with(&wrapped, self.component, &registry.read(), hook)
-            .map_err(PropertyRefusal::Undecodable)?;
-        segments
-            .iter()
-            .try_fold(stored, |stored, segment| {
-                let (ReflectedValue::Struct(fields) | ReflectedValue::Variant { fields, .. }) =
-                    stored
-                else {
-                    return None;
-                };
-                fields
-                    .into_iter()
-                    .find(|(name, _)| *segment == name.as_str())
-                    .map(|(_, value)| value)
-            })
-            .ok_or_else(|| PropertyRefusal::Undecodable(EditError::Rejected.to_string()))
-    }
+            });
+    let stored =
+        json_to_value_with(&wrapped, root, types, hook).map_err(PropertyRefusal::Undecodable)?;
+    segments
+        .iter()
+        .try_fold(stored, |stored, segment| {
+            let (ReflectedValue::Struct(fields) | ReflectedValue::Variant { fields, .. }) = stored
+            else {
+                return None;
+            };
+            fields
+                .into_iter()
+                .find(|(name, _)| *segment == name.as_str())
+                .map(|(_, value)| value)
+        })
+        .ok_or_else(|| PropertyRefusal::Undecodable(EditError::Rejected.to_string()))
 }
 
 /// Adds an addable component at its default value, or removes a registered one.
@@ -374,17 +429,23 @@ fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditE
 }
 
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
-    let row = &on.signal().row;
-    let property = property_name(world, row.component, &row.path);
-    let result = in_open_scene(world, row.entity)
+    let address = &on.signal().row.address;
+    let target = address.target.component();
+    let property = match target {
+        Some(target) => property_name(world, target.component, &address.path),
+        None => address.target.name(),
+    };
+    let result = target
+        .ok_or(EditError::MissingTarget)
         .map_err(|error| error.to_string())
+        .and_then(|target| in_open_scene(world, target.entity).map_err(|error| error.to_string()))
         .and_then(|()| on.signal().apply(world).map_err(|error| error.to_string()))
         .map_err(|reason| refused(format!("Set {property} failed: {reason}")));
     report(world, &result);
     write(
         world,
         PropertyCommitted {
-            row: on.signal().row.clone(),
+            address: address.clone(),
             result,
         },
     );
@@ -401,21 +462,19 @@ pub(crate) fn set_value(on: On<SetValue>, world: &mut World) {
     write(
         world,
         PropertyCommitted {
-            row: PropertyRow {
-                entity: set.entity,
-                component: set.component,
-                path: set.path.clone(),
-                type_id: field,
-                editor_type: None,
-                registry_tick: Tick::default(),
-            },
+            address: set.address(field),
             result,
         },
     );
 }
 
 fn property_name(world: &World, component: TypeId, path: &PropertyPath) -> String {
-    std::iter::once(component_name(world, component).to_string())
+    dotted_name(component_name(world, component), path)
+}
+
+/// `owner` and the segments of `path`, as a status line names a property.
+pub(crate) fn dotted_name(owner: &str, path: &PropertyPath) -> String {
+    std::iter::once(owner.to_string())
         .chain(path.segments().iter().map(ToString::to_string))
         .collect::<Vec<_>>()
         .join(".")
@@ -644,16 +703,24 @@ mod tests {
         let editor = registry.editor(TypeId::of::<f32>(), None).unwrap();
         CommitProperty {
             row: PropertyRow {
-                entity,
-                component: TypeId::of::<Gain>(),
-                path: PropertyPath::new(["amount"]),
-                type_id: TypeId::of::<f32>(),
-                editor_type: Some(editor.editor_type),
+                address: PropertyAddress {
+                    target: Arc::new(ComponentTarget {
+                        entity,
+                        component: TypeId::of::<Gain>(),
+                    }),
+                    path: PropertyPath::new(["amount"]),
+                    type_id: TypeId::of::<f32>(),
+                },
+                editor_type: editor.editor_type,
                 registry_tick: Tick::default(),
             },
             edit: Arc::new(amount),
             editor: Arc::clone(&editor.adapter),
         }
+    }
+
+    fn entity_of(outcome: &PropertyCommitted) -> Entity {
+        outcome.address.target.component().unwrap().entity
     }
 
     fn statuses(app: &App) -> Vec<String> {
@@ -695,7 +762,7 @@ mod tests {
         assert_eq!(gain(&mut app, entity), 2.0);
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].row.entity, entity);
+        assert_eq!(entity_of(&outcomes[0]), entity);
         assert_eq!(outcomes[0].result, Ok(()));
         assert!(statuses(&app).is_empty());
     }
@@ -714,7 +781,7 @@ mod tests {
         );
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].row.entity, entity);
+        assert_eq!(entity_of(&outcomes[0]), entity);
         assert_eq!(
             outcomes[0].result,
             Err(PropertyRefusal::Refused(statuses(&app).remove(0)))
@@ -869,12 +936,16 @@ mod tests {
         assert_eq!(read(&mut app, entity, |lens: &Lens| lens.focal), 50.0);
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 2);
-        let row = &outcomes[0].row;
-        assert_eq!(row.entity, entity);
-        assert_eq!(row.component, TypeId::of::<Gain>());
-        assert_eq!(row.path, PropertyPath::new(["amount"]));
-        assert_eq!(row.type_id, TypeId::of::<f32>());
-        assert!(!row.has_editor());
+        let address = &outcomes[0].address;
+        assert_eq!(
+            address.target.component(),
+            Some(ComponentTarget {
+                entity,
+                component: TypeId::of::<Gain>(),
+            })
+        );
+        assert_eq!(address.path, PropertyPath::new(["amount"]));
+        assert_eq!(address.type_id, TypeId::of::<f32>());
         assert_eq!(results(&app), [Ok(()), Ok(())]);
         assert_eq!(written::<SceneEdited>(&app).len(), 2);
         assert!(statuses(&app).is_empty());
@@ -945,8 +1016,8 @@ mod tests {
             [1.4, 4.0]
         );
         let outcomes = written::<PropertyCommitted>(&app);
-        assert_eq!(outcomes[1].row.path, element);
-        assert_eq!(outcomes[1].row.type_id, TypeId::of::<f32>());
+        assert_eq!(outcomes[1].address.path, element);
+        assert_eq!(outcomes[1].address.type_id, TypeId::of::<f32>());
     }
 
     #[test]
@@ -1105,8 +1176,8 @@ mod tests {
             statuses(&app),
             [
                 "Set Gain.volume failed: the property was not found",
-                "Set Gain.amount failed: the entity or its component no longer exists",
-                "Set Gain.amount failed: the entity or its component no longer exists",
+                "Set Gain.amount failed: its entity, component or document no longer exists",
+                "Set Gain.amount failed: its entity, component or document no longer exists",
                 "Set the component failed: the component type is not registered",
             ]
         );
