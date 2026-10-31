@@ -245,7 +245,8 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
   velocity to the spring's. The body keeps its own vertical velocity.
 - `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
   the path from where the body ended the step and writes it to the character's
-  `AnimationPlayer`.
+  `AnimationPlayer`, which is on the simulation's entity, or on or under an
+  entity whose `DisplacementSimulation` names it.
 
 An entity without a `BodyId` is skipped. The simulation holds no position: the
 body has it.
@@ -294,9 +295,13 @@ node.
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
-the blackboard of the `AnimationPlayer` on its entity, where only this crate
-reads it. A player with no simulation on its entity, or a preview `App`, has no
-trajectory; the node then plays the database without searching.
+the blackboard of its `AnimationPlayer`, where only this crate reads it. The
+player sits on the simulation's entity, or, when the visible character is a
+separate entity from the capsule, on or under an entity with a
+`DisplacementSimulation` naming the capsule: a player with no simulation of its
+own climbs `ChildOf` to the nearest one. A player that finds neither, or a
+preview `App`, has no trajectory; the node then plays the database without
+searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
@@ -307,4 +312,11 @@ every frame, with an early out. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
 
 `MotionMatchingInstance::root_motion` is the simulation bone's velocity and
-angular velocity at the playhead. Nothing reads it yet.
+angular velocity at the playhead, in model space. Each step turns them back by
+the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
+scales them by the frame's time into a `RootMotion` on `instance.output`:
+`translation = q⁻¹ * (velocity * dt)` and `rotation =
+from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
+clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
+the same way. The root joint is the database skeleton's first without a parent.
+A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`.

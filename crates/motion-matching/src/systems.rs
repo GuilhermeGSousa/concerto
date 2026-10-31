@@ -1,9 +1,10 @@
 use concerto_animation::player::AnimationPlayer;
-use concerto_ecs::{Query, Res, ResMut};
+use concerto_ecs::{entity::hierarchy::ChildOf, Entity, Query, Res, ResMut};
 use concerto_foundation::time::Time;
 use concerto_physics::{body::BodyId, physics_state::PhysicsState};
 
 use crate::{
+    displacement::DisplacementSimulation,
     node::{MotionMatchingTrajectory, TRAJECTORY_KEY},
     simulation::{CharacterSimulation, DesiredMotion},
 };
@@ -21,17 +22,39 @@ pub fn drive_body(
     }
 }
 
-/// Predicts each character's path from where its body ended the step and writes it to its animation player's blackboard.
+fn displaced_capsule(
+    entity: Entity,
+    links: &Query<&DisplacementSimulation>,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    let mut current = entity;
+    loop {
+        if let Some(link) = links.get_entity(current) {
+            return Some(link.0);
+        }
+        current = parents.get_entity(current)?.parent();
+    }
+}
+
+/// Predicts each character's path from where its body ended the step and writes it to its animation player's blackboard, whether the player shares the simulation's entity or sits on or under a character naming it.
 pub fn publish_trajectory(
-    query: Query<(
-        &CharacterSimulation,
-        &DesiredMotion,
-        &BodyId,
-        &mut AnimationPlayer,
-    )>,
+    players: Query<(Entity, &mut AnimationPlayer)>,
+    simulations: Query<(&CharacterSimulation, &DesiredMotion, Option<&BodyId>)>,
+    links: Query<&DisplacementSimulation>,
+    parents: Query<&ChildOf>,
     physics: Res<PhysicsState>,
 ) {
-    for (simulation, desired, body_id, mut player) in query.iter() {
+    for (entity, mut player) in players.iter() {
+        let capsule = if simulations.contains_entity(entity) {
+            Some(entity)
+        } else {
+            displaced_capsule(entity, &links, &parents)
+        };
+        let Some((simulation, desired, Some(body_id))) =
+            capsule.and_then(|capsule| simulations.get_entity(capsule))
+        else {
+            continue;
+        };
         let translation = physics.body_transform(*body_id).translation;
         player.set_param(
             TRAJECTORY_KEY,
@@ -46,6 +69,7 @@ pub fn publish_trajectory(
 
 #[cfg(test)]
 mod tests {
+    use concerto_ecs::entity::hierarchy::ChildOf;
     use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
     use concerto_ecs::system::schedule::Schedule;
     use concerto_ecs::world::World;
@@ -57,6 +81,7 @@ mod tests {
     use glam::{Quat, Vec3};
 
     use super::*;
+    use crate::displacement::DisplacementSimulation;
     use crate::simulation::CharacterSimulation;
 
     const EPS: f32 = 1.0e-4;
@@ -193,5 +218,68 @@ mod tests {
             trajectory.samples,
             simulation.predict(trajectory.translation, &desired)
         );
+    }
+
+    fn moving_capsule() -> (World, Entity, CharacterSimulation, DesiredMotion) {
+        let mut simulation = CharacterSimulation::default();
+        simulation.velocity.value = Vec3::new(1.0, 0.0, 2.0);
+        simulation.facing.value = Quat::from_rotation_y(0.5);
+        let desired = DesiredMotion {
+            velocity: Vec3::new(3.0, 0.0, 4.0),
+            rotation: Quat::from_rotation_y(1.0),
+        };
+        let (world, capsule) =
+            world_with_body(Vec3::new(3.0, 5.0, -2.0), simulation.clone(), desired);
+        (world, capsule, simulation, desired)
+    }
+
+    #[test]
+    fn publish_trajectory_climbs_from_a_player_to_the_capsule_its_character_names() {
+        let (mut world, capsule, simulation, desired) = moving_capsule();
+        let character = world.spawn((DisplacementSimulation(capsule), AnimationPlayer::new(1)));
+        let armature = world.spawn(ChildOf::new(character));
+        let skeleton = world.spawn((ChildOf::new(armature), AnimationPlayer::new(1)));
+
+        run_once(&mut world, publish_trajectory);
+
+        for player in [character, skeleton] {
+            let trajectory = published(&world, player).unwrap();
+            assert!((trajectory.translation.x - 3.0).abs() < EPS);
+            assert!((trajectory.translation.z + 2.0).abs() < EPS);
+            assert_eq!(trajectory.rotation, Quat::from_rotation_y(0.5));
+            assert_eq!(
+                trajectory.samples,
+                simulation.predict(trajectory.translation, &desired)
+            );
+        }
+    }
+
+    #[test]
+    fn a_player_with_a_simulation_of_its_own_does_not_climb() {
+        let (mut world, capsule, ..) = moving_capsule();
+        let character = world.spawn(DisplacementSimulation(capsule));
+        let player = world.spawn((
+            ChildOf::new(character),
+            CharacterSimulation::default(),
+            AnimationPlayer::new(1),
+        ));
+
+        run_once(&mut world, publish_trajectory);
+
+        assert_eq!(published(&world, player), None);
+    }
+
+    #[test]
+    fn a_player_with_no_capsule_above_it_gets_no_trajectory() {
+        let (mut world, ..) = moving_capsule();
+        let plain = world.spawn(());
+        let unlinked = world.spawn((ChildOf::new(plain), AnimationPlayer::new(1)));
+        let dangling = world.spawn(DisplacementSimulation(plain));
+        let under_dangling = world.spawn((ChildOf::new(dangling), AnimationPlayer::new(1)));
+
+        run_once(&mut world, publish_trajectory);
+
+        assert_eq!(published(&world, unlinked), None);
+        assert_eq!(published(&world, under_dangling), None);
     }
 }
