@@ -245,6 +245,26 @@ self-describing, so a payload cannot absorb a new field with
 `#[serde(default)]`: any change to a type's serialized fields, their order or
 their types is a new encoding.
 
+Each content type's encoding is pinned by a test. `check_encoding(&value, dir)`
+(`concerto_foundation::assets::content`) serializes the value and compares the
+bytes with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`. The checks sit in each
+crate's serialization test, with the fixtures in its `tests/encoding/`:
+
+| Test file | Types |
+|---|---|
+| `crates/mesh/tests/mesh_serialization.rs` | `Mesh`, `Skeleton` |
+| `crates/render/tests/material_serialization.rs` | `Texture`, `StandardMaterial` |
+| `crates/animation/tests/graph_serialization.rs` | `AnimationClip`, `AnimationGraph` |
+| `crates/scene/tests/scene_serialization.rs` | `Scene` |
+| `crates/motion-matching/tests/serialization.rs` | `MotionDatabase`, `MotionDatabaseDefinition` |
+
+A missing fixture fails the test with a hint to bless it. Bytes that differ
+fail it with a message to raise the version. The value given to the check sets
+every field to something other than its default, and uses no `HashMap` with
+more than one entry, since bincode writes a map in iteration order. A type that
+becomes content, because an importer emits it or the editor creates it, adds
+its check in the same change.
+
 When you change one:
 
 1. Raise the version. A derived type writes `#[asset(version = N)]` next to
@@ -258,13 +278,20 @@ When you change one:
    converts it; an older version converts through each newer one in turn.
    Without a migration, older files fail to load with an error that says to
    re-import their source or re-create them in the editor.
-3. Migration happens in memory: the file keeps its old version until it is
+3. Bless the new fixture with
+   `CONCERTO_BLESS_ENCODING=1 cargo test -p <crate> --test <file>`, run the
+   test again without the variable, and commit the new `.bin` file. Keep the
+   old version's fixture while its `migrate` arm exists, with a test that
+   passes it through `decode_content_asset` and checks the converted value;
+   delete it when you choose rejection.
+4. Migration happens in memory: the file keeps its old version until it is
    saved, and a save writes the current `FORMAT_VERSION`. Re-import the
    affected sources, or re-save editor-authored assets, and commit the
    rewritten content.
-4. A legacy struct and its `migrate` arm may be deleted once no committed
-   `.gasset` under `examples/*` carries that version. After that, files at
-   that version are rejected.
+5. A legacy struct and its `migrate` arm may be deleted once no committed
+   `.gasset` under `examples/*` carries that version. Its fixture and test go
+   with it, and the PR says so. After that, files at that version are
+   rejected.
 
 `CONTENT_FORMAT_VERSION` is a different number. It changes only when the
 framing or `ContentAssetHeader` changes, never for a payload, and a new header

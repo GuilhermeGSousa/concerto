@@ -43,6 +43,34 @@ pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAs
     Ok((header, value))
 }
 
+/// Compares `value`'s payload encoding with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`, for a crate's encoding test.
+pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
+    let name = A::name();
+    let version = A::FORMAT_VERSION;
+    let path = dir.join(format!("{name}.v{version}.bin"));
+    let bytes = bincode::serialize(value)
+        .unwrap_or_else(|error| panic!("failed to serialize {name}: {error}"));
+    if std::env::var("CONCERTO_BLESS_ENCODING").as_deref() == Ok("1") {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("failed to create '{}': {error}", dir.display()));
+        std::fs::write(&path, &bytes)
+            .unwrap_or_else(|error| panic!("failed to write '{}': {error}", path.display()));
+        return;
+    }
+    let Ok(fixture) = std::fs::read(&path) else {
+        panic!(
+            "no encoding fixture for {name} version {version} at {}; run this test with CONCERTO_BLESS_ENCODING=1 to write it",
+            path.display()
+        );
+    };
+    if fixture != bytes {
+        panic!(
+            "the encoding of {name} changed but its FORMAT_VERSION is still {version}: raise it to {next}, add a migration from {version} or accept that version-{version} files are rejected (docs/asset-importing.md, \"Changing an asset type's encoding\"), then run with CONCERTO_BLESS_ENCODING=1",
+            next = version + 1
+        );
+    }
+}
+
 /// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
