@@ -608,7 +608,7 @@ fn property_write(
     let (component, short, _) = carried_component(source, entity, &arguments.component)?;
     let changed = registry.changed_tick();
     let rows = source
-        .collect_component(registry, changed, entity, component)
+        .collect_component(registry, entity, component)
         .unwrap_or_default();
     let listed = source
         .read(entity, component)
@@ -627,7 +627,7 @@ fn property_write(
             value: arguments.value,
         }));
     };
-    let row = property.row(entity, component);
+    let row = property.row(entity, component, changed);
     let current = source.read(entity, component);
     let types = source.types();
     let editor = current_editor(registry, Some(&*types), changed, &row)
@@ -717,7 +717,7 @@ fn list_commit(
 ) -> Result<(PropertyCommit, String), ToolError> {
     let (component, short, _) = carried_component(source, entity, component)?;
     let rows = source
-        .collect_component(registry, registry.changed_tick(), entity, component)
+        .collect_component(registry, entity, component)
         .unwrap_or_default();
     let listed = source
         .read(entity, component)
@@ -738,13 +738,16 @@ fn list_commit(
     if root {
         return Err(root_refused(&attempt));
     }
-    let list = found.row.filter(|row| row.is_list()).ok_or_else(|| {
-        ToolError::new(
-            "not_a_list",
-            format!("{name} is not a list that list_push and list_remove can change."),
-        )
-    })?;
-    if let (ListEdit::Remove(index), Some(&length)) = (edit, list.value.downcast::<usize>())
+    let (list, length) = found
+        .row
+        .and_then(|row| Some((row, row.list_length()?)))
+        .ok_or_else(|| {
+            ToolError::new(
+                "not_a_list",
+                format!("{name} is not a list that list_push and list_remove can change."),
+            )
+        })?;
+    if let ListEdit::Remove(index) = edit
         && index >= length
     {
         return Err(ToolError::new(
@@ -752,8 +755,11 @@ fn list_commit(
             format!("{name} has length {length}, so it has no element {index}."),
         ));
     }
-    let commit = PropertyCommit::erased::<ListEditor>(&list.row(entity, component), edit)
-        .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
+    let commit = PropertyCommit::erased::<ListEditor>(
+        &list.row(entity, component, registry.changed_tick()),
+        edit,
+    )
+    .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
     Ok((commit, done))
 }
 

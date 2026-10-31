@@ -30,7 +30,7 @@ use super::{BusyInputs, act::describe_pose, is_busy};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
-    inspector::{InspectionSource, InspectorRegistry, Property},
+    inspector::{InspectionSource, InspectorRegistry, Property, PropertyKind},
     project::ProjectState,
     tools::{
         camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
@@ -896,14 +896,18 @@ pub(super) struct ListedPath<'a> {
 impl<'a> ListedPath<'a> {
     /// The row whose editor writes this path, or `None` when `set_property` writes it whole: an enum, a list, or a path no editor claims.
     pub(super) fn adapter(&self) -> Option<&'a Property> {
-        self.row
-            .filter(|property| !self.names_enum && !property.is_list() && property.has_editor())
+        self.row.filter(|property| {
+            !self.names_enum && property.list_length().is_none() && property.value().is_some()
+        })
     }
 }
 
 pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec<ListedPath<'a>> {
     let mut listed: Vec<ListedPath> = Vec::new();
-    for row in rows.iter().filter(|row| !row.heading) {
+    for row in rows
+        .iter()
+        .filter(|row| !matches!(row.kind, PropertyKind::Heading))
+    {
         let segments = row.path.segments();
         for depth in 0..segments.len() {
             let above = PropertyPath::new(segments[..depth].iter().copied());

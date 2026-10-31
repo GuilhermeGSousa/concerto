@@ -204,15 +204,9 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
             PropertyPath::new(["gain"])
         ]
     );
-    assert!(!fallback[0].has_editor());
-    assert!(fallback[1].has_editor());
-    assert!(fallback[2].has_editor());
-    assert!(
-        fallback[0]
-            .value
-            .snapshot::<Setting, SettingEditor>()
-            .is_none()
-    );
+    assert!(fallback[0].value().is_none());
+    assert!(fallback[1].value().is_some());
+    assert!(fallback[2].value().is_some());
 
     let mut registry = registry;
     registry.register_property_editor::<Setting, SettingEditor>();
@@ -221,15 +215,18 @@ fn registered_composite_is_one_row_and_fallback_retains_unsupported_fields() {
     assert_eq!(properties[0].path, PropertyPath::new(["setting"]));
     assert_eq!(properties[0].type_id, TypeId::of::<Setting>());
     let snapshot = properties[0]
-        .value
+        .value()
+        .unwrap()
         .snapshot::<Setting, SettingEditor>()
         .unwrap();
     assert_eq!(snapshot.title, "Shadows");
     assert!(!snapshot.enabled);
-    assert!(properties[0].value == registry.collect(&value, &TypeRegistry::default())[0].value);
+    let same = registry.collect(&value, &TypeRegistry::default());
+    assert!(properties[0].value() == same[0].value());
     let mut changed = value;
     changed.setting.enabled = true;
-    assert!(properties[0].value != registry.collect(&changed, &TypeRegistry::default())[0].value);
+    let different = registry.collect(&changed, &TypeRegistry::default());
+    assert!(properties[0].value() != different[0].value());
 }
 
 #[test]

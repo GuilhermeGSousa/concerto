@@ -5,7 +5,8 @@ use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::list::remove_button;
 use super::registry::InspectionSource;
-use concerto_ecs::reflect::AppTypeRegistry;
+use concerto_ecs::{component::Tick, reflect::AppTypeRegistry};
+use concerto_reflect::PathSegment;
 use std::collections::HashMap;
 
 /// A component card in the inspector's UI hierarchy.
@@ -21,7 +22,6 @@ pub struct InspectedComponent {
 
 #[derive(Component)]
 pub(super) struct BuildPropertyWidget {
-    heading: bool,
     remove: Option<(Entity, usize)>,
 }
 
@@ -47,7 +47,7 @@ pub(super) fn sync_inspected_components(
     stacks: Query<(Entity, &ComponentStack, Option<&Children>)>,
     cards: Query<&InspectedComponent>,
     bodies: Query<&Children>,
-    rows: Query<(&PropertyRow, &PropertyRowValue)>,
+    rows: Query<(&PropertyRow, Option<&PropertyRowValue>)>,
     menus: Query<(Entity, &AddComponentMenu)>,
     component_menus: Query<&ComponentMenu>,
     mut cmd: CommandQueue,
@@ -121,28 +121,34 @@ fn refresh_card(
     mut card: InspectedComponent,
     theme: &UITheme,
     bodies: &Query<&Children>,
-    rows: &Query<(&PropertyRow, &PropertyRowValue)>,
+    rows: &Query<(&PropertyRow, Option<&PropertyRowValue>)>,
 ) {
     if card.read && !source.is_component_changed(card.scene_entity, card.type_id) {
         return;
     }
+    let registry_tick = registry.changed_tick();
     let properties = source
-        .collect_component(
-            registry,
-            registry.changed_tick(),
-            card.scene_entity,
-            card.type_id,
-        )
+        .collect_component(registry, card.scene_entity, card.type_id)
         .unwrap_or_default();
     let kept = card
         .read
-        .then(|| kept_rows(source, registry, card.body, &properties, bodies, rows))
+        .then(|| {
+            kept_rows(
+                source,
+                registry,
+                registry_tick,
+                card.body,
+                &properties,
+                bodies,
+                rows,
+            )
+        })
         .flatten();
     match kept {
         Some(kept) => {
             for (row, property) in kept.into_iter().zip(properties) {
-                if let Some(row) = row {
-                    cmd.insert(property.value, row);
+                if let (Some(row), PropertyKind::Value(value)) = (row, property.kind) {
+                    cmd.insert(value, row);
                 }
             }
         }
@@ -156,11 +162,10 @@ fn refresh_card(
             let mut lists = HashMap::new();
             for property in properties {
                 let node = source.row_node(registry, &property, theme);
-                let remove = property
-                    .list_element
-                    .and_then(|index| Some((*lists.get(&list_of(&property.path)?)?, index)));
-                let path = property.is_list().then(|| property.path.clone());
-                let row = spawn_row(cmd, &card, property, node, remove, theme);
+                let remove = list_element(&property.path)
+                    .and_then(|(list, index)| Some((*lists.get(&list)?, index)));
+                let path = property.list_length().map(|_| property.path.clone());
+                let row = spawn_row(cmd, &card, property, registry_tick, node, remove, theme);
                 if let Some(path) = path {
                     lists.insert(path, row);
                 }
@@ -171,18 +176,22 @@ fn refresh_card(
     cmd.insert(card, entity);
 }
 
-fn list_of(element: &PropertyPath) -> Option<PropertyPath> {
-    let (_, list) = element.segments().split_last()?;
-    Some(PropertyPath::new(list.iter().copied()))
+/// The list a path's last step goes into, with the index it takes there.
+fn list_element(path: &PropertyPath) -> Option<(PropertyPath, usize)> {
+    let (&PathSegment::Index(index), list) = path.segments().split_last()? else {
+        return None;
+    };
+    Some((PropertyPath::new(list.iter().copied()), index))
 }
 
 fn kept_rows(
     source: &InspectionSource,
     registry: &InspectorRegistry,
+    registry_tick: Tick,
     body: Entity,
     properties: &[Property],
     bodies: &Query<&Children>,
-    rows: &Query<(&PropertyRow, &PropertyRowValue)>,
+    rows: &Query<(&PropertyRow, Option<&PropertyRowValue>)>,
 ) -> Option<Vec<Option<Entity>>> {
     let existing: Vec<Entity> = bodies
         .get_entity(body)
@@ -195,19 +204,18 @@ fn kept_rows(
         .into_iter()
         .zip(properties)
         .map(|(entity, property)| {
-            let (row, value) = rows.get_entity(entity)?;
+            let (row, shown) = rows.get_entity(entity)?;
             let same_row = row.path == property.path
                 && row.type_id == property.type_id
-                && row.editor_type == property.editor_type
-                && row.registry_tick == property.registry_tick;
-            if !same_row {
-                None
-            } else if *value == property.value {
-                Some(None)
-            } else {
-                source
-                    .follows_snapshot(registry, property)
-                    .then_some(Some(entity))
+                && row.registry_tick == registry_tick;
+            match (shown, property.value()) {
+                _ if !same_row => None,
+                (None, None) => Some(None),
+                (Some(shown), Some(value)) if shown == value => Some(None),
+                (Some(_), Some(_)) => source
+                    .follows_snapshot(registry, row)
+                    .then_some(Some(entity)),
+                _ => None,
             }
         })
         .collect()
@@ -268,6 +276,7 @@ fn spawn_row(
     cmd: &mut CommandQueue,
     card: &InspectedComponent,
     property: Property,
+    registry_tick: Tick,
     mut row_node: UINode,
     remove: Option<(Entity, usize)>,
     theme: &UITheme,
@@ -278,18 +287,14 @@ fn spawn_row(
             row_node.padding.right = theme.control_height + theme.spacing_xs;
         }
     }
-    let target = property.row(card.scene_entity, card.type_id);
+    let target = property.row(card.scene_entity, card.type_id, registry_tick);
     let label = if property.path.depth() == 0 {
         card.name.to_string()
     } else {
         label_for(&property.path)
     };
-    let build = BuildPropertyWidget {
-        heading: property.heading,
-        remove,
-    };
     let mut body_queue = cmd.entity(card.body);
-    let mut row_queue = body_queue.spawn_child((row_node, target, property.value, build));
+    let mut row_queue = body_queue.spawn_child((row_node, target, BuildPropertyWidget { remove }));
     let row = row_queue.entity();
     row_queue.add_child(
         theme
@@ -300,6 +305,15 @@ fn spawn_row(
             .width(UIValue::Px(PROPERTY_LABEL_WIDTH))
             .fixed(),
     );
+    match property.kind {
+        PropertyKind::Value(value) => {
+            row_queue.insert(value);
+        }
+        PropertyKind::Heading => {}
+        PropertyKind::Unsupported => {
+            row_queue.add_child(theme.label("Unsupported type"));
+        }
+    }
     row
 }
 
@@ -324,7 +338,7 @@ pub(super) fn build_property_widgets(
     rows: Query<(
         Entity,
         &PropertyRow,
-        &PropertyRowValue,
+        Option<&PropertyRowValue>,
         &BuildPropertyWidget,
     )>,
     registry: Res<InspectorRegistry>,
@@ -335,16 +349,13 @@ pub(super) fn build_property_widgets(
     let types = types.as_deref().map(|types| types.read());
     let types = types.as_deref();
     for (entity, row, value, build) in rows.iter() {
-        if let Some(editor) = registry
+        let editor = registry
             .editor(row.type_id, types)
-            .filter(|editor| Some(editor.editor_type) == row.editor_type)
+            .filter(|editor| Some(editor.editor_type) == row.editor_type);
+        if let (Some(editor), Some(value)) = (editor, value)
+            && let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme)
         {
-            if let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme) {
-                log::warn!("Unable to build property widget: {error}");
-            }
-        } else if !build.heading {
-            cmd.entity(entity)
-                .add_child(theme.label("Unsupported type"));
+            log::warn!("Unable to build property widget: {error}");
         }
         if let Some((list, index)) = build.remove {
             cmd.entity(entity)

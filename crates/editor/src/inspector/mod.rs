@@ -61,8 +61,8 @@ use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
 pub use rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
-    PropertyRowValue,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyKind, PropertyRow, PropertyRowValue,
 };
 
 pub const PANEL_ID: &str = "concerto.ecs";

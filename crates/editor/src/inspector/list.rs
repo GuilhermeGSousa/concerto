@@ -28,6 +28,10 @@ use crate::fonts::{glyph, icon};
 /// Shows a reflected list's length and adds to it; its elements follow as rows of their own.
 pub(crate) struct ListEditor;
 
+/// The snapshot of a list's own row.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ListLength(pub(crate) usize);
+
 /// A change to a reflected list's length.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ListEdit {
@@ -42,9 +46,9 @@ impl ErasedEditor for ListEditor {
         let ReflectRef::List(list) = value.reflect_ref() else {
             return Err(EditError::TypeMismatch);
         };
-        Ok(PropertyRowValue::erased::<Self, usize>(
+        Ok(PropertyRowValue::erased::<Self, ListLength>(
             (value as &dyn Any).type_id(),
-            list.len(),
+            ListLength(list.len()),
         ))
     }
 
@@ -55,9 +59,7 @@ impl ErasedEditor for ListEditor {
         snapshot: &PropertyRowValue,
         theme: &UITheme,
     ) -> Result<(), EditError> {
-        let length = *snapshot
-            .downcast::<usize>()
-            .ok_or(EditError::TypeMismatch)?;
+        let ListLength(length) = snapshot.downcast().ok_or(EditError::TypeMismatch)?;
         cmd.entity(row)
             .add_child(
                 theme

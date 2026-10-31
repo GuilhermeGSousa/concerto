@@ -7,7 +7,7 @@ use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, com
 use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::{node::UINode, theme::UITheme};
 
-use super::list::ListEditor;
+use super::list::ListLength;
 pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
@@ -47,8 +47,8 @@ pub(crate) struct Snapshot {
 }
 
 /// Owned snapshot refreshed independently of the widget's focused edit buffer.
-#[derive(Component, Clone, Default)]
-pub struct PropertyRowValue(pub(crate) Option<Snapshot>);
+#[derive(Component, Clone)]
+pub struct PropertyRowValue(Snapshot);
 
 impl PropertyRowValue {
     pub(crate) fn new<T: Reflect, E: PropertyEditor<T>>(value: E::Snapshot) -> Self {
@@ -60,7 +60,7 @@ impl PropertyRowValue {
         value_type: TypeId,
         value: S,
     ) -> Self {
-        Self(Some(Snapshot {
+        Self(Snapshot {
             data: Arc::new(value),
             value_type,
             editor_type: TypeId::of::<E>(),
@@ -68,34 +68,28 @@ impl PropertyRowValue {
                 (Some(a), Some(b)) => a == b,
                 _ => false,
             },
-        }))
+        })
     }
 
-    /// Returns `None` for an unsupported row or a different value/adapter type.
+    /// Returns `None` for a different value/adapter type.
     pub fn snapshot<T: Reflect, E: PropertyEditor<T>>(&self) -> Option<&E::Snapshot> {
-        let snapshot = self.0.as_ref()?;
-        if snapshot.value_type != TypeId::of::<T>() || snapshot.editor_type != TypeId::of::<E>() {
+        if self.0.value_type != TypeId::of::<T>() || self.0.editor_type != TypeId::of::<E>() {
             return None;
         }
-        snapshot.data.downcast_ref()
+        self.0.data.downcast_ref()
     }
 
     pub(crate) fn downcast<S: Any>(&self) -> Option<&S> {
-        self.0.as_ref()?.data.downcast_ref()
+        self.0.data.downcast_ref()
     }
 }
 
 impl PartialEq for PropertyRowValue {
     fn eq(&self, other: &Self) -> bool {
-        match (&self.0, &other.0) {
-            (None, None) => true,
-            (Some(a), Some(b)) => {
-                a.value_type == b.value_type
-                    && a.editor_type == b.editor_type
-                    && (a.equals)(a.data.as_ref(), b.data.as_ref())
-            }
-            _ => false,
-        }
+        let (a, b) = (&self.0, &other.0);
+        a.value_type == b.value_type
+            && a.editor_type == b.editor_type
+            && (a.equals)(a.data.as_ref(), b.data.as_ref())
     }
 }
 
@@ -104,36 +98,43 @@ impl PartialEq for PropertyRowValue {
 pub struct Property {
     pub path: PropertyPath,
     pub type_id: TypeId,
-    pub value: PropertyRowValue,
-    pub(crate) editor_type: Option<TypeId>,
-    pub(crate) heading: bool,
-    pub(crate) list_element: Option<usize>,
-    pub(crate) registry_tick: Tick,
+    pub kind: PropertyKind,
+}
+
+/// What a [`Property`]'s row shows.
+#[derive(Clone)]
+pub enum PropertyKind {
+    /// The snapshot of the editor that claimed the value.
+    Value(PropertyRowValue),
+    /// A list element with no row of its own: its index and remove button, ahead of its fields' rows.
+    Heading,
+    /// A value no editor claims.
+    Unsupported,
 }
 
 impl Property {
-    /// Whether an adapter claimed this property.
-    pub fn has_editor(&self) -> bool {
-        self.editor_type.is_some()
+    /// The snapshot of the editor that claimed this property, if one did.
+    pub fn value(&self) -> Option<&PropertyRowValue> {
+        match &self.kind {
+            PropertyKind::Value(value) => Some(value),
+            PropertyKind::Heading | PropertyKind::Unsupported => None,
+        }
     }
 
-    /// Whether this is a list's own row, the one [`ListEditor`] claimed.
-    pub(crate) fn is_list(&self) -> bool {
-        self.editor_type == Some(TypeId::of::<ListEditor>())
+    /// The length of the list this property shows, when it is a list's own row.
+    pub(crate) fn list_length(&self) -> Option<usize> {
+        let ListLength(length) = self.value()?.downcast()?;
+        Some(*length)
     }
 
-    pub fn registry_tick(&self) -> Tick {
-        self.registry_tick
-    }
-
-    pub fn row(&self, entity: Entity, component: TypeId) -> PropertyRow {
+    pub fn row(&self, entity: Entity, component: TypeId, registry_tick: Tick) -> PropertyRow {
         PropertyRow {
             entity,
             component,
             path: self.path.clone(),
             type_id: self.type_id,
-            editor_type: self.editor_type,
-            registry_tick: self.registry_tick,
+            editor_type: self.value().map(|value| value.0.editor_type),
+            registry_tick,
         }
     }
 }

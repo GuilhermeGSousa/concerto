@@ -32,8 +32,8 @@ use concerto_ui::{node::UINode, theme::UITheme};
 
 use super::list::ListEditor;
 use super::rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
-    PropertyRowValue,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyKind, PropertyRow, PropertyRowValue,
 };
 use super::variants::{OptionToggle, VariantPicker};
 use crate::asset_picker::AssetPicker;
@@ -215,7 +215,6 @@ impl InspectorRegistry {
     #[cfg(test)]
     pub(crate) fn collect_component(
         &self,
-        registry_tick: Tick,
         scene: &World,
         entity: Entity,
         component: TypeId,
@@ -223,20 +222,7 @@ impl InspectorRegistry {
         let types = scene.get_resource::<AppTypeRegistry>()?;
         let entry = types.get_type_data::<ReflectComponent>(component)?;
         let value = (entry.read)(&ComponentMetadata::new(scene), entity)?;
-        Some(self.collect_at(registry_tick, value, &types.read()))
-    }
-
-    fn collect_at(
-        &self,
-        registry_tick: Tick,
-        root: &dyn Reflect,
-        types: &TypeRegistry,
-    ) -> Vec<Property> {
-        let mut properties = self.collect(root, types);
-        for property in &mut properties {
-            property.registry_tick = registry_tick;
-        }
-        properties
+        Some(self.collect(value, &types.read()))
     }
 }
 
@@ -248,15 +234,11 @@ struct Collect<'a> {
 }
 
 impl Collect<'_> {
-    fn property(&self, type_id: TypeId) -> Property {
+    fn property(&self, type_id: TypeId, kind: PropertyKind) -> Property {
         Property {
             path: PropertyPath::new(self.path.iter().copied()),
             type_id,
-            value: PropertyRowValue::default(),
-            editor_type: None,
-            heading: false,
-            list_element: None,
-            registry_tick: Tick::default(),
+            kind,
         }
     }
 
@@ -264,11 +246,9 @@ impl Collect<'_> {
         let type_id = (value as &dyn Any).type_id();
         if let Some(editor) = self.registry.editor(type_id, Some(self.types)) {
             match editor.adapter.snapshot(value) {
-                Ok(snapshot) => self.properties.push(Property {
-                    value: snapshot,
-                    editor_type: Some(editor.editor_type),
-                    ..self.property(type_id)
-                }),
+                Ok(snapshot) => self
+                    .properties
+                    .push(self.property(type_id, PropertyKind::Value(snapshot))),
                 Err(error) => log::warn!("Unable to snapshot {:?}: {error}", self.path),
             }
             if editor.walks_children {
@@ -279,7 +259,8 @@ impl Collect<'_> {
         let count = self.properties.len();
         value.visit(self);
         if count == self.properties.len() {
-            self.properties.push(self.property(type_id));
+            self.properties
+                .push(self.property(type_id, PropertyKind::Unsupported));
         }
     }
 }
@@ -300,13 +281,9 @@ impl PropertyVisitor for Collect<'_> {
             .get(first)
             .is_some_and(|property| property.path.depth() == self.path.len());
         if !has_own_row {
-            let heading = Property {
-                heading: true,
-                ..self.property((value as &dyn Any).type_id())
-            };
+            let heading = self.property((value as &dyn Any).type_id(), PropertyKind::Heading);
             self.properties.insert(first, heading);
         }
-        self.properties[first].list_element = Some(index);
         self.path.pop();
     }
 }
@@ -329,12 +306,11 @@ impl InspectionSource<'_> {
     pub fn is_registered(&self, id: TypeId) -> bool {
         self.table.get_type_data::<ReflectComponent>(id).is_some()
     }
-    pub fn follows_snapshot(&self, registry: &InspectorRegistry, property: &Property) -> bool {
+    pub fn follows_snapshot(&self, registry: &InspectorRegistry, row: &PropertyRow) -> bool {
         registry
-            .editor(property.type_id, Some(&self.table.read()))
+            .editor(row.type_id, Some(&self.table.read()))
             .is_some_and(|editor| {
-                Some(editor.editor_type) == property.editor_type
-                    && editor.adapter.follows_snapshot()
+                Some(editor.editor_type) == row.editor_type && editor.adapter.follows_snapshot()
             })
     }
     /// The layout node for `property`'s row, the standard one when no editor claims it.
@@ -344,10 +320,10 @@ impl InspectionSource<'_> {
         property: &Property,
         theme: &UITheme,
     ) -> UINode {
-        registry
-            .editor(property.type_id, Some(&self.table.read()))
-            .filter(|editor| Some(editor.editor_type) == property.editor_type)
-            .and_then(|editor| editor.adapter.row_node(&property.value, theme).ok())
+        property
+            .value()
+            .zip(registry.editor(property.type_id, Some(&self.table.read())))
+            .and_then(|(value, editor)| editor.adapter.row_node(value, theme).ok())
             .unwrap_or_else(|| super::sync::standard_row_node(theme))
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
@@ -385,11 +361,10 @@ impl InspectionSource<'_> {
     pub fn collect_component(
         &self,
         registry: &InspectorRegistry,
-        registry_tick: Tick,
         entity: Entity,
         id: TypeId,
     ) -> Option<Vec<Property>> {
-        Some(registry.collect_at(registry_tick, self.read(entity, id)?, &self.table.read()))
+        Some(registry.collect(self.read(entity, id)?, &self.table.read()))
     }
 }
 
@@ -541,13 +516,12 @@ mod tests {
                 .unwrap();
             registry
                 .collect_component(
-                    changed,
                     self.f.scene_world(self.document),
                     self.entity,
                     TypeId::of::<Transform>(),
                 )
                 .unwrap()[0]
-                .row(self.entity, TypeId::of::<Transform>())
+                .row(self.entity, TypeId::of::<Transform>(), changed)
         }
         fn translation(&self) -> Vec3 {
             self.f
@@ -574,9 +548,9 @@ mod tests {
 
     fn row_in(registry: &InspectorRegistry, scene: &World, entity: Entity) -> PropertyRow {
         registry
-            .collect_component(Tick::default(), scene, entity, TypeId::of::<Transform>())
+            .collect_component(scene, entity, TypeId::of::<Transform>())
             .unwrap()[0]
-            .row(entity, TypeId::of::<Transform>())
+            .row(entity, TypeId::of::<Transform>(), Tick::default())
     }
 
     fn refused(
@@ -816,9 +790,9 @@ mod tests {
         let old = editors
             .get_resource::<InspectorRegistry>()
             .unwrap()
-            .collect_component(changed(&editors), &scene, entity, TypeId::of::<Transform>())
+            .collect_component(&scene, entity, TypeId::of::<Transform>())
             .unwrap()[0]
-            .row(entity, TypeId::of::<Transform>());
+            .row(entity, TypeId::of::<Transform>(), changed(&editors));
         let edit = || {
             PropertyCommit::new::<Vec3, NumericFields>(
                 &old,
@@ -1040,7 +1014,10 @@ mod tests {
                             PathSegment::Index(index) => panic!("element {index} of no list"),
                         })
                         .collect(),
-                    property.editor_type.expect("every row has an editor"),
+                    registry
+                        .editor(property.type_id, Some(&types()))
+                        .expect("every row has an editor")
+                        .editor_type,
                 )
             })
             .collect()
