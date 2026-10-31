@@ -16,7 +16,7 @@ use concerto_ecs::{
 };
 use std::sync::Arc;
 
-/// The values a document shows in the inspector while it is the active one.
+/// The values a document shows in the inspector while it is the active one; each lives in [`TargetWorld::Editor`] and has a name of its own.
 #[derive(Component, Clone, Default)]
 pub struct InspectedValues(pub Vec<Arc<dyn PropertyTarget>>);
 
@@ -40,7 +40,6 @@ pub struct ValueSnapshot {
 /// The active document's values as they were last read.
 #[derive(Resource, Default)]
 pub struct InspectedSnapshots {
-    pub document: Option<Entity>,
     pub values: Vec<ValueSnapshot>,
 }
 
@@ -68,12 +67,9 @@ fn read_value(
 ) -> ValueSnapshot {
     let types = target.types(world).unwrap_or_default();
     let mut properties = Vec::new();
-    {
-        let table = types.read();
-        target.read(world, &mut |value| {
-            properties = registry.collect(value, &table);
-        });
-    }
+    target.read(world, &mut |value| {
+        properties = registry.collect(value, &types.read());
+    });
     ValueSnapshot {
         target: target.clone(),
         name: target.name(),
@@ -99,7 +95,7 @@ pub(super) fn read_inspected_values(_: On<RefreshInspector>, world: &mut World) 
                 .collect()
         })
         .unwrap_or_default();
-    world.insert_resource(InspectedSnapshots { document, values });
+    world.insert_resource(InspectedSnapshots { values });
 }
 
 pub(super) fn send_value_commits(mut commits: ResMut<PropertyCommits>, mut cmd: CommandQueue) {

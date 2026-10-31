@@ -24,7 +24,7 @@ use concerto_reflect::{
 use serde_json::Value;
 
 use crate::{
-    inspector::{ComponentTarget, ErasedEditor, PropertyAddress},
+    inspector::{ComponentTarget, ErasedEditor, PropertyAddress, PropertyTarget},
     tools::{
         entity_ops::in_open_scene,
         scene::{SceneRoot, SceneStatus, report_edit, write},
@@ -222,13 +222,18 @@ pub struct SetValue {
 impl Signal for SetValue {}
 
 impl SetValue {
+    /// The component this writes to.
+    pub(crate) fn target(&self) -> Arc<dyn PropertyTarget> {
+        Arc::new(ComponentTarget {
+            entity: self.entity,
+            component: self.component,
+        })
+    }
+
     /// The address of this write, whose value has type `type_id`.
     pub(crate) fn address(&self, type_id: TypeId) -> PropertyAddress {
         PropertyAddress {
-            target: Arc::new(ComponentTarget {
-                entity: self.entity,
-                component: self.component,
-            }),
+            target: self.target(),
             path: self.path.clone(),
             type_id,
         }

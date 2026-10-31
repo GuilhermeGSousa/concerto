@@ -264,6 +264,7 @@ pub fn load_dialogue(
                 );
                 previews.trigger(document_entity, SetSpin(dialogue.spin_speed));
                 state.dialogue = Some(dialogue);
+                commands.remove::<Unsaved>(document_entity);
                 commands.trigger(RefreshInspector);
                 assert!(finish_asset_request(&mut document, &asset, Ok(())));
             }

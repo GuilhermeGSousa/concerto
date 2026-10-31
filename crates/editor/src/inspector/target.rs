@@ -151,10 +151,15 @@ pub struct PropertyAddress {
 impl PropertyAddress {
     /// Whether both addresses reach one target: through one `Arc`, or as the same component.
     pub fn same_target(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.target, &other.target)
+        self.reaches(&other.target)
+    }
+
+    /// Whether this address is of `target`.
+    pub fn reaches(&self, target: &Arc<dyn PropertyTarget>) -> bool {
+        Arc::ptr_eq(&self.target, target)
             || self
                 .target
                 .component()
-                .is_some_and(|target| other.target.component() == Some(target))
+                .is_some_and(|component| target.component() == Some(component))
     }
 }

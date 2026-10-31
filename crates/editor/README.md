@@ -181,8 +181,9 @@ of `entity` and `component`, or for `inspect` of `entity` and `components`. A
 name matches exactly, unlike a component's. These calls need no open scene and
 answer straight away, with no scene as the edit target. `target` with any of
 those arguments, neither `target` nor `entity`, and `entity` without a
-`component` the tool requires each answer `invalid_arguments`, and a name the
-front document does not have answers `unknown_target`, listing the names it has.
+`component` the tool requires each answer `invalid_arguments`, a name the front
+document does not have answers `unknown_target`, listing the names it has, and a
+name two of its values share answers `ambiguous_target`.
 
 `inspect` with `target` answers in a component's form with no entity: `name`,
 `type`, `value` and `paths`. A value that is gone, such as one its document has
@@ -263,6 +264,7 @@ A failed call is a tool result marked `isError` whose text is
 | `unknown_component` | The entity does not carry the component, or for `add_component` no registered component has that name; the message lists those it could be |
 | `ambiguous_component` | The short name names several components; the message lists their full paths |
 | `unknown_target` | The front document has no value of that name; the message lists those it has |
+| `ambiguous_target` | The front document has more than one value of that name |
 | `unknown_path` | The component or value has no such property path; the message lists those `inspect` shows |
 | `invalid_value` | The JSON does not decode to the property's type, whether an adapter edits the path or not; the message says why |
 | `not_editable` | The adapter that edits the path offers no value edit, or the path is under a list and its type has no JSON form and no registered `Default` |
@@ -718,14 +720,17 @@ field keeps its text. Different targets rebuild the cards and reset the scroll.
 A value's edit runs in the editor's world, and its `EditContext` holds the
 editor's `AssetServer` and `AssetRegistry`; without either every edit is refused
 with `EditError::MissingAssets`. That is a limit on handles: the editor's server
-knows only `Mesh`, `Texture` and `Skeleton`, so a value holding another handle
-type cannot take a picker edit, even when its types come from a preview that
-knows the asset. A commit queued before the editor registrations changed is
+knows only what its own `App` registered, which is `RenderPlugin`'s `Mesh`,
+`Texture` and `Skeleton` and whatever an extension adds with `register_asset`.
+So a value holding another handle type cannot take a picker edit, even when its
+types come from a preview that knows the asset. A commit queued before the editor registrations changed is
 refused and reported, where a component's is only logged. The outcome is one
 `Hosted<PropertyCommitted>`, naming the value's document and not the active one,
 so a tab switch cannot credit an edit to the wrong tab. A refusal also sets that
-document's `EditorDocument::status`. Nothing else happens by itself: an asset
-editor reads the event to insert `Unsaved` and to tell its preview.
+document's `EditorDocument::status`, which only a scene's chrome shows by itself,
+so an asset editor puts it in one of its own panels. Nothing else happens by
+itself: an asset editor reads the event to insert `Unsaved` and to tell its
+preview.
 
 A custom editor on a value row must not use `EditWorld`, which skips its system
 while no scene is the edit target. It reaches its document through
@@ -894,7 +899,8 @@ spans the space between the cards and sits over the viewport, which keeps its
 full size, as it does under the cards. Chatter stays visible on every tab. A
 Scene document gets no `bottom` host.
 
-The [complete custom asset editor example](examples/custom_asset.rs) loads a
+The [custom asset editor example](examples/custom_asset.rs), which does not take
+part in saving (see the rules below), loads a
 non-Clone Dialogue asset, builds its own text widget, replaces its contents,
 rejects invalid input without mutation, hosts a preview of a cube that it sets
 spinning with a signal, publishes the `Dialogue` as a

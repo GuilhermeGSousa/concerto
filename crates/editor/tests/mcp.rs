@@ -4713,6 +4713,18 @@ impl AssetEditor for TuneEditor {
                 read: Box::new(|_| None),
                 edit: Box::new(|_| None),
             }),
+            Arc::new(DocumentValue::<HeldTune> {
+                name: "Twin".into(),
+                document,
+                read: Box::new(|held| Some(&held.tuning)),
+                edit: Box::new(|held| Some(&mut held.tuning)),
+            }),
+            Arc::new(DocumentValue::<HeldTune> {
+                name: "Twin".into(),
+                document,
+                read: Box::new(|held| Some(&held.loose)),
+                edit: Box::new(|held| Some(&mut held.loose)),
+            }),
         ];
         editor.insert((HeldTune::default(), InspectedValues(targets)));
     }
@@ -4843,7 +4855,10 @@ fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
     };
 
     let answers = served.result;
-    assert_eq!(line(&answers.busy, "values: "), "Tuning, Loose, Absent");
+    assert_eq!(
+        line(&answers.busy, "values: "),
+        "Tuning, Loose, Absent, Twin, Twin"
+    );
     assert_eq!(line(&answers.idle, "active: "), answers.document);
     assert_eq!(answers.in_a_frame, answers.between_frames);
     let shown = &answers.between_frames;
@@ -5017,6 +5032,12 @@ fn a_value_call_is_refused_by_its_arguments_with_no_scene_open() {
                 json!({ "target": "Absent", "path": "gain", "value": 1.0 }),
             )
             .await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Twin", "path": "gain", "value": 1.0 }),
+            )
+            .await,
         ];
         let through_an_editor = set_on_target(&client, "Loose", "gain", json!(0.5)).await;
         let unregistered = inspected_target(&client, "Loose").await;
@@ -5048,13 +5069,14 @@ fn a_value_call_is_refused_by_its_arguments_with_no_scene_open() {
             "not_a_list",
             "index_out_of_range",
             "refused",
+            "ambiguous_target",
         ]
     );
     assert!(
         errors[0]["message"]
             .as_str()
             .unwrap()
-            .ends_with("Tuning, Loose, Absent."),
+            .ends_with("Tuning, Loose, Absent, Twin, Twin."),
         "{}",
         errors[0]
     );
@@ -5151,7 +5173,10 @@ fn component_calls_answer_as_before_with_a_scene_open_and_with_a_value_document_
         answers.pushed,
         "Added an element to Samples.values; its length is 101."
     );
-    assert_eq!(line(&answers.status, "values: "), "Tuning, Loose, Absent");
+    assert_eq!(
+        line(&answers.status, "values: "),
+        "Tuning, Loose, Absent, Twin, Twin"
+    );
     assert_eq!(answers.with_a_scene_behind["name"], "Tuning");
     for error in answers.behind {
         assert_eq!(error["code"], "no_scene", "{error}");

@@ -682,6 +682,27 @@ fn closing_a_value_tab_takes_its_cards_away() {
 }
 
 #[test]
+fn a_value_tab_closing_in_the_frame_a_scene_takes_over_leaves_the_scenes_cards() {
+    let mut w = editing();
+    w.select_in_scene(w.setting);
+    let scene = w.scene;
+    let notes = w.open::<Notes>();
+
+    let commands = &mut w
+        .world()
+        .get_resource_mut::<AssetEditorCommands>()
+        .unwrap()
+        .0;
+    commands.push_back(AssetEditorCommand::Close(notes));
+    commands.push_back(AssetEditorCommand::Activate(scene));
+    w.editor.update();
+
+    assert_eq!((w.component_cards(), w.value_cards().len()), (1, 0));
+    let world = w.world();
+    assert_eq!(world.query::<&SettingButton, ()>().iter(world).count(), 1);
+}
+
+#[test]
 fn going_to_a_scene_tab_and_back_shows_each_tabs_own_cards_with_their_widgets() {
     let mut w = editing();
     w.select_in_scene(w.setting);

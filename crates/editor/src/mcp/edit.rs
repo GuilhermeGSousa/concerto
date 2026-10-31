@@ -147,7 +147,8 @@ struct EditingEntity {
 #[derive(Component)]
 struct SettingProperty {
     document: Entity,
-    address: PropertyAddress,
+    target: Arc<dyn PropertyTarget>,
+    path: PropertyPath,
     list_edit: Option<String>,
 }
 
@@ -724,16 +725,17 @@ fn set_property(
                 arguments.value,
             )
         });
-        let address = match write {
+        let (target, path) = match write {
             Ok(Write::Adapter(commit)) => {
                 let address = commit.row.address.clone();
                 commits.0.push(commit);
-                address
+                (address.target, address.path)
             }
             Ok(Write::Value(set)) => {
-                let address = set.address(TypeId::of::<()>());
+                let written = set.target();
+                let path = set.path.clone();
                 scene.trigger(set);
-                address
+                (written, path)
             }
             Err(error) => {
                 reply.err(error);
@@ -744,7 +746,8 @@ fn set_property(
             PendingCall::new(reply, "the property to be set"),
             SettingProperty {
                 document,
-                address,
+                target,
+                path,
                 list_edit: None,
             },
         ));
@@ -837,13 +840,14 @@ fn start_list_edit(
             return;
         }
     };
-    let address = commit.row.address.clone();
+    let PropertyAddress { target, path, .. } = commit.row.address.clone();
     commits.0.push(commit);
     cmd.spawn((
         PendingCall::new(reply, "the list to be changed"),
         SettingProperty {
             document,
-            address,
+            target,
+            path,
             list_edit: Some(done),
         },
     ));
@@ -952,14 +956,13 @@ fn answer_property_commits(
 ) {
     for Hosted { document, event } in committed.read() {
         for (call, pending, setting) in waiting.iter() {
-            let address = &setting.address;
             if setting.document != *document
-                || !address.same_target(&event.address)
-                || address.path != event.address.path
+                || !event.address.reaches(&setting.target)
+                || setting.path != event.address.path
             {
                 continue;
             }
-            let Some(target) = address.target.component() else {
+            let Some(target) = setting.target.component() else {
                 continue;
             };
             match &event.result {
@@ -968,7 +971,7 @@ fn answer_property_commits(
                         "{done}; its length is {}.",
                         source
                             .read(target.entity, target.component)
-                            .map_or(0, |value| list_length(value, &address.path))
+                            .map_or(0, |value| list_length(value, &setting.path))
                     ),
                     None => component_answer(&source, &registry, target.entity, target.component),
                 }),

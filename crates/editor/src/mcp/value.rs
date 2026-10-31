@@ -140,20 +140,28 @@ fn start_value_call(
     cmd: &mut CommandQueue,
 ) {
     let (active, values) = front;
-    let found = front_values(active, values)
+    let found: Vec<_> = front_values(active, values)
         .iter()
-        .find(|target| target.name() == name);
-    match found {
-        Some(target) => cmd.trigger(ValueCall {
+        .filter(|target| target.name() == name)
+        .collect();
+    match found[..] {
+        [target] => cmd.trigger(ValueCall {
             reply: PendingCall::new(reply, "the value").reply,
             target: target.clone(),
             request,
         }),
-        None => reply.err(ToolError::new(
+        [] => reply.err(ToolError::new(
             "unknown_target",
             format!(
                 "The front document has no value named {name}; its values are {}.",
                 value_names(active, values)
+            ),
+        )),
+        _ => reply.err(ToolError::new(
+            "ambiguous_target",
+            format!(
+                "The front document has {} values named {name}, so a name can't reach one.",
+                found.len()
             ),
         )),
     }
@@ -260,15 +268,18 @@ fn reading<R>(
     let registry = world.get_resource::<InspectorRegistry>()?;
     let changed = world.resource_changed_tick::<InspectorRegistry>()?;
     let types = target.types(world).unwrap_or_default();
-    let types = types.read();
-    let source = EditSource {
-        types: &types,
-        registry,
-        changed,
-        server: world.get_resource::<AssetServer>(),
-    };
+    let server = world.get_resource::<AssetServer>();
     let mut result = None;
-    target.read(world, &mut |value| result = Some(read(value, &source)));
+    target.read(world, &mut |value| {
+        let table = types.read();
+        let source = EditSource {
+            types: &table,
+            registry,
+            changed,
+            server,
+        };
+        result = Some(read(value, &source));
+    });
     result
 }
 
