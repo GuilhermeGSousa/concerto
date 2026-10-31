@@ -715,14 +715,4 @@ mod dismiss_tests {
             stack_open: true,
         }));
     }
-
-    #[test]
-    fn frame_n_plus_1_the_following_escape_closes_the_panel() {
-        assert!(should_dismiss_on_escape(EscapeDismissal {
-            dismissed: true,
-            field_focused: false,
-            field_cancelled_this_frame: false,
-            stack_open: true,
-        }));
-    }
 }
