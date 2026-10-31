@@ -168,6 +168,14 @@ impl Inspecting {
             .map(|(entity, row, value)| (entity, row.clone(), value.clone()))
             .collect()
     }
+    fn all_rows(&mut self) -> Vec<PropertyRow> {
+        let world = self.world();
+        world
+            .query::<&PropertyRow, ()>()
+            .iter(world)
+            .cloned()
+            .collect()
+    }
     fn setting_row(&mut self) -> (Entity, PropertyRow, PropertyRowValue) {
         self.rows()
             .into_iter()
@@ -234,17 +242,18 @@ fn the_inspector_shows_a_registered_composite_of_the_scene_as_one_row() {
     let mut w = inspecting();
     w.select(w.a);
 
-    let rows = w.rows();
-    let paths: Vec<_> = rows.iter().map(|(_, row, _)| row.path.clone()).collect();
+    let rows = w.all_rows();
+    let paths: Vec<_> = rows.iter().map(|row| row.path.clone()).collect();
     assert_eq!(
         paths,
         [PropertyPath::new(["setting"]), PropertyPath::new(["gain"])]
     );
     let a = w.a;
-    assert!(rows.iter().all(|(_, row, _)| row.entity == a
+    assert!(rows.iter().all(|row| row.entity == a
         && row.component == TypeId::of::<Container>()
         && row.has_editor()));
-    let snapshot = rows[0].2.snapshot::<Setting, SettingEditor>().unwrap();
+    let (_, _, shown) = w.setting_row();
+    let snapshot = shown.snapshot::<Setting, SettingEditor>().unwrap();
     assert_eq!(snapshot.title, "Shadows");
     assert!(!snapshot.enabled);
 }

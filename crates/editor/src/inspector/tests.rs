@@ -2188,6 +2188,41 @@ mod list_rows {
     }
 
     #[test]
+    fn a_write_to_a_list_keeps_the_rows_that_show_no_value() {
+        let (mut w, entity) = fixture(Stops {
+            entries: vec![Stop::default()],
+        });
+        const OFFSET: [PathSegment; 3] = [
+            PathSegment::Field("entries"),
+            PathSegment::Index(0),
+            PathSegment::Field("offset"),
+        ];
+        let before = body(&mut w.f.world);
+        let offset = row(&mut w.f.world, &OFFSET).unwrap();
+        let shown =
+            w.f.world
+                .get_component_for_entity::<PropertyRowValue>(offset)
+                .unwrap()
+                .clone();
+
+        w.scene()
+            .get_component_for_entity_mut::<Stops>(entity)
+            .unwrap()
+            .entries[0]
+            .offset = 2.0;
+        w.tick();
+        w.update();
+
+        assert_eq!(body(&mut w.f.world), before);
+        assert!(
+            *w.f.world
+                .get_component_for_entity::<PropertyRowValue>(offset)
+                .unwrap()
+                != shown
+        );
+    }
+
+    #[test]
     fn an_element_with_no_editor_and_no_fields_is_unsupported_and_can_be_removed() {
         let (mut w, entity) = fixture(Titles {
             names: vec!["first".into(), "second".into()],

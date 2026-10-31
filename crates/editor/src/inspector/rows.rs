@@ -39,7 +39,7 @@ pub trait PropertyEditor<T: Reflect>: Default + Send + Sync + 'static {
 }
 
 #[derive(Clone)]
-pub(crate) struct Snapshot {
+struct Snapshot {
     data: Arc<dyn Any + Send + Sync>,
     value_type: TypeId,
     editor_type: TypeId,

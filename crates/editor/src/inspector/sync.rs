@@ -176,7 +176,6 @@ fn refresh_card(
     cmd.insert(card, entity);
 }
 
-/// The list a path's last step goes into, with the index it takes there.
 fn list_element(path: &PropertyPath) -> Option<(PropertyPath, usize)> {
     let (&PathSegment::Index(index), list) = path.segments().split_last()? else {
         return None;
