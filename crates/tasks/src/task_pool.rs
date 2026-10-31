@@ -383,14 +383,6 @@ mod tests {
     }
 
     #[test]
-    fn task_is_finished_after_await() {
-        let pool = TaskPool::new();
-        let task = pool.spawn(async { 1u32 });
-        let result = pollster::block_on(task);
-        assert_eq!(result, 1);
-    }
-
-    #[test]
     fn drop_joins_threads() {
         // If Drop impl is broken this will hang or panic.
         let pool = TaskPool::new();

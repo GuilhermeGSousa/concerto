@@ -50,6 +50,8 @@ jobs:
           # jolt-ffi builds the Jolt Physics C++ sources from a submodule.
           submodules: true
 
+      - uses: ./.github/actions/lfs-pull
+
       - name: Free disk space
         if: runner.os == 'Linux'
         run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -112,6 +114,7 @@ jobs:
         with:
           # jolt-ffi builds the Jolt Physics C++ sources from a submodule.
           submodules: true
+      - uses: ./.github/actions/lfs-pull
       - name: Cache
         uses: actions/cache@v4
         with:

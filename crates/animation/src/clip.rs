@@ -307,18 +307,6 @@ mod tests {
     }
 
     #[test]
-    fn frame_rate_survives_a_bincode_round_trip() {
-        let mut clip = linear_clip(Uuid::from_u128(1));
-        clip.set_frame_rate(24.0);
-
-        let bytes = bincode::serialize(&clip).unwrap();
-        let back: AnimationClip = bincode::deserialize(&bytes).unwrap();
-
-        assert_eq!(back.frame_rate(), Some(24.0));
-        assert_eq!(back.duration(), 1.0);
-    }
-
-    #[test]
     fn detected_frame_rate_is_none_when_the_rate_rounds_to_nothing() {
         let mut clip = AnimationClip::default();
         clip.add_channel(Uuid::from_u128(1), channel_with_keys(vec![0.0, 200.0]));

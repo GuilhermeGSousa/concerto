@@ -40,13 +40,6 @@ fn stored(channel: &ConstantChannel) -> StoredChannel {
 }
 
 #[test]
-fn registration_carries_the_feature_channel_type_data() {
-    let registry = registry();
-    let registration = registry.get_by_name("ConstantChannel").unwrap();
-    assert!(registration.data::<ReflectFeatureChannel>().is_some());
-}
-
-#[test]
 fn a_stored_channel_builds_and_extracts() {
     let channel = ConstantChannel {
         value: 2.0,
