@@ -149,6 +149,12 @@ style follow the file you are in.
 cloud pipeline session writes the test first but cannot run it, so the red step
 is not observed.
 
+**What a test is for.** A test covers behaviour the engine owns. Do not test a
+getter, a one-line wrapper, or a derive from another crate (`std`, `serde`), and
+do not test what an external library does on its own. Engine maths, a value's
+persisted encoding, and a test that is the only cover for a behaviour stay
+however simple they look.
+
 ## Constraints
 
 - A game crate never depends on `concerto-editor`. The editor hosts the game;
