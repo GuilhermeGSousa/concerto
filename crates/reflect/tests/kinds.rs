@@ -139,6 +139,27 @@ fn a_vec_is_a_list_that_grows_with_defaults_and_shrinks() {
 }
 
 #[test]
+fn removing_from_a_vec_takes_that_element_out() {
+    let mut list = vec![1.0_f32, 2.0, 3.0];
+    let ReflectMut::List(elements) = list.reflect_mut() else {
+        panic!("a Vec is a List");
+    };
+    assert!(elements.remove(1));
+    assert_eq!(elements.len(), 2);
+    assert_eq!(list, [1.0, 3.0]);
+}
+
+#[test]
+fn removing_out_of_range_from_a_vec_changes_nothing() {
+    let mut list = vec![1.0_f32, 2.0];
+    let ReflectMut::List(elements) = list.reflect_mut() else {
+        panic!("a Vec is a List");
+    };
+    assert!(!elements.remove(2));
+    assert_eq!(list, [1.0, 2.0]);
+}
+
+#[test]
 fn a_leaf_encodes_and_decodes_itself() {
     let source = Vec3::new(1.0, 2.0, 3.0);
     let ReflectRef::Leaf(leaf) = source.reflect_ref() else {

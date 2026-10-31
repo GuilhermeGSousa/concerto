@@ -12,7 +12,7 @@ use concerto_ecs::{
 };
 use std::any::TypeId;
 
-use concerto_reflect::PropertyPath;
+use concerto_reflect::{PathSegment, PropertyPath};
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     interaction::{Interactable, UIDisabled},
@@ -31,6 +31,7 @@ mod add_component;
 mod boolean;
 mod color;
 mod component_menu;
+mod list;
 mod name_field;
 mod numeric;
 mod registry;
@@ -55,12 +56,13 @@ use numeric::{
 use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
+pub(crate) use list::{ListEdit, ListEditor};
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
 pub use rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
-    PropertyRowValue,
+    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    PropertyKind, PropertyRow, PropertyRowValue,
 };
 
 pub const PANEL_ID: &str = "concerto.ecs";
@@ -81,9 +83,11 @@ fn label_for(path: &PropertyPath) -> String {
         .segments()
         .iter()
         .rev()
-        .find(|segment| segment.parse::<usize>().is_err())
-        .copied()
-        .unwrap_or(path.name())
+        .find(|segment| match segment {
+            PathSegment::Field(name) => name.parse::<usize>().is_err(),
+            PathSegment::Index(_) => true,
+        })
+        .map_or(path.name().to_string(), ToString::to_string)
         .split('_')
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
