@@ -102,7 +102,7 @@ pub(crate) struct SceneEditorState {
     building: Option<AssetEntry>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl SceneEditorState {
     pub(crate) fn idle(&self) -> bool {
         self.job.is_none() && self.building.is_none()

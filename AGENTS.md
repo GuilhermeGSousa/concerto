@@ -48,6 +48,7 @@ cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
+cargo concerto editor <dir> --update [--engine <path>]
 ```
 
 Examples are `tech-demo` and `ui-showcase`. Sources are imported through the editor's Import…, over a

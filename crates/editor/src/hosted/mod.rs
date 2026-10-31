@@ -3,8 +3,8 @@ pub mod events;
 pub mod input;
 pub mod seam;
 pub mod target;
-#[cfg(test)]
-pub(crate) mod testing;
+#[cfg(any(test, feature = "testing"))]
+pub mod testing;
 
 use std::{
     any::Any,
@@ -204,7 +204,7 @@ impl PendingApp {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testing"))]
     pub(crate) fn finish_now(mut self) -> Option<HostedApp> {
         self.finish_if_ready()
     }

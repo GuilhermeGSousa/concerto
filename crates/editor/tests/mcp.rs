@@ -27,7 +27,7 @@ use concerto_ecs::{
     signal::listener::GlobalListener,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, Unsaved},
+    asset_editor::{AssetEditorRegistry, EditorDocument, Unsaved},
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     inspector::{EditContext, EditError, EditableApp, PropertyEditor},
@@ -361,6 +361,32 @@ struct EditFramesSoFar {}
 
 #[derive(Deserialize, JsonSchema)]
 struct TextFields {}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExtensionState {}
+
+#[derive(Resource)]
+struct ExtensionInstalled {
+    after_the_editor: bool,
+}
+
+fn extension(app: &mut App) {
+    let after_the_editor = app.get_resource::<AssetEditorRegistry>().is_some();
+    app.insert_resource(ExtensionInstalled { after_the_editor });
+}
+
+fn extension_state(
+    mut calls: ToolCalls<ExtensionState>,
+    installed: Option<Res<ExtensionInstalled>>,
+) {
+    for (_, reply) in calls.read() {
+        reply.ok(match &installed {
+            Some(installed) if installed.after_the_editor => "after the editor",
+            Some(_) => "before the editor",
+            None => "not installed",
+        });
+    }
+}
 
 fn state(
     mut calls: ToolCalls<State>,
@@ -734,7 +760,7 @@ where
     let served = run_with(
         server_io,
         move |app| {
-            concerto_editor::mcp::editor(recipe, root)(app);
+            concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
             app.insert_resource(log)
                 .insert_resource(FixtureScene(scene))
                 .add_tool::<State, _>(McpTool::read_only("state"), state)
@@ -767,6 +793,10 @@ where
                     edit_frames_so_far,
                 )
                 .add_tool::<TextFields, _>(McpTool::read_only("text_fields"), text_fields)
+                .add_tool::<ExtensionState, _>(
+                    McpTool::read_only("extension_state"),
+                    extension_state,
+                )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -1086,6 +1116,21 @@ fn status_and_list_assets_without_a_project() {
     assert_eq!(line(&status, "project: "), "none");
     assert_eq!(line(&status, "selection: "), "none");
     assert_eq!(error["code"], "no_project");
+}
+
+#[test]
+fn a_plugin_given_to_the_editor_is_installed_after_it() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        let state = ok(&client, "extension_state").await;
+        client.cancel().await.unwrap();
+        state
+    }) else {
+        return;
+    };
+
+    assert_eq!(served.result, "after the editor");
 }
 
 #[test]

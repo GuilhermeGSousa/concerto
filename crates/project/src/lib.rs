@@ -24,16 +24,12 @@ const GAME_FILES: &[(&str, &str)] = &[
     (".gitignore", include_str!("../templates/game/gitignore")),
 ];
 
-const EDITOR_FILES: &[(&str, &str)] = &[
-    (
-        "editor/Cargo.toml",
-        include_str!("../templates/editor/Cargo.toml.template"),
-    ),
-    (
-        "editor/src/main.rs",
-        include_str!("../templates/editor/src/main.rs"),
-    ),
-];
+const EDITOR_MANIFEST: &str = include_str!("../templates/editor/Cargo.toml.template");
+const EDITOR_MAIN: &str = include_str!("../templates/editor/src/main.rs");
+const EDITOR_MAIN_WITH_PLUGINS: &str = include_str!("../templates/editor/src/main_with_plugins.rs");
+
+const PLUGIN_KEYS: &[&str] = &["package", "install", "version", "path"];
+const ARRAY_WIDTH: usize = 60;
 
 const OWN_WORKSPACE: &str = "\n[workspace]\nmembers = [\".\", \"editor\"]\n\n[profile.dev.package.concerto-jolt-ffi]\nopt-level = 3";
 
@@ -57,7 +53,7 @@ const RESERVED: &[&str] = &[
 ];
 
 /// How to run the tool.
-pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n       cargo concerto editor <dir> [--engine <path>]";
+pub const USAGE: &str = "usage: cargo concerto new <dir> [--engine <path>]\n       cargo concerto editor <dir> [--update] [--engine <path>]";
 
 /// Where a generated project's engine dependencies come from.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +67,7 @@ pub enum Engine {
 pub enum Command {
     New(PathBuf, Engine),
     Editor(PathBuf, Engine),
+    UpdateEditor(PathBuf, Option<Engine>),
 }
 
 /// The files a command wrote, the manifests it edited, and what it has to say.
@@ -116,11 +113,14 @@ where
         "unknown command `{command}`"
     );
     let mut dir = None;
-    let mut engine = Engine::Published;
+    let mut engine = None;
+    let mut update = false;
     while let Some(arg) = args.next() {
         if arg == "--engine" {
             let path = args.next().context("--engine needs a path")?;
-            engine = Engine::Checkout(PathBuf::from(path));
+            engine = Some(Engine::Checkout(PathBuf::from(path)));
+        } else if arg == "--update" && command == "editor" {
+            update = true;
         } else if arg.starts_with('-') {
             bail!("unknown option `{arg}`");
         } else if dir.is_none() {
@@ -130,6 +130,10 @@ where
         }
     }
     let dir = dir.with_context(|| format!("`{command}` needs a directory"))?;
+    if update {
+        return Ok(Command::UpdateEditor(dir, engine));
+    }
+    let engine = engine.unwrap_or(Engine::Published);
     Ok(match command.as_str() {
         "new" => Command::New(dir, engine),
         _ => Command::Editor(dir, engine),
@@ -141,6 +145,7 @@ pub fn run(command: Command) -> Result<Report> {
     match command {
         Command::New(dir, engine) => new_project(dir, engine),
         Command::Editor(dir, engine) => add_editor(dir, engine),
+        Command::UpdateEditor(dir, engine) => update_editor(dir, engine),
     }
 }
 
@@ -168,10 +173,15 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     } else {
         OWN_WORKSPACE
     };
-    let crate_name = name.replace('-', "_");
+    let game = Game {
+        dir: dir.clone(),
+        crate_name: name.replace('-', "_"),
+        name,
+        plugins: Vec::new(),
+    };
     let vars = [
-        ("name", name.as_str()),
-        ("crate", crate_name.as_str()),
+        ("name", game.name.as_str()),
+        ("crate", game.crate_name.as_str()),
         ("concerto", &dependency(checkout.as_deref(), "", &dir, &dir)),
         (
             "concerto_asset_build",
@@ -185,7 +195,7 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
         .try_for_each(|(path, template)| {
             write_file(&dir.join(path), &render(template, &vars), &mut report)
         })
-        .and_then(|()| write_editor(&dir, &name, &crate_name, checkout.as_deref(), &mut report))
+        .and_then(|()| write_editor(&game, checkout.as_deref(), &mut report))
         .and_then(|()| match workspace {
             Some(workspace) => join_workspace(
                 &dir,
@@ -226,6 +236,74 @@ fn remove_project(dir: &Path, created: bool) -> std::io::Result<()> {
 /// Adds the generated `editor/` crate to the game in `dir` and makes it a workspace member.
 pub fn add_editor(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     let dir = absolute(dir.as_ref())?;
+    let game = read_game(&dir)?;
+    ensure!(
+        !dir.join("editor").exists(),
+        "{} already exists; --update rewrites its generated files",
+        dir.join("editor").display()
+    );
+    let checkout = resolve(engine)?;
+    let workspace = workspace_of(&dir)?;
+    let mut report = Report::default();
+    let added =
+        write_editor(&game, checkout.as_deref(), &mut report).and_then(|()| match workspace {
+            Some(workspace) => join_workspace(&dir, workspace, &[dir.join("editor")], &mut report),
+            None => declare_own_workspace(&dir, &mut report),
+        });
+    if let Err(error) = added {
+        let editor = dir.join("editor");
+        return Err(match fs::remove_dir_all(&editor) {
+            Ok(()) => error,
+            Err(cleanup) => error.context(format!(
+                "and {} could not be removed: {cleanup}",
+                editor.display()
+            )),
+        });
+    }
+    report.notes.push(format!(
+        "the editor calls `{}::game`; the game's library must export `pub fn game(app: &mut App)`",
+        game.crate_name
+    ));
+    warn_if_published(checkout.as_deref(), &mut report);
+    Ok(report)
+}
+
+/// Rewrites `editor/Cargo.toml` and `editor/src/main.rs` from the game in `dir`; `editor/Cargo.toml` names the engine unless `engine` does.
+pub fn update_editor(dir: impl AsRef<Path>, engine: Option<Engine>) -> Result<Report> {
+    let dir = absolute(dir.as_ref())?;
+    let game = read_game(&dir)?;
+    let editor = dir.join("editor");
+    ensure!(
+        editor.is_dir(),
+        "{} does not exist; `cargo concerto editor` without --update creates it",
+        editor.display()
+    );
+    let engine = match engine {
+        Some(engine) => engine,
+        None => engine_of_editor(&editor)?,
+    };
+    let checkout = resolve(engine)?;
+    let mut report = Report::default();
+    write_editor(&game, checkout.as_deref(), &mut report)?;
+    warn_if_published(checkout.as_deref(), &mut report);
+    Ok(report)
+}
+
+struct Game {
+    dir: PathBuf,
+    name: String,
+    crate_name: String,
+    plugins: Vec<EditorPlugin>,
+}
+
+struct EditorPlugin {
+    package: String,
+    install: String,
+    version: Option<String>,
+    path: Option<String>,
+}
+
+fn read_game(dir: &Path) -> Result<Game> {
     let manifest_path = dir.join("Cargo.toml");
     let manifest: DocumentMut = fs::read_to_string(&manifest_path)
         .with_context(|| format!("{} has no Cargo.toml", dir.display()))?
@@ -247,54 +325,205 @@ pub fn add_editor(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
         "{} has no library: the editor calls the game's recipe from src/lib.rs",
         dir.display()
     );
-    ensure!(
-        !dir.join("editor").exists(),
-        "{} already exists",
-        dir.join("editor").display()
-    );
-    let checkout = resolve(engine)?;
-    let workspace = workspace_of(&dir)?;
-    let mut report = Report::default();
-    let added =
-        write_editor(&dir, &name, &crate_name, checkout.as_deref(), &mut report).and_then(|()| {
-            match workspace {
-                Some(workspace) => {
-                    join_workspace(&dir, workspace, &[dir.join("editor")], &mut report)
-                }
-                None => declare_own_workspace(&dir, &mut report),
-            }
-        });
-    if let Err(error) = added {
-        let editor = dir.join("editor");
-        return Err(match fs::remove_dir_all(&editor) {
-            Ok(()) => error,
-            Err(cleanup) => error.context(format!(
-                "and {} could not be removed: {cleanup}",
-                editor.display()
-            )),
-        });
-    }
-    report.notes.push(format!(
-        "the editor calls `{crate_name}::game`; the game's library must export `pub fn game(app: &mut App)`"
-    ));
-    warn_if_published(checkout.as_deref(), &mut report);
-    Ok(report)
+    let plugins = editor_plugins(&manifest, &name)
+        .with_context(|| format!("the editor plugins in {}", manifest_path.display()))?;
+    Ok(Game {
+        dir: dir.to_path_buf(),
+        name,
+        crate_name,
+        plugins,
+    })
 }
 
-fn write_editor(
-    dir: &Path,
-    name: &str,
-    crate_name: &str,
+fn editor_plugins(manifest: &DocumentMut, game: &str) -> Result<Vec<EditorPlugin>> {
+    let Some(list) = manifest
+        .get("package")
+        .and_then(|package| package.get("metadata"))
+        .and_then(|metadata| metadata.get("concerto"))
+        .and_then(|concerto| concerto.get("editor"))
+        .and_then(|editor| editor.get("plugins"))
+    else {
+        return Ok(Vec::new());
+    };
+    let list = list
+        .as_array()
+        .context("`plugins` must be an array of `{ package, install }` tables")?;
+    let mut taken = vec![game.to_string(), "concerto-editor".to_string()];
+    let mut plugins = Vec::new();
+    for entry in list {
+        let plugin = editor_plugin(entry, &taken)?;
+        taken.push(plugin.package.clone());
+        plugins.push(plugin);
+    }
+    Ok(plugins)
+}
+
+fn editor_plugin(entry: &Value, taken: &[String]) -> Result<EditorPlugin> {
+    let shown = entry.to_string();
+    let shown = shown.trim();
+    let table = entry
+        .as_inline_table()
+        .with_context(|| format!("`{shown}` is not a `{{ package, install }}` table"))?;
+    if let Some((key, _)) = table.iter().find(|(key, _)| !PLUGIN_KEYS.contains(key)) {
+        bail!("`{shown}` has an unknown key `{key}`");
+    }
+    let text = |key: &str| {
+        table
+            .get(key)
+            .map(|value| {
+                value
+                    .as_str()
+                    .map(str::to_string)
+                    .with_context(|| format!("`{shown}` has a `{key}` that is not a string"))
+            })
+            .transpose()
+    };
+    let package = text("package")?.with_context(|| format!("`{shown}` has no `package`"))?;
+    let install = text("install")?.with_context(|| format!("`{shown}` has no `install`"))?;
+    let version = text("version")?;
+    let path = text("path")?;
+    ensure!(
+        is_package_name(&package),
+        "`{shown}` does not name a Cargo package"
+    );
+    ensure!(
+        !taken.contains(&package),
+        "`{shown}` names `{package}`, which the editor already depends on"
+    );
+    ensure!(
+        is_rust_path(&install),
+        "`{shown}` has an `install` that is not a Rust path such as `{}::install`",
+        package.replace('-', "_")
+    );
+    ensure!(
+        version.is_some() || path.is_some() || engine_crate(&package).is_some(),
+        "`{shown}` is not a `concerto-<dir>` package, so it must give `version` or `path`"
+    );
+    Ok(EditorPlugin {
+        package,
+        install,
+        version,
+        path,
+    })
+}
+
+fn is_rust_path(path: &str) -> bool {
+    let segments: Vec<&str> = path.split("::").collect();
+    segments.len() > 1 && segments.into_iter().all(is_identifier)
+}
+
+fn is_identifier(segment: &str) -> bool {
+    segment != "_"
+        && !segment.is_empty()
+        && !segment.starts_with(|c: char| c.is_ascii_digit())
+        && segment
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !KEYWORDS.contains(&segment)
+}
+
+fn engine_crate(package: &str) -> Option<String> {
+    package
+        .strip_prefix("concerto-")
+        .filter(|dir| !dir.is_empty())
+        .map(|dir| format!("crates/{dir}"))
+}
+
+fn plugin_dependency(
+    plugin: &EditorPlugin,
+    game: &Path,
     checkout: Option<&Path>,
-    report: &mut Report,
-) -> Result<()> {
+) -> Result<String> {
+    let editor = game.join("editor");
+    if let (None, None, Some(crate_dir)) =
+        (&plugin.version, &plugin.path, engine_crate(&plugin.package))
+    {
+        return Ok(dependency(checkout, &crate_dir, &editor, game));
+    }
+    let mut table = InlineTable::new();
+    if let Some(version) = &plugin.version {
+        table.insert("version", version.as_str().into());
+    }
+    if let Some(path) = &plugin.path {
+        let written = if Path::new(path).is_absolute() {
+            path.clone()
+        } else {
+            relative(&editor, &absolute(&game.join(path))?)
+        };
+        table.insert("path", written.as_str().into());
+    }
+    table.fmt();
+    Ok(table.to_string())
+}
+
+fn plugin_list(plugins: &[EditorPlugin]) -> String {
+    let installs: Vec<&str> = plugins
+        .iter()
+        .map(|plugin| plugin.install.as_str())
+        .collect();
+    let line = installs.join(", ");
+    if installs.len() == 1 || line.len() <= ARRAY_WIDTH {
+        format!("&[{line}]")
+    } else {
+        format!(
+            "&[\n            {},\n        ]",
+            installs.join(",\n            ")
+        )
+    }
+}
+
+fn engine_of_editor(editor: &Path) -> Result<Engine> {
+    let manifest = editor.join("Cargo.toml");
+    let unknown = || {
+        format!(
+            "{} does not say which engine it uses; pass --engine <path>",
+            manifest.display()
+        )
+    };
+    let document = read_manifest(&manifest)?.with_context(unknown)?;
+    let dependency = document
+        .get("dependencies")
+        .and_then(|dependencies| dependencies.get("concerto-editor"))
+        .with_context(unknown)?;
+    if dependency.is_str() {
+        return Ok(Engine::Published);
+    }
+    let table = dependency.as_table_like().with_context(unknown)?;
+    let Some(path) = table.get("path") else {
+        ensure!(table.contains_key("version"), unknown());
+        return Ok(Engine::Published);
+    };
+    let path = absolute(&editor.join(path.as_str().with_context(unknown)?))?;
+    ensure!(path.ends_with("crates/editor"), unknown());
+    let checkout = path.parent().and_then(Path::parent).with_context(unknown)?;
+    Ok(Engine::Checkout(checkout.to_path_buf()))
+}
+
+fn write_editor(game: &Game, checkout: Option<&Path>, report: &mut Report) -> Result<()> {
+    let dir = &game.dir;
     let editor = dependency(checkout, "crates/editor", &dir.join("editor"), dir);
+    let mut plugin_dependencies = String::new();
+    for plugin in &game.plugins {
+        let dependency = plugin_dependency(plugin, dir, checkout)?;
+        plugin_dependencies.push_str(&format!("\n{} = {dependency}", plugin.package));
+    }
+    let plugins = plugin_list(&game.plugins);
     let vars = [
-        ("name", name),
-        ("crate", crate_name),
+        ("name", game.name.as_str()),
+        ("crate", game.crate_name.as_str()),
         ("concerto_editor", editor.as_str()),
+        ("plugin_dependencies", plugin_dependencies.as_str()),
+        ("plugins", plugins.as_str()),
     ];
-    for (path, template) in EDITOR_FILES {
+    let main = if game.plugins.is_empty() {
+        EDITOR_MAIN
+    } else {
+        EDITOR_MAIN_WITH_PLUGINS
+    };
+    for (path, template) in [
+        ("editor/Cargo.toml", EDITOR_MANIFEST),
+        ("editor/src/main.rs", main),
+    ] {
         write_file(&dir.join(path), &render(template, &vars), report)?;
     }
     Ok(())
@@ -310,11 +539,7 @@ fn warn_if_published(checkout: Option<&Path>, report: &mut Report) {
 
 fn validate_name(name: &str) -> Result<()> {
     let crate_name = name.replace('-', "_");
-    let valid = !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-        && !name.starts_with(|c: char| c.is_ascii_digit())
+    let valid = is_package_name(name)
         && !KEYWORDS.contains(&crate_name.as_str())
         && !RESERVED.contains(&crate_name.as_str());
     ensure!(
@@ -322,6 +547,14 @@ fn validate_name(name: &str) -> Result<()> {
         "`{name}` cannot be a package name: use letters, digits, `-` and `_`, do not start with a digit, and do not use a Rust keyword, `test`, a Cargo build directory name (`build`, `deps`, `examples`, `incremental`), or the name of an engine crate the project depends on"
     );
     Ok(())
+}
+
+fn is_package_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && !name.starts_with(|c: char| c.is_ascii_digit())
 }
 
 fn render(template: &str, vars: &[(&str, &str)]) -> String {
@@ -1114,6 +1347,407 @@ mod tests {
         assert!(parse(["concerto", "new", "x", "--engine"]).is_err());
         assert!(parse(["concerto", "new", "x", "y"]).is_err());
         assert!(parse(["concerto", "new", "x", "--bogus"]).is_err());
+    }
+
+    const PLUGINS: &str = "\n[package.metadata.concerto.editor]\nplugins = [{ package = \"concerto-motion-matching-editor\", install = \"concerto_motion_matching_editor::install\" }]\n";
+
+    fn write_game_with_plugins(dir: &Path, plugins: &str) {
+        write(dir.join("Cargo.toml"), &format!("{GAME_MANIFEST}{plugins}"));
+        write(dir.join("src/lib.rs"), "pub fn game() {}\n");
+    }
+
+    fn plugin_list(entries: &str) -> String {
+        format!("\n[package.metadata.concerto.editor]\nplugins = [{entries}]\n")
+    }
+
+    fn editor_manifest(dependency: &str) -> String {
+        format!(
+            "[package]\nname = \"g-editor\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\ng = {{ path = \"..\" }}\nconcerto-editor = \"{VERSION}\"\n{dependency}"
+        )
+    }
+
+    const PLAIN_MAIN: &str = "fn main() {\n    concerto_editor::run(g::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n";
+
+    const MOTION_MAIN: &str = "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_motion_matching_editor::install],\n    );\n}\n";
+
+    #[test]
+    fn without_a_plugin_list_the_editor_calls_run() {
+        for plugins in ["", &plugin_list("")] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path().join("g");
+            write_game_with_plugins(&dir, plugins);
+
+            add_editor(&dir, Engine::Published).unwrap();
+
+            assert_eq!(read(dir.join("editor/Cargo.toml")), editor_manifest(""));
+            assert_eq!(read(dir.join("editor/src/main.rs")), PLAIN_MAIN);
+        }
+    }
+
+    #[test]
+    fn a_plugin_list_names_the_crate_and_the_call() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game_with_plugins(&dir, PLUGINS);
+
+        add_editor(&dir, Engine::Published).unwrap();
+
+        assert_eq!(
+            read(dir.join("editor/Cargo.toml")),
+            editor_manifest(&format!(
+                "concerto-motion-matching-editor = \"{VERSION}\"\n"
+            ))
+        );
+        assert_eq!(read(dir.join("editor/src/main.rs")), MOTION_MAIN);
+        assert!(read(dir.join("Cargo.toml")).contains(PLUGINS));
+        assert!(!read(dir.join("Cargo.toml")).contains("concerto-motion-matching-editor ="));
+    }
+
+    #[test]
+    fn a_long_plugin_list_is_written_the_way_cargo_fmt_keeps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game_with_plugins(
+            &dir,
+            &plugin_list(
+                "{ package = \"concerto-first-long-extension\", install = \"concerto_first_long_extension::install\" }, { package = \"concerto-second\", install = \"concerto_second::setup::install\" }",
+            ),
+        );
+
+        add_editor(&dir, Engine::Published).unwrap();
+
+        assert_eq!(
+            read(dir.join("editor/src/main.rs")),
+            "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[\n            concerto_first_long_extension::install,\n            concerto_second::setup::install,\n        ],\n    );\n}\n"
+        );
+    }
+
+    #[test]
+    fn one_plugin_stays_on_one_line_however_long() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game_with_plugins(
+            &dir,
+            &plugin_list(
+                "{ package = \"concerto-a-very-long-plugin-crate-name-that-fills-the-row\", install = \"a_very_long_plugin_crate_name_that_fills_the_row::setup::install\" }",
+            ),
+        );
+
+        add_editor(&dir, Engine::Published).unwrap();
+
+        assert!(read(dir.join("editor/src/main.rs")).contains(
+            "        &[a_very_long_plugin_crate_name_that_fills_the_row::setup::install],\n"
+        ));
+    }
+
+    #[test]
+    fn a_concerto_package_resolves_to_its_crate_in_the_checkout() {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("engine");
+        fs::create_dir_all(&checkout).unwrap();
+        let inside = checkout.join("examples/g");
+        let outside = tmp.path().join("projects/g");
+        for dir in [&inside, &outside] {
+            write_game_with_plugins(dir, PLUGINS);
+            add_editor(dir, Engine::Checkout(checkout.clone())).unwrap();
+        }
+
+        assert!(read(inside.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-motion-matching-editor = {{ version = \"{VERSION}\", path = \"../../../crates/motion-matching-editor\" }}"
+        )));
+        let checkout = slashed(&canonical(&checkout));
+        assert!(read(outside.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-motion-matching-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/motion-matching-editor\" }}"
+        )));
+    }
+
+    #[test]
+    fn another_package_uses_the_version_and_path_its_entry_gives() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game_with_plugins(
+            &dir,
+            &plugin_list(
+                "{ package = \"by-version\", install = \"by_version::install\", version = \"2.1\" }, { package = \"by-path\", install = \"by_path::install\", path = \"../tools/by-path\" }, { package = \"by-both\", install = \"by_both::install\", version = \"3\", path = \"plugins/by-both\" }, { package = \"concerto-own\", install = \"concerto_own::install\", path = \"/elsewhere/own\" }",
+            ),
+        );
+
+        add_editor(&dir, Engine::Published).unwrap();
+
+        let manifest = read(dir.join("editor/Cargo.toml"));
+        assert!(manifest.contains("by-version = { version = \"2.1\" }\n"));
+        assert!(manifest.contains("by-path = { path = \"../../tools/by-path\" }\n"));
+        assert!(manifest.contains("by-both = { version = \"3\", path = \"../plugins/by-both\" }\n"));
+        assert!(manifest.contains("concerto-own = { path = \"/elsewhere/own\" }\n"));
+    }
+
+    #[test]
+    fn a_malformed_entry_names_itself_and_nothing_is_written() {
+        for (entries, named) in [
+            ("\"loose\"", "loose"),
+            ("{ install = \"a::install\" }", "a::install"),
+            ("{ package = \"a-b\" }", "a-b"),
+            ("{ package = 1, install = \"a::install\" }", "`package`"),
+            (
+                "{ package = \"bad name\", install = \"a::install\", version = \"1\" }",
+                "bad name",
+            ),
+            (
+                "{ package = \"thing\", install = \"thing::install\" }",
+                "thing",
+            ),
+            (
+                "{ package = \"concerto-\", install = \"a::install\" }",
+                "concerto-",
+            ),
+            (
+                "{ package = \"concerto-a\", install = \"install\" }",
+                "concerto-a",
+            ),
+            (
+                "{ package = \"concerto-a\", install = \"a::\" }",
+                "concerto-a",
+            ),
+            (
+                "{ package = \"concerto-a\", install = \"a::b(); evil()\" }",
+                "concerto-a",
+            ),
+            (
+                "{ package = \"concerto-a\", install = \"a::fn\" }",
+                "concerto-a",
+            ),
+            (
+                "{ package = \"concerto-a\", install = \"a::install\", version = 1 }",
+                "`version`",
+            ),
+            (
+                "{ package = \"concerto-a\", install = \"a::install\", pth = \"x\" }",
+                "pth",
+            ),
+            (
+                "{ package = \"concerto-editor\", install = \"a::install\" }",
+                "concerto-editor",
+            ),
+            ("{ package = \"g\", install = \"a::install\", version = \"1\" }", "`g`"),
+            (
+                "{ package = \"concerto-a\", install = \"a::i\" }, { package = \"concerto-a\", install = \"a::j\" }",
+                "a::j",
+            ),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path().join("g");
+            write_game_with_plugins(&dir, &plugin_list(entries));
+
+            let added = add_editor(&dir, Engine::Published).unwrap_err();
+
+            assert!(format!("{added:#}").contains(named), "{added:#}");
+            assert!(!dir.join("editor").exists(), "{entries}");
+            assert!(!read(dir.join("Cargo.toml")).contains("[workspace]"));
+
+            write(dir.join("editor/Cargo.toml"), "mine");
+            write(dir.join("editor/src/main.rs"), "mine too");
+
+            let updated = update_editor(&dir, None).unwrap_err();
+
+            assert!(format!("{updated:#}").contains(named), "{updated:#}");
+            assert_eq!(read(dir.join("editor/Cargo.toml")), "mine");
+            assert_eq!(read(dir.join("editor/src/main.rs")), "mine too");
+        }
+    }
+
+    #[test]
+    fn a_plugin_list_that_is_not_an_array_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game_with_plugins(
+            &dir,
+            "\n[package.metadata.concerto.editor]\nplugins = \"all\"\n",
+        );
+
+        let error = add_editor(&dir, Engine::Published).unwrap_err();
+
+        assert!(format!("{error:#}").contains("plugins"), "{error:#}");
+        assert!(!dir.join("editor").exists());
+    }
+
+    fn tree(dir: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+        let mut files = Vec::new();
+        let mut folders = vec![dir.to_path_buf()];
+        while let Some(folder) = folders.pop() {
+            for entry in fs::read_dir(folder).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    folders.push(path);
+                } else {
+                    let contents = fs::read(&path).unwrap();
+                    files.push((path, contents));
+                }
+            }
+        }
+        files.sort();
+        files
+    }
+
+    #[test]
+    fn update_rewrites_only_the_editors_two_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("ws");
+        write(ws.join("Cargo.toml"), "[workspace]\nmembers = [\"g\"]\n");
+        let dir = ws.join("g");
+        write_game(&dir);
+        add_editor(&dir, Engine::Published).unwrap();
+        write(dir.join("editor/src/notes.rs"), "mine");
+        write(dir.join("editor/README.md"), "also mine");
+        write_game_with_plugins(&dir, PLUGINS);
+        let before = tree(&ws);
+
+        let report = update_editor(&dir, None).unwrap();
+
+        let dir = canonical(&dir);
+        let changed: Vec<_> = tree(&ws)
+            .into_iter()
+            .filter(|file| !before.contains(file))
+            .map(|(path, _)| canonical(&path))
+            .collect();
+        assert_eq!(
+            changed,
+            vec![
+                dir.join("editor/Cargo.toml"),
+                dir.join("editor/src/main.rs")
+            ]
+        );
+        assert_eq!(tree(&ws).len(), before.len());
+        assert_eq!(
+            report.written,
+            vec![
+                dir.join("editor/Cargo.toml"),
+                dir.join("editor/src/main.rs")
+            ]
+        );
+        assert!(report.edited.is_empty());
+        assert_eq!(read(dir.join("editor/src/main.rs")), MOTION_MAIN);
+    }
+
+    #[test]
+    fn update_with_an_empty_list_goes_back_to_run() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game_with_plugins(&dir, PLUGINS);
+        add_editor(&dir, Engine::Published).unwrap();
+        let manifest = read(dir.join("Cargo.toml")).replace(PLUGINS, "");
+        write(dir.join("Cargo.toml"), &manifest);
+
+        update_editor(&dir, None).unwrap();
+
+        assert_eq!(read(dir.join("editor/Cargo.toml")), editor_manifest(""));
+        assert_eq!(read(dir.join("editor/src/main.rs")), PLAIN_MAIN);
+    }
+
+    #[test]
+    fn update_keeps_the_engine_the_editor_already_has() {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("engine");
+        fs::create_dir_all(&checkout).unwrap();
+        let inside = checkout.join("examples/g");
+        let outside = tmp.path().join("projects/g");
+        for dir in [&inside, &outside] {
+            write_game(dir);
+            add_editor(dir, Engine::Checkout(checkout.clone())).unwrap();
+            let before = read(dir.join("editor/Cargo.toml"));
+
+            let report = update_editor(dir, None).unwrap();
+
+            assert_eq!(read(dir.join("editor/Cargo.toml")), before);
+            assert!(report.warnings.is_empty());
+        }
+
+        write_game_with_plugins(&inside, PLUGINS);
+        update_editor(&inside, None).unwrap();
+
+        assert!(read(inside.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-motion-matching-editor = {{ version = \"{VERSION}\", path = \"../../../crates/motion-matching-editor\" }}"
+        )));
+    }
+
+    #[test]
+    fn update_keeps_the_published_engine_and_warns() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game(&dir);
+        add_editor(&dir, Engine::Published).unwrap();
+
+        let report = update_editor(&dir, None).unwrap();
+
+        assert_eq!(read(dir.join("editor/Cargo.toml")), editor_manifest(""));
+        assert!(report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("release")));
+    }
+
+    #[test]
+    fn update_takes_the_engine_it_is_given() {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("engine");
+        fs::create_dir_all(&checkout).unwrap();
+        let dir = tmp.path().join("g");
+        write_game(&dir);
+        add_editor(&dir, Engine::Published).unwrap();
+
+        update_editor(&dir, Some(Engine::Checkout(checkout.clone()))).unwrap();
+
+        let checkout = slashed(&canonical(&checkout));
+        assert!(read(dir.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/editor\" }}"
+        )));
+    }
+
+    #[test]
+    fn update_refuses_an_engine_it_cannot_read_from_the_editor() {
+        for dependency in [
+            "concerto-editor = { workspace = true }\n",
+            "concerto-editor = { path = \"../somewhere/else\" }\n",
+            "serde = \"1\"\n",
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path().join("g");
+            write_game(&dir);
+            let manifest = format!("[dependencies]\n{dependency}");
+            write(dir.join("editor/Cargo.toml"), &manifest);
+
+            let error = update_editor(&dir, None).unwrap_err();
+
+            assert!(format!("{error:#}").contains("--engine"), "{error:#}");
+            assert_eq!(read(dir.join("editor/Cargo.toml")), manifest);
+        }
+    }
+
+    #[test]
+    fn update_refuses_a_missing_editor_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("g");
+        write_game(&dir);
+
+        let error = update_editor(&dir, None).unwrap_err();
+
+        assert!(format!("{error:#}").contains("editor"), "{error:#}");
+        assert!(!dir.join("editor").exists());
+    }
+
+    #[test]
+    fn the_parser_reads_update() {
+        assert_eq!(
+            parse(["concerto", "editor", "x", "--update"]).unwrap(),
+            Command::UpdateEditor(PathBuf::from("x"), None)
+        );
+        assert_eq!(
+            parse(["editor", "--update", "x", "--engine", "e"]).unwrap(),
+            Command::UpdateEditor(
+                PathBuf::from("x"),
+                Some(Engine::Checkout(PathBuf::from("e")))
+            )
+        );
+        assert!(parse(["new", "x", "--update"]).is_err());
     }
 
     #[test]

@@ -36,10 +36,14 @@ use crate::{
     timeline::TimelineReadout,
 };
 
-/// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project`, with [`McpPlugin`] and [`EditorMcpPlugin`].
-pub fn editor(recipe: fn(&mut App), project: PathBuf) -> impl FnOnce(&mut App) {
+/// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project` with `plugins` added, and [`McpPlugin`] and [`EditorMcpPlugin`].
+pub fn editor(
+    recipe: fn(&mut App),
+    project: PathBuf,
+    plugins: Vec<fn(&mut App)>,
+) -> impl FnOnce(&mut App) {
     move |app| {
-        crate::run::register_editor(app, recipe, project, false);
+        crate::run::register_editor(app, recipe, project, false, &plugins);
         app.register_plugin(McpPlugin)
             .register_plugin(EditorMcpPlugin);
     }

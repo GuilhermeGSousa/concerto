@@ -28,7 +28,7 @@ pub mod window_chrome;
 mod workspace;
 
 use concerto_mesh::MeshComponent;
-pub use run::run;
+pub use run::{run, run_with};
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;

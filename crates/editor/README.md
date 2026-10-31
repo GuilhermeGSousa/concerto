@@ -23,6 +23,27 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+### Extension crates
+
+An editor crate extends the editor with a public `fn(&mut App)`, conventionally
+`install`, which registers its asset editors and anything else it needs. A game
+never depends on such a crate: it lists it under
+`[package.metadata.concerto.editor]` in its `Cargo.toml`, and `cargo concerto
+editor <dir> --update` regenerates `editor/` to call
+`concerto_editor::run_with(recipe, project_root, plugins)`, as the project
+tool's [README](../project/README.md#editor-plugins) describes. `run_with` is
+`run` with `plugins` added to the editor's `App` in order, after `EditorPlugin`
+and everything else the editor registers, and before the MCP plugins under
+`--mcp`. `run` is `run_with` with an empty list.
+
+An extension crate's tests can use the `testing` feature, which exposes
+`hosted::testing` and its `SceneFixture`; take it as a dev-dependency:
+
+```toml
+[dev-dependencies]
+concerto-editor = { workspace = true, features = ["testing"] }
+```
+
 ## Agents (MCP)
 
 `--mcp` runs the editor for an agent: the whole editor, panels included, with

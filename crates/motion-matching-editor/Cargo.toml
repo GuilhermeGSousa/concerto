@@ -1,0 +1,15 @@
+[package]
+name = "concerto-motion-matching-editor"
+version.workspace = true
+edition = "2024"
+description.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+concerto-app.workspace = true
+concerto-editor.workspace = true
+concerto-motion-matching.workspace = true
+
+[dev-dependencies]
+concerto-editor = { workspace = true, features = ["testing"] }
