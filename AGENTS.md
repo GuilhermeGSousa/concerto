@@ -38,15 +38,6 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 - Linux system packages: `libasound2-dev libudev-dev libwayland-dev`.
 - The wasm target: `rustup target add wasm32-unknown-unknown`.
 - `trunk` to run an example in a browser.
-- The LAFAN1 motion capture dataset, only for work that uses it. Its submodule
-  is `update = none`, so `git submodule update --init` and CI skip it. Fetch it
-  and the 77 BVH takes in `lafan1/lafan1.zip`, leaving the rest of its LFS data
-  on Ubisoft's server, with:
-
-  ```sh
-  GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --checkout examples/tech-demo/assets/lafan1
-  git -C examples/tech-demo/assets/lafan1 lfs pull --include=lafan1/lafan1.zip
-  ```
 
 ## Commands
 
@@ -176,9 +167,10 @@ is not observed.
 - `content/` trees and `<source>.import.toml` files are committed. Never run a
   flow that saves or imports against `examples/*`; copy the project's `content/`
   somewhere disposable first.
-- LAFAN1 is CC BY-NC-ND 4.0, not the engine's licence. The submodule only points
-  at Ubisoft's repository. Ask the owner before committing anything extracted or
-  imported from it, `.gasset` files included.
+- `examples/tech-demo/assets/lafan1` is Ubisoft's LAFAN1 data under CC BY-NC-ND
+  4.0, not the engine's licence. Keep its files byte-identical to the release,
+  with its `README.md` and `license.txt` beside them. Ask the owner before
+  committing anything imported or adapted from it, `.gasset` files included.
 
 ## Git
 

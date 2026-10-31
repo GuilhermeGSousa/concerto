@@ -1,11 +1,11 @@
-name: Pull Git LFS objects
-description: Restores the LFS store from the Actions cache, then downloads only the objects it lacks.
+name: Pull gassets from Git LFS
+description: Restores the LFS store from the Actions cache, then downloads only the gassets it lacks.
 runs:
   using: composite
   steps:
     - name: List LFS objects
       shell: bash
-      run: git lfs ls-files --long | cut -d ' ' -f 1 | sort > .lfs-objects
+      run: git lfs ls-files --long --include='*.gasset' | cut -d ' ' -f 1 | sort > .lfs-objects
     - name: Cache LFS objects
       uses: actions/cache@v4
       with:
@@ -15,4 +15,4 @@ runs:
           ${{ runner.os }}-lfs-
     - name: Pull LFS objects
       shell: bash
-      run: git lfs pull
+      run: git lfs pull --include='*.gasset'

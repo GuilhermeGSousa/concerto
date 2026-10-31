@@ -136,3 +136,6 @@ open an issue or contact the author to ask for one.
 
 Versions released before the license change, including `concerto` 0.1.0 on
 crates.io, remain available under the MIT license they were published with.
+
+The motion capture data in `examples/tech-demo/assets/lafan1` is Ubisoft's and
+has [its own license](examples/tech-demo/assets/lafan1/README.md).
