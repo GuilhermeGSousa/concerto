@@ -351,7 +351,9 @@ impl Importer for GltfImporter {
         let requested_clip_names: Vec<Option<&str>> =
             document.animations().map(|a| a.name()).collect();
         let animation_names = clip_names(&requested_clip_names);
-        for (animation, animation_name) in document.animations().zip(&animation_names) {
+        for (animation_index, (animation, animation_name)) in
+            document.animations().zip(&animation_names).enumerate()
+        {
             let mut animation_clip = AnimationClip::default();
 
             for channel in animation.channels() {
@@ -404,6 +406,13 @@ impl Importer for GltfImporter {
                 }
             }
 
+            let index_name = animation_index.to_string();
+            if !animation_names.contains(&index_name) {
+                ctx.renamed_from(
+                    &format!("animation/{animation_name}"),
+                    &format!("animation/{index_name}"),
+                );
+            }
             ctx.emit(&format!("animation/{animation_name}"), &animation_clip)?;
         }
 

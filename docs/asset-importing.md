@@ -499,10 +499,17 @@ separate DTO trait — the on-disk form of an asset *is* the asset.
 - **Sub-asset matching still uses importer keys** such as `mesh/0` and
   `animation/Idle_Loop`. Reordering objects in a DCC export can change what these keys
   mean. Matching across such changes is deferred.
-- **Obsolete outputs are retained.** Re-import does not delete sub-assets
-  that the source stopped emitting. Renaming clips therefore leaves the old
-  `animation_N` outputs and their metadata keys behind next to the new ones;
-  cleaning them up is tracked in issue #269.
+- **Pruning skips editor-saved outputs.** Re-import deletes the `.gasset` and
+  the metadata key of every output the importer stopped emitting, and removes
+  it from the editor's registry. An output saved from the editor (its header
+  has no provenance) is kept with its key. Pruning an output that another asset
+  still references logs a warning naming the output and the referrer.
+- **A renamed output keeps its id only with a hint.** An importer that renames a
+  sub-asset calls `ctx.renamed_from(new_name, old_name)` before it first calls
+  `sub_asset_id` or `emit` for `new_name`; the new name then takes over the old
+  name's id, and the file keeps its address. The glTF and BVH importers do this
+  for clips renamed from `animation/{index}` to `animation/{name}`. Other
+  importers get the mechanism only.
 - **Moved content is seen at the next build.** A game finds a moved `.gasset`
   once it is rebuilt, and an open editor once the project is reopened; there
   is no runtime file watcher yet.

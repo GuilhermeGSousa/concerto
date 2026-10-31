@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::{Asset, AssetId};
@@ -57,18 +58,20 @@ pub enum ImportError {
 pub struct ImportOutputs {
     pub sub_assets: Vec<EmittedSubAsset>,
     pub dependencies: Vec<DependencyEntry>,
+    pub renames: Vec<(String, String)>,
 }
 
-/// Maps a sub-asset name to the `AssetId` that references to it should use.
+/// Maps a sub-asset name and its hinted old name to the `AssetId` that references to it should use.
 /// The default addresses sub-assets against the source file
 /// (`"<source>#<sub>"`); the `import` tool substitutes content-tree paths.
-pub type SubAssetIdResolver = Box<dyn Fn(&str) -> AssetId + Send + Sync>;
+pub type SubAssetIdResolver = Box<dyn Fn(&str, Option<&str>) -> AssetId + Send + Sync>;
 
 pub struct ImportContext {
     relative_source: PathBuf,
     sub_assets: Vec<EmittedSubAsset>,
     dependencies: Vec<DependencyEntry>,
     sub_asset_id_resolver: Option<SubAssetIdResolver>,
+    renames: BTreeMap<String, String>,
     settings: toml::Table,
 }
 
@@ -79,6 +82,7 @@ impl ImportContext {
             sub_assets: Vec::new(),
             dependencies: Vec::new(),
             sub_asset_id_resolver: None,
+            renames: BTreeMap::new(),
             settings: toml::Table::new(),
         }
     }
@@ -96,6 +100,7 @@ impl ImportContext {
             sub_assets: Vec::new(),
             dependencies: Vec::new(),
             sub_asset_id_resolver: Some(resolver),
+            renames: BTreeMap::new(),
             settings: toml::Table::new(),
         }
     }
@@ -122,8 +127,16 @@ impl ImportContext {
     /// instead of the default `"<source>#<sub>"` addressing.
     pub fn sub_asset_id(&self, name: &str) -> AssetId {
         match &self.sub_asset_id_resolver {
-            Some(resolve) => resolve(name),
+            Some(resolve) => resolve(name, self.renames.get(name).map(String::as_str)),
             None => AssetId::from_path(&format!("{}#{}", self.relative_source.display(), name)),
+        }
+    }
+
+    /// Records that `new_name` replaces `old_name` so the sub-asset keeps its id; call it before the first `sub_asset_id` or `emit` for `new_name`.
+    pub fn renamed_from(&mut self, new_name: &str, old_name: &str) {
+        if new_name != old_name {
+            self.renames
+                .insert(new_name.to_string(), old_name.to_string());
         }
     }
 
@@ -153,6 +166,7 @@ impl ImportContext {
         ImportOutputs {
             sub_assets: self.sub_assets,
             dependencies: self.dependencies,
+            renames: self.renames.into_iter().collect(),
         }
     }
 }

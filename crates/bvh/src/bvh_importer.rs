@@ -97,6 +97,9 @@ impl Importer for BvhImporter {
         ctx.emit("skeleton/0", &skeleton)?;
         let stem = source_path.file_stem().and_then(|stem| stem.to_str());
         let clip_name = clip_names(&[stem]).remove(0);
+        if clip_name != "0" {
+            ctx.renamed_from(&format!("animation/{clip_name}"), "animation/0");
+        }
         ctx.emit(&format!("animation/{clip_name}"), &clip)?;
         let scene = build_scene(&bvh, &skeleton, ctx.sub_asset_id("skeleton/0"))?;
         ctx.emit("scene", &scene)?;
