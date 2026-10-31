@@ -32,6 +32,9 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 
 - The Jolt submodule: `git submodule update --init`. Without it every native
   build fails in `concerto-jolt-ffi`.
+- Git LFS: `git lfs install` before cloning, or `git lfs pull` in a clone made
+  without it. `.gasset` files are LFS objects, and building a game from their
+  pointers fails with `missing the GRDY magic prefix`.
 - Linux system packages: `libasound2-dev libudev-dev libwayland-dev`.
 - The wasm target: `rustup target add wasm32-unknown-unknown`.
 - `trunk` to run an example in a browser.
@@ -170,6 +173,10 @@ however simple they look.
 - `content/` trees and `<source>.import.toml` files are committed. Never run a
   flow that saves or imports against `examples/*`; copy the project's `content/`
   somewhere disposable first.
+- `examples/tech-demo/assets/lafan1` is Ubisoft's LAFAN1 data under CC BY-NC-ND
+  4.0, not the engine's licence. Keep its files byte-identical to the release,
+  with its `README.md` and `license.txt` beside them. Ask the owner before
+  committing anything imported or adapted from it, `.gasset` files included.
 
 ## Git
 

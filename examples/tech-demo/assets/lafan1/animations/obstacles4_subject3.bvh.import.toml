@@ -1,0 +1,12 @@
+version = 1
+source_id = "b6182d3f-04ed-4f16-8f12-58cd17816183"
+importer = "bvh"
+
+[outputs."animation/obstacles4_subject3"]
+asset_id = "3ad90672-eaf0-4fc0-ac9f-938acaa8f9a9"
+
+[outputs.scene]
+asset_id = "a24a12ca-52ba-4fe5-a542-a6783ef8075d"
+
+[outputs."skeleton/0"]
+asset_id = "c65842a4-dca9-4fdf-9db8-af96d05d1430"

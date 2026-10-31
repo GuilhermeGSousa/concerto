@@ -1,0 +1,12 @@
+version = 1
+source_id = "9ec0b25e-9dcb-415d-98ee-605828896fcc"
+importer = "bvh"
+
+[outputs."animation/dance2_subject2"]
+asset_id = "f0660648-3f8a-47e6-9fa7-b005dd62c021"
+
+[outputs.scene]
+asset_id = "8afcf8bd-f56e-472d-9ed6-73eb7cca60cc"
+
+[outputs."skeleton/0"]
+asset_id = "20573a7b-a40f-47ce-8184-20bfe6974c62"
