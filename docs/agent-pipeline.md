@@ -84,8 +84,10 @@ and in that session `/loop 1h /issue-pipeline`. You follow it from the Claude
 app. Each hour it moves its PRs forward from your comments and takes a new issue
 if it holds fewer than 2, preferring `agent:local` ones within each priority tier. It works in worktrees
 under `../concerto-issues/`, sharing one `target/` there, and never touches your
-checkout. It runs the full done gate and checks visual changes on screen. It
-stops when you close the session; its issues resume at the next start.
+checkout. It runs the full done gate and checks visual changes on screen. When
+that disk has under 30 GB free, it deletes the shared `target/`'s incremental
+data, then the whole `target/` if that wasn't enough. It stops when you close
+the session; its issues resume at the next start.
 
 The roles and skills are reached through the `.claude/agents` and
 `.claude/skills` symlinks. On Windows they need `git config core.symlinks true`

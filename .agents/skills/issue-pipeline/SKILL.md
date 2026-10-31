@@ -93,9 +93,15 @@ Each tick:
    `agent:claimed-local` from the issue. Ignored files go with the worktree.
    If it prints anything, leave the worktree and the label, and comment on the
    issue what is uncommitted, once.
-3. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
+3. Let `<target>` be `<parent>/concerto-issues/target`. If the disk holding it
+   has under 30 GB free, run
+   `flock -n <target>/debug/.cargo-lock rm -rf <target>/debug/incremental`. If
+   the lock is held, leave it for the next tick. If it's still under 30 GB,
+   remove the whole `<target>` the same way. If that fails, comment on an open
+   pipeline PR what's taking the space and add `agent:needs-owner`.
+4. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
    an issue you already hold", up to the next wait.
-4. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
+5. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
    first eligible issue in tier order, preferring `agent:local` ones within
    each tier. Add
    `agent:claimed-local`, re-read its labels, and if `agent:claimed-cloud` is
