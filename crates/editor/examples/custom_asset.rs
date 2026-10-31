@@ -8,24 +8,30 @@ use concerto_app::{
     schedule_groups::{Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, IntoSystem, Query, Res, System,
+    Component, Entity, IntoSystem, Query, Res, System, World,
     command::{CommandQueue, EntityCommandQueue},
     entity::hierarchy::{ChildOf, Children},
+    events::{event_channel::EventChannel, event_reader::EventReader},
     signal::{On, Signal},
 };
 use concerto_editor::{
     asset_editor::{
         ActiveEditor, AssetEditor, AssetEditorAppExt, AssetEditorCommand, AssetEditorCommands,
-        AssetEditorRegistry, EditorDocument, PreviewSpec, asset_request_is_current,
+        AssetEditorRegistry, EditorDocument, PreviewSpec, Unsaved, asset_request_is_current,
         finish_asset_request, process_editor_commands,
     },
+    dock::PanelRegistry,
     hosted::{
-        HostRole, HostedApp, HostedPlugin,
+        HostRole, Hosted, HostedApp, HostedPlugin,
         input::{ViewportShown, ViewportView},
+    },
+    inspector::{
+        DocumentValue, InspectedValues, InspectorPlugin, PropertyRow, RefreshInspector, spawn_panel,
     },
     preview::{PreviewHostPlugin, PreviewSignals},
     project::{Project, ProjectState},
     scene::SceneRecipe,
+    tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
     Asset, AssetId, CreatableAsset,
@@ -44,14 +50,25 @@ use concerto_mesh::{
     Vertex,
     mesh::{Mesh, MeshComponent},
 };
+use concerto_reflect::Reflect;
 use concerto_render::{MaterialComponent, assets::material::StandardMaterial};
+use concerto_ui::{
+    focus::{FocusedWidget, UIFocusGained, UIFocusLost},
+    node::UINode,
+    text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+    theme::UITheme,
+};
 use concerto_window::plugin::{Window, WindowPlugin};
 use glam::{Quat, Vec2, Vec3};
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Reflect)]
 pub struct Dialogue {
     pub text: String,
+    pub spin_speed: f32,
 }
 impl Asset for Dialogue {
     fn name() -> &'static str {
@@ -62,6 +79,7 @@ impl CreatableAsset for Dialogue {
     fn new_asset() -> Self {
         Dialogue {
             text: "Hello".into(),
+            spin_speed: 2.0,
         }
     }
 }
@@ -75,6 +93,7 @@ pub struct DialogueWidget {
 #[derive(Component)]
 pub struct DialogueDocument {
     pub widget: Entity,
+    pub dialogue: Option<Dialogue>,
 }
 
 /// Turns its entity's `Transform` around world up, in radians per second.
@@ -98,7 +117,13 @@ impl AssetEditor for DialogueEditor {
                 text: String::new(),
             })
             .entity();
-        editor.insert(DialogueDocument { widget });
+        editor.insert((
+            DialogueDocument {
+                widget,
+                dialogue: None,
+            },
+            dialogue_value(document),
+        ));
     }
 
     fn preview(&self) -> Option<PreviewSpec> {
@@ -106,6 +131,23 @@ impl AssetEditor for DialogueEditor {
             build: dialogue_preview,
         })
     }
+}
+
+fn dialogue_value(document: Entity) -> InspectedValues {
+    InspectedValues(vec![Arc::new(DocumentValue::<DialogueDocument> {
+        name: "Dialogue".into(),
+        document,
+        read: Box::new(|held| {
+            held.dialogue
+                .as_ref()
+                .map(|dialogue| dialogue as &dyn Reflect)
+        }),
+        edit: Box::new(|held| {
+            held.dialogue
+                .as_mut()
+                .map(|dialogue| dialogue as &mut dyn Reflect)
+        }),
+    })])
 }
 
 fn unit_cube() -> Mesh {
@@ -142,7 +184,8 @@ fn unit_cube() -> Mesh {
 }
 
 fn dialogue_preview(app: &mut App) {
-    app.add_system(Startup, spawn_cube.at_preview_time())
+    app.register_type::<Dialogue>()
+        .add_system(Startup, spawn_cube.at_preview_time())
         .add_system(Update, spin_cubes.at_preview_time())
         .add_listener(set_spin.at_preview_time());
 }
@@ -184,7 +227,7 @@ fn set_spin(on: On<SetSpin>, spins: Query<&mut Spin>) {
 /// Normal custom-editor system: validate and deserialize before changing the
 /// widget or completing the document request.
 pub fn load_dialogue(
-    documents: Query<(Entity, &mut EditorDocument, &DialogueDocument)>,
+    documents: Query<(Entity, &mut EditorDocument, &mut DialogueDocument)>,
     project: Res<ProjectState>,
     mut previews: PreviewSignals,
     mut commands: CommandQueue,
@@ -192,11 +235,11 @@ pub fn load_dialogue(
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
     };
-    for (document_entity, mut document, state) in documents.iter() {
+    for (document_entity, mut document, mut state) in documents.iter() {
         let Some(asset) = document.pending.clone() else {
             continue;
         };
-        let result = (|| -> Result<String> {
+        let result = (|| -> Result<Dialogue> {
             let bytes = std::fs::read(root.join(&asset.address))?;
             let (header, payload) = read_content_asset(&bytes)?;
             anyhow::ensure!(
@@ -205,21 +248,23 @@ pub fn load_dialogue(
             );
             let dialogue: Dialogue = bincode::deserialize(payload)?;
             anyhow::ensure!(!dialogue.text.trim().is_empty(), "Dialogue cannot be empty");
-            Ok(dialogue.text)
+            Ok(dialogue)
         })();
         if !asset_request_is_current(&document, &asset) {
             continue;
         }
         match result {
-            Ok(text) => {
+            Ok(dialogue) => {
                 commands.insert(
                     DialogueWidget {
                         document: document_entity,
-                        text,
+                        text: dialogue.text.clone(),
                     },
                     state.widget,
                 );
-                previews.trigger(document_entity, SetSpin(2.0));
+                previews.trigger(document_entity, SetSpin(dialogue.spin_speed));
+                state.dialogue = Some(dialogue);
+                commands.trigger(RefreshInspector);
                 assert!(finish_asset_request(&mut document, &asset, Ok(())));
             }
             Err(error) => {
@@ -229,10 +274,30 @@ pub fn load_dialogue(
     }
 }
 
+/// An edit of a document's `Dialogue` marks it unsaved and sends the speed to its preview.
+pub fn follow_dialogue_edits(
+    mut committed: EventReader<Hosted<PropertyCommitted>>,
+    documents: Query<&DialogueDocument>,
+    mut previews: PreviewSignals,
+    mut commands: CommandQueue,
+) {
+    for Hosted { document, event } in committed.read() {
+        if event.result.is_ok()
+            && let Some(held) = documents.get_entity(*document)
+            && let Some(dialogue) = &held.dialogue
+        {
+            commands.insert(Unsaved, *document);
+            previews.trigger(*document, SetSpin(dialogue.spin_speed));
+        }
+    }
+}
+
 pub fn register(app: &mut App) -> Result<()> {
     app.register_asset::<Dialogue>();
+    app.register_type::<Dialogue>();
     app.register_creatable_asset_editor::<Dialogue, DialogueEditor>()?;
-    app.add_system(Update, load_dialogue);
+    app.add_system(Update, load_dialogue)
+        .add_system(Update, follow_dialogue_edits);
     Ok(())
 }
 
@@ -242,6 +307,11 @@ pub fn preview_recipe(app: &mut App) {
         .register_plugin(AssetManagerPlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin);
+}
+
+fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
+    let parent = cmd.spawn(UINode::default()).entity();
+    spawn_panel(&mut cmd, parent, &theme);
 }
 
 pub fn smoke_test() -> Result<()> {
@@ -260,8 +330,17 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(TimePlugin)
         .register_plugin(WindowPlugin)
+        .insert_resource(PanelRegistry::default())
+        .insert_resource(UITheme::default())
+        .insert_resource(FocusedWidget::default())
+        .register_event::<UIFocusGained>()
+        .register_event::<UIFocusLost>()
+        .register_event::<UITextInputSubmitted>()
+        .register_event::<UITextInputCancelled>()
         .register_plugin(HostedPlugin)
-        .register_plugin(PreviewHostPlugin);
+        .register_plugin(InspectorPlugin)
+        .register_plugin(PreviewHostPlugin)
+        .add_system(Startup, build_inspector);
     app.insert_resource(Window::new((64, 64), 1.0));
     app.insert_resource(SceneRecipe {
         recipe: preview_recipe,
@@ -312,7 +391,10 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             root.join(&address),
             write_content_asset(
                 &header,
-                &bincode::serialize(&Dialogue { text: text.into() })?,
+                &bincode::serialize(&Dialogue {
+                    text: text.into(),
+                    spin_speed: 2.0,
+                })?,
             )?,
         )?;
         let asset = AssetEntry {
@@ -347,6 +429,10 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         assert_eq!(widget.document, active);
         let widget_text = widget.text.clone();
         assert_eq!(widget_text, if text.is_empty() { "Goodbye" } else { text });
+        let held = world
+            .get_component_for_entity::<DialogueDocument>(active)
+            .unwrap();
+        assert_eq!(held.dialogue.as_ref().unwrap().text, widget_text);
         let doc = world
             .get_component_for_entity::<EditorDocument>(active)
             .unwrap();
@@ -359,13 +445,37 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
         }
     }
     let document = document.unwrap();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while !preview_has_spun(&app, document) {
-        anyhow::ensure!(Instant::now() < deadline, "The preview never spun");
-        app.update();
-        std::thread::sleep(Duration::from_millis(1));
-    }
+    wait_for_spin(&mut app, document, 2.0)?;
+    app.update();
     let world = app.main_mut().world_mut();
+    assert!(
+        world
+            .get_component_for_entity::<Unsaved>(document)
+            .is_none()
+    );
+    let field = speed_field(world).expect("the inspector shows the speed");
+    world
+        .get_component_for_entity_mut::<UITextInput>(field)
+        .unwrap()
+        .value = "5".into();
+    world
+        .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+        .unwrap()
+        .push_event(UITextInputSubmitted {
+            entity: field,
+            value: "5".into(),
+        });
+    wait_for_spin(&mut app, document, 5.0)?;
+    let world = app.main_mut().world_mut();
+    let held = world
+        .get_component_for_entity::<DialogueDocument>(document)
+        .unwrap();
+    assert_eq!(held.dialogue.as_ref().unwrap().spin_speed, 5.0);
+    assert!(
+        world
+            .get_component_for_entity::<Unsaved>(document)
+            .is_some()
+    );
     world
         .get_resource_mut::<AssetEditorCommands>()
         .unwrap()
@@ -376,7 +486,41 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-fn preview_has_spun(app: &App, document: Entity) -> bool {
+fn speed_field(world: &mut World) -> Option<Entity> {
+    let (row, _) = world
+        .query::<(Entity, &PropertyRow), ()>()
+        .iter(world)
+        .find(|(_, row)| row.address.path.to_string() == "spin_speed")?;
+    text_field(world, row)
+}
+
+fn text_field(world: &World, entity: Entity) -> Option<Entity> {
+    if world
+        .get_component_for_entity::<UITextInput>(entity)
+        .is_some()
+    {
+        return Some(entity);
+    }
+    world
+        .get_component_for_entity::<Children>(entity)?
+        .iter()
+        .find_map(|child| text_field(world, *child))
+}
+
+fn wait_for_spin(app: &mut App, document: Entity, speed: f32) -> Result<()> {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !preview_has_spun(app, document, speed) {
+        anyhow::ensure!(
+            Instant::now() < deadline,
+            "The preview never spun at {speed}"
+        );
+        app.update();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    Ok(())
+}
+
+fn preview_has_spun(app: &App, document: Entity, speed: f32) -> bool {
     let Some(hosted) = app
         .main()
         .world()
@@ -403,7 +547,7 @@ fn preview_has_spun(app: &App, document: Entity) -> bool {
             .get_component_for_entity::<GlobalTransform>(cube)
             .is_some()
     );
-    spin.speed == 2.0 && transform.rotation != Quat::IDENTITY
+    spin.speed == speed && transform.rotation != Quat::IDENTITY
 }
 
 #[allow(dead_code)]

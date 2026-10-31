@@ -831,7 +831,9 @@ fn an_edit_of_a_target_whose_document_has_gone_reports_a_missing_target() {
         w.reports(),
         [(
             document,
-            refused("Set Tuning.setting failed: the entity or its component no longer exists")
+            refused(
+                "Set Tuning.setting failed: its entity, component or document no longer exists"
+            )
         )]
     );
 }

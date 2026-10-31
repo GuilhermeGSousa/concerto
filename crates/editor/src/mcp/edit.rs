@@ -38,7 +38,7 @@ use crate::{
     tools::{
         edits::{
             ComponentEdit, ComponentEdited, EditComponent, PropertyCommitted, PropertyRefusal,
-            SetValue,
+            SetValue, dotted_name,
         },
         entity_ops::{EntityEdit, EntityEdited},
         scene::SceneRoot,
@@ -490,13 +490,6 @@ fn shown_path(path: &PropertyPath) -> String {
     path.to_string()
 }
 
-pub(super) fn property_name(component: &str, path: &PropertyPath) -> String {
-    std::iter::once(component.to_string())
-        .chain(path.segments().iter().map(ToString::to_string))
-        .collect::<Vec<_>>()
-        .join(".")
-}
-
 fn unknown_path(component: &str, path: &str, listed: &[ListedPath]) -> ToolError {
     if listed.is_empty() {
         return ToolError::new(
@@ -626,7 +619,7 @@ pub(super) fn adapter_commit(
     json: &Value,
     source: &EditSource,
 ) -> Result<PropertyCommit, ToolError> {
-    let name = property_name(owner, &property.path);
+    let name = dotted_name(owner, &property.path);
     let row = property
         .row(target, source.changed)
         .ok_or_else(|| not_editable(&name))?;
@@ -667,7 +660,7 @@ fn property_write(
         .map(|value| listed_paths(value, &rows))
         .unwrap_or_default();
     let found = find_path(short, path, &listed)?;
-    let name = property_name(short, &found.path);
+    let name = dotted_name(short, &found.path);
     if root {
         return Err(root_refused(&format!("Set {name}")));
     }
@@ -791,7 +784,7 @@ pub(super) fn list_commit_at(
     changed: Tick,
 ) -> Result<(PropertyCommit, String), ToolError> {
     let found = find_path(owner, path, listed)?;
-    let name = property_name(owner, &found.path);
+    let name = dotted_name(owner, &found.path);
     let (attempt, done) = match edit {
         ListEdit::Push => (
             format!("Add to {name}"),

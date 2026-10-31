@@ -23,7 +23,7 @@ use serde_json::{Map, Value};
 use super::{
     edit::{
         EditSource, ListPush, ListRemove, SetProperty, adapter_commit, find_path, list_commit_at,
-        list_length, property_name, refusal_error, refused,
+        list_length, refusal_error, refused,
     },
     observe::{Inspect, insert_unavailable, insert_value, listed_paths},
 };
@@ -33,7 +33,7 @@ use crate::{
         InspectedValues, InspectorRegistry, ListEdit, PropertyAddress, PropertyCommit,
         PropertyTarget, apply_value_commit, report_value_edit,
     },
-    tools::edits::{EditError, PropertyRefusal, applied, decode_property},
+    tools::edits::{EditError, PropertyRefusal, applied, decode_property, dotted_name},
 };
 
 enum ValueRequest {
@@ -382,7 +382,7 @@ fn set_value(
             let result = stored
                 .and_then(|stored| write_json(world, &address, &stored, &mut hook))
                 .map_err(|refusal| {
-                    let property = property_name(&target.name(), &address.path);
+                    let property = dotted_name(&target.name(), &address.path);
                     refusal.map(|reason| format!("Set {property} failed: {reason}"))
                 });
             report_value_edit(world, &address, &result);

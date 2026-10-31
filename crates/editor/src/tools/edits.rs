@@ -50,7 +50,7 @@ impl std::fmt::Display for EditError {
             Self::TypeMismatch => "the value has the wrong type",
             Self::NotFound => "the property was not found",
             Self::StaleEditor => "its editor changed since it was read",
-            Self::MissingTarget => "the entity or its component no longer exists",
+            Self::MissingTarget => "its entity, component or document no longer exists",
             Self::UnregisteredComponent => "the component type is not registered",
             Self::MissingAssets => "its App has no asset server or asset registry",
         })
@@ -1171,8 +1171,8 @@ mod tests {
             statuses(&app),
             [
                 "Set Gain.volume failed: the property was not found",
-                "Set Gain.amount failed: the entity or its component no longer exists",
-                "Set Gain.amount failed: the entity or its component no longer exists",
+                "Set Gain.amount failed: its entity, component or document no longer exists",
+                "Set Gain.amount failed: its entity, component or document no longer exists",
                 "Set the component failed: the component type is not registered",
             ]
         );
