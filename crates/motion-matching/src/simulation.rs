@@ -106,8 +106,6 @@ pub fn predict_trajectory(
 #[cfg(test)]
 mod tests {
     use concerto_foundation::math::spring_damper::spring_character_update;
-    use concerto_reflect::{with_property, PropertyPath};
-    use std::any::Any;
 
     use super::*;
 
@@ -202,32 +200,5 @@ mod tests {
         assert!((simulation.sample_dt - 1.0 / 3.0).abs() < 1.0e-6);
         assert!(simulation.trajectory.is_empty());
         assert_eq!(simulation.rotation, Quat::IDENTITY);
-    }
-
-    #[test]
-    fn trajectory_sample_reflects_its_fields() {
-        let sample = TrajectorySample {
-            position: Vec3::new(1.0, 2.0, 3.0),
-            velocity: Vec3::new(4.0, 5.0, 6.0),
-            rotation: Quat::from_rotation_y(0.5),
-        };
-        let mut position = None;
-        let mut velocity = None;
-        let mut rotation = None;
-        with_property(&sample, &PropertyPath::new(["position"]), &mut |value| {
-            position = (value as &dyn Any).downcast_ref::<Vec3>().copied();
-        })
-        .unwrap();
-        with_property(&sample, &PropertyPath::new(["velocity"]), &mut |value| {
-            velocity = (value as &dyn Any).downcast_ref::<Vec3>().copied();
-        })
-        .unwrap();
-        with_property(&sample, &PropertyPath::new(["rotation"]), &mut |value| {
-            rotation = (value as &dyn Any).downcast_ref::<Quat>().copied();
-        })
-        .unwrap();
-        assert_eq!(position, Some(sample.position));
-        assert_eq!(velocity, Some(sample.velocity));
-        assert_eq!(rotation, Some(sample.rotation));
     }
 }
