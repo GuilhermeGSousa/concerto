@@ -98,11 +98,12 @@ fn walk(input: Res<Input>, players: Query<(&mut DesiredMotion, &GroundProbe), Wi
 ```
 
 Each fixed step the simulation advances its velocity and facing springs
-(halflife 0.27 s by default) toward `DesiredMotion`, sets the body's
-horizontal velocity to the spring's, and reads the body's position back after
-collisions. It also fills `CharacterSimulation::trajectory` with
-`sample_count` predicted samples, `sample_dt` apart, assuming the desired
-motion holds.
+(halflife 0.27 s by default) toward `DesiredMotion` and sets the body's
+horizontal velocity to the spring's. After the physics step it predicts
+`sample_count` samples of the path ahead, `sample_dt` apart, assuming the
+desired motion holds, for motion matching to search with. The springs and the
+prediction are internal; to read how a character moves, ask its body with
+`physics.linear_velocity(body_id)`.
 
 The default halflife changed from 0.1 s, the old `CharacterMovement` value, to
 0.27 s.

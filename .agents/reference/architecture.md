@@ -131,7 +131,7 @@ executable's directory otherwise.
 ## Editor
 
 A game that has an editor is a library plus a thin binary; `tech-demo` is the
-one example built that way, and the other four are binaries only. The library
+one example built that way, and the others are binaries only. The library
 exposes one recipe, `pub fn game(app: &mut App)`, which registers the game's
 plugins, components, systems, and startup scene; `main` is
 `concerto::run(<game>::game, concerto::content_registry!())`. The editor is a
