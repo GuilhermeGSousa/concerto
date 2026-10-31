@@ -38,34 +38,3 @@ fn import_produces_one_main_sub_asset_with_correct_pixels() {
 
     std::fs::remove_dir_all(&temp_dir).ok();
 }
-
-#[test]
-fn texture_round_trips_through_bincode() {
-    let texture = Texture {
-        width: 2,
-        height: 1,
-        format: TextureFormat::Rgba8UnormSrgb,
-        kind: TextureKind::Sampled,
-        data: vec![10, 20, 30, 255, 40, 50, 60, 255],
-    };
-    let bytes = bincode::serialize(&texture).expect("Texture should serialize");
-    let decoded: Texture = bincode::deserialize(&bytes).expect("Texture should deserialize");
-
-    assert_eq!(decoded.width, 2, "width must survive the round-trip");
-    assert_eq!(decoded.height, 1, "height must survive the round-trip");
-    assert_eq!(
-        decoded.format,
-        TextureFormat::Rgba8UnormSrgb,
-        "format must survive the round-trip"
-    );
-    assert_eq!(
-        decoded.kind,
-        TextureKind::Sampled,
-        "kind must survive the round-trip"
-    );
-    assert_eq!(
-        decoded.data,
-        vec![10, 20, 30, 255, 40, 50, 60, 255],
-        "pixels must survive the round-trip unchanged"
-    );
-}

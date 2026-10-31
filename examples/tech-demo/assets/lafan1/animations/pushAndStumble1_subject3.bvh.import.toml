@@ -1,0 +1,12 @@
+version = 1
+source_id = "4c0496dc-d847-4e9d-9a04-904df9c2d28f"
+importer = "bvh"
+
+[outputs."animation/pushAndStumble1_subject3"]
+asset_id = "187d37b1-15a3-4a8d-b35c-36fc5e0deaf3"
+
+[outputs.scene]
+asset_id = "60aafe4f-30ef-4be6-9e24-4802592129a5"
+
+[outputs."skeleton/0"]
+asset_id = "23fe5124-a38e-4337-a6c9-f80e22c9a029"
