@@ -1,0 +1,12 @@
+version = 1
+source_id = "83f2fc8b-c18c-4fb6-9cb5-c888c061d909"
+importer = "bvh"
+
+[outputs."animation/pushAndFall1_subject1"]
+asset_id = "bbaf2f67-2f25-4f90-9784-a392b34d1970"
+
+[outputs.scene]
+asset_id = "11814b09-6980-4877-be9d-e77cc40db46a"
+
+[outputs."skeleton/0"]
+asset_id = "3886f557-f467-40cf-a8ea-31d59eed2e04"

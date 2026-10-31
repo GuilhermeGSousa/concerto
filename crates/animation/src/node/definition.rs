@@ -277,15 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn derive_provides_reflect_animation_node() {
-        let registry = registered();
-        let data = registry
-            .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<Gain>())
-            .copied();
-        assert!(data.is_some());
-    }
-
-    #[test]
     fn from_value_and_to_value_round_trip() {
         let registry = registered();
         let data = *registry

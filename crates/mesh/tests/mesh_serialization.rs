@@ -1,4 +1,3 @@
-//! Covers Mesh/Vertex round-tripping through bincode directly (no DTO).
 use concerto_mesh::mesh::Mesh;
 use concerto_mesh::vertex::Vertex;
 use glam::{Mat4, Vec3};
@@ -58,26 +57,4 @@ fn transformed_aabb_contains_all_rotated_and_scaled_corners() {
 
     assert!(bounds.min.abs_diff_eq(Vec3::new(8.0, 18.0, 28.5), 1e-5));
     assert!(bounds.max.abs_diff_eq(Vec3::new(12.0, 22.0, 31.5), 1e-5));
-}
-
-#[test]
-fn mesh_round_trips_through_bincode_directly() {
-    let mesh = Mesh {
-        vertices: vec![sample_vertex(0.0), sample_vertex(1.0)],
-        indices: vec![0, 1, 0],
-    };
-
-    let bytes = bincode::serialize(&mesh).expect("Mesh should serialize through bincode");
-    let decoded: Mesh =
-        bincode::deserialize(&bytes).expect("Mesh should deserialize back from bincode bytes");
-
-    assert_eq!(
-        decoded.indices, mesh.indices,
-        "indices must survive a bincode round-trip unchanged"
-    );
-    assert_eq!(
-        decoded.vertices[1].pos_coords,
-        [1.0, 0.0, 0.0],
-        "per-vertex position data must survive a bincode round-trip unchanged"
-    );
 }

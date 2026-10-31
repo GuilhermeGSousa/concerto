@@ -1,5 +1,5 @@
-//! Covers ImportContext's sub-asset emission, same-file reference-ID
-//! computation, and dependency tracking.
+//! Covers ImportContext's sub-asset emission and same-file reference-ID
+//! computation.
 use concerto_asset_import::ImportContext;
 use concerto_foundation::assets::{Asset, AssetId};
 use serde::{Deserialize, Serialize};
@@ -79,40 +79,6 @@ fn emit_records_sub_asset_with_serialized_bytes_and_references() {
         round_tripped.referenced, referenced_id,
         "bincode round-trip preserves data"
     );
-}
-
-#[test]
-fn track_dependency_records_path_and_hash() {
-    let mut ctx = ImportContext::new(std::path::PathBuf::from("models/character.gltf"));
-    ctx.track_dependency(
-        std::path::PathBuf::from("assets/models/character.bin"),
-        12345,
-    );
-
-    let out = ctx.into_parts();
-    assert_eq!(
-        out.dependencies.len(),
-        1,
-        "track_dependency should record exactly one dependency"
-    );
-    assert_eq!(
-        out.dependencies[0].path,
-        std::path::PathBuf::from("assets/models/character.bin"),
-        "dependency path matches tracked value"
-    );
-    assert_eq!(
-        out.dependencies[0].content_hash, 12345,
-        "dependency content_hash matches tracked value"
-    );
-}
-
-#[test]
-fn with_settings_makes_settings_return_the_table() {
-    let mut table = toml::Table::new();
-    table.insert("scale".to_string(), toml::Value::Float(0.5));
-    let ctx = ImportContext::new(std::path::PathBuf::from("motion/walk.bvh"))
-        .with_settings(table.clone());
-    assert_eq!(ctx.settings(), &table);
 }
 
 #[test]

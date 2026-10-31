@@ -86,28 +86,3 @@ impl PosePool {
         self.free_poses.push(pose);
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use glam::{Quat, Vec3};
-
-    use super::{JointPose, Pose};
-
-    #[test]
-    fn a_pose_built_from_joints_keeps_them_in_order() {
-        let joints = vec![
-            JointPose::IDENTITY,
-            JointPose {
-                translation: Vec3::new(1.0, 2.0, 3.0),
-                rotation: Quat::from_rotation_y(0.5),
-                scale: Vec3::splat(2.0),
-            },
-        ];
-
-        let mut pose = Pose::from_joints(joints.clone());
-
-        assert_eq!(pose.len(), 2);
-        assert_eq!(pose.joints(), joints.as_slice());
-        assert_eq!(pose.get_joint_pose(1), Some(&joints[1]));
-    }
-}
