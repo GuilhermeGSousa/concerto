@@ -1,7 +1,7 @@
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 
-use super::spring::SpringValue;
+use super::spring::SpringVector;
 
 const LN_2: f32 = std::f32::consts::LN_2;
 const EPSILON: f32 = 1.0e-5;
@@ -16,8 +16,8 @@ pub fn damping_to_halflife(damping: f32) -> f32 {
     4.0 * LN_2 / (damping + EPSILON)
 }
 
-/// Decays an offset and its velocity to zero; a rest offset halves every `halflife`. Not for [`Quat`].
-pub fn decay_spring_damper_exact<T: SpringValue>(x: T, v: T, halflife: f32, dt: f32) -> (T, T) {
+/// Decays an offset and its velocity to zero; a rest offset halves every `halflife`.
+pub fn decay_spring_damper_exact<T: SpringVector>(x: T, v: T, halflife: f32, dt: f32) -> (T, T) {
     let y = halflife_to_damping(halflife) / 2.0;
     let j1 = v.add(x.scale(y));
     let eydt = (-y * dt).exp();
@@ -27,8 +27,8 @@ pub fn decay_spring_damper_exact<T: SpringValue>(x: T, v: T, halflife: f32, dt: 
     )
 }
 
-/// Critically damped spring toward a fixed `goal`, returning the new position and velocity. Not for [`Quat`].
-pub fn simple_spring_damper_exact<T: SpringValue>(
+/// Critically damped spring toward a fixed `goal`, returning the new position and velocity.
+pub fn simple_spring_damper_exact<T: SpringVector>(
     x: T,
     v: T,
     goal: T,
