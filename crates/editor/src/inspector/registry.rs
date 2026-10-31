@@ -25,11 +25,12 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::handle::ReflectAssetHandle;
 use concerto_reflect::{
-    PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo, ReflectOption,
-    TypeRegistry,
+    PathSegment, PropertyPath, PropertyVisitor, Reflect, ReflectDefault, ReflectEnumInfo,
+    ReflectList, ReflectOption, TypeRegistry,
 };
 use concerto_ui::{node::UINode, theme::UITheme};
 
+use super::list::ListEditor;
 use super::rows::{
     EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor, PropertyRow,
     PropertyRowValue,
@@ -163,7 +164,7 @@ impl InspectorRegistry {
         );
     }
 
-    /// The editor registered for `id`, or else the one its type data in `types` calls for: the asset picker, an option toggle or a variant picker.
+    /// The editor registered for `id`, or else the one its type data in `types` calls for: the asset picker, an option toggle, a list editor or a variant picker.
     pub(crate) fn editor(
         &self,
         id: TypeId,
@@ -183,6 +184,8 @@ impl InspectorRegistry {
         let (editor_type, adapter): (TypeId, Arc<dyn ErasedEditor>) =
             if types.get_type_data::<ReflectOption>(id).is_some() {
                 (TypeId::of::<OptionToggle>(), Arc::new(OptionToggle))
+            } else if types.get_type_data::<ReflectList>(id).is_some() {
+                (TypeId::of::<ListEditor>(), Arc::new(ListEditor))
             } else {
                 let info = types.get_type_data::<ReflectEnumInfo>(id)?;
                 (
@@ -240,21 +243,31 @@ impl InspectorRegistry {
 struct Collect<'a> {
     registry: &'a InspectorRegistry,
     types: &'a TypeRegistry,
-    path: Vec<&'static str>,
+    path: Vec<PathSegment>,
     properties: Vec<Property>,
 }
 
 impl Collect<'_> {
+    fn property(&self, type_id: TypeId) -> Property {
+        Property {
+            path: PropertyPath::new(self.path.iter().copied()),
+            type_id,
+            value: PropertyRowValue::default(),
+            editor_type: None,
+            heading: false,
+            list_element: None,
+            registry_tick: Tick::default(),
+        }
+    }
+
     fn node(&mut self, value: &dyn Reflect) {
         let type_id = (value as &dyn Any).type_id();
         if let Some(editor) = self.registry.editor(type_id, Some(self.types)) {
             match editor.adapter.snapshot(value) {
                 Ok(snapshot) => self.properties.push(Property {
-                    path: PropertyPath::new(self.path.iter().copied()),
-                    type_id,
                     value: snapshot,
                     editor_type: Some(editor.editor_type),
-                    registry_tick: Tick::default(),
+                    ..self.property(type_id)
                 }),
                 Err(error) => log::warn!("Unable to snapshot {:?}: {error}", self.path),
             }
@@ -266,21 +279,34 @@ impl Collect<'_> {
         let count = self.properties.len();
         value.visit(self);
         if count == self.properties.len() {
-            self.properties.push(Property {
-                path: PropertyPath::new(self.path.iter().copied()),
-                type_id,
-                value: PropertyRowValue::default(),
-                editor_type: None,
-                registry_tick: Tick::default(),
-            });
+            self.properties.push(self.property(type_id));
         }
     }
 }
 
 impl PropertyVisitor for Collect<'_> {
     fn field(&mut self, name: &'static str, value: &dyn Reflect) {
-        self.path.push(name);
+        self.path.push(PathSegment::Field(name));
         self.node(value);
+        self.path.pop();
+    }
+
+    fn element(&mut self, index: usize, value: &dyn Reflect) {
+        self.path.push(PathSegment::Index(index));
+        let first = self.properties.len();
+        self.node(value);
+        let has_own_row = self
+            .properties
+            .get(first)
+            .is_some_and(|property| property.path.depth() == self.path.len());
+        if !has_own_row {
+            let heading = Property {
+                heading: true,
+                ..self.property((value as &dyn Any).type_id())
+            };
+            self.properties.insert(first, heading);
+        }
+        self.properties[first].list_element = Some(index);
         self.path.pop();
     }
 }

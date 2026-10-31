@@ -635,6 +635,26 @@ editor registered for the exact enum or `Option` type with
 `register_property_editor` still takes precedence, and its fields are not
 shown.
 
+### Lists
+
+A `Vec<T>` field is edited with nothing registered on the editor's `App`.
+`Vec<T>` registers `ReflectList`, and the field's row shows its length and an
+add button, which appends `T::default()`. Each element follows, labelled by its
+index from 0, in one of three shapes. An element with an editor gets that
+editor's row, with a remove button at the end. An element with fields, such as a
+struct, gets a heading with its index and the remove button, followed by a row
+per field. Anything else gets an "Unsupported type" row with a remove button, so
+whatever add creates can be removed; `Vec<String>` falls here, since there is no
+`String` editor. Elements cannot be reordered.
+
+Add and remove are property commits, so they mark the scene unsaved. The editor
+has no undo, so a removal stands until the scene is reloaded. A list in a list,
+or in an `Option`, works the same way. Every element is shown, and a list the
+game rewrites stays visible: a change of length rebuilds the card, and new
+values refresh in their rows. An editor registered for the exact `Vec` type with
+`register_property_editor` still takes precedence, and its elements are not
+shown.
+
 ### Colors
 
 A `Color` field is edited with nothing registered on the editor's `App`. Its

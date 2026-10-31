@@ -31,6 +31,7 @@ mod add_component;
 mod boolean;
 mod color;
 mod component_menu;
+mod list;
 mod name_field;
 mod numeric;
 mod registry;

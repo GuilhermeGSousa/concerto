@@ -7,6 +7,7 @@ use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, com
 use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::{node::UINode, theme::UITheme};
 
+use super::list::ListEditor;
 pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
@@ -105,6 +106,8 @@ pub struct Property {
     pub type_id: TypeId,
     pub value: PropertyRowValue,
     pub(crate) editor_type: Option<TypeId>,
+    pub(crate) heading: bool,
+    pub(crate) list_element: Option<usize>,
     pub(crate) registry_tick: Tick,
 }
 
@@ -112,6 +115,11 @@ impl Property {
     /// Whether an adapter claimed this property.
     pub fn has_editor(&self) -> bool {
         self.editor_type.is_some()
+    }
+
+    /// Whether this is a list's own row, the one [`ListEditor`] claimed.
+    pub(crate) fn is_list(&self) -> bool {
+        self.editor_type == Some(TypeId::of::<ListEditor>())
     }
 
     pub fn registry_tick(&self) -> Tick {

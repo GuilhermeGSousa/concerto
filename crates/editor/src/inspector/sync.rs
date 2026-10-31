@@ -3,8 +3,10 @@ use super::*;
 
 use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
+use super::list::remove_button;
 use super::registry::InspectionSource;
-use concerto_ecs::{query::filter::With, reflect::AppTypeRegistry};
+use concerto_ecs::reflect::AppTypeRegistry;
+use std::collections::HashMap;
 
 /// A component card in the inspector's UI hierarchy.
 #[derive(Component, Clone, Copy)]
@@ -18,7 +20,10 @@ pub struct InspectedComponent {
 }
 
 #[derive(Component)]
-pub(super) struct BuildPropertyWidget;
+pub(super) struct BuildPropertyWidget {
+    heading: bool,
+    remove: Option<(Entity, usize)>,
+}
 
 pub(super) fn forget_scene(
     _: On<Remove<EditTarget>>,
@@ -148,14 +153,27 @@ fn refresh_card(
             let mut body = body_node(theme);
             body.visible = !properties.is_empty();
             cmd.insert(body, card.body);
+            let mut lists = HashMap::new();
             for property in properties {
                 let node = source.row_node(registry, &property, theme);
-                spawn_row(cmd, &card, property, node, theme);
+                let remove = property
+                    .list_element
+                    .and_then(|index| Some((*lists.get(&list_of(&property.path)?)?, index)));
+                let path = property.is_list().then(|| property.path.clone());
+                let row = spawn_row(cmd, &card, property, node, remove, theme);
+                if let Some(path) = path {
+                    lists.insert(path, row);
+                }
             }
         }
     }
     card.read = true;
     cmd.insert(card, entity);
+}
+
+fn list_of(element: &PropertyPath) -> Option<PropertyPath> {
+    let (_, list) = element.segments().split_last()?;
+    Some(PropertyPath::new(list.iter().copied()))
 }
 
 fn kept_rows(
@@ -251,6 +269,7 @@ fn spawn_row(
     card: &InspectedComponent,
     property: Property,
     row_node: UINode,
+    remove: Option<(Entity, usize)>,
     theme: &UITheme,
 ) -> Entity {
     let target = property.row(card.scene_entity, card.type_id);
@@ -259,9 +278,12 @@ fn spawn_row(
     } else {
         label_for(&property.path)
     };
+    let build = BuildPropertyWidget {
+        heading: property.heading,
+        remove,
+    };
     let mut body_queue = cmd.entity(card.body);
-    let mut row_queue =
-        body_queue.spawn_child((row_node, target, property.value, BuildPropertyWidget));
+    let mut row_queue = body_queue.spawn_child((row_node, target, property.value, build));
     let row = row_queue.entity();
     row_queue.add_child(
         theme
@@ -293,7 +315,12 @@ fn body_node(theme: &UITheme) -> UINode {
 }
 
 pub(super) fn build_property_widgets(
-    rows: Query<(Entity, &PropertyRow, &PropertyRowValue), With<BuildPropertyWidget>>,
+    rows: Query<(
+        Entity,
+        &PropertyRow,
+        &PropertyRowValue,
+        &BuildPropertyWidget,
+    )>,
     registry: Res<InspectorRegistry>,
     types: EditWorld<Option<Res<AppTypeRegistry>>>,
     theme: Res<UITheme>,
@@ -301,7 +328,7 @@ pub(super) fn build_property_widgets(
 ) {
     let types = types.as_deref().map(|types| types.read());
     let types = types.as_deref();
-    for (entity, row, value) in rows.iter() {
+    for (entity, row, value, build) in rows.iter() {
         if let Some(editor) = registry
             .editor(row.type_id, types)
             .filter(|editor| Some(editor.editor_type) == row.editor_type)
@@ -309,9 +336,16 @@ pub(super) fn build_property_widgets(
             if let Err(error) = editor.adapter.build(&mut cmd, entity, value, &theme) {
                 log::warn!("Unable to build property widget: {error}");
             }
+        } else if build.heading {
+            cmd.entity(entity)
+                .add_child(UINode::default().with_flex_grow(1.0));
         } else {
             cmd.entity(entity)
-                .add_child(theme.label("Unsupported type"));
+                .add_child(theme.label("Unsupported type").grow());
+        }
+        if let Some((list, index)) = build.remove {
+            cmd.entity(entity)
+                .add_child(remove_button(&theme, list, index));
         }
         cmd.remove::<BuildPropertyWidget>(entity);
     }

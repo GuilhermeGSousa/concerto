@@ -1468,12 +1468,14 @@ fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
     assert_eq!(values[15], 15.0);
     assert_eq!(values[16], "… 84 more, 100 in all");
     assert_eq!(samples["value"]["gain"], 0.5);
+    let sample_paths = samples["paths"].as_array().unwrap();
     assert_eq!(
-        samples["paths"],
-        json!([
-            { "path": "values", "adapter": false },
-            { "path": "gain", "adapter": true },
-        ])
+        sample_paths[0],
+        json!({ "path": "values", "adapter": false })
+    );
+    assert_eq!(
+        sample_paths.last().unwrap(),
+        &json!({ "path": "gain", "adapter": true })
     );
     let unreadable = inspected(&inspections[3], "Unreadable");
     assert_eq!(unreadable["value"], Value::Null);

@@ -865,10 +865,7 @@ pub(super) fn component_json(
                 .map(|listed| {
                     let mut path = Map::new();
                     path.insert("path".into(), listed.path.to_string().into());
-                    path.insert(
-                        "adapter".into(),
-                        (!listed.names_enum && listed.row.is_some_and(Property::has_editor)).into(),
-                    );
+                    path.insert("adapter".into(), listed.adapter().is_some().into());
                     if listed.names_enum {
                         path.insert("enum".into(), true.into());
                     }
@@ -889,6 +886,14 @@ pub(super) struct ListedPath<'a> {
     pub(super) path: PropertyPath,
     pub(super) row: Option<&'a Property>,
     pub(super) names_enum: bool,
+}
+
+impl<'a> ListedPath<'a> {
+    /// The row whose editor writes this path, or `None` when `set_property` writes it whole: an enum, a list, or a path no editor claims.
+    pub(super) fn adapter(&self) -> Option<&'a Property> {
+        self.row
+            .filter(|property| !self.names_enum && !property.is_list() && property.has_editor())
+    }
 }
 
 pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec<ListedPath<'a>> {
