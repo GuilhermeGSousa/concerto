@@ -172,6 +172,9 @@ fix the entry in the same commit as the change that made it false.
 - **`#[reflect(opaque)]` makes a type a serde leaf.** It is stored as bytes
   through its `Serialize` and `Deserialize`, so it needs both. Use it only for
   values with no reflected inside; structs and enums derive `Reflect` plainly.
+- **`#[reflect(skip)]` hides a struct field from everything reflective.** The
+  inspector, MCP, property paths and scenes do not see it, its type need not be
+  `Reflect`, and a load leaves it at its default.
 - **A handle type must be registered to load from a scene.** Registering the
   component that holds `AssetHandle<A>` registers it. A handle whose type
   nothing registered spawns weak and loads nothing, with a warning.

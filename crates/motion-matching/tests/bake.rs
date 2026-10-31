@@ -1,14 +1,13 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_foundation::math::spring_damper::CharacterState;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
     bake, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, BodyMotion, ChannelSource, CharacterSimulation, FeatureChannel, FrameContext,
-    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
-    StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
+    BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, MotionDatabaseDefinition,
+    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
+    TrajectorySample, TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -961,17 +960,7 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
 
     for frame in [0, 20, 50] {
         let features = database.features(frame);
-        let mut simulation = CharacterSimulation {
-            state: CharacterState {
-                position: place(vec3(features, 6)),
-                velocity: yaw * vec3(features, 0),
-                ..Default::default()
-            },
-            rotation: yaw * quat(features, 9),
-            angular_velocity: yaw * vec3(features, 3),
-            ..Default::default()
-        };
-        simulation.trajectory = (0..SAMPLES)
+        let trajectory: Vec<TrajectorySample> = (0..SAMPLES)
             .map(|k| {
                 let at = 13 + k * 10;
                 TrajectorySample {
@@ -987,14 +976,14 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
             model_pose: &[],
             model_velocities: &[],
             simulation: Transform::from_translation_rotation(
-                simulation.state.position,
-                simulation.rotation,
+                place(vec3(features, 6)),
+                yaw * quat(features, 9),
             ),
             body: BodyMotion {
-                velocity: simulation.state.velocity,
-                angular_velocity: simulation.angular_velocity,
+                velocity: yaw * vec3(features, 0),
+                angular_velocity: yaw * vec3(features, 3),
             },
-            trajectory: &simulation.trajectory,
+            trajectory: &trajectory,
         };
         let mut online = [0.0; LOCAL_DIMS];
         LocalChannel::default().extract(&context, &mut online);
