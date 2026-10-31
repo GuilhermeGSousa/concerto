@@ -395,6 +395,26 @@ fn opening_another_definition_drops_the_build() {
 }
 
 #[test]
+fn a_build_leaves_another_kind_of_asset_at_the_baked_address_alone() {
+    let mut tab = ready(fixture());
+    let other = write_definition(&mut tab.f, BAKED, &MotionDatabaseDefinition::default());
+    let before = std::fs::read(tab.f.project_root.join(BAKED)).unwrap();
+    let build = tab.panels().build;
+
+    tab.click(build);
+    tab.until_settled();
+
+    assert!(status(&tab).contains("isn't a motion database"));
+    assert_eq!(
+        std::fs::read(tab.f.project_root.join(BAKED)).unwrap(),
+        before
+    );
+    let assets = tab.world().get_resource::<AssetRegistry>().unwrap();
+    assert_eq!(assets.get(other.id), Some(&other));
+    assert!(registered(&tab).is_none());
+}
+
+#[test]
 fn a_finished_job_for_a_replaced_definition_writes_nothing() {
     let mut tab = ready(fixture());
     let (mut job, release) = gated_job(&tab, 0, 1);

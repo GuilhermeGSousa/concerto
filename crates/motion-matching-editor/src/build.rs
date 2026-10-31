@@ -7,7 +7,7 @@ use std::{
     thread::JoinHandle,
 };
 
-use anyhow::{Context, anyhow};
+use anyhow::{Context, anyhow, ensure};
 use concerto_animation::clip::AnimationClip;
 use concerto_ecs::{
     Component, Entity, Query, Res, ResMut, With, World,
@@ -440,6 +440,19 @@ pub(crate) fn start_build(on: On<StartBuild>, world: &mut World) {
     }
 }
 
+fn refuse_another_asset(path: &Path, address: &str) -> anyhow::Result<()> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return Ok(());
+    };
+    let database =
+        read_content_asset(&bytes).is_ok_and(|(header, _)| header.kind == MotionDatabase::name());
+    ensure!(
+        database,
+        "{address} isn't a motion database, so Build left it alone"
+    );
+    Ok(())
+}
+
 fn install(
     built: &Built,
     asset: &AssetEntry,
@@ -448,6 +461,7 @@ fn install(
 ) -> anyhow::Result<String> {
     let address = baked_address(asset);
     let path = root.join(&address);
+    refuse_another_asset(&path, &address)?;
     std::fs::write(&path, &built.bytes)
         .with_context(|| format!("failed to write '{}'", path.display()))?;
     assets.insert(AssetEntry {

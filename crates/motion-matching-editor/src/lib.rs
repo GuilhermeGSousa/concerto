@@ -50,11 +50,11 @@ pub fn install(app: &mut App) {
                 (
                     follow_definition_edits,
                     request_definition_saves,
+                    request_builds,
                     load_definition,
                     follow_skeleton,
                     read_entry_facts,
                     finish_build,
-                    request_builds,
                     check_baked,
                     follow_playback,
                     follow_preview_time,

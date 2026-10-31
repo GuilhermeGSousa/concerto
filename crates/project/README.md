@@ -99,7 +99,8 @@ dependencies. Any other package must give `version` or `path`.
 ## `editor --update`
 
 Rewrites `editor/Cargo.toml` and `editor/src/main.rs` from the game's list, and
-nothing else, so run it after changing the list. It refuses a missing `editor/`.
+nothing else, so run it after changing the list. Anything written by hand in
+those two files is lost. It refuses a missing `editor/`.
 
 Its engine is the one `editor/Cargo.toml` already names, so it never swaps a
 path dependency for the published crate; `--engine` replaces it. It refuses an

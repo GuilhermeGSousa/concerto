@@ -105,11 +105,6 @@ impl HostedApp {
         self.app.main_mut().world_mut()
     }
 
-    #[doc(hidden)]
-    pub fn world_for_test(&self) -> &World {
-        self.world()
-    }
-
     pub(crate) fn push(&mut self, event: WindowEvent) {
         if let Some(channel) = self.app.get_resource_mut::<EventChannel<WindowEvent>>() {
             channel.push_event(event);

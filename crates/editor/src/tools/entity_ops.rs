@@ -98,7 +98,6 @@ pub(crate) fn apply_entity_edit(on: On<EntityEdit>, world: &mut World) {
     );
 }
 
-/// Refuses a structural edit in a world that holds [`FixedEntities`].
 pub(crate) fn not_fixed(world: &World) -> anyhow::Result<()> {
     if world.get_resource::<FixedEntities>().is_some() {
         bail!("the entities of this document are fixed");

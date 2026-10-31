@@ -1111,7 +1111,7 @@ mod tests {
         app.main()
             .world()
             .get_component_for_entity::<HostedApp>(document)
-            .map(HostedApp::world_for_test)
+            .map(HostedApp::world)
     }
 
     fn update_until_built(app: &mut App, document: Entity) {

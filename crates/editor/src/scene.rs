@@ -768,7 +768,7 @@ mod tests {
         f.world
             .get_component_for_entity::<HostedApp>(document)
             .unwrap()
-            .world_for_test()
+            .world()
             .id()
     }
 
@@ -1050,7 +1050,7 @@ mod tests {
                 clipboard: None,
             });
         let old = hosted_now(plain_recipe, |_| {});
-        let before = old.world_for_test().id();
+        let before = old.world().id();
         let next = scene_entry("next");
         let world = app.main_mut().world_mut();
         let document = world.spawn((
@@ -1089,7 +1089,7 @@ mod tests {
                 world
                     .get_component_for_entity::<HostedApp>(document)
                     .unwrap()
-                    .world_for_test()
+                    .world()
                     .id(),
                 before
             );
