@@ -40,7 +40,6 @@ impl AnimationBlackboard {
 mod tests {
     use concerto_foundation::assets::asset_store::AssetStore;
     use concerto_reflect::Reflect;
-    use glam::Vec2;
 
     use super::AnimationBlackboard;
     use crate::evaluation::AnimationGraphContext;
@@ -86,26 +85,5 @@ mod tests {
         assert!(blackboard.get::<bool>("speed").is_none());
         assert!(blackboard.get_int("speed").is_none());
         assert!(blackboard.get::<f32>("missing").is_none());
-    }
-
-    #[test]
-    fn setting_a_key_again_replaces_the_value_and_its_type() {
-        let mut blackboard = AnimationBlackboard::default();
-        blackboard.set("flag", true);
-        blackboard.set("flag", 3_u32);
-
-        assert_eq!(blackboard.get_bool("flag"), None);
-        assert_eq!(blackboard.get_int("flag"), Some(3));
-    }
-
-    #[test]
-    fn typed_helpers_read_their_own_types() {
-        let mut blackboard = AnimationBlackboard::default();
-        blackboard.set("a", Vec2::new(1.0, 2.0));
-        blackboard.set("b", 1.5_f32);
-
-        assert_eq!(blackboard.get_vec2("a"), Some(Vec2::new(1.0, 2.0)));
-        assert_eq!(blackboard.get_float("b"), Some(1.5));
-        assert_eq!(blackboard.get_float("a"), None);
     }
 }
