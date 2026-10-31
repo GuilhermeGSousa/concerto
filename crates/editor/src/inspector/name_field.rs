@@ -1,7 +1,7 @@
 //! The selected entity's name, above its component cards.
 use super::*;
 
-use crate::tools::entity_ops::EntityEdit;
+use crate::tools::entity_ops::{EntityEdit, FixedEntities};
 use concerto_ecs::{component::name::Name, events::event_reader::EventReader};
 use concerto_ui::{
     focus::{FocusedWidget, UIFocusLost},
@@ -54,6 +54,7 @@ pub(super) fn update_name_field(
     mut cancelled: EventReader<UITextInputCancelled>,
     data: Res<InspectorData>,
     names: EditWorld<Query<&Name>>,
+    fixed: EditWorld<Option<Res<FixedEntities>>>,
     fields: Query<(Entity, &mut NameField, &mut UITextInput, &mut UINode)>,
     mut focused: ResMut<FocusedWidget>,
     mut focus_request: ResMut<FocusNameField>,
@@ -102,7 +103,7 @@ pub(super) fn update_name_field(
             input.selection_anchor = None;
             input.value = name;
         }
-        let visible = data.scene_entity.is_some();
+        let visible = data.scene_entity.is_some() && fixed.is_none();
         if node.visible != visible {
             node.visible = visible;
         }

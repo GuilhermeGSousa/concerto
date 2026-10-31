@@ -128,7 +128,8 @@ impl AssetEditor for SceneEditor {
     }
 }
 
-pub(crate) fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
+/// Reads the scene at `address` under `root`, checking its id and its kind.
+pub fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
     let bytes = std::fs::read(root.join(address))?;
     let (header, payload) = read_content_asset(&bytes)?;
     anyhow::ensure!(

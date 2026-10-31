@@ -11,7 +11,7 @@ use std::{
 use base64::{Engine, engine::general_purpose::STANDARD};
 use concerto_app::{
     App,
-    edit_time::AtEditTime,
+    edit_time::{AtEditTime, AtPreviewTime},
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
     schedule_groups::{LateUpdate, Startup, Update},
@@ -27,7 +27,9 @@ use concerto_ecs::{
     signal::listener::GlobalListener,
 };
 use concerto_editor::{
-    asset_editor::{AssetEditorRegistry, EditorDocument, Unsaved},
+    asset_editor::{
+        AssetEditor, AssetEditorAppExt, AssetEditorRegistry, EditorDocument, PreviewSpec, Unsaved,
+    },
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
     inspector::{EditContext, EditError, EditableApp, PropertyEditor},
@@ -35,7 +37,7 @@ use concerto_editor::{
     scene::Play,
     tools::{
         camera::{EditorHelper, FlyCamera},
-        entity_ops::EntityEdit,
+        entity_ops::{EntityEdit, FixedEntities},
         scene::SceneRoot,
         selection::Select,
     },
@@ -894,6 +896,122 @@ async fn open(client: &Client) {
     until(client, "state", |state| state.starts_with("project")).await;
     assert_eq!(ok(client, "open_scene").await, "queued");
     until(client, "state", |state| state.contains("level target")).await;
+}
+
+#[derive(Asset, Serialize, Deserialize)]
+struct Tuning;
+
+#[derive(Default)]
+struct TuningEditor;
+
+impl AssetEditor for TuningEditor {
+    fn preview(&self) -> Option<PreviewSpec> {
+        Some(PreviewSpec {
+            build: tuning_preview,
+        })
+    }
+
+    fn edits_in_preview(&self) -> bool {
+        true
+    }
+}
+
+#[derive(Component)]
+struct Tuned;
+
+fn spawn_tuned(mut cmd: CommandQueue) {
+    cmd.spawn((Name::new("Tuned"), Tuned));
+}
+
+fn tuning_preview(app: &mut App) {
+    app.insert_resource(FixedEntities)
+        .add_system(Startup, spawn_tuned.at_preview_time());
+}
+
+#[derive(Resource)]
+struct TuningAsset(AssetId);
+
+#[derive(Deserialize, JsonSchema)]
+struct OpenTuning {}
+
+#[derive(Deserialize, JsonSchema)]
+struct TunedId {}
+
+fn open_tuning(
+    mut calls: ToolCalls<OpenTuning>,
+    tuning: Res<TuningAsset>,
+    mut commands: ResMut<EditorCommands>,
+) {
+    for (_, reply) in calls.read() {
+        commands.0.push_back(EditorCommand::OpenAsset(tuning.0));
+        reply.ok("queued");
+    }
+}
+
+fn tuned_id(mut calls: ToolCalls<TunedId>, tuned: EditWorld<Query<Entity, With<Tuned>>>) {
+    for (_, reply) in calls.read() {
+        reply.ok(tuned
+            .iter()
+            .next()
+            .map_or("none".to_owned(), |entity| entity.to_id_string()));
+    }
+}
+
+#[test]
+fn a_preview_that_is_the_edit_target_has_no_camera_and_keeps_its_entities() {
+    let fixture = Fixture::new();
+    let tuning = fixture.add("content/tuning.gasset", Tuning::name());
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        move |app| {
+            app.register_asset_editor::<Tuning, TuningEditor>().unwrap();
+            app.insert_resource(TuningAsset(tuning))
+                .add_tool::<OpenTuning, _>(McpTool::new("open_tuning"), open_tuning)
+                .add_tool::<TunedId, _>(
+                    McpTool::read_only("tuned_id").needs(Needs::Scene),
+                    tuned_id,
+                );
+        },
+        |client| async move {
+            until(&client, "state", |state| state.starts_with("project")).await;
+            assert_eq!(ok(&client, "open_tuning").await, "queued");
+            until(&client, "state", |state| state.contains("tuning target")).await;
+            let tuned = until(&client, "tuned_id", |id| id != "none").await;
+            let frame = error(&client, "frame").await;
+            let camera = error_with(
+                &client,
+                "set_camera",
+                json!({ "position": [0.0, 1.0, 2.0], "yaw": 0.0, "pitch": 0.0 }),
+            )
+            .await;
+            let delete = error_with(&client, "delete_entity", json!({ "entity": tuned })).await;
+            let rename = error_with(
+                &client,
+                "rename_entity",
+                json!({ "entity": tuned, "name": "Other" }),
+            )
+            .await;
+            let kept = ok(&client, "tuned_id").await;
+            client.cancel().await.unwrap();
+            (frame, camera, delete, rename, tuned, kept)
+        },
+    ) else {
+        return;
+    };
+
+    let (frame, camera, delete, rename, tuned, kept) = served.result;
+    assert_eq!(frame["code"], "no_scene");
+    assert_eq!(camera["code"], "no_scene");
+    assert_eq!(delete["code"], "refused");
+    assert_eq!(
+        delete["message"],
+        "Delete failed: the entities of this document are fixed"
+    );
+    assert_eq!(rename["code"], "refused");
+    assert_eq!(kept, tuned);
 }
 
 #[test]

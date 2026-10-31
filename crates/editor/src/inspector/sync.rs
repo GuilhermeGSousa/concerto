@@ -5,6 +5,7 @@ use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::list::remove_button;
 use super::registry::InspectionSource;
+use crate::tools::entity_ops::FixedEntities;
 use concerto_ecs::{component::Tick, reflect::AppTypeRegistry};
 use concerto_reflect::PathSegment;
 use std::collections::HashMap;
@@ -41,6 +42,7 @@ pub(super) fn forget_scene(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_inspected_components(
     source: EditWorld<InspectionSource>,
+    fixed: EditWorld<Option<Res<FixedEntities>>>,
     registry: Res<InspectorRegistry>,
     data: Res<InspectorData>,
     theme: Res<UITheme>,
@@ -84,7 +86,7 @@ pub(super) fn sync_inspected_components(
         let mut components = source.visible_components(target);
         components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
         for (type_id, name) in components {
-            let removable = source.is_registered(type_id);
+            let removable = fixed.is_none() && source.is_registered(type_id);
             let (entity, card) = spawn_card(
                 &mut cmd,
                 stack_entity,
@@ -99,7 +101,9 @@ pub(super) fn sync_inspected_components(
             );
         }
 
-        spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
+        if fixed.is_none() {
+            spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
+        }
         ensure_component_menu(&mut cmd, &component_menus, &theme);
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {

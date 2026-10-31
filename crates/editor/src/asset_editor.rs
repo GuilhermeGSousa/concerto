@@ -32,6 +32,10 @@ pub trait AssetEditor: Send + Sync + 'static {
     fn bottom_host(&self) -> bool {
         false
     }
+    /// Whether this editor's preview `App` is the edit target, so the normal inspector edits its entities.
+    fn edits_in_preview(&self) -> bool {
+        false
+    }
 }
 
 /// What an asset editor's preview `App` adds to the game's recipe.
@@ -155,6 +159,13 @@ impl AssetEditorRegistry {
         self.editors
             .get(kind)
             .is_some_and(|editor| editor.bottom_host())
+    }
+
+    /// Whether a document of `kind` edits in its preview `App`; a kind with no editor does not.
+    pub fn edits_in_preview(&self, kind: &str) -> bool {
+        self.editors
+            .get(kind)
+            .is_some_and(|editor| editor.edits_in_preview())
     }
 }
 

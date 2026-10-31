@@ -25,7 +25,7 @@ use serde_json::Value;
 use crate::{
     inspector::ErasedEditor,
     tools::{
-        entity_ops::in_open_scene,
+        entity_ops::{in_open_scene, not_fixed},
         scene::{SceneRoot, SceneStatus, report_edit, write},
     },
 };
@@ -428,7 +428,8 @@ pub(crate) fn edit_component(on: On<EditComponent>, world: &mut World) {
         ComponentEdit::Remove { entity, component } => ("Remove", entity, component),
     };
     let name = component_name(world, component);
-    let result = in_open_scene(world, entity)
+    let result = not_fixed(world)
+        .and_then(|()| in_open_scene(world, entity))
         .map_err(|error| error.to_string())
         .and_then(|()| {
             apply_component_edit(world, edit).map_err(|error| match (edit, error) {
@@ -477,7 +478,7 @@ mod tests {
     };
     use crate::{
         inspector::{InspectorRegistry, PropertyEditor},
-        tools::scene::SceneStatus,
+        tools::{entity_ops::FixedEntities, scene::SceneStatus},
     };
     use concerto_color::Color;
     use concerto_ecs::{command::EntityCommandQueue, component::scene::SceneEntityRef};
@@ -530,6 +531,60 @@ mod tests {
             entity,
             component: TypeId::of::<T>(),
         }
+    }
+
+    #[test]
+    fn fixed_entities_refuse_a_component_edit_and_it_still_writes_its_result() {
+        let (mut app, entity) = fixture();
+        let world = app.main_mut().world_mut();
+        world.insert(Gain::default(), entity);
+        world.insert_resource(FixedEntities);
+
+        world.trigger(EditComponent(add::<Lens>(entity)));
+        world.trigger(EditComponent(remove::<Gain>(entity)));
+
+        let results = written::<ComponentEdited>(&app);
+        assert_eq!(results.len(), 2);
+        for (result, verb) in results.iter().zip(["Add Lens", "Remove Gain"]) {
+            let status = result.result.as_ref().unwrap_err();
+            assert_eq!(
+                *status,
+                format!("{verb} failed: the entities of this document are fixed")
+            );
+        }
+        assert_eq!(statuses(&app).len(), 2);
+        assert!(written::<SceneEdited>(&app).is_empty());
+        let world = app.main_mut().world_mut();
+        assert!(world.get_component_for_entity::<Gain>(entity).is_some());
+        assert!(world.get_component_for_entity::<Lens>(entity).is_none());
+    }
+
+    #[test]
+    fn fixed_entities_still_take_property_edits() {
+        let (mut app, entity) = fixture();
+        let world = app.main_mut().world_mut();
+        world.insert(Gain::default(), entity);
+        world.insert_resource(FixedEntities);
+
+        world.trigger(gain_to(entity, 3.0));
+        world.trigger(SetValue {
+            entity,
+            component: TypeId::of::<Gain>(),
+            path: PropertyPath::new(["amount"]),
+            value: Value::from(4.0),
+        });
+
+        let world = app.main_mut().world_mut();
+        assert_eq!(
+            world
+                .get_component_for_entity::<Gain>(entity)
+                .unwrap()
+                .amount,
+            4.0
+        );
+        let results = written::<PropertyCommitted>(&app);
+        assert!(results.iter().all(|committed| committed.result.is_ok()));
+        assert_eq!(results.len(), 2);
     }
 
     #[test]

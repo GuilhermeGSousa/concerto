@@ -35,7 +35,10 @@ use crate::{
     asset_editor::{AssetEditorRegistry, EditorDocument},
     hosted::{self, HostRequest, HostRole, HostedApp, PendingApp, input::ViewportShown},
     scene::SceneRecipe,
-    tools::camera::{SKY, editor_grid},
+    tools::{
+        EditToolsCorePlugin,
+        camera::{SKY, editor_grid},
+    },
 };
 
 /// On a document whose preview failed to build; it is not built again until the tab is reopened.
@@ -141,10 +144,14 @@ pub(crate) fn open_previews(
             role: HostRole::Preview,
             clipboard: recipe.clipboard,
         };
+        let edits_in_preview = editors.edits_in_preview(doc.asset_type);
         let pending = hosted::begin(
             request,
             |app| {
                 app.register_plugin(PreviewPlugin);
+                if edits_in_preview {
+                    app.register_plugin(EditToolsCorePlugin);
+                }
                 (spec.build)(app);
             },
             |_| {},
@@ -361,7 +368,10 @@ mod tests {
             input::InViewport, testing::*,
         },
         scene::Play,
-        tools::scene::SceneDirty,
+        tools::{
+            scene::SceneDirty,
+            selection::{Select, Selection},
+        },
     };
     use concerto_ecs::{Changed, IntoSystem, System, events::event_channel::EventChannel};
     use concerto_foundation::assets::Asset;
@@ -733,6 +743,65 @@ mod tests {
         f.frame();
 
         assert_eq!(queued(&f), 0);
+    }
+
+    #[test]
+    fn a_preview_its_editor_edits_in_is_the_edit_target_with_the_edit_tools() {
+        let mut f = SceneFixture::new();
+        let document = f.open_preview_of(EditedPreviewAsset::name());
+        assert_eq!(markers(&f, document), (true, true));
+        assert_eq!(
+            f.world
+                .get_component_for_entity::<HostedApp>(document)
+                .unwrap()
+                .role(),
+            HostRole::Preview
+        );
+        let entity = f.scene_world_mut(document).spawn(Transform::IDENTITY);
+
+        f.signal(Select(Some(entity)));
+
+        let selection = f.scene_world(document).get_resource::<Selection>();
+        assert_eq!(selection.unwrap().entity(), Some(entity));
+    }
+
+    #[test]
+    fn any_other_preview_gets_no_edit_tools() {
+        let mut f = SceneFixture::new();
+        let document = f.open_preview();
+
+        assert!(
+            f.scene_world(document)
+                .get_resource::<Selection>()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_play_on_a_preview_that_is_the_edit_target_is_refused() {
+        let mut f = SceneFixture::new();
+        let document = f.open_preview_of(EditedPreviewAsset::name());
+
+        f.world.trigger(Play(document));
+        for _ in 0..3 {
+            f.frame();
+        }
+
+        assert_eq!(markers(&f, document), (true, true));
+        assert!(
+            f.world
+                .get_component_for_entity::<PendingPlayApp>(document)
+                .is_none()
+        );
+        assert_eq!(f.play_state(document), None);
+        assert_eq!(
+            f.world
+                .get_resource::<EventChannel<PlayFailed>>()
+                .unwrap()
+                .read_from(&mut Default::default())
+                .count(),
+            1
+        );
     }
 
     #[test]

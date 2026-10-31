@@ -102,7 +102,7 @@ fn broken_build(_: &mut App) {
 }
 
 macro_rules! test_asset {
-    ($asset:ident, $editor:ident, $preview:expr) => {
+    ($asset:ident, $editor:ident, $preview:expr, $edits_in_preview:expr) => {
         #[derive(serde::Serialize, serde::Deserialize)]
         pub struct $asset;
 
@@ -119,6 +119,10 @@ macro_rules! test_asset {
             fn preview(&self) -> Option<PreviewSpec> {
                 $preview
             }
+
+            fn edits_in_preview(&self) -> bool {
+                $edits_in_preview
+            }
         }
     };
 }
@@ -128,16 +132,26 @@ test_asset!(
     PreviewedEditor,
     Some(PreviewSpec {
         build: previewed_build
-    })
+    }),
+    false
+);
+test_asset!(
+    EditedPreviewAsset,
+    EditedPreviewEditor,
+    Some(PreviewSpec {
+        build: previewed_build
+    }),
+    true
 );
 test_asset!(
     BrokenPreviewAsset,
     BrokenPreviewEditor,
     Some(PreviewSpec {
         build: broken_build
-    })
+    }),
+    false
 );
-test_asset!(PlainAsset, PlainEditor, None);
+test_asset!(PlainAsset, PlainEditor, None, false);
 
 pub fn plain_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
@@ -370,6 +384,9 @@ impl SceneFixture {
             .register::<PreviewedAsset, PreviewedEditor>()
             .unwrap();
         editors
+            .register::<EditedPreviewAsset, EditedPreviewEditor>()
+            .unwrap();
+        editors
             .register::<BrokenPreviewAsset, BrokenPreviewEditor>()
             .unwrap();
         editors.register::<PlainAsset, PlainEditor>().unwrap();
@@ -509,7 +526,11 @@ impl SceneFixture {
     }
 
     pub fn open_preview(&mut self) -> Entity {
-        let document = self.request_kind(PreviewedAsset::name());
+        self.open_preview_of(PreviewedAsset::name())
+    }
+
+    pub fn open_preview_of(&mut self, kind: &str) -> Entity {
+        let document = self.request_kind(kind);
         self.frames_until("the preview was never built", |f| {
             f.world
                 .get_component_for_entity::<HostedApp>(document)

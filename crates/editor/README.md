@@ -143,7 +143,9 @@ finite in an `f32` (beyond about ±3.4e38) answers `invalid_arguments`. `frame` 
 position, yaw, pitch and the direction it looks along, once the edit `App` has
 stepped and the camera shows it; the edit `App` steps only while the viewport
 shows the scene. While a game plays both answer `refused`, since the game has
-no editor camera. All three need an open scene.
+no editor camera, and on a preview that is the edit target both answer
+`no_scene`, since a preview has no editor camera either. All three need an open
+scene.
 
 The edit tools change the edited scene, or the running game while it plays, by
 triggering the signal the panels trigger, and answer once the edit `App`
@@ -730,7 +732,7 @@ the same checks.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` and the
+holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool` and the
 asset picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
@@ -888,15 +890,15 @@ asset changes.
 recipe has a renderer, one directional light, and the default
 `CameraEnvironment`. Only its camera draws, through `ExclusiveCamera`, so a
 camera the preview spawns, inside a character scene for instance, does not.
-None of the scene tools are added.
+None of the scene tools are added, unless the editor edits in its preview, below.
 
 The preview shows in the shared viewport, which stands in for the document's
 `canvas` host: a previewing document gets `left` and `inspector` hosts and no
 `canvas`. Build the editor's own controls in those two hosts, and in `bottom`
 when the editor asks for it; the hierarchy and inspector panels are hidden on a
-preview tab, as on any custom editor's tab. A preview carries only `ViewportTarget`, which the viewport shows, routes input
-to, and steps, and never `EditTarget`, which `EditWorld<T>` and
-`EditWorldSignals` read. A preview is stepped only while its tab is in front
+preview tab, as on any custom editor's tab. A preview carries `ViewportTarget`, which the viewport shows, routes input
+to, and steps, but not `EditTarget`, which `EditWorld<T>` and
+`EditWorldSignals` read, unless the editor edits in it. A preview is stepped only while its tab is in front
 and the viewport is shown; a preview in the background is frozen.
 
 Drive the preview with the `PreviewSignals` system parameter:
@@ -907,6 +909,37 @@ preview, or a document with no preview is dropped. Read back through the
 preview's events: call `forward_hosted_event::<E>()` before the editor `App`
 finishes building, and read `EventReader<Hosted<E>>`, whose `document` says
 which preview wrote it.
+
+### Editing in a preview
+
+An editor whose document is edited as entities returns `true` from
+`AssetEditor::edits_in_preview`, which is `false` unless it says otherwise, and
+keeps those entities in its preview `App`. Such a preview differs from any other
+in four ways:
+
+- It is the edit target as well as the viewport target, so the normal inspector,
+  `EditWorld<T>`, `EditWorldSignals` and the MCP tools act on its world. An
+  extension crate's systems may use them too.
+- `open_previews` adds `EditToolsCorePlugin` before `build`, which gives it
+  `Selection` and the edit path, and no viewport tools. Select an entity with
+  the `Select` signal through `EditWorldSignals`.
+- The inspector panel stays on the tab, under the document's `inspector` host,
+  which is as tall as its content. The hierarchy stays hidden.
+- It has no scene and no `FlyCamera`: Play stays refused, and MCP `frame` and
+  `set_camera` answer `no_scene`.
+
+Its systems and listeners are marked `.at_preview_time()` as in any preview. An
+edit through the inspector marks the preview's `SceneDirty` and writes
+`PropertyCommitted` or `ComponentEdited`, which reach the editor as `Hosted<E>`
+events. Nothing marks the document `Unsaved` for it: the asset editor reads
+those events and does that itself, and it saves the document itself.
+
+When the entities are the document, so that nothing may add, remove or rename
+them, `build` inserts the `FixedEntities` resource. `EntityEdit` and
+`EditComponent` are then refused and still write `EntityEdited` and
+`ComponentEdited`, so Delete, Ctrl+D and the MCP entity tools answer at once and
+change nothing. The inspector hides the name field, the ⋯ button and the
+add-component row. Property edits still apply.
 
 ### The clip editor
 

@@ -93,7 +93,8 @@ impl HostedApp {
             .is_some_and(|dirty| dirty.0)
     }
 
-    pub(crate) fn world(&self) -> &World {
+    /// The `App`'s main world.
+    pub fn world(&self) -> &World {
         self.app.main().world()
     }
 
