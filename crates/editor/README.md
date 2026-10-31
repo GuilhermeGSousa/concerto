@@ -536,7 +536,7 @@ document, read with `EventReader<Hosted<E>>`: `SceneEdited`, which says the
 scene changed; `SceneStatus`, which carries why an edit was refused to Chatter;
 `RevealEntity`, which the hierarchy scrolls to; and one outcome per applied
 edit signal: `EntityEdited { edit, result }`, whose result is the entity a
-create or duplicate made; `PropertyCommitted { row, result }`, whose refusal
+create or duplicate made; `PropertyCommitted { address, result }`, whose refusal
 is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
 `Refused` for any other reason; and
 `ComponentEdited { edit, result }`. A refused edit's result is the text its
@@ -544,7 +544,7 @@ is a `PropertyRefusal`, `Undecodable` for a JSON value that does not decode and
 Chatter. `SetValue { entity, component, path, value }` writes a JSON value, in
 the shape `inspect` reports, into the field at `path` of a component, or into
 the whole component when `path` is empty, with no inspector adapter involved,
-and reports `PropertyCommitted` (its row has no editor) and `SceneEdited` as a
+and reports `PropertyCommitted` and `SceneEdited` as a
 property commit does. Fields the JSON leaves out keep their values. Entity
 references are live entity ids such as `42v3`, asset handles are asset ids and
 load through the edit `App`'s `AssetServer` as a spawned scene's do, and colors

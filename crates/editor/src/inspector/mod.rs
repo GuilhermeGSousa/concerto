@@ -37,6 +37,7 @@ mod numeric;
 mod registry;
 mod rows;
 mod sync;
+mod target;
 mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
@@ -61,9 +62,10 @@ use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};
 pub use rows::{
-    EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
+    EditContext, EditError, PlainRow, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyKind, PropertyRow, PropertyRowValue,
 };
+pub use target::{ComponentTarget, PropertyAddress, PropertyTarget, TargetWorld};
 
 pub const PANEL_ID: &str = "concerto.ecs";
 

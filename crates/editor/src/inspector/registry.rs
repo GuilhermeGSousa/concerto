@@ -308,9 +308,9 @@ impl InspectionSource<'_> {
     }
     pub fn follows_snapshot(&self, registry: &InspectorRegistry, row: &PropertyRow) -> bool {
         registry
-            .editor(row.type_id, Some(&self.table.read()))
+            .editor(row.address.type_id, Some(&self.table.read()))
             .is_some_and(|editor| {
-                Some(editor.editor_type) == row.editor_type && editor.adapter.follows_snapshot()
+                editor.editor_type == row.editor_type && editor.adapter.follows_snapshot()
             })
     }
     /// The layout node for `property`'s row, the standard one when no editor claims it.
@@ -416,10 +416,8 @@ pub(crate) fn current_editor(
     row: &PropertyRow,
 ) -> Result<RegisteredEditor, EditError> {
     registry
-        .editor(row.type_id, types)
-        .filter(|editor| {
-            row.editor_type == Some(editor.editor_type) && row.registry_tick == changed
-        })
+        .editor(row.address.type_id, types)
+        .filter(|editor| row.editor_type == editor.editor_type && row.registry_tick == changed)
         .ok_or(EditError::StaleEditor)
 }
 
@@ -460,7 +458,7 @@ pub(super) fn send_property_commits(
 #[cfg(test)]
 mod tests {
     use super::super::{
-        PropertyRow,
+        ComponentTarget, PropertyRow,
         numeric::{NumericEdit, NumericFields},
     };
     use super::*;
@@ -521,7 +519,8 @@ mod tests {
                     TypeId::of::<Transform>(),
                 )
                 .unwrap()[0]
-                .row(self.entity, TypeId::of::<Transform>(), changed)
+                .row(transform_of(self.entity), changed)
+                .unwrap()
         }
         fn translation(&self) -> Vec3 {
             self.f
@@ -546,11 +545,19 @@ mod tests {
         (world, entity)
     }
 
+    fn transform_of(entity: Entity) -> Arc<ComponentTarget> {
+        Arc::new(ComponentTarget {
+            entity,
+            component: TypeId::of::<Transform>(),
+        })
+    }
+
     fn row_in(registry: &InspectorRegistry, scene: &World, entity: Entity) -> PropertyRow {
         registry
             .collect_component(scene, entity, TypeId::of::<Transform>())
             .unwrap()[0]
-            .row(entity, TypeId::of::<Transform>(), Tick::default())
+            .row(transform_of(entity), Tick::default())
+            .unwrap()
     }
 
     fn refused(
@@ -671,7 +678,7 @@ mod tests {
         let mut s = sending();
         let row = s.row();
         let mut stale = row.clone();
-        stale.editor_type = Some(TypeId::of::<u8>());
+        stale.editor_type = TypeId::of::<u8>();
 
         s.commits().0.push(PropertyCommit {
             row: stale,
@@ -792,7 +799,8 @@ mod tests {
             .unwrap()
             .collect_component(&scene, entity, TypeId::of::<Transform>())
             .unwrap()[0]
-            .row(entity, TypeId::of::<Transform>(), changed(&editors));
+            .row(transform_of(entity), changed(&editors))
+            .unwrap();
         let edit = || {
             PropertyCommit::new::<Vec3, NumericFields>(
                 &old,
@@ -930,13 +938,13 @@ mod tests {
         let row = row_in(&registry, &scene, a);
 
         let mut wrong_type = row.clone();
-        wrong_type.path = PropertyPath::new(["rotation"]);
+        wrong_type.address.path = PropertyPath::new(["rotation"]);
         assert_eq!(
             numeric(&registry, wrong_type, 1.0).apply(&mut scene),
             Err(EditError::TypeMismatch)
         );
         let mut missing = row.clone();
-        missing.path = PropertyPath::new(["absent"]);
+        missing.address.path = PropertyPath::new(["absent"]);
         assert_eq!(
             numeric(&registry, missing, 1.0).apply(&mut scene),
             Err(EditError::NotFound)

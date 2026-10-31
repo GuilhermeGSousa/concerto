@@ -28,8 +28,8 @@ use super::{
 use crate::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
-        ErasedEditor, InspectionSource, InspectorRegistry, ListEdit, ListEditor, PropertyCommit,
-        PropertyCommits, current_editor,
+        ComponentTarget, ErasedEditor, InspectionSource, InspectorRegistry, ListEdit, ListEditor,
+        PropertyAddress, PropertyCommit, PropertyCommits, current_editor,
     },
     tools::{
         edits::{
@@ -137,9 +137,7 @@ struct EditingEntity {
 #[derive(Component)]
 struct SettingProperty {
     document: Entity,
-    entity: Entity,
-    component: TypeId,
-    path: PropertyPath,
+    address: PropertyAddress,
     list_edit: Option<String>,
 }
 
@@ -193,6 +191,10 @@ pub(super) fn build(app: &mut App) {
 
 fn refused(reason: &str) -> ToolError {
     ToolError::new("refused", reason)
+}
+
+fn not_editable(name: &str) -> ToolError {
+    ToolError::new("not_editable", format!("{name} has no editor."))
 }
 
 fn root_refused(edit: &str) -> ToolError {
@@ -627,7 +629,10 @@ fn property_write(
             value: arguments.value,
         }));
     };
-    let row = property.row(entity, component, changed);
+    let target = Arc::new(ComponentTarget { entity, component });
+    let row = property
+        .row(target, changed)
+        .ok_or_else(|| not_editable(&name))?;
     let current = source.read(entity, component);
     let types = source.types();
     let editor = current_editor(registry, Some(&*types), changed, &row)
@@ -635,7 +640,7 @@ fn property_write(
     let mut edit = Err(unknown_path(short, &arguments.path, &[]));
     let mut hook = LiveLeaves::from_parts(&types, server);
     if let Some(value) = current {
-        let _ = with_property(value, &row.path, &mut |field| {
+        let _ = with_property(value, &row.address.path, &mut |field| {
             edit = value_edit(
                 field,
                 &arguments.value,
@@ -676,30 +681,27 @@ fn set_property(
                 arguments,
             )
         });
-        let row = match write {
+        let address = match write {
             Ok(Write::Adapter(commit)) => {
-                let row = commit.row.clone();
+                let address = commit.row.address.clone();
                 commits.0.push(commit);
-                (row.entity, row.component, row.path)
+                address
             }
             Ok(Write::Value(set)) => {
-                let row = (set.entity, set.component, set.path.clone());
+                let address = set.address(TypeId::of::<()>());
                 scene.trigger(set);
-                row
+                address
             }
             Err(error) => {
                 reply.err(error);
                 continue;
             }
         };
-        let (entity, component, path) = row;
         cmd.spawn((
             PendingCall::new(reply, "the property to be set"),
             SettingProperty {
                 document,
-                entity,
-                component,
-                path,
+                address,
                 list_edit: None,
             },
         ));
@@ -755,11 +757,12 @@ fn list_commit(
             format!("{name} has length {length}, so it has no element {index}."),
         ));
     }
-    let commit = PropertyCommit::erased::<ListEditor>(
-        &list.row(entity, component, registry.changed_tick()),
-        edit,
-    )
-    .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
+    let target = Arc::new(ComponentTarget { entity, component });
+    let row = list
+        .row(target, registry.changed_tick())
+        .ok_or_else(|| not_editable(&name))?;
+    let commit = PropertyCommit::erased::<ListEditor>(&row, edit)
+        .map_err(|error| refused(&format!("{attempt} failed: {error}")))?;
     Ok((commit, done))
 }
 
@@ -777,15 +780,13 @@ fn start_list_edit(
             return;
         }
     };
-    let row = commit.row.clone();
+    let address = commit.row.address.clone();
     commits.0.push(commit);
     cmd.spawn((
         PendingCall::new(reply, "the list to be changed"),
         SettingProperty {
             document,
-            entity: row.entity,
-            component: row.component,
-            path: row.path,
+            address,
             list_edit: Some(done),
         },
     ));
@@ -849,10 +850,10 @@ fn list_remove(
     }
 }
 
-fn list_length(source: &InspectionSource, setting: &SettingProperty) -> usize {
+fn list_length(source: &InspectionSource, target: ComponentTarget, path: &PropertyPath) -> usize {
     let mut length = 0;
-    if let Some(value) = source.read(setting.entity, setting.component) {
-        let _ = with_property(value, &setting.path, &mut |field| {
+    if let Some(value) = source.read(target.entity, target.component) {
+        let _ = with_property(value, path, &mut |field| {
             if let ReflectRef::List(list) = field.reflect_ref() {
                 length = list.len();
             }
@@ -885,20 +886,23 @@ fn answer_property_commits(
 ) {
     for Hosted { document, event } in committed.read() {
         for (call, pending, setting) in waiting.iter() {
-            let row = &event.row;
+            let address = &setting.address;
             if setting.document != *document
-                || setting.entity != row.entity
-                || setting.component != row.component
-                || setting.path != row.path
+                || !address.same_target(&event.address)
+                || address.path != event.address.path
             {
                 continue;
             }
+            let Some(target) = address.target.component() else {
+                continue;
+            };
             match &event.result {
                 Ok(()) => pending.reply.ok(match &setting.list_edit {
-                    Some(done) => {
-                        format!("{done}; its length is {}.", list_length(&source, setting))
-                    }
-                    None => component_answer(&source, &registry, setting.entity, setting.component),
+                    Some(done) => format!(
+                        "{done}; its length is {}.",
+                        list_length(&source, target, &address.path)
+                    ),
+                    None => component_answer(&source, &registry, target.entity, target.component),
                 }),
                 Err(PropertyRefusal::Undecodable(reason)) => {
                     pending.reply.err(ToolError::new("invalid_value", reason))

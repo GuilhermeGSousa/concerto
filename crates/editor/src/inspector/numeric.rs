@@ -124,15 +124,16 @@ fn queue_numeric(
     edit: NumericEdit,
 ) -> Result<(), EditError> {
     use std::any::TypeId;
-    if row.type_id == TypeId::of::<f32>() {
+    let type_id = row.address.type_id;
+    if type_id == TypeId::of::<f32>() {
         commits.push::<f32, NumericFields>(row, edit)
-    } else if row.type_id == TypeId::of::<f64>() {
+    } else if type_id == TypeId::of::<f64>() {
         commits.push::<f64, NumericFields>(row, edit)
-    } else if row.type_id == TypeId::of::<Vec3>() {
+    } else if type_id == TypeId::of::<Vec3>() {
         commits.push::<Vec3, NumericFields>(row, edit)
-    } else if row.type_id == TypeId::of::<Quat>() {
+    } else if type_id == TypeId::of::<Quat>() {
         commits.push::<Quat, NumericFields>(row, edit)
-    } else if row.type_id == TypeId::of::<concerto_color::Color>() {
+    } else if type_id == TypeId::of::<concerto_color::Color>() {
         commits.push::<concerto_color::Color, NumericFields>(row, edit)
     } else {
         Err(EditError::TypeMismatch)
@@ -667,7 +668,7 @@ mod tests {
 
     #[test]
     fn transform_numeric_widget_submit_refresh_and_cancel_smoke_test() {
-        use super::super::{InspectorRegistry, Property, send_property_commits};
+        use super::super::{ComponentTarget, InspectorRegistry, Property, send_property_commits};
         use crate::hosted::testing::SceneFixture;
         use concerto_ecs::{
             IntoSystem, Res, Resource, System, World, component::Tick,
@@ -678,7 +679,7 @@ mod tests {
             focus::{FocusedWidget, UIFocusLost},
             text_input::{UITextInputCancelled, UITextInputSubmitted},
         };
-        use std::any::TypeId;
+        use std::{any::TypeId, sync::Arc};
 
         #[derive(Resource)]
         struct Build {
@@ -691,7 +692,14 @@ mod tests {
                 &NumericFields,
                 &mut cmd.spawn((
                     data.property
-                        .row(data.entity, TypeId::of::<Transform>(), data.tick),
+                        .row(
+                            Arc::new(ComponentTarget {
+                                entity: data.entity,
+                                component: TypeId::of::<Transform>(),
+                            }),
+                            data.tick,
+                        )
+                        .unwrap(),
                     data.property.value().unwrap().clone(),
                 )),
                 data.property

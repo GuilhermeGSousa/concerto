@@ -23,7 +23,7 @@ use concerto_reflect::{
 use serde_json::Value;
 
 use crate::{
-    inspector::ErasedEditor,
+    inspector::{ComponentTarget, ErasedEditor, PropertyAddress},
     tools::{
         entity_ops::in_open_scene,
         scene::{SceneRoot, SceneStatus, report_edit, write},
@@ -63,23 +63,15 @@ pub struct EditContext<'w> {
     pub registry: &'w AssetRegistry,
 }
 
-/// Captured at rebuild, so a queued edit always addresses its original target.
-#[derive(Component, Clone, Debug)]
+/// A row an editor built.
+#[derive(Component, Clone)]
 pub struct PropertyRow {
-    pub entity: Entity,
-    pub component: TypeId,
-    pub path: PropertyPath,
-    pub type_id: TypeId,
-    pub(crate) editor_type: Option<TypeId>,
+    pub address: PropertyAddress,
+    pub(crate) editor_type: TypeId,
     pub(crate) registry_tick: Tick,
 }
 
 impl PropertyRow {
-    /// Whether an adapter claimed this row when it was collected.
-    pub fn has_editor(&self) -> bool {
-        self.editor_type.is_some()
-    }
-
     /// The registry's change tick at collection, which later edits are checked against.
     pub fn registry_tick(&self) -> Tick {
         self.registry_tick
@@ -98,7 +90,7 @@ impl Signal for CommitProperty {}
 /// What one `CommitProperty` or `SetValue` did to the row it addressed, or why it was refused.
 #[derive(Event, Clone)]
 pub struct PropertyCommitted {
-    pub row: PropertyRow,
+    pub address: PropertyAddress,
     pub result: Result<(), PropertyRefusal>,
 }
 
@@ -143,15 +135,21 @@ fn refused(reason: impl ToString) -> PropertyRefusal {
 impl CommitProperty {
     /// Writes the value into the component the row addresses.
     pub fn apply(&self, world: &mut World) -> Result<(), EditError> {
-        let component = reflected(world, self.row.component)?;
+        let target = self
+            .row
+            .address
+            .target
+            .component()
+            .ok_or(EditError::MissingTarget)?;
+        let component = reflected(world, target.component)?;
         let mut result = Err(EditError::MissingAssets);
         world.resource_scope::<AssetServer>(|world, assets| {
             world.resource_scope::<AssetRegistry>(|world, registry| {
                 result = apply_through(
                     world,
                     component,
-                    self.row.entity,
-                    &self.row.path,
+                    target.entity,
+                    &self.row.address.path,
                     self.editor.as_ref(),
                     self.edit.as_ref(),
                     &EditContext { assets, registry },
@@ -199,6 +197,18 @@ pub struct SetValue {
 impl Signal for SetValue {}
 
 impl SetValue {
+    /// The address of this write, whose value has type `type_id`.
+    pub(crate) fn address(&self, type_id: TypeId) -> PropertyAddress {
+        PropertyAddress {
+            target: Arc::new(ComponentTarget {
+                entity: self.entity,
+                component: self.component,
+            }),
+            path: self.path.clone(),
+            type_id,
+        }
+    }
+
     fn write(&self, world: &mut World, field: &mut TypeId) -> Result<(), PropertyRefusal> {
         let component = reflected(world, self.component).map_err(refused)?;
         if !world.entity_is_valid(self.entity) {
@@ -374,17 +384,23 @@ fn reflected(world: &World, component: TypeId) -> Result<ReflectComponent, EditE
 }
 
 pub(crate) fn commit_property(on: On<CommitProperty>, world: &mut World) {
-    let row = &on.signal().row;
-    let property = property_name(world, row.component, &row.path);
-    let result = in_open_scene(world, row.entity)
+    let address = &on.signal().row.address;
+    let target = address.target.component();
+    let property = match target {
+        Some(target) => property_name(world, target.component, &address.path),
+        None => address.target.name(),
+    };
+    let result = target
+        .ok_or(EditError::MissingTarget)
         .map_err(|error| error.to_string())
+        .and_then(|target| in_open_scene(world, target.entity).map_err(|error| error.to_string()))
         .and_then(|()| on.signal().apply(world).map_err(|error| error.to_string()))
         .map_err(|reason| refused(format!("Set {property} failed: {reason}")));
     report(world, &result);
     write(
         world,
         PropertyCommitted {
-            row: on.signal().row.clone(),
+            address: address.clone(),
             result,
         },
     );
@@ -401,14 +417,7 @@ pub(crate) fn set_value(on: On<SetValue>, world: &mut World) {
     write(
         world,
         PropertyCommitted {
-            row: PropertyRow {
-                entity: set.entity,
-                component: set.component,
-                path: set.path.clone(),
-                type_id: field,
-                editor_type: None,
-                registry_tick: Tick::default(),
-            },
+            address: set.address(field),
             result,
         },
     );
@@ -644,16 +653,24 @@ mod tests {
         let editor = registry.editor(TypeId::of::<f32>(), None).unwrap();
         CommitProperty {
             row: PropertyRow {
-                entity,
-                component: TypeId::of::<Gain>(),
-                path: PropertyPath::new(["amount"]),
-                type_id: TypeId::of::<f32>(),
-                editor_type: Some(editor.editor_type),
+                address: PropertyAddress {
+                    target: Arc::new(ComponentTarget {
+                        entity,
+                        component: TypeId::of::<Gain>(),
+                    }),
+                    path: PropertyPath::new(["amount"]),
+                    type_id: TypeId::of::<f32>(),
+                },
+                editor_type: editor.editor_type,
                 registry_tick: Tick::default(),
             },
             edit: Arc::new(amount),
             editor: Arc::clone(&editor.adapter),
         }
+    }
+
+    fn entity_of(outcome: &PropertyCommitted) -> Entity {
+        outcome.address.target.component().unwrap().entity
     }
 
     fn statuses(app: &App) -> Vec<String> {
@@ -695,7 +712,7 @@ mod tests {
         assert_eq!(gain(&mut app, entity), 2.0);
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].row.entity, entity);
+        assert_eq!(entity_of(&outcomes[0]), entity);
         assert_eq!(outcomes[0].result, Ok(()));
         assert!(statuses(&app).is_empty());
     }
@@ -714,7 +731,7 @@ mod tests {
         );
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 1);
-        assert_eq!(outcomes[0].row.entity, entity);
+        assert_eq!(entity_of(&outcomes[0]), entity);
         assert_eq!(
             outcomes[0].result,
             Err(PropertyRefusal::Refused(statuses(&app).remove(0)))
@@ -869,12 +886,16 @@ mod tests {
         assert_eq!(read(&mut app, entity, |lens: &Lens| lens.focal), 50.0);
         let outcomes = written::<PropertyCommitted>(&app);
         assert_eq!(outcomes.len(), 2);
-        let row = &outcomes[0].row;
-        assert_eq!(row.entity, entity);
-        assert_eq!(row.component, TypeId::of::<Gain>());
-        assert_eq!(row.path, PropertyPath::new(["amount"]));
-        assert_eq!(row.type_id, TypeId::of::<f32>());
-        assert!(!row.has_editor());
+        let address = &outcomes[0].address;
+        assert_eq!(
+            address.target.component(),
+            Some(ComponentTarget {
+                entity,
+                component: TypeId::of::<Gain>(),
+            })
+        );
+        assert_eq!(address.path, PropertyPath::new(["amount"]));
+        assert_eq!(address.type_id, TypeId::of::<f32>());
         assert_eq!(results(&app), [Ok(()), Ok(())]);
         assert_eq!(written::<SceneEdited>(&app).len(), 2);
         assert!(statuses(&app).is_empty());
@@ -945,8 +966,8 @@ mod tests {
             [1.4, 4.0]
         );
         let outcomes = written::<PropertyCommitted>(&app);
-        assert_eq!(outcomes[1].row.path, element);
-        assert_eq!(outcomes[1].row.type_id, TypeId::of::<f32>());
+        assert_eq!(outcomes[1].address.path, element);
+        assert_eq!(outcomes[1].address.type_id, TypeId::of::<f32>());
     }
 
     #[test]

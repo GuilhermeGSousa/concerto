@@ -3,11 +3,12 @@ use std::{
     sync::Arc,
 };
 
-use concerto_ecs::{Component, Entity, Resource, command::EntityCommandQueue, component::Tick};
+use concerto_ecs::{Component, Resource, command::EntityCommandQueue, component::Tick};
 use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::{node::UINode, theme::UITheme};
 
 use super::list::ListLength;
+use super::target::{PropertyAddress, PropertyTarget};
 pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
@@ -127,16 +128,25 @@ impl Property {
         Some(*length)
     }
 
-    pub fn row(&self, entity: Entity, component: TypeId, registry_tick: Tick) -> PropertyRow {
-        PropertyRow {
-            entity,
-            component,
-            path: self.path.clone(),
-            type_id: self.type_id,
-            editor_type: self.value().map(|value| value.0.editor_type),
+    /// The editor's row for this property on `target`, or `None` when no editor claimed it.
+    pub fn row(&self, target: Arc<dyn PropertyTarget>, registry_tick: Tick) -> Option<PropertyRow> {
+        Some(PropertyRow {
+            editor_type: self.value()?.0.editor_type,
+            address: PropertyAddress {
+                target,
+                path: self.path.clone(),
+                type_id: self.type_id,
+            },
             registry_tick,
-        }
+        })
     }
+}
+
+/// A row with no value of its own: a heading, or a value no editor claims.
+#[derive(Component, Clone)]
+pub struct PlainRow {
+    pub path: PropertyPath,
+    pub type_id: TypeId,
 }
 
 /// An owned edit and its captured target. Construct through [`Self::new`].
@@ -150,10 +160,7 @@ impl PropertyCommit {
         row: &PropertyRow,
         edit: E::Edit,
     ) -> Result<Self, EditError> {
-        if row.editor_type.is_none() {
-            return Err(EditError::StaleEditor);
-        }
-        if row.type_id != TypeId::of::<T>() {
+        if row.address.type_id != TypeId::of::<T>() {
             return Err(EditError::TypeMismatch);
         }
         Self::erased::<E>(row, edit)
@@ -164,10 +171,7 @@ impl PropertyCommit {
         row: &PropertyRow,
         edit: impl Any + Send + Sync,
     ) -> Result<Self, EditError> {
-        if row.editor_type.is_none() {
-            return Err(EditError::StaleEditor);
-        }
-        if row.editor_type != Some(TypeId::of::<E>()) {
+        if row.editor_type != TypeId::of::<E>() {
             return Err(EditError::TypeMismatch);
         }
         Ok(Self {
