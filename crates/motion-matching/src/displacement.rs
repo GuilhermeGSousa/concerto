@@ -25,7 +25,7 @@ impl Default for CharacterDisplacement {
     }
 }
 
-/// Places the character and the capsule at a weighted average of the two: 0 is code-driven, 1 is data-driven.
+/// Places the character and the capsule at a weighted average of the two each frame, clamped to 0..=1: 0 is code-driven, 1 is data-driven, and the speed between them depends on the frame rate.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
 pub struct Synchronization {
@@ -110,10 +110,11 @@ fn yaw_from(from: Quat, to: Quat) -> Vec3 {
 
 impl Synchronization {
     fn apply(&self, capsule: Placement, moved: Placement) -> Placement {
+        let data_factor = self.data_factor.clamp(0.0, 1.0);
         let moved_yaw = yaw_of(moved.rotation);
-        let yaw = yaw_of(capsule.rotation).slerp(moved_yaw, self.data_factor);
+        let yaw = yaw_of(capsule.rotation).slerp(moved_yaw, data_factor);
         Placement {
-            position: capsule.position.lerp(moved.position, self.data_factor),
+            position: capsule.position.lerp(moved.position, data_factor),
             rotation: yaw * moved_yaw.inverse() * moved.rotation,
         }
     }
@@ -127,8 +128,9 @@ impl Adjustment {
         let mut turn = damp_adjustment_exact(yaw_gap, self.rotation_halflife, dt, ADJUSTMENT_EPS);
         if self.by_velocity {
             let turned = to_scaled_angle_axis(quat_abs(delta.rotation)).length();
-            shift = shift.clamp_length_max(self.position_max_ratio * delta.translation.length());
-            turn = turn.clamp_length_max(self.rotation_max_ratio * turned);
+            let max_shift = self.position_max_ratio * delta.translation.length();
+            shift = shift.clamp_length_max(max_shift.max(0.0));
+            turn = turn.clamp_length_max((self.rotation_max_ratio * turned).max(0.0));
         }
         Placement {
             position: moved.position + shift,
@@ -142,9 +144,10 @@ impl Clamp {
         let offset = (moved.position - capsule.position).with_y(0.0);
         let yaw_offset = yaw_from(capsule.rotation, moved.rotation);
         Placement {
-            position: moved.position + (offset.clamp_length_max(self.max_distance) - offset),
+            position: moved.position
+                + (offset.clamp_length_max(self.max_distance.max(0.0)) - offset),
             rotation: from_scaled_angle_axis(
-                yaw_offset.clamp_length_max(self.max_angle) - yaw_offset,
+                yaw_offset.clamp_length_max(self.max_angle.max(0.0)) - yaw_offset,
             ) * moved.rotation,
         }
     }
@@ -248,6 +251,60 @@ mod tests {
             max_distance: 0.5,
             max_angle: 0.5,
         })
+    }
+
+    #[test]
+    fn a_data_factor_outside_its_range_acts_as_its_nearest_end() {
+        for (factor, end) in [(1.5, 1.0), (-0.5, 0.0)] {
+            let displace = |factor| {
+                synchronization(factor).displace(
+                    0.016,
+                    at(1.0, 2.0, 0.4),
+                    at(3.0, 2.0, 0.9),
+                    moved_by(Vec3::X, 0.1),
+                )
+            };
+            let (outside, inside) = (displace(factor), displace(end));
+            assert_position(outside.character.position, inside.character.position);
+            assert_position(outside.pull, inside.pull);
+            assert_eq!(outside.character.rotation, inside.character.rotation);
+        }
+    }
+
+    #[test]
+    fn a_negative_clamp_holds_the_character_on_the_capsule() {
+        let negative = CharacterDisplacement::Clamp(Clamp {
+            max_distance: -1.0,
+            max_angle: -1.0,
+        });
+
+        let result = negative.displace(
+            0.016,
+            at(1.0, 2.0, 0.4),
+            at(3.0, 2.0, 0.9),
+            RootMotion::IDENTITY,
+        );
+
+        assert_position(result.character.position, Vec3::new(1.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn a_negative_ratio_gives_the_character_no_correction() {
+        let negative = CharacterDisplacement::Adjustment(Adjustment {
+            by_velocity: true,
+            position_max_ratio: -1.0,
+            rotation_max_ratio: -1.0,
+            ..Adjustment::default()
+        });
+
+        let result = negative.displace(
+            0.016,
+            at(0.0, 0.0, 0.0),
+            at(1.0, 0.0, 0.0),
+            moved_by(Vec3::X, 0.1),
+        );
+
+        assert_position(result.character.position, Vec3::new(2.0, 0.0, 0.0));
     }
 
     #[test]

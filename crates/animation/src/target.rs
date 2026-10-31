@@ -58,8 +58,9 @@ pub fn animate_targets(
             continue;
         }
         let root_bone = skeleton_component
-            .root()
-            .and_then(|root| root_bones.get_entity(root));
+            .bones()
+            .iter()
+            .find_map(|bone| bone.entity().and_then(|bone| root_bones.get_entity(bone)));
         if let Some(mut root_bone) = root_bone {
             root_bone.root_motion = RootMotion::IDENTITY;
         }
@@ -243,6 +244,7 @@ mod tests {
         skeletons: AssetStore<Skeleton>,
         skeleton: AssetHandle<Skeleton>,
         rest: JointPose,
+        names_root: bool,
     }
 
     impl Rig {
@@ -266,7 +268,13 @@ mod tests {
                 skeletons,
                 skeleton,
                 rest,
+                names_root: true,
             }
+        }
+
+        fn unnamed_root(mut self) -> Self {
+            self.names_root = false;
+            self
         }
 
         fn loaded_skeleton(mut self) -> Self {
@@ -325,7 +333,7 @@ mod tests {
                 SkeletonComponent {
                     skeleton: self.skeleton,
                     bones: vec![SceneEntityRef::Entity(root)],
-                    root: Some(SceneEntityRef::Entity(root)),
+                    root: self.names_root.then_some(SceneEntityRef::Entity(root)),
                 },
             ));
             world.insert_resource(self.clips);
@@ -432,6 +440,21 @@ mod tests {
 
         assert_eq!(
             rig.root_motion_after_animating(player),
+            RootMotion::IDENTITY
+        );
+    }
+
+    #[test]
+    fn a_paused_player_clears_a_root_bone_the_skeleton_does_not_name_as_its_root() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
+        let clip = rig.moving_clip(Vec3::X);
+        let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
+        let mut player = rig.player(graph);
+        rig.update(&mut player, 0.5);
+        player.set_paused(true);
+
+        assert_eq!(
+            rig.unnamed_root().root_motion_after_animating(player),
             RootMotion::IDENTITY
         );
     }

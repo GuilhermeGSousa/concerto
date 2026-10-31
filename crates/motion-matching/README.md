@@ -19,7 +19,7 @@ the crate as `concerto::motion_matching`.
 | `velocity_halflife` | spring halflife for velocity | 0.27 s |
 | `rotation_halflife` | spring halflife for facing | 0.27 s |
 | `sample_dt`, `sample_count` | trajectory sampling | 1/3 s, 3 |
-| `max_pull_speed` | the most speed a pull adds to the body | 5 m/s |
+| `max_pull_speed` | how fast a pull can take the body; a spring already faster keeps its speed | 5 m/s |
 
 A halflife here is the one in orangeduck/Motion-Matching: a spring at rest covers
 about 40% of the distance in it, where
@@ -30,7 +30,9 @@ trajectory.
 
 `max_pull_speed` must keep one fixed step under the capsule's radius: bodies use
 discrete collision, so a faster pull could carry the capsule through a wall. The
-default is about 0.17 m a step.
+default is about 0.17 m a step. A pull never takes the body past that speed, or
+past the spring's own speed when that is higher, so a fast spring needs the same
+care.
 
 A game that wants to know how a character moves asks its body:
 `PhysicsState::linear_velocity` and `body_transform` say where it went after
@@ -249,8 +251,9 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
   vertical velocity, advances the facing, and sets the body's horizontal
   velocity to the spring's. It takes the simulation's pull, the world offset
   from the body to where it should be, and adds the velocity that closes half
-  of it in the step, capped at `max_pull_speed`. The springs never see the pull,
-  so the prediction is undisturbed. The body keeps its own vertical velocity.
+  of it in the step, at no more than `max_pull_speed` or the spring's own speed,
+  whichever is higher. The springs never see the pull, so the prediction is
+  undisturbed. The body keeps its own vertical velocity.
 - `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
   the path from where the body ended the step and writes it to the character's
   `AnimationPlayer`, which is on the simulation's entity, or on or under an
@@ -374,6 +377,14 @@ numbers in the old variant.
 | `Adjustment` | The character moves by root motion and is damped towards the capsule. | The capsule stops. The character keeps going on its root motion, pulled back only as far as the ratios allow. |
 | `Clamp` | The character moves by root motion and is kept within reach of the capsule. | The capsule stops, and the character stops within `max_distance` of it. |
 
+`data_factor` is clamped to 0..=1. The average is of positions, taken once a
+frame, so at 0 and at 1 the character moves at the code's speed or the data's,
+and between them its speed depends on the frame rate and is not the same average
+of the two speeds.
+
+Give each character its own capsule: a second character naming the same one
+overwrites the first's pull.
+
 | Field | Meaning | Default |
 |---|---|---|
 | `Synchronization::data_factor` | 0 puts the character on the capsule, code-driven; 1 follows root motion and pulls the capsule to it, data-driven | 1.0 |
@@ -398,7 +409,7 @@ motion is ignored, as is any turn out of yaw.
 Only `Synchronization` moves the capsule. `apply_character_displacement` sets
 the simulation's pull to the offset from the capsule to the target each frame,
 and every other method leaves it at zero. `drive_body` takes it and adds half
-of it as velocity, capped at `max_pull_speed`, so physics still resolves
+of it as velocity, within the limit above, so physics still resolves
 collisions. The capsule shows the body up to a step late, which is why it adds
 half: a full correction would be issued again before the last one showed. So
 the capsule closes the gap over a few steps, and lags the character by a little

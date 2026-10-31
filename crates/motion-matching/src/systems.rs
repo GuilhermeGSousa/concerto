@@ -19,7 +19,7 @@ use crate::{
     simulation::{CharacterSimulation, DesiredMotion},
 };
 
-/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, capped at `max_pull_speed`.
+/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, at no more than `max_pull_speed` or the spring's own speed, whichever is higher.
 pub fn drive_body(
     query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
     mut physics: ResMut<PhysicsState>,
@@ -29,9 +29,10 @@ pub fn drive_body(
         simulation.previous_facing = simulation.facing.value;
         let velocity = simulation.advance(desired, dt);
         let pull = std::mem::take(&mut simulation.pull) / (2.0 * dt);
-        let pull = pull.clamp_length_max(simulation.max_pull_speed);
+        let limit = velocity.length().max(simulation.max_pull_speed);
         let vertical = physics.linear_velocity(*body_id).y;
-        physics.set_linear_velocity(*body_id, (velocity + pull).with_y(vertical));
+        let moved = (velocity + pull).clamp_length_max(limit);
+        physics.set_linear_velocity(*body_id, moved.with_y(vertical));
     }
 }
 
@@ -123,13 +124,13 @@ fn is_under(entity: Entity, ancestor: Entity, parents: &Query<&ChildOf>) -> bool
     false
 }
 
-fn in_world_space(delta: RootMotion, parent: Option<&GlobalTransform>) -> RootMotion {
-    let Some(parent) = parent else {
+fn in_world_space(delta: RootMotion, space: Option<&GlobalTransform>) -> RootMotion {
+    let Some(space) = space else {
         return delta;
     };
-    let rotation = parent.rotation();
+    let rotation = space.rotation();
     RootMotion {
-        translation: rotation * (parent.scale() * delta.translation),
+        translation: rotation * (space.scale() * delta.translation),
         rotation: rotation * delta.rotation * rotation.inverse(),
     }
 }
@@ -150,9 +151,14 @@ pub fn apply_character_displacement(
     for (root, bone) in root_bones.iter() {
         if let Some(character) = displaced_character(root, &methods, &parents) {
             deltas.entry(character).or_insert_with(|| {
-                let parent = parents.get_entity(root);
-                let parent = parent.and_then(|child_of| globals.get_entity(child_of.parent()));
-                in_world_space(bone.root_motion, parent)
+                let parent = parents.get_entity(root).map(|child_of| child_of.parent());
+                let space = if root == character {
+                    Some(root)
+                } else {
+                    parent
+                };
+                let space = space.and_then(|entity| globals.get_entity(entity));
+                in_world_space(bone.root_motion, space)
             });
         }
     }
@@ -390,26 +396,48 @@ mod tests {
         assert_eq!(simulation.facing, advanced.facing);
     }
 
-    #[test]
-    fn drive_body_caps_the_pull_but_not_the_springs() {
+    fn body_speed_under_a_pull(spring: f32, pull: Vec3, max_pull_speed: f32) -> (Vec3, Vec3) {
         let dt = Time::fixed_delta_time().as_secs_f32();
         let desired = DesiredMotion {
-            velocity: Vec3::new(8.0, 0.0, 0.0),
+            velocity: Vec3::new(spring, 0.0, 0.0),
             ..DesiredMotion::default()
         };
         let mut simulation = CharacterSimulation {
-            pull: Vec3::new(30.0, 0.0, 40.0),
-            max_pull_speed: 3.0,
+            pull,
+            max_pull_speed,
             ..Default::default()
         };
         simulation.velocity.value = desired.velocity;
-        let spring = simulation.clone().advance(&desired, dt);
+        let driven = simulation.clone().advance(&desired, dt);
         let (mut world, _, body) = pulled_body(simulation, desired);
 
         run_once(&mut world, drive_body);
 
-        let expected = spring + Vec3::new(1.8, 0.0, 2.4);
-        assert!(velocity_of(&world, body).with_y(0.0).distance(expected) < EPS);
+        (velocity_of(&world, body).with_y(0.0), driven)
+    }
+
+    #[test]
+    fn a_pull_takes_a_slow_body_no_faster_than_the_cap() {
+        let (velocity, _) = body_speed_under_a_pull(1.0, Vec3::new(30.0, 0.0, 40.0), 3.0);
+
+        assert!((velocity.length() - 3.0).abs() < EPS, "{velocity:?}");
+    }
+
+    #[test]
+    fn a_pull_adds_no_speed_to_a_spring_already_past_the_cap() {
+        let (velocity, spring) = body_speed_under_a_pull(8.0, Vec3::new(30.0, 0.0, 40.0), 3.0);
+
+        assert!(
+            (velocity.length() - spring.length()).abs() < EPS,
+            "{velocity:?}"
+        );
+    }
+
+    #[test]
+    fn a_negative_cap_gives_a_pull_no_speed() {
+        let (velocity, spring) = body_speed_under_a_pull(0.0, Vec3::new(30.0, 0.0, 40.0), -1.0);
+
+        assert!(velocity.distance(spring) < EPS, "{velocity:?}");
     }
 
     #[test]
@@ -671,24 +699,31 @@ mod tests {
     }
 
     #[test]
-    fn a_root_on_the_character_itself_moves_it_by_the_delta_as_it_stands() {
+    fn a_root_on_the_character_itself_moves_it_the_way_it_faces() {
         let mut world = displacement_world();
         let capsule = spawn_capsule(&mut world, Vec3::ZERO);
         let character = spawn_character(&mut world, capsule, synchronization(1.0), Vec3::ZERO);
+        let facing = Quat::from_rotation_y(FRAC_PI_2);
+        world
+            .get_component_for_entity_mut::<Transform>(character)
+            .unwrap()
+            .rotation = facing;
         world.insert(
-            AnimationRootBone {
-                root_motion: RootMotion {
-                    translation: Vec3::new(0.5, 0.0, 0.0),
-                    rotation: Quat::from_rotation_y(0.3),
+            (
+                GlobalTransform::new(Mat4::from_quat(facing)),
+                AnimationRootBone {
+                    root_motion: RootMotion {
+                        translation: Vec3::new(0.0, 0.0, 0.5),
+                        rotation: Quat::IDENTITY,
+                    },
                 },
-            },
+            ),
             character,
         );
 
         run_once(&mut world, apply_character_displacement);
 
         assert_near(position_of(&world, character), Vec3::new(0.5, 0.0, 0.0));
-        assert_yaw(rotation_of(&world, character), 0.3);
     }
 
     #[test]
@@ -992,12 +1027,21 @@ mod tests {
             holder,
         );
 
+        let mut travelled = 0.0;
         for _ in 0..4 {
             thread::sleep(Duration::from_millis(5));
             app.update();
+            let world = app.main().world();
+            let bone = world.get_component_for_entity::<AnimationRootBone>(root);
+            travelled += bone.unwrap().root_motion.translation.z;
         }
 
         let world = app.main().world();
+        let moved = position_of(world, character);
+        assert!(
+            (moved.z - travelled).abs() < EPS,
+            "{moved:?} vs {travelled}"
+        );
         let placed = position_of(world, character);
         assert!(placed.z < 0.0, "{placed:?}");
         assert_eq!(placed.y, height);

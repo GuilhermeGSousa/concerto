@@ -256,7 +256,7 @@ cmd.spawn((
 Each frame the character moves by its root motion, and is then reconciled with
 the capsule by one of three methods, which are mutually exclusive:
 
-- `Synchronization` places both at a weighted average, set by `data_factor`: 0
+- `Synchronization` places both at a weighted average each frame, set by `data_factor`: 0
   is code-driven, 1 is data-driven. The capsule is pulled through its velocity,
   so physics still stops it at a wall.
 - `Adjustment`, the default, damps the character towards the capsule, by no more
