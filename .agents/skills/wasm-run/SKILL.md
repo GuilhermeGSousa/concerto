@@ -19,12 +19,14 @@ It serves at `http://127.0.0.1:8080`. `tech-demo` has a
 `Trunk.toml` and an `index.html`; an example without them does not run on the
 web yet.
 
-The CI check is only that it builds, and it compiles the libraries without
-linking a program, so a link failure shows up only in `trunk`:
+The CI check is only that it builds:
 
 ```sh
 cargo build --target wasm32-unknown-unknown
 ```
+
+That compiles the libraries and links no program, so a link failure shows up
+only in `trunk`.
 
 A build that passes proves nothing about the browser. A wasm change is verified
 by loading the page and reading the console.
