@@ -7,9 +7,18 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+anyhow = "1"
+bincode = "1.3"
 concerto-app.workspace = true
+concerto-ecs.workspace = true
 concerto-editor.workspace = true
+concerto-foundation.workspace = true
+concerto-mesh.workspace = true
 concerto-motion-matching.workspace = true
+concerto-reflect.workspace = true
 
 [dev-dependencies]
 concerto-editor = { workspace = true, features = ["testing"] }
+concerto-window.workspace = true
+serde_json = "1"
+tempfile = "3"

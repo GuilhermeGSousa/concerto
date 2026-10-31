@@ -85,7 +85,8 @@ pub(crate) fn report_edit(world: &mut World) {
     write(world, SceneEdited);
 }
 
-pub(crate) fn write<E: Event + 'static>(world: &mut World, event: E) {
+/// Writes `event` into `world`, for a listener that holds the world; dropped if nothing registered it.
+pub fn write<E: Event + 'static>(world: &mut World, event: E) {
     if let Some(channel) = world.get_resource_mut::<EventChannel<E>>() {
         channel.push_event(event);
     }

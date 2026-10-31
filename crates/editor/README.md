@@ -89,13 +89,15 @@ the editor is busy. `list_assets` lists the project's assets as
 `address · kind · id` lines, filtered by `query`, `kind` and `folder`, 50 at a
 time unless `limit` says otherwise, from `offset`; a longer list ends with the
 call that shows the rest. `scene_tree` shows the edited scene, or while a game
-plays its top-level entities as the hierarchy does, one `id name [components]`
-line per entity, indented, from `root` if given, `depth` levels deep (3) and at
-most `limit` entities (200); a cut subtree or a cut list ends with the call that
-continues it. `find_entities` lists the entities whose name contains `name`,
-ignoring case, and that carry `component`, by short name or full path, each with
-its path of names from the top, 50 unless `limit` says otherwise. `inspect`
-answers `entity` as JSON: its id, its name, and each component the inspector
+plays its top-level entities as the hierarchy does, or in a preview that is the
+edit target its top-level entities, the stage's camera and light among them, one
+`id name [components]` line per entity, indented, from `root` if given, `depth`
+levels deep (3) and at most `limit` entities (200); a cut subtree or a cut list
+ends with the call that continues it. `find_entities` looks through the same
+entities and lists those whose name contains `name`, ignoring case, and that
+carry `component`, by short name or full path, each with its path of names from
+the top, 50 unless `limit` says otherwise. `inspect` answers `entity` as JSON:
+its id, its name, and each component the inspector
 lists, or only those `components` names by short name, ignoring case, or full
 path. Each component has its short `name`, its full `type`, its `value`, and
 its `paths`: every property path, dot-separated, with `adapter` saying whether
@@ -933,6 +935,13 @@ edit through the inspector marks the preview's `SceneDirty` and writes
 `PropertyCommitted` or `ComponentEdited`, which reach the editor as `Hosted<E>`
 events. Nothing marks the document `Unsaved` for it: the asset editor reads
 those events and does that itself, and it saves the document itself.
+
+A save reaches a background tab too, through the unsaved guard or MCP `save`,
+and `EditWorld<T>` reads only the front tab. So the editor reads `SaveRequested`
+on its document and triggers a signal whose listener takes the world. That
+listener reads the document's `App` through `HostedApp::world_mut`, writes
+`SceneSaved` or `SaveFailed` with `tools::scene::write`, which MCP `save` waits
+on, and calls `HostedApp::mark_saved`, which it also calls on `DiscardEdits`.
 
 When the entities are the document, so that nothing may add, remove or rename
 them, `build` inserts the `FixedEntities` resource. `EntityEdit` and

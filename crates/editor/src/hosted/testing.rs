@@ -62,6 +62,7 @@ use crate::{
         SceneSaved, SceneState,
     },
     tools::{
+        edits::{ComponentEdited, PropertyCommitted},
         entity_ops::EntityEdit,
         scene::{RevealEntity, SceneEdited, SceneRoot, SceneStatus},
         selection::Selection,
@@ -462,10 +463,14 @@ impl SceneFixture {
         world.insert_resource(EventChannel::<Hosted<SceneEdited>>::new());
         world.insert_resource(EventChannel::<Hosted<SceneStatus>>::new());
         world.insert_resource(EventChannel::<Hosted<RevealEntity>>::new());
+        world.insert_resource(EventChannel::<Hosted<PropertyCommitted>>::new());
+        world.insert_resource(EventChannel::<Hosted<ComponentEdited>>::new());
         let mut delivery = vec![
             forward_events::<SceneEdited>.into_boxed_system(),
             forward_events::<SceneStatus>.into_boxed_system(),
             forward_events::<RevealEntity>.into_boxed_system(),
+            forward_events::<PropertyCommitted>.into_boxed_system(),
+            forward_events::<ComponentEdited>.into_boxed_system(),
             crate::scene::follow_unsaved_edits.into_boxed_system(),
             crate::scene::show_status.into_boxed_system(),
             crate::scene::reveal.into_boxed_system(),

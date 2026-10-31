@@ -83,7 +83,8 @@ impl HostedApp {
         crate::tools::scene::capture_open_scene(self.app.main_mut().world_mut())
     }
 
-    pub(crate) fn mark_saved(&mut self) {
+    /// Records that the document's edits are on disk, so the `App` no longer reads as dirty.
+    pub fn mark_saved(&mut self) {
         crate::tools::scene::mark_saved(self.app.main_mut().world_mut());
     }
 
@@ -96,6 +97,11 @@ impl HostedApp {
     /// The `App`'s main world.
     pub fn world(&self) -> &World {
         self.app.main().world()
+    }
+
+    /// The `App`'s main world, for an editor that reads a document out of it from a listener that holds the world.
+    pub fn world_mut(&mut self) -> &mut World {
+        self.app.main_mut().world_mut()
     }
 
     #[doc(hidden)]

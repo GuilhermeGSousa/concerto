@@ -1015,6 +1015,45 @@ fn a_preview_that_is_the_edit_target_has_no_camera_and_keeps_its_entities() {
 }
 
 #[test]
+fn a_preview_that_is_the_edit_target_lists_its_top_level_entities() {
+    let fixture = Fixture::new();
+    let tuning = fixture.add("content/tuning.gasset", Tuning::name());
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        move |app| {
+            app.register_asset_editor::<Tuning, TuningEditor>().unwrap();
+            app.insert_resource(TuningAsset(tuning))
+                .add_tool::<OpenTuning, _>(McpTool::new("open_tuning"), open_tuning)
+                .add_tool::<TunedId, _>(
+                    McpTool::read_only("tuned_id").needs(Needs::Scene),
+                    tuned_id,
+                );
+        },
+        |client| async move {
+            until(&client, "state", |state| state.starts_with("project")).await;
+            assert_eq!(ok(&client, "open_tuning").await, "queued");
+            until(&client, "state", |state| state.contains("tuning target")).await;
+            let tuned = until(&client, "tuned_id", |id| id != "none").await;
+            let tree = ok_with(&client, "scene_tree", json!({ "depth": 1 })).await;
+            let found = ok_with(&client, "find_entities", json!({ "name": "tuned" })).await;
+            client.cancel().await.unwrap();
+            (tuned, tree, found)
+        },
+    ) else {
+        return;
+    };
+
+    let (tuned, tree, found) = served.result;
+    assert!(tree.contains(&format!("{tuned} Tuned")), "{tree}");
+    assert!(tree.contains("Camera"), "{tree}");
+    assert!(tree.contains("Light"), "{tree}");
+    assert!(found.contains(&tuned), "{found}");
+}
+
+#[test]
 fn unmet_needs_answer_the_editor_codes() {
     let fixture = Fixture::new();
     let log = Log::default();
