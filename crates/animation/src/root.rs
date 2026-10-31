@@ -1,11 +1,9 @@
 use concerto_ecs::component::Component;
-use glam::Vec3;
+
+use crate::pose::RootMotion;
 
 #[derive(Component, Default)]
 pub struct AnimationRootBone {
-    /// The root bone's animated local translation for the current frame (root motion).
-    ///
-    /// The root bone itself is kept at its bind pose rather than being animated; consume this
-    /// to drive the character's world movement (e.g. by diffing it across frames).
-    pub displacement: Vec3,
+    /// How the root moved this frame; the root bone itself stays at its bind pose.
+    pub root_motion: RootMotion,
 }

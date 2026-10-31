@@ -1,8 +1,10 @@
 use concerto_foundation::assets::asset_store::AssetStore;
 
 use crate::{
-    blackboard::AnimationBlackboard, clip::AnimationClip, graph::AnimationGraph,
-    pose::EvaluatedPose,
+    blackboard::AnimationBlackboard,
+    clip::AnimationClip,
+    graph::AnimationGraph,
+    pose::{EvaluatedPose, JointPose},
 };
 
 pub struct AnimationGraphEvaluator {
@@ -39,10 +41,18 @@ impl Default for AnimationGraphEvaluator {
     }
 }
 
+/// The bone root motion is read from: its index in the pose and its rest joint.
+#[derive(Clone, Debug, PartialEq)]
+pub struct RootBone {
+    pub index: usize,
+    pub rest: JointPose,
+}
+
 pub struct AnimationGraphContext<'a> {
     pub(crate) animation_clips: &'a AssetStore<AnimationClip>,
     pub(crate) animation_graphs: &'a AssetStore<AnimationGraph>,
     pub(crate) blackboard: &'a AnimationBlackboard,
+    pub(crate) root: Option<RootBone>,
 }
 
 impl<'a> AnimationGraphContext<'a> {
@@ -56,5 +66,10 @@ impl<'a> AnimationGraphContext<'a> {
 
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
+    }
+
+    /// The root bone of the player being evaluated, if it has one.
+    pub fn root(&self) -> Option<&RootBone> {
+        self.root.as_ref()
     }
 }

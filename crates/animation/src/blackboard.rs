@@ -71,6 +71,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
 
         assert_eq!(read_stance(&context), Some((true, 0.5)));
