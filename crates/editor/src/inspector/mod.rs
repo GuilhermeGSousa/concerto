@@ -3,7 +3,7 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup, Update},
 };
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, Resource, World,
+    Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
     command::CommandQueue,
     component::bundle::IntoBundle,
     entity::{EntityStructuralVersion, hierarchy::Children},
@@ -38,6 +38,7 @@ mod registry;
 mod rows;
 mod sync;
 mod target;
+mod values;
 mod variants;
 
 pub use crate::tools::edits::{ComponentEdit, ComponentEdits};
@@ -65,7 +66,12 @@ pub use rows::{
     EditContext, EditError, PlainRow, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyKind, PropertyRow, PropertyRowValue,
 };
-pub use target::{ComponentTarget, PropertyAddress, PropertyTarget, TargetWorld};
+pub use target::{ComponentTarget, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld};
+pub use values::{InspectedSnapshots, InspectedValues, RefreshInspector, ValueCard, ValueSnapshot};
+use values::{
+    build_value_widgets, read_inspected_values, refresh_inspected_values, refresh_on_new_app,
+    sync_value_cards,
+};
 
 pub const PANEL_ID: &str = "concerto.ecs";
 
@@ -120,6 +126,7 @@ impl Plugin for InspectorPlugin {
         app.insert_resource(PropertyCommits::default());
         app.insert_resource(ComponentEdits::default());
         app.insert_resource(FocusNameField::default());
+        app.insert_resource(InspectedSnapshots::default());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
             title: "Looking Glass",
@@ -135,6 +142,15 @@ impl Plugin for InspectorPlugin {
             .add_system(LateUpdate, update_name_field)
             .add_system(LateUpdate, sync_inspected_components)
             .add_system(LateUpdate, build_property_widgets)
+            .add_system(
+                LateUpdate,
+                (
+                    refresh_inspected_values,
+                    sync_value_cards,
+                    build_value_widgets,
+                )
+                    .chain(),
+            )
             .add_system(LateUpdate, add_highlighted_component)
             .add_system(LateUpdate, clear_add_component_search)
             .add_system(LateUpdate, populate_add_component_menu)
@@ -155,6 +171,8 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(add_component::forget_scene);
     world.add_listener(component_menu::forget_scene);
     world.add_listener(variants::forget_scene);
+    world.add_listener(read_inspected_values);
+    world.add_listener(refresh_on_new_app);
 }
 
 fn forget_scene(

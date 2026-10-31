@@ -1,11 +1,13 @@
 use std::{any::TypeId, sync::Arc};
 
 use concerto_ecs::{
-    Entity, World,
+    Component, Entity, World,
     reflect::{AppTypeRegistry, ReflectComponent},
     system::input::ComponentMetadata,
 };
 use concerto_reflect::{PropertyPath, Reflect};
+
+use crate::hosted::HostedApp;
 
 /// A reflected value the inspector can show and edit.
 pub trait PropertyTarget: Send + Sync + 'static {
@@ -84,6 +86,57 @@ impl PropertyTarget for ComponentTarget {
 
     fn component(&self) -> Option<ComponentTarget> {
         Some(*self)
+    }
+}
+
+/// A value inside `C`, a component on a document in the editor's world.
+pub struct DocumentValue<C> {
+    pub name: String,
+    pub document: Entity,
+    pub read: Box<dyn Fn(&C) -> Option<&dyn Reflect> + Send + Sync>,
+    pub edit: Box<dyn Fn(&mut C) -> Option<&mut dyn Reflect> + Send + Sync>,
+}
+
+impl<C: Component> PropertyTarget for DocumentValue<C> {
+    fn name(&self) -> String {
+        self.name.clone()
+    }
+
+    fn world(&self) -> TargetWorld {
+        TargetWorld::Editor
+    }
+
+    fn read(&self, world: &World, read: &mut dyn FnMut(&dyn Reflect)) -> bool {
+        let value = world
+            .get_component_for_entity::<C>(self.document)
+            .and_then(|held| (self.read)(held));
+        let Some(value) = value else {
+            return false;
+        };
+        read(value);
+        true
+    }
+
+    fn edit(&self, world: &mut World, edit: &mut dyn FnMut(&mut dyn Reflect)) -> bool {
+        let value = world
+            .get_component_for_entity_mut::<C>(self.document)
+            .and_then(|held| (self.edit)(held));
+        let Some(value) = value else {
+            return false;
+        };
+        edit(value);
+        true
+    }
+
+    fn types(&self, world: &World) -> Option<AppTypeRegistry> {
+        world
+            .get_component_for_entity::<HostedApp>(self.document)
+            .and_then(HostedApp::type_registry)
+            .or_else(|| world.get_resource::<AppTypeRegistry>().cloned())
+    }
+
+    fn document(&self) -> Option<Entity> {
+        Some(self.document)
     }
 }
 

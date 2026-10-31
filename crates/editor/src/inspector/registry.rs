@@ -200,6 +200,27 @@ impl InspectorRegistry {
         })
     }
 
+    pub(crate) fn follows_snapshot(&self, types: &TypeRegistry, row: &PropertyRow) -> bool {
+        self.editor(row.address.type_id, Some(types))
+            .is_some_and(|editor| {
+                editor.editor_type == row.editor_type && editor.adapter.follows_snapshot()
+            })
+    }
+
+    /// The layout node for `property`'s row, the standard one when no editor claims it.
+    pub(crate) fn row_node(
+        &self,
+        types: &TypeRegistry,
+        property: &Property,
+        theme: &UITheme,
+    ) -> UINode {
+        property
+            .value()
+            .zip(self.editor(property.type_id, Some(types)))
+            .and_then(|(value, editor)| editor.adapter.row_node(value, theme).ok())
+            .unwrap_or_else(|| super::sync::standard_row_node(theme))
+    }
+
     /// Collect fresh owned snapshots, preferring an editor for each node over its children unless that editor walks them.
     pub fn collect(&self, root: &dyn Reflect, types: &TypeRegistry) -> Vec<Property> {
         let mut collector = Collect {
@@ -305,26 +326,6 @@ impl InspectionSource<'_> {
     }
     pub fn is_registered(&self, id: TypeId) -> bool {
         self.table.get_type_data::<ReflectComponent>(id).is_some()
-    }
-    pub fn follows_snapshot(&self, registry: &InspectorRegistry, row: &PropertyRow) -> bool {
-        registry
-            .editor(row.address.type_id, Some(&self.table.read()))
-            .is_some_and(|editor| {
-                editor.editor_type == row.editor_type && editor.adapter.follows_snapshot()
-            })
-    }
-    /// The layout node for `property`'s row, the standard one when no editor claims it.
-    pub fn row_node(
-        &self,
-        registry: &InspectorRegistry,
-        property: &Property,
-        theme: &UITheme,
-    ) -> UINode {
-        property
-            .value()
-            .zip(registry.editor(property.type_id, Some(&self.table.read())))
-            .and_then(|(value, editor)| editor.adapter.row_node(value, theme).ok())
-            .unwrap_or_else(|| super::sync::standard_row_node(theme))
     }
     /// Addable components `entity` does not carry yet, with how many are addable in total.
     pub fn addable_components(&self, entity: Entity) -> (Vec<(TypeId, &'static str)>, usize) {
