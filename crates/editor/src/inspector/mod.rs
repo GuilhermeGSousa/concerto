@@ -24,8 +24,8 @@ use concerto_ui::{
 use taffy::FlexDirection;
 
 use crate::dock::{DockedApp, PanelDescriptor, PanelRegistry, Region};
-use crate::hosted::{EditTarget, EditWorld, EditWorldSignals};
-use crate::tools::{scene::SceneRoot, selection::Selection};
+use crate::hosted::{EditTarget, EditWorld, EditWorldSignals, HostedEventsAppExt};
+use crate::tools::{edits::PropertyCommitted, scene::SceneRoot, selection::Selection};
 
 mod add_component;
 mod boolean;
@@ -67,10 +67,12 @@ pub use rows::{
     PropertyKind, PropertyRow, PropertyRowValue,
 };
 pub use target::{ComponentTarget, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld};
-pub use values::{InspectedSnapshots, InspectedValues, RefreshInspector, ValueCard, ValueSnapshot};
+pub use values::{
+    CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ValueCard, ValueSnapshot,
+};
 use values::{
-    build_value_widgets, read_inspected_values, refresh_inspected_values, refresh_on_new_app,
-    sync_value_cards,
+    build_value_widgets, commit_value, read_inspected_values, refresh_inspected_values,
+    refresh_on_new_app, send_value_commits, sync_value_cards,
 };
 
 pub const PANEL_ID: &str = "concerto.ecs";
@@ -132,9 +134,11 @@ impl Plugin for InspectorPlugin {
             title: "Looking Glass",
             region: Region::Side,
         });
+        app.forward_hosted_event::<PropertyCommitted>();
         install_listeners(app.main_mut().world_mut());
         app.add_system(Startup, build_panel);
         app.add_system(Update, send_property_commits)
+            .add_system(Update, send_value_commits)
             .add_system(Update, send_component_edits);
         app.add_system(LateUpdate, commit_numeric_fields)
             .add_system(LateUpdate, cancel_numeric_fields)
@@ -173,6 +177,7 @@ pub(crate) fn install_listeners(world: &mut World) {
     world.add_listener(variants::forget_scene);
     world.add_listener(read_inspected_values);
     world.add_listener(refresh_on_new_app);
+    world.add_listener(commit_value);
 }
 
 fn forget_scene(
@@ -184,8 +189,8 @@ fn forget_scene(
     if *data != InspectorData::default() {
         *data = InspectorData::default();
     }
-    if !commits.0.is_empty() {
-        commits.0.clear();
+    if commits.holds_for(TargetWorld::EditTarget) {
+        commits.take_for(TargetWorld::EditTarget);
     }
     if !edits.0.is_empty() {
         edits.0.clear();

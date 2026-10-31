@@ -6,10 +6,13 @@ use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin},
-    schedule_groups::Update,
+    schedule_groups::{LateUpdate, Update},
 };
 use concerto_ecs::{
-    Component, Entity, World, command::EntityCommandQueue, entity::hierarchy::Children,
+    Component, Entity, ResMut, Resource, World,
+    command::EntityCommandQueue,
+    entity::hierarchy::{ChildOf, Children},
+    events::{event_channel::EventChannel, event_reader::EventReader},
     reflect::ReflectComponent,
 };
 use concerto_editor::{
@@ -18,23 +21,42 @@ use concerto_editor::{
         EditorDocument, process_editor_commands,
     },
     guard::UnsavedGuard,
-    hosted::{HostRequest, HostRole, HostedApp, begin, finish_blocking, trigger_on},
+    hosted::{
+        HostRequest, HostRole, Hosted, HostedApp, HostedEventsAppExt, SetEditTarget, begin,
+        finish_blocking, trigger_on,
+    },
     inspector::{
-        DocumentValue, InspectedComponent, InspectedValues, NameField, PlainRow, PropertyRow,
-        PropertyRowValue, PropertyTarget, RefreshInspector, ValueCard,
+        DocumentValue, EditableApp, InspectedComponent, InspectedValues, NameField, PlainRow,
+        PropertyCommits, PropertyRow, PropertyRowValue, PropertyTarget, RefreshInspector,
+        ValueCard,
     },
     project::ProjectState,
-    tools::selection::Select,
+    tools::{
+        edits::{PropertyCommitted, PropertyRefusal},
+        scene::SceneEdited,
+        selection::Select,
+    },
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
+    asset_server::AssetServer,
+    asset_store::AssetStore,
     content::ImportProvenance,
+    handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
+use concerto_mesh::Mesh;
 use concerto_reflect::{Reflect, ReflectDefault};
-use concerto_ui::{node::UINode, scroll::UIScrollArea};
-use concerto_window::plugin::WindowPlugin;
-use example::{Setting, SettingButton, SettingEditor};
+use concerto_ui::{
+    focus::FocusedWidget,
+    interaction::UIClick,
+    node::UINode,
+    scroll::UIScrollArea,
+    text::UIText,
+    text_input::{UITextInput, UITextInputSubmitted},
+};
+use concerto_window::{input::MouseButton, plugin::WindowPlugin};
+use example::{Setting, SettingButton, SettingEdit, SettingEditor};
 use std::{marker::PhantomData, sync::Arc};
 
 #[derive(Reflect, Default, Clone, PartialEq, Debug)]
@@ -63,10 +85,23 @@ struct Wave {
     mode: Mode,
 }
 
+#[derive(Reflect, Default)]
+struct Rates {
+    fast: f32,
+    slow: f32,
+}
+
+#[derive(Reflect, Default)]
+struct Look {
+    mesh: AssetHandle<Mesh>,
+}
+
 #[derive(Component)]
 struct Held {
     tuning: Tuning,
     staged: Staged,
+    rates: Rates,
+    look: Look,
 }
 
 fn held() -> Held {
@@ -79,6 +114,8 @@ fn held() -> Held {
             samples: vec![1.0],
         },
         staged: Staged::default(),
+        rates: Rates::default(),
+        look: Look::default(),
     }
 }
 
@@ -98,6 +135,43 @@ fn staged(document: Entity) -> Arc<dyn PropertyTarget> {
         read: Box::new(|held| Some(&held.staged)),
         edit: Box::new(|held| Some(&mut held.staged)),
     })
+}
+
+fn rates(document: Entity) -> Arc<dyn PropertyTarget> {
+    Arc::new(DocumentValue::<Held> {
+        name: "Rates".into(),
+        document,
+        read: Box::new(|held| Some(&held.rates)),
+        edit: Box::new(|held| Some(&mut held.rates)),
+    })
+}
+
+fn look(document: Entity) -> Arc<dyn PropertyTarget> {
+    Arc::new(DocumentValue::<Held> {
+        name: "Look".into(),
+        document,
+        read: Box::new(|held| Some(&held.look)),
+        edit: Box::new(|held| Some(&mut held.look)),
+    })
+}
+
+#[derive(Resource, Default)]
+struct Reports(Vec<(Entity, Result<(), PropertyRefusal>)>);
+
+fn record_reports(
+    mut committed: EventReader<Hosted<PropertyCommitted>>,
+    mut reports: ResMut<Reports>,
+) {
+    for Hosted { document, event } in committed.read() {
+        reports.0.push((*document, event.result.clone()));
+    }
+}
+
+#[derive(Resource, Default)]
+struct SceneEdits(usize);
+
+fn count_scene_edits(mut edited: EventReader<Hosted<SceneEdited>>, mut edits: ResMut<SceneEdits>) {
+    edits.0 += edited.read().count();
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -176,13 +250,21 @@ fn editing() -> Editing {
             editors.register::<Notes, ValueEditor<Notes>>().unwrap();
             editors.register::<Sketch, ValueEditor<Sketch>>().unwrap();
             editor
+                .register_plugin(AssetManagerPlugin)
                 .register_type::<Tuning>()
+                .register_type::<Rates>()
+                .register_type::<Look>()
+                .forward_hosted_event::<SceneEdited>()
                 .insert_resource(editors)
                 .insert_resource(AssetEditorCommands::default())
                 .insert_resource(AssetRegistry::default())
                 .insert_resource(ProjectState::default())
                 .insert_resource(UnsavedGuard::default())
-                .add_system(Update, process_editor_commands);
+                .insert_resource(Reports::default())
+                .insert_resource(SceneEdits::default())
+                .add_system(Update, process_editor_commands)
+                .add_system(LateUpdate, record_reports)
+                .add_system(LateUpdate, count_scene_edits);
         },
     );
     editor.main_mut().world_mut().insert(
@@ -348,6 +430,131 @@ impl Editing {
             .setting
             .enabled = enabled;
     }
+
+    fn held(&mut self, document: Entity) -> &Held {
+        self.world()
+            .get_component_for_entity::<Held>(document)
+            .unwrap()
+    }
+
+    fn row_entity(&mut self, path: &str) -> Entity {
+        let world = self.world();
+        world
+            .query::<(Entity, &PropertyRow), ()>()
+            .iter(world)
+            .find(|(_, row)| row.address.path.to_string() == path)
+            .map(|(entity, _)| entity)
+            .unwrap()
+    }
+
+    fn row(&mut self, path: &str) -> PropertyRow {
+        let entity = self.row_entity(path);
+        self.world()
+            .get_component_for_entity::<PropertyRow>(entity)
+            .unwrap()
+            .clone()
+    }
+
+    fn commit(&mut self, row: &PropertyRow, edit: SettingEdit) {
+        self.world()
+            .get_resource_mut::<PropertyCommits>()
+            .unwrap()
+            .push::<Setting, SettingEditor>(row, edit)
+            .unwrap();
+    }
+
+    fn queued_commits(&mut self) -> usize {
+        self.world()
+            .get_resource::<PropertyCommits>()
+            .unwrap()
+            .0
+            .len()
+    }
+
+    fn reports(&mut self) -> &[(Entity, Result<(), PropertyRefusal>)] {
+        &self.world().get_resource::<Reports>().unwrap().0
+    }
+
+    fn status(&mut self, document: Entity) -> String {
+        self.world()
+            .get_component_for_entity::<EditorDocument>(document)
+            .unwrap()
+            .status
+            .clone()
+    }
+
+    fn click(&mut self, entity: Entity) {
+        self.world().trigger_on(
+            entity,
+            UIClick {
+                position: Default::default(),
+                button: MouseButton::Left,
+            },
+        );
+    }
+
+    fn click_last_child(&mut self, parent: Entity) {
+        let last = self
+            .world()
+            .get_component_for_entity::<Children>(parent)
+            .unwrap()
+            .iter()
+            .copied()
+            .last()
+            .unwrap();
+        self.click(last);
+    }
+
+    fn click_labelled(&mut self, label: &str) {
+        let world = self.world();
+        let text = world
+            .query::<(Entity, &UIText), ()>()
+            .iter(world)
+            .find(|(_, text)| text.text == label)
+            .map(|(entity, _)| entity)
+            .unwrap();
+        let item = world
+            .get_component_for_entity::<ChildOf>(text)
+            .unwrap()
+            .parent();
+        self.click(item);
+    }
+
+    fn text_field(&mut self, row: Entity) -> Entity {
+        let world = self.world();
+        let mut pending = vec![row];
+        while let Some(entity) = pending.pop() {
+            if world
+                .get_component_for_entity::<UITextInput>(entity)
+                .is_some()
+            {
+                return entity;
+            }
+            if let Some(children) = world.get_component_for_entity::<Children>(entity) {
+                pending.extend(children.iter().copied());
+            }
+        }
+        panic!("the row has no text field");
+    }
+
+    fn field_text(&mut self, field: Entity) -> String {
+        self.world()
+            .get_component_for_entity::<UITextInput>(field)
+            .unwrap()
+            .value
+            .clone()
+    }
+
+    fn type_into(&mut self, field: Entity, text: &str) {
+        self.world()
+            .get_component_for_entity_mut::<UITextInput>(field)
+            .unwrap()
+            .value = text.into();
+    }
+}
+
+fn refused(status: &str) -> Result<(), PropertyRefusal> {
+    Err(PropertyRefusal::Refused(status.into()))
 }
 
 #[test]
@@ -537,4 +744,265 @@ fn a_type_only_the_preview_registers_shows_when_the_preview_came_first() {
 
     assert!(w.plain_rows().is_empty());
     assert_eq!(w.rows_with_widgets(), ["mode"]);
+}
+
+#[test]
+fn editing_a_value_writes_it_and_reports_one_event_and_nothing_to_any_scene() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    let row = w.row("setting");
+
+    w.commit(&row, SettingEdit::Toggle);
+    w.editor.update();
+
+    assert!(w.held(document).tuning.setting.enabled);
+    assert_eq!(w.shown_enabled(), [true]);
+    assert_eq!(w.reports(), [(document, Ok(()))]);
+    assert_eq!(w.queued_commits(), 0);
+
+    let scene = w.scene;
+    w.activate(scene);
+    w.editor.update();
+    assert_eq!(w.world().get_resource::<SceneEdits>().unwrap().0, 0);
+}
+
+#[test]
+fn an_edit_followed_by_a_tab_switch_names_the_edited_document() {
+    let mut w = editing();
+    let notes = w.open::<Notes>();
+    let row = w.row("setting");
+    let sketch = w.open::<Sketch>();
+
+    w.commit(&row, SettingEdit::Toggle);
+    w.editor.update();
+
+    assert!(w.held(notes).tuning.setting.enabled);
+    assert!(!w.held(sketch).tuning.setting.enabled);
+    assert_eq!(w.reports(), [(notes, Ok(()))]);
+    assert_eq!(w.shown_enabled(), [false]);
+}
+
+#[test]
+fn a_refused_edit_leaves_the_value_reports_it_and_sets_its_own_documents_status() {
+    let mut w = editing();
+    let notes = w.open::<Notes>();
+    let row = w.row("setting");
+    let sketch = w.open::<Sketch>();
+    let front_status = w.status(sketch);
+
+    w.commit(&row, SettingEdit::Rename(String::new()));
+    w.editor.update();
+
+    let status = "Set Tuning.setting failed: the value was refused";
+    assert_eq!(w.held(notes).tuning.setting.title, "Shadows");
+    assert_eq!(w.reports(), [(notes, refused(status))]);
+    assert_eq!(w.status(notes), status);
+    assert_eq!(w.status(sketch), front_status);
+}
+
+#[test]
+fn a_commit_read_before_the_editors_changed_is_refused_and_reported() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    let row = w.row("setting");
+
+    w.editor
+        .register_property_editor::<Setting, SettingEditor>();
+    w.commit(&row, SettingEdit::Toggle);
+    w.editor.update();
+
+    let status = "Set Tuning.setting failed: its editor changed since it was read";
+    assert!(!w.held(document).tuning.setting.enabled);
+    assert_eq!(w.reports(), [(document, refused(status))]);
+    assert_eq!(w.status(document), status);
+}
+
+#[test]
+fn an_edit_of_a_target_whose_document_has_gone_reports_a_missing_target() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    let row = w.row("setting");
+    w.command(AssetEditorCommand::Close(document));
+
+    w.commit(&row, SettingEdit::Toggle);
+    w.editor.update();
+
+    assert_eq!(
+        w.reports(),
+        [(
+            document,
+            refused("Set Tuning.setting failed: the entity or its component no longer exists")
+        )]
+    );
+}
+
+#[test]
+fn a_scene_in_front_takes_its_own_commits_and_leaves_a_values_to_its_document() {
+    let mut w = editing();
+    w.select_in_scene(w.setting);
+    let scene = w.scene;
+    let component = w.row("");
+    let notes = w.open::<Notes>();
+    let value = w.row("setting");
+    w.activate(scene);
+
+    w.commit(&component, SettingEdit::Toggle);
+    w.commit(&value, SettingEdit::Toggle);
+    w.editor.update();
+    w.editor.update();
+
+    assert!(w.held(notes).tuning.setting.enabled);
+    assert_eq!(w.shown_enabled(), [true]);
+    assert_eq!(w.queued_commits(), 0);
+    assert_eq!(w.reports().len(), 2);
+    assert!(w.reports().iter().all(|(_, result)| result.is_ok()));
+}
+
+#[test]
+fn a_component_commit_left_with_a_value_document_in_front_waits_for_its_scene() {
+    let mut w = editing();
+    w.select_in_scene(w.setting);
+    let scene = w.scene;
+    let component = w.row("");
+    let notes = w.open::<Notes>();
+    let value = w.row("setting");
+
+    w.commit(&component, SettingEdit::Toggle);
+    w.commit(&value, SettingEdit::Toggle);
+    w.editor.update();
+
+    assert!(w.held(notes).tuning.setting.enabled);
+    assert_eq!(w.reports(), [(notes, Ok(()))]);
+    assert_eq!(w.queued_commits(), 1);
+
+    w.activate(scene);
+    w.editor.update();
+    assert_eq!(w.queued_commits(), 0);
+    assert_eq!(w.shown_enabled(), [true]);
+}
+
+#[test]
+fn leaving_a_scene_drops_its_commits_and_keeps_a_values() {
+    let mut w = editing();
+    w.select_in_scene(w.setting);
+    let scene = w.scene;
+    let component = w.row("");
+    let notes = w.open::<Notes>();
+    let value = w.row("setting");
+    w.activate(scene);
+
+    w.commit(&component, SettingEdit::Toggle);
+    w.commit(&value, SettingEdit::Toggle);
+    w.world().trigger(SetEditTarget(None));
+    w.editor.update();
+    w.editor.update();
+
+    assert!(w.held(notes).tuning.setting.enabled);
+    assert_eq!(w.reports(), [(notes, Ok(()))]);
+    assert_eq!(w.queued_commits(), 0);
+}
+
+#[test]
+fn a_lists_buttons_add_to_and_remove_from_a_value() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+
+    let list = w.row_entity("samples");
+    w.click_last_child(list);
+    w.editor.update();
+    assert_eq!(w.held(document).tuning.samples, [1.0, 0.0]);
+    assert_eq!(w.reports(), [(document, Ok(()))]);
+
+    let element = w.row_entity("samples.0");
+    w.click_last_child(element);
+    w.editor.update();
+    assert_eq!(w.held(document).tuning.samples, [0.0]);
+    let world = w.world();
+    let rows = world
+        .query::<&PropertyRow, ()>()
+        .iter(world)
+        .filter(|row| row.address.path.name() == "samples")
+        .count();
+    assert_eq!(rows, 2);
+}
+
+#[test]
+fn a_value_edit_keeps_the_rows_so_a_focused_field_keeps_its_text() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    w.world()
+        .insert(InspectedValues(vec![rates(document)]), document);
+    w.editor.update();
+    let (fast, slow) = (w.row_entity("fast"), w.row_entity("slow"));
+    let (fast_field, slow_field) = (w.text_field(fast), w.text_field(slow));
+
+    **w.world().get_resource_mut::<FocusedWidget>().unwrap() = Some(slow_field);
+    w.type_into(slow_field, "12");
+    w.type_into(fast_field, "3");
+    w.world()
+        .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+        .unwrap()
+        .push_event(UITextInputSubmitted {
+            entity: fast_field,
+            value: "3".into(),
+        });
+    w.editor.update();
+    w.editor.update();
+
+    assert_eq!(w.held(document).rates.fast, 3.0);
+    assert_eq!((w.row_entity("fast"), w.row_entity("slow")), (fast, slow));
+    assert_eq!(w.field_text(slow_field), "12");
+}
+
+#[test]
+fn a_picked_asset_lands_in_a_value_when_the_editors_server_knows_its_type() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    let store = AssetStore::<Mesh>::new();
+    w.world()
+        .get_resource_mut::<AssetServer>()
+        .unwrap()
+        .register_asset(&store);
+    w.world().insert_resource(store);
+    let cube = AssetEntry {
+        id: AssetId::new(),
+        address: "content/cube.gasset".into(),
+        kind: Mesh::name().into(),
+        provenance: None,
+    };
+    w.world()
+        .get_resource_mut::<AssetRegistry>()
+        .unwrap()
+        .insert(cube.clone());
+    w.world()
+        .insert(InspectedValues(vec![look(document)]), document);
+    w.editor.update();
+
+    let row = w.row_entity("mesh");
+    w.click_last_child(row);
+    w.editor.update();
+    w.click_labelled(cube.name());
+    w.editor.update();
+
+    assert_eq!(w.held(document).look.mesh.id(), cube.id);
+    assert_eq!(w.reports(), [(document, Ok(()))]);
+}
+
+#[test]
+fn a_commit_is_checked_against_the_registry_of_the_values_types() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    w.world().insert(preview(), document);
+    w.world()
+        .insert(InspectedValues(vec![staged(document)]), document);
+    w.editor.update();
+
+    let row = w.row_entity("mode");
+    w.click_last_child(row);
+    w.editor.update();
+    w.click_labelled("Loud");
+    w.editor.update();
+
+    assert_eq!(w.held(document).staged.mode, Mode::Loud);
+    assert_eq!(w.reports(), [(document, Ok(()))]);
 }

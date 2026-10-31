@@ -35,6 +35,7 @@ use super::rows::{
     EditContext, EditError, Property, PropertyCommit, PropertyCommits, PropertyEditor,
     PropertyKind, PropertyRow, PropertyRowValue,
 };
+use super::target::TargetWorld;
 use super::variants::{OptionToggle, VariantPicker};
 use crate::asset_picker::AssetPicker;
 use crate::hosted::{EditWorld, EditWorldSignals};
@@ -443,12 +444,12 @@ pub(super) fn send_property_commits(
     types: EditWorld<Option<Res<AppTypeRegistry>>>,
     mut scene: EditWorldSignals,
 ) {
-    if commits.0.is_empty() {
+    if !commits.holds_for(TargetWorld::EditTarget) {
         return;
     }
     let types = types.as_deref().map(|types| types.read());
     let types = types.as_deref();
-    for commit in std::mem::take(&mut commits.0) {
+    for commit in commits.take_for(TargetWorld::EditTarget) {
         match checked(&registry, types, registry.changed_tick(), commit) {
             Ok(commit) => scene.trigger(commit),
             Err(error) => log::warn!("Property commit dropped: {error}"),

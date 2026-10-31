@@ -8,7 +8,7 @@ use concerto_reflect::{PropertyPath, Reflect};
 use concerto_ui::{node::UINode, theme::UITheme};
 
 use super::list::ListLength;
-use super::target::{PropertyAddress, PropertyTarget};
+use super::target::{PropertyAddress, PropertyTarget, TargetWorld};
 pub use crate::tools::edits::{EditContext, EditError, PropertyRow};
 
 /// Presentation and validated editing for a concrete Rust type.
@@ -179,9 +179,13 @@ impl PropertyCommit {
             edit: Arc::new(edit),
         })
     }
+
+    fn lives_in(&self, world: TargetWorld) -> bool {
+        self.row.address.target.world() == world
+    }
 }
 
-/// Edits waiting to be checked against the widget registry and sent to the scene.
+/// Edits waiting to be checked against the widget registry and sent to their target.
 #[derive(Resource, Default)]
 pub struct PropertyCommits(pub Vec<PropertyCommit>);
 
@@ -193,5 +197,19 @@ impl PropertyCommits {
     ) -> Result<(), EditError> {
         self.0.push(PropertyCommit::new::<T, E>(row, edit)?);
         Ok(())
+    }
+
+    /// Whether a waiting edit's target lives in `world`.
+    pub(crate) fn holds_for(&self, world: TargetWorld) -> bool {
+        self.0.iter().any(|commit| commit.lives_in(world))
+    }
+
+    /// Takes the edits whose targets live in `world`, leaving the others in place.
+    pub(crate) fn take_for(&mut self, world: TargetWorld) -> Vec<PropertyCommit> {
+        let (taken, left) = std::mem::take(&mut self.0)
+            .into_iter()
+            .partition(|commit| commit.lives_in(world));
+        self.0 = left;
+        taken
     }
 }

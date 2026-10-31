@@ -51,7 +51,7 @@ impl std::fmt::Display for EditError {
             Self::StaleEditor => "its editor changed since it was read",
             Self::MissingTarget => "the entity or its component no longer exists",
             Self::UnregisteredComponent => "the component type is not registered",
-            Self::MissingAssets => "the scene's App has no asset server or asset registry",
+            Self::MissingAssets => "its App has no asset server or asset registry",
         })
     }
 }
@@ -87,7 +87,7 @@ pub struct CommitProperty {
 
 impl Signal for CommitProperty {}
 
-/// What one `CommitProperty` or `SetValue` did to the row it addressed, or why it was refused.
+/// What one `CommitProperty`, `CommitValue` or `SetValue` did to the row it addressed, or why it was refused.
 #[derive(Event, Clone)]
 pub struct PropertyCommitted {
     pub address: PropertyAddress,
@@ -142,22 +142,51 @@ impl CommitProperty {
             .component()
             .ok_or(EditError::MissingTarget)?;
         let component = reflected(world, target.component)?;
-        let mut result = Err(EditError::MissingAssets);
-        world.resource_scope::<AssetServer>(|world, assets| {
-            world.resource_scope::<AssetRegistry>(|world, registry| {
-                result = apply_through(
-                    world,
-                    component,
-                    target.entity,
-                    &self.row.address.path,
-                    self.editor.as_ref(),
-                    self.edit.as_ref(),
-                    &EditContext { assets, registry },
-                );
-            });
-        });
-        result
+        with_edit_context(world, |world, context| {
+            apply_through(
+                world,
+                component,
+                target.entity,
+                &self.row.address.path,
+                self.editor.as_ref(),
+                self.edit.as_ref(),
+                context,
+            )
+        })
     }
+}
+
+/// Runs `edit` with the world's asset server and registry, or answers `MissingAssets` without either.
+pub(crate) fn with_edit_context(
+    world: &mut World,
+    edit: impl FnOnce(&mut World, &EditContext) -> Result<(), EditError>,
+) -> Result<(), EditError> {
+    let mut result = Err(EditError::MissingAssets);
+    world.resource_scope::<AssetServer>(|world, assets| {
+        world.resource_scope::<AssetRegistry>(|world, registry| {
+            result = edit(world, &EditContext { assets, registry });
+        });
+    });
+    result
+}
+
+/// Applies `edit` through `editor` to the property at `path` of `value`.
+pub(crate) fn apply_at(
+    value: &mut dyn Reflect,
+    path: &PropertyPath,
+    editor: &dyn ErasedEditor,
+    edit: &dyn Any,
+    context: &EditContext,
+) -> Result<(), EditError> {
+    let mut result = Err(EditError::NotFound);
+    if with_property_mut(value, path, &mut |value| {
+        result = editor.apply(value, edit, context);
+    })
+    .is_err()
+    {
+        result = Err(EditError::NotFound);
+    }
+    result
 }
 
 fn apply_through(
@@ -171,13 +200,7 @@ fn apply_through(
 ) -> Result<(), EditError> {
     let mut result = Err(EditError::NotFound);
     let found = (component.edit)(world, entity, &mut |value| {
-        if with_property_mut(value, path, &mut |value| {
-            result = editor.apply(value, edit, context);
-        })
-        .is_err()
-        {
-            result = Err(EditError::NotFound);
-        }
+        result = apply_at(value, path, editor, edit, context);
     });
     if found {
         result
@@ -424,7 +447,12 @@ pub(crate) fn set_value(on: On<SetValue>, world: &mut World) {
 }
 
 fn property_name(world: &World, component: TypeId, path: &PropertyPath) -> String {
-    std::iter::once(component_name(world, component).to_string())
+    dotted_name(component_name(world, component), path)
+}
+
+/// `owner` and the segments of `path`, as a status line names a property.
+pub(crate) fn dotted_name(owner: &str, path: &PropertyPath) -> String {
+    std::iter::once(owner.to_string())
         .chain(path.segments().iter().map(ToString::to_string))
         .collect::<Vec<_>>()
         .join(".")
