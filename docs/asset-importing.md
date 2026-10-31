@@ -87,6 +87,8 @@ For a new sub-asset, the import chooses an initial address:
 - The sub-asset name (`mesh/0`, `animation/Idle_Loop`, `material/steel`) has
   `/`, `\`, and `#` replaced with `_`, so `animation/Idle_Loop` →
   `animation_Idle_Loop.gasset`.
+- A file name over 200 bytes is cut on a character boundary and ends in `_` plus
+  8 hex digits of a hash of the full sub-asset name, so long names stay distinct.
 
 ### Animation clip names
 
