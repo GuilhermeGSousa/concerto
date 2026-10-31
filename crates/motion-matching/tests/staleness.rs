@@ -150,6 +150,13 @@ fn a_changed_skeleton_byte_changes_the_hash() {
 }
 
 #[test]
+fn a_changed_skeleton_asset_changes_the_hash_even_with_identical_bytes() {
+    assert_changes_the_hash(|definition| {
+        definition.skeleton = AssetHandle::weak(AssetId::from_path("another skeleton"));
+    });
+}
+
+#[test]
 fn a_changed_clip_byte_changes_the_hash() {
     assert_ne!(
         weightless_hash(&definition(), SKELETON, &[&[4, 5, 7], TURN]),

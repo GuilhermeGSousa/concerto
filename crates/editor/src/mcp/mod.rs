@@ -27,7 +27,7 @@ use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::Ho
 use concerto_ui::{sets::UiSet, text::UIText, text_input::UITextInput};
 
 use crate::{
-    asset_editor::{EditorDocument, SaveRequested},
+    asset_editor::{BackgroundWork, EditorDocument, SaveRequested},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{
         EditWorld, HostRole, HostedApp, PendingApp, PendingPlayApp, PlayState, ViewportTarget,
@@ -103,11 +103,12 @@ type BusyInputs = (
     Query<'static, 'static, &'static PlayState>,
     Res<'static, PanelTextChanged>,
     Query<'static, 'static, &'static HostedApp, With<ViewportTarget>>,
+    Query<'static, 'static, &'static BackgroundWork>,
     NonSendMarker,
 );
 
 fn is_busy(
-    (project, documents, building, starting, saving, states, text, previews, _): &SystemInputData<
+    (project, documents, building, starting, saving, states, text, previews, work, _): &SystemInputData<
         BusyInputs,
     >,
 ) -> bool {
@@ -117,6 +118,7 @@ fn is_busy(
         || building.iter().next().is_some()
         || starting.iter().next().is_some()
         || saving.iter().next().is_some()
+        || work.iter().next().is_some()
         || states.iter().any(|state| state.is_on())
         || front_preview_is_loading(previews)
 }

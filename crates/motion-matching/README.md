@@ -215,9 +215,10 @@ let database = bake(&definition, &skeleton, &clips, &registry)?.with_source_hash
 ```
 
 `clip_bytes` holds the stored bytes of one clip per entry. The hash is FNV-1a,
-so it is stable across Rust versions. It covers the skeleton's and clips' bytes,
-the entries, `rate`, `speed`, `simulation`, `trajectory`, and each channel's
-type name and value with its top-level `weight` field left out.
+so it is stable across Rust versions. It covers the skeleton's asset id, the
+skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
+`trajectory`, and each channel's type name and value with its top-level `weight`
+field left out.
 
 - `weights_of(&definition, &registry)`: each live channel's `weight()`, in order.
 - `is_stale(&database, &definition, hash, &registry)`: the hash differs from

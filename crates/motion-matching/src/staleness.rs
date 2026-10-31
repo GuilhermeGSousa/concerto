@@ -94,6 +94,7 @@ pub fn weightless_hash(
     clip_bytes: &[&[u8]],
 ) -> u64 {
     let mut hash = Fnv1a::new();
+    hash.value(&stored(&definition.skeleton));
     hash.bytes(skeleton_bytes);
     hash.count(clip_bytes.len());
     for clip in clip_bytes {

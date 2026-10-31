@@ -164,6 +164,20 @@ fn queue_numeric(
     }
 }
 
+/// Queues `number` for a scalar `row`, as its field does when it loses focus.
+#[cfg(any(test, feature = "testing"))]
+pub fn commit_number(
+    commits: &mut PropertyCommits,
+    row: &PropertyRow,
+    number: f64,
+) -> Result<(), EditError> {
+    queue_numeric(
+        commits,
+        row,
+        NumericEdit::Whole(NumericSnapshot::Number(number)),
+    )
+}
+
 /// One field of a [`NumericFields`] row.
 #[derive(Component)]
 pub(crate) struct NumericSlot {

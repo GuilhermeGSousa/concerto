@@ -1,7 +1,7 @@
 use std::{path::Path, sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
-use concerto_ecs::{Entity, Query, Res, ResMut};
+use concerto_ecs::{Entity, Query, Res};
 use concerto_editor::{
     clip_editor::{ClipFacts, read_clip},
     preview::PreviewSignals,
@@ -12,8 +12,8 @@ use concerto_foundation::assets::{
     content::read_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
-use concerto_mcp::FrameDemand;
 use concerto_mesh::Skeleton;
+use serde::de::DeserializeOwned;
 
 use crate::{document::DefinitionDocument, preview::ShowSkeletonBones};
 
@@ -33,15 +33,24 @@ pub(crate) struct ShownSkeleton {
     pub(crate) error: Option<String>,
 }
 
-/// Reads the skeleton `asset` names under `root`, checking its id and its kind.
-pub fn read_skeleton(root: &Path, asset: &AssetEntry) -> anyhow::Result<Skeleton> {
+pub(crate) fn read_bytes<A: Asset>(root: &Path, asset: &AssetEntry) -> anyhow::Result<Vec<u8>> {
     let bytes = std::fs::read(root.join(&asset.address))?;
-    let (header, payload) = read_content_asset(&bytes)?;
+    let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
-        header.asset_id == asset.id && header.kind == Skeleton::name(),
+        header.asset_id == asset.id && header.kind == A::name(),
         "Asset identity or type mismatch"
     );
+    Ok(bytes)
+}
+
+pub(crate) fn decode<A: DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<A> {
+    let (_, payload) = read_content_asset(bytes)?;
     Ok(bincode::deserialize(payload)?)
+}
+
+/// Reads the skeleton `asset` names under `root`, checking its id and its kind.
+pub fn read_skeleton(root: &Path, asset: &AssetEntry) -> anyhow::Result<Skeleton> {
+    decode(&read_bytes::<Skeleton>(root, asset)?)
 }
 
 fn read_shown(id: AssetId, root: &Path, assets: &AssetRegistry) -> ShownSkeleton {
@@ -151,17 +160,11 @@ pub(crate) fn read_entry_facts(
     documents: Query<&mut DefinitionDocument>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
-    mut demand: Option<ResMut<FrameDemand>>,
 ) {
     let Some(project) = project.project.as_ref() else {
         return;
     };
     for mut state in documents.iter() {
-        if state.facts_job.is_some()
-            && let Some(demand) = demand.as_mut()
-        {
-            demand.request();
-        }
         if state
             .facts_job
             .as_ref()

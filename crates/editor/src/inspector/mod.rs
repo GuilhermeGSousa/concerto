@@ -50,6 +50,8 @@ use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
 use color::refresh_color_swatches;
+#[cfg(any(test, feature = "testing"))]
+pub use numeric::commit_number;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields, refresh_numeric_labels,
 };

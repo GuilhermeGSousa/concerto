@@ -15,13 +15,13 @@ concerto-color.workspace = true
 concerto-ecs.workspace = true
 concerto-editor.workspace = true
 concerto-foundation.workspace = true
-concerto-mcp.workspace = true
 concerto-mesh.workspace = true
 concerto-motion-matching.workspace = true
 concerto-reflect.workspace = true
 concerto-ui.workspace = true
 concerto-window.workspace = true
 log = "0.4"
+serde = "1"
 
 [dev-dependencies]
 concerto-editor = { workspace = true, features = ["testing"] }

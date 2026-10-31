@@ -28,7 +28,8 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::{
-        AssetEditor, AssetEditorAppExt, AssetEditorRegistry, EditorDocument, PreviewSpec, Unsaved,
+        AssetEditor, AssetEditorAppExt, AssetEditorRegistry, BackgroundWork, EditorDocument,
+        PreviewSpec, Unsaved,
     },
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals},
@@ -4796,6 +4797,69 @@ fn save_answers_busy_while_the_scene_loads() {
         after.contains("unsaved changes were made while it loaded"),
         "{after}"
     );
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct StartWork {}
+
+#[derive(Deserialize, JsonSchema)]
+struct EndWork {}
+
+#[derive(Component)]
+struct Worker;
+
+fn start_work(mut calls: ToolCalls<StartWork>, mut cmd: CommandQueue) {
+    for (_, reply) in calls.read() {
+        cmd.spawn((Worker, BackgroundWork));
+        reply.ok("started");
+    }
+}
+
+fn end_work(
+    mut calls: ToolCalls<EndWork>,
+    workers: Query<Entity, With<Worker>>,
+    mut cmd: CommandQueue,
+) {
+    for (_, reply) in calls.read() {
+        for worker in workers.iter() {
+            cmd.remove::<BackgroundWork>(worker);
+        }
+        reply.ok("ended");
+    }
+}
+
+#[test]
+fn status_is_busy_while_a_document_has_background_work() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        |app| {
+            app.add_tool::<StartWork, _>(McpTool::new("start_work"), start_work)
+                .add_tool::<EndWork, _>(McpTool::new("end_work"), end_work);
+        },
+        |client| async move {
+            open(&client).await;
+            until(&client, "status", |status| status.ends_with("busy: no")).await;
+            assert_eq!(ok(&client, "start_work").await, "started");
+            let working = until(&client, "status", |status| status.ends_with("busy: yes")).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let still = ok(&client, "status").await;
+            assert_eq!(ok(&client, "end_work").await, "ended");
+            let ended = until(&client, "status", |status| status.ends_with("busy: no")).await;
+            client.cancel().await.unwrap();
+            (working, still, ended)
+        },
+    ) else {
+        return;
+    };
+
+    let (working, still, ended) = served.result;
+    assert!(working.ends_with("busy: yes"), "{working}");
+    assert!(still.ends_with("busy: yes"), "{still}");
+    assert!(ended.ends_with("busy: no"), "{ended}");
 }
 
 fn drawless_game(app: &mut App) {

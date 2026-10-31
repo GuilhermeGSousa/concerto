@@ -61,9 +61,9 @@ selected, and Save is refused with a status.
 Clips are read off the main thread: a worker reads each clip that has no
 `EntryFacts` against the current skeleton, on open, when an entry is added and
 when the skeleton changes. Opening a definition reads them again, so a tab does
-not see a clip re-imported while it is open. Under `--mcp` the worker asks for
-frames with `FrameDemand`, but `status` does not count it, so `busy: no` can come
-before the rows settle.
+not see a clip re-imported while it is open. The document holds `BackgroundWork`
+while any of its workers runs, so under `--mcp` frames keep running and `status`
+reads `busy: yes` until the rows settle.
 
 The `bottom` host holds a `Timeline` of the selected entry, read from the same
 `EntryFacts`. A drag on its track writes the entry's `TimeRange`, from
@@ -72,8 +72,42 @@ because rounding can land above it and `bake` refuses that. A click clears the
 range, so the entry uses the whole clip. A clip with no detected rate has no
 frames, so its range cannot be selected.
 
-The `inspector` host, above the normal inspector, shows the document's status on
-a line of its own when it is not empty.
+The `inspector` host, above the normal inspector, holds **Build**, the line under
+it, the baked state, the stats of the baked file, in a list that scrolls past
+160 px, and the document's status on a line of its own when it is not empty. The
+next edit clears the status.
+
+## Build
+
+Build is off, with the reason on the line below it, while the preview is not
+running, with no skeleton, and with no entry. While it runs it is off and that
+line reads `Baking 2 of 6`: the entry being worked on, out of how many.
+
+Pressing it waits until no property or component edit is queued, then saves if
+the document, or the preview's `SceneDirty`, says anything changed, so a weight
+typed and not yet committed is in the build. A failed save stops it there. A
+worker thread then reads the skeleton and clips, using the preview's
+`AppTypeRegistry`, so a channel the game registers bakes, and hashes them with
+the definition. When `<name>_baked.gasset` next to the definition holds that hash,
+only the weights changed: the worker loads the file and calls `set_weights`, and
+the status reads `Updated the weights in …`. Otherwise it bakes in full, and the
+status reads `Built …`. A `BakeError` shows as `Build failed: …`.
+
+The main thread writes the file, its id derived from its path, and adds it to the
+registry, only if the document still shows the definition the build started for.
+Closing the tab or opening another definition drops the result, while the thread
+runs to its end. The baked file is an ordinary `.gasset`; the project decides
+whether to commit it.
+
+The baked state compares that file with the definition as last saved. A worker
+works it out on open, after each save and after each build, so a changed weight
+reads `Out of date` once saved even though the hash leaves it out. A definition
+with no baked file, or one in an older layout, reads `Not built`. A skeleton or
+clip that cannot be read reads `Can't read <asset>`. With a failed preview the
+channels cannot be built, and the line stays empty. The stats come from the baked
+file: the frames in all and per entry, the memory, and each channel's mean and
+standard deviation. An entry shorter than the trajectory looks ahead gets a
+warning.
 
 ## Joint names
 

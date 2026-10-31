@@ -88,7 +88,8 @@ impl HostedApp {
         crate::tools::scene::mark_saved(self.app.main_mut().world_mut());
     }
 
-    pub(crate) fn scene_dirty(&self) -> bool {
+    /// Whether the `App` holds an edit not yet marked saved, which reads true before the edit's event reaches the editor.
+    pub fn scene_dirty(&self) -> bool {
         self.world()
             .get_resource::<crate::tools::scene::SceneDirty>()
             .is_some_and(|dirty| dirty.0)

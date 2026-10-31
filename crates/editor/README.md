@@ -70,8 +70,9 @@ message naming lavapipe.
 
 Frames run on demand, only while a call needs one or the editor is busy: a
 project or scene opening, the assets of the edited scene or the preview in
-front still loading, a game starting or playing, a save under way, or text in
-the panels changed in the last frame and may not be drawn yet. A timeline's
+front still loading, a game starting or playing, a save under way, a document
+holding `BackgroundWork`, or text in the panels changed in the last frame and
+may not be drawn yet. A timeline's
 readout does not count, so a clip that is playing does not keep the editor busy
 and advances only while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
@@ -851,6 +852,11 @@ the asset, and remove `SaveRequested`. If the write fails, insert `Unsaved`
 again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
+
+A worker thread that a custom editor polls for its result needs frames to be
+polled in, and an agent needs to know it is running: insert `BackgroundWork` on
+the document when it starts and remove it when it ends. `status` reads
+`busy: yes` while any document holds it.
 
 Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab

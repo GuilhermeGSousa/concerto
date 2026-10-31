@@ -16,7 +16,7 @@ use concerto_editor::{
     EditorPlugin,
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved},
     guard::DiscardEdits,
-    hosted::{HostedApp, HostedPlugin, input::ViewportShown, testing::*},
+    hosted::{HostedApp, HostedPlugin, input::ViewportShown, testing::*, trigger_on},
     inspector::{InspectorData, InspectorRegistry, PropertyKind},
     preview::{PreviewFailed, PreviewHostPlugin},
     project::{Project, ProjectState},
@@ -47,14 +47,17 @@ use serde_json::{Value, json};
 
 use crate::{
     ChannelOrder, DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
-    document::{follow_definition_edits, forget_discarded_edits, load_definition},
+    build::{check_baked, finish_build, mark_background_work, request_builds, start_build},
+    document::{
+        clear_status_on_edit, follow_definition_edits, forget_discarded_edits, load_definition,
+    },
     facts::{follow_skeleton, read_entry_facts},
     install,
     joint::JointNameEditor,
     menu::close_name_menu,
     panels::{build_definition_panels, sync_channel_rows, sync_definition_panels},
     read_definition,
-    save::{request_definition_saves, save_definition},
+    save::{SaveDefinition, request_definition_saves, save_definition},
 };
 
 #[derive(Component, Reflect, Default)]
@@ -73,7 +76,7 @@ impl FeatureChannel for Unplaced {
 #[reflect(Component)]
 struct NoChannel;
 
-fn database_recipe(app: &mut App) {
+pub(crate) fn database_recipe(app: &mut App) {
     scene_recipe(app);
     app.register_type::<BonePositions>()
         .register_type::<BoneVelocities>()
@@ -103,6 +106,8 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     inspector.register_property_editor::<JointName, JointNameEditor>();
     f.world.insert_resource(inspector);
     f.world.add_listener(save_definition);
+    f.world.add_listener(start_build);
+    f.world.add_listener(clear_status_on_edit);
     f.world.add_listener(forget_discarded_edits);
     f.world.add_listener(close_name_menu);
     f.add_delivery(follow_definition_edits.into_boxed_system());
@@ -110,6 +115,10 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     f.add_delivery(load_definition.into_boxed_system());
     f.add_delivery(follow_skeleton.into_boxed_system());
     f.add_delivery(read_entry_facts.into_boxed_system());
+    f.add_delivery(finish_build.into_boxed_system());
+    f.add_delivery(request_builds.into_boxed_system());
+    f.add_delivery(check_baked.into_boxed_system());
+    f.add_delivery(mark_background_work.into_boxed_system());
     f.add_delivery(build_definition_panels.into_boxed_system());
     f.add_delivery(sync_definition_panels.into_boxed_system());
     f.add_delivery(sync_channel_rows.into_boxed_system());
@@ -748,6 +757,47 @@ fn a_background_tab_saves_its_own_edits() {
     assert_eq!(saved.channels.len(), 5);
     assert!(!f.unsaved(document));
     assert_eq!(f.written::<SceneSaved>().len(), 1);
+}
+
+#[test]
+fn an_edit_saved_before_its_event_arrives_leaves_the_document_saved() {
+    let mut f = fixture();
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
+    let document = open(&mut f, &asset);
+    let settings = settings_entity(&mut f, document);
+
+    trigger_on(
+        &mut f.world,
+        document,
+        SetValue {
+            entity: settings,
+            component: TypeId::of::<DatabaseSettings>(),
+            path: PropertyPath::new(["speed"]),
+            value: json!(2.0),
+        },
+    );
+    f.world.trigger(SaveDefinition { document });
+    f.frame();
+
+    assert_eq!(read_definition(&f.project_root, &asset).unwrap().speed, 2.0);
+    assert!(!f.unsaved(document));
+}
+
+#[test]
+fn the_next_edit_clears_the_saved_line() {
+    let mut f = fixture();
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
+    let document = open(&mut f, &asset);
+    let settings = settings_entity(&mut f, document);
+    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(2.0));
+    save(&mut f, document);
+    assert_eq!(f.status(document), "Saved content/database.gasset");
+
+    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(3.0));
+    f.frame();
+
+    assert!(f.unsaved(document));
+    assert_eq!(f.status(document), "");
 }
 
 #[test]

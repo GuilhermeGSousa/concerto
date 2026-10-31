@@ -4,7 +4,7 @@ use concerto_ecs::{
     entity::hierarchy::{ChildOf, Children},
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, EditorHosts},
+    asset_editor::{BackgroundWork, EditorDocument, EditorHosts},
     asset_picker::AssetPickerMenu,
     clip_editor::ClipFacts,
     hosted::testing::SceneFixture,
@@ -17,7 +17,6 @@ use concerto_foundation::assets::{
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
-use concerto_mcp::FrameDemand;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, MotionDatabaseDefinition, MotionEntry, TimeRange,
@@ -53,6 +52,14 @@ pub(crate) struct Tab {
     pub(crate) run: AssetEntry,
     pub(crate) skeleton: AssetEntry,
     pub(crate) asset: AssetEntry,
+}
+
+pub(crate) fn stat_warnings(stats: &BakedStats, assets: &AssetRegistry) -> Vec<String> {
+    stat_lines(stats, assets)
+        .into_iter()
+        .filter(|line| line.warning)
+        .map(|line| line.name)
+        .collect()
 }
 
 fn bone_id(bone: usize) -> Uuid {
@@ -97,7 +104,7 @@ fn entry_of(clip: &AssetEntry, range: Option<TimeRange>) -> MotionEntry {
     }
 }
 
-fn hosts(f: &mut SceneFixture, document: Entity) {
+pub(crate) fn hosts(f: &mut SceneFixture, document: Entity) {
     let [left, inspector, bottom] = [(); 3].map(|_| f.world.spawn(UINode::default()));
     f.world.insert(
         EditorHosts {
@@ -111,7 +118,14 @@ fn hosts(f: &mut SceneFixture, document: Entity) {
     f.frame();
 }
 
-pub(crate) fn tab_with(mut f: SceneFixture) -> Tab {
+pub(crate) fn tab_with(f: SceneFixture) -> Tab {
+    tab_of(f, |_| {})
+}
+
+pub(crate) fn tab_of(
+    mut f: SceneFixture,
+    change: impl FnOnce(&mut MotionDatabaseDefinition),
+) -> Tab {
     let skeleton = write_asset(
         &mut f,
         "content/hero/skeleton.gasset",
@@ -119,7 +133,7 @@ pub(crate) fn tab_with(mut f: SceneFixture) -> Tab {
     );
     let walk = write_asset(&mut f, "content/hero/walk.gasset", &clip_of(10, 0..3));
     let run = write_asset(&mut f, "content/hero/run.gasset", &clip_of(2, 0..2));
-    let opened = MotionDatabaseDefinition {
+    let mut opened = MotionDatabaseDefinition {
         skeleton: AssetHandle::weak(skeleton.id),
         entries: vec![
             entry_of(
@@ -133,6 +147,7 @@ pub(crate) fn tab_with(mut f: SceneFixture) -> Tab {
         ],
         ..Default::default()
     };
+    change(&mut opened);
     let asset = write_definition(&mut f, "content/hero/database.gasset", &opened);
     let document = open(&mut f, &asset);
     hosts(&mut f, document);
@@ -164,18 +179,18 @@ impl Tab {
         state(&self.f, self.document)
     }
 
-    fn state_mut(&mut self) -> &mut DefinitionDocument {
+    pub(crate) fn state_mut(&mut self) -> &mut DefinitionDocument {
         self.f
             .world
             .get_component_for_entity_mut::<DefinitionDocument>(self.document)
             .unwrap()
     }
 
-    fn world(&self) -> &World {
+    pub(crate) fn world(&self) -> &World {
         &self.f.world
     }
 
-    fn text(&self, entity: Entity) -> &UIText {
+    pub(crate) fn text(&self, entity: Entity) -> &UIText {
         self.world()
             .get_component_for_entity::<UIText>(entity)
             .unwrap()
@@ -187,14 +202,21 @@ impl Tab {
             .unwrap()
     }
 
-    fn shown(&self, entity: Entity) -> bool {
+    pub(crate) fn shown(&self, entity: Entity) -> bool {
         self.world()
             .get_component_for_entity::<UINode>(entity)
             .unwrap()
             .visible
     }
 
-    fn disabled(&self, entity: Entity) -> bool {
+    pub(crate) fn height(&self, entity: Entity) -> UIValue {
+        self.world()
+            .get_component_for_entity::<UINode>(entity)
+            .unwrap()
+            .height
+    }
+
+    pub(crate) fn disabled(&self, entity: Entity) -> bool {
         self.world()
             .get_component_for_entity::<UIDisabled>(entity)
             .is_some()
@@ -233,7 +255,7 @@ impl Tab {
             .parent()
     }
 
-    fn labels_under(&mut self, menus: Vec<Entity>) -> Vec<(Entity, String)> {
+    pub(crate) fn labels_under(&mut self, menus: Vec<Entity>) -> Vec<(Entity, String)> {
         let world = &mut self.f.world;
         let labels: Vec<(Entity, String)> = world
             .query::<(Entity, &UIText), ()>()
@@ -326,8 +348,31 @@ impl Tab {
         self.f.frame();
     }
 
-    fn unsaved(&mut self) -> bool {
+    pub(crate) fn unsaved(&mut self) -> bool {
         self.f.unsaved(self.document)
+    }
+
+    pub(crate) fn working(&self) -> bool {
+        self.world()
+            .get_component_for_entity::<BackgroundWork>(self.document)
+            .is_some()
+    }
+
+    pub(crate) fn until_settled(&mut self) {
+        let document = self.document;
+        self.f.frames_until("the workers never settled", |f| {
+            let requested = f
+                .world
+                .get_component_for_entity::<BuildRequested>(document)
+                .is_some();
+            let state = state(f, document);
+            !requested
+                && !state.build.is_running()
+                && state.baked_job.is_none()
+                && !state.baked_wanted
+        });
+        self.f.frame();
+        self.f.frame();
     }
 
     pub(crate) fn until_read(&mut self) {
@@ -1232,7 +1277,7 @@ fn the_left_panel_scrolls_over_what_it_holds() {
         .get_component_for_entity_mut::<UIScrollArea>(view)
         .unwrap()
         .offset = 900.0;
-    tab.f.add_delivery(sync_left_scroll.into_boxed_system());
+    tab.f.add_delivery(sync_panel_scroll.into_boxed_system());
 
     tab.f.frame();
 
@@ -1276,38 +1321,24 @@ fn a_settled_panel_writes_nothing() {
 }
 
 #[test]
-fn a_read_in_progress_asks_an_agents_host_for_frames() {
-    let mut f = fixture();
-    f.world.insert_resource(FrameDemand::default());
-    let mut tab = tab_with(f);
+fn a_read_in_progress_marks_the_document_as_working() {
+    let mut tab = tab_with(fixture());
     tab.until_read();
     let (release, wait) = std::sync::mpsc::channel::<()>();
     tab.state_mut().facts_job = Some(std::thread::spawn(move || {
         let _ = wait.recv();
         Vec::new()
     }));
-    tab.f.world.insert_resource(FrameDemand::default());
 
     tab.f.frame();
 
-    assert!(
-        tab.world()
-            .get_resource::<FrameDemand>()
-            .unwrap()
-            .is_requested()
-    );
+    assert!(tab.working());
 
     release.send(()).unwrap();
     tab.until_read();
-    tab.f.world.insert_resource(FrameDemand::default());
-    tab.f.frame();
+    tab.until_settled();
 
-    assert!(
-        !tab.world()
-            .get_resource::<FrameDemand>()
-            .unwrap()
-            .is_requested()
-    );
+    assert!(!tab.working());
 }
 
 #[test]

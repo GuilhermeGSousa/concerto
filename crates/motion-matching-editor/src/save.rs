@@ -20,7 +20,7 @@ use concerto_motion_matching::MotionDatabaseDefinition;
 use crate::{document::DefinitionDocument, preview::capture_definition};
 
 pub(crate) struct SaveDefinition {
-    document: Entity,
+    pub(crate) document: Entity,
 }
 
 impl Signal for SaveDefinition {}
@@ -35,7 +35,10 @@ pub(crate) fn request_definition_saves(
     }
 }
 
-fn captured(world: &mut World, document: Entity) -> anyhow::Result<MotionDatabaseDefinition> {
+pub(crate) fn captured(
+    world: &mut World,
+    document: Entity,
+) -> anyhow::Result<MotionDatabaseDefinition> {
     let hosted = world
         .get_component_for_entity_mut::<HostedApp>(document)
         .context("The preview is not running, so its settings and channels cannot be read")?;
@@ -90,6 +93,7 @@ fn save(world: &mut World, document: Entity) -> anyhow::Result<AssetEntry> {
     }
     if let Some(state) = world.get_component_for_entity_mut::<DefinitionDocument>(document) {
         state.loaded = Some(definition);
+        state.baked_wanted = true;
     }
     if let Some(hosted) = world.get_component_for_entity_mut::<HostedApp>(document) {
         hosted.mark_saved();
@@ -98,23 +102,28 @@ fn save(world: &mut World, document: Entity) -> anyhow::Result<AssetEntry> {
     Ok(saved)
 }
 
-fn set_status(world: &mut World, document: Entity, status: String) {
+pub(crate) fn set_status(world: &mut World, document: Entity, status: String) {
     if let Some(document) = world.get_component_for_entity_mut::<EditorDocument>(document) {
         document.status = status;
     }
 }
 
-pub(crate) fn save_definition(on: On<SaveDefinition>, world: &mut World) {
-    let document = on.signal().document;
+pub(crate) fn save_and_report(world: &mut World, document: Entity) -> bool {
     match save(world, document) {
         Ok(asset) => {
             set_status(world, document, format!("Saved {}", asset.address));
             write(world, SceneSaved { document, asset });
+            true
         }
         Err(error) => {
             let message = format!("Save failed: {error:#}");
             set_status(world, document, message.clone());
             write(world, SaveFailed { document, message });
+            false
         }
     }
+}
+
+pub(crate) fn save_definition(on: On<SaveDefinition>, world: &mut World) {
+    save_and_report(world, on.signal().document);
 }

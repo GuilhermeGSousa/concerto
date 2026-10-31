@@ -29,13 +29,17 @@ fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
     spawn_panel(&mut cmd, parent, &theme);
 }
 
-fn inspecting(mut f: SceneFixture) -> Tab {
+pub(crate) fn with_inspector(f: &mut SceneFixture) {
     let mut panel = build_inspector.into_system();
     panel.initialize(&mut f.world);
     panel.run_and_apply((), &mut f.world);
     for system in row_systems() {
         f.add_delivery(system);
     }
+}
+
+fn inspecting(mut f: SceneFixture) -> Tab {
+    with_inspector(&mut f);
     f.add_delivery(refresh_joint_rows.into_boxed_system());
     let mut tab = tab_with(f);
     tab.until_read();

@@ -37,6 +37,7 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 use crate::{
+    build::{BakedStats, BuildRequested, build_refusal, progress_line},
     document::DefinitionDocument,
     facts::EntryFacts,
     menu::{NameMenu, close_menu, open_name_menu},
@@ -47,6 +48,8 @@ use crate::{
 
 const TITLE_HEIGHT: f32 = 16.0;
 const ROW_PADDING: f32 = 4.0;
+const STAT_HEIGHT: f32 = 16.0;
+const STATS_MAX_HEIGHT: f32 = 160.0;
 
 #[derive(Component)]
 pub(crate) struct DefinitionPanels {
@@ -63,6 +66,12 @@ pub(crate) struct DefinitionPanels {
     add_channel: Entity,
     channel_rows: Vec<ChannelWidgets>,
     timeline: Entity,
+    pub(crate) build: Entity,
+    pub(crate) note: Entity,
+    pub(crate) baked: Entity,
+    pub(crate) stats_view: Entity,
+    pub(crate) stats: Entity,
+    shown_stats: Option<BakedStats>,
     status: Entity,
 }
 
@@ -78,6 +87,15 @@ struct ChannelWidgets {
     entity: Option<Entity>,
     name: String,
     row: Entity,
+}
+
+struct InspectorPanel {
+    build: Entity,
+    note: Entity,
+    baked: Entity,
+    stats_view: Entity,
+    stats: Entity,
+    status: Entity,
 }
 
 struct LeftPanel {
@@ -343,6 +361,15 @@ fn pick_channel(name: String) -> Listener<UIClick> {
     .into_listener()
 }
 
+fn request_build(document: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>, mut cmd: CommandQueue| {
+        if on.signal().button == MouseButton::Left {
+            cmd.insert(BuildRequested, document);
+        }
+    })
+    .into_listener()
+}
+
 fn title(theme: &UITheme, text: &str) -> Label {
     theme
         .label(text.to_uppercase())
@@ -550,9 +577,53 @@ fn spawn_channel_row(
     }
 }
 
-fn build_inspector(host: &mut EntityCommandQueue, theme: &UITheme) -> Entity {
+fn build_inspector(
+    host: &mut EntityCommandQueue,
+    document: Entity,
+    theme: &UITheme,
+) -> InspectorPanel {
     let mut panel = host.spawn_child(theme.column().gap(theme.spacing_sm));
-    panel.spawn_child(theme.label("").hidden().fixed()).entity()
+    let build = panel
+        .spawn_child(
+            theme
+                .button("Build")
+                .fixed()
+                .on_click(request_build(document)),
+        )
+        .entity();
+    let note = panel
+        .spawn_child(theme.label("").small().muted().hidden().fixed())
+        .entity();
+    let baked = panel
+        .spawn_child(
+            theme
+                .label("")
+                .font_size(theme.font_size_sm)
+                .hidden()
+                .fixed(),
+        )
+        .entity();
+    let mut view = panel.spawn_child((theme.column().fixed().clipped().hidden(), Interactable));
+    let stats_view = view.entity();
+    let stats = view
+        .spawn_child(theme.column().fixed().gap(0.0).padding(UIRect {
+            right: SCROLLBAR_WIDTH + theme.spacing_xs,
+            ..UIRect::all(0.0)
+        }))
+        .entity();
+    view.insert(UIScrollArea {
+        content: Some(stats),
+        ..Default::default()
+    });
+    let status = panel.spawn_child(theme.label("").hidden().fixed()).entity();
+    InspectorPanel {
+        build,
+        note,
+        baked,
+        stats_view,
+        stats,
+        status,
+    }
 }
 
 fn build_bottom(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) -> Entity {
@@ -583,7 +654,7 @@ pub(crate) fn build_definition_panels(
             continue;
         };
         let left = build_left(&mut cmd.entity(left), document, &theme);
-        let status = build_inspector(&mut cmd.entity(inspector), &theme);
+        let inspector = build_inspector(&mut cmd.entity(inspector), document, &theme);
         let timeline = build_bottom(&mut cmd.entity(bottom), document, &theme);
         cmd.insert(
             DefinitionPanels {
@@ -600,7 +671,13 @@ pub(crate) fn build_definition_panels(
                 add_channel: left.add_channel,
                 channel_rows: Vec::new(),
                 timeline,
-                status,
+                build: inspector.build,
+                note: inspector.note,
+                baked: inspector.baked,
+                stats_view: inspector.stats_view,
+                stats: inspector.stats,
+                shown_stats: None,
+                status: inspector.status,
             },
             document,
         );
@@ -630,6 +707,93 @@ fn driven_line(facts: Option<&EntryFacts>, skeleton: bool, theme: &UITheme) -> (
         theme.warning
     };
     (format!("{} of {}", read.driven, read.skeleton_bones), color)
+}
+
+struct StatLine {
+    name: String,
+    value: String,
+    warning: bool,
+}
+
+impl StatLine {
+    fn new(name: impl Into<String>, value: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+            warning: false,
+        }
+    }
+}
+
+fn memory_line(bytes: usize) -> String {
+    const KIB: f32 = 1024.0;
+    let bytes = bytes as f32;
+    if bytes < KIB * KIB {
+        format!("{:.1} KiB", bytes / KIB)
+    } else {
+        format!("{:.1} MiB", bytes / (KIB * KIB))
+    }
+}
+
+fn stat_lines(stats: &BakedStats, assets: &AssetRegistry) -> Vec<StatLine> {
+    let mut lines = vec![
+        StatLine::new("Frames", stats.frames.to_string()),
+        StatLine::new("Memory", memory_line(stats.bytes)),
+    ];
+    for entry in &stats.entries {
+        lines.push(StatLine {
+            warning: entry.short,
+            ..StatLine::new(asset_name(assets, entry.clip), entry.frames.to_string())
+        });
+        if entry.short {
+            lines.push(StatLine {
+                warning: true,
+                ..StatLine::new(
+                    format!("Shorter than the {:.2} s trajectory", stats.horizon),
+                    "",
+                )
+            });
+        }
+    }
+    for channel in &stats.channels {
+        lines.push(StatLine::new(
+            channel.name.as_str(),
+            format!("{:.3} ± {:.3}", channel.mean, channel.deviation),
+        ));
+    }
+    lines
+}
+
+fn spawn_stat_line(list: &mut EntityCommandQueue, line: &StatLine, theme: &UITheme) {
+    let color = if line.warning {
+        theme.warning
+    } else {
+        theme.text
+    };
+    let mut row = list.spawn_child(
+        theme
+            .row()
+            .fixed()
+            .height(UIValue::Px(STAT_HEIGHT))
+            .gap(theme.spacing_xs),
+    );
+    row.add_child(
+        theme
+            .label(line.name.as_str())
+            .small()
+            .color(color)
+            .single_line()
+            .grow()
+            .shrink(1.0)
+            .min_width(UIValue::Px(0.0)),
+    );
+    row.add_child(
+        theme
+            .label(line.value.as_str())
+            .small()
+            .color(color)
+            .no_wrap(),
+    );
 }
 
 fn write_text(texts: &Query<&mut UIText>, entity: Entity, value: &str) {
@@ -744,6 +908,35 @@ pub(crate) fn sync_definition_panels(
         write_line(&texts, &nodes, panels.skeleton_error, error);
         write_line(&texts, &nodes, panels.status, &document.status);
 
+        let refusal = build_refusal(state, hosted.is_some());
+        write_disabled(
+            &disabled,
+            &mut cmd,
+            panels.build,
+            refusal.is_some() || state.build.is_running(),
+        );
+        let note = state.build.progress().map_or_else(
+            || refusal.unwrap_or_default().to_owned(),
+            |(finished, total)| progress_line(finished, total),
+        );
+        write_line(&texts, &nodes, panels.note, &note);
+        write_line(&texts, &nodes, panels.baked, &state.baked.line());
+        if panels.shown_stats != state.stats {
+            let lines = state
+                .stats
+                .as_ref()
+                .map_or_else(Vec::new, |stats| stat_lines(stats, &assets));
+            let mut list = cmd.entity(panels.stats).despawn_children();
+            for line in &lines {
+                spawn_stat_line(&mut list, line, &theme);
+            }
+            if let Some(mut node) = nodes.get_entity(panels.stats_view) {
+                node.visible = state.stats.is_some();
+                node.height = UIValue::Px((lines.len() as f32 * STAT_HEIGHT).min(STATS_MAX_HEIGHT));
+            }
+            panels.shown_stats = state.stats.clone();
+        }
+
         if panels.entry_rows.len() != state.entries.len() {
             let mut list = cmd.entity(panels.entries).despawn_children();
             let rows = (0..state.entries.len())
@@ -840,29 +1033,39 @@ pub(crate) fn sync_channel_rows(
     }
 }
 
-pub(crate) fn sync_left_scroll(
+fn fit_scroll_area(
+    view: Entity,
+    content: Entity,
+    layouts: &Query<&UILayout>,
+    areas: &Query<&mut UIScrollArea>,
+) {
+    let (Some(shown), Some(content), Some(mut area)) = (
+        layouts.get_entity(view),
+        layouts.get_entity(content),
+        areas.get_entity(view),
+    ) else {
+        return;
+    };
+    let extent = content.rect.size.y;
+    if area.content_extent != extent {
+        area.content_extent = extent;
+    }
+    let offset = area
+        .offset
+        .clamp(0.0, (extent - shown.content_rect.size.y).max(0.0));
+    if area.offset != offset {
+        area.offset = offset;
+    }
+}
+
+pub(crate) fn sync_panel_scroll(
     panels: Query<&DefinitionPanels>,
     layouts: Query<&UILayout>,
     areas: Query<&mut UIScrollArea>,
 ) {
     for panels in panels.iter() {
-        let (Some(view), Some(content), Some(mut area)) = (
-            layouts.get_entity(panels.view),
-            layouts.get_entity(panels.content),
-            areas.get_entity(panels.view),
-        ) else {
-            continue;
-        };
-        let extent = content.rect.size.y;
-        if area.content_extent != extent {
-            area.content_extent = extent;
-        }
-        let offset = area
-            .offset
-            .clamp(0.0, (extent - view.content_rect.size.y).max(0.0));
-        if area.offset != offset {
-            area.offset = offset;
-        }
+        fit_scroll_area(panels.view, panels.content, &layouts, &areas);
+        fit_scroll_area(panels.stats_view, panels.stats, &layouts, &areas);
     }
 }
 

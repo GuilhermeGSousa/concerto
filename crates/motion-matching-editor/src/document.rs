@@ -6,7 +6,7 @@ use concerto_ecs::{
     command::{CommandQueue, EntityCommandQueue},
     events::event_reader::EventReader,
     reflect::AppTypeRegistry,
-    signal::On,
+    signal::{On, lifecycle::Add},
 };
 use concerto_editor::{
     asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved, finish_asset_request},
@@ -23,6 +23,7 @@ use concerto_mesh::Skeleton;
 use concerto_motion_matching::{MotionDatabaseDefinition, MotionEntry};
 
 use crate::{
+    build::{BakedJob, BakedState, BakedStats, BuildState},
     facts::{EntryFacts, FactsJob, ShownSkeleton},
     preview::{DatabaseSettings, ShowDefinition, database_preview, live_channel},
 };
@@ -34,9 +35,14 @@ pub struct DefinitionDocument {
     pub entries: Vec<MotionEntry>,
     pub selected_entry: Option<usize>,
     pub loaded: Option<MotionDatabaseDefinition>,
+    pub build: BuildState,
+    pub baked: BakedState,
+    pub stats: Option<BakedStats>,
     pub entry_facts: Vec<EntryFacts>,
     pub(crate) shown_skeleton: Option<ShownSkeleton>,
     pub(crate) facts_job: Option<FactsJob>,
+    pub(crate) baked_wanted: bool,
+    pub(crate) baked_job: Option<BakedJob>,
 }
 
 impl DefinitionDocument {
@@ -138,6 +144,11 @@ pub(crate) fn load_definition(
         state.selected_entry = (!definition.entries.is_empty()).then_some(0);
         state.entry_facts.clear();
         state.shown_skeleton = None;
+        state.build = BuildState::default();
+        state.baked = BakedState::default();
+        state.stats = None;
+        state.baked_job = None;
+        state.baked_wanted = true;
         previews.trigger(
             entity,
             ShowDefinition {
@@ -153,7 +164,7 @@ pub(crate) fn load_definition(
 pub(crate) fn follow_definition_edits(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
     mut edited: EventReader<Hosted<ComponentEdited>>,
-    documents: Query<Entity, With<DefinitionDocument>>,
+    previews: Query<&HostedApp, With<DefinitionDocument>>,
     mut cmd: CommandQueue,
 ) {
     let committed = committed
@@ -165,9 +176,23 @@ pub(crate) fn follow_definition_edits(
         .filter(|hosted| hosted.event.result.is_ok())
         .map(|hosted| hosted.document);
     for document in committed.chain(edited) {
-        if documents.get_entity(document).is_some() {
+        if previews
+            .get_entity(document)
+            .is_some_and(HostedApp::scene_dirty)
+        {
             cmd.insert(Unsaved, document);
         }
+    }
+}
+
+pub(crate) fn clear_status_on_edit(
+    on: On<Add<Unsaved>>,
+    documents: Query<&mut EditorDocument, With<DefinitionDocument>>,
+) {
+    if let Some(mut document) = documents.get_entity(on.signal().entity)
+        && !document.status.is_empty()
+    {
+        document.status.clear();
     }
 }
 
