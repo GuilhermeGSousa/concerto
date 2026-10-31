@@ -30,7 +30,7 @@ use concerto_editor::{
 use concerto_foundation::assets::{
     Asset, AssetId, CreatableAsset,
     asset_server::AssetServer,
-    content::{ContentAssetHeader, ImportProvenance, read_content_asset, write_content_asset},
+    content::{ContentAssetHeader, ImportProvenance, decode_content_asset, write_content_asset},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_foundation::{
@@ -195,12 +195,11 @@ pub fn load_dialogue(
         };
         let result = (|| -> Result<String> {
             let bytes = std::fs::read(root.join(&asset.address))?;
-            let (header, payload) = read_content_asset(&bytes)?;
+            let (header, dialogue) = decode_content_asset::<Dialogue>(&bytes)?;
             anyhow::ensure!(
-                header.asset_id == asset.id && header.kind == Dialogue::name(),
+                header.asset_id == asset.id,
                 "Asset identity or type mismatch"
             );
-            let dialogue: Dialogue = bincode::deserialize(payload)?;
             anyhow::ensure!(!dialogue.text.trim().is_empty(), "Dialogue cannot be empty");
             Ok(dialogue.text)
         })();
@@ -301,7 +300,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             asset_id: id,
             references: vec![],
             kind: Dialogue::name().into(),
-            kind_version: 1,
+            kind_version: Dialogue::FORMAT_VERSION,
             provenance: Some(provenance.clone()),
         };
         let address = format!("{name}.gasset");

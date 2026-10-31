@@ -224,6 +224,53 @@ The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only w
 The header can be read without touching the payload, which is what lets a
 future tool index a whole content tree cheaply.
 
+## Changing an asset type's encoding
+
+Each asset type has its own payload version, `Asset::FORMAT_VERSION`, which
+starts at 1 and is written to `kind_version` in every header. Version 1 of a
+type is its encoding as committed at header version 4. Header scans
+(`scan_content`, `asset_id!`, the build script, project open and import) never
+check it; a file is checked only when it is decoded. Every decode goes through
+`decode_content_asset::<A>`, or `utils::load_content_asset::<A>` for a file
+under a `ContentAssetRoot`, which the `AssetServer` uses:
+
+| `kind_version`            | Result                                                      |
+|---------------------------|-------------------------------------------------------------|
+| equal to `FORMAT_VERSION` | the payload is decoded with bincode                         |
+| older                     | `A::migrate(version, payload)`; the default rejects it      |
+| newer                     | rejected: the file was written by a newer build             |
+
+A `kind` other than `A::name()` is rejected too. bincode is not
+self-describing, so a payload cannot absorb a new field with
+`#[serde(default)]`: any change to a type's serialized fields, their order or
+their types is a new encoding.
+
+When you change one:
+
+1. Raise the version. A derived type writes `#[asset(version = N)]` next to
+   `#[derive(Asset)]`; a hand-written `impl Asset` sets
+   `const FORMAT_VERSION: u32 = N;`.
+2. Choose between migration and rejection. To keep reading older files,
+   implement `Asset` by hand and override `migrate`. Put frozen
+   `<Type>V<n>` structs, which only derive `Deserialize`, and their
+   conversions in a `legacy` module next to the type, in its own crate.
+   `migrate` matches on the version, decodes the frozen struct with bincode and
+   converts it; an older version converts through each newer one in turn.
+   Without a migration, older files fail to load with an error that says to
+   re-import their source or re-create them in the editor.
+3. Migration happens in memory: the file keeps its old version until it is
+   saved, and a save writes the current `FORMAT_VERSION`. Re-import the
+   affected sources, or re-save editor-authored assets, and commit the
+   rewritten content.
+4. A legacy struct and its `migrate` arm may be deleted once no committed
+   `.gasset` under `examples/*` carries that version. After that, files at
+   that version are rejected.
+
+`CONTENT_FORMAT_VERSION` is a different number. It changes only when the
+framing or `ContentAssetHeader` changes, never for a payload, and a new header
+version keeps the previous one readable where it can, as version 5 reads
+version 4.
+
 ## The asset registry
 
 The registry lists every content asset's `AssetId` with its address and kind.

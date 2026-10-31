@@ -14,6 +14,35 @@ pub use concerto_asset_format::{
     ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
+/// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
+pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
+    let (header, payload) = read_content_asset(bytes)?;
+    if header.kind != A::name() {
+        anyhow::bail!(
+            "content asset holds a {} but a {} was requested",
+            header.kind,
+            A::name()
+        );
+    }
+    let version = header.kind_version;
+    let current = A::FORMAT_VERSION;
+    let value = match version.cmp(&current) {
+        std::cmp::Ordering::Equal => bincode::deserialize(payload)
+            .with_context(|| format!("failed to deserialize {} payload", A::name()))?,
+        std::cmp::Ordering::Less => A::migrate(version, payload).with_context(|| {
+            format!(
+                "{name} payload is version {version}; this build's {name} is version {current}",
+                name = A::name()
+            )
+        })?,
+        std::cmp::Ordering::Greater => anyhow::bail!(
+            "{} payload is version {version}, newer than this build's version {current}",
+            A::name()
+        ),
+    };
+    Ok((header, value))
+}
+
 /// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
@@ -27,7 +56,7 @@ pub fn save_content_asset_into<A: Asset>(
         asset_id,
         references: value.referenced_sub_assets(),
         kind: A::name().to_string(),
-        kind_version: 1,
+        kind_version: A::FORMAT_VERSION,
         provenance: None,
     };
     let kind = header.kind.clone();
@@ -45,7 +74,7 @@ pub fn save_content_asset_into<A: Asset>(
         id: asset_id,
         address: address.to_owned(),
         kind,
-        kind_version: Some(1),
+        kind_version: Some(A::FORMAT_VERSION),
         provenance: None,
     });
     Ok(asset_id)

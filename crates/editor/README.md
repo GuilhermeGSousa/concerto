@@ -796,7 +796,8 @@ full size, as it does under the cards. Chatter stays visible on every tab. A
 Scene document gets no `bottom` host.
 
 The [complete custom asset editor example](examples/custom_asset.rs) loads a
-non-Clone Dialogue asset, builds its own text widget, replaces its contents,
+non-Clone Dialogue asset through `decode_content_asset`, which checks its kind
+and type version, builds its own text widget, replaces its contents,
 rejects invalid input without mutation, hosts a preview of a cube that it sets
 spinning with a signal, and registers through the public API. Run its headless
 smoke test with:

@@ -11,8 +11,8 @@ use concerto_ecs::{
     events::event_reader::EventReader,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId,
-    content::read_content_asset,
+    AssetId,
+    content::decode_content_asset,
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_scene::scene::Scene;
@@ -138,12 +138,12 @@ pub(crate) fn sync_clip_preview(
 
 fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
     let bytes = std::fs::read(root.join(&asset.address))?;
-    let (header, payload) = read_content_asset(&bytes)?;
+    let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
     anyhow::ensure!(
-        header.asset_id == asset.id && header.kind == AnimationClip::name(),
+        header.asset_id == asset.id,
         "Asset identity or type mismatch"
     );
-    Ok(bincode::deserialize(payload)?)
+    Ok(clip)
 }
 
 fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
@@ -620,7 +620,12 @@ mod tests {
 
         let document = open_clip(&mut f, &mistaken);
 
-        assert!(f.status(document).contains("mismatch"));
+        assert!(
+            f.status(document)
+                .contains("holds a Scene but a AnimationClip was requested"),
+            "got: {}",
+            f.status(document)
+        );
         assert!(state(&f, document).clip.is_none());
     }
 

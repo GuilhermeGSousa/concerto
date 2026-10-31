@@ -307,7 +307,7 @@ pub(crate) fn write_scene_file(root: &std::path::Path, asset: &AssetEntry, nodes
         asset_id: asset.id,
         references: vec![],
         kind: Scene::name().into(),
-        kind_version: 1,
+        kind_version: Scene::FORMAT_VERSION,
         provenance: asset.provenance.clone(),
     };
     std::fs::write(

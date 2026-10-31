@@ -77,16 +77,46 @@ fn read_asset_id(literal: &syn::LitStr) -> Result<AssetIdLookup, String> {
         .map_err(|error| format!("asset_id!: {error:#}"))
 }
 
-#[proc_macro_derive(Asset)]
+#[proc_macro_derive(Asset, attributes(asset))]
 pub fn asset(input: TokenStream) -> TokenStream {
     let ast = syn::parse(input).unwrap();
     impl_asset(&ast)
 }
 
+fn asset_version(ast: &syn::DeriveInput) -> syn::Result<Option<u32>> {
+    let mut version = None;
+    for attr in ast
+        .attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("asset"))
+    {
+        attr.parse_nested_meta(|meta| {
+            let expected = || meta.error("expected #[asset(version = …)] with an integer literal");
+            if !meta.path.is_ident("version") {
+                return Err(expected());
+            }
+            match meta.value().and_then(|value| value.parse::<syn::Lit>()) {
+                Ok(syn::Lit::Int(int)) => {
+                    version = Some(int.base10_parse::<u32>()?);
+                    Ok(())
+                }
+                _ => Err(expected()),
+            }
+        })?;
+    }
+    Ok(version)
+}
+
 fn impl_asset(ast: &syn::DeriveInput) -> TokenStream {
     let name = &ast.ident;
+    let version = match asset_version(ast) {
+        Ok(version) => version.map(|version| quote! { const FORMAT_VERSION: u32 = #version; }),
+        Err(error) => return error.to_compile_error().into(),
+    };
     let gen = quote! {
         impl Asset for #name {
+            #version
+
             fn name() -> &'static str {
                 stringify!(#name)
             }

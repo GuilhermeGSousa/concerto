@@ -29,6 +29,7 @@ pub struct EmittedSubAsset {
     pub name: String,
     pub asset_id: AssetId,
     pub type_name: &'static str,
+    pub kind_version: u32,
     pub bytes: Vec<u8>,
     pub references: Vec<AssetId>,
 }
@@ -137,6 +138,7 @@ impl ImportContext {
             name: name.to_string(),
             asset_id: self.sub_asset_id(name),
             type_name: T::name(),
+            kind_version: T::FORMAT_VERSION,
             bytes,
             references: value.referenced_sub_assets(),
         });

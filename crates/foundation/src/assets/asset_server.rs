@@ -332,15 +332,10 @@ impl AssetServer {
             }
             let address = entry.address;
             let asset = async {
-                let bytes = crate::assets::utils::load_content_asset_bytes(
-                    &content_root,
-                    &address,
-                    A::name(),
-                )
-                .await
-                .with_context(|| format!("failed to read {} asset", A::name()))?;
-                let mut asset: A = bincode::deserialize(&bytes)
-                    .with_context(|| format!("failed to deserialize {} asset", A::name()))?;
+                let mut asset =
+                    crate::assets::utils::load_content_asset::<A>(&content_root, &address)
+                        .await
+                        .with_context(|| format!("failed to read {} asset", A::name()))?;
                 let context = AssetLoadContext::new(server, id);
                 asset.on_load(&context)?;
                 anyhow::Ok(asset)

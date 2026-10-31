@@ -281,7 +281,7 @@ fn import_placed(
             asset_id: sub_asset.asset_id,
             references: sub_asset.references.clone(),
             kind: sub_asset.type_name.to_string(),
-            kind_version: 1,
+            kind_version: sub_asset.kind_version,
             provenance: Some(ImportProvenance {
                 source: provenance_source.clone(),
                 sub_asset: sub_asset.name.clone(),
