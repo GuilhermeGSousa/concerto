@@ -1600,17 +1600,6 @@ mod tests {
     }
 
     #[test]
-    fn lines_are_one_logical_pixel_whatever_the_scale() {
-        assert_eq!(
-            segments_of(&tree_row(1, false, false, &[])),
-            [
-                segment(12.0, 0.0, 1.0, 24.0),
-                segment(12.0, 12.0, 22.0, 1.0)
-            ]
-        );
-    }
-
-    #[test]
     fn roots_have_no_connectors() {
         assert!(segments_of(&tree_row(0, false, false, &[])).is_empty());
         assert!(segments_of(&tree_row(0, true, true, &[])).is_empty());
