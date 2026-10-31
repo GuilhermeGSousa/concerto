@@ -21,20 +21,25 @@ use concerto_ecs::{
     command::{CommandQueue, EntityCommandQueue},
     component::{name::Name, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
+    events::event_reader::EventReader,
     reflect::{ReflectComponent, ReflectSceneComponent},
     signal::On,
     signal::Signal,
     signal::listener::GlobalListener,
 };
 use concerto_editor::{
-    asset_editor::{EditorDocument, Unsaved},
+    asset_editor::{AssetEditor, AssetEditorAppExt, EditorDocument, Unsaved, finish_asset_request},
     guard::UnsavedGuard,
-    hosted::{EditTarget, EditWorld, EditWorldSignals},
-    inspector::{EditContext, EditError, EditableApp, PropertyEditor},
+    hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
+    inspector::{
+        DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
+        PropertyTarget,
+    },
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
     tools::{
         camera::{EditorHelper, FlyCamera},
+        edits::PropertyCommitted,
         entity_ops::EntityEdit,
         scene::SceneRoot,
         selection::Select,
@@ -1001,6 +1006,7 @@ fn status_reports_the_project_documents_and_the_edit_target_selection() {
     line(&before, "project status: ");
     assert_eq!(line(&before, "documents: "), "none");
     assert_eq!(line(&before, "active: "), "none");
+    assert_eq!(line(&before, "values: "), "none");
     assert_eq!(line(&before, "selection: "), "none");
 
     assert_eq!(line(&after, "project: "), root.display().to_string());
@@ -4643,4 +4649,511 @@ fn screenshot_answers_busy_while_nothing_is_drawn() {
         "{viewport}"
     );
     assert_eq!(editor, Some(false));
+}
+
+#[derive(Serialize, Deserialize)]
+struct Tune;
+
+impl Asset for Tune {
+    fn name() -> &'static str {
+        "Tune"
+    }
+}
+
+#[derive(Reflect, Default)]
+#[reflect(Default)]
+enum Temper {
+    #[default]
+    Calm,
+    Loud,
+}
+
+#[derive(Reflect, Default)]
+#[reflect(Default)]
+struct Tuning {
+    gain: f32,
+    temper: Temper,
+    samples: Vec<f32>,
+}
+
+#[derive(Reflect, Default)]
+struct Loose {
+    gain: f32,
+    samples: Vec<f32>,
+}
+
+#[derive(Component, Default)]
+struct HeldTune {
+    tuning: Tuning,
+    loose: Loose,
+}
+
+#[derive(Default)]
+struct TuneEditor;
+
+impl AssetEditor for TuneEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        let document = editor.entity();
+        let targets: Vec<Arc<dyn PropertyTarget>> = vec![
+            Arc::new(DocumentValue::<HeldTune> {
+                name: "Tuning".into(),
+                document,
+                read: Box::new(|held| Some(&held.tuning)),
+                edit: Box::new(|held| Some(&mut held.tuning)),
+            }),
+            Arc::new(DocumentValue::<HeldTune> {
+                name: "Loose".into(),
+                document,
+                read: Box::new(|held| Some(&held.loose)),
+                edit: Box::new(|held| Some(&mut held.loose)),
+            }),
+            Arc::new(DocumentValue::<HeldTune> {
+                name: "Absent".into(),
+                document,
+                read: Box::new(|_| None),
+                edit: Box::new(|_| None),
+            }),
+        ];
+        editor.insert((HeldTune::default(), InspectedValues(targets)));
+    }
+}
+
+#[derive(Deserialize, JsonSchema)]
+struct FinishTune {}
+
+fn finish_tune(mut calls: ToolCalls<FinishTune>, documents: Query<&mut EditorDocument>) {
+    for (_, reply) in calls.read() {
+        for mut document in documents.iter() {
+            if let Some(asset) = document.pending.clone() {
+                finish_asset_request(&mut document, &asset, Ok(()));
+            }
+        }
+        reply.ok("finished");
+    }
+}
+
+fn note_value_edits(mut committed: EventReader<Hosted<PropertyCommitted>>, log: Res<Log>) {
+    for Hosted { document, event } in committed.read() {
+        log.push(format!(
+            "{} {} {}",
+            document.to_id_string(),
+            event.address.path,
+            event.result.is_ok()
+        ));
+    }
+}
+
+fn tune_editor(app: &mut App) {
+    app.register_asset_editor::<Tune, TuneEditor>().unwrap();
+    app.register_type::<Tuning>()
+        .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
+        .add_system(LateUpdate, note_value_edits);
+}
+
+async fn open_tune(client: &Client) -> String {
+    until(client, "state", |state| state.starts_with("project")).await;
+    let opened = ok_with(
+        client,
+        "open_asset",
+        json!({ "asset": "content/tune.gasset" }),
+    )
+    .await;
+    opened
+        .trim_end_matches('.')
+        .rsplit(' ')
+        .next()
+        .unwrap()
+        .to_owned()
+}
+
+async fn inspected_target(client: &Client, name: &str) -> Value {
+    serde_json::from_str(&ok_with(client, "inspect", json!({ "target": name })).await).unwrap()
+}
+
+async fn set_on_target(client: &Client, target: &str, path: &str, value: Value) -> Value {
+    serde_json::from_str(
+        &ok_with(
+            client,
+            "set_property",
+            json!({ "target": target, "path": path, "value": value }),
+        )
+        .await,
+    )
+    .unwrap()
+}
+
+struct ValueCalls {
+    document: String,
+    busy: String,
+    in_a_frame: Value,
+    between_frames: Value,
+    through_an_editor: Value,
+    an_enum: Value,
+    a_list: Value,
+    pushed: String,
+    removed: String,
+    after: Value,
+    idle: String,
+}
+
+#[test]
+fn a_documents_values_answer_by_name_at_once_with_no_scene_open() {
+    let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
+        let document = open_tune(&client).await;
+        let busy = until(&client, "status", |status| status.ends_with("busy: yes")).await;
+        let in_a_frame = inspected_target(&client, "Tuning").await;
+        ok(&client, "finish_tune").await;
+        let idle = until(&client, "status", |status| status.ends_with("busy: no")).await;
+        let between_frames = inspected_target(&client, "Tuning").await;
+        let through_an_editor = set_on_target(&client, "Tuning", "gain", json!(0.75)).await;
+        let an_enum = set_on_target(&client, "Tuning", "temper", json!("Loud")).await;
+        let a_list = set_on_target(&client, "Tuning", "samples", json!([1.0, 2.0])).await;
+        let pushed = ok_with(
+            &client,
+            "list_push",
+            json!({ "target": "Tuning", "path": "samples" }),
+        )
+        .await;
+        let removed = ok_with(
+            &client,
+            "list_remove",
+            json!({ "target": "Tuning", "path": "samples", "index": 0 }),
+        )
+        .await;
+        let after = inspected_target(&client, "Tuning").await;
+        client.cancel().await.unwrap();
+        ValueCalls {
+            document,
+            busy,
+            in_a_frame,
+            between_frames,
+            through_an_editor,
+            an_enum,
+            a_list,
+            pushed,
+            removed,
+            after,
+            idle,
+        }
+    }) else {
+        return;
+    };
+
+    let answers = served.result;
+    assert_eq!(line(&answers.busy, "values: "), "Tuning, Loose, Absent");
+    assert_eq!(line(&answers.idle, "active: "), answers.document);
+    assert_eq!(answers.in_a_frame, answers.between_frames);
+    let shown = &answers.between_frames;
+    assert_eq!(shown["name"], "Tuning");
+    assert_eq!(shown["type"], "mcp::Tuning");
+    assert_eq!(
+        shown["value"],
+        json!({ "gain": 0.0, "temper": "Calm", "samples": [] })
+    );
+    assert!(shown.get("entity").is_none(), "{shown}");
+    let adapters: Vec<(&str, bool)> = shown["paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|path| {
+            (
+                path["path"].as_str().unwrap(),
+                path["adapter"].as_bool().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        adapters,
+        [("gain", true), ("temper", false), ("samples", false)]
+    );
+    assert_eq!(answers.through_an_editor["value"]["gain"], 0.75);
+    assert_eq!(answers.through_an_editor["name"], "Tuning");
+    assert_eq!(answers.an_enum["value"]["temper"], "Loud");
+    assert_eq!(answers.a_list["value"]["samples"], json!([1.0, 2.0]));
+    assert_eq!(
+        answers.pushed,
+        "Added an element to Tuning.samples; its length is 3."
+    );
+    assert_eq!(
+        answers.removed,
+        "Removed element 0 of Tuning.samples; its length is 2."
+    );
+    assert_eq!(
+        answers.after["value"],
+        json!({ "gain": 0.75, "temper": "Loud", "samples": [2.0, 0.0] })
+    );
+    let reports: Vec<String> = log
+        .entries()
+        .into_iter()
+        .filter(|entry| entry.starts_with(&answers.document))
+        .collect();
+    assert_eq!(
+        reports,
+        [
+            "gain true",
+            "temper true",
+            "samples true",
+            "samples true",
+            "samples true"
+        ]
+        .map(|report| format!("{} {report}", answers.document))
+    );
+}
+
+#[test]
+fn a_value_call_is_refused_by_its_arguments_with_no_scene_open() {
+    let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
+        open_tune(&client).await;
+        let refused = [
+            ("inspect", json!({ "target": "Tuning", "entity": "1v1" })),
+            (
+                "inspect",
+                json!({ "target": "Tuning", "components": ["Light"] }),
+            ),
+            ("inspect", json!({})),
+            ("inspect", json!({ "components": ["Light"] })),
+            (
+                "set_property",
+                json!({ "target": "Tuning", "entity": "1v1", "path": "gain", "value": 1.0 }),
+            ),
+            (
+                "set_property",
+                json!({ "target": "Tuning", "component": "Light", "path": "gain", "value": 1.0 }),
+            ),
+            ("set_property", json!({ "path": "gain", "value": 1.0 })),
+            (
+                "set_property",
+                json!({ "component": "Light", "path": "gain", "value": 1.0 }),
+            ),
+            (
+                "set_property",
+                json!({ "entity": "1v1", "path": "gain", "value": 1.0 }),
+            ),
+            (
+                "list_push",
+                json!({ "target": "Tuning", "entity": "1v1", "path": "samples" }),
+            ),
+            ("list_push", json!({ "path": "samples" })),
+            ("list_push", json!({ "entity": "1v1", "path": "samples" })),
+            (
+                "list_remove",
+                json!({ "target": "Tuning", "component": "Light", "path": "samples", "index": 0 }),
+            ),
+            ("list_remove", json!({ "path": "samples", "index": 0 })),
+            (
+                "list_remove",
+                json!({ "entity": "1v1", "path": "samples", "index": 0 }),
+            ),
+        ];
+        let mut codes = Vec::new();
+        for (tool, arguments) in refused {
+            codes.push(error_with(&client, tool, arguments).await["code"].clone());
+        }
+        let errors = vec![
+            error_with(&client, "inspect", json!({ "target": "Pitch" })).await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Pitch", "path": "gain", "value": 1.0 }),
+            )
+            .await,
+            error_with(
+                &client,
+                "list_push",
+                json!({ "target": "Pitch", "path": "samples" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "list_remove",
+                json!({ "target": "Pitch", "path": "samples", "index": 0 }),
+            )
+            .await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Tuning", "path": "volume", "value": 1.0 }),
+            )
+            .await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Tuning", "path": "gain", "value": "loud" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Tuning", "path": "samples", "value": "loud" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Loose", "path": "samples", "value": [1.0] }),
+            )
+            .await,
+            error_with(
+                &client,
+                "list_push",
+                json!({ "target": "Tuning", "path": "gain" }),
+            )
+            .await,
+            error_with(
+                &client,
+                "list_remove",
+                json!({ "target": "Tuning", "path": "samples", "index": 3 }),
+            )
+            .await,
+            error_with(
+                &client,
+                "set_property",
+                json!({ "target": "Absent", "path": "gain", "value": 1.0 }),
+            )
+            .await,
+        ];
+        let through_an_editor = set_on_target(&client, "Loose", "gain", json!(0.5)).await;
+        let unregistered = inspected_target(&client, "Loose").await;
+        let gone = inspected_target(&client, "Absent").await;
+        let status = ok(&client, "status").await;
+        client.cancel().await.unwrap();
+        (codes, errors, through_an_editor, unregistered, gone, status)
+    }) else {
+        return;
+    };
+
+    let (codes, errors, through_an_editor, unregistered, gone, status) = served.result;
+    assert_eq!(codes, vec![json!("invalid_arguments"); 15]);
+    let found: Vec<&str> = errors
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        found,
+        [
+            "unknown_target",
+            "unknown_target",
+            "unknown_target",
+            "unknown_target",
+            "unknown_path",
+            "invalid_value",
+            "invalid_value",
+            "refused",
+            "not_a_list",
+            "index_out_of_range",
+            "refused",
+        ]
+    );
+    assert!(
+        errors[0]["message"]
+            .as_str()
+            .unwrap()
+            .ends_with("Tuning, Loose, Absent."),
+        "{}",
+        errors[0]
+    );
+    assert_eq!(
+        errors[4]["message"],
+        "Tuning has no path `volume`; its paths are gain, temper, samples."
+    );
+    assert_eq!(through_an_editor["value"]["gain"], 0.5);
+    assert_eq!(unregistered["value"]["gain"], 0.5);
+    assert_eq!(gone["name"], "Absent");
+    assert_eq!(gone["value"], Value::Null);
+    assert_eq!(gone["unavailable"], true);
+    assert_eq!(
+        errors[7]["message"],
+        "Set Loose.samples failed: its type is not registered, so JSON cannot build it"
+    );
+    assert!(
+        documents(&status)[0].ends_with(&format!(
+            " · \"{}\"",
+            errors[7]["message"].as_str().unwrap()
+        )),
+        "{status}"
+    );
+}
+
+struct ComponentCalls {
+    inspected: Value,
+    set: Value,
+    pushed: String,
+    behind: Vec<Value>,
+    in_front_of_a_scene: Value,
+    with_a_scene_behind: Value,
+    status: String,
+}
+
+#[test]
+fn component_calls_answer_as_before_with_a_scene_open_and_with_a_value_document_in_front() {
+    let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(&fixture, &log, game, tune_editor, |client| async move {
+        open(&client).await;
+        let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+        let sword = scene_id(&ids, "Sword");
+        until(&client, "status", |status| status.ends_with("busy: no")).await;
+        let inspect = json!({ "entity": sword, "components": ["Transform"] });
+        let set = json!({
+            "entity": sword,
+            "component": "Transform",
+            "path": "translation",
+            "value": [1.0, 2.0, 3.0]
+        });
+        let push = json!({ "entity": sword, "component": "Samples", "path": "values" });
+        let in_front_of_a_scene =
+            error_with(&client, "inspect", json!({ "target": "Tuning" })).await;
+        let inspected =
+            serde_json::from_str(&ok_with(&client, "inspect", inspect.clone()).await).unwrap();
+        let changed =
+            serde_json::from_str(&ok_with(&client, "set_property", set.clone()).await).unwrap();
+        let pushed = ok_with(&client, "list_push", push.clone()).await;
+        open_tune(&client).await;
+        let status = ok(&client, "status").await;
+        let behind = vec![
+            error_with(&client, "inspect", inspect).await,
+            error_with(&client, "set_property", set).await,
+            error_with(&client, "list_push", push).await,
+        ];
+        let with_a_scene_behind = inspected_target(&client, "Tuning").await;
+        client.cancel().await.unwrap();
+        ComponentCalls {
+            inspected,
+            set: changed,
+            pushed,
+            behind,
+            in_front_of_a_scene,
+            with_a_scene_behind,
+            status,
+        }
+    }) else {
+        return;
+    };
+
+    let answers = served.result;
+    assert_eq!(answers.in_front_of_a_scene["code"], "unknown_target");
+    assert_eq!(
+        component_names(&answers.inspected),
+        ["Transform"],
+        "{}",
+        answers.inspected
+    );
+    assert_eq!(answers.set["name"], "Transform");
+    assert_eq!(answers.set["value"]["translation"], json!([1.0, 2.0, 3.0]));
+    assert_eq!(
+        answers.pushed,
+        "Added an element to Samples.values; its length is 101."
+    );
+    assert_eq!(line(&answers.status, "values: "), "Tuning, Loose, Absent");
+    assert_eq!(answers.with_a_scene_behind["name"], "Tuning");
+    for error in answers.behind {
+        assert_eq!(error["code"], "no_scene", "{error}");
+    }
 }

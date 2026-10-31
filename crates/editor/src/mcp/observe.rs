@@ -17,7 +17,9 @@ use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
 };
-use concerto_reflect::{PathSegment, PropertyPath, Reflect, ReflectRef, to_json, with_property};
+use concerto_reflect::{
+    PathSegment, PropertyPath, Reflect, ReflectRef, TypeRegistry, to_json, with_property,
+};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
@@ -26,18 +28,18 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
-use super::{BusyInputs, act::describe_pose, is_busy};
+use super::{BusyInputs, act::describe_pose, is_busy, value::value_names};
 use crate::{
     asset_editor::{ActiveEditor, EditorDocument, Unsaved},
     hosted::{EditTarget, EditWorld, HostedApp, PlayState, input::ViewportShown},
-    inspector::{InspectionSource, InspectorRegistry, Property, PropertyKind},
+    inspector::{InspectedValues, InspectionSource, InspectorRegistry, Property, PropertyKind},
     project::ProjectState,
     tools::{
         camera::FlyCamera, entity_ops::scene_member_by, scene::SceneRoot, selection::Selection,
     },
 };
 
-/// What the editor has open: the project, its documents, the active one, the selection, the viewport's size, and whether it is busy.
+/// What the editor has open: the project, its documents, the active one and its values, the selection, the viewport's size, and whether it is busy.
 #[derive(Deserialize, JsonSchema)]
 pub struct Status {}
 
@@ -83,11 +85,13 @@ pub struct FindEntities {
     pub limit: usize,
 }
 
-/// One entity's components as JSON, each with its property paths, whether an inspector adapter edits each, and which name an enum to write whole; lists longer than 16 are cut.
+/// One entity's components, or one value of the front document, as JSON, each with its property paths, whether an inspector adapter edits each, and which name an enum to write whole; lists longer than 16 are cut.
 #[derive(Deserialize, JsonSchema)]
 pub struct Inspect {
-    /// The entity, such as 42v3, as scene_tree shows it.
-    pub entity: String,
+    /// A value of the front document, by a name status lists under values; give it instead of entity and components.
+    pub target: Option<String>,
+    /// The entity, such as 42v3, as scene_tree shows it; needed unless target is given.
+    pub entity: Option<String>,
     /// The components to show, by short name such as Transform or by full type path; all of them when absent.
     pub components: Option<Vec<String>>,
 }
@@ -179,6 +183,7 @@ type StatusInputs = (
         ),
     >,
     BusyInputs,
+    Query<'static, 'static, &'static InspectedValues>,
 );
 
 fn status(
@@ -218,7 +223,7 @@ fn status_of_edit_target(
 }
 
 fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bool) -> String {
-    let (project, registry, active, viewport, documents, busy) = editor;
+    let (project, registry, active, viewport, documents, busy, values) = editor;
     let mut lines = vec![
         match &project.project {
             Some(open) => format!("project: {}", open.root.display()),
@@ -242,6 +247,7 @@ fn describe(editor: &SystemInputData<StatusInputs>, selection: &str, loading: bo
             .0
             .map_or_else(|| "none".to_owned(), |entity| entity.to_id_string())
     ));
+    lines.push(format!("values: {}", value_names(active, values)));
     lines.push(format!("selection: {selection}"));
     lines.push(match viewport.0 {
         Some(view) => format!("viewport: {}x{}", view.size.0, view.size.1),
@@ -771,7 +777,10 @@ fn inspect(
     registry: Res<InspectorRegistry>,
 ) {
     for (arguments, reply) in calls.read() {
-        let answer = resolve(&arguments.entity, &entities)
+        let (None, Some(entity)) = (&arguments.target, &arguments.entity) else {
+            continue;
+        };
+        let answer = resolve(entity, &entities)
             .and_then(|entity| inspection(&source, &registry, &names, entity, &arguments));
         match answer {
             Ok(text) => reply.ok(text),
@@ -856,35 +865,45 @@ pub(super) fn component_json(
     component.insert("name".into(), short.into());
     component.insert("type".into(), full.into());
     match source.read(entity, id) {
-        Some(value) => {
-            let types = source.types();
-            component.insert("value".into(), bounded(to_json(value, &types)));
-            let rows = registry.collect(value, &types);
-            let listed = listed_paths(value, &rows);
-            let paths: Vec<Value> = shown_paths(&listed)
-                .iter()
-                .map(|shown| {
-                    let listed = match shown {
-                        ShownPath::Listed(listed) => listed,
-                        ShownPath::Cut { list, total } => return cut_note(list, *total).into(),
-                    };
-                    let mut path = Map::new();
-                    path.insert("path".into(), listed.path.to_string().into());
-                    path.insert("adapter".into(), listed.adapter().is_some().into());
-                    if listed.names_enum {
-                        path.insert("enum".into(), true.into());
-                    }
-                    Value::Object(path)
-                })
-                .collect();
-            component.insert("paths".into(), paths.into());
-        }
-        None => {
-            component.insert("value".into(), Value::Null);
-            component.insert("unavailable".into(), true.into());
-        }
+        Some(value) => insert_value(&mut component, value, &source.types(), registry),
+        None => insert_unavailable(&mut component),
     }
     Value::Object(component)
+}
+
+/// Adds `value` and `paths` to an answer's JSON.
+pub(super) fn insert_value(
+    answer: &mut Map<String, Value>,
+    value: &dyn Reflect,
+    types: &TypeRegistry,
+    registry: &InspectorRegistry,
+) {
+    answer.insert("value".into(), bounded(to_json(value, types)));
+    let rows = registry.collect(value, types);
+    let listed = listed_paths(value, &rows);
+    let paths: Vec<Value> = shown_paths(&listed)
+        .iter()
+        .map(|shown| {
+            let listed = match shown {
+                ShownPath::Listed(listed) => listed,
+                ShownPath::Cut { list, total } => return cut_note(list, *total).into(),
+            };
+            let mut path = Map::new();
+            path.insert("path".into(), listed.path.to_string().into());
+            path.insert("adapter".into(), listed.adapter().is_some().into());
+            if listed.names_enum {
+                path.insert("enum".into(), true.into());
+            }
+            Value::Object(path)
+        })
+        .collect();
+    answer.insert("paths".into(), paths.into());
+}
+
+/// Marks an answer's JSON as having no value to show.
+pub(super) fn insert_unavailable(answer: &mut Map<String, Value>) {
+    answer.insert("value".into(), Value::Null);
+    answer.insert("unavailable".into(), true.into());
 }
 
 pub(super) struct ListedPath<'a> {
@@ -1075,8 +1094,6 @@ fn fitted(picture: RgbaImage, max_edge: u32) -> RgbaImage {
 
 #[cfg(test)]
 mod tests {
-    use concerto_reflect::TypeRegistry;
-
     use super::*;
 
     #[derive(Reflect, Default)]

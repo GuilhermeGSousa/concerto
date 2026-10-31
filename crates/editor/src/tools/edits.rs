@@ -18,7 +18,8 @@ use concerto_foundation::assets::{
 };
 use concerto_reflect::{
     PathSegment, PropertyPath, Reflect, ReflectDefault, ReflectJson, ReflectRef, ReflectedValue,
-    apply_value_with, json_to_value_with, with_property, with_property_mut,
+    TypeRegistry, ValueWarning, apply_value_with, json_to_value_with, with_property,
+    with_property_mut,
 };
 use serde_json::Value;
 
@@ -87,7 +88,7 @@ pub struct CommitProperty {
 
 impl Signal for CommitProperty {}
 
-/// What one `CommitProperty`, `CommitValue` or `SetValue` did to the row it addressed, or why it was refused.
+/// What one edit of a property did to the row it addressed, or why it was refused.
 #[derive(Event, Clone)]
 pub struct PropertyCommitted {
     pub address: PropertyAddress,
@@ -113,7 +114,8 @@ impl PropertyRefusal {
         }
     }
 
-    fn map(self, reword: impl FnOnce(String) -> String) -> Self {
+    /// The same refusal with its text reworded.
+    pub(crate) fn map(self, reword: impl FnOnce(String) -> String) -> Self {
         match self {
             Self::Undecodable(status) => Self::Undecodable(reword(status)),
             Self::NotEditable(status) => Self::NotEditable(reword(status)),
@@ -252,7 +254,20 @@ impl SetValue {
                 *field = (value as &dyn Any).type_id();
             })
             .map_err(|_| refused(EditError::NotFound))?;
-            self.decode(world, live, *field, &mut hook)?
+            let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
+                return Err(PropertyRefusal::Undecodable(
+                    EditError::UnregisteredComponent.to_string(),
+                ));
+            };
+            decode_property(
+                &self.value,
+                live,
+                self.component,
+                &self.path,
+                *field,
+                &registry.read(),
+                &mut hook,
+            )?
         };
         let mut warnings = Vec::new();
         (component.edit)(world, self.entity, &mut |value| {
@@ -260,68 +275,73 @@ impl SetValue {
                 warnings = apply_value_with(value, &stored, &mut hook);
             });
         });
-        if warnings.is_empty() {
-            Ok(())
-        } else {
-            Err(PropertyRefusal::Undecodable(
-                warnings
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join("; "),
-            ))
-        }
+        applied(&warnings)
     }
+}
 
-    fn decode(
-        &self,
-        world: &World,
-        live: &dyn Reflect,
-        field: TypeId,
-        hook: &mut LiveLeaves,
-    ) -> Result<ReflectedValue, PropertyRefusal> {
-        let Some(registry) = world.get_resource::<AppTypeRegistry>() else {
-            return Err(PropertyRefusal::Undecodable(
-                EditError::UnregisteredComponent.to_string(),
-            ));
-        };
-        if registry.get_type_data::<ReflectJson>(field).is_some()
-            || registry.get_type_data::<ReflectDefault>(field).is_some()
-        {
-            return json_to_value_with(&self.value, field, &registry.read(), hook)
-                .map_err(PropertyRefusal::Undecodable);
-        }
-        let segments = self.path.segments();
-        if segments
+/// `Ok` unless applying a decoded value left `warnings`.
+pub(crate) fn applied(warnings: &[ValueWarning]) -> Result<(), PropertyRefusal> {
+    if warnings.is_empty() {
+        Ok(())
+    } else {
+        Err(PropertyRefusal::Undecodable(
+            warnings
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; "),
+        ))
+    }
+}
+
+/// Decodes `json` for the property at `path` of `live`, a value of type `root`, where the property has type `field`.
+pub(crate) fn decode_property(
+    json: &Value,
+    live: &dyn Reflect,
+    root: TypeId,
+    path: &PropertyPath,
+    field: TypeId,
+    types: &TypeRegistry,
+    hook: &mut LiveLeaves,
+) -> Result<ReflectedValue, PropertyRefusal> {
+    if types.get_type_data::<ReflectJson>(field).is_some()
+        || types.get_type_data::<ReflectDefault>(field).is_some()
+    {
+        return json_to_value_with(json, field, types, hook).map_err(PropertyRefusal::Undecodable);
+    }
+    let segments = path.segments();
+    if segments
+        .iter()
+        .any(|segment| matches!(segment, PathSegment::Index(_)))
+    {
+        let name = types
+            .get(field)
+            .map_or("the type", |registration| registration.type_path());
+        return Err(PropertyRefusal::NotEditable(format!(
+            "{name} has no JSON form and no registered Default, so JSON cannot build it inside a list"
+        )));
+    }
+    let variants: Vec<Option<&'static str>> = (0..segments.len())
+        .map(|depth| {
+            let mut variant = None;
+            let _ = with_property(
+                live,
+                &PropertyPath::new(segments[..depth].iter().copied()),
+                &mut |owner| {
+                    if let ReflectRef::Enum(owner) = owner.reflect_ref() {
+                        variant = Some(owner.variant_name());
+                    }
+                },
+            );
+            variant
+        })
+        .collect();
+    let wrapped =
+        segments
             .iter()
-            .any(|segment| matches!(segment, PathSegment::Index(_)))
-        {
-            let name = registry
-                .read()
-                .get(field)
-                .map_or("the type", |registration| registration.type_path());
-            return Err(PropertyRefusal::NotEditable(format!(
-                "{name} has no JSON form and no registered Default, so JSON cannot build it inside a list"
-            )));
-        }
-        let variants: Vec<Option<&'static str>> = (0..segments.len())
-            .map(|depth| {
-                let mut variant = None;
-                let _ = with_property(
-                    live,
-                    &PropertyPath::new(segments[..depth].iter().copied()),
-                    &mut |owner| {
-                        if let ReflectRef::Enum(owner) = owner.reflect_ref() {
-                            variant = Some(owner.variant_name());
-                        }
-                    },
-                );
-                variant
-            })
-            .collect();
-        let wrapped = segments.iter().zip(&variants).rev().fold(
-            self.value.clone(),
-            |inner, (segment, variant)| {
+            .zip(&variants)
+            .rev()
+            .fold(json.clone(), |inner, (segment, variant)| {
                 let field = Value::Object([(segment.to_string(), inner)].into_iter().collect());
                 match variant {
                     Some(variant) => {
@@ -329,25 +349,22 @@ impl SetValue {
                     }
                     None => field,
                 }
-            },
-        );
-        let stored = json_to_value_with(&wrapped, self.component, &registry.read(), hook)
-            .map_err(PropertyRefusal::Undecodable)?;
-        segments
-            .iter()
-            .try_fold(stored, |stored, segment| {
-                let (ReflectedValue::Struct(fields) | ReflectedValue::Variant { fields, .. }) =
-                    stored
-                else {
-                    return None;
-                };
-                fields
-                    .into_iter()
-                    .find(|(name, _)| *segment == name.as_str())
-                    .map(|(_, value)| value)
-            })
-            .ok_or_else(|| PropertyRefusal::Undecodable(EditError::Rejected.to_string()))
-    }
+            });
+    let stored =
+        json_to_value_with(&wrapped, root, types, hook).map_err(PropertyRefusal::Undecodable)?;
+    segments
+        .iter()
+        .try_fold(stored, |stored, segment| {
+            let (ReflectedValue::Struct(fields) | ReflectedValue::Variant { fields, .. }) = stored
+            else {
+                return None;
+            };
+            fields
+                .into_iter()
+                .find(|(name, _)| *segment == name.as_str())
+                .map(|(_, value)| value)
+        })
+        .ok_or_else(|| PropertyRefusal::Undecodable(EditError::Rejected.to_string()))
 }
 
 /// Adds an addable component at its default value, or removes a registered one.

@@ -153,7 +153,8 @@ fn write_value(world: &mut World, commit: &PropertyCommit) -> Result<(), EditErr
     })
 }
 
-fn report_value_edit(
+/// Tells the value's document what an edit did, and reads the values again.
+pub(crate) fn report_value_edit(
     world: &mut World,
     address: &PropertyAddress,
     result: &Result<(), PropertyRefusal>,

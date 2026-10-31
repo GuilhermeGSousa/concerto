@@ -70,6 +70,7 @@ pub use target::{ComponentTarget, DocumentValue, PropertyAddress, PropertyTarget
 pub use values::{
     CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ValueCard, ValueSnapshot,
 };
+pub(crate) use values::{apply_value_commit, report_value_edit};
 use values::{
     build_value_widgets, commit_value, read_inspected_values, refresh_inspected_values,
     refresh_on_new_app, send_value_commits, sync_value_cards,
