@@ -17,7 +17,7 @@ use concerto_mcp::{
     AppMcpExt, McpRead, McpServe, McpTool, Needs, Reply, ToolCalls, ToolError, answer_unanswered,
     host::HostPicture, receive_read_only_calls,
 };
-use concerto_reflect::{PropertyPath, Reflect, ReflectRef, to_json, with_property};
+use concerto_reflect::{PathSegment, PropertyPath, Reflect, ReflectRef, to_json, with_property};
 use concerto_render::{
     gpu::Gpu, readback::read_texture, render_asset::render_texture::RenderTexture,
 };
@@ -860,9 +860,14 @@ pub(super) fn component_json(
             let types = source.types();
             component.insert("value".into(), bounded(to_json(value, &types)));
             let rows = registry.collect(value, &types);
-            let paths: Vec<Value> = listed_paths(value, &rows)
+            let listed = listed_paths(value, &rows);
+            let paths: Vec<Value> = shown_paths(&listed)
                 .iter()
-                .map(|listed| {
+                .map(|shown| {
+                    let listed = match shown {
+                        ShownPath::Listed(listed) => listed,
+                        ShownPath::Cut { list, total } => return cut_note(list, *total).into(),
+                    };
                     let mut path = Map::new();
                     path.insert("path".into(), listed.path.to_string().into());
                     path.insert("adapter".into(), listed.adapter().is_some().into());
@@ -898,7 +903,7 @@ impl<'a> ListedPath<'a> {
 
 pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec<ListedPath<'a>> {
     let mut listed: Vec<ListedPath> = Vec::new();
-    for row in rows {
+    for row in rows.iter().filter(|row| !row.heading) {
         let segments = row.path.segments();
         for depth in 0..segments.len() {
             let above = PropertyPath::new(segments[..depth].iter().copied());
@@ -917,6 +922,46 @@ pub(super) fn listed_paths<'a>(value: &dyn Reflect, rows: &'a [Property]) -> Vec
         });
     }
     listed
+}
+
+/// One entry of a component's `paths`: a listed path, or the note that stands for a long list's cut elements.
+pub(super) enum ShownPath<'a> {
+    Listed(&'a ListedPath<'a>),
+    Cut { list: PropertyPath, total: usize },
+}
+
+/// The paths `inspect` shows: each list's first [`LIST_LIMIT`] elements, then a note in place of the rest.
+pub(super) fn shown_paths<'a>(listed: &'a [ListedPath<'a>]) -> Vec<ShownPath<'a>> {
+    let mut shown: Vec<ShownPath> = Vec::new();
+    for entry in listed {
+        let segments = entry.path.segments();
+        let Some((depth, index)) =
+            segments
+                .iter()
+                .enumerate()
+                .find_map(|(depth, segment)| match segment {
+                    PathSegment::Index(index) if *index >= LIST_LIMIT => Some((depth, *index)),
+                    _ => None,
+                })
+        else {
+            shown.push(ShownPath::Listed(entry));
+            continue;
+        };
+        let list = PropertyPath::new(segments[..depth].iter().copied());
+        match shown.last_mut() {
+            Some(ShownPath::Cut { list: last, total }) if *last == list => *total = index + 1,
+            _ => shown.push(ShownPath::Cut {
+                list,
+                total: index + 1,
+            }),
+        }
+    }
+    shown
+}
+
+/// What a [`ShownPath::Cut`] says, in the form `value`'s cut list does.
+pub(super) fn cut_note(list: &PropertyPath, total: usize) -> String {
+    format!("… {} more of {list}, {total} in all", total - LIST_LIMIT)
 }
 
 fn names_enum(value: &dyn Reflect, path: &PropertyPath) -> bool {
@@ -1022,4 +1067,105 @@ fn fitted(picture: RgbaImage, max_edge: u32) -> RgbaImage {
         u32::try_from(edge).unwrap_or(max_edge).max(1)
     };
     image::imageops::resize(&picture, scaled(width), scaled(height), FilterType::Nearest)
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_reflect::TypeRegistry;
+
+    use super::*;
+
+    #[derive(Reflect, Default)]
+    struct Stride {
+        length: f32,
+    }
+
+    #[derive(Reflect, Default)]
+    struct Track {
+        strides: Vec<Stride>,
+        grid: Vec<Vec<f32>>,
+        gain: f32,
+    }
+
+    fn shown(track: &Track) -> Vec<String> {
+        let mut types = TypeRegistry::default();
+        types.register::<Track>();
+        let rows = InspectorRegistry::default().collect(track, &types);
+        shown_paths(&listed_paths(track, &rows))
+            .iter()
+            .map(|shown| match shown {
+                ShownPath::Listed(listed) => listed.path.to_string(),
+                ShownPath::Cut { list, total } => cut_note(list, *total),
+            })
+            .collect()
+    }
+
+    fn strides(count: usize) -> Vec<Stride> {
+        (0..count).map(|_| Stride::default()).collect()
+    }
+
+    #[test]
+    fn a_struct_elements_heading_is_not_a_path_but_its_fields_are() {
+        let track = Track {
+            strides: strides(2),
+            ..Track::default()
+        };
+
+        assert_eq!(
+            shown(&track),
+            [
+                "strides",
+                "strides.0.length",
+                "strides.1.length",
+                "grid",
+                "gain"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_long_list_shows_its_first_sixteen_elements_and_says_how_many_were_cut() {
+        let track = Track {
+            strides: strides(20),
+            ..Track::default()
+        };
+
+        let mut expected = vec!["strides".to_owned()];
+        expected.extend((0..16).map(|index| format!("strides.{index}.length")));
+        expected.push("… 4 more of strides, 20 in all".to_owned());
+        expected.extend(["grid".to_owned(), "gain".to_owned()]);
+        assert_eq!(shown(&track), expected);
+    }
+
+    #[test]
+    fn a_list_of_exactly_sixteen_elements_is_not_cut() {
+        let track = Track {
+            strides: strides(16),
+            ..Track::default()
+        };
+
+        assert!(!shown(&track).iter().any(|path| path.contains("more of")));
+    }
+
+    #[test]
+    fn each_list_is_cut_on_its_own_and_a_cut_element_hides_its_inner_lists() {
+        let mut grid = vec![Vec::new(); 18];
+        grid[0] = vec![0.0; 17];
+        grid[17] = vec![0.0; 17];
+        let track = Track {
+            grid,
+            ..Track::default()
+        };
+
+        let paths = shown(&track);
+        assert_eq!(paths[0..2], ["strides", "grid"]);
+        assert_eq!(paths[2], "grid.0");
+        assert_eq!(paths[18], "grid.0.15");
+        assert_eq!(paths[19], "… 1 more of grid.0, 17 in all");
+        assert_eq!(paths[20], "grid.1");
+        assert_eq!(paths[34], "grid.15");
+        assert_eq!(paths[35], "… 2 more of grid, 18 in all");
+        assert_eq!(paths[36], "gain");
+        assert_eq!(paths.len(), 37);
+    }
 }

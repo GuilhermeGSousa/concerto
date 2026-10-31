@@ -56,6 +56,7 @@ use numeric::{
 use variants::{refresh_option_fields, refresh_variant_labels};
 
 use crate::tools::edits::EditComponent;
+pub(crate) use list::{ListEdit, ListEditor};
 use registry::send_property_commits;
 pub use registry::{EditableApp, ErasedEditor, InspectorRegistry};
 pub(crate) use registry::{InspectionSource, current_editor};

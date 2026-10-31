@@ -1468,15 +1468,12 @@ fn inspect_reads_components_as_json_with_their_paths_and_adapters() {
     assert_eq!(values[15], 15.0);
     assert_eq!(values[16], "… 84 more, 100 in all");
     assert_eq!(samples["value"]["gain"], 0.5);
-    let sample_paths = samples["paths"].as_array().unwrap();
-    assert_eq!(
-        sample_paths[0],
-        json!({ "path": "values", "adapter": false })
-    );
-    assert_eq!(
-        sample_paths.last().unwrap(),
-        &json!({ "path": "gain", "adapter": true })
-    );
+    let mut sample_paths = vec![json!({ "path": "values", "adapter": false })];
+    sample_paths
+        .extend((0..16).map(|index| json!({ "path": format!("values.{index}"), "adapter": true })));
+    sample_paths.push(json!("… 84 more of values, 100 in all"));
+    sample_paths.push(json!({ "path": "gain", "adapter": true }));
+    assert_eq!(samples["paths"], Value::Array(sample_paths));
     let unreadable = inspected(&inspections[3], "Unreadable");
     assert_eq!(unreadable["value"], Value::Null);
     assert_eq!(unreadable["unavailable"], true);
@@ -2041,6 +2038,14 @@ fn tools_treat_an_entity_outside_the_open_scene_as_unknown_but_not_while_playing
             (
                 "remove_component",
                 json!({ "entity": camera, "component": "Camera" }),
+            ),
+            (
+                "list_push",
+                json!({ "entity": camera, "component": "Camera", "path": "fovy" }),
+            ),
+            (
+                "list_remove",
+                json!({ "entity": camera, "component": "Camera", "path": "fovy", "index": 0 }),
             ),
         ] {
             refused.push((tool, error_with(&client, tool, arguments).await));
@@ -3903,6 +3908,286 @@ fn set_property_answers_not_editable_for_an_adapter_with_no_value_edit() {
     assert_eq!(
         refused["message"],
         "Sealed.seal's inspector adapter offers no value edit, so set_property cannot write it."
+    );
+}
+
+#[derive(Reflect, Default)]
+enum Mood {
+    #[default]
+    Calm,
+    Tense {
+        level: f32,
+    },
+}
+
+#[derive(Component, Reflect, Default)]
+#[reflect(Component, Default)]
+struct Roster {
+    strides: Vec<Stride>,
+    moods: Vec<Mood>,
+    locked: Vec<u32>,
+    gain: f32,
+}
+
+#[derive(Default)]
+struct LockedEditor;
+
+impl PropertyEditor<Vec<u32>> for LockedEditor {
+    type Snapshot = usize;
+    type Edit = u32;
+
+    fn snapshot(&self, value: &Vec<u32>) -> usize {
+        value.len()
+    }
+
+    fn build(&self, _: &mut EntityCommandQueue, _: &usize, _: &UITheme) {}
+
+    fn apply(&self, value: &mut Vec<u32>, edit: &u32, _: &EditContext) -> Result<(), EditError> {
+        value.push(*edit);
+        Ok(())
+    }
+}
+
+fn roster_game(app: &mut App) {
+    game(app);
+    app.register_type::<Roster>();
+}
+
+struct ListEdits {
+    pushed_stride: String,
+    roster: Value,
+    written: Value,
+    pushed_mood: String,
+    moods: Value,
+    pushed_sample: String,
+    removed_sample: String,
+    past_the_cut: Value,
+    samples: Value,
+    refused: Vec<Value>,
+}
+
+#[test]
+fn list_elements_are_listed_written_pushed_and_removed() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        roster_game,
+        |app| {
+            app.register_property_editor::<Vec<u32>, LockedEditor>();
+        },
+        |client| async move {
+            open(&client).await;
+            let ids: Value = serde_json::from_str(&ok(&client, "ids").await).unwrap();
+            let (rig, sword, root) = (
+                scene_id(&ids, "Rig"),
+                scene_id(&ids, "Sword"),
+                scene_id(&ids, "root"),
+            );
+            until(&client, "scene_tree", |tree| {
+                components(tree, &sword).contains(&"Samples")
+            })
+            .await;
+            ok_with(
+                &client,
+                "add_component",
+                json!({ "entity": rig, "component": "Roster" }),
+            )
+            .await;
+            let pushed_stride = ok_with(
+                &client,
+                "list_push",
+                json!({ "entity": rig, "component": "roster", "path": "strides" }),
+            )
+            .await;
+            let set = |entity: &str, component: &str, path: &str, value: Value| {
+                let client = &client;
+                let arguments = json!({ "entity": entity, "component": component, "path": path, "value": value });
+                async move {
+                    serde_json::from_str::<Value>(&ok_with(client, "set_property", arguments).await)
+                        .unwrap()
+                }
+            };
+            let inspect = |entity: &str, component: &str| {
+                let client = &client;
+                let arguments = json!({ "entity": entity, "components": [component] });
+                async move {
+                    serde_json::from_str::<Value>(&ok_with(client, "inspect", arguments).await)
+                        .unwrap()
+                }
+            };
+            let written = set(&rig, "Roster", "strides.0.length", json!(2.5)).await;
+            let roster = inspect(&rig, "Roster").await;
+            let pushed_mood = ok_with(
+                &client,
+                "list_push",
+                json!({ "entity": rig, "component": "Roster", "path": "moods" }),
+            )
+            .await;
+            let moods = inspect(&rig, "Roster").await;
+            set(&sword, "Samples", "values.3", json!(9.5)).await;
+            let past_the_cut = set(&sword, "Samples", "values.50", json!(-1.0)).await;
+            let pushed_sample = ok_with(
+                &client,
+                "list_push",
+                json!({ "entity": sword, "component": "Samples", "path": "values" }),
+            )
+            .await;
+            let removed_sample = ok_with(
+                &client,
+                "list_remove",
+                json!({ "entity": sword, "component": "Samples", "path": "values", "index": 0 }),
+            )
+            .await;
+            let samples = inspect(&sword, "Samples").await;
+            let mut refused = Vec::new();
+            for (tool, arguments) in [
+                (
+                    "set_property",
+                    json!({ "entity": rig, "component": "Roster", "path": "strides.0", "value": { "length": 1.0 } }),
+                ),
+                (
+                    "set_property",
+                    json!({ "entity": rig, "component": "Roster", "path": "moods.0", "value": "Calm" }),
+                ),
+                (
+                    "set_property",
+                    json!({ "entity": sword, "component": "Samples", "path": "values.100", "value": 1.0 }),
+                ),
+                (
+                    "list_push",
+                    json!({ "entity": root, "component": "Transform", "path": "translation" }),
+                ),
+                (
+                    "list_remove",
+                    json!({ "entity": root, "component": "Transform", "path": "translation", "index": 0 }),
+                ),
+                (
+                    "list_push",
+                    json!({ "entity": rig, "component": "Roster", "path": "gain" }),
+                ),
+                (
+                    "list_push",
+                    json!({ "entity": rig, "component": "Roster", "path": "locked" }),
+                ),
+                (
+                    "list_remove",
+                    json!({ "entity": rig, "component": "Roster", "path": "locked", "index": 0 }),
+                ),
+                (
+                    "list_remove",
+                    json!({ "entity": rig, "component": "Roster", "path": "strides", "index": 1 }),
+                ),
+                (
+                    "list_push",
+                    json!({ "entity": rig, "component": "Roster", "path": "crew" }),
+                ),
+            ] {
+                refused.push(error_with(&client, tool, arguments).await);
+            }
+            client.cancel().await.unwrap();
+            ListEdits {
+                pushed_stride,
+                roster,
+                written,
+                pushed_mood,
+                moods,
+                pushed_sample,
+                removed_sample,
+                past_the_cut,
+                samples,
+                refused,
+            }
+        },
+    ) else {
+        return;
+    };
+
+    let edits = served.result;
+    assert_eq!(
+        edits.pushed_stride,
+        "Added an element to Roster.strides; its length is 1."
+    );
+    assert_eq!(edits.written["value"]["strides"][0]["length"], 2.5);
+    assert_eq!(
+        inspected(&edits.roster, "Roster")["paths"],
+        json!([
+            { "path": "strides", "adapter": false },
+            { "path": "strides.0.length", "adapter": true },
+            { "path": "strides.0.height", "adapter": true },
+            { "path": "moods", "adapter": false },
+            { "path": "locked", "adapter": true },
+            { "path": "gain", "adapter": true },
+        ])
+    );
+    assert_eq!(
+        edits.pushed_mood,
+        "Added an element to Roster.moods; its length is 1."
+    );
+    assert_eq!(
+        inspected(&edits.moods, "Roster")["paths"][4],
+        json!({ "path": "moods.0", "adapter": false, "enum": true })
+    );
+    assert_eq!(edits.past_the_cut["name"], "Samples");
+    assert_eq!(
+        edits.pushed_sample,
+        "Added an element to Samples.values; its length is 101."
+    );
+    assert_eq!(
+        edits.removed_sample,
+        "Removed element 0 of Samples.values; its length is 100."
+    );
+    let values = inspected(&edits.samples, "Samples")["value"]["values"]
+        .as_array()
+        .unwrap();
+    assert_eq!(values[0], 1.0);
+    assert_eq!(values[2], 9.5);
+
+    let refused = &edits.refused;
+    let codes: Vec<&str> = refused
+        .iter()
+        .map(|error| error["code"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        codes,
+        [
+            "unknown_path",
+            "not_editable",
+            "unknown_path",
+            "refused",
+            "refused",
+            "not_a_list",
+            "not_a_list",
+            "not_a_list",
+            "index_out_of_range",
+            "unknown_path",
+        ]
+    );
+    assert_eq!(
+        refused[1]["message"],
+        "Set Roster.moods.0 failed: mcp::Mood has no JSON form and no registered Default, so JSON cannot build it inside a list"
+    );
+    let cut = refused[2]["message"].as_str().unwrap();
+    assert!(
+        cut.contains("values.15, … 84 more of values, 100 in all, gain"),
+        "{cut}"
+    );
+    assert_eq!(
+        refused[3]["message"],
+        "Add to Transform.translation failed: the scene root cannot be changed"
+    );
+    assert_eq!(
+        refused[4]["message"],
+        "Remove from Transform.translation failed: the scene root cannot be changed"
+    );
+    assert_eq!(
+        refused[5]["message"],
+        "Roster.gain is not a list that list_push and list_remove can change."
+    );
+    assert_eq!(
+        refused[8]["message"],
+        "Roster.strides has length 1, so it has no element 1."
     );
 }
 
