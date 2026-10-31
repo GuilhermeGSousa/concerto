@@ -37,6 +37,7 @@ fn mesh_entry(path: &str) -> AssetEntry {
         id: AssetId::new(),
         address: format!("content/{path}.gasset"),
         kind: Mesh::name().into(),
+        kind_version: None,
         provenance: None,
     }
 }

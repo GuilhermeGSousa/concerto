@@ -530,6 +530,7 @@ mod tests {
             id,
             address: "content/hero/scene.gasset".into(),
             kind: "Scene".into(),
+            kind_version: None,
             provenance: None,
         }
     }

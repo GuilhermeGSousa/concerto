@@ -2,16 +2,14 @@
 use std::path::Path;
 
 use concerto_asset_build::write_registry_into;
-use concerto_asset_format::{
-    parse_registry, write_content_asset, AssetId, ContentAssetHeader, CONTENT_FORMAT_VERSION,
-};
+use concerto_asset_format::{parse_registry, write_content_asset, AssetId, ContentAssetHeader};
 
 fn write_asset(path: &Path, id: AssetId, kind: &str) {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: vec![],
         kind: kind.into(),
+        kind_version: 1,
         provenance: None,
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();

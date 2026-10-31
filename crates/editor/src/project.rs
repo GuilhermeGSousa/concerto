@@ -222,7 +222,7 @@ fn process_commands(
 mod tests {
     use super::*;
     use concerto_foundation::assets::content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset,
+        ContentAssetHeader, ImportProvenance, write_content_asset,
     };
     use concerto_foundation::assets::{Asset, registry::AssetEntry};
     #[test]
@@ -253,10 +253,10 @@ mod tests {
             ("authored", "Scene", false),
         ] {
             let header = ContentAssetHeader {
-                format_version: CONTENT_FORMAT_VERSION,
                 asset_id: if name == "scene" { id } else { AssetId::new() },
                 references: vec![],
                 kind: kind.into(),
+                kind_version: 1,
                 provenance: imported.then(|| ImportProvenance {
                     source: "assets/model.glb".into(),
                     sub_asset: name.into(),
@@ -385,6 +385,7 @@ mod tests {
                 id: AssetId::new(),
                 address: "content/a.gasset".into(),
                 kind: Scene::name().into(),
+                kind_version: None,
                 provenance: None,
             });
         world.get_resource_mut::<ProjectState>().unwrap().status = "Created a.gasset".into();

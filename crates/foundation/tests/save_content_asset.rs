@@ -73,6 +73,7 @@ fn saving_into_a_registry_returns_the_id_and_records_it() {
         id: existing,
         address: "content/other.gasset".into(),
         kind: "Widget".into(),
+        kind_version: None,
         provenance: None,
     });
 

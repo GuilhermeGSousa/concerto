@@ -733,6 +733,7 @@ mod tests {
             id: AssetId::new(),
             address: "notes.gasset".into(),
             kind: "Notes".into(),
+            kind_version: None,
             provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: "notes".into(),

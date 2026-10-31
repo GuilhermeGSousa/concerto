@@ -1,5 +1,5 @@
 //! Framing for game-ready content assets: `magic | u32 header_len |
-//! bincode(ContentAssetHeader) | payload (verbatim)`. The header is read
+//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim)`. The header is read
 //! without touching the payload, so a future asset registry can index a
 //! whole content tree by scanning headers alone.
 use std::path::Path;
@@ -24,10 +24,10 @@ pub fn save_content_asset_into<A: Asset>(
     let path = project_root.join(address);
     let asset_id = mint_or_reuse_id(&path)?;
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id,
         references: value.referenced_sub_assets(),
         kind: A::name().to_string(),
+        kind_version: 1,
         provenance: None,
     };
     let kind = header.kind.clone();
@@ -45,6 +45,7 @@ pub fn save_content_asset_into<A: Asset>(
         id: asset_id,
         address: address.to_owned(),
         kind,
+        kind_version: Some(1),
         provenance: None,
     });
     Ok(asset_id)

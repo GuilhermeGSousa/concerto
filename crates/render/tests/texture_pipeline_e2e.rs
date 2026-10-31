@@ -1,9 +1,7 @@
 //! End-to-end proof that an imported texture round-trips through the
 //! runtime byte-loading path — the same envelope `AssetServer` reads.
 use concerto_asset_import::{ImportContext, Importer};
-use concerto_foundation::assets::content::{
-    write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION,
-};
+use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
 use concerto_foundation::assets::utils::load_content_asset_bytes;
 use concerto_foundation::assets::{Asset, ContentAssetRoot};
 use concerto_render::assets::texture::{Texture, TextureFormat, TextureKind};
@@ -34,10 +32,10 @@ fn an_imported_texture_is_reachable_at_its_conventional_address() {
 
     let address = "content/swatch/main.gasset";
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: sub_asset.asset_id,
         references: sub_asset.references.clone(),
         kind: sub_asset.type_name.to_string(),
+        kind_version: 1,
         provenance: None,
     };
     std::fs::create_dir_all(temp_dir.join("content/swatch")).unwrap();

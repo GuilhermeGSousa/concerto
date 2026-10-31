@@ -71,13 +71,11 @@ impl Default for AssetId {
 /// Leading bytes of every content asset file.
 pub const CONTENT_ASSET_MAGIC: [u8; 4] = *b"GRDY";
 
-/// Bumped whenever `ContentAssetHeader`'s on-disk shape changes
-/// incompatibly. `read_content_asset` rejects a mismatch outright.
-pub const CONTENT_FORMAT_VERSION: u32 = 4;
+/// The version of the framing and `ContentAssetHeader`, written before the header; it changes only when they change, never for a payload.
+pub const CONTENT_FORMAT_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContentAssetHeader {
-    pub format_version: u32,
     /// Identity: a UUID minted when the asset is first written and carried
     /// here from then on, so it survives the file being renamed or moved.
     /// Deliberately not derived from the address — only the asset registry
@@ -87,9 +85,42 @@ pub struct ContentAssetHeader {
     pub references: Vec<AssetId>,
     /// Authoritative type tag; must equal the loading type's `Asset::name()`.
     pub kind: String,
+    /// The `Asset::FORMAT_VERSION` of `kind` that the payload was written with.
+    pub kind_version: u32,
     /// Where this content asset came from, if `import` produced it from a
     /// DCC source rather than an editor saving it directly.
     pub provenance: Option<ImportProvenance>,
+}
+
+#[derive(Deserialize)]
+struct HeaderV4 {
+    asset_id: AssetId,
+    references: Vec<AssetId>,
+    kind: String,
+    provenance: Option<ImportProvenance>,
+}
+
+fn decode_header(bytes: &[u8]) -> anyhow::Result<ContentAssetHeader> {
+    let mut rest = bytes;
+    let version: u32 = bincode::deserialize_from(&mut rest)
+        .context("failed to deserialize content asset header")?;
+    match version {
+        5 => bincode::deserialize(rest).context("failed to deserialize content asset header"),
+        4 => {
+            let header: HeaderV4 = bincode::deserialize(rest)
+                .context("failed to deserialize version 4 content asset header")?;
+            Ok(ContentAssetHeader {
+                asset_id: header.asset_id,
+                references: header.references,
+                kind: header.kind,
+                kind_version: 1,
+                provenance: header.provenance,
+            })
+        }
+        other => bail!(
+            "unsupported content asset format version {other} (this build reads versions 4 and 5)"
+        ),
+    }
 }
 
 /// The offline source (and sub-asset within it) that `import` produced a
@@ -105,8 +136,8 @@ pub struct ImportProvenance {
 }
 
 pub fn write_content_asset(header: &ContentAssetHeader, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let header_bytes =
-        bincode::serialize(header).context("failed to serialize content asset header")?;
+    let header_bytes = bincode::serialize(&(CONTENT_FORMAT_VERSION, header))
+        .context("failed to serialize content asset header")?;
 
     let header_len =
         u32::try_from(header_bytes.len()).context("content asset header exceeds 4 GiB")?;
@@ -139,14 +170,7 @@ pub fn read_content_asset(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, &
         );
     }
 
-    let header: ContentAssetHeader = bincode::deserialize(&bytes[8..header_end])
-        .context("failed to deserialize content asset header")?;
-    if header.format_version != CONTENT_FORMAT_VERSION {
-        bail!(
-            "unsupported content asset format version {} (this build expects {CONTENT_FORMAT_VERSION})",
-            header.format_version
-        );
-    }
+    let header = decode_header(&bytes[8..header_end])?;
     Ok((header, &bytes[header_end..]))
 }
 
@@ -185,16 +209,8 @@ pub fn read_content_asset_header(path: &Path) -> anyhow::Result<ContentAssetHead
         )
     })?;
 
-    let header: ContentAssetHeader = bincode::deserialize(&header_bytes)
-        .with_context(|| format!("failed to deserialize header of '{}'", path.display()))?;
-    if header.format_version != CONTENT_FORMAT_VERSION {
-        bail!(
-            "unsupported content asset format version {} in '{}' (this build expects {CONTENT_FORMAT_VERSION})",
-            header.format_version,
-            path.display()
-        );
-    }
-    Ok(header)
+    decode_header(&header_bytes)
+        .with_context(|| format!("failed to read the header of '{}'", path.display()))
 }
 
 /// One content asset: what a scan reads from its header, or a registry line holds.
@@ -204,6 +220,8 @@ pub struct ScannedEntry {
     /// The path relative to the scan's base, `/`-separated (`"content/hero/body.gasset"`).
     pub address: String,
     pub kind: String,
+    /// The header's `kind_version`; `None` for a registry line.
+    pub kind_version: Option<u32>,
     /// Where an imported asset came from; `None` for an authored asset and for a registry line.
     pub provenance: Option<ImportProvenance>,
 }
@@ -295,6 +313,7 @@ pub fn scan_content(base: &Path, dir: &Path, extension: &str) -> anyhow::Result<
             id: header.asset_id,
             address,
             kind: header.kind,
+            kind_version: Some(header.kind_version),
             provenance: header.provenance,
         });
     }
@@ -363,6 +382,7 @@ pub fn parse_registry(text: &str) -> anyhow::Result<Vec<ScannedEntry>> {
             id,
             address: record.address,
             kind: record.kind,
+            kind_version: None,
             provenance: None,
         });
     }

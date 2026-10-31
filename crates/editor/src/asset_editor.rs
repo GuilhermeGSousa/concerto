@@ -471,6 +471,7 @@ mod tests {
             id: AssetId::from_path(path),
             address: path.into(),
             kind: "TestAsset".into(),
+            kind_version: None,
             provenance: Some(concerto_foundation::assets::content::ImportProvenance {
                 source: path.into(),
                 sub_asset: String::new(),

@@ -30,10 +30,7 @@ use concerto_editor::{
 use concerto_foundation::assets::{
     Asset, AssetId, CreatableAsset,
     asset_server::AssetServer,
-    content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, read_content_asset,
-        write_content_asset,
-    },
+    content::{ContentAssetHeader, ImportProvenance, read_content_asset, write_content_asset},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_foundation::{
@@ -301,10 +298,10 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             sub_asset: name.into(),
         };
         let header = ContentAssetHeader {
-            format_version: CONTENT_FORMAT_VERSION,
             asset_id: id,
             references: vec![],
             kind: Dialogue::name().into(),
+            kind_version: 1,
             provenance: Some(provenance.clone()),
         };
         let address = format!("{name}.gasset");
@@ -319,6 +316,7 @@ fn smoke_test_at(root: &std::path::Path) -> Result<()> {
             id,
             address,
             kind: header.kind,
+            kind_version: None,
             provenance: Some(provenance),
         };
         world

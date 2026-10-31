@@ -203,22 +203,22 @@ resampling setting.
 ```
 magic "GRDY" (4 bytes)
 u32   header length, little-endian
-      bincode(ContentAssetHeader)
+      bincode(u32 format version, ContentAssetHeader)
       payload — the asset's own bincode encoding, verbatim
 ```
 
 A skeleton asset (`skeleton/N`) holds bone names, parent indices (each parent before its child), inverse bind poses, the rest pose as `JointPose` and the bone ids. `JointPose` lives in `concerto-mesh`; `concerto-animation` re-exports it. A skin whose joints are not ordered parents-first fails the import with an error naming the skin and joint; a skin with a joint outside every scene root is skipped with a warning. Neither emits a skeleton.
 
-Format version 4 rejects every `.gasset` written at version 3. After upgrading, re-import every source through the editor over a scratch copy of the project and commit the result. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
+The format version is `CONTENT_FORMAT_VERSION`, currently `5`; it changes only when the framing or the header changes, never for a payload. Version 5 adds `kind_version` to the header. A version-4 file reads as kind version 1 and needs no re-import; it moves to version 5 the next time the editor saves it or an import rewrites it. Any other version is rejected. glTF clips have no stored frame rate, so the clip editor shows a detected one; BVH clips store the rate from `Frame Time`.
 
 `ContentAssetHeader` (see `concerto_foundation::assets::content`):
 
 | Field            | Meaning                                                        |
 |------------------|---------------------------------------------------------------|
-| `format_version` | `CONTENT_FORMAT_VERSION` (currently `4`); a mismatch is rejected on read; there is no decoder for older files |
 | `asset_id`       | Persistent UUID, minted once and reused from source metadata; legacy UUIDs are preserved |
 | `references`     | the `AssetId`s this asset points at, so a tree can be integrity-checked by scanning headers alone |
 | `kind`           | the asset type tag (`Mesh`, `StandardMaterial`, `Scene`, …); must match the loading type |
+| `kind_version`   | the `Asset::FORMAT_VERSION` of `kind` that the payload was written with; `1` for a version-4 file |
 | `provenance`     | `Some(ImportProvenance { source, sub_asset })` for import output, `None` for editor-authored assets |
 
 The header can be read without touching the payload, which is what lets a

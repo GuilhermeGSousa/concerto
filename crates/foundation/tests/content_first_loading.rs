@@ -1,7 +1,5 @@
 //! load_content_asset_bytes reads a content asset at <root>/<address>.
-use concerto_foundation::assets::content::{
-    write_content_asset, ContentAssetHeader, CONTENT_FORMAT_VERSION,
-};
+use concerto_foundation::assets::content::{write_content_asset, ContentAssetHeader};
 use concerto_foundation::assets::utils::load_content_asset_bytes;
 use concerto_foundation::assets::{AssetId, ContentAssetRoot};
 
@@ -18,10 +16,10 @@ fn reads_a_content_asset_at_its_literal_address() {
     let id = AssetId::from_path(address);
 
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: Vec::new(),
         kind: "Mesh".to_string(),
+        kind_version: 1,
         provenance: None,
     };
     std::fs::create_dir_all(dir.join("content/x")).unwrap();
@@ -47,10 +45,10 @@ fn a_kind_mismatch_is_an_error() {
     let dir = temp_root("kind");
     let address = "content/x/thing.gasset";
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: AssetId::from_path(address),
         references: Vec::new(),
         kind: "Mesh".to_string(),
+        kind_version: 1,
         provenance: None,
     };
     std::fs::create_dir_all(dir.join("content/x")).unwrap();

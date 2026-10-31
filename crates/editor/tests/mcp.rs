@@ -44,9 +44,7 @@ use concerto_foundation::{
     assets::{
         Asset, AssetId, LoadableAsset,
         asset_server::{AssetLoadContext, AssetServer},
-        content::{
-            CONTENT_FORMAT_VERSION, ContentAssetHeader, ImportProvenance, write_content_asset,
-        },
+        content::{ContentAssetHeader, ImportProvenance, write_content_asset},
         handle::AssetHandle,
     },
     transform::{GlobalTransform, Transform},
@@ -579,10 +577,10 @@ fn note_prompt(closing: Option<Res<Closing>>, guard: Res<UnsavedGuard>, log: Res
 
 fn write_asset(root: &Path, address: &str, id: AssetId, kind: &str, payload: &[u8]) {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: vec![],
         kind: kind.into(),
+        kind_version: 1,
         provenance: Some(ImportProvenance {
             source: "fixture.glb".into(),
             sub_asset: address.into(),
