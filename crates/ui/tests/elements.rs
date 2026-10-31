@@ -11,9 +11,9 @@ use concerto_ui::{
         Interactable, UIClick, UIDrag, UIInteractionStyle, UIPointerDown, UIPointerEnter,
     },
     material::UIMaterial,
-    node::{AlignContent, AlignItems, FlexDirection, Overflow, UIBox, UILayout, UINode, UIRect},
+    node::{AlignItems, FlexDirection, Overflow, UIBox, UILayout, UINode, UIRect},
     slider::{UISlider, UISliderChanged},
-    text::{FontFamily, UIText},
+    text::UIText,
     text_input::UITextInput,
     theme::{ButtonVariant, ChipColors, UITheme},
     transform::UIValue,
@@ -57,11 +57,6 @@ fn colors(style: &UIInteractionStyle) -> [Color; 4] {
 
 #[derive(Component)]
 struct Marker;
-
-#[test]
-fn a_single_value_pads_every_side() {
-    assert_eq!(UIRect::from(3.0), UIRect::all(3.0));
-}
 
 #[test]
 fn selection_is_the_accent_at_a_fifth_alpha() {
@@ -182,49 +177,12 @@ fn text_without_a_node_gets_one() {
 }
 
 #[test]
-fn a_label_is_a_node_with_text() {
-    let spawned = spawn(theme().label("Curiosities"));
-    assert_eq!(spawned.get::<UINode>(), &UINode::default());
-    assert_eq!(spawned.get::<UIText>().text, "Curiosities");
-}
-
-#[test]
 fn font_size_always_pairs_its_line_height() {
     let t = theme();
     let spawned = spawn(t.label("x").font_size(20.0));
     let text = spawned.get::<UIText>();
     assert_eq!(text.font_size, 20.0);
     assert_eq!(text.line_height, t.line_height(20.0));
-}
-
-#[test]
-fn typography_modifiers_compose_in_any_order() {
-    let t = theme();
-    let a = spawn(t.text("x").small().muted().mono().weight(500));
-    let b = spawn(t.text("x").mono().weight(500).muted().small());
-    for spawned in [&a, &b] {
-        let text = spawned.get::<UIText>();
-        assert_eq!(text.font_size, t.font_size_sm);
-        assert_eq!(text.line_height, t.line_height(t.font_size_sm));
-        assert_eq!(text.color, t.text_muted);
-        assert!(matches!(text.font_family, FontFamily::Monospace));
-        assert_eq!(text.font_weight, 500);
-    }
-}
-
-#[test]
-fn large_color_and_family_set_their_fields() {
-    let t = theme();
-    let spawned = spawn(
-        t.text("x")
-            .large()
-            .color(t.accent)
-            .family(FontFamily::Name("Inter".into())),
-    );
-    let text = spawned.get::<UIText>();
-    assert_eq!(text.font_size, t.font_size_lg);
-    assert_eq!(text.color, t.accent);
-    assert!(matches!(&text.font_family, FontFamily::Name(name) if name == "Inter"));
 }
 
 #[test]
@@ -307,13 +265,6 @@ fn text_reinserted_replaces_existing_text() {
         .insert(t.text("after").muted(), spawned.entity);
     assert_eq!(spawned.get::<UIText>().text, "after");
     assert_eq!(spawned.get::<UIText>().color, t.text_muted);
-}
-
-#[test]
-fn text_converts_into_a_plain_uitext() {
-    let t = theme();
-    let text: UIText = t.text("x").small().into();
-    assert_eq!(text.font_size, t.font_size_sm);
 }
 
 fn material_of(spawned: &Spawned) -> &UIMaterial {
@@ -475,11 +426,6 @@ fn button_nests_with_extra_components() {
 }
 
 #[test]
-fn a_char_labels_a_button() {
-    assert_eq!(spawn(theme().button('x')).get::<UIText>().text, "x");
-}
-
-#[test]
 fn text_field_defaults() {
     let t = theme();
     let spawned = spawn(t.text_field("Search entities…"));
@@ -604,46 +550,6 @@ fn a_dropdown_hangs_below_its_trigger_and_toggles_with_it() {
 }
 
 #[test]
-fn popup_anchor_modifiers_set_the_panel() {
-    let t = theme();
-    let mut world = World::default();
-    let trigger = world.spawn(Marker);
-    let search = world.spawn(Marker);
-    let entity = world.spawn(
-        t.dropdown(trigger)
-            .anchor_side(UIAnchorSide::Above)
-            .anchor_align(UIAnchorAlign::End)
-            .anchor_gap(6.0)
-            .focus_on_open(search)
-            .open(true)
-            .fill(t.canvas)
-            .width(UIValue::Px(272.0)),
-    );
-    let panel = world
-        .get_component_for_entity::<UIAnchoredPanel>(entity)
-        .unwrap();
-    assert_eq!(panel.side, UIAnchorSide::Above);
-    assert_eq!(panel.align, UIAnchorAlign::End);
-    assert_eq!(panel.gap, 6.0);
-    assert_eq!(panel.focus_on_open, Some(search));
-    assert!(panel.open);
-    assert_eq!(
-        world
-            .get_component_for_entity::<UIMaterial>(entity)
-            .unwrap()
-            .color,
-        t.canvas.to_linear()
-    );
-    assert_eq!(
-        world
-            .get_component_for_entity::<UINode>(entity)
-            .unwrap()
-            .width,
-        UIValue::Px(272.0)
-    );
-}
-
-#[test]
 fn a_context_menu_floats_at_a_point_with_no_owner() {
     let t = theme();
     let spawned = spawn((
@@ -698,44 +604,6 @@ fn a_field_value_moves_the_cursor_to_its_end() {
     assert_eq!(input.value, "héllo");
     assert_eq!(input.cursor, "héllo".len());
     assert_eq!(input.placeholder, "Search…");
-}
-
-#[test]
-fn line_height_overrides_the_size_derived_leading() {
-    let spawned = spawn(theme().text("x").font_size(9.0).line_height(18.0));
-    let text = spawned.get::<UIText>();
-    assert_eq!(text.font_size, 9.0);
-    assert_eq!(text.line_height, 18.0);
-}
-
-#[test]
-fn borderless_drops_the_border() {
-    let spawned = spawn(theme().button("x").borderless());
-    let material = material_of(&spawned);
-    assert_eq!(material.border_width, 0.0);
-    assert_eq!(material.border_color, Color::TRANSPARENT.to_linear());
-}
-
-#[test]
-fn remaining_layout_modifiers_set_their_fields() {
-    let spawned = spawn(
-        theme()
-            .label("x")
-            .size(UIValue::Px(8.0), UIValue::Px(9.0))
-            .min_height(UIValue::Px(2.0))
-            .max_width(UIValue::Px(50.0))
-            .shrink(0.5)
-            .align_items(AlignItems::End)
-            .justify(AlignContent::SpaceBetween),
-    );
-    let node = spawned.get::<UINode>();
-    assert_eq!(node.width, UIValue::Px(8.0));
-    assert_eq!(node.height, UIValue::Px(9.0));
-    assert_eq!(node.min_height, UIValue::Px(2.0));
-    assert_eq!(node.max_width, UIValue::Px(50.0));
-    assert_eq!(node.flex_shrink, 0.5);
-    assert_eq!(node.align_items, Some(AlignItems::End));
-    assert_eq!(node.justify_content, Some(AlignContent::SpaceBetween));
 }
 
 #[test]

@@ -35,16 +35,6 @@ pub(crate) fn update_text_viewport(
     text_viewport.update(&queue, Resolution { width, height });
 }
 
-#[cfg(test)]
-fn node_text_bounds(location: glam::Vec2, size: glam::Vec2) -> TextBounds {
-    TextBounds {
-        left: location.x as i32,
-        top: location.y as i32,
-        right: (location.x + size.x) as i32,
-        bottom: (location.y + size.y) as i32,
-    }
-}
-
 pub(crate) struct PreparedText {
     resolution: Option<Resolution>,
     layers: HashMap<i32, Vec<Entity>>,
@@ -150,32 +140,6 @@ fn batches_below(layers: &[i32], next: usize, layer: i32) -> usize {
         end += 1;
     }
     end
-}
-
-#[cfg(test)]
-mod tests {
-    use super::node_text_bounds;
-    use glam::Vec2;
-
-    #[test]
-    fn bounds_match_node_absolute_position() {
-        let loc = Vec2::new(10.0, 800.0);
-        let size = Vec2::new(120.0, 32.0);
-        let b = node_text_bounds(loc, size);
-        assert_eq!(b.left, 10);
-        assert_eq!(b.top, 800);
-        assert_eq!(b.right, 130);
-        assert_eq!(b.bottom, 832);
-    }
-
-    #[test]
-    fn bounds_at_origin() {
-        let b = node_text_bounds(Vec2::ZERO, Vec2::new(800.0, 600.0));
-        assert_eq!(b.left, 0);
-        assert_eq!(b.top, 0);
-        assert_eq!(b.right, 800);
-        assert_eq!(b.bottom, 600);
-    }
 }
 
 pub(crate) fn ui_renderpass(
