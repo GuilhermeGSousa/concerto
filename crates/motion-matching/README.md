@@ -19,6 +19,7 @@ the crate as `concerto::motion_matching`.
 | `velocity_halflife` | spring halflife for velocity | 0.27 s |
 | `rotation_halflife` | spring halflife for facing | 0.27 s |
 | `sample_dt`, `sample_count` | trajectory sampling | 1/3 s, 3 |
+| `max_pull_speed` | the most speed a pull adds to the body | 5 m/s |
 
 A halflife here is the one in orangeduck/Motion-Matching: a spring at rest covers
 about 40% of the distance in it, where
@@ -26,6 +27,10 @@ about 40% of the distance in it, where
 
 `sample_dt` and `sample_count` must match the motion database that queries the
 trajectory.
+
+`max_pull_speed` must keep one fixed step under the capsule's radius: bodies use
+discrete collision, so a faster pull could carry the capsule through a wall. The
+default is about 0.17 m a step.
 
 A game that wants to know how a character moves asks its body:
 `PhysicsState::linear_velocity` and `body_transform` say where it went after
@@ -242,7 +247,10 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
 - `drive_body`, in `FixedUpdate`, before `step_simulation`: advances the
   velocity spring one fixed step toward `DesiredMotion::velocity`, with zero
   vertical velocity, advances the facing, and sets the body's horizontal
-  velocity to the spring's. The body keeps its own vertical velocity.
+  velocity to the spring's. It takes the simulation's pull, the world offset
+  from the body to where it should be, and adds the velocity that closes half
+  of it in the step, capped at `max_pull_speed`. The springs never see the pull,
+  so the prediction is undisturbed. The body keeps its own vertical velocity.
 - `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
   the path from where the body ended the step and writes it to the character's
   `AnimationPlayer`, which is on the simulation's entity, or on or under an
@@ -319,4 +327,5 @@ scales them by the frame's time into a `RootMotion` on `instance.output`:
 from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
 the same way. The root joint is the database skeleton's first without a parent.
-A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`.
+A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`, and so
+does a frame that holds the pose at the end of its range.

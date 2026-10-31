@@ -325,7 +325,12 @@ fn run(
     }
     instance.last_delta = dt;
     instance.root_motion = body_motion_at(database, instance.frame);
-    let delta = root_delta(instance, sources);
+    let held = instance.frame == previous_frame && instance.frame + 1 == range.end;
+    let delta = if held {
+        RootMotion::IDENTITY
+    } else {
+        root_delta(instance, sources)
+    };
     instance.output.set_root_motion(delta);
     scatter(instance, sources);
     Ok(())
@@ -898,6 +903,72 @@ mod tests {
         let (_, time) = fixture.database.clip_time(instance.frame).unwrap();
         let arrived = facing(time) * instance.output.root_motion().rotation;
         assert!(arrived.angle_between(facing(time + dt)) < 1e-3);
+    }
+
+    #[test]
+    fn a_pose_held_at_the_end_of_its_range_gives_no_root_motion() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let last = fixture.database.range_of(0).unwrap().end - 1;
+        instance.frame = last - 1;
+
+        instance.activate(0.1);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        assert_eq!(instance.frame, last);
+        assert!(instance.output.root_motion().translation.z < 0.0);
+
+        for dt in [0.1, 0.001] {
+            instance.activate(dt);
+            step(&node, &mut instance, &quiet(), &fixture.sources());
+            assert_eq!(instance.frame, last);
+            assert_eq!(instance.output.root_motion(), RootMotion::IDENTITY);
+        }
+    }
+
+    #[test]
+    fn a_jump_away_from_the_end_of_a_range_moves_the_root_again() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let last = fixture.database.range_of(0).unwrap().end - 1;
+        instance.frame = last;
+
+        instance.activate(0.1);
+        step(
+            &node,
+            &mut instance,
+            &trajectory(1.0, 2),
+            &fixture.sources(),
+        );
+
+        assert_ne!(instance.frame, last);
+        assert_ne!(instance.output.root_motion(), RootMotion::IDENTITY);
+    }
+
+    #[test]
+    fn steps_shorter_than_a_database_frame_add_up_to_the_distance_played() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        instance.frame = 20;
+        let steps = 40;
+        let dt = 0.5 / steps as f32;
+
+        let mut travelled = Vec3::ZERO;
+        for _ in 0..steps {
+            instance.activate(dt);
+            step(&node, &mut instance, &quiet(), &fixture.sources());
+            travelled += instance.output.root_motion().translation;
+        }
+
+        assert!(
+            travelled.distance(Vec3::new(0.0, 0.0, -0.5)) < 1e-3,
+            "{travelled:?}"
+        );
     }
 
     #[test]

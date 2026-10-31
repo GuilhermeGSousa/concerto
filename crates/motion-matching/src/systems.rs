@@ -9,16 +9,19 @@ use crate::{
     simulation::{CharacterSimulation, DesiredMotion},
 };
 
-/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's.
+/// Advances the springs one fixed step towards the desired motion and sets the body's horizontal velocity to the spring's, plus half of any pull, capped at `max_pull_speed`.
 pub fn drive_body(
     query: Query<(&mut CharacterSimulation, &DesiredMotion, &BodyId)>,
     mut physics: ResMut<PhysicsState>,
 ) {
     let dt = Time::fixed_delta_time().as_secs_f32();
     for (mut simulation, desired, body_id) in query.iter() {
+        simulation.previous_facing = simulation.facing.value;
         let velocity = simulation.advance(desired, dt);
+        let pull = std::mem::take(&mut simulation.pull) / (2.0 * dt);
+        let pull = pull.clamp_length_max(simulation.max_pull_speed);
         let vertical = physics.linear_velocity(*body_id).y;
-        physics.set_linear_velocity(*body_id, velocity.with_y(vertical));
+        physics.set_linear_velocity(*body_id, (velocity + pull).with_y(vertical));
     }
 }
 
@@ -177,6 +180,116 @@ mod tests {
         let before = Quat::IDENTITY.angle_between(desired.rotation);
         assert!(simulation.facing.value.angle_between(desired.rotation) < before);
         assert!(simulation.facing.velocity.length() > 0.0);
+    }
+
+    fn pulled_body(
+        simulation: CharacterSimulation,
+        desired: DesiredMotion,
+    ) -> (World, Entity, BodyId) {
+        let (mut world, entity) = world_with_body(Vec3::new(0.0, 5.0, 0.0), simulation, desired);
+        let body = body_of(&world, entity);
+        world
+            .get_resource_mut::<PhysicsState>()
+            .unwrap()
+            .set_linear_velocity(body, Vec3::new(0.0, -3.0, 0.0));
+        (world, entity, body)
+    }
+
+    fn velocity_of(world: &World, body: BodyId) -> Vec3 {
+        world
+            .get_resource::<PhysicsState>()
+            .unwrap()
+            .linear_velocity(body)
+    }
+
+    fn walking() -> DesiredMotion {
+        DesiredMotion {
+            velocity: Vec3::new(2.0, 0.0, -1.0),
+            rotation: Quat::from_rotation_y(1.5),
+        }
+    }
+
+    #[test]
+    fn drive_body_adds_half_the_pull_and_leaves_the_springs_alone() {
+        let dt = Time::fixed_delta_time().as_secs_f32();
+        let desired = walking();
+        let pull = Vec3::new(0.02, 0.0, -0.03);
+        let simulation = CharacterSimulation {
+            pull,
+            ..Default::default()
+        };
+        let mut advanced = simulation.clone();
+        let spring = advanced.advance(&desired, dt);
+        let (mut world, entity, body) = pulled_body(simulation, desired);
+
+        run_once(&mut world, drive_body);
+
+        let velocity = velocity_of(&world, body);
+        let expected = spring + pull / (2.0 * dt);
+        assert!(velocity.with_y(0.0).distance(expected) < EPS);
+        assert!((velocity.y + 3.0).abs() < EPS);
+        let simulation = world
+            .get_component_for_entity::<CharacterSimulation>(entity)
+            .unwrap();
+        assert_eq!(simulation.pull, Vec3::ZERO);
+        assert_eq!(simulation.velocity, advanced.velocity);
+        assert_eq!(simulation.facing, advanced.facing);
+    }
+
+    #[test]
+    fn drive_body_caps_the_pull_but_not_the_springs() {
+        let dt = Time::fixed_delta_time().as_secs_f32();
+        let desired = DesiredMotion {
+            velocity: Vec3::new(8.0, 0.0, 0.0),
+            ..DesiredMotion::default()
+        };
+        let mut simulation = CharacterSimulation {
+            pull: Vec3::new(30.0, 0.0, 40.0),
+            max_pull_speed: 3.0,
+            ..Default::default()
+        };
+        simulation.velocity.value = desired.velocity;
+        let spring = simulation.clone().advance(&desired, dt);
+        let (mut world, _, body) = pulled_body(simulation, desired);
+
+        run_once(&mut world, drive_body);
+
+        let expected = spring + Vec3::new(1.8, 0.0, 2.4);
+        assert!(velocity_of(&world, body).with_y(0.0).distance(expected) < EPS);
+    }
+
+    #[test]
+    fn a_second_step_in_a_frame_gets_no_pull() {
+        let dt = Time::fixed_delta_time().as_secs_f32();
+        let desired = walking();
+        let simulation = CharacterSimulation {
+            pull: Vec3::new(0.1, 0.0, 0.0),
+            ..Default::default()
+        };
+        let mut advanced = simulation.clone();
+        advanced.advance(&desired, dt);
+        let spring = advanced.advance(&desired, dt);
+        let (mut world, _, body) = pulled_body(simulation, desired);
+
+        run_once(&mut world, drive_body);
+        run_once(&mut world, drive_body);
+
+        assert!(velocity_of(&world, body).with_y(0.0).distance(spring) < EPS);
+    }
+
+    #[test]
+    fn drive_body_records_the_facing_it_advanced_from() {
+        let mut simulation = CharacterSimulation::default();
+        simulation.facing.value = Quat::from_rotation_y(0.5);
+        let (mut world, entity, _) = pulled_body(simulation, walking());
+
+        run_once(&mut world, drive_body);
+
+        let simulation = world
+            .get_component_for_entity::<CharacterSimulation>(entity)
+            .unwrap();
+        assert_eq!(simulation.previous_facing, Quat::from_rotation_y(0.5));
+        assert_ne!(simulation.facing.value, simulation.previous_facing);
     }
 
     #[test]
