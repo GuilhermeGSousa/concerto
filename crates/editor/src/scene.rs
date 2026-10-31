@@ -17,7 +17,7 @@ use concerto_ecs::{
 };
 use concerto_foundation::assets::{
     AssetId,
-    content::{decode_content_asset, save_content_asset_into},
+    content::{decode_content_asset, read_content_asset, save_content_asset_into},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_render::gpu::Gpu;
@@ -130,12 +130,12 @@ impl AssetEditor for SceneEditor {
 
 pub(crate) fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
     let bytes = std::fs::read(root.join(address))?;
-    let (header, scene) = decode_content_asset::<Scene>(&bytes)?;
+    let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
         header.asset_id == id,
         "Asset identity changed; reopen the project"
     );
-    Ok(scene)
+    Ok(decode_content_asset::<Scene>(&bytes)?.1)
 }
 
 /// Opens, hosts, and saves scenes; `recipe` is what each scene's edit `App` is built from.

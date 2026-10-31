@@ -139,10 +139,7 @@ pub(crate) fn sync_clip_preview(
 fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
     let bytes = std::fs::read(root.join(&asset.address))?;
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
-    anyhow::ensure!(
-        header.asset_id == asset.id,
-        "Asset identity or type mismatch"
-    );
+    anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
     Ok(clip)
 }
 

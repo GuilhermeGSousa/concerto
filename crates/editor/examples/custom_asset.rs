@@ -196,10 +196,7 @@ pub fn load_dialogue(
         let result = (|| -> Result<String> {
             let bytes = std::fs::read(root.join(&asset.address))?;
             let (header, dialogue) = decode_content_asset::<Dialogue>(&bytes)?;
-            anyhow::ensure!(
-                header.asset_id == asset.id,
-                "Asset identity or type mismatch"
-            );
+            anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
             anyhow::ensure!(!dialogue.text.trim().is_empty(), "Dialogue cannot be empty");
             Ok(dialogue.text)
         })();

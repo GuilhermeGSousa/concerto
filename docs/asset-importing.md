@@ -265,6 +265,11 @@ more than one entry, since bincode writes a map in iteration order. A type that
 becomes content, because an importer emits it or the editor creates it, adds
 its check in the same change.
 
+`AnimationGraph` stores each node's Rust type name, so moving or renaming a
+node type also fails its check. That is a change to the persisted form, but not
+to the field layout: old graphs need the old name to resolve, not a version
+bump.
+
 When you change one:
 
 1. Raise the version. A derived type writes `#[asset(version = N)]` next to

@@ -1,4 +1,3 @@
-//! decode_content_asset checks a content asset's kind and type version, migrating older payloads.
 use concerto_foundation::assets::content::{
     decode_content_asset, write_content_asset, ContentAssetHeader,
 };
