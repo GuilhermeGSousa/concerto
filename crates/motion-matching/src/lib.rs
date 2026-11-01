@@ -28,9 +28,7 @@ pub use definition::{
     MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
     TrajectorySettings,
 };
-pub use displacement::{
-    Adjustment, CharacterDisplacement, Clamp, DisplacementSimulation, Synchronization,
-};
+pub use displacement::{Adjustment, CharacterDisplacement, CharacterLink, Clamp, Synchronization};
 pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,
 };

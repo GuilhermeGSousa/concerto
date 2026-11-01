@@ -1,20 +1,14 @@
-use std::collections::{HashMap, HashSet};
-
 use concerto_animation::{player::AnimationPlayer, pose::RootMotion, root::AnimationRootBone};
-use concerto_ecs::{
-    entity::hierarchy::ChildOf,
-    system::input::SystemLocal,
-    world::{FromWorld, World},
-    Entity, Query, Res, ResMut,
-};
+use concerto_ecs::{Entity, Query, Res, ResMut};
 use concerto_foundation::{
     time::Time,
     transform::{GlobalTransform, Transform},
 };
+use concerto_mesh::skeleton::SkeletonComponent;
 use concerto_physics::{body::BodyId, physics_state::PhysicsState};
 
 use crate::{
-    displacement::{yaw_of, CharacterDisplacement, DisplacementSimulation, Placement},
+    displacement::{yaw_of, CharacterDisplacement, CharacterLink, Placement},
     node::{MotionMatchingTrajectory, TRAJECTORY_KEY},
     simulation::{CharacterSimulation, DesiredMotion},
 };
@@ -36,37 +30,18 @@ pub fn drive_body(
     }
 }
 
-fn displaced_capsule(
-    entity: Entity,
-    links: &Query<&DisplacementSimulation>,
-    parents: &Query<&ChildOf>,
-) -> Option<Entity> {
-    let mut current = entity;
-    loop {
-        if let Some(link) = links.get_entity(current) {
-            return Some(link.0);
-        }
-        current = parents.get_entity(current)?.parent();
-    }
-}
-
-/// Predicts each character's path from where its body ended the step and writes it to its animation player's blackboard, whether the player shares the simulation's entity or sits on or under a character naming it.
+/// Predicts each linked character's path from where its body ended the step and writes it to the blackboard of the animation player on its skeleton.
 pub fn publish_trajectory(
-    players: Query<(Entity, &mut AnimationPlayer)>,
-    simulations: Query<(&CharacterSimulation, &DesiredMotion, Option<&BodyId>)>,
-    links: Query<&DisplacementSimulation>,
-    parents: Query<&ChildOf>,
+    links: Query<&CharacterLink>,
+    players: Query<&mut AnimationPlayer>,
+    simulations: Query<(&CharacterSimulation, &DesiredMotion, &BodyId)>,
     physics: Res<PhysicsState>,
 ) {
-    for (entity, mut player) in players.iter() {
-        let capsule = if simulations.contains_entity(entity) {
-            Some(entity)
-        } else {
-            displaced_capsule(entity, &links, &parents)
+    for link in links.iter() {
+        let Some(mut player) = players.get_entity(link.skeleton) else {
+            continue;
         };
-        let Some((simulation, desired, Some(body_id))) =
-            capsule.and_then(|capsule| simulations.get_entity(capsule))
-        else {
+        let Some((simulation, desired, body_id)) = simulations.get_entity(link.capsule) else {
             continue;
         };
         let translation = physics.body_transform(*body_id).translation;
@@ -81,53 +56,7 @@ pub fn publish_trajectory(
     }
 }
 
-/// The characters already reported for being built wrong, so a misuse is logged once.
-#[derive(Default)]
-pub struct MisusedCharacters(HashSet<Entity>);
-
-impl MisusedCharacters {
-    fn warn(&mut self, entity: Entity, problem: &str) {
-        if self.0.insert(entity) {
-            log::warn!("CharacterDisplacement on {entity:?} {problem}: it is left where it is");
-        }
-    }
-}
-
-impl FromWorld for MisusedCharacters {
-    fn from_world(_: &World) -> Self {
-        Self::default()
-    }
-}
-
-fn displaced_character(
-    entity: Entity,
-    characters: &Query<&CharacterDisplacement>,
-    parents: &Query<&ChildOf>,
-) -> Option<Entity> {
-    let mut current = entity;
-    loop {
-        if characters.contains_entity(current) {
-            return Some(current);
-        }
-        current = parents.get_entity(current)?.parent();
-    }
-}
-
-fn is_under(entity: Entity, ancestor: Entity, parents: &Query<&ChildOf>) -> bool {
-    let mut current = entity;
-    while let Some(child_of) = parents.get_entity(current) {
-        current = child_of.parent();
-        if current == ancestor {
-            return true;
-        }
-    }
-    false
-}
-
-fn in_world_space(delta: RootMotion, space: Option<&GlobalTransform>) -> RootMotion {
-    let Some(space) = space else {
-        return delta;
-    };
+fn in_world_space(delta: RootMotion, space: &GlobalTransform) -> RootMotion {
     let rotation = space.rotation();
     RootMotion {
         translation: rotation * (space.scale() * delta.translation),
@@ -135,47 +64,33 @@ fn in_world_space(delta: RootMotion, space: Option<&GlobalTransform>) -> RootMot
     }
 }
 
-/// Places each character by this frame's root motion and its `CharacterDisplacement`, and gives a `Synchronization`'s target to the capsule.
+fn root_motion_of(
+    skeleton: Entity,
+    skeletons: &Query<(&SkeletonComponent, &GlobalTransform)>,
+    root_bones: &Query<&AnimationRootBone>,
+) -> Option<RootMotion> {
+    let (component, space) = skeletons.get_entity(skeleton)?;
+    let bone = root_bones.get_entity(component.root()?)?;
+    Some(in_world_space(bone.root_motion, space))
+}
+
+/// Places each character by the root motion of its skeleton and its `CharacterDisplacement`, and gives a `Synchronization`'s target to the capsule.
 pub fn apply_character_displacement(
-    characters: Query<(Entity, &CharacterDisplacement, &DisplacementSimulation)>,
-    methods: Query<&CharacterDisplacement>,
-    root_bones: Query<(Entity, &AnimationRootBone)>,
-    parents: Query<&ChildOf>,
-    globals: Query<&GlobalTransform>,
+    characters: Query<(Entity, &CharacterDisplacement, &CharacterLink)>,
+    skeletons: Query<(&SkeletonComponent, &GlobalTransform)>,
+    root_bones: Query<&AnimationRootBone>,
     simulations: Query<&mut CharacterSimulation>,
     transforms: Query<&mut Transform>,
     time: Res<Time>,
-    mut misused: SystemLocal<MisusedCharacters>,
 ) {
-    let mut deltas = HashMap::new();
-    for (root, bone) in root_bones.iter() {
-        if let Some(character) = displaced_character(root, &methods, &parents) {
-            deltas.entry(character).or_insert_with(|| {
-                let parent = parents.get_entity(root).map(|child_of| child_of.parent());
-                let space = if root == character {
-                    Some(root)
-                } else {
-                    parent
-                };
-                let space = space.and_then(|entity| globals.get_entity(entity));
-                in_world_space(bone.root_motion, space)
-            });
-        }
-    }
-
     let dt = time.delta().as_secs_f32();
     let alpha = time.fixed_alpha();
     for (entity, method, link) in characters.iter() {
-        let Some(mut simulation) = simulations.get_entity(link.0) else {
-            misused.warn(entity, "names an entity with no CharacterSimulation");
+        let Some(mut simulation) = simulations.get_entity(link.capsule) else {
             continue;
         };
-        if is_under(entity, link.0, &parents) {
-            misused.warn(entity, "is under its capsule, so it would move twice");
-            continue;
-        }
         let Some(position) = transforms
-            .get_entity(link.0)
+            .get_entity(link.capsule)
             .map(|capsule| capsule.translation)
         else {
             continue;
@@ -193,7 +108,7 @@ pub fn apply_character_displacement(
                 position: character.translation,
                 rotation: character.rotation,
             },
-            deltas.get(&entity).copied().unwrap_or(RootMotion::IDENTITY),
+            root_motion_of(link.skeleton, &skeletons, &root_bones).unwrap_or(RootMotion::IDENTITY),
         );
         character.translation = displaced.character.position;
         character.rotation = displaced.character.rotation;
@@ -209,8 +124,7 @@ pub fn apply_character_displacement(
 #[cfg(test)]
 mod tests {
     use std::f32::consts::FRAC_PI_2;
-    use std::sync::{Mutex, Once};
-    use std::thread::{self, ThreadId};
+    use std::thread;
     use std::time::Duration;
 
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
@@ -228,6 +142,7 @@ mod tests {
     use concerto_ecs::world::World;
     use concerto_ecs::{Entity, IntoSystemConfig};
     use concerto_foundation::assets::asset_server::AssetServer;
+    use concerto_foundation::assets::handle::AssetHandle;
     use concerto_foundation::math::spring_damper::halflife_to_damping;
     use concerto_foundation::transform::Transform;
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
@@ -241,8 +156,7 @@ mod tests {
 
     use super::*;
     use crate::displacement::{
-        Adjustment, CharacterDisplacement, Clamp, DisplacementSimulation, Placement,
-        Synchronization,
+        Adjustment, CharacterDisplacement, CharacterLink, Clamp, Placement, Synchronization,
     };
     use crate::plugin::MotionMatchingPlugin;
     use crate::simulation::CharacterSimulation;
@@ -479,6 +393,13 @@ mod tests {
         let mut world = World::new();
         world.insert_resource(PhysicsState::new());
         let entity = world.spawn((CharacterSimulation::default(), AnimationPlayer::new(1)));
+        world.insert(
+            CharacterLink {
+                capsule: entity,
+                skeleton: entity,
+            },
+            entity,
+        );
 
         run_once(&mut world, drive_body);
         run_once(&mut world, publish_trajectory);
@@ -488,31 +409,6 @@ mod tests {
             .unwrap();
         assert_eq!(simulation.velocity.value, Vec3::ZERO);
         assert_eq!(published(&world, entity), None);
-    }
-
-    #[test]
-    fn publish_trajectory_starts_the_path_at_the_body_and_keeps_the_facing() {
-        let mut simulation = CharacterSimulation::default();
-        simulation.velocity.value = Vec3::new(1.0, 0.0, 2.0);
-        simulation.facing.value = Quat::from_rotation_y(0.5);
-        let desired = DesiredMotion {
-            velocity: Vec3::new(3.0, 0.0, 4.0),
-            rotation: Quat::from_rotation_y(1.0),
-        };
-        let (mut world, entity) =
-            world_with_body(Vec3::new(3.0, 5.0, -2.0), simulation.clone(), desired);
-        world.insert(AnimationPlayer::new(1), entity);
-
-        run_once(&mut world, publish_trajectory);
-
-        let trajectory = published(&world, entity).unwrap();
-        assert!((trajectory.translation.x - 3.0).abs() < EPS);
-        assert!((trajectory.translation.z + 2.0).abs() < EPS);
-        assert_eq!(trajectory.rotation, Quat::from_rotation_y(0.5));
-        assert_eq!(
-            trajectory.samples,
-            simulation.predict(trajectory.translation, &desired)
-        );
     }
 
     fn moving_capsule() -> (World, Entity, CharacterSimulation, DesiredMotion) {
@@ -529,53 +425,52 @@ mod tests {
     }
 
     #[test]
-    fn publish_trajectory_climbs_from_a_player_to_the_capsule_its_character_names() {
+    fn publish_trajectory_writes_the_capsules_path_to_the_skeletons_player() {
         let (mut world, capsule, simulation, desired) = moving_capsule();
-        let character = world.spawn((DisplacementSimulation(capsule), AnimationPlayer::new(1)));
-        let armature = world.spawn(ChildOf::new(character));
-        let skeleton = world.spawn((ChildOf::new(armature), AnimationPlayer::new(1)));
+        let skeleton = world.spawn(AnimationPlayer::new(1));
+        world.spawn(CharacterLink { capsule, skeleton });
 
         run_once(&mut world, publish_trajectory);
 
-        for player in [character, skeleton] {
-            let trajectory = published(&world, player).unwrap();
-            assert!((trajectory.translation.x - 3.0).abs() < EPS);
-            assert!((trajectory.translation.z + 2.0).abs() < EPS);
-            assert_eq!(trajectory.rotation, Quat::from_rotation_y(0.5));
-            assert_eq!(
-                trajectory.samples,
-                simulation.predict(trajectory.translation, &desired)
-            );
-        }
+        let trajectory = published(&world, skeleton).unwrap();
+        assert!((trajectory.translation.x - 3.0).abs() < EPS);
+        assert!((trajectory.translation.z + 2.0).abs() < EPS);
+        assert_eq!(trajectory.rotation, Quat::from_rotation_y(0.5));
+        assert_eq!(
+            trajectory.samples,
+            simulation.predict(trajectory.translation, &desired)
+        );
     }
 
     #[test]
-    fn a_player_with_a_simulation_of_its_own_does_not_climb() {
+    fn a_player_on_the_capsule_itself_gets_its_trajectory_through_a_link() {
         let (mut world, capsule, ..) = moving_capsule();
-        let character = world.spawn(DisplacementSimulation(capsule));
-        let player = world.spawn((
-            ChildOf::new(character),
-            CharacterSimulation::default(),
-            AnimationPlayer::new(1),
-        ));
+        world.insert(AnimationPlayer::new(1), capsule);
+        world.spawn(CharacterLink {
+            capsule,
+            skeleton: capsule,
+        });
 
         run_once(&mut world, publish_trajectory);
 
-        assert_eq!(published(&world, player), None);
+        assert!(published(&world, capsule).is_some());
     }
 
     #[test]
-    fn a_player_with_no_capsule_above_it_gets_no_trajectory() {
-        let (mut world, ..) = moving_capsule();
+    fn a_player_no_link_reaches_gets_no_trajectory() {
+        let (mut world, capsule, ..) = moving_capsule();
+        let unlinked = world.spawn((ChildOf::new(capsule), AnimationPlayer::new(1)));
         let plain = world.spawn(());
-        let unlinked = world.spawn((ChildOf::new(plain), AnimationPlayer::new(1)));
-        let dangling = world.spawn(DisplacementSimulation(plain));
-        let under_dangling = world.spawn((ChildOf::new(dangling), AnimationPlayer::new(1)));
+        let dangling = world.spawn(AnimationPlayer::new(1));
+        world.spawn(CharacterLink {
+            capsule: plain,
+            skeleton: dangling,
+        });
 
         run_once(&mut world, publish_trajectory);
 
         assert_eq!(published(&world, unlinked), None);
-        assert_eq!(published(&world, under_dangling), None);
+        assert_eq!(published(&world, dangling), None);
     }
 
     const YAW_EPS: f32 = 1.0e-3;
@@ -604,21 +499,53 @@ mod tests {
         world.spawn((simulation, Transform::IDENTITY))
     }
 
+    fn spawn_linked_character(
+        world: &mut World,
+        capsule: Entity,
+        skeleton: Entity,
+        method: CharacterDisplacement,
+        position: Vec3,
+    ) -> Entity {
+        world.spawn((
+            method,
+            CharacterLink { capsule, skeleton },
+            Transform::from_translation(position),
+        ))
+    }
+
     fn spawn_character(
         world: &mut World,
         capsule: Entity,
         method: CharacterDisplacement,
         position: Vec3,
     ) -> Entity {
-        world.spawn((
-            method,
-            DisplacementSimulation(capsule),
-            Transform::from_translation(position),
-        ))
+        let skeleton = world.spawn(());
+        spawn_linked_character(world, capsule, skeleton, method, position)
     }
 
-    fn spawn_root_bone(world: &mut World, parent: Entity, root_motion: RootMotion) -> Entity {
-        world.spawn((AnimationRootBone { root_motion }, ChildOf::new(parent)))
+    fn rooted_skeleton(world: &mut World, root_motion: RootMotion) -> SkeletonComponent {
+        let root = world.spawn(AnimationRootBone { root_motion });
+        SkeletonComponent::new(
+            AssetHandle::default(),
+            Vec::new(),
+            Some(SceneEntityRef::Entity(root)),
+        )
+    }
+
+    fn spawn_skeleton(world: &mut World, space: Mat4, root_motion: RootMotion) -> Entity {
+        let skeleton = rooted_skeleton(world, root_motion);
+        world.spawn((skeleton, GlobalTransform::new(space)))
+    }
+
+    fn spawn_moving_character(
+        world: &mut World,
+        capsule: Entity,
+        method: CharacterDisplacement,
+        position: Vec3,
+        root_motion: RootMotion,
+    ) -> Entity {
+        let skeleton = spawn_skeleton(world, Mat4::IDENTITY, root_motion);
+        spawn_linked_character(world, capsule, skeleton, method, position)
     }
 
     fn forward_by(distance: f32) -> RootMotion {
@@ -676,21 +603,26 @@ mod tests {
     }
 
     #[test]
-    fn a_rotated_parent_keeps_the_translation_and_the_yaw_of_the_delta() {
+    fn a_rotated_skeleton_keeps_the_translation_and_the_yaw_of_the_delta() {
         let mut world = displacement_world();
         let capsule = spawn_capsule(&mut world, Vec3::ZERO);
-        let character = spawn_character(&mut world, capsule, synchronization(1.0), Vec3::ZERO);
         let z_up = Mat4::from_scale_rotation_translation(
             Vec3::splat(2.0),
             Quat::from_rotation_x(-FRAC_PI_2),
             Vec3::new(5.0, 0.0, 5.0),
         );
-        let armature = world.spawn((GlobalTransform::new(z_up), ChildOf::new(character)));
         let delta = RootMotion {
             translation: Vec3::new(0.0, 1.0, 0.3),
             rotation: Quat::from_rotation_z(0.4),
         };
-        spawn_root_bone(&mut world, armature, delta);
+        let skeleton = spawn_skeleton(&mut world, z_up, delta);
+        let character = spawn_linked_character(
+            &mut world,
+            capsule,
+            skeleton,
+            synchronization(1.0),
+            Vec3::ZERO,
+        );
 
         run_once(&mut world, apply_character_displacement);
 
@@ -699,25 +631,27 @@ mod tests {
     }
 
     #[test]
-    fn a_root_on_the_character_itself_moves_it_the_way_it_faces() {
+    fn a_skeleton_on_the_character_itself_moves_it_the_way_it_faces() {
         let mut world = displacement_world();
         let capsule = spawn_capsule(&mut world, Vec3::ZERO);
-        let character = spawn_character(&mut world, capsule, synchronization(1.0), Vec3::ZERO);
         let facing = Quat::from_rotation_y(FRAC_PI_2);
-        world
-            .get_component_for_entity_mut::<Transform>(character)
-            .unwrap()
-            .rotation = facing;
+        let skeleton = rooted_skeleton(
+            &mut world,
+            RootMotion {
+                translation: Vec3::new(0.0, 0.0, 0.5),
+                rotation: Quat::IDENTITY,
+            },
+        );
+        let character = world.spawn((
+            synchronization(1.0),
+            skeleton,
+            Transform::from_translation_rotation(Vec3::ZERO, facing),
+        ));
         world.insert(
-            (
-                GlobalTransform::new(Mat4::from_quat(facing)),
-                AnimationRootBone {
-                    root_motion: RootMotion {
-                        translation: Vec3::new(0.0, 0.0, 0.5),
-                        rotation: Quat::IDENTITY,
-                    },
-                },
-            ),
+            CharacterLink {
+                capsule,
+                skeleton: character,
+            },
             character,
         );
 
@@ -727,28 +661,18 @@ mod tests {
     }
 
     #[test]
-    fn a_root_moves_only_the_nearest_character_above_it() {
+    fn only_the_skeleton_the_link_names_moves_a_character() {
         let mut world = displacement_world();
         let capsule = spawn_capsule(&mut world, Vec3::ZERO);
-        let outer = spawn_character(&mut world, capsule, synchronization(1.0), Vec3::ZERO);
-        let inner = spawn_character(&mut world, capsule, synchronization(1.0), Vec3::ZERO);
-        world.insert(ChildOf::new(outer), inner);
-        let skeleton = world.spawn(ChildOf::new(inner));
-        spawn_root_bone(&mut world, skeleton, forward_by(0.5));
-
-        run_once(&mut world, apply_character_displacement);
-
-        assert_near(position_of(&world, inner), Vec3::new(0.5, 0.0, 0.0));
-        assert_near(position_of(&world, outer), Vec3::ZERO);
-    }
-
-    #[test]
-    fn a_character_with_two_skeletons_moves_by_one_of_them() {
-        let mut world = displacement_world();
-        let capsule = spawn_capsule(&mut world, Vec3::ZERO);
-        let character = spawn_character(&mut world, capsule, synchronization(1.0), Vec3::ZERO);
-        spawn_root_bone(&mut world, character, forward_by(0.5));
-        spawn_root_bone(&mut world, character, forward_by(0.5));
+        let character = spawn_moving_character(
+            &mut world,
+            capsule,
+            synchronization(1.0),
+            Vec3::ZERO,
+            forward_by(0.5),
+        );
+        let other = spawn_skeleton(&mut world, Mat4::IDENTITY, forward_by(2.0));
+        world.insert(ChildOf::new(character), other);
 
         run_once(&mut world, apply_character_displacement);
 
@@ -772,11 +696,10 @@ mod tests {
     }
 
     #[test]
-    fn a_character_with_no_displacement_simulation_does_not_move() {
+    fn a_character_with_no_link_does_not_move() {
         let mut world = displacement_world();
         let start = Vec3::new(3.0, 1.0, 0.0);
         let character = world.spawn((synchronization(1.0), Transform::from_translation(start)));
-        spawn_root_bone(&mut world, character, forward_by(0.5));
 
         run_once(&mut world, apply_character_displacement);
 
@@ -838,13 +761,13 @@ mod tests {
     fn synchronization_pulls_the_capsule_to_its_target_and_other_methods_do_not() {
         let mut world = displacement_world();
         let synchronized = spawn_capsule(&mut world, Vec3::ZERO);
-        let character = spawn_character(
+        spawn_moving_character(
             &mut world,
             synchronized,
             synchronization(1.0),
             Vec3::new(1.0, 0.0, 0.0),
+            forward_by(0.5),
         );
-        spawn_root_bone(&mut world, character, forward_by(0.5));
         let clamped = spawn_capsule(&mut world, Vec3::ZERO);
         spawn_character(
             &mut world,
@@ -894,76 +817,14 @@ mod tests {
         assert_eq!(simulation.facing.velocity, Vec3::new(0.0, 0.7, 0.0));
     }
 
-    struct Capture;
-
-    static RECORDS: Mutex<Vec<(ThreadId, log::Level)>> = Mutex::new(Vec::new());
-
-    impl log::Log for Capture {
-        fn enabled(&self, _: &log::Metadata) -> bool {
-            true
-        }
-
-        fn log(&self, record: &log::Record) {
-            RECORDS
-                .lock()
-                .unwrap()
-                .push((thread::current().id(), record.level()));
-        }
-
-        fn flush(&self) {}
-    }
-
-    fn warnings() -> usize {
-        static INSTALL: Once = Once::new();
-        INSTALL.call_once(|| {
-            log::set_logger(&Capture).unwrap();
-            log::set_max_level(log::LevelFilter::Warn);
-        });
-        let me = thread::current().id();
-        RECORDS
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(thread, level)| *thread == me && *level == log::Level::Warn)
-            .count()
-    }
-
-    fn warnings_over_three_runs(world: &mut World) -> usize {
-        let before = warnings();
-        let mut schedule = Schedule::new();
-        schedule.add_system(apply_character_displacement);
-        let mut schedule = schedule.compile::<SingleThreadedExecutor>(world);
-        for _ in 0..3 {
-            schedule.run(world);
-        }
-        warnings() - before
-    }
-
     #[test]
-    fn a_character_under_its_capsule_is_skipped_and_warned_about_once() {
-        let mut world = displacement_world();
-        let capsule = spawn_capsule(&mut world, Vec3::ZERO);
-        let start = Vec3::new(3.0, 0.0, 0.0);
-        let child = spawn_character(&mut world, capsule, clamp(0.5, 1.0), start);
-        world.insert(ChildOf::new(capsule), child);
-        let holder = world.spawn(ChildOf::new(capsule));
-        let grandchild = spawn_character(&mut world, capsule, clamp(0.5, 1.0), start);
-        world.insert(ChildOf::new(holder), grandchild);
-
-        assert_eq!(warnings_over_three_runs(&mut world), 2);
-
-        assert_eq!(position_of(&world, child), start);
-        assert_eq!(position_of(&world, grandchild), start);
-    }
-
-    #[test]
-    fn a_character_naming_an_entity_with_no_simulation_is_skipped_and_warned_about_once() {
+    fn a_character_naming_an_entity_with_no_simulation_is_left_where_it_is() {
         let mut world = displacement_world();
         let plain = world.spawn(Transform::IDENTITY);
         let start = Vec3::new(3.0, 0.0, 0.0);
         let character = spawn_character(&mut world, plain, clamp(0.5, 1.0), start);
 
-        assert_eq!(warnings_over_three_runs(&mut world), 1);
+        run_once(&mut world, apply_character_displacement);
 
         assert_eq!(position_of(&world, character), start);
     }
@@ -1011,8 +872,10 @@ mod tests {
         let height = 1.5;
         let world = app.main_mut().world_mut();
         let capsule = spawn_capsule(world, Vec3::new(0.0, height, 0.0));
-        let character = spawn_character(world, capsule, synchronization(1.0), Vec3::ZERO);
-        let holder = world.spawn((Transform::IDENTITY, ChildOf::new(character)));
+        let holder = world.spawn(Transform::IDENTITY);
+        let character =
+            spawn_linked_character(world, capsule, holder, synchronization(1.0), Vec3::ZERO);
+        world.insert(ChildOf::new(character), holder);
         let root = world.spawn((
             Transform::IDENTITY,
             AnimationRootBone::default(),
@@ -1022,7 +885,11 @@ mod tests {
             (
                 AnimationPlayer::new(1),
                 AnimationHandleComponent::new(graph),
-                SkeletonComponent::new(skeleton, vec![SceneEntityRef::Entity(root)], None),
+                SkeletonComponent::new(
+                    skeleton,
+                    vec![SceneEntityRef::Entity(root)],
+                    Some(SceneEntityRef::Entity(root)),
+                ),
             ),
             holder,
         );
@@ -1105,8 +972,8 @@ mod tests {
             offset,
             Transform::IDENTITY,
         ));
-        let character = spawn_character(&mut world, capsule, method, character_at);
-        spawn_root_bone(&mut world, character, root_motion);
+        let character =
+            spawn_moving_character(&mut world, capsule, method, character_at, root_motion);
         run_once(&mut world, register_colliders);
         (world, capsule, character)
     }
