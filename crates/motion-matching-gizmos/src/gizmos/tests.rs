@@ -734,6 +734,24 @@ fn history_forgets_positions_older_than_a_second() {
 }
 
 #[test]
+fn a_trail_that_was_hidden_shows_no_position_older_than_a_second() {
+    let mut stage = Stage::new();
+    stage.only(&[HISTORY]);
+    stage.tick();
+    stage.tick();
+
+    stage.only(&[]);
+    stage.time().set_time_scale(1000.0);
+    stage.tick();
+    stage.time().set_time_scale(1.0);
+    stage.only(&[HISTORY]);
+    stage.tick();
+
+    assert_eq!(stage.trail_length(), 2);
+    assert_eq!(stage.segments(), 1);
+}
+
+#[test]
 fn a_paused_game_adds_nothing_to_the_trail() {
     let mut stage = Stage::new();
     stage.only(&[HISTORY]);

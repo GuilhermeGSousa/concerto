@@ -54,8 +54,7 @@ impl BakedFrame {
         ))
     }
 
-    /// A local pose placed at `simulation`, read with `trajectory`.
-    pub fn placed(
+    pub(crate) fn placed(
         skeleton: &Skeleton,
         local_pose: Vec<JointPose>,
         simulation: Transform,

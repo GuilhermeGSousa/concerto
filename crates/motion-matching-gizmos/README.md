@@ -22,7 +22,9 @@ world.insert(MotionMatchingGizmos::default(), character);
 ```
 
 The plugin registers `DebugGizmosPlugin` if the `App` has a renderer and nothing
-has registered it yet. An `App` without a renderer builds and draws nothing.
+has registered it yet, which also brings `draw_skeleton_gizmos`, so a
+`SkeletonGizmo` kept in a game's scene starts drawing in play. An `App` without a
+renderer builds and draws nothing.
 
 `draw_motion_matching` runs in game time, which includes Play in the editor, and
 not while editing or in a preview. `MotionMatchingGizmos` is a reflected
@@ -38,7 +40,7 @@ All four default to on.
 | `simulation` | The ring and arrow of the simulation bone, and a line from it to the character, so the gap between capsule and character shows. |
 | `query` | `MotionMatchingInstance::last_query`, in each channel's palette colour, dimmed: the feature bones of the pose it read and the desired trajectory. Nothing before the first search. |
 | `matched` | The features of the frame the instance plays, at full colour. Between searches it moves on with playback, and the query stays as it was. |
-| `history` | A line through about the last second of the simulation bone's positions, in game time. A paused game adds nothing to it. |
+| `history` | A line through about the last second of the simulation bone's positions, in game time. It records while the toggle is off, so turning it on shows only that last second. A paused game adds nothing to it. |
 
 Everything is placed at the same bone: the position of `CharacterLink::capsule`
 this frame, and its facing from `CharacterSimulation::interpolated_facing`. The
@@ -54,7 +56,7 @@ A character whose capsule or skeleton is gone is skipped whole. `query` and
 `matched` draw nothing when the database, its skeleton or a clip is missing, when
 the frame isn't in the database, or when the features don't fit its channels, so
 a replaced database can't panic here. A graph with several motion matching nodes
-draws the first one that is initialised and hasn't failed.
+draws one that is initialised and hasn't failed, and which one isn't defined.
 
 ## For tests and tools
 

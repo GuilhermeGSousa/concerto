@@ -197,12 +197,12 @@ pub fn draw_motion_matching(
             draw_simulation(&mut gizmos, &bone);
             gizmos.line(bone.translation, character.translation(), SIMULATION_COLOR);
         }
+        remember(
+            &mut shown.trail,
+            time.delta().as_secs_f32(),
+            bone.translation,
+        );
         if shown.history {
-            remember(
-                &mut shown.trail,
-                time.delta().as_secs_f32(),
-                bone.translation,
-            );
             gizmos.linestrip(
                 shown.trail.iter().map(|(_, position)| *position),
                 SIMULATION_COLOR,
