@@ -102,6 +102,7 @@ fn baked_with(
         ..Default::default()
     };
     definition.simulation.position_joint = "Spine".into();
+    definition.simulation.facing_axis = Vec3::Z;
     let clips: Vec<AnimationClip> = entries.iter().map(|_| walking()).collect();
     definition.entries = entries;
     let skeleton = skeleton();

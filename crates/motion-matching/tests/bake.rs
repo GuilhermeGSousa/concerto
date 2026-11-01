@@ -250,8 +250,12 @@ fn a_straight_walk_faces_its_travel_and_moves_at_walk_speed() {
     let skeleton = body_skeleton();
     let poses = walk_model_poses(&skeleton, 2.0, 60.0);
 
-    let simulation =
-        simulation_bone(&SimulationBoneSettings::default(), &skeleton, &poses).unwrap();
+    let settings = SimulationBoneSettings {
+        facing_axis: Vec3::Z,
+        ..Default::default()
+    };
+
+    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
 
     assert_eq!(simulation.len(), poses.len());
     for (frame, transform) in simulation.iter().enumerate() {
@@ -350,8 +354,12 @@ fn a_window_longer_than_the_range_is_clamped() {
     let poses = walk_model_poses(&skeleton, 0.1, 60.0);
     assert_eq!(poses.len(), 6);
 
-    let simulation =
-        simulation_bone(&SimulationBoneSettings::default(), &skeleton, &poses).unwrap();
+    let settings = SimulationBoneSettings {
+        facing_axis: Vec3::Z,
+        ..Default::default()
+    };
+
+    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
 
     assert_eq!(simulation.len(), 6);
     assert!((simulation[3].rotation * Vec3::Z - Vec3::NEG_Z).length() < 1e-3);
@@ -492,6 +500,7 @@ fn baking_definition(
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()

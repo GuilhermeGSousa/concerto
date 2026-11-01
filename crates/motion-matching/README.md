@@ -61,7 +61,7 @@ plays. `MotionDatabase::pose` samples the pose from the clip.
 An entry bakes `floor((end - start) * rate / speed)` frames.
 
 `SimulationBoneSettings`: `position_joint` (`"Spine2"`) and `facing_joint`
-(`"Hips"`) are `JointName`s; `facing_axis` (`Vec3::Z`) is the facing
+(`"Hips"`) are `JointName`s; `facing_axis` (`Vec3::Y`) is the facing
 joint's forward in its own space; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
 ground projection smoothed, with the smoothed yaw of the facing joint. A

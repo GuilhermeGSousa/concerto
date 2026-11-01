@@ -117,6 +117,7 @@ fn baked(channels: Vec<StoredChannel>) -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -346,6 +347,7 @@ fn bake_with(channel: StoredChannel) -> Result<MotionDatabase, BakeError> {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -442,6 +444,7 @@ fn query_database() -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
