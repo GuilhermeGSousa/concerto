@@ -255,9 +255,8 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
   whichever is higher. The springs never see the pull, so the prediction is
   undisturbed. The body keeps its own vertical velocity.
 - `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
-  the path from where the body ended the step and writes it to the character's
-  `AnimationPlayer`, which is on the simulation's entity, or on or under an
-  entity whose `DisplacementSimulation` names it.
+  the path from where the body ended the step and writes it to the
+  `AnimationPlayer` on the skeleton of each `CharacterLink`.
 - `apply_character_displacement`, in `LateUpdate`, after `animate_targets` and
   before `propagate_global_transforms`: places each character; see
   [Displacement](#displacement).
@@ -308,13 +307,11 @@ node.
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
-the blackboard of its `AnimationPlayer`, where only this crate reads it. The
-player sits on the simulation's entity, or, when the visible character is a
-separate entity from the capsule, on or under an entity with a
-`DisplacementSimulation` naming the capsule: a player with no simulation of its
-own climbs `ChildOf` to the nearest one. A player that finds neither, or a
-preview `App`, has no trajectory; the node then plays the database without
-searching.
+the blackboard of its `AnimationPlayer`, where only this crate reads it. A
+`CharacterLink` says where both are: `capsule` holds the simulation and
+`skeleton` the player. When the player is on the capsule, both fields name that
+entity. A player no link names, or a preview `App`, has no trajectory; the node
+then plays the database without searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
@@ -339,30 +336,36 @@ does a frame that holds the pose at the end of its range.
 
 The visible character and the capsule are two entities, and they drift apart:
 root motion moves one and the player moves the other. `CharacterDisplacement`
-goes on the character and reconciles the two each frame.
-`DisplacementSimulation` names the capsule, which holds `CharacterSimulation`,
-`DesiredMotion` and the body, and needs `ColliderOffset::bottom_origin` for the
-character to stand on the ground. The game inserts it at spawn.
+goes on the character and reconciles the two each frame. `CharacterLink`, also
+on the character, names the entities it works with, and the game provides both:
+
+- `capsule` holds `CharacterSimulation`, `DesiredMotion` and the body, and needs
+  `ColliderOffset::bottom_origin` for the character to stand on the ground.
+- `skeleton` holds the `SkeletonComponent` with a root and its
+  `AnimationPlayer`. A scene-spawned skeleton exists only once its scene has, so
+  the game inserts the link then.
 
 ```rust
 commands.spawn((
     CharacterDisplacement::Clamp(Clamp::default()),
-    DisplacementSimulation(capsule),
+    CharacterLink { capsule, skeleton },
     Transform::default(),
 ));
 ```
 
-The skeleton goes anywhere under the character: each `AnimationRootBone` climbs
-`ChildOf` to the nearest entity with a `CharacterDisplacement`, so a
-scene-spawned skeleton needs no link. A character with two skeletons uses the
-first one found. A character whose skeleton has not spawned has no root motion
-and still gets its method's correction.
+Root motion is in the space of the root bone's parent, and the system reads that
+space from the skeleton's `GlobalTransform`. The skeleton has to be in it: a
+glTF skinned node beside its root joint with no transform of its own, or a BVH
+root joint, which rests unrotated. Any other skeleton moves the character the
+wrong way.
 
-A character's `Transform` is written in world space. It is not a child of its
-capsule: one under it would move twice, so the system skips it and warns once
-for that entity. A `DisplacementSimulation` naming an entity with no
-`CharacterSimulation` gets the same. A character without a
-`DisplacementSimulation` does not move.
+A `skeleton` with no `SkeletonComponent`, or no root, gives no root motion, and
+the character still gets its method's correction. A `capsule` with no
+`CharacterSimulation` leaves the character where it is, and so does having no
+`CharacterLink`.
+
+A character's `Transform` is written in world space. Do not make it a child of
+its capsule: nothing checks, and it would move twice.
 
 ### Methods
 
