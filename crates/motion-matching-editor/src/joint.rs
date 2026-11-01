@@ -129,6 +129,7 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
            rows: Query<&PropertyRow>,
+           values: Query<&PropertyRowValue>,
            mut commits: ResMut<PropertyCommits>| {
         if on.signal().button != MouseButton::Left {
             return;
@@ -137,6 +138,9 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
         let Some(target) = rows.get_entity(row) else {
             return;
         };
+        if joint_of(&values, row).as_ref() == Some(&name) {
+            return;
+        }
         if let Err(error) = commits.push::<JointName, JointNameEditor>(target, name.clone()) {
             log::warn!("Joint pick dropped: {error}");
         }

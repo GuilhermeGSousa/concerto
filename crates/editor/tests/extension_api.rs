@@ -14,11 +14,10 @@ use concerto_editor::{
         AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
     },
     clip_editor::{
-        ClipFacts, default_scene,
+        ClipFacts,
         preview::{ClearClip, clip_preview},
         read_clip, read_shown_scene,
     },
-    scene::load_scene,
 };
 use concerto_foundation::assets::{
     AssetId,
@@ -80,8 +79,6 @@ fn an_extension_crate_reaches_what_it_builds_on() {
     let _ = ClearClip;
     let _: fn(&mut App) = clip_preview;
     let _: fn(&Path, &AssetEntry) -> anyhow::Result<_> = read_clip;
-    let _: for<'a> fn(&AssetEntry, &'a AssetRegistry) -> Option<&'a AssetEntry> = default_scene;
     let _ = read_shown_scene;
-    let _ = load_scene;
     let _ = ClipFacts::of;
 }

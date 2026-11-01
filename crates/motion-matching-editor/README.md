@@ -41,6 +41,7 @@ An edit through a card comes back as `Hosted<PropertyCommitted>`, and an `Ok`
 marks the document `Unsaved`. `save_definitions` saves any document with
 `SaveRequested`, in front or not, writing each channel under its stored type name,
 so a save with no edit writes the same definition.
+Discarding unsaved edits puts the document back as it was last read or saved.
 
 ## The panels
 

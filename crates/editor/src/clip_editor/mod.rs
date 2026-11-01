@@ -148,14 +148,13 @@ pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationCli
     Ok(bincode::deserialize(payload)?)
 }
 
-/// The scene named `scene` in `clip`'s folder, which a preview shows unless another is picked.
-pub fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
+fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a AssetEntry> {
     assets
         .of_type::<Scene>()
         .find(|entry| entry.name() == "scene" && entry.folder() == clip.folder())
 }
 
-/// Reads the `picked` scene, or else the [`default_scene`] of `clip`, with its id.
+/// Reads the `picked` scene, or else the one named `scene` in `clip`'s folder, with its id.
 pub fn read_shown_scene(
     root: &Path,
     clip: Option<&AssetEntry>,

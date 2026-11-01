@@ -1,5 +1,5 @@
 use std::{
-    any::Any,
+    any::{Any, TypeId},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -13,6 +13,7 @@ use concerto_ecs::{Entity, IntoSystem, Res, System, command::CommandQueue};
 use concerto_editor::{
     EditorPlugin,
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved},
+    guard::DiscardEdits,
     hosted::{HostedApp, HostedPlugin, input::ViewportShown, testing::*},
     inspector::{
         InspectedSnapshots, InspectedValues, InspectorRegistry, PropertyCommits, PropertyRow,
@@ -32,7 +33,7 @@ use concerto_mesh::JointName;
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, FeatureChannel, FrameContext, MotionDatabaseDefinition,
     MotionEntry, ReflectFeatureChannel, StoredChannel, TimeRange, TrajectoryDirections,
-    TrajectoryPositions, weightless_hash,
+    TrajectoryPositions,
 };
 use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_ui::{node::UINode, theme::UITheme};
@@ -41,7 +42,9 @@ use concerto_window::plugin::{Window, WindowPlugin};
 use crate::{
     DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
     build::{check_baked, finish_build, mark_background_work, start_build},
-    document::{clear_status_on_edit, follow_definition_edits, load_definition},
+    document::{
+        clear_status_on_edit, follow_definition_edits, load_definition, restore_discarded_edits,
+    },
     facts::{follow_skeleton, read_entry_facts},
     install,
     joint::{JointNameEditor, refresh_joint_rows},
@@ -123,6 +126,7 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     panel.initialize(&mut f.world);
     panel.run_and_apply((), &mut f.world);
     f.world.add_listener(clear_status_on_edit);
+    f.world.add_listener(restore_discarded_edits);
     let mut value_systems = value_systems();
     let cards = value_systems.split_off(1);
     for system in value_systems {
@@ -323,7 +327,7 @@ fn the_testing_feature_opens_a_scene_in_an_extension_crate() {
 }
 
 #[test]
-fn install_registers_a_creatable_editor_with_a_preview_that_edits_nothing() {
+fn install_registers_a_creatable_editor_with_a_preview() {
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -523,7 +527,7 @@ fn an_unregistered_channel_refuses_to_open() {
 }
 
 #[test]
-fn a_channel_needs_no_component_to_open() {
+fn a_registered_channel_opens() {
     let mut f = fixture();
     let opened = with_channel("Unplaced", ReflectedValue::Struct(vec![]));
     let asset = write_definition(&mut f, "content/database.gasset", &opened);
@@ -729,7 +733,36 @@ fn a_saved_channel_edit_reopens_with_its_value() {
 }
 
 #[test]
-fn a_no_op_save_keeps_the_definition_and_its_hash() {
+fn discarding_edits_goes_back_to_the_definition_as_last_saved() {
+    let mut f = fixture();
+    let opened = definition();
+    let asset = write_definition(&mut f, "content/database.gasset", &opened);
+    let document = open(&mut f, &asset);
+    edit(&mut f, document, "Settings", "rate", 48.0);
+
+    f.world.trigger(DiscardEdits(document));
+    f.frame();
+
+    assert_eq!(state(&f, document).definition().unwrap(), opened);
+}
+
+#[test]
+fn a_definitions_preview_reflects_its_settings() {
+    let mut f = fixture();
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
+    let document = open(&mut f, &asset);
+
+    let hosted = f
+        .world
+        .get_component_for_entity::<HostedApp>(document)
+        .unwrap();
+
+    let types = hosted.type_registry().unwrap();
+    assert!(types.read().get(TypeId::of::<DatabaseSettings>()).is_some());
+}
+
+#[test]
+fn a_no_op_save_keeps_the_definition() {
     let mut f = fixture();
     let opened = definition();
     let asset = write_definition(&mut f, "content/database.gasset", &opened);
@@ -739,10 +772,6 @@ fn a_no_op_save_keeps_the_definition_and_its_hash() {
 
     let saved = read_definition(&f.project_root, &asset).unwrap();
     assert_eq!(saved, opened);
-    assert_eq!(
-        weightless_hash(&saved, b"skeleton", &[b"clip"]),
-        weightless_hash(&opened, b"skeleton", &[b"clip"])
-    );
 }
 
 #[test]

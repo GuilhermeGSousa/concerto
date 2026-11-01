@@ -166,6 +166,24 @@ fn picking_a_bone_writes_it_marks_the_document_unsaved_and_saves() {
 }
 
 #[test]
+fn picking_the_bone_already_set_leaves_the_document_saved() {
+    let mut tab = inspecting();
+    show_settings(&mut tab);
+    let label = label_of(&mut tab, "simulation.facing_joint");
+    let button = button_of(&tab, label);
+    let current = text_of(&tab, label).text.clone();
+
+    tab.click(button);
+    let item = tab.name_item(&current);
+    tab.click(item);
+    tab.f.frame();
+    tab.f.frame();
+
+    assert!(!tab.name_menu_open());
+    assert!(!tab.f.unsaved(tab.document));
+}
+
+#[test]
 fn picking_a_bone_for_a_list_element_writes_that_element() {
     let mut tab = inspecting();
     let document = tab.document;

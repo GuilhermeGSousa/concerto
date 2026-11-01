@@ -165,7 +165,7 @@ fn queue_numeric(
     }
 }
 
-/// Queues `number` for a scalar `row`, as its field does when it loses focus.
+/// Queues `number` as the whole value of a float `row`; a `usize` row refuses it.
 #[cfg(any(test, feature = "testing"))]
 pub fn commit_number(
     commits: &mut PropertyCommits,

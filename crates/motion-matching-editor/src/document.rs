@@ -9,6 +9,7 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved, finish_asset_request},
+    guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
     inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, ShownValue},
     preview::{PreviewFailed, PreviewSignals},
@@ -230,7 +231,6 @@ fn channel_names(channels: &[HeldChannel], registry: &TypeRegistry) -> Vec<Strin
         .collect()
 }
 
-/// Replaces the document's values, showing the channel `shown`, or the settings without one.
 pub(crate) fn publish_values(
     document: Entity,
     state: &DefinitionDocument,
@@ -265,6 +265,31 @@ pub fn read_definition(
         "Asset identity or type mismatch"
     );
     Ok(bincode::deserialize(payload)?)
+}
+
+fn hold_definition(
+    state: &mut DefinitionDocument,
+    definition: MotionDatabaseDefinition,
+    channels: Option<Vec<HeldChannel>>,
+) {
+    state.settings = channels
+        .is_some()
+        .then(|| DatabaseSettings::of(&definition));
+    state.channels = channels.unwrap_or_default();
+    state.skeleton = definition.skeleton.clone();
+    state.entries = definition.entries.clone();
+    state.selected_entry = (!definition.entries.is_empty()).then_some(0);
+    state.entry_facts.clear();
+    state.shown_skeleton = None;
+    state.build = BuildState::default();
+    state.baked = BakedState::default();
+    state.stats = None;
+    state.baked_job = None;
+    state.baked_wanted = true;
+    state.time = 0.0;
+    state.playback = None;
+    state.sought_entry = None;
+    state.loaded = Some(definition);
 }
 
 fn live_channels(
@@ -315,29 +340,44 @@ pub(crate) fn load_definition(
                 continue;
             }
         };
-        state.settings = channels
-            .is_some()
-            .then(|| DatabaseSettings::of(&definition));
-        state.channels = channels.unwrap_or_default();
-        state.skeleton = definition.skeleton.clone();
-        state.entries = definition.entries.clone();
-        state.selected_entry = (!definition.entries.is_empty()).then_some(0);
-        state.entry_facts.clear();
-        state.shown_skeleton = None;
-        state.build = BuildState::default();
-        state.baked = BakedState::default();
-        state.stats = None;
-        state.baked_job = None;
-        state.baked_wanted = true;
-        state.time = 0.0;
-        state.playback = None;
-        state.sought_entry = None;
+        hold_definition(&mut state, definition, channels);
         previews.trigger(entity, ShowDatabase(None));
         if let Some(types) = types {
             publish_values(entity, &state, &types.read(), None, &mut cmd);
         }
-        state.loaded = Some(definition);
         finish_asset_request(&mut document, &asset, Ok(()));
+    }
+}
+
+pub(crate) fn restore_discarded_edits(
+    on: On<DiscardEdits>,
+    documents: Query<(&mut DefinitionDocument, Option<&HostedApp>)>,
+    mut previews: PreviewSignals,
+    mut cmd: CommandQueue,
+) {
+    let document = on.signal().0;
+    let Some((mut state, hosted)) = documents.get_entity(document) else {
+        return;
+    };
+    let Some(definition) = state.loaded.clone() else {
+        return;
+    };
+    let types = hosted.and_then(HostedApp::type_registry);
+    let channels = types
+        .as_ref()
+        .map(|types| live_channels(&definition, &types.read()))
+        .transpose();
+    let channels = match channels {
+        Ok(channels) => channels,
+        Err(error) => {
+            log::warn!("Discarded edits stay: {error}");
+            return;
+        }
+    };
+    hold_definition(&mut state, definition, channels);
+    previews.trigger(document, ShowDatabase(None));
+    if let Some(types) = types {
+        publish_values(document, &state, &types.read(), None, &mut cmd);
     }
 }
 

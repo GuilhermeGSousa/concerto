@@ -30,7 +30,9 @@ pub use playback::{BakedPlayback, DatabaseProgress, SeekDatabase, ShowDatabase};
 pub use preview::database_preview;
 
 use build::{check_baked, finish_build, mark_background_work, start_build};
-use document::{clear_status_on_edit, follow_definition_edits, load_definition};
+use document::{
+    clear_status_on_edit, follow_definition_edits, load_definition, restore_discarded_edits,
+};
 use facts::{follow_skeleton, read_entry_facts};
 use joint::refresh_joint_rows;
 use menu::close_name_menu;
@@ -73,5 +75,6 @@ pub fn install(app: &mut App) {
                 .chain(),
         )
         .add_system(LateUpdate, (refresh_joint_rows, sync_panel_scroll))
-        .add_listener(clear_status_on_edit);
+        .add_listener(clear_status_on_edit)
+        .add_listener(restore_discarded_edits);
 }

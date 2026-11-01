@@ -39,7 +39,7 @@ and everything else the editor registers, and before the MCP plugins under
 An extension crate's tests can use the `testing` feature, which exposes
 `hosted::testing` and its `SceneFixture`, `inspector::value_systems`, the systems
 that show a document's values and send their edits, and
-`inspector::commit_number`, which queues a number for a row as its field does;
+`inspector::commit_number`, which queues a number as a float row's whole value;
 take it as a dev-dependency:
 
 ```toml
