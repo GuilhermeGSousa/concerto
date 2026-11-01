@@ -35,6 +35,19 @@ pub trait FeatureChannel: Reflect + Send + Sync + 'static {
         let _ = (skeleton, trajectory);
         Ok(())
     }
+
+    /// Adds the shapes that draw `features`, this channel's raw `dims()` values, to `out`; `frame` only places what the values hold no position for.
+    fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
+        let _ = (frame, features, out);
+    }
+}
+
+/// One thing a channel draws, relative to the simulation bone; a `Ring` lies flat in the bone's ground plane.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FeatureShape {
+    Ring { center: Vec3, radius: f32 },
+    Line { start: Vec3, end: Vec3 },
+    Arrow { start: Vec3, end: Vec3 },
 }
 
 /// What a channel reads: `Trajectory` channels use only `FrameContext::simulation` and `FrameContext::trajectory`.
@@ -74,6 +87,25 @@ pub fn extract_features(
         channel.extract(frame, &mut out[offset..offset + dims]);
         offset += dims;
     }
+}
+
+/// The shapes of every channel for one raw feature vector, one list per channel in order.
+pub fn preview_features(
+    channels: &[Box<dyn FeatureChannel>],
+    frame: &FrameContext,
+    features: &[f32],
+) -> Vec<Vec<FeatureShape>> {
+    let mut offset = 0;
+    channels
+        .iter()
+        .map(|channel| {
+            let dims = channel.dims();
+            let mut shapes = Vec::new();
+            channel.preview(frame, &features[offset..offset + dims], &mut shapes);
+            offset += dims;
+            shapes
+        })
+        .collect()
 }
 
 /// Builds a live [`FeatureChannel`] from a stored value and stores one back.

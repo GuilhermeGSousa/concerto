@@ -3,9 +3,8 @@ use concerto_mesh::Skeleton;
 use concerto_reflect::TypeRegistry;
 
 use crate::{
-    channel::{build_channels, BodyMotion, ChannelSource, FeatureChannel, FrameContext},
+    channel::{BodyMotion, ChannelSource, FeatureChannel, FrameContext},
     database::{BakeError, MotionDatabase},
-    definition::StoredChannel,
     simulation::TrajectorySample,
 };
 
@@ -17,16 +16,8 @@ pub struct FeatureQuery {
 impl FeatureQuery {
     /// Builds the live channels from the values stored in the database's spans; a type the registry lacks is an error.
     pub fn new(database: &MotionDatabase, registry: &TypeRegistry) -> Result<Self, BakeError> {
-        let stored: Vec<StoredChannel> = database
-            .channels()
-            .iter()
-            .map(|span| StoredChannel {
-                type_name: span.type_name.clone(),
-                value: span.value.clone(),
-            })
-            .collect();
         Ok(Self {
-            channels: build_channels(&stored, registry)?,
+            channels: database.live_channels(registry)?,
         })
     }
 

@@ -548,10 +548,14 @@ fn read_playback(database: MotionDatabase, input: &CheckInput) -> Option<BakedPl
         .collect::<Option<Vec<_>>>()?;
     let sampled: Vec<&AnimationClip> = clips.iter().map(Arc::as_ref).collect();
     database.pose(0, &skeleton, &sampled).ok()?;
+    let channels = database
+        .live_channels(&input.types.read())
+        .unwrap_or_default();
     Some(BakedPlayback {
         database: Arc::new(database),
         skeleton: Arc::new(skeleton),
         clips,
+        channels: channels.into(),
     })
 }
 

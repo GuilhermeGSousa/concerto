@@ -141,11 +141,19 @@ every bone with a match by id in the skeleton's `bone_ids`. That pose holds each
 parentless bone relative to the simulation bone, so it is placed by
 `database.simulation(frame)` first: the character goes where the clip takes it,
 the camera follows it, and the simulation bone, a yellow ring with an arrow along
-its facing, is drawn under it with `DebugGizmos`. Its trajectory is drawn the same
-way in blue: a line from the bone through one smaller ring and arrow per sample,
-at the frames `trajectory_frames` names, so it shows what the bake read for that
-frame and it stops at the end of the entry. An out-of-date file plays until the
-next build, and the baked state says so.
+its facing, is drawn under it with `DebugGizmos`. An out-of-date file plays until
+the next build, and the baked state says so.
+
+Every channel also draws the frame's features, through its `preview` and
+`preview_features`, so a game's channel can add its own shapes. The channels are
+built from the values in the baked file, so an out-of-date file draws what it
+baked, and channels that cannot be built draw nothing while the database plays.
+Channels take colours in turn from a palette without the simulation bone's yellow.
+Each is dimmed unless it is the one picked under **Channels**, which draws at full
+colour, so with `Settings` picked they are all dimmed. `ShowChannel` tells the
+preview which one, by its index among the baked channels, and only when the
+definition's channel there has the type the baked one has, so an out-of-date file
+never highlights the wrong channel.
 
 With no baked data to play, the preview plays the selected entry's whole clip
 through `clip_preview`, read on a worker, and that is also the fallback for a

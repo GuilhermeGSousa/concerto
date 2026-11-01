@@ -171,7 +171,7 @@ app.register_type::<RootSpeed>();
 A channel needs `Reflect` and `Default`. The registered type name is what a
 `StoredChannel` refers to; a stored value is applied over `Default`.
 
-A channel may also override three methods:
+A channel may also override four methods:
 
 - `weight()` (default 1.0): how much its group counts in the search. It must be
   finite and positive, or `bake` returns `InvalidWeight`. A top-level field
@@ -181,6 +181,25 @@ A channel may also override three methods:
   can compute it from a predicted trajectory.
 - `validate(&skeleton, &trajectory_settings)` (default `Ok`): `bake` calls it
   before extracting; an `Err` becomes `ChannelValue`.
+- `preview(&frame, features, &mut out)` (default nothing): adds the
+  `FeatureShape`s that draw `features`. See [Previewing](#previewing).
+
+### Previewing
+
+`preview` says how a channel looks for a given feature vector, so the same code
+can draw a baked frame or, later, a runtime query beside the frame it selected.
+`preview_features(&channels, &frame, &features)` gives each channel its span of a
+raw vector and returns one list of shapes per channel, in order.
+
+`FeatureShape` is a `Ring { center, radius }`, a `Line { start, end }` or an
+`Arrow { start, end }`, relative to the simulation bone. A `Ring` lies flat in the
+bone's ground plane. The caller decides where the shapes go and their colour, and
+a channel gets no drawing handle, so this crate does not depend on the renderer.
+
+- What is drawn comes from `features`, which are raw: a normalised vector is not
+  in metres. `FeatureQuery::build` returns normalised values.
+- `frame` only places what the values hold no position for, such as where a bone
+  or a trajectory sample is. A shape the context cannot place is left out.
 
 ### Reference channels
 
@@ -199,6 +218,13 @@ in orangeduck/Motion-Matching.
 `samples` index the trajectory; 0 is one `sample_dt` ahead. With the default
 `TrajectorySettings` at 60 Hz they sit at +20, +40 and +60 frames. A missing
 bone or an index at or past `sample_count` makes `bake` return `ChannelValue`.
+
+| Channel | Preview |
+|---|---|
+| `BonePositions` | a `Ring` of radius 0.05 at each stored position |
+| `BoneVelocities` | an `Arrow` from the bone's position in `model_pose` along the stored velocity scaled by 0.1 |
+| `TrajectoryPositions` | `Line`s from the origin through the stored positions, with a `Ring` of radius 0.12 at each |
+| `TrajectoryDirections` | an `Arrow` 0.3 long from the sample's position in `trajectory` along the stored direction |
 
 ### Normalisation
 
@@ -272,10 +298,12 @@ every bone index is a skeleton joint index.
   entry baked, or `None` past the last entry.
 - `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
   `clip_start + (frame - range_start) * speed / rate`.
-- `trajectory_frames(frame)`: the frame each trajectory sample of `frame` reads,
-  clamped to its range's last frame; empty for a frame the database did not bake.
-  `TrajectorySettings::frame_offset(sample, rate)` is the rounded offset the bake
-  and this share.
+- `trajectory_samples(frame)`: the trajectory samples of `frame` as the bake saw
+  them, clamped to its range's last frame; empty for a frame the database did not
+  bake. `TrajectorySettings::frame_offset(sample, rate)` is the rounded offset the
+  bake and this share.
+- `body_motion(frame)`: the simulation bone's velocities at `frame`.
+- `live_channels(&registry)`: the channels built from the values in the spans.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
