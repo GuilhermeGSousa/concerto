@@ -967,6 +967,10 @@ again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
 
+A document that holds its own edits restores them on `DiscardEdits`, which the
+prompt sends when the user chooses Discard. The tab can outlive that choice, since
+the open that asked for it can fail.
+
 A worker thread that a custom editor polls for its result needs frames to be
 polled in, and an agent needs to know it is running: insert `BackgroundWork` on
 the document when it starts and remove it when it ends. `status` reads

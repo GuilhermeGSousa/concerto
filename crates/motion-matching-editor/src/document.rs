@@ -371,6 +371,7 @@ pub(crate) fn restore_discarded_edits(
         Ok(channels) => channels,
         Err(error) => {
             log::warn!("Discarded edits stay: {error}");
+            cmd.insert(Unsaved, document);
             return;
         }
     };

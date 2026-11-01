@@ -735,15 +735,38 @@ fn a_saved_channel_edit_reopens_with_its_value() {
 #[test]
 fn discarding_edits_goes_back_to_the_definition_as_last_saved() {
     let mut f = fixture();
-    let opened = definition();
-    let asset = write_definition(&mut f, "content/database.gasset", &opened);
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
     edit(&mut f, document, "Settings", "rate", 48.0);
+    save(&mut f, document);
+    let saved = read_definition(&f.project_root, &asset).unwrap();
+    show(&mut f, document, "BoneVelocities 2");
+    edit(&mut f, document, "BoneVelocities 2", "weight", 2.5);
 
     f.world.trigger(DiscardEdits(document));
     f.frame();
 
-    assert_eq!(state(&f, document).definition().unwrap(), opened);
+    assert_eq!(state(&f, document).definition().unwrap(), saved);
+    assert_eq!(shown_name(&f, document).as_deref(), Some("Settings"));
+}
+
+#[test]
+fn edits_that_cannot_be_discarded_stay_marked_unsaved() {
+    let mut f = fixture();
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
+    let document = open(&mut f, &asset);
+    edit(&mut f, document, "Settings", "rate", 48.0);
+    let state = f
+        .world
+        .get_component_for_entity_mut::<DefinitionDocument>(document)
+        .unwrap();
+    state.loaded.as_mut().unwrap().channels[0].type_name = "not registered".into();
+    f.world.remove_component::<Unsaved>(document);
+
+    f.world.trigger(DiscardEdits(document));
+    f.frame();
+
+    assert!(f.unsaved(document));
 }
 
 #[test]
@@ -919,7 +942,7 @@ fn edit_speed(app: &mut App, document: Entity) -> bool {
 }
 
 #[test]
-fn install_opens_and_saves_a_definition_in_the_editors_schedule() {
+fn install_opens_saves_and_discards_a_definition_in_the_editors_schedule() {
     let directory = tempfile::tempdir().unwrap();
     let mut assets = AssetRegistry::default();
     let id = save_content_asset_into(
@@ -992,4 +1015,19 @@ fn install_opens_and_saves_a_definition_in_the_editors_schedule() {
 
     let saved = read_definition(directory.path(), &asset).unwrap();
     assert_eq!(saved.speed, 3.0);
+
+    let world = app.main_mut().world_mut();
+    let state = world
+        .get_component_for_entity_mut::<DefinitionDocument>(document)
+        .unwrap();
+    state.settings.as_mut().unwrap().speed = 7.0;
+    world.trigger(DiscardEdits(document));
+    app.update();
+
+    let held = app
+        .main()
+        .world()
+        .get_component_for_entity::<DefinitionDocument>(document)
+        .unwrap();
+    assert_eq!(held.settings.as_ref().unwrap().speed, 3.0);
 }

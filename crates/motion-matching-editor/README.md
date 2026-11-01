@@ -107,8 +107,8 @@ in full, and the status reads `Built …`. A `BakeError` shows as `Build failed:
 
 The main thread writes the file, its id derived from its path, and adds it to the
 registry, only if the document still shows the definition the build started for.
-Closing the tab or opening another definition drops the result, while the thread
-runs to its end. The baked file is an ordinary `.gasset`; the project decides
+Closing the tab, opening another definition or discarding unsaved edits drops the
+result, while the thread runs to its end. The baked file is an ordinary `.gasset`; the project decides
 whether to commit it. Build refuses when that address holds another kind of
 asset, or a file whose header it can't read, which includes a baked file from an
 older format. It leaves that file alone, and it has to be removed by hand.
