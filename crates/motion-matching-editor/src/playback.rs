@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, thread::JoinHandle};
+use std::{ops::Range, path::PathBuf, sync::Arc, thread::JoinHandle};
 
 use concerto_animation::clip::AnimationClip;
 use concerto_app::{App, edit_time::AtPreviewTime, schedule_groups::LateUpdate};
@@ -91,6 +91,7 @@ pub struct DatabaseProgress {
 pub(crate) struct DatabasePlayback {
     pub(crate) shown: Option<BakedPlayback>,
     pub(crate) picked: Option<usize>,
+    looped: Option<usize>,
     position: f32,
     reported: Option<usize>,
 }
@@ -105,8 +106,18 @@ pub(crate) struct ClipJob {
     handle: JoinHandle<anyhow::Result<AnimationClip>>,
 }
 
-fn stepped(position: f32, delta: f32, rate: f32, frames: usize) -> f32 {
-    (position + delta * rate) % frames.max(1) as f32
+fn stepped(position: f32, delta: f32, rate: f32, range: Range<usize>) -> f32 {
+    let start = range.start as f32;
+    if !range.contains(&(position as usize)) {
+        return start;
+    }
+    start + (position - start + delta * rate) % range.len() as f32
+}
+
+fn looped_range(database: &MotionDatabase, entry: Option<usize>) -> Range<usize> {
+    entry
+        .and_then(|entry| database.ranges().nth(entry))
+        .unwrap_or(0..database.frame_count())
 }
 
 fn frame_in_entry(database: &MotionDatabase, entry: usize, time: f32) -> Option<usize> {
@@ -167,7 +178,7 @@ fn play_database(
         playback.position,
         time.delta().as_secs_f32(),
         shown.database.rate(),
-        shown.database.frame_count(),
+        looped_range(&shown.database, playback.looped),
     );
     let frame = playback.position as usize;
     let Some(pose) = local_pose(shown, frame).map(|pose| placed_pose(shown, frame, pose)) else {
@@ -336,6 +347,7 @@ fn seek_database(on: On<SeekDatabase>, mut playback: ResMut<DatabasePlayback>) {
         .and_then(|shown| frame_in_entry(&shown.database, entry, time));
     if let Some(frame) = frame {
         playback.position = frame as f32;
+        playback.looped = Some(entry);
     }
 }
 

@@ -269,12 +269,46 @@ impl Stage {
 
 #[test]
 fn the_position_steps_at_the_rate() {
-    assert_eq!(stepped(3.0, 0.5, 30.0, 100), 18.0);
+    assert_eq!(stepped(3.0, 0.5, 30.0, 0..100), 18.0);
 }
 
 #[test]
 fn the_position_wraps_past_the_last_frame() {
-    assert_eq!(stepped(9.5, 0.1, 10.0, 10), 0.5);
+    assert_eq!(stepped(9.5, 0.1, 10.0, 0..10), 0.5);
+}
+
+#[test]
+fn the_position_wraps_to_the_start_of_its_range() {
+    assert_eq!(stepped(14.5, 0.1, 10.0, 10..15), 10.5);
+}
+
+#[test]
+fn a_position_outside_the_range_starts_it() {
+    assert_eq!(stepped(3.0, 0.1, 10.0, 10..15), 10.0);
+    assert_eq!(stepped(0.0, 0.1, 10.0, 0..0), 0.0);
+}
+
+#[test]
+fn with_no_entry_sought_the_whole_database_loops() {
+    let database = baked().database;
+
+    assert_eq!(looped_range(&database, None), 0..database.frame_count());
+    assert_eq!(looped_range(&database, Some(7)), 0..database.frame_count());
+}
+
+#[test]
+fn a_sought_entry_loops_on_itself_and_does_not_run_into_the_next() {
+    let mut stage = Stage::shown();
+    stage.seek(0, 1.99);
+    stage.world.get_resource_mut::<Time>().unwrap().update();
+    std::thread::sleep(Duration::from_secs_f32(3.0 / RATE));
+    stage.world.get_resource_mut::<Time>().unwrap().update();
+
+    stage.frame();
+
+    let frame = stage.playback().frame();
+    assert_eq!(stage.database().entry_of(frame), Some(0));
+    assert!(frame < 30, "{frame}");
 }
 
 #[test]
@@ -1028,6 +1062,27 @@ fn the_timeline_follows_the_baked_frames_of_the_selected_entry() {
 
     let database = tab.state().playback.as_ref().unwrap().database.clone();
     assert_eq!(database.entry_of(preview_frame(&tab)), Some(0));
+}
+
+#[test]
+fn the_timeline_head_comes_back_without_the_playback_leaving_the_selected_entry() {
+    let mut tab = built(logging());
+    let document = tab.document;
+    let database = tab.state().playback.as_ref().unwrap().database.clone();
+    let last = database.ranges().next().unwrap().end - 1;
+    let (_, end) = database.clip_time(last).unwrap();
+
+    scrub(&mut tab, end);
+
+    tab.f.frames_until("the head never came back", |f| {
+        let frame = f
+            .scene_world(document)
+            .get_resource::<DatabasePlayback>()
+            .unwrap()
+            .frame();
+        assert_eq!(database.entry_of(frame), Some(0));
+        state(f, document).time < end
+    });
 }
 
 #[test]
