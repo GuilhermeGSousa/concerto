@@ -202,9 +202,8 @@ impl AnimationNode for PlaceholderNode {
         _: &mut PosePool,
         output: &mut Pose,
     ) {
-        match evaluated_inputs.first() {
-            Some(input) => output.copy_from(&input.pose),
-            None => output.copy_from(&Pose::identity(output.len())),
+        if let Some(input) = evaluated_inputs.first() {
+            output.copy_from(&input.pose);
         }
     }
 
@@ -215,9 +214,10 @@ impl AnimationNode for PlaceholderNode {
 mod tests {
     use concerto_foundation::assets::asset_store::AssetStore;
     use concerto_reflect::TypeRegistry;
+    use glam::Vec3;
 
     use super::*;
-    use crate::blackboard::AnimationBlackboard;
+    use crate::{blackboard::AnimationBlackboard, pose::JointPose};
 
     #[derive(Default, Reflect)]
     #[reflect(AnimationNode)]
@@ -364,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_without_input_resets_a_recycled_pose_to_identity() {
+    fn placeholder_without_input_leaves_the_rest_pose() {
         let clips = AssetStore::new();
         let graphs = AssetStore::new();
         let blackboard = AnimationBlackboard::default();
@@ -376,13 +376,15 @@ mod tests {
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
         let mut instance = node.create_instance(&context);
+        let rest = [JointPose {
+            translation: Vec3::X,
+            ..JointPose::IDENTITY
+        }];
         let mut pool = PosePool::new(1);
-        let mut recycled = Pose::identity(1);
-        recycled.get_joint_pose_mut(0).unwrap().translation.x = 7.0;
-        pool.release(recycled);
+        pool.set_rest(&rest);
 
         let mut output = pool.acquire();
         node.evaluate(&mut instance, &context, &[], &[], &mut pool, &mut output);
-        assert_eq!(output.joints()[0].translation.x, 0.0);
+        assert_eq!(output.joints(), rest);
     }
 }

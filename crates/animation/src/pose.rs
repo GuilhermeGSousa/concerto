@@ -125,6 +125,7 @@ pub struct EvaluatedPose {
 pub struct PosePool {
     free_poses: Vec<Pose>,
     bone_count: usize,
+    rest: Box<[JointPose]>,
 }
 
 impl PosePool {
@@ -132,6 +133,7 @@ impl PosePool {
         Self {
             free_poses: Vec::new(),
             bone_count,
+            rest: Box::default(),
         }
     }
 
@@ -139,9 +141,22 @@ impl PosePool {
         let mut pose = self
             .free_poses
             .pop()
-            .unwrap_or(Pose::identity(self.bone_count));
+            .unwrap_or_else(|| Pose::identity(self.bone_count));
+        if !self.rest.is_empty() {
+            pose.joints.clone_from_slice(&self.rest);
+        }
         pose.root_motion = RootMotion::IDENTITY;
         pose
+    }
+
+    pub(crate) fn set_rest(&mut self, rest: &[JointPose]) {
+        if rest.len() != self.bone_count {
+            self.bone_count = rest.len();
+            self.free_poses.clear();
+        }
+        if *self.rest != *rest {
+            self.rest = rest.into();
+        }
     }
 
     pub(crate) fn release(&mut self, pose: Pose) {
@@ -209,6 +224,21 @@ mod tests {
         pool.release(recycled);
 
         assert_eq!(pool.acquire().root_motion(), RootMotion::IDENTITY);
+    }
+
+    #[test]
+    fn set_rest_with_another_length_resizes_the_pool() {
+        let mut pool = PosePool::new(1);
+        let shorter = pool.acquire();
+        pool.release(shorter);
+        let rest = [
+            joint(Vec3::X, Quat::IDENTITY),
+            joint(Vec3::Y, Quat::from_rotation_z(0.3)),
+        ];
+
+        pool.set_rest(&rest);
+
+        assert_eq!(pool.acquire().joints(), rest);
     }
 
     #[test]

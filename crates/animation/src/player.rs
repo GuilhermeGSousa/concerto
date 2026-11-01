@@ -197,6 +197,7 @@ impl AnimationPlayer {
             root,
         };
 
+        self.pose_pool.set_rest(rest_pose);
         let mut output_pose = self.pose_pool.acquire();
         if !self
             .graph_instance

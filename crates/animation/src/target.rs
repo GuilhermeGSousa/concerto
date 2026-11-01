@@ -100,7 +100,7 @@ pub(crate) fn initialize_animation_players(
 
 #[cfg(test)]
 mod tests {
-    use concerto_ecs::{IntoSystem, System, World, component::scene::SceneEntityRef};
+    use concerto_ecs::{Entity, IntoSystem, System, World, component::scene::SceneEntityRef};
     use concerto_foundation::{
         assets::{
             AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
@@ -235,6 +235,8 @@ mod tests {
         );
     }
     const ROOT_ID: Uuid = Uuid::from_u128(9);
+    const CHILD_ID: Uuid = Uuid::from_u128(10);
+    const CHILD_REST: Vec3 = Vec3::new(0.0, 0.5, 0.0);
 
     struct Rig {
         server: AssetServer,
@@ -296,10 +298,41 @@ mod tests {
             self
         }
 
+        fn loaded_two_bone_skeleton(mut self) -> Self {
+            let skeleton = Skeleton::new(
+                vec![Mat4::IDENTITY; 2],
+                vec![None, Some(0)],
+                vec!["root".to_string(), "child".to_string()],
+                vec![
+                    self.rest.clone(),
+                    JointPose {
+                        translation: CHILD_REST,
+                        ..JointPose::IDENTITY
+                    },
+                ],
+                vec![ROOT_ID, CHILD_ID],
+            )
+            .unwrap();
+            self.skeletons.insert(self.skeleton.id(), skeleton);
+            self
+        }
+
         fn clip(&mut self, channels: Vec<AnimationChannel>) -> AssetHandle<AnimationClip> {
+            self.clip_of(ROOT_ID, channels)
+        }
+
+        fn child_clip(&mut self, channels: Vec<AnimationChannel>) -> AssetHandle<AnimationClip> {
+            self.clip_of(CHILD_ID, channels)
+        }
+
+        fn clip_of(
+            &mut self,
+            bone_id: Uuid,
+            channels: Vec<AnimationChannel>,
+        ) -> AssetHandle<AnimationClip> {
             let mut clip = AnimationClip::default();
             for channel in channels {
-                clip.add_channel(ROOT_ID, channel);
+                clip.add_channel(bone_id, channel);
             }
             let handle = self.server.add(AnimationClip::default());
             self.clips.insert(handle.id(), clip);
@@ -317,7 +350,11 @@ mod tests {
         }
 
         fn player(&self, graph: AssetHandle<AnimationGraph>) -> AnimationPlayer {
-            let mut player = AnimationPlayer::new(1);
+            let bone_count = self
+                .skeletons
+                .get(&self.skeleton)
+                .map_or(1, Skeleton::bone_count);
+            let mut player = AnimationPlayer::new(bone_count);
             player.initialize_graph(graph, &self.clips, &self.graphs);
             player
         }
@@ -360,6 +397,61 @@ mod tests {
                 .unwrap()
                 .root_motion
         }
+
+        fn spawn_two_bones(self, player: AnimationPlayer) -> TwoBones {
+            let mut world = World::default();
+            let root = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
+            let child = world.spawn(Transform::IDENTITY);
+            let owner = world.spawn((
+                player,
+                SkeletonComponent {
+                    skeleton: self.skeleton,
+                    bones: vec![SceneEntityRef::Entity(root), SceneEntityRef::Entity(child)],
+                    root: Some(SceneEntityRef::Entity(root)),
+                },
+            ));
+            world.insert_resource(self.clips);
+            world.insert_resource(self.graphs);
+            world.insert_resource(self.skeletons);
+            TwoBones {
+                world,
+                owner,
+                child,
+            }
+        }
+    }
+
+    struct TwoBones {
+        world: World,
+        owner: Entity,
+        child: Entity,
+    }
+
+    impl TwoBones {
+        fn animate(&mut self) {
+            let mut system = animate_targets.into_system();
+            system.initialize(&mut self.world);
+            system.run_and_apply((), &mut self.world);
+        }
+
+        fn play(&mut self, graph: AssetHandle<AnimationGraph>) {
+            let owner = self.owner;
+            self.world
+                .resource_scope(|world, clips: &AssetStore<AnimationClip>| {
+                    world.resource_scope(|world, graphs: &AssetStore<AnimationGraph>| {
+                        world
+                            .get_component_for_entity_mut::<AnimationPlayer>(owner)
+                            .unwrap()
+                            .initialize_graph(graph, clips, graphs);
+                    });
+                });
+        }
+
+        fn child(&self) -> &Transform {
+            self.world
+                .get_component_for_entity::<Transform>(self.child)
+                .unwrap()
+        }
     }
 
     fn stale_motion() -> RootMotion {
@@ -374,6 +466,52 @@ mod tests {
             vec![0.0, 1.0],
             AnimationChanelOutput::Translation(vec![Vec3::ZERO, per_second]),
         )
+    }
+
+    #[test]
+    fn a_child_joint_with_no_position_channel_keeps_its_rest_translation() {
+        let turn = Quat::from_rotation_z(0.4);
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_two_bone_skeleton();
+        let clip = rig.child_clip(vec![AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::Rotation(vec![turn, turn]),
+        )]);
+        let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
+        let player = rig.player(graph);
+        let mut bones = rig.spawn_two_bones(player);
+
+        bones.animate();
+
+        assert_eq!(bones.child().translation, CHILD_REST);
+        assert!(bones.child().rotation.abs_diff_eq(turn, 1e-5));
+    }
+
+    #[test]
+    fn a_joint_with_no_channels_in_a_second_clip_shows_rest_not_the_first_clips_value() {
+        let keyed = Vec3::new(1.0, 2.0, 3.0);
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_two_bone_skeleton();
+        let first = rig.child_clip(vec![AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::Translation(vec![keyed, keyed]),
+        )]);
+        let second = rig.moving_clip(Vec3::X);
+        let first = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(first)));
+        let second = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(second)));
+        let player = rig.player(first);
+        let mut bones = rig.spawn_two_bones(player);
+
+        bones.animate();
+        bones.animate();
+        assert_eq!(
+            bones.child().translation,
+            keyed,
+            "every pose in the pool holds the first clip's value"
+        );
+
+        bones.play(second);
+        bones.animate();
+
+        assert_eq!(bones.child().translation, CHILD_REST);
     }
 
     #[test]
