@@ -5,7 +5,9 @@ use concerto_app::{
     schedule_groups::{FixedUpdate, LateFixedUpdate, LateUpdate},
 };
 use concerto_ecs::IntoSystemConfig;
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::{
+    assets::handle::AssetHandle, transform::systems::propagate_global_transforms,
+};
 use concerto_physics::step_simulation;
 
 use crate::{
@@ -14,11 +16,12 @@ use crate::{
         MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange,
         TrajectorySettings,
     },
+    displacement::CharacterDisplacement,
     features::{BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions},
     node::{MotionMatchingNode, MotionMatchingTrajectory},
     runtime::run_motion_matching,
     simulation::{CharacterSimulation, DesiredMotion, TrajectorySample},
-    systems::{drive_body, publish_trajectory},
+    systems::{apply_character_displacement, drive_body, publish_trajectory},
 };
 
 pub(crate) fn register_runtime(app: &mut concerto_app::App) {
@@ -48,11 +51,18 @@ impl Plugin for MotionMatchingPlugin {
             .register_type::<DesiredMotion>()
             .register_type::<TrajectorySample>()
             .register_type::<CharacterSimulation>()
+            .register_type::<CharacterDisplacement>()
             .register_type::<AssetHandle<MotionDatabase>>()
             .register_type::<MotionMatchingTrajectory>()
             .register_type::<MotionMatchingNode>()
             .add_system(FixedUpdate, drive_body)
-            .add_system(LateFixedUpdate, publish_trajectory.after(step_simulation));
+            .add_system(LateFixedUpdate, publish_trajectory.after(step_simulation))
+            .add_system(
+                LateUpdate,
+                apply_character_displacement
+                    .after(animate_targets)
+                    .before(propagate_global_transforms),
+            );
         register_runtime(app);
     }
 }

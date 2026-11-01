@@ -4,6 +4,7 @@ pub mod bake;
 pub mod channel;
 pub mod database;
 pub mod definition;
+pub mod displacement;
 pub mod features;
 pub mod filter;
 pub mod instance;
@@ -26,6 +27,9 @@ pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{
     MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
     TrajectorySettings,
+};
+pub use displacement::{
+    Adjustment, CharacterDisplacement, Clamp, DisplacementSimulation, Synchronization,
 };
 pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,

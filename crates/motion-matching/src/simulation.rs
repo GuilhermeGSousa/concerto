@@ -52,10 +52,15 @@ pub struct CharacterSimulation {
     pub rotation_halflife: f32,
     pub sample_dt: f32,
     pub sample_count: usize,
+    pub max_pull_speed: f32,
     #[reflect(skip)]
     pub(crate) velocity: Spring<Vec3>,
     #[reflect(skip)]
     pub(crate) facing: Spring<Quat>,
+    #[reflect(skip)]
+    pub(crate) pull: Vec3,
+    #[reflect(skip)]
+    pub(crate) previous_facing: Quat,
 }
 
 impl Default for CharacterSimulation {
@@ -66,8 +71,11 @@ impl Default for CharacterSimulation {
             rotation_halflife: halflife,
             sample_dt: 1.0 / 3.0,
             sample_count: 3,
+            max_pull_speed: 8.0,
             velocity: Spring::critically_damped(Vec3::ZERO, frequency(halflife)),
             facing: Spring::critically_damped(Quat::IDENTITY, frequency(halflife)),
+            pull: Vec3::ZERO,
+            previous_facing: Quat::IDENTITY,
         }
     }
 }
