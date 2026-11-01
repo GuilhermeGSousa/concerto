@@ -163,6 +163,7 @@ fn two_clip_definition(
         rate: 30.0,
         speed,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()

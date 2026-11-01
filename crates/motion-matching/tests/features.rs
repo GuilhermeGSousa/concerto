@@ -117,6 +117,7 @@ fn baked(channels: Vec<StoredChannel>) -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -346,6 +347,7 @@ fn bake_with(channel: StoredChannel) -> Result<MotionDatabase, BakeError> {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -442,6 +444,7 @@ fn query_database() -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -490,6 +493,39 @@ fn a_query_for_a_database_frame_equals_its_normalised_features() {
 
         assert_close(&built, &database.normalised_features(frame));
     }
+}
+
+#[test]
+fn a_raw_query_holds_its_trajectory_span_in_metres_and_its_pose_spans_as_baked() {
+    let database = query_database();
+    let query = FeatureQuery::new(&database, &query_registry()).unwrap();
+    let simulation = Transform::from_translation(Vec3::new(1.0, 0.0, 2.0));
+    let trajectory = [
+        Vec3::new(1.0, 0.0, 5.0),
+        Vec3::new(9.0, 0.0, 9.0),
+        Vec3::new(4.0, 0.0, 2.0),
+    ]
+    .map(|position| TrajectorySample {
+        position,
+        ..Default::default()
+    });
+
+    let raw = query
+        .raw(&database, &skeleton(), 7, &simulation, &trajectory)
+        .unwrap();
+
+    let span = &database.channels()[1];
+    assert_eq!(span.source, ChannelSource::Trajectory);
+    assert_close(
+        &raw[span.offset..span.offset + span.dims],
+        &[0.0, 3.0, 3.0, 0.0],
+    );
+    let ramp = &database.channels()[0];
+    assert_eq!(ramp.source, ChannelSource::Pose);
+    assert_close(
+        &raw[ramp.offset..ramp.offset + ramp.dims],
+        &database.features(7)[ramp.offset..ramp.offset + ramp.dims],
+    );
 }
 
 #[test]

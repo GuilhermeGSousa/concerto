@@ -20,7 +20,7 @@ use log::error;
 
 use crate::{
     database::{BakeError, MotionDatabase},
-    instance::MotionMatchingInstance,
+    instance::{LastQuery, MotionMatchingInstance},
     node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
     query::FeatureQuery,
     search::{cost_of, excluded_tail, search},
@@ -187,7 +187,7 @@ fn forced_search(
 
 fn find_better_frame(
     node: &MotionMatchingNode,
-    instance: &MotionMatchingInstance,
+    instance: &mut MotionMatchingInstance,
     trajectory: &MotionMatchingTrajectory,
     sources: &Sources,
 ) -> Result<Option<usize>, String> {
@@ -197,17 +197,28 @@ fn find_better_frame(
     };
     let simulation =
         Transform::from_translation_rotation(trajectory.translation, trajectory.rotation);
-    let features = match query.build(
+    let raw = match query.raw(
         database,
         sources.skeleton,
         instance.frame,
         &simulation,
         &trajectory.samples,
     ) {
-        Ok(features) => features,
-        Err(BakeError::TrajectoryTooShort { .. }) => return Ok(None),
+        Ok(raw) => raw,
+        Err(BakeError::TrajectoryTooShort { .. }) => {
+            instance.last_query = None;
+            return Ok(None);
+        }
         Err(error) => return Err(error.to_string()),
     };
+    let mut features = raw.clone();
+    database.normalise(&mut features);
+    instance.last_query = Some(LastQuery {
+        features: raw,
+        frame: instance.frame,
+        simulation,
+        trajectory: trajectory.samples.clone(),
+    });
     let Some((best, best_cost)) =
         search(database, &features, instance.frame, excluded_tail(database))
     else {
@@ -383,6 +394,7 @@ mod tests {
     use concerto_animation::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        node::AnimationNode,
         plugin::register_animation_types,
         pose::{Pose, RootMotion},
         root::AnimationRootBone,
@@ -409,6 +421,8 @@ mod tests {
         instance::MotionMatchingInstance,
         node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
         plugin::register_runtime,
+        query::FeatureQuery,
+        search::{excluded_tail, search},
         simulation::TrajectorySample,
         test_support::{
             pace_database, pace_database_of, registry, skeleton, turn_left, walk_forward, Pace,
@@ -608,6 +622,148 @@ mod tests {
 
         assert_eq!(fixture.database.entry_of(instance.frame), Some(1));
         assert!((instance.search_timer - node.search_period).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_transition_lands_on_the_frame_the_normalised_query_finds() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        let board = trajectory(0.25, 2);
+        step(&node, &mut instance, &board, &fixture.sources());
+
+        let samples = &board
+            .get::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
+            .unwrap()
+            .samples;
+        let query = FeatureQuery::new(&fixture.database, &fixture.registry)
+            .unwrap()
+            .build(
+                &fixture.database,
+                &fixture.skeleton,
+                3,
+                &Transform::IDENTITY,
+                samples,
+            )
+            .unwrap();
+        let tail = excluded_tail(&fixture.database);
+        let (expected, _) = search(&fixture.database, &query, 3, tail).unwrap();
+        assert_ne!(expected, 3);
+        assert_eq!(instance.frame, expected);
+    }
+
+    fn searched(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingInstance {
+        let mut instance = instance(node, 0.0);
+        step(node, &mut instance, &quiet(), &fixture.sources());
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(
+            node,
+            &mut instance,
+            &trajectory(0.25, 2),
+            &fixture.sources(),
+        );
+        instance
+    }
+
+    #[test]
+    fn an_instance_that_has_not_searched_has_no_last_query() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.1);
+
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+
+        assert!(instance.initialised);
+        assert!(instance.last_query.is_none());
+    }
+
+    #[test]
+    fn a_search_keeps_its_raw_query_with_what_it_was_built_from() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let published = MotionMatchingTrajectory {
+            translation: Vec3::new(1.0, 0.0, 2.0),
+            rotation: Quat::from_rotation_y(0.5),
+            samples: vec![
+                TrajectorySample {
+                    position: Vec3::new(1.0, 0.0, 3.0),
+                    velocity: Vec3::new(0.0, 0.0, -0.25),
+                    rotation: Quat::from_rotation_y(0.6),
+                };
+                2
+            ],
+        };
+        let mut board = AnimationBlackboard::default();
+        board.set(TRAJECTORY_KEY, published.clone());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(&node, &mut instance, &board, &fixture.sources());
+
+        let last = instance.last_query.as_ref().unwrap();
+        assert_eq!(last.features, [0.25]);
+        assert_eq!(last.frame, 3);
+        assert_ne!(instance.frame, last.frame);
+        assert_eq!(last.simulation.translation, published.translation);
+        assert_eq!(last.simulation.rotation, published.rotation);
+        assert_eq!(last.trajectory, published.samples);
+    }
+
+    #[test]
+    fn a_trajectory_too_short_to_search_clears_the_last_query() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = searched(&fixture, &node);
+        assert!(instance.last_query.is_some());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(
+            &node,
+            &mut instance,
+            &trajectory(0.25, 1),
+            &fixture.sources(),
+        );
+
+        assert!(instance.last_query.is_none());
+    }
+
+    #[test]
+    fn a_tick_with_no_search_due_keeps_the_last_query() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = searched(&fixture, &node);
+
+        instance.activate(0.03);
+        instance.search_timer = 10.0;
+        step(
+            &node,
+            &mut instance,
+            &trajectory(0.5, 2),
+            &fixture.sources(),
+        );
+
+        let last = instance.last_query.as_ref().unwrap();
+        assert_eq!(last.features, [0.25]);
+    }
+
+    #[test]
+    fn a_reset_clears_the_last_query() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = searched(&fixture, &node);
+        assert!(instance.last_query.is_some());
+
+        node.reset(&mut instance);
+
+        assert!(instance.last_query.is_none());
     }
 
     #[test]

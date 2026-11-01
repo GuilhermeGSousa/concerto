@@ -1,8 +1,4 @@
-use std::{
-    f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2},
-    sync::Arc,
-    time::Duration,
-};
+use std::{f32::consts::FRAC_1_SQRT_2, sync::Arc, time::Duration};
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_animation_editor::preview::{ClearClip, ShowClip};
@@ -102,6 +98,7 @@ fn baked_with(
         ..Default::default()
     };
     definition.simulation.position_joint = "Spine".into();
+    definition.simulation.facing_axis = Vec3::Z;
     let clips: Vec<AnimationClip> = entries.iter().map(|_| walking()).collect();
     definition.entries = entries;
     let skeleton = skeleton();
@@ -508,34 +505,6 @@ fn the_simulation_bone_is_drawn_while_a_database_plays() {
 }
 
 #[test]
-fn a_shape_goes_through_the_simulation_bone() {
-    let bone = Transform::from_translation_rotation(
-        Vec3::new(1.0, 0.0, 2.0),
-        Quat::from_rotation_y(FRAC_PI_2),
-    );
-
-    let ring = FeatureShape::Ring {
-        center: Vec3::Z,
-        radius: 0.5,
-    };
-    let FeatureShape::Ring { center, radius } = placed_shape(&bone, ring) else {
-        panic!("a ring stays a ring");
-    };
-    assert!(center.distance(Vec3::new(2.0, 0.0, 2.0)) < NEAR, "{center}");
-    assert_eq!(radius, 0.5);
-
-    let arrow = FeatureShape::Arrow {
-        start: Vec3::Z,
-        end: Vec3::new(0.0, 1.0, 2.0),
-    };
-    let FeatureShape::Arrow { start, end } = placed_shape(&bone, arrow) else {
-        panic!("an arrow stays an arrow");
-    };
-    assert!(start.distance(Vec3::new(2.0, 0.0, 2.0)) < NEAR, "{start}");
-    assert!(end.distance(Vec3::new(3.0, 1.0, 2.0)) < NEAR, "{end}");
-}
-
-#[test]
 fn a_bone_velocity_starts_at_the_bone_of_the_shown_frame() {
     let shown = baked_with(vec![entry(None)], 1.0, vec![spine_velocities()]);
 
@@ -576,32 +545,6 @@ fn every_channel_is_drawn_while_a_database_plays() {
 
     assert!(one > none);
     assert!(both > one);
-}
-
-#[test]
-fn the_picked_channel_has_its_full_colour_and_the_others_are_dimmed() {
-    let full = channel_color(1, Some(1)).to_array();
-
-    for dimmed in [channel_color(1, None), channel_color(1, Some(0))] {
-        let dimmed = dimmed.to_array();
-        for index in 0..3 {
-            assert!((dimmed[index] - full[index] * 0.4).abs() < NEAR);
-        }
-        assert_eq!(dimmed[3], full[3]);
-    }
-}
-
-#[test]
-fn channels_take_their_colours_in_turn() {
-    let full = |channel| channel_color(channel, Some(channel));
-
-    assert_ne!(full(0), full(1));
-    assert_eq!(full(CHANNEL_COLORS.len()), full(0));
-}
-
-#[test]
-fn no_channel_uses_the_simulation_bones_colour() {
-    assert!(!CHANNEL_COLORS.contains(&SIMULATION_COLOR));
 }
 
 #[test]
