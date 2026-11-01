@@ -530,7 +530,7 @@ fn preview_has_spun(app: &App, document: Entity, speed: f32) -> bool {
         return false;
     };
     assert_eq!(hosted.role(), HostRole::Preview);
-    let world = hosted.world();
+    let world = hosted.world_for_test();
     let spins: Vec<_> = world
         .archetypes()
         .iter()

@@ -56,9 +56,7 @@ An `App` does not run itself. A host builds it, feeds it, and steps it:
    read `Window` for what the game asked for.
 
 A host may also trigger signals on an `App` it holds, and read back the events
-that `App` wrote. It never borrows the `App`'s world to change it. An asset
-editor may read a document out of it through `HostedApp::world`, or `world_mut`
-from a listener. Between
+that `App` wrote. It never borrows the `App`'s world to change it. Between
 frames it may call `serve(label)`, which runs one main-world schedule without
 marking a frame boundary for change detection, extracting, or touching the
 render world.
@@ -188,22 +186,19 @@ while it runs:
   document's `HostedApp` with `HostRole::Preview`. It runs the main-world
   systems and listeners marked `.at_edit_time()` or `.at_preview_time()` (the
   `Preview` tag), so animation plays in it while the startup scene and the
-  game's unmarked systems stay out. It has no scene file, and no scene tools
-  unless `AssetEditor::edits_in_preview` is true, which adds
-  `EditToolsCorePlugin`. The asset editor drives it with signals through
-  `PreviewSignals` and reads its events as `Hosted<E>`.
+  game's unmarked systems stay out. It has no scene file and no scene tools.
+  The asset editor drives it with signals through `PreviewSignals` and reads
+  its events as `Hosted<E>`.
 
 `crates/editor/src/hosted/` is the host. Each frame, in `First`, it steps the
 document's `HostedApp` on the active tab, the edit `App`, the play `App` while
 playing, or the preview, while the viewport is visible, after pushing the
 viewport's size and input into it. That document carries `ViewportTarget`;
-every role but a preview also carries `EditTarget`, which the panels read, and
-so does a preview whose editor's `edits_in_preview` is true. An
+every role but a preview also carries `EditTarget`, which the panels read. An
 edit `App` that is not stepped still takes signals, which is how a tab that is
 not in front is saved; a preview in the background is frozen.
 
-Panels reach the edit `App`, the play `App` while playing, or a preview that
-edits, through two
+Panels reach the edit `App`, or the play `App` while playing, through two
 system parameters: `EditWorld<T>` reads its world, and `EditWorldSignals` triggers
 signals such as `EntityEdit` and `Select` in it. The scene tools in
 `crates/editor/src/tools/` apply each change and report back through the

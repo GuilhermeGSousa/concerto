@@ -225,6 +225,12 @@ pub(crate) fn value_names(f: &SceneFixture, document: Entity) -> Vec<String> {
         })
 }
 
+fn holds_an_empty_list_of_values(f: &SceneFixture, document: Entity) -> bool {
+    f.world
+        .get_component_for_entity::<InspectedValues>(document)
+        .is_some_and(|values| values.0.is_empty())
+}
+
 pub(crate) fn shown_name(f: &SceneFixture, document: Entity) -> Option<String> {
     f.world
         .get_component_for_entity::<ShownValue>(document)
@@ -335,7 +341,6 @@ fn install_registers_a_creatable_editor_with_a_preview_that_edits_nothing() {
     let kind = MotionDatabaseDefinition::name();
     assert!(editors.preview(kind).is_some());
     assert!(editors.bottom_host(kind));
-    assert!(!editors.edits_in_preview(kind));
     assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
 }
 
@@ -505,7 +510,7 @@ fn refused(type_name: &str, value: ReflectedValue, reason: &str) {
     assert_eq!(f.document(document).current, None);
     assert!(state(&f, document).loaded.is_none());
     assert!(state(&f, document).channels.is_empty());
-    assert!(value_names(&f, document).is_empty());
+    assert!(holds_an_empty_list_of_values(&f, document));
 }
 
 #[test]
@@ -857,7 +862,7 @@ fn a_failed_preview_keeps_the_definition_and_refuses_save() {
     assert_eq!(state(&f, document).loaded, Some(opened));
     assert!(f.status(document).starts_with("Preview failed"));
     assert!(state(&f, document).settings.is_none());
-    assert!(value_names(&f, document).is_empty());
+    assert!(holds_an_empty_list_of_values(&f, document));
     assert!(card_names(&mut f).is_empty());
 
     save(&mut f, document);

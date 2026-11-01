@@ -62,7 +62,7 @@ use crate::{
         SceneSaved, SceneState,
     },
     tools::{
-        edits::{ComponentEdited, PropertyCommitted},
+        edits::PropertyCommitted,
         entity_ops::EntityEdit,
         scene::{RevealEntity, SceneEdited, SceneRoot, SceneStatus},
         selection::Selection,
@@ -103,7 +103,7 @@ fn broken_build(_: &mut App) {
 }
 
 macro_rules! test_asset {
-    ($asset:ident, $editor:ident, $preview:expr, $edits_in_preview:expr) => {
+    ($asset:ident, $editor:ident, $preview:expr) => {
         #[derive(serde::Serialize, serde::Deserialize)]
         pub struct $asset;
 
@@ -120,10 +120,6 @@ macro_rules! test_asset {
             fn preview(&self) -> Option<PreviewSpec> {
                 $preview
             }
-
-            fn edits_in_preview(&self) -> bool {
-                $edits_in_preview
-            }
         }
     };
 }
@@ -133,26 +129,16 @@ test_asset!(
     PreviewedEditor,
     Some(PreviewSpec {
         build: previewed_build
-    }),
-    false
-);
-test_asset!(
-    EditedPreviewAsset,
-    EditedPreviewEditor,
-    Some(PreviewSpec {
-        build: previewed_build
-    }),
-    true
+    })
 );
 test_asset!(
     BrokenPreviewAsset,
     BrokenPreviewEditor,
     Some(PreviewSpec {
         build: broken_build
-    }),
-    false
+    })
 );
-test_asset!(PlainAsset, PlainEditor, None, false);
+test_asset!(PlainAsset, PlainEditor, None);
 
 pub fn plain_recipe(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
@@ -385,9 +371,6 @@ impl SceneFixture {
             .register::<PreviewedAsset, PreviewedEditor>()
             .unwrap();
         editors
-            .register::<EditedPreviewAsset, EditedPreviewEditor>()
-            .unwrap();
-        editors
             .register::<BrokenPreviewAsset, BrokenPreviewEditor>()
             .unwrap();
         editors.register::<PlainAsset, PlainEditor>().unwrap();
@@ -465,13 +448,10 @@ impl SceneFixture {
         world.insert_resource(EventChannel::<Hosted<SceneStatus>>::new());
         world.insert_resource(EventChannel::<Hosted<RevealEntity>>::new());
         world.insert_resource(EventChannel::<Hosted<PropertyCommitted>>::new());
-        world.insert_resource(EventChannel::<Hosted<ComponentEdited>>::new());
         let mut delivery = vec![
             forward_events::<SceneEdited>.into_boxed_system(),
             forward_events::<SceneStatus>.into_boxed_system(),
             forward_events::<RevealEntity>.into_boxed_system(),
-            forward_events::<PropertyCommitted>.into_boxed_system(),
-            forward_events::<ComponentEdited>.into_boxed_system(),
             crate::scene::follow_unsaved_edits.into_boxed_system(),
             crate::scene::show_status.into_boxed_system(),
             crate::scene::reveal.into_boxed_system(),
@@ -532,11 +512,7 @@ impl SceneFixture {
     }
 
     pub fn open_preview(&mut self) -> Entity {
-        self.open_preview_of(PreviewedAsset::name())
-    }
-
-    pub fn open_preview_of(&mut self, kind: &str) -> Entity {
-        let document = self.request_kind(kind);
+        let document = self.request_kind(PreviewedAsset::name());
         self.frames_until("the preview was never built", |f| {
             f.world
                 .get_component_for_entity::<HostedApp>(document)

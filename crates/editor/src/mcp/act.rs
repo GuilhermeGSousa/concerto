@@ -578,7 +578,6 @@ fn frame(
     mut calls: ToolCalls<Frame>,
     entities: EditWorld<SceneEntities>,
     names: EditWorld<Query<&Name>>,
-    fly: EditWorld<Option<Res<FlyCamera>>>,
     targets: Query<&PlayState, With<EditTarget>>,
     mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
@@ -586,9 +585,6 @@ fn frame(
     for (arguments, reply) in calls.read() {
         if playing(&targets) {
             reply.err(camera_refused());
-            continue;
-        }
-        if fly.is_none() {
             continue;
         }
         let framed = match arguments.entity.as_deref().map(|id| resolve(id, &entities)) {
@@ -651,7 +647,6 @@ fn pose_of(arguments: &SetCamera) -> Result<SetCameraPose, ToolError> {
 
 fn set_camera(
     mut calls: ToolCalls<SetCamera>,
-    fly: EditWorld<Option<Res<FlyCamera>>>,
     targets: Query<&PlayState, With<EditTarget>>,
     mut scene: EditWorldSignals,
     mut cmd: CommandQueue,
@@ -659,9 +654,6 @@ fn set_camera(
     for (arguments, reply) in calls.read() {
         if playing(&targets) {
             reply.err(camera_refused());
-            continue;
-        }
-        if fly.is_none() {
             continue;
         }
         match pose_of(&arguments) {

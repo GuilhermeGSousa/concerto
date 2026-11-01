@@ -42,7 +42,6 @@ pub(crate) fn create_editor_hosts(
         let mut bottom = None;
         if doc.asset_type != concerto_scene::scene::Scene::name() {
             let previewing = editors.preview(doc.asset_type).is_some();
-            let edits_in_preview = editors.edits_in_preview(doc.asset_type);
             for (index, base) in bases.iter().copied().enumerate() {
                 if index == 0 && previewing {
                     continue;
@@ -52,9 +51,6 @@ pub(crate) fn create_editor_hosts(
                 };
                 let mut node = node.clone();
                 node.visible = false;
-                if index == 2 && edits_in_preview {
-                    node.flex_grow = 0.0;
-                }
                 let surface = if index == 0 {
                     theme.canvas()
                 } else {
@@ -128,10 +124,8 @@ pub(crate) fn sync_workspace(
     let inspected = active
         .0
         .is_some_and(|entity| values.get_entity(entity).is_some());
-    let inspector =
-        scene || inspected || document.is_some_and(|doc| editors.edits_in_preview(doc.asset_type));
     let bases = panel_bodies(&registry);
-    for (entity, visible) in bases.into_iter().zip([viewport, scene, inspector]) {
+    for (entity, visible) in bases.into_iter().zip([viewport, scene, scene || inspected]) {
         if let Some(entity) = entity {
             set_visible(&nodes, entity, visible);
         }
@@ -804,75 +798,6 @@ mod tests {
                 .get_component_for_entity::<EditTarget>(preview)
                 .is_none()
         );
-    }
-
-    #[test]
-    fn a_preview_that_edits_in_itself_shows_the_inspector_below_its_host() {
-        use crate::hosted::{SetEditTarget, input::Routing, testing::*};
-        let mut world = docked_world();
-        world.insert_resource(ActiveEditor::default());
-        world.insert_resource(FocusedWidget::default());
-        world.insert_resource(HoveredNode::default());
-        world.insert_resource(UIInputState::default());
-        world.insert_resource(ActionMap::default());
-        world.insert_resource(Routing::default());
-        let mut editors = AssetEditorRegistry::default();
-        editors
-            .register::<PreviewedAsset, PreviewedEditor>()
-            .unwrap();
-        editors
-            .register::<EditedPreviewAsset, EditedPreviewEditor>()
-            .unwrap();
-        world.insert_resource(editors);
-        crate::hosted::install_listeners(&mut world);
-        let bases = panel_bodies(world.get_resource::<PanelRegistry>().unwrap());
-        let plain = document_of(&mut world, PreviewedAsset::name());
-        world.insert(preview_now(plain_recipe), plain);
-        let edited = document_of(&mut world, EditedPreviewAsset::name());
-        world.insert(preview_now(plain_recipe), edited);
-        let scene = document_of(&mut world, concerto_scene::scene::Scene::name());
-        let mut create = super::create_editor_hosts.into_system();
-        create.initialize(&mut world);
-        create.run_and_apply((), &mut world);
-        let hosts = *world
-            .get_component_for_entity::<EditorHosts>(edited)
-            .unwrap();
-        let plain_hosts = *world
-            .get_component_for_entity::<EditorHosts>(plain)
-            .unwrap();
-        assert!(hosts.canvas.is_none() && hosts.left.is_some());
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(edited);
-        world.trigger(SetEditTarget(Some(edited)));
-        sync_workspace(&mut world);
-
-        assert!(visible(&world, bases[0]));
-        assert!(!visible(&world, bases[1]), "the hierarchy stays hidden");
-        assert!(visible(&world, bases[2]) && visible(&world, hosts.inspector));
-        assert!(visible(&world, hosts.left));
-        let side = foot_children(&world, bases[2].unwrap());
-        let host = side.iter().position(|e| Some(*e) == hosts.inspector);
-        let base = side.iter().position(|e| Some(*e) == bases[2]);
-        assert!(host < base, "the host sits above the inspector");
-        let node = |entity: Option<Entity>| {
-            world
-                .get_component_for_entity::<UINode>(entity.unwrap())
-                .unwrap()
-                .flex_grow
-        };
-        assert_eq!(node(hosts.inspector), 0.0, "the inspector takes the rest");
-        assert_eq!(node(plain_hosts.inspector), 1.0);
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(plain);
-        world.trigger(SetEditTarget(Some(plain)));
-        sync_workspace(&mut world);
-        assert!(!visible(&world, bases[2]) && visible(&world, plain_hosts.inspector));
-        assert!(!visible(&world, hosts.inspector));
-
-        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(scene);
-        sync_workspace(&mut world);
-        assert!(visible(&world, bases[1]) && visible(&world, bases[2]));
-        assert!(!visible(&world, hosts.inspector));
     }
 
     #[test]

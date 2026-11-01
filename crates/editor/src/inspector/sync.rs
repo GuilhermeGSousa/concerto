@@ -5,7 +5,6 @@ use super::add_component::{AddComponentMenu, spawn_add_component};
 use super::component_menu::{ComponentMenu, ensure_component_menu, menu_button};
 use super::list::remove_button;
 use super::registry::InspectionSource;
-use crate::tools::entity_ops::FixedEntities;
 use concerto_ecs::{component::Tick, reflect::AppTypeRegistry};
 use concerto_reflect::{PathSegment, TypeRegistry};
 use std::{collections::HashMap, sync::Arc};
@@ -50,7 +49,6 @@ pub(super) fn forget_scene(
 #[allow(clippy::too_many_arguments)]
 pub(super) fn sync_inspected_components(
     source: EditWorld<InspectionSource>,
-    fixed: EditWorld<Option<Res<FixedEntities>>>,
     registry: Res<InspectorRegistry>,
     data: Res<InspectorData>,
     theme: Res<UITheme>,
@@ -98,8 +96,7 @@ pub(super) fn sync_inspected_components(
         let mut components = source.visible_components(target);
         components.sort_by(|(a_id, a), (b_id, b)| a.cmp(b).then(a_id.cmp(b_id)));
         for (type_id, name) in components {
-            let menu =
-                (fixed.is_none() && source.is_registered(type_id)).then_some((target, type_id));
+            let menu = source.is_registered(type_id).then_some((target, type_id));
             let (entity, body) = spawn_card(&mut cmd, stack_entity, name, menu, &theme);
             let card = InspectedComponent {
                 scene_entity: target,
@@ -113,9 +110,7 @@ pub(super) fn sync_inspected_components(
             );
         }
 
-        if fixed.is_none() {
-            spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
-        }
+        spawn_add_component(&mut cmd, stack_entity, &menus, &theme);
         ensure_component_menu(&mut cmd, &component_menus, &theme);
     } else {
         for &entity in children.into_iter().flat_map(|children| children.iter()) {

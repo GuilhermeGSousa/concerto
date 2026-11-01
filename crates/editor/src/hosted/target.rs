@@ -4,7 +4,7 @@ use concerto_ecs::{
 };
 
 use super::{HostRole, HostedApp};
-use crate::asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument};
+use crate::asset_editor::ActiveEditor;
 
 /// Marks the document whose `App` the editor's panels read and send signals to.
 #[derive(Component)]
@@ -23,8 +23,6 @@ pub(crate) fn move_edit_target(
     edit_targets: Query<Entity, With<EditTarget>>,
     viewport_targets: Query<Entity, With<ViewportTarget>>,
     hosted: Query<&HostedApp>,
-    documents: Query<&EditorDocument>,
-    editors: Option<Res<AssetEditorRegistry>>,
     active: Res<ActiveEditor>,
     mut cmd: CommandQueue,
 ) {
@@ -42,11 +40,7 @@ pub(crate) fn move_edit_target(
         && let Some(app) = hosted.get_entity(document)
     {
         cmd.insert(ViewportTarget, document);
-        let edits_in_preview = documents
-            .get_entity(document)
-            .zip(editors.as_deref())
-            .is_some_and(|(doc, editors)| editors.edits_in_preview(doc.asset_type));
-        if app.role() != HostRole::Preview || edits_in_preview {
+        if app.role() != HostRole::Preview {
             cmd.insert(EditTarget, document);
         }
     }
@@ -56,14 +50,13 @@ pub(crate) fn move_edit_target(
 mod tests {
     use super::*;
     use crate::{
-        asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument},
+        asset_editor::ActiveEditor,
         hosted::{HostedApp, testing::*},
     };
     use concerto_ecs::{
         ResMut, Resource, World,
         signal::lifecycle::{Add, Remove},
     };
-    use concerto_foundation::assets::Asset;
 
     fn world_with_two_documents() -> (World, Entity, Entity) {
         let mut world = World::new();
@@ -149,47 +142,6 @@ mod tests {
 
         assert!(targets(&mut world).is_empty());
         assert_eq!(viewport_targets(&mut world), [preview]);
-    }
-
-    fn document_of(kind: &'static str) -> EditorDocument {
-        EditorDocument {
-            asset_type: kind,
-            title: kind.into(),
-            current: None,
-            pending: None,
-            order: 0,
-            status: String::new(),
-            failed: None,
-        }
-    }
-
-    #[test]
-    fn a_preview_gets_the_edit_target_when_its_editor_edits_in_it() {
-        let (mut world, _, _) = world_with_two_documents();
-        let mut editors = AssetEditorRegistry::default();
-        editors
-            .register::<PreviewedAsset, PreviewedEditor>()
-            .unwrap();
-        editors
-            .register::<EditedPreviewAsset, EditedPreviewEditor>()
-            .unwrap();
-        world.insert_resource(editors);
-        let plain = world.spawn((
-            preview_now(plain_recipe),
-            document_of(PreviewedAsset::name()),
-        ));
-        let edited = world.spawn((
-            preview_now(plain_recipe),
-            document_of(EditedPreviewAsset::name()),
-        ));
-
-        activate(&mut world, Some(edited));
-        assert_eq!(targets(&mut world), [edited]);
-        assert_eq!(viewport_targets(&mut world), [edited]);
-
-        activate(&mut world, Some(plain));
-        assert!(targets(&mut world).is_empty());
-        assert_eq!(viewport_targets(&mut world), [plain]);
     }
 
     #[test]

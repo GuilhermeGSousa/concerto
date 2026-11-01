@@ -18,7 +18,6 @@ use concerto_editor::{
         preview::{ClearClip, clip_preview},
         read_clip, read_shown_scene,
     },
-    hosted::HostedApp,
     scene::load_scene,
 };
 use concerto_foundation::assets::{
@@ -85,7 +84,4 @@ fn an_extension_crate_reaches_what_it_builds_on() {
     let _ = read_shown_scene;
     let _ = load_scene;
     let _ = ClipFacts::of;
-    let _ = HostedApp::world;
-    let _ = HostedApp::world_mut;
-    let _ = HostedApp::mark_saved;
 }

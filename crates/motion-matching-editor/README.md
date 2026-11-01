@@ -29,7 +29,9 @@ named by its type's short name and numbered from the second of a type
 (`BoneVelocities`, `BoneVelocities 2`), so MCP reaches each by its `target`. A
 channel's value finds its channel by a `ChannelId`, so a commit queued against a
 removed channel changes nothing, and can't land on the one that took its place.
-The inspector shows the one value `ShownValue` names, `Settings` at first.
+The inspector shows the one value `ShownValue` names, `Settings` at first. A
+document opens with an empty `InspectedValues`, so a refused open or a failed
+preview keeps the inspector under the `inspector` host, with no card.
 
 Opening a definition is refused with a status when it holds a channel whose type
 is not registered in the game, that is not a `FeatureChannel`, or whose stored
