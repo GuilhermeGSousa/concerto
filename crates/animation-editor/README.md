@@ -1,7 +1,8 @@
 # concerto-animation-editor
 
 The asset editor of an `AnimationClip`, as an extension of `concerto-editor`.
-Only editor crates depend on it. A game lists it in its own `Cargo.toml`, and
+Only editor crates depend on it. `cargo concerto new` writes this entry into a new
+project. A game made without it adds it to its own `Cargo.toml`, and
 `cargo concerto editor <dir> --update` writes the call into the game's generated
 `editor/`:
 

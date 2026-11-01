@@ -140,8 +140,8 @@ and the published 0.1.0 does not, so the tool warns when `--engine` is absent.
 
 With `--engine <path>`, a Concerto checkout resolved against the working
 directory, each dependency also names its own crate in that checkout: `.` for
-`concerto`, `crates/asset-build` for `concerto-asset-build`, and
-`crates/editor` for `concerto-editor`.
+`concerto`, `crates/asset-build` for `concerto-asset-build`, `crates/editor` for
+`concerto-editor`, and `crates/<dir>` for a plugin package `concerto-<dir>`.
 
 ```toml
 concerto = { version = "0.1.0", path = "../.." }

@@ -49,4 +49,3 @@ tempfile = "3"
 glyphon = "0.8.0"
 rmcp = { version = "3.5", features = ["client", "transport-io"] }
 tokio = { version = "1", features = ["rt", "io-util", "macros", "time"] }
-uuid = "1.18.1"

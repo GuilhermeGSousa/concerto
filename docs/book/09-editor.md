@@ -27,7 +27,7 @@ plugins = [
 ]
 ```
 
-`cargo concerto editor <dir>` adds the crate to an existing game. With no list
+`cargo concerto editor <dir>` adds `editor/` to an existing game. With no list
 in its `Cargo.toml`, the game gets `concerto_editor::run` instead, which takes
 only the first two arguments, and it has no clip tab. To get one, add the entry
 above and run `cargo concerto editor <dir> --update`; see the
