@@ -12,7 +12,9 @@ the crate as `concerto::motion_matching`.
   write it. It holds no gait or strafe. Default: zero velocity, identity.
 - `CharacterSimulation`: requires `DesiredMotion` and a physics body. Its fields
   are its tuning. The springs it steps and the trajectory it predicts are
-  internal: no field, accessor or reflection reaches them.
+  internal: no field or reflection reaches them. `interpolated_facing(alpha)` is
+  the one read of that state: the facing `alpha` of the way from the last fixed
+  step to the current one, the facing `apply_character_displacement` uses.
 
 | Field | Meaning | Default |
 |---|---|---|
@@ -187,7 +189,7 @@ A channel may also override four methods:
 ### Previewing
 
 `preview` says how a channel looks for a given feature vector, so the same code
-can draw a baked frame or, later, a runtime query beside the frame it selected.
+can draw a baked frame or a runtime query beside the frame it selected.
 `preview_features(&channels, &frame, &features)` gives each channel its span of a
 raw vector and returns one list of shapes per channel, in order.
 
@@ -197,7 +199,8 @@ bone's ground plane. The caller decides where the shapes go and their colour, an
 a channel gets no drawing handle, so this crate does not depend on the renderer.
 
 - What is drawn comes from `features`, which are raw: a normalised vector is not
-  in metres. `FeatureQuery::build` returns normalised values.
+  in metres. `FeatureQuery::raw` and `LastQuery::features` hold raw values;
+  `FeatureQuery::build` returns normalised ones.
 - `frame` only places what the values hold no position for, such as where a bone
   or a trajectory sample is. A shape the context cannot place is left out.
 
@@ -277,11 +280,16 @@ let query = FeatureQuery::new(&database, &registry)?;
 let vector = query.build(&database, &skeleton, pose_frame, &simulation, &trajectory)?;
 ```
 
-`build` returns the normalised query vector: `Pose` channels are copied from
-database frame `pose_frame`, as the reference does, and `Trajectory` channels
-are extracted from `trajectory` expressed in `simulation` (the character's
-world transform). It returns `FrameOutOfRange`, `BoneCountMismatch`,
-`ChannelCountMismatch` or `TrajectoryTooShort` instead of panicking.
+`raw` takes the same arguments as `build` and returns the query vector in the
+units `preview` reads: `Pose` channels are copied from database frame
+`pose_frame`, as the reference does, and `Trajectory` channels are extracted
+from `trajectory` expressed in `simulation` (the character's world transform).
+`build` is `raw` followed by `database.normalise`, the form the search compares.
+Both return `FrameOutOfRange`, `BoneCountMismatch`, `ChannelCountMismatch` or
+`TrajectoryTooShort` instead of panicking.
+
+`channels()` returns the live channels in the database's order, which is what
+`preview_features` takes, so drawing does not build them again.
 
 ### Layout
 
@@ -397,6 +405,14 @@ rate)` frames of its range, and on a better frame jumps with inertialization.
 The search is brute force: a squared distance over the normalised features of
 every frame, with an early out. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
+
+`MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:
+`features` is the raw query vector, `frame` the database frame it copied its
+`Pose` channels from, and `simulation` and `trajectory` what it was built with.
+All four come from one moment, so a drawn query does not mix bones from one
+frame with arrows from a later one. It is `None` until a search runs and after
+`reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale
+query is not drawn. A frame with no search due keeps the last one.
 
 `MotionMatchingInstance::root_motion` is the simulation bone's velocity and
 angular velocity at the playhead, in model space. Each step turns them back by

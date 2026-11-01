@@ -94,6 +94,11 @@ impl CharacterSimulation {
         )
     }
 
+    /// The facing `alpha` of the way from the last fixed step to the current one.
+    pub fn interpolated_facing(&self, alpha: f32) -> Quat {
+        self.previous_facing.slerp(self.facing.value, alpha)
+    }
+
     /// Advances the springs `dt` towards `desired` and returns the horizontal velocity the body should move at.
     pub(crate) fn advance(&mut self, desired: &DesiredMotion, dt: f32) -> Vec3 {
         let (mut velocity, mut facing) = self.springs();
