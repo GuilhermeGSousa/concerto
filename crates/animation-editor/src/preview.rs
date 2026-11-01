@@ -17,6 +17,7 @@ use concerto_ecs::{
     system::input::SystemLocal,
     world::FromWorld,
 };
+use concerto_editor::preview::OrbitCamera;
 use concerto_foundation::{
     assets::asset_store::AssetStore,
     time::Time,
@@ -29,8 +30,6 @@ use concerto_mesh::{
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{scene::Scene, spawner::spawn_scene};
 use glam::Vec3;
-
-use crate::preview::OrbitCamera;
 
 #[derive(Resource)]
 pub(super) struct ClipPreview {
@@ -418,10 +417,6 @@ pub fn clip_preview(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        hosted::testing::plain_recipe,
-        preview::{OrbitCamera, PreviewPlugin},
-    };
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
     use concerto_app::plugins::TransformPlugin;
     use concerto_ecs::{
@@ -430,6 +425,10 @@ mod tests {
         entity::hierarchy::{ChildOf, Children},
         events::{event_channel::EventChannel, event_cursor::EventCursor},
         system::BoxedSystem,
+    };
+    use concerto_editor::{
+        hosted::testing::plain_recipe,
+        preview::{OrbitCamera, PreviewPlugin},
     };
     use concerto_foundation::{
         assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
@@ -499,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_document_starts_with_the_previews_values() {
-        let document = crate::clip_editor::ClipDocument::default();
+        let document = crate::ClipDocument::default();
         let preview = ClipPreview::default();
 
         assert_eq!(document.time, preview.time);

@@ -10,6 +10,7 @@ license.workspace = true
 anyhow = "1"
 bincode = "1.3"
 concerto-animation.workspace = true
+concerto-animation-editor.workspace = true
 concerto-app.workspace = true
 concerto-color.workspace = true
 concerto-debug-gizmos.workspace = true

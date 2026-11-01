@@ -1,12 +1,9 @@
 use std::{path::Path, sync::Arc, thread::JoinHandle};
 
 use anyhow::Context;
+use concerto_animation_editor::{ClipFacts, preview::ShowClipScene, read_clip, read_shown_scene};
 use concerto_ecs::{Entity, Query, Res};
-use concerto_editor::{
-    clip_editor::{ClipFacts, preview::ShowClipScene, read_clip, read_shown_scene},
-    preview::PreviewSignals,
-    project::ProjectState,
-};
+use concerto_editor::{preview::PreviewSignals, project::ProjectState};
 use concerto_foundation::assets::{
     Asset, AssetId,
     content::read_content_asset,

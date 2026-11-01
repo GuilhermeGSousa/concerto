@@ -1,6 +1,10 @@
 use std::{ops::Range, path::PathBuf, sync::Arc, thread::JoinHandle};
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation_editor::{
+    preview::{ClearClip, ClipPreviewProgress, SeekClip, ShowClip},
+    read_clip,
+};
 use concerto_app::{App, edit_time::AtPreviewTime, schedule_groups::LateUpdate};
 use concerto_color::Color;
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
@@ -14,10 +18,6 @@ use concerto_ecs::{
     },
 };
 use concerto_editor::{
-    clip_editor::{
-        preview::{ClearClip, ClipPreviewProgress, SeekClip, ShowClip},
-        read_clip,
-    },
     hosted::HostedAppEvents,
     inspector::{InspectedValues, ShownValue},
     preview::PreviewSignals,

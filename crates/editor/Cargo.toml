@@ -12,7 +12,6 @@ testing = ["dep:tempfile"]
 
 [dependencies]
 profiling = "1"
-concerto-animation.workspace = true
 concerto-scene.workspace = true
 concerto-mesh.workspace = true
 glam = "0.30.1"

@@ -5,6 +5,7 @@ use std::{
 };
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation_editor::preview::{ClearClip, ShowClip};
 use concerto_app::{App, edit_time::AtPreviewTime, plugins::TransformPlugin};
 use concerto_debug_gizmos::GizmoStorage;
 use concerto_ecs::{
@@ -17,7 +18,6 @@ use concerto_ecs::{
 };
 use concerto_editor::{
     asset_editor::Unsaved,
-    clip_editor::preview::{ClearClip, ShowClip},
     hosted::testing::{SceneFixture, plain_recipe, scene_entry, write_scene_file},
     preview::PreviewPlugin,
     timeline::TimelineScrubbed,
