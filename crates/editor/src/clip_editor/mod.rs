@@ -265,7 +265,6 @@ mod tests {
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::{
             HostRole, Hosted, HostedApp, HostedPlugin,
-            events::forward_events,
             input::{ViewportShown, ViewportView},
             testing::*,
         },
@@ -325,8 +324,8 @@ mod tests {
             .insert_resource(EventChannel::<Hosted<ClipPreviewProgress>>::new());
         f.world
             .insert_resource(EventChannel::<Hosted<ClipPreviewBones>>::new());
-        f.add_delivery(forward_events::<ClipPreviewProgress>.into_boxed_system());
-        f.add_delivery(forward_events::<ClipPreviewBones>.into_boxed_system());
+        f.add_delivery(forwarding::<ClipPreviewProgress>());
+        f.add_delivery(forwarding::<ClipPreviewBones>());
         f.add_delivery(sync_clip_preview.into_boxed_system());
         f.add_delivery(load_clip.into_boxed_system());
         f

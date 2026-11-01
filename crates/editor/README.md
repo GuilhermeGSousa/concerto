@@ -37,8 +37,9 @@ and everything else the editor registers, and before the MCP plugins under
 `--mcp`. `run` is `run_with` with an empty list.
 
 An extension crate's tests can use the `testing` feature, which exposes
-`hosted::testing` and its `SceneFixture`, `inspector::value_systems`, the systems
-that show a document's values and send their edits, and
+`hosted::testing` and its `SceneFixture` and `forwarding`, the system that
+re-writes a hosted event for a fixture's delivery, `inspector::value_systems`, the
+systems that show a document's values and send their edits, and
 `inspector::commit_number`, which queues a number as a float row's whole value;
 take it as a dev-dependency:
 
