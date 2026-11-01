@@ -26,6 +26,9 @@ has registered it yet, which also brings `draw_skeleton_gizmos`, so a
 `SkeletonGizmo` kept in a game's scene starts drawing in play. An `App` without a
 renderer builds and draws nothing.
 
+The trail is a private field, so start from `default()` and set the toggles
+afterwards.
+
 `draw_motion_matching` runs in game time, which includes Play in the editor, and
 not while editing or in a preview. `MotionMatchingGizmos` is a reflected
 component, so the inspector shows its toggles while playing, but it isn't a scene

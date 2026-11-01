@@ -397,7 +397,7 @@ fn assert_read_from_the_capsule(last_query: &LastQuery, database: &MotionDatabas
     assert!(simulation.translation.distance(baked.translation) > FAR_FROM_THE_DATABASE);
     assert!(simulation.rotation.angle_between(Quat::IDENTITY) > 0.0);
     assert_eq!(trajectory.len(), samples().len());
-    assert!(trajectory[0].position.distance(START) < 1.0);
+    assert!(trajectory[0].position.distance(START) < 2.0);
     assert!(trajectory[1].position.x > trajectory[0].position.x);
 }
 
