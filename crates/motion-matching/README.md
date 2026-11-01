@@ -272,6 +272,10 @@ every bone index is a skeleton joint index.
   entry baked, or `None` past the last entry.
 - `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
   `clip_start + (frame - range_start) * speed / rate`.
+- `trajectory_frames(frame)`: the frame each trajectory sample of `frame` reads,
+  clamped to its range's last frame; empty for a frame the database did not bake.
+  `TrajectorySettings::frame_offset(sample, rate)` is the rounded offset the bake
+  and this share.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,

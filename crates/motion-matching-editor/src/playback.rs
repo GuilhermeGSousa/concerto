@@ -41,6 +41,9 @@ const SIMULATION_COLOR: Color = Color::rgba(1.0, 0.85, 0.1, 1.0);
 const SIMULATION_RADIUS: f32 = 0.3;
 const SIMULATION_ARROW: f32 = 0.6;
 const SIMULATION_WIDTH: f32 = 2.0;
+const TRAJECTORY_COLOR: Color = Color::rgba(0.2, 0.8, 1.0, 1.0);
+const TRAJECTORY_RADIUS: f32 = 0.12;
+const TRAJECTORY_ARROW: f32 = 0.3;
 
 /// A baked database with the skeleton and the clips it samples, as a preview plays it.
 #[derive(Clone)]
@@ -170,6 +173,14 @@ fn play_database(
     }
 }
 
+fn trajectory_bones(database: &MotionDatabase, frame: usize, stage: &Transform) -> Vec<Transform> {
+    database
+        .trajectory_frames(frame)
+        .into_iter()
+        .map(|sample| stage.mul_transform(database.simulation(sample)))
+        .collect()
+}
+
 fn draw_simulation_bone(
     playback: Res<DatabasePlayback>,
     skeletons: Query<&SkeletonComponent>,
@@ -196,6 +207,26 @@ fn draw_simulation_bone(
         SIMULATION_COLOR,
     );
     gizmos.arrow(bone.translation, tip, SIMULATION_COLOR);
+
+    let samples = trajectory_bones(&shown.database, playback.frame(), &stage);
+    let path = samples.iter().map(|sample| sample.translation);
+    gizmos.linestrip(
+        std::iter::once(bone.translation).chain(path),
+        TRAJECTORY_COLOR,
+    );
+    for sample in &samples {
+        gizmos.circle(
+            sample.translation,
+            sample.local_y(),
+            TRAJECTORY_RADIUS,
+            TRAJECTORY_COLOR,
+        );
+        gizmos.arrow(
+            sample.translation,
+            sample.translation + sample.local_z() * TRAJECTORY_ARROW,
+            TRAJECTORY_COLOR,
+        );
+    }
 }
 
 fn show_database(on: On<ShowDatabase>, mut playback: ResMut<DatabasePlayback>) {

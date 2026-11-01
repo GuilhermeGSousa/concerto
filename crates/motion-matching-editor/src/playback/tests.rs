@@ -26,7 +26,7 @@ use concerto_foundation::{
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
     BonePositions, MotionDatabase, MotionDatabaseDefinition, MotionEntry, StoredChannel, TimeRange,
-    bake,
+    TrajectorySettings, bake,
 };
 use concerto_reflect::{TypeRegistry, to_value};
 use glam::{Quat, Vec3};
@@ -82,6 +82,10 @@ fn entry(range: Option<TimeRange>) -> MotionEntry {
 }
 
 fn baked_from(entries: Vec<MotionEntry>, speed: f32) -> BakedPlayback {
+    baked_with_samples(entries, speed, TrajectorySettings::default().sample_count)
+}
+
+fn baked_with_samples(entries: Vec<MotionEntry>, speed: f32, sample_count: usize) -> BakedPlayback {
     let mut definition = MotionDatabaseDefinition {
         skeleton: AssetHandle::weak(AssetId::new()),
         rate: RATE,
@@ -90,6 +94,7 @@ fn baked_from(entries: Vec<MotionEntry>, speed: f32) -> BakedPlayback {
         ..Default::default()
     };
     definition.simulation.position_joint = "Spine".into();
+    definition.trajectory.sample_count = sample_count;
     let clips: Vec<AnimationClip> = entries.iter().map(|_| walking()).collect();
     definition.entries = entries;
     let skeleton = skeleton();
@@ -427,6 +432,49 @@ fn the_simulation_bone_is_drawn_while_a_database_plays() {
     stage.frame();
 
     assert!(stage.segments() > 0);
+}
+
+#[test]
+fn the_trajectory_is_the_simulation_bone_ahead_of_the_frame_placed_on_the_stage() {
+    let database = baked().database;
+    let stage = Transform::from_translation(Vec3::new(0.0, 0.0, 3.0));
+
+    let bones = trajectory_bones(&database, 5, &stage);
+
+    let positions: Vec<Vec3> = bones.iter().map(|bone| bone.translation).collect();
+    let expected = [
+        Vec3::new(1.0, 0.0, 3.0),
+        Vec3::new(5.0 / 3.0, 0.0, 3.0),
+        Vec3::new(7.0 / 3.0, 0.0, 3.0),
+    ];
+    assert_eq!(positions.len(), expected.len());
+    for (position, expected) in positions.iter().zip(expected) {
+        assert!(position.distance(expected) < NEAR, "{position}");
+    }
+}
+
+#[test]
+fn the_trajectory_of_a_frame_near_its_end_stays_in_its_entry() {
+    let database = baked().database;
+    let last = database.simulation(59).translation;
+
+    let bones = trajectory_bones(&database, 50, &Transform::IDENTITY);
+
+    assert_eq!(bones.len(), 3);
+    assert!(bones.iter().all(|bone| bone.translation == last));
+}
+
+#[test]
+fn the_trajectory_is_drawn_while_a_database_plays() {
+    let drawn = |sample_count| {
+        let mut stage = Stage::new();
+        let shown = baked_with_samples(vec![entry(None)], 1.0, sample_count);
+        stage.world.trigger(ShowDatabase(Some(shown)));
+        stage.frame();
+        stage.segments()
+    };
+
+    assert!(drawn(3) > drawn(0));
 }
 
 #[test]

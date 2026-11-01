@@ -50,6 +50,13 @@ pub struct TrajectorySettings {
     pub sample_count: usize,
 }
 
+impl TrajectorySettings {
+    /// How many frames ahead sample `sample` sits at `rate`, rounded to a whole frame.
+    pub fn frame_offset(&self, sample: usize, rate: f32) -> usize {
+        (self.sample_dt * (sample + 1) as f32 * rate).round() as usize
+    }
+}
+
 impl Default for TrajectorySettings {
     fn default() -> Self {
         Self {

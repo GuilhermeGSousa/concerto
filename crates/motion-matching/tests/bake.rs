@@ -921,6 +921,23 @@ fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
 }
 
 #[test]
+fn trajectory_frames_sit_ahead_of_a_frame_and_stop_at_the_end_of_its_range() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(3.0);
+    let definition = trajectory_definition(
+        vec![entry(Some((0.0, 1.0))), entry(Some((1.0, 3.0)))],
+        1.0,
+        Vec::new(),
+    );
+    let database = bake(&definition, &skeleton, &[&clip, &clip], &body_registry()).unwrap();
+
+    assert_eq!(database.trajectory_frames(5), vec![11, 17, 23]);
+    assert_eq!(database.trajectory_frames(20), vec![26, 29, 29]);
+    assert_eq!(database.trajectory_frames(30), vec![36, 42, 48]);
+    assert!(database.trajectory_frames(90).is_empty());
+}
+
+#[test]
 fn a_sample_past_the_range_end_equals_the_last_simulation_frame() {
     let skeleton = body_skeleton();
     let clip = walk_clip(3.0);

@@ -173,6 +173,20 @@ impl MotionDatabase {
         Some(self.range_starts[entry]..self.range_stops[entry])
     }
 
+    /// The frame each trajectory sample of `frame` reads, in sample order and clamped to its range's last frame; none for a frame the database did not bake.
+    pub fn trajectory_frames(&self, frame: usize) -> Vec<usize> {
+        let Some(range) = self.range_of(frame) else {
+            return Vec::new();
+        };
+        (0..self.trajectory.sample_count)
+            .map(|sample| {
+                frame
+                    .saturating_add(self.trajectory.frame_offset(sample, self.rate))
+                    .min(range.end - 1)
+            })
+            .collect()
+    }
+
     /// The entry of `frame` and the clip time in seconds that the frame plays.
     pub fn clip_time(&self, frame: usize) -> Option<(usize, f32)> {
         let entry = self.entry_of(frame)?;

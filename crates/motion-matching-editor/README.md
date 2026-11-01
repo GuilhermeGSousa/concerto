@@ -141,8 +141,11 @@ every bone with a match by id in the skeleton's `bone_ids`. That pose holds each
 parentless bone relative to the simulation bone, so it is placed by
 `database.simulation(frame)` first: the character goes where the clip takes it,
 the camera follows it, and the simulation bone, a yellow ring with an arrow along
-its facing, is drawn under it with `DebugGizmos`. An out-of-date file plays until
-the next build, and the baked state says so.
+its facing, is drawn under it with `DebugGizmos`. Its trajectory is drawn the same
+way in blue: a line from the bone through one smaller ring and arrow per sample,
+at the frames `trajectory_frames` names, so it shows what the bake read for that
+frame and it stops at the end of the entry. An out-of-date file plays until the
+next build, and the baked state says so.
 
 With no baked data to play, the preview plays the selected entry's whole clip
 through `clip_preview`, read on a worker, and that is also the fallback for a
