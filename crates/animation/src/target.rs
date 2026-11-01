@@ -1,13 +1,18 @@
 use concerto_ecs::{
     Entity,
     command::CommandQueue,
+    entity::hierarchy::ChildOf,
     query::{
         Query,
         filter::{Added, Changed},
     },
     resource::Res,
 };
-use concerto_foundation::{assets::asset_store::AssetStore, time::Time, transform::Transform};
+use concerto_foundation::{
+    assets::asset_store::AssetStore,
+    time::Time,
+    transform::{GlobalTransform, Transform},
+};
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 
 use crate::{
@@ -35,6 +40,8 @@ pub fn animate_targets(
     animation_players: Query<(&mut AnimationPlayer, &SkeletonComponent)>,
     transforms: Query<&mut Transform>,
     root_bones: Query<&mut AnimationRootBone>,
+    parents: Query<&ChildOf>,
+    globals: Query<&GlobalTransform>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
     animation_clips: Res<AssetStore<AnimationClip>>,
     skeletons: Res<AssetStore<Skeleton>>,
@@ -52,6 +59,8 @@ pub fn animate_targets(
                         skeleton_component.bones(),
                         &transforms,
                         &root_bones,
+                        &parents,
+                        &globals,
                     )
                 });
         if evaluated {

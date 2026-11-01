@@ -33,6 +33,16 @@ impl RootMotion {
     }
 }
 
+/// The part of `rotation` that turns about the unit vector `axis`, or identity for a half turn across it.
+pub fn twist_about(rotation: Quat, axis: Vec3) -> Quat {
+    let along = axis * rotation.xyz().dot(axis);
+    let twist = Quat::from_xyzw(along.x, along.y, along.z, rotation.w);
+    if twist.length_squared() < f32::EPSILON {
+        return Quat::IDENTITY;
+    }
+    twist.normalize()
+}
+
 pub struct Pose {
     joints: Box<[JointPose]>,
     root_motion: RootMotion,
@@ -166,9 +176,11 @@ impl PosePool {
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::PI;
+
     use glam::{Quat, Vec3};
 
-    use super::{JointPose, Pose, PosePool, RootMotion};
+    use super::{JointPose, Pose, PosePool, RootMotion, twist_about};
 
     fn moved() -> RootMotion {
         RootMotion {
@@ -183,6 +195,44 @@ mod tests {
             rotation,
             scale: Vec3::ONE,
         }
+    }
+
+    #[test]
+    fn a_turn_about_the_axis_is_all_twist() {
+        let yaw = Quat::from_rotation_y(0.7);
+
+        assert!(twist_about(yaw, Vec3::Y).abs_diff_eq(yaw, 1e-5));
+    }
+
+    #[test]
+    fn a_turn_square_to_the_axis_has_no_twist() {
+        let pitch = Quat::from_rotation_x(0.7);
+
+        assert!(twist_about(pitch, Vec3::Y).abs_diff_eq(Quat::IDENTITY, 1e-5));
+    }
+
+    #[test]
+    fn a_mix_gives_the_twist_it_starts_with() {
+        let axis = Vec3::new(1.0, 2.0, 2.0).normalize();
+        let twist = Quat::from_axis_angle(axis, 0.9);
+        let swing = Quat::from_axis_angle(axis.any_orthonormal_vector(), 0.4);
+
+        assert!(twist_about(twist * swing, axis).abs_diff_eq(twist, 1e-5));
+    }
+
+    #[test]
+    fn a_half_turn_about_the_axis_is_all_twist() {
+        let half_turn = Quat::from_rotation_y(PI);
+
+        assert!(twist_about(half_turn, Vec3::Y).abs_diff_eq(half_turn, 1e-5));
+    }
+
+    #[test]
+    fn a_half_turn_across_the_axis_has_no_twist_to_find() {
+        assert_eq!(
+            twist_about(Quat::from_xyzw(1.0, 0.0, 0.0, 0.0), Vec3::Y),
+            Quat::IDENTITY
+        );
     }
 
     #[test]

@@ -19,6 +19,7 @@ mod tests {
     use concerto_foundation::assets::{
         LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
+    use glam::Vec3;
     use uuid::Uuid;
 
     use crate::blackboard::AnimationBlackboard;
@@ -589,6 +590,7 @@ mod tests {
                 root: Some(RootBone {
                     index: 0,
                     rest: JointPose::IDENTITY,
+                    up: Vec3::X,
                 }),
             };
             self.fsm.update(&mut self.instance, MACHINE_FRAME, &context);

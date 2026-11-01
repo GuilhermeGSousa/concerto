@@ -1,6 +1,6 @@
 use std::f32::consts::FRAC_PI_2;
 
-use concerto_animation::pose::RootMotion;
+use concerto_animation::pose::{twist_about, RootMotion};
 use concerto_ecs::{reflect::ReflectComponent, Component, Entity};
 use concerto_foundation::math::spring_damper::{
     damp_adjustment_exact, from_scaled_angle_axis, quat_abs, to_scaled_angle_axis,
@@ -100,11 +100,7 @@ pub(crate) struct Displaced {
 }
 
 pub(crate) fn yaw_of(rotation: Quat) -> Quat {
-    let twist = Quat::from_xyzw(0.0, rotation.y, 0.0, rotation.w);
-    if twist.length_squared() < f32::EPSILON {
-        return Quat::IDENTITY;
-    }
-    twist.normalize()
+    twist_about(rotation, Vec3::Y)
 }
 
 fn yaw_from(from: Quat, to: Quat) -> Vec3 {
