@@ -2,6 +2,7 @@ use concerto_color::Color;
 use concerto_debug_gizmos::DebugGizmos;
 use concerto_foundation::transform::Transform;
 use concerto_motion_matching::FeatureShape;
+use glam::Vec3;
 
 /// The colour of the simulation bone's ring and arrow.
 pub const SIMULATION_COLOR: Color = Color::rgba(1.0, 0.85, 0.1, 1.0);
@@ -39,15 +40,18 @@ pub fn placed_shape(bone: &Transform, shape: FeatureShape) -> FeatureShape {
     }
 }
 
-/// Draws a shape in the simulation bone's space, placed at `bone`.
-pub fn draw_shape(gizmos: &mut DebugGizmos, bone: &Transform, shape: FeatureShape, color: Color) {
-    match placed_shape(bone, shape) {
-        FeatureShape::Ring { center, radius } => {
-            gizmos.circle(center, bone.local_y(), radius, color)
-        }
+/// Draws a shape that is already placed; a `Ring` lies flat against `up`.
+pub fn draw_placed(gizmos: &mut DebugGizmos, up: Vec3, shape: FeatureShape, color: Color) {
+    match shape {
+        FeatureShape::Ring { center, radius } => gizmos.circle(center, up, radius, color),
         FeatureShape::Line { start, end } => gizmos.line(start, end, color),
         FeatureShape::Arrow { start, end } => gizmos.arrow(start, end, color),
     }
+}
+
+/// Draws a shape in the simulation bone's space, placed at `bone`.
+pub fn draw_shape(gizmos: &mut DebugGizmos, bone: &Transform, shape: FeatureShape, color: Color) {
+    draw_placed(gizmos, bone.local_y(), placed_shape(bone, shape), color);
 }
 
 /// The colour of `channel`: full when it's the `picked` one, dimmed otherwise.
