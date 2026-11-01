@@ -163,6 +163,14 @@ each bone's axes are drawn. Every game built on `DefaultPlugins` keeps it in a
 scene. It is drawn wherever `DebugGizmosPlugin` runs: in the editor's edit
 viewport, and not while playing unless the game adds the plugin.
 
+`MotionMatchingGizmos`, from the `concerto-motion-matching-gizmos` crate, draws
+what motion matching compares on a running character: the simulation bone, the
+last search's query, the frame it matched, and the path behind it. Register
+`MotionMatchingGizmosPlugin` after `DefaultPlugins` and put the component on the
+entity with `CharacterLink`. Its
+[README](../../crates/motion-matching-gizmos/README.md) says what each toggle
+draws.
+
 ## Custom materials
 
 A material is an asset whose fields become shader bindings. Derive `Asset` and

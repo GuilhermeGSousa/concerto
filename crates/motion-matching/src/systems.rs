@@ -98,9 +98,7 @@ pub fn apply_character_displacement(
         let Some(mut character) = transforms.get_entity(entity) else {
             continue;
         };
-        let rotation = simulation
-            .previous_facing
-            .slerp(simulation.facing.value, alpha);
+        let rotation = simulation.interpolated_facing(alpha);
         let displaced = method.displace(
             dt,
             Placement { position, rotation },
