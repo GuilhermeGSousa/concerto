@@ -234,9 +234,15 @@ root moved this frame, with a `translation` and a `rotation` that read as
 "forward, as the character faced last frame". Every source in a graph produces
 one, and blends and transitions carry it with the pose, so it works for any
 graph. Each frame the result lands on the root bone, in
-`AnimationRootBone::root_motion`, and the bone's own `Transform` stays at its
-bind pose. A paused player, an unloaded skeleton or graph, or a clip with no
-channels for the root gives `RootMotion::IDENTITY`.
+`AnimationRootBone::root_motion`. A paused player, an unloaded skeleton or graph,
+or a clip with no channels for the root gives `RootMotion::IDENTITY`.
+
+The root bone's `Transform` is written like any other bone's, net of what root
+motion took: its yaw, measured from the rest pose, and its ground translation.
+Its height, pitch, roll and scale stay in the bone. Yaw and ground translation
+are always removed, with or without a `CharacterDisplacement`, so a clip that
+turns or walks stays on the spot in a game that applies nothing. A joint a clip
+has no channels for shows the skeleton's rest pose.
 
 Nothing applies it on its own. To have it move a character, make the visible
 character a separate entity from the capsule, with the skeleton under it, and

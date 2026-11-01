@@ -216,6 +216,7 @@ impl AnimationPlayer {
             return false;
         }
 
+        let root_motion = output_pose.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {
                 continue;
@@ -225,8 +226,7 @@ impl AnimationPlayer {
             };
 
             if let Some(mut root_bone) = root_bones.get_entity(bone_entity) {
-                root_bone.root_motion = output_pose.root_motion();
-                continue;
+                root_bone.root_motion = root_motion;
             }
 
             if let Some(mut transform) = transforms.get_entity(bone_entity) {
@@ -245,7 +245,9 @@ fn up_of(root: Entity, parents: &Query<&ChildOf>, globals: &Query<&GlobalTransfo
     parents
         .get_entity(root)
         .and_then(|parent| globals.get_entity(parent.parent()))
-        .map_or(Vec3::Y, |parent| parent.rotation().inverse() * Vec3::Y)
+        .map(|parent| parent.rotation().inverse() * Vec3::Y)
+        .filter(|up| up.is_finite())
+        .unwrap_or(Vec3::Y)
 }
 
 #[derive(Component)]

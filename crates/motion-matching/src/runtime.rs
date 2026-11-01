@@ -993,6 +993,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_database_frames_root_joint_reaches_the_root_bones_transform() {
+        let (mut app, bones, database) = playing_app();
+        let world = app.main_mut().world_mut();
+        world.insert(AnimationRootBone::default(), bones[0]);
+        world.run_schedule(LateUpdate);
+        world.run_schedule(LateUpdate);
+
+        let expected = database
+            .pose(0, &skeleton(), &[&walk_forward(), &turn_left()])
+            .unwrap();
+        let root_transform = world
+            .get_component_for_entity::<Transform>(bones[0])
+            .unwrap();
+        assert!(expected[0].rotation.angle_between(Quat::IDENTITY) > 1.0);
+        assert!(
+            root_transform.rotation.angle_between(expected[0].rotation) < 1e-3,
+            "{:?} vs {:?}",
+            root_transform.rotation,
+            expected[0].rotation
+        );
+        assert!(
+            root_transform.translation.distance(expected[0].translation) < 1e-4,
+            "{:?} vs {:?}",
+            root_transform.translation,
+            expected[0].translation
+        );
+    }
+
     fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
         let mut app = App::new();
         app.register_plugin(AssetManagerPlugin);

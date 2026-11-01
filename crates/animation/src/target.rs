@@ -109,12 +109,15 @@ pub(crate) fn initialize_animation_players(
 
 #[cfg(test)]
 mod tests {
-    use concerto_ecs::{Entity, IntoSystem, System, World, component::scene::SceneEntityRef};
+    use concerto_ecs::{
+        Entity, IntoSystem, System, World, component::scene::SceneEntityRef,
+        entity::hierarchy::ChildOf,
+    };
     use concerto_foundation::{
         assets::{
             AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
         },
-        transform::Transform,
+        transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
     use glam::{Mat4, Quat, Vec2, Vec3};
@@ -284,6 +287,11 @@ mod tests {
             }
         }
 
+        fn resting_at(mut self, translation: Vec3) -> Self {
+            self.rest.translation = translation;
+            self
+        }
+
         fn unnamed_root(mut self) -> Self {
             self.names_root = false;
             self
@@ -425,14 +433,23 @@ mod tests {
             TwoBones {
                 world,
                 owner,
+                root,
                 child,
             }
+        }
+
+        fn playing_on_the_root(mut self, channels: Vec<AnimationChannel>) -> TwoBones {
+            let clip = self.clip(channels);
+            let graph = self.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
+            let player = self.player(graph);
+            self.spawn_two_bones(player)
         }
     }
 
     struct TwoBones {
         world: World,
         owner: Entity,
+        root: Entity,
         child: Entity,
     }
 
@@ -456,6 +473,17 @@ mod tests {
                 });
         }
 
+        fn put_root_under(&mut self, space: Mat4) {
+            let parent = self.world.spawn(GlobalTransform::new(space));
+            self.world.insert(ChildOf::new(parent), self.root);
+        }
+
+        fn root(&self) -> &Transform {
+            self.world
+                .get_component_for_entity::<Transform>(self.root)
+                .unwrap()
+        }
+
         fn child(&self) -> &Transform {
             self.world
                 .get_component_for_entity::<Transform>(self.child)
@@ -475,6 +503,102 @@ mod tests {
             vec![0.0, 1.0],
             AnimationChanelOutput::Translation(vec![Vec3::ZERO, per_second]),
         )
+    }
+
+    fn held(output: AnimationChanelOutput) -> AnimationChannel {
+        AnimationChannel::new(vec![0.0, 1.0], output)
+    }
+
+    fn lying_rest() -> Quat {
+        Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+    }
+
+    #[test]
+    fn a_root_shows_its_pitch_and_its_yaw_does_not_reach_the_transform() {
+        let pitch = Quat::from_rotation_x(0.3);
+        let turned = Quat::from_rotation_y(1.1) * pitch * lying_rest();
+        let mut bones = Rig::new(lying_rest())
+            .loaded_two_bone_skeleton()
+            .playing_on_the_root(vec![held(AnimationChanelOutput::Rotation(vec![
+                turned, turned,
+            ]))]);
+
+        bones.animate();
+
+        let shown = bones.root().rotation;
+        assert!(
+            shown.angle_between(pitch * lying_rest()) < 1e-3,
+            "got {shown}"
+        );
+    }
+
+    #[test]
+    fn a_roots_height_follows_the_clip_and_its_ground_translation_stays_at_rest() {
+        let keyed = Vec3::new(3.0, 1.25, 4.0);
+        let mut bones = Rig::new(lying_rest())
+            .resting_at(Vec3::new(1.0, 0.9, -2.0))
+            .loaded_two_bone_skeleton()
+            .playing_on_the_root(vec![held(AnimationChanelOutput::Translation(vec![
+                keyed, keyed,
+            ]))]);
+
+        bones.animate();
+
+        let shown = bones.root().translation;
+        assert!(
+            shown.abs_diff_eq(Vec3::new(1.0, 1.25, -2.0), 1e-5),
+            "got {shown}"
+        );
+    }
+
+    #[test]
+    fn a_root_with_a_scale_channel_shows_its_scale() {
+        let keyed = Vec3::new(1.5, 2.0, 0.5);
+        let mut bones = Rig::new(lying_rest())
+            .loaded_two_bone_skeleton()
+            .playing_on_the_root(vec![held(AnimationChanelOutput::Scale(vec![keyed, keyed]))]);
+
+        bones.animate();
+
+        assert_eq!(bones.root().scale, keyed);
+    }
+
+    #[test]
+    fn under_a_rotated_parent_a_roots_height_is_read_along_the_parents_up() {
+        let keyed = Vec3::new(1.0, 2.0, 3.0);
+        let mut bones = Rig::new(lying_rest())
+            .loaded_two_bone_skeleton()
+            .playing_on_the_root(vec![held(AnimationChanelOutput::Translation(vec![
+                keyed, keyed,
+            ]))]);
+        bones.put_root_under(Mat4::from_quat(lying_rest()));
+
+        bones.animate();
+
+        let shown = bones.root().translation;
+        assert!(
+            shown.abs_diff_eq(Vec3::new(0.0, 0.0, 3.0), 1e-5),
+            "got {shown}"
+        );
+    }
+
+    #[test]
+    fn under_a_parent_scaled_to_nothing_a_roots_height_is_read_along_y() {
+        let keyed = Vec3::new(1.0, 2.0, 3.0);
+        let mut bones = Rig::new(lying_rest())
+            .loaded_two_bone_skeleton()
+            .playing_on_the_root(vec![held(AnimationChanelOutput::Translation(vec![
+                keyed, keyed,
+            ]))]);
+        bones.put_root_under(Mat4::from_scale(Vec3::ZERO));
+
+        bones.animate();
+
+        let shown = bones.root().translation;
+        assert!(
+            shown.abs_diff_eq(Vec3::new(0.0, 2.0, 0.0), 1e-5),
+            "got {shown}"
+        );
     }
 
     #[test]
