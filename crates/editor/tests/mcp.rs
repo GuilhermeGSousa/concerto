@@ -28,12 +28,15 @@ use concerto_ecs::{
     signal::listener::GlobalListener,
 };
 use concerto_editor::{
-    asset_editor::{AssetEditor, AssetEditorAppExt, EditorDocument, Unsaved, finish_asset_request},
+    asset_editor::{
+        AssetEditor, AssetEditorAppExt, AssetEditorRegistry, BackgroundWork, EditorDocument,
+        Unsaved, finish_asset_request,
+    },
     guard::UnsavedGuard,
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
         DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
-        PropertyTarget,
+        PropertyTarget, ShownValue,
     },
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
@@ -366,6 +369,32 @@ struct EditFramesSoFar {}
 
 #[derive(Deserialize, JsonSchema)]
 struct TextFields {}
+
+#[derive(Deserialize, JsonSchema)]
+struct ExtensionState {}
+
+#[derive(Resource)]
+struct ExtensionInstalled {
+    after_the_editor: bool,
+}
+
+fn extension(app: &mut App) {
+    let after_the_editor = app.get_resource::<AssetEditorRegistry>().is_some();
+    app.insert_resource(ExtensionInstalled { after_the_editor });
+}
+
+fn extension_state(
+    mut calls: ToolCalls<ExtensionState>,
+    installed: Option<Res<ExtensionInstalled>>,
+) {
+    for (_, reply) in calls.read() {
+        reply.ok(match &installed {
+            Some(installed) if installed.after_the_editor => "after the editor",
+            Some(_) => "before the editor",
+            None => "not installed",
+        });
+    }
+}
 
 fn state(
     mut calls: ToolCalls<State>,
@@ -739,7 +768,7 @@ where
     let served = run_with(
         server_io,
         move |app| {
-            concerto_editor::mcp::editor(recipe, root)(app);
+            concerto_editor::mcp::editor(recipe, root, vec![extension])(app);
             app.insert_resource(log)
                 .insert_resource(FixtureScene(scene))
                 .add_tool::<State, _>(McpTool::read_only("state"), state)
@@ -772,6 +801,10 @@ where
                     edit_frames_so_far,
                 )
                 .add_tool::<TextFields, _>(McpTool::read_only("text_fields"), text_fields)
+                .add_tool::<ExtensionState, _>(
+                    McpTool::read_only("extension_state"),
+                    extension_state,
+                )
                 .add_tool::<WantsProject, _>(
                     McpTool::read_only("wants_project").needs(Needs::Project),
                     wants_project,
@@ -1092,6 +1125,21 @@ fn status_and_list_assets_without_a_project() {
     assert_eq!(line(&status, "project: "), "none");
     assert_eq!(line(&status, "selection: "), "none");
     assert_eq!(error["code"], "no_project");
+}
+
+#[test]
+fn a_plugin_given_to_the_editor_is_installed_after_it() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        let state = ok(&client, "extension_state").await;
+        client.cancel().await.unwrap();
+        state
+    }) else {
+        return;
+    };
+
+    assert_eq!(served.result, "after the editor");
 }
 
 #[test]
@@ -4602,6 +4650,69 @@ fn save_answers_busy_while_the_scene_loads() {
     );
 }
 
+#[derive(Deserialize, JsonSchema)]
+struct StartWork {}
+
+#[derive(Deserialize, JsonSchema)]
+struct EndWork {}
+
+#[derive(Component)]
+struct Worker;
+
+fn start_work(mut calls: ToolCalls<StartWork>, mut cmd: CommandQueue) {
+    for (_, reply) in calls.read() {
+        cmd.spawn((Worker, BackgroundWork));
+        reply.ok("started");
+    }
+}
+
+fn end_work(
+    mut calls: ToolCalls<EndWork>,
+    workers: Query<Entity, With<Worker>>,
+    mut cmd: CommandQueue,
+) {
+    for (_, reply) in calls.read() {
+        for worker in workers.iter() {
+            cmd.remove::<BackgroundWork>(worker);
+        }
+        reply.ok("ended");
+    }
+}
+
+#[test]
+fn status_is_busy_while_a_document_has_background_work() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        |app| {
+            app.add_tool::<StartWork, _>(McpTool::new("start_work"), start_work)
+                .add_tool::<EndWork, _>(McpTool::new("end_work"), end_work);
+        },
+        |client| async move {
+            open(&client).await;
+            until(&client, "status", |status| status.ends_with("busy: no")).await;
+            assert_eq!(ok(&client, "start_work").await, "started");
+            let working = until(&client, "status", |status| status.ends_with("busy: yes")).await;
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let still = ok(&client, "status").await;
+            assert_eq!(ok(&client, "end_work").await, "ended");
+            let ended = until(&client, "status", |status| status.ends_with("busy: no")).await;
+            client.cancel().await.unwrap();
+            (working, still, ended)
+        },
+    ) else {
+        return;
+    };
+
+    let (working, still, ended) = served.result;
+    assert!(working.ends_with("busy: yes"), "{working}");
+    assert!(still.ends_with("busy: yes"), "{still}");
+    assert!(ended.ends_with("busy: no"), "{ended}");
+}
+
 fn drawless_game(app: &mut App) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -4688,45 +4799,59 @@ struct HeldTune {
     loose: Loose,
 }
 
+fn tune_values(document: Entity) -> Vec<Arc<dyn PropertyTarget>> {
+    vec![
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Tuning".into(),
+            document,
+            read: Box::new(|held| Some(&held.tuning)),
+            edit: Box::new(|held| Some(&mut held.tuning)),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Loose".into(),
+            document,
+            read: Box::new(|held| Some(&held.loose)),
+            edit: Box::new(|held| Some(&mut held.loose)),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Absent".into(),
+            document,
+            read: Box::new(|_| None),
+            edit: Box::new(|_| None),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Twin".into(),
+            document,
+            read: Box::new(|held| Some(&held.tuning)),
+            edit: Box::new(|held| Some(&mut held.tuning)),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Twin".into(),
+            document,
+            read: Box::new(|held| Some(&held.loose)),
+            edit: Box::new(|held| Some(&mut held.loose)),
+        }),
+    ]
+}
+
 #[derive(Default)]
 struct TuneEditor;
 
 impl AssetEditor for TuneEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
-        let document = editor.entity();
-        let targets: Vec<Arc<dyn PropertyTarget>> = vec![
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Tuning".into(),
-                document,
-                read: Box::new(|held| Some(&held.tuning)),
-                edit: Box::new(|held| Some(&mut held.tuning)),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Loose".into(),
-                document,
-                read: Box::new(|held| Some(&held.loose)),
-                edit: Box::new(|held| Some(&mut held.loose)),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Absent".into(),
-                document,
-                read: Box::new(|_| None),
-                edit: Box::new(|_| None),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Twin".into(),
-                document,
-                read: Box::new(|held| Some(&held.tuning)),
-                edit: Box::new(|held| Some(&mut held.tuning)),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Twin".into(),
-                document,
-                read: Box::new(|held| Some(&held.loose)),
-                edit: Box::new(|held| Some(&mut held.loose)),
-            }),
-        ];
+        let targets = tune_values(editor.entity());
         editor.insert((HeldTune::default(), InspectedValues(targets)));
+    }
+}
+
+#[derive(Default)]
+struct ShownTuneEditor;
+
+impl AssetEditor for ShownTuneEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        let targets = tune_values(editor.entity());
+        let shown = ShownValue(targets[1].clone());
+        editor.insert((HeldTune::default(), InspectedValues(targets), shown));
     }
 }
 
@@ -4760,6 +4885,13 @@ fn tune_editor(app: &mut App) {
     app.register_type::<Tuning>()
         .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
         .add_system(LateUpdate, note_value_edits);
+}
+
+fn shown_tune_editor(app: &mut App) {
+    app.register_asset_editor::<Tune, ShownTuneEditor>()
+        .unwrap();
+    app.register_type::<Tuning>()
+        .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune);
 }
 
 async fn open_tune(client: &Client) -> String {
@@ -4806,6 +4938,38 @@ struct ValueCalls {
     removed: String,
     after: Value,
     idle: String,
+}
+
+#[test]
+fn a_shown_value_leaves_every_value_reachable_by_name() {
+    let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        shown_tune_editor,
+        |client| async move {
+            open_tune(&client).await;
+            ok(&client, "finish_tune").await;
+            let status = until(&client, "status", |status| status.ends_with("busy: no")).await;
+            let hidden = inspected_target(&client, "Tuning").await;
+            let written = set_on_target(&client, "Tuning", "gain", json!(0.75)).await;
+            client.cancel().await.unwrap();
+            (status, hidden, written)
+        },
+    ) else {
+        return;
+    };
+
+    let (status, hidden, written) = served.result;
+    assert_eq!(
+        line(&status, "values: "),
+        "Tuning, Loose, Absent, Twin, Twin"
+    );
+    assert_eq!(hidden["name"], "Tuning");
+    assert_eq!(written["value"]["gain"], 0.75);
 }
 
 #[test]

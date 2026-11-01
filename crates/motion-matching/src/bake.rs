@@ -304,6 +304,17 @@ pub fn bake(
     clips: &[&AnimationClip],
     registry: &TypeRegistry,
 ) -> Result<MotionDatabase, BakeError> {
+    bake_with_progress(definition, skeleton, clips, registry, |_, _| {})
+}
+
+/// [`bake`], calling `on_entry(finished, total)` after each entry, with `finished` counting from 1.
+pub fn bake_with_progress(
+    definition: &MotionDatabaseDefinition,
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip],
+    registry: &TypeRegistry,
+    mut on_entry: impl FnMut(usize, usize),
+) -> Result<MotionDatabase, BakeError> {
     let plans = plan_entries(definition, skeleton, clips)?;
     check_window("position_window", definition.simulation.position_window)?;
     check_window("facing_window", definition.simulation.facing_window)?;
@@ -348,7 +359,7 @@ pub fn bake(
     let mut clip_starts = Vec::with_capacity(plans.len());
     let mut simulation_frames = Vec::with_capacity(frame_count);
 
-    for (plan, clip) in plans.iter().zip(clips) {
+    for (index, (plan, clip)) in plans.iter().zip(clips).enumerate() {
         let locals: Vec<Vec<JointPose>> = (0..plan.frames)
             .map(|index| {
                 sample_pose(
@@ -392,6 +403,7 @@ pub fn bake(
         range_starts.push(plan.first_frame);
         range_stops.push(plan.first_frame + plan.frames);
         clip_starts.push(plan.start);
+        on_entry(index + 1, plans.len());
     }
 
     let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);

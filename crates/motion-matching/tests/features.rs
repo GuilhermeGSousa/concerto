@@ -8,7 +8,7 @@ use concerto_motion_matching::{
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
     TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
-use concerto_reflect::{to_value, Reflect, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -632,4 +632,38 @@ fn a_query_needs_every_channel_type_registered() {
         matches!(error, BakeError::UnregisteredChannel(_)),
         "{error:?}"
     );
+}
+
+fn reference_registry() -> TypeRegistry {
+    let mut registry = TypeRegistry::default();
+    registry.register::<BonePositions>();
+    registry.register::<BoneVelocities>();
+    registry.register::<TrajectoryPositions>();
+    registry.register::<TrajectoryDirections>();
+    registry
+}
+
+#[test]
+fn an_empty_stored_value_builds_a_channel_at_its_defaults() {
+    let registry = reference_registry();
+    let data = registry
+        .get_by_name("BonePositions")
+        .unwrap()
+        .data::<ReflectFeatureChannel>()
+        .copied()
+        .unwrap();
+
+    let built = (data.from_value)(&ReflectedValue::Struct(Vec::new())).unwrap();
+
+    assert_eq!(
+        (data.to_value)(built.as_ref()).unwrap(),
+        to_value(&BonePositions::default()).unwrap()
+    );
+}
+
+#[test]
+fn a_channel_registers_its_joint_names() {
+    let registry = reference_registry();
+
+    assert!(registry.get_by_name("JointName").is_some());
 }

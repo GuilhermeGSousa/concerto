@@ -3164,6 +3164,25 @@ mod value_cards {
     }
 
     #[test]
+    fn a_scene_fixture_edits_a_value_through_the_value_systems() {
+        let mut v = valued();
+        v.systems = value_systems();
+        for system in &mut v.systems {
+            system.initialize(&mut v.w.f.world);
+        }
+        v.show_value();
+        let row = v.row_at(1, "gain").1;
+
+        let commits = v.world().get_resource_mut::<PropertyCommits>().unwrap();
+        commit_number(commits, &row, 5.0).unwrap();
+        v.update();
+
+        let document = v.document;
+        let held = v.world().get_component_for_entity::<Held>(document);
+        assert_eq!(held.unwrap().0.gain, 5.0);
+    }
+
+    #[test]
     fn value_systems_do_not_request_exclusive_access() {
         for system in [
             values::refresh_inspected_values.into_boxed_system(),

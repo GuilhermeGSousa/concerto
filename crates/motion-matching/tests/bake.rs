@@ -2,7 +2,8 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    bake, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose, simulation_bone,
+    bake, bake_with_progress, model_pose, model_velocities, plan_entries, reexpress_roots,
+    sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
     BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, MotionDatabaseDefinition,
@@ -1143,4 +1144,55 @@ fn a_channel_that_fails_validation_is_a_channel_value_error() {
             reason: "no such bone".into(),
         }
     );
+}
+
+#[test]
+fn bake_with_progress_reports_each_entry_once_in_order() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(
+        vec![entry(None), entry(None), entry(None)],
+        vec![weighted(1.0, 0.0)],
+    );
+    let mut reports = Vec::new();
+
+    let reported = bake_with_progress(
+        &definition,
+        &skeleton,
+        &[&clip, &clip, &clip],
+        &weighted_registry(),
+        |finished, total| reports.push((finished, total)),
+    )
+    .unwrap();
+
+    assert_eq!(reports, vec![(1, 3), (2, 3), (3, 3)]);
+    assert_eq!(
+        reported,
+        bake(
+            &definition,
+            &skeleton,
+            &[&clip, &clip, &clip],
+            &weighted_registry()
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![weighted(-1.0, 0.0)]);
+    let mut reports = 0;
+
+    let result = bake_with_progress(
+        &definition,
+        &skeleton,
+        &[&clip],
+        &weighted_registry(),
+        |_, _| reports += 1,
+    );
+
+    assert!(result.is_err());
+    assert_eq!(reports, 0);
 }
