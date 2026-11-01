@@ -14,23 +14,22 @@ pub mod query;
 pub mod runtime;
 pub mod search;
 pub mod simulation;
+pub mod staleness;
 pub mod systems;
 #[cfg(test)]
 mod test_support;
 
-pub use bake::bake;
+pub use bake::{bake, bake_with_progress};
 pub use channel::{
-    build_channels, extract_features, BodyMotion, ChannelSource, FeatureChannel, FrameContext,
-    ReflectFeatureChannel,
+    build_channels, extract_features, preview_features, BodyMotion, ChannelSource, FeatureChannel,
+    FeatureShape, FrameContext, ReflectFeatureChannel,
 };
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{
     MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
     TrajectorySettings,
 };
-pub use displacement::{
-    Adjustment, CharacterDisplacement, Clamp, DisplacementSimulation, Synchronization,
-};
+pub use displacement::{Adjustment, CharacterDisplacement, CharacterLink, Clamp, Synchronization};
 pub use features::{
     reference_channels, BonePositions, BoneVelocities, TrajectoryDirections, TrajectoryPositions,
 };
@@ -41,3 +40,4 @@ pub use query::FeatureQuery;
 pub use runtime::run_motion_matching;
 pub use search::{cost_of, excluded_tail, search};
 pub use simulation::{CharacterSimulation, DesiredMotion, TrajectorySample};
+pub use staleness::{is_stale, weightless_hash, weights_changed_only, weights_of};

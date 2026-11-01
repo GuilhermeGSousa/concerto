@@ -20,6 +20,10 @@ use std::sync::Arc;
 #[derive(Component, Clone, Default)]
 pub struct InspectedValues(pub Vec<Arc<dyn PropertyTarget>>);
 
+/// The one value of its document's [`InspectedValues`] the panel shows; a document without it shows them all.
+#[derive(Component, Clone)]
+pub struct ShownValue(pub Arc<dyn PropertyTarget>);
+
 /// Reads the active document's values again.
 pub struct RefreshInspector;
 impl Signal for RefreshInspector {}
@@ -85,16 +89,16 @@ pub(super) fn read_inspected_values(_: On<RefreshInspector>, world: &mut World) 
     let Some(registry) = world.get_resource::<InspectorRegistry>() else {
         return;
     };
-    let values = document
+    let shown =
+        document.and_then(|document| world.get_component_for_entity::<ShownValue>(document));
+    let listed = document
         .and_then(|document| world.get_component_for_entity::<InspectedValues>(document))
-        .map(|values| {
-            values
-                .0
-                .iter()
-                .map(|target| read_value(world, registry, target))
-                .collect()
-        })
-        .unwrap_or_default();
+        .map_or(&[][..], |values| values.0.as_slice());
+    let targets = shown.map_or(listed, |shown| std::slice::from_ref(&shown.0));
+    let values = targets
+        .iter()
+        .map(|target| read_value(world, registry, target))
+        .collect();
     world.insert_resource(InspectedSnapshots { values });
 }
 
@@ -197,11 +201,12 @@ pub(super) fn refresh_inspected_values(
     active: Res<ActiveEditor>,
     registry: Res<InspectorRegistry>,
     changed: Query<&InspectedValues, Changed<InspectedValues>>,
+    shown: Query<&ShownValue, Changed<ShownValue>>,
     mut cmd: CommandQueue,
 ) {
-    let values_changed = active
-        .0
-        .is_some_and(|document| changed.get_entity(document).is_some());
+    let values_changed = active.0.is_some_and(|document| {
+        changed.get_entity(document).is_some() || shown.get_entity(document).is_some()
+    });
     if active.is_changed() || registry.is_changed() || values_changed {
         cmd.trigger(RefreshInspector);
     }

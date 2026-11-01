@@ -7,3 +7,4 @@ publish = false
 [dependencies]
 tech-demo = { path = ".." }
 concerto-editor = { version = "0.1.0", path = "../../../crates/editor" }
+concerto-motion-matching-editor = { version = "0.1.0", path = "../../../crates/motion-matching-editor" }

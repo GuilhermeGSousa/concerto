@@ -240,15 +240,15 @@ channels for the root gives `RootMotion::IDENTITY`.
 
 Nothing applies it on its own. To have it move a character, make the visible
 character a separate entity from the capsule, with the skeleton under it, and
-give it a `CharacterDisplacement` and a `DisplacementSimulation` naming the
-capsule:
+give it a `CharacterDisplacement` and a `CharacterLink` naming the capsule and
+the skeleton:
 
 ```rust
-use concerto::motion_matching::{CharacterDisplacement, Clamp, DisplacementSimulation};
+use concerto::motion_matching::{CharacterDisplacement, CharacterLink, Clamp};
 
 cmd.spawn((
     CharacterDisplacement::Clamp(Clamp::default()),
-    DisplacementSimulation(capsule),
+    CharacterLink { capsule, skeleton },
     Transform::default(),
 ));
 ```
@@ -265,9 +265,9 @@ the capsule by one of three methods, which are mutually exclusive:
 - `Clamp` keeps the character within a distance and an angle of the capsule.
 
 Height is always the capsule's. Do not parent the character to its capsule: it
-would move twice, so it is skipped with a warning. The
-[crate's README](../../crates/motion-matching/README.md) has the fields and what
-each method promises at a wall.
+would move twice. The [crate's README](../../crates/motion-matching/README.md)
+has the fields, what the skeleton has to be, and what each method promises at a
+wall.
 
 ## Gameplay helpers
 

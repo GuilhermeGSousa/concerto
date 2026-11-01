@@ -2,12 +2,13 @@ use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, Animatio
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
-    bake, model_pose, model_velocities, plan_entries, reexpress_roots, sample_pose, simulation_bone,
+    bake, bake_with_progress, model_pose, model_velocities, plan_entries, reexpress_roots,
+    sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
-    TrajectorySample, TrajectorySettings,
+    BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, MotionDatabase,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -919,6 +920,52 @@ fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
     }
 }
 
+fn two_range_database(channels: Vec<StoredChannel>) -> MotionDatabase {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(3.0);
+    let definition = trajectory_definition(
+        vec![entry(Some((0.0, 1.0))), entry(Some((1.0, 3.0)))],
+        1.0,
+        channels,
+    );
+    bake(&definition, &skeleton, &[&clip, &clip], &body_registry()).unwrap()
+}
+
+#[test]
+fn trajectory_samples_sit_ahead_of_a_frame_and_stop_at_the_end_of_its_range() {
+    let database = two_range_database(Vec::new());
+    let positions = |frames: [usize; 3]| frames.map(|frame| database.simulation(frame).translation);
+    let samples_at = |frame: usize| -> Vec<Vec3> {
+        database
+            .trajectory_samples(frame)
+            .iter()
+            .map(|sample| sample.position)
+            .collect()
+    };
+
+    assert_eq!(samples_at(5), positions([11, 17, 23]));
+    assert_eq!(samples_at(20), positions([26, 29, 29]));
+    assert_eq!(samples_at(30), positions([36, 42, 48]));
+    assert!(samples_at(90).is_empty());
+}
+
+#[test]
+fn trajectory_samples_are_the_ones_the_bake_gave_the_channels() {
+    let database = two_range_database(vec![body_channel()]);
+
+    for frame in [0, 5, 20, 29, 30, 89] {
+        let samples = database.trajectory_samples(frame);
+        let features = database.features(frame);
+        assert_eq!(samples.len(), SAMPLES);
+        for (index, sample) in samples.iter().enumerate() {
+            let at = 13 + index * 10;
+            assert!(sample.position.distance(vec3(features, at)) < 1e-5);
+            assert!(sample.velocity.distance(vec3(features, at + 3)) < 1e-5);
+            assert!(sample.rotation.dot(quat(features, at + 6)).abs() > 1.0 - 1e-5);
+        }
+    }
+}
+
 #[test]
 fn a_sample_past_the_range_end_equals_the_last_simulation_frame() {
     let skeleton = body_skeleton();
@@ -1143,4 +1190,55 @@ fn a_channel_that_fails_validation_is_a_channel_value_error() {
             reason: "no such bone".into(),
         }
     );
+}
+
+#[test]
+fn bake_with_progress_reports_each_entry_once_in_order() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(
+        vec![entry(None), entry(None), entry(None)],
+        vec![weighted(1.0, 0.0)],
+    );
+    let mut reports = Vec::new();
+
+    let reported = bake_with_progress(
+        &definition,
+        &skeleton,
+        &[&clip, &clip, &clip],
+        &weighted_registry(),
+        |finished, total| reports.push((finished, total)),
+    )
+    .unwrap();
+
+    assert_eq!(reports, vec![(1, 3), (2, 3), (3, 3)]);
+    assert_eq!(
+        reported,
+        bake(
+            &definition,
+            &skeleton,
+            &[&clip, &clip, &clip],
+            &weighted_registry()
+        )
+        .unwrap()
+    );
+}
+
+#[test]
+fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(1.0);
+    let definition = baking_definition(vec![entry(None)], vec![weighted(-1.0, 0.0)]);
+    let mut reports = 0;
+
+    let result = bake_with_progress(
+        &definition,
+        &skeleton,
+        &[&clip],
+        &weighted_registry(),
+        |_, _| reports += 1,
+    );
+
+    assert!(result.is_err());
+    assert_eq!(reports, 0);
 }

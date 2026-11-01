@@ -23,6 +23,30 @@ overrides it. `--decorated` and `--help`/`-h` work as above, and a bad argument
 prints the usage and exits with status 2. `run` sets up logging with
 `env_logger`, ignoring a logger that is already installed.
 
+### Extension crates
+
+An editor crate extends the editor with a public `fn(&mut App)`, conventionally
+`install`, which registers its asset editors and anything else it needs. A game
+never depends on such a crate: it lists it under
+`[package.metadata.concerto.editor]` in its `Cargo.toml`, and `cargo concerto
+editor <dir> --update` regenerates `editor/` to call
+`concerto_editor::run_with(recipe, project_root, plugins)`, as the project
+tool's [README](../project/README.md#editor-plugins) describes. `run_with` is
+`run` with `plugins` added to the editor's `App` in order, after `EditorPlugin`
+and everything else the editor registers, and before the MCP plugins under
+`--mcp`. `run` is `run_with` with an empty list.
+
+An extension crate's tests can use the `testing` feature, which exposes
+`hosted::testing` and its `SceneFixture`, `inspector::value_systems`, the systems
+that show a document's values and send their edits, and
+`inspector::commit_number`, which queues a number as a float row's whole value;
+take it as a dev-dependency:
+
+```toml
+[dev-dependencies]
+concerto-editor = { workspace = true, features = ["testing"] }
+```
+
 ## Agents (MCP)
 
 `--mcp` runs the editor for an agent: the whole editor, panels included, with
@@ -47,8 +71,9 @@ message naming lavapipe.
 
 Frames run on demand, only while a call needs one or the editor is busy: a
 project or scene opening, the assets of the edited scene or the preview in
-front still loading, a game starting or playing, a save under way, or text in
-the panels changed in the last frame and may not be drawn yet. A timeline's
+front still loading, a game starting or playing, a save under way, a document
+holding `BackgroundWork`, or text in the panels changed in the last frame and
+may not be drawn yet. A timeline's
 readout does not count, so a clip that is playing does not keep the editor busy
 and advances only while frames run. An idle editor runs none, so once
 `status` reports `busy: no` the viewport shows the scene with everything it
@@ -698,9 +723,16 @@ titled by its name, with no name field, add-component row or ⋯ menu, since tho
 belong to entity cards. `read` or `edit` returning `None` means the value is
 gone: its card has no rows and an edit is refused with
 `EditError::MissingTarget`. The workspace shows the inspector with the document's
-`inspector` host above it, and the host stops growing while `InspectedValues` is
-there, so the two do not split the card in half. `InspectedValues` is replaced,
-never removed, because a removal is not noticed; an empty list shows no cards.
+`inspector` host above it, and the host neither grows nor shrinks while
+`InspectedValues` is there, so the two do not split the card in half and what
+the host holds is not clipped. `InspectedValues` is replaced, never removed,
+because a removal is not noticed; an empty list shows no cards.
+
+A document that publishes several values can show one at a time by adding a
+`ShownValue` holding one of its targets: the panel then shows only that value's
+card, and inserting another `ShownValue` swaps it. Every value in
+`InspectedValues` stays reachable by name over MCP. `ShownValue` is replaced,
+never removed, for the same reason.
 
 A value's types are the ones registered in the document's preview `App` when it
 has one, because a game's types are registered there, and otherwise in the
@@ -710,10 +742,11 @@ registry does not hold reads "Unsupported type", and MCP refuses to write JSON
 into a value whose root type is missing.
 
 A value has no change detection and is not polled. It is read when an edit lands,
-when `ActiveEditor`, `InspectedValues` or the editor registrations change, when a
-preview arrives, and on the public signal `RefreshInspector`. Anything else that
-writes the value, such as a load replacing it, triggers `RefreshInspector`
-itself; the cost of forgetting is a panel that stays stale until the next edit.
+when `ActiveEditor`, `InspectedValues`, `ShownValue` or the editor registrations
+change, when a preview arrives, and on the public signal `RefreshInspector`.
+Anything else that writes the value, such as a load replacing it, triggers
+`RefreshInspector` itself; the cost of forgetting is a panel that stays stale
+until the next edit.
 Targets that are the same `Arc`s keep their cards and their rows, so a focused
 field keeps its text. Different targets rebuild the cards and reset the scroll.
 
@@ -814,7 +847,7 @@ the same checks.
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `Vec3`, `Quat` and `bool` and the
+holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool` and the
 asset picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
@@ -933,6 +966,15 @@ the asset, and remove `SaveRequested`. If the write fails, insert `Unsaved`
 again and leave an error in the document's status. Removing the marker at
 capture means an edit made while a slow save is in flight marks the document
 again and is not lost.
+
+A document that holds its own edits restores them on `DiscardEdits`, which the
+prompt sends when the user chooses Discard. The tab can outlive that choice, since
+the open that asked for it can fail.
+
+A worker thread that a custom editor polls for its result needs frames to be
+polled in, and an agent needs to know it is running: insert `BackgroundWork` on
+the document when it starts and remove it when it ends. `status` reads
+`busy: yes` while any document holds it.
 
 Register custom interaction systems in `Update` after `EditorPlugin`. Workspace
 visibility uses resource change detection and host component changes; a tab

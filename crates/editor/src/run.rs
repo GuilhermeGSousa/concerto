@@ -86,11 +86,18 @@ pub(crate) fn parse_args(
     })
 }
 
+pub(crate) fn apply_plugins(app: &mut App, plugins: &[fn(&mut App)]) {
+    for plugin in plugins {
+        plugin(app);
+    }
+}
+
 pub(crate) fn register_editor(
     app: &mut App,
     recipe: fn(&mut App),
     project: PathBuf,
     decorated: bool,
+    plugins: &[fn(&mut App)],
 ) {
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -104,10 +111,16 @@ pub(crate) fn register_editor(
             recipe,
         })
         .register_plugin(concerto_ui::plugin::UIPlugin);
+    apply_plugins(app, plugins);
 }
 
 /// Opens the editor for the game whose recipe is `recipe`, on the project at `project_root` unless `--project` names another; `--mcp` serves it over MCP on stdin and stdout instead of opening a window.
 pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
+    run_with(recipe, project_root, &[]);
+}
+
+/// Runs the editor with `plugins` added to its `App`, after `EditorPlugin`.
+pub fn run_with(recipe: fn(&mut App), project_root: impl Into<PathBuf>, plugins: &[fn(&mut App)]) {
     let _ = env_logger::try_init();
     let mut arguments = std::env::args_os();
     let program = arguments.next();
@@ -122,10 +135,13 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
             std::process::exit(2);
         }
     };
+    let plugins = plugins.to_vec();
     match options.mcp {
-        Some(size) => concerto_mcp::host::run(crate::mcp::editor(recipe, options.project), size),
+        Some(size) => {
+            concerto_mcp::host::run(crate::mcp::editor(recipe, options.project, plugins), size)
+        }
         None => concerto_winit::run(move |app| {
-            register_editor(app, recipe, options.project, options.decorated);
+            register_editor(app, recipe, options.project, options.decorated, &plugins);
         }),
     }
 }
@@ -134,10 +150,66 @@ pub fn run(recipe: fn(&mut App), project_root: impl Into<PathBuf>) {
 mod tests {
     use std::{ffi::OsString, path::PathBuf};
 
-    use super::{ArgsError, parse_args, usage};
+    use concerto_app::{
+        App,
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin},
+    };
+    use concerto_ecs::Resource;
+    use concerto_window::plugin::WindowPlugin;
+
+    use super::{ArgsError, apply_plugins, parse_args, usage};
+    use crate::{
+        EditorPlugin,
+        asset_editor::{AssetEditorAppExt, AssetEditorRegistry},
+        hosted::testing::{PlainAsset, PlainEditor, plain_recipe},
+    };
 
     fn args(list: &[&str]) -> Vec<OsString> {
         list.iter().map(OsString::from).collect()
+    }
+
+    #[derive(Resource)]
+    struct Applied(Vec<&'static str>);
+
+    fn first_extension(app: &mut App) {
+        app.register_asset_editor::<PlainAsset, PlainEditor>()
+            .expect("the editor's registry is in place");
+        app.insert_resource(Applied(vec!["first"]));
+    }
+
+    fn second_extension(app: &mut App) {
+        app.get_resource_mut::<Applied>()
+            .expect("the first extension ran")
+            .0
+            .push("second");
+    }
+
+    #[test]
+    fn plugins_are_applied_in_order_and_reach_what_the_editor_plugin_registered() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(EditorPlugin {
+                project: None,
+                decorated: false,
+                recipe: plain_recipe,
+            });
+
+        apply_plugins(&mut app, &[first_extension, second_extension]);
+
+        assert_eq!(
+            app.get_resource::<Applied>().unwrap().0,
+            ["first", "second"]
+        );
+        assert!(
+            app.get_resource::<AssetEditorRegistry>()
+                .unwrap()
+                .editor_kind("PlainAsset")
+                .is_some()
+        );
     }
 
     #[test]

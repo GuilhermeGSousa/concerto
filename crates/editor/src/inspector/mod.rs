@@ -52,6 +52,8 @@ use sync::{build_property_widgets, sync_inspected_components};
 
 use boolean::refresh_bool_fields;
 use color::refresh_color_swatches;
+#[cfg(any(test, feature = "testing"))]
+pub use numeric::commit_number;
 use numeric::{
     cancel_numeric_fields, commit_numeric_fields, refresh_numeric_fields, refresh_numeric_labels,
 };
@@ -68,7 +70,8 @@ pub use rows::{
 };
 pub use target::{ComponentTarget, DocumentValue, PropertyAddress, PropertyTarget, TargetWorld};
 pub use values::{
-    CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ValueCard, ValueSnapshot,
+    CommitValue, InspectedSnapshots, InspectedValues, RefreshInspector, ShownValue, ValueCard,
+    ValueSnapshot,
 };
 pub(crate) use values::{apply_value_commit, report_value_edit};
 use values::{
@@ -307,6 +310,18 @@ pub(crate) fn row_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
         sync_inspected_components.into_boxed_system(),
         build_property_widgets.into_boxed_system(),
         send_property_commits.into_boxed_system(),
+    ]
+}
+
+/// The systems that show the active document's values and send their edits.
+#[cfg(any(test, feature = "testing"))]
+pub fn value_systems() -> Vec<concerto_ecs::system::BoxedSystem> {
+    use concerto_ecs::IntoSystem;
+    vec![
+        send_value_commits.into_boxed_system(),
+        refresh_inspected_values.into_boxed_system(),
+        sync_value_cards.into_boxed_system(),
+        build_value_widgets.into_boxed_system(),
     ]
 }
 

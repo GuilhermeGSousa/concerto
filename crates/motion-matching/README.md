@@ -41,7 +41,8 @@ collisions, which the springs do not know.
 ## Motion database
 
 `MotionDatabaseDefinition` says what to bake; `bake` turns it into a
-`MotionDatabase`. Both are assets. The database stores no poses: it stores
+`MotionDatabase`. Both are assets, and the definition is a `CreatableAsset`
+whose `new_asset()` is its `Default`. The database stores no poses: it stores
 features, the simulation bone and, per frame, which clip and time the frame
 plays. `MotionDatabase::pose` samples the pose from the clip.
 
@@ -60,12 +61,16 @@ plays. `MotionDatabase::pose` samples the pose from the clip.
 An entry bakes `floor((end - start) * rate / speed)` frames.
 
 `SimulationBoneSettings`: `position_joint` (`"Spine2"`) and `facing_joint`
-(`"Hips"`) name skeleton joints; `facing_axis` (`Vec3::Z`) is the facing
+(`"Hips"`) are `JointName`s; `facing_axis` (`Vec3::Z`) is the facing
 joint's forward in its own space; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
 ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
+
+`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
+leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
+the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`
@@ -80,7 +85,13 @@ let database = bake(&definition, &skeleton, &clips, &registry)?;
 
 `clips` holds one resolved clip per entry, in order; `registry` is the
 `TypeRegistry` that knows the channel types. Each entry is baked on its own, so
-no frame blends across two entries. `bake` returns `BakeError`:
+no frame blends across two entries.
+
+`bake_with_progress` takes one more argument, `on_entry(finished, total)`,
+called after each entry with `finished` counting from 1. It is not called for a
+definition that is refused before the first entry.
+
+`bake` returns `BakeError`:
 
 | Error | Cause |
 |---|---|
@@ -160,15 +171,35 @@ app.register_type::<RootSpeed>();
 A channel needs `Reflect` and `Default`. The registered type name is what a
 `StoredChannel` refers to; a stored value is applied over `Default`.
 
-A channel may also override three methods:
+A channel may also override four methods:
 
 - `weight()` (default 1.0): how much its group counts in the search. It must be
-  finite and positive, or `bake` returns `InvalidWeight`.
+  finite and positive, or `bake` returns `InvalidWeight`. A top-level field
+  named `weight` means this and nothing else: see [Stale databases](#stale-databases).
 - `source()` (default `ChannelSource::Pose`): a `Trajectory` channel reads only
   `simulation` and `trajectory` from its `FrameContext`, so the runtime query
   can compute it from a predicted trajectory.
 - `validate(&skeleton, &trajectory_settings)` (default `Ok`): `bake` calls it
   before extracting; an `Err` becomes `ChannelValue`.
+- `preview(&frame, features, &mut out)` (default nothing): adds the
+  `FeatureShape`s that draw `features`. See [Previewing](#previewing).
+
+### Previewing
+
+`preview` says how a channel looks for a given feature vector, so the same code
+can draw a baked frame or, later, a runtime query beside the frame it selected.
+`preview_features(&channels, &frame, &features)` gives each channel its span of a
+raw vector and returns one list of shapes per channel, in order.
+
+`FeatureShape` is a `Ring { center, radius }`, a `Line { start, end }` or an
+`Arrow { start, end }`, relative to the simulation bone. A `Ring` lies flat in the
+bone's ground plane. The caller decides where the shapes go and their colour, and
+a channel gets no drawing handle, so this crate does not depend on the renderer.
+
+- What is drawn comes from `features`, which are raw: a normalised vector is not
+  in metres. `FeatureQuery::build` returns normalised values.
+- `frame` only places what the values hold no position for, such as where a bone
+  or a trajectory sample is. A shape the context cannot place is left out.
 
 ### Reference channels
 
@@ -188,6 +219,13 @@ in orangeduck/Motion-Matching.
 `TrajectorySettings` at 60 Hz they sit at +20, +40 and +60 frames. A missing
 bone or an index at or past `sample_count` makes `bake` return `ChannelValue`.
 
+| Channel | Preview |
+|---|---|
+| `BonePositions` | a `Ring` of radius 0.05 at each stored position |
+| `BoneVelocities` | an `Arrow` from the bone's position in `model_pose` along the stored velocity scaled by 0.1 |
+| `TrajectoryPositions` | `Line`s from the origin through the stored positions, with a `Ring` of radius 0.12 at each |
+| `TrajectoryDirections` | an `Arrow` 0.3 long from the sample's position in `trajectory` along the stored direction |
+
 ### Normalisation
 
 Each channel is a group. The bake stores the mean of every feature dimension
@@ -202,6 +240,35 @@ deviation is below `1e-6` normalises to 0. `features(frame)` stays raw.
 - `set_weights(&[f32])`: one weight per channel; changes the scales only, with
   no re-bake. It does not rewrite the weight inside each channel's stored
   value; the span's weight is the one in use.
+
+### Stale databases
+
+A `MotionDatabase` stores `source_hash()`, the hash of what it was baked from.
+`bake` leaves it at 0; the caller sets it with `with_source_hash`.
+
+```rust
+let hash = weightless_hash(&definition, &skeleton_bytes, &clip_bytes);
+let database = bake(&definition, &skeleton, &clips, &registry)?.with_source_hash(hash);
+```
+
+`clip_bytes` holds the stored bytes of one clip per entry. The hash is FNV-1a,
+so it is stable across Rust versions. It covers the skeleton's asset id, the
+skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
+`trajectory`, and each channel's type name and value with its top-level `weight`
+field left out.
+
+- `weights_of(&definition, &registry)`: each live channel's `weight()`, in order.
+- `is_stale(&database, &definition, hash, &registry)`: the hash differs from
+  `source_hash()`, or a `ChannelSpan` weight differs from `weights_of`, or a
+  channel cannot be built.
+- `weights_changed_only(&database, &definition, hash, &registry)`: the same test
+  with the hash equal, the case `set_weights(&weights_of(..)?)` fixes with no
+  re-bake.
+
+A channel's top-level `weight` field means the search weight and nothing else.
+A field called `weight` that feeds `extract` changes no hash, so features baked
+from its old value read as current. A weight stored under another name, or
+nested deeper, just changes the hash and asks for a full bake.
 
 ### FeatureQuery
 
@@ -225,14 +292,24 @@ every bone index is a skeleton joint index.
 - `skeleton()`, `bone_count()`, `clips()`: the skeleton handle, its bone count
   at bake time and one clip handle per entry, in entry order.
 - `rate()`, `speed()`, `trajectory()`: the sampling the bake used.
+- `source_hash()`: see [Stale databases](#stale-databases).
 - `frame_count()`; `entry_of(frame)`, `range_of(frame)`: the entry holding a
-  frame and its half-open frame range.
+  frame and its half-open frame range; `frames_of_entry(index)`: the frames an
+  entry baked, or `None` past the last entry.
 - `clip_time(frame)`: the entry and the clip time in seconds the frame plays,
   `clip_start + (frame - range_start) * speed / rate`.
+- `trajectory_samples(frame)`: the trajectory samples of `frame` as the bake saw
+  them, clamped to its range's last frame; empty for a frame the database did not
+  bake. `TrajectorySettings::frame_offset(sample, rate)` is the rounded offset the
+  bake and this share.
+- `body_motion(frame)`: the simulation bone's velocities at `frame`.
+- `live_channels(&registry)`: the channels built from the values in the spans.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
   per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
   `dims`, `weight`, `source`, `value`).
+- `deviations()`: each channel's mean standard deviation, in channel order.
+- `size_in_bytes()`: the bytes held by the feature, simulation and range arrays.
 
 `simulation(frame)` and `features(frame)` panic on a frame outside
 `0..frame_count()`. `entry_of`, `range_of` and `clip_time` return `None` for
@@ -255,9 +332,8 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
   whichever is higher. The springs never see the pull, so the prediction is
   undisturbed. The body keeps its own vertical velocity.
 - `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
-  the path from where the body ended the step and writes it to the character's
-  `AnimationPlayer`, which is on the simulation's entity, or on or under an
-  entity whose `DisplacementSimulation` names it.
+  the path from where the body ended the step and writes it to the
+  `AnimationPlayer` on the skeleton of each `CharacterLink`.
 - `apply_character_displacement`, in `LateUpdate`, after `animate_targets` and
   before `propagate_global_transforms`: places each character; see
   [Displacement](#displacement).
@@ -308,13 +384,11 @@ node.
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
-the blackboard of its `AnimationPlayer`, where only this crate reads it. The
-player sits on the simulation's entity, or, when the visible character is a
-separate entity from the capsule, on or under an entity with a
-`DisplacementSimulation` naming the capsule: a player with no simulation of its
-own climbs `ChildOf` to the nearest one. A player that finds neither, or a
-preview `App`, has no trajectory; the node then plays the database without
-searching.
+the blackboard of its `AnimationPlayer`, where only this crate reads it. A
+`CharacterLink` says where both are: `capsule` holds the simulation and
+`skeleton` the player. When the player is on the capsule, both fields name that
+entity. A player no link names, or a preview `App`, has no trajectory; the node
+then plays the database without searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
@@ -339,30 +413,36 @@ does a frame that holds the pose at the end of its range.
 
 The visible character and the capsule are two entities, and they drift apart:
 root motion moves one and the player moves the other. `CharacterDisplacement`
-goes on the character and reconciles the two each frame.
-`DisplacementSimulation` names the capsule, which holds `CharacterSimulation`,
-`DesiredMotion` and the body, and needs `ColliderOffset::bottom_origin` for the
-character to stand on the ground. The game inserts it at spawn.
+goes on the character and reconciles the two each frame. `CharacterLink`, also
+on the character, names the entities it works with, and the game provides both:
+
+- `capsule` holds `CharacterSimulation`, `DesiredMotion` and the body, and needs
+  `ColliderOffset::bottom_origin` for the character to stand on the ground.
+- `skeleton` holds the `SkeletonComponent` with a root and its
+  `AnimationPlayer`. A scene-spawned skeleton exists only once its scene has, so
+  the game inserts the link then.
 
 ```rust
 commands.spawn((
     CharacterDisplacement::Clamp(Clamp::default()),
-    DisplacementSimulation(capsule),
+    CharacterLink { capsule, skeleton },
     Transform::default(),
 ));
 ```
 
-The skeleton goes anywhere under the character: each `AnimationRootBone` climbs
-`ChildOf` to the nearest entity with a `CharacterDisplacement`, so a
-scene-spawned skeleton needs no link. A character with two skeletons uses the
-first one found. A character whose skeleton has not spawned has no root motion
-and still gets its method's correction.
+Root motion is in the space of the root bone's parent, and the system reads that
+space from the skeleton's `GlobalTransform`. The skeleton has to be in it: a
+glTF skinned node beside its root joint with no transform of its own, or a BVH
+root joint, which rests unrotated. Any other skeleton moves the character the
+wrong way.
 
-A character's `Transform` is written in world space. It is not a child of its
-capsule: one under it would move twice, so the system skips it and warns once
-for that entity. A `DisplacementSimulation` naming an entity with no
-`CharacterSimulation` gets the same. A character without a
-`DisplacementSimulation` does not move.
+A `skeleton` with no `SkeletonComponent`, or no root, gives no root motion, and
+the character still gets its method's correction. A `capsule` with no
+`CharacterSimulation` leaves the character where it is, and so does having no
+`CharacterLink`.
+
+A character's `Transform` is written in world space. Do not make it a child of
+its capsule: nothing checks, and it would move twice.
 
 ### Methods
 

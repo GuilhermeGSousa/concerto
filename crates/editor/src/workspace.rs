@@ -140,9 +140,10 @@ pub(crate) fn sync_workspace(
         if let Some(host) = hosts.inspector
             && values.get_entity(entity).is_some()
             && let Some(mut node) = nodes.get_entity(host)
-            && node.flex_grow != 0.0
+            && (node.flex_grow != 0.0 || node.flex_shrink != 0.0)
         {
             node.flex_grow = 0.0;
+            node.flex_shrink = 0.0;
         }
     }
     if hosts_changed || registry.is_changed() {
@@ -660,7 +661,7 @@ mod tests {
     }
 
     #[test]
-    fn a_value_document_shows_the_inspector_under_a_host_that_does_not_grow() {
+    fn a_value_document_shows_the_inspector_under_a_host_that_neither_grows_nor_shrinks() {
         let mut world = docked_world();
         world.insert_resource(ActiveEditor::default());
         world.insert_resource(FocusedWidget::default());
@@ -700,6 +701,14 @@ mod tests {
         };
         assert_eq!(node(&world, host), 0.0);
         assert_eq!(node(&world, base), 1.0);
+        let shrink = |world: &World, entity| {
+            world
+                .get_component_for_entity::<UINode>(entity)
+                .unwrap()
+                .flex_shrink
+        };
+        assert_eq!(shrink(&world, host), 0.0);
+        assert_eq!(shrink(&world, base), 1.0);
         let order = foot_children(&world, base);
         let position = |entity| order.iter().position(|&child| child == entity).unwrap();
         assert!(position(host) < position(base));

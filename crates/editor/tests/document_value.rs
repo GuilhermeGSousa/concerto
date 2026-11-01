@@ -28,7 +28,7 @@ use concerto_editor::{
     inspector::{
         DocumentValue, EditableApp, InspectedComponent, InspectedValues, NameField, PlainRow,
         PropertyCommits, PropertyRow, PropertyRowValue, PropertyTarget, RefreshInspector,
-        ValueCard,
+        ShownValue, ValueCard,
     },
     project::ProjectState,
     tools::{
@@ -613,6 +613,45 @@ fn the_same_targets_keep_their_cards_and_the_scroll() {
 
     assert_eq!(w.value_card_ids(), cards);
     assert_eq!(w.scroll(), 40.0);
+}
+
+#[test]
+fn a_shown_value_is_the_only_card_and_picking_another_replaces_it() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    let (tuning, staged) = (tuning(document), staged(document));
+    let list = vec![tuning.clone(), staged.clone()];
+
+    w.world()
+        .insert((InspectedValues(list), ShownValue(staged)), document);
+    w.editor.update();
+    assert_eq!(w.value_cards(), ["Staged"]);
+
+    w.world().insert(ShownValue(tuning), document);
+    w.editor.update();
+    assert_eq!(w.value_cards(), ["Tuning"]);
+}
+
+#[test]
+fn a_refresh_keeps_the_shown_values_card() {
+    let mut w = editing();
+    let document = w.open::<Notes>();
+    let (tuning, staged) = (tuning(document), staged(document));
+    w.world().insert(
+        (
+            InspectedValues(vec![tuning, staged.clone()]),
+            ShownValue(staged),
+        ),
+        document,
+    );
+    w.editor.update();
+    let cards = w.value_card_ids();
+
+    w.world().trigger(RefreshInspector);
+    w.editor.update();
+
+    assert_eq!(w.value_cards(), ["Staged"]);
+    assert_eq!(w.value_card_ids(), cards);
 }
 
 #[test]

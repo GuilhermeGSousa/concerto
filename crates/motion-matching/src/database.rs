@@ -3,16 +3,18 @@ use std::ops::Range;
 
 use concerto_animation::clip::AnimationClip;
 use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 
-use concerto_reflect::ReflectedValue;
+use concerto_reflect::{ReflectedValue, TypeRegistry};
 
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
-use crate::channel::ChannelSource;
-use crate::definition::TrajectorySettings;
+use crate::channel::{build_channels, BodyMotion, ChannelSource, FeatureChannel};
+use crate::definition::{StoredChannel, TrajectorySettings};
+use crate::simulation::TrajectorySample;
 
 /// Where one feature channel's values sit in a frame's feature vector.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -44,6 +46,7 @@ pub struct MotionDatabase {
     channels: Vec<ChannelSpan>,
     offset: Vec<f32>,
     deviations: Vec<f32>,
+    source_hash: u64,
 }
 
 const DEVIATION_FLOOR: f32 = 1e-6;
@@ -85,7 +88,19 @@ impl MotionDatabase {
             channels,
             offset,
             deviations,
+            source_hash: 0,
         }
+    }
+
+    /// Records the hash of what the database was baked from, as [`weightless_hash`](crate::weightless_hash) gives it.
+    pub fn with_source_hash(mut self, source_hash: u64) -> Self {
+        self.source_hash = source_hash;
+        self
+    }
+
+    /// The hash of what the database was baked from; 0 until [`with_source_hash`](Self::with_source_hash) sets it.
+    pub fn source_hash(&self) -> u64 {
+        self.source_hash
     }
 
     /// The number of baked frames.
@@ -141,6 +156,11 @@ impl MotionDatabase {
             .map(|(start, stop)| *start..*stop)
     }
 
+    /// The number of frames entry `index` baked.
+    pub fn frames_of_entry(&self, index: usize) -> Option<usize> {
+        self.ranges().nth(index).map(|range| range.len())
+    }
+
     /// The index of the entry whose range contains `frame`.
     pub fn entry_of(&self, frame: usize) -> Option<usize> {
         self.range_starts
@@ -153,6 +173,69 @@ impl MotionDatabase {
     pub fn range_of(&self, frame: usize) -> Option<Range<usize>> {
         let entry = self.entry_of(frame)?;
         Some(self.range_starts[entry]..self.range_stops[entry])
+    }
+
+    /// The simulation bone's velocities at `frame`, by central difference and one-sided at the ends of its range; zero for a frame the database did not bake.
+    pub fn body_motion(&self, frame: usize) -> BodyMotion {
+        let Some(range) = self.range_of(frame) else {
+            return BodyMotion::default();
+        };
+        let previous = if frame > range.start {
+            frame - 1
+        } else {
+            frame
+        };
+        let next = if frame + 1 < range.end {
+            frame + 1
+        } else {
+            frame
+        };
+        if previous == next {
+            return BodyMotion::default();
+        }
+        let dt = (next - previous) as f32 / self.rate;
+        let previous = self.simulation(previous);
+        let next = self.simulation(next);
+        BodyMotion {
+            velocity: (next.translation - previous.translation) / dt,
+            angular_velocity: angular_velocity(next.rotation, previous.rotation, dt),
+        }
+    }
+
+    /// The trajectory samples of `frame` as the bake saw them, in sample order and clamped to its range's last frame; none for a frame the database did not bake.
+    pub fn trajectory_samples(&self, frame: usize) -> Vec<TrajectorySample> {
+        let Some(range) = self.range_of(frame) else {
+            return Vec::new();
+        };
+        (0..self.trajectory.sample_count)
+            .map(|sample| {
+                let target = frame
+                    .saturating_add(self.trajectory.frame_offset(sample, self.rate))
+                    .min(range.end - 1);
+                let simulation = self.simulation(target);
+                TrajectorySample {
+                    position: simulation.translation,
+                    velocity: self.body_motion(target).velocity,
+                    rotation: simulation.rotation,
+                }
+            })
+            .collect()
+    }
+
+    /// The live channels built from the values in the spans; a type the registry lacks is an error.
+    pub fn live_channels(
+        &self,
+        registry: &TypeRegistry,
+    ) -> Result<Vec<Box<dyn FeatureChannel>>, BakeError> {
+        let stored: Vec<StoredChannel> = self
+            .channels
+            .iter()
+            .map(|span| StoredChannel {
+                type_name: span.type_name.clone(),
+                value: span.value.clone(),
+            })
+            .collect();
+        build_channels(&stored, registry)
     }
 
     /// The entry of `frame` and the clip time in seconds that the frame plays.
@@ -206,6 +289,20 @@ impl MotionDatabase {
     /// The mean of every feature dimension over all frames.
     pub fn offset(&self) -> &[f32] {
         &self.offset
+    }
+
+    /// The mean standard deviation of each channel's group, one per channel in order.
+    pub fn deviations(&self) -> &[f32] {
+        &self.deviations
+    }
+
+    /// The bytes held by the feature, simulation and range arrays.
+    pub fn size_in_bytes(&self) -> usize {
+        size_of_val(self.features.as_slice())
+            + size_of_val(self.simulation.as_slice())
+            + size_of_val(self.range_starts.as_slice())
+            + size_of_val(self.range_stops.as_slice())
+            + size_of_val(self.clip_starts.as_slice())
     }
 
     /// The divisor of every feature dimension: its group's floored deviation over the group's weight.

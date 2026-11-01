@@ -1,11 +1,16 @@
-use concerto_mesh::Skeleton;
+use concerto_mesh::{JointName, Skeleton};
 use concerto_reflect::{to_value, Reflect};
 use glam::{Quat, Vec3};
 
 use crate::{
-    channel::{ChannelSource, FeatureChannel, FrameContext, ReflectFeatureChannel},
+    channel::{ChannelSource, FeatureChannel, FeatureShape, FrameContext, ReflectFeatureChannel},
     definition::{StoredChannel, TrajectorySettings},
 };
+
+const BONE_RING: f32 = 0.05;
+const VELOCITY_SCALE: f32 = 0.1;
+const SAMPLE_RING: f32 = 0.12;
+const DIRECTION_LENGTH: f32 = 0.3;
 
 fn local_point(frame: &FrameContext, point: Vec3) -> Vec3 {
     frame.simulation.rotation.inverse() * (point - frame.simulation.translation)
@@ -16,12 +21,12 @@ fn local_vector(frame: &FrameContext, vector: Vec3) -> Vec3 {
     rotation.inverse() * vector
 }
 
-fn check_bones(bones: &[String], skeleton: &Skeleton) -> Result<(), String> {
+fn check_bones(bones: &[JointName], skeleton: &Skeleton) -> Result<(), String> {
     match bones
         .iter()
         .find(|bone| skeleton.bone_index(bone).is_none())
     {
-        Some(bone) => Err(format!("the skeleton has no bone named {bone}")),
+        Some(bone) => Err(format!("the skeleton has no bone named {}", bone.0)),
         None => Ok(()),
     }
 }
@@ -43,7 +48,7 @@ fn check_samples(samples: &[usize], trajectory: &TrajectorySettings) -> Result<(
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub struct BonePositions {
-    pub bones: Vec<String>,
+    pub bones: Vec<JointName>,
     pub weight: f32,
 }
 
@@ -83,13 +88,20 @@ impl FeatureChannel for BonePositions {
     ) -> Result<(), String> {
         check_bones(&self.bones, skeleton)
     }
+
+    fn preview(&self, _frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
+        out.extend(features.chunks_exact(3).map(|value| FeatureShape::Ring {
+            center: Vec3::from_slice(value),
+            radius: BONE_RING,
+        }));
+    }
 }
 
 /// The model-space velocities of bones, in the simulation bone's frame; 3 values per bone.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(FeatureChannel)]
 pub struct BoneVelocities {
-    pub bones: Vec<String>,
+    pub bones: Vec<JointName>,
     pub weight: f32,
 }
 
@@ -128,6 +140,22 @@ impl FeatureChannel for BoneVelocities {
         _trajectory: &TrajectorySettings,
     ) -> Result<(), String> {
         check_bones(&self.bones, skeleton)
+    }
+
+    fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
+        for (bone, velocity) in self.bones.iter().zip(features.chunks_exact(3)) {
+            let pose = frame
+                .skeleton
+                .bone_index(bone)
+                .and_then(|index| frame.model_pose.get(index));
+            if let Some(pose) = pose {
+                let start = local_point(frame, pose.translation);
+                out.push(FeatureShape::Arrow {
+                    start,
+                    end: start + Vec3::from_slice(velocity) * VELOCITY_SCALE,
+                });
+            }
+        }
     }
 }
 
@@ -179,6 +207,22 @@ impl FeatureChannel for TrajectoryPositions {
     ) -> Result<(), String> {
         check_samples(&self.samples, trajectory)
     }
+
+    fn preview(&self, _frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
+        let mut previous = Vec3::ZERO;
+        for value in features.chunks_exact(2) {
+            let position = Vec3::new(value[0], 0.0, value[1]);
+            out.push(FeatureShape::Line {
+                start: previous,
+                end: position,
+            });
+            out.push(FeatureShape::Ring {
+                center: position,
+                radius: SAMPLE_RING,
+            });
+            previous = position;
+        }
+    }
 }
 
 /// The ground-plane facing of trajectory samples, in the simulation bone's frame; x and z per sample.
@@ -228,6 +272,19 @@ impl FeatureChannel for TrajectoryDirections {
     ) -> Result<(), String> {
         check_samples(&self.samples, trajectory)
     }
+
+    fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
+        for (sample, value) in self.samples.iter().zip(features.chunks_exact(2)) {
+            let direction = Vec3::new(value[0], 0.0, value[1]).normalize_or_zero();
+            if let (Some(sample), true) = (frame.trajectory.get(*sample), direction != Vec3::ZERO) {
+                let start = local_point(frame, sample.position);
+                out.push(FeatureShape::Arrow {
+                    start,
+                    end: start + direction * DIRECTION_LENGTH,
+                });
+            }
+        }
+    }
 }
 
 fn stored<T: FeatureChannel>(type_name: &str, channel: &T) -> StoredChannel {
@@ -237,8 +294,8 @@ fn stored<T: FeatureChannel>(type_name: &str, channel: &T) -> StoredChannel {
     }
 }
 
-fn names(bones: &[&str]) -> Vec<String> {
-    bones.iter().map(|bone| (*bone).to_string()).collect()
+fn names(bones: &[&str]) -> Vec<JointName> {
+    bones.iter().map(|bone| (*bone).into()).collect()
 }
 
 /// The reference 27-value feature set: foot positions and velocities, hip velocity, and three trajectory positions and directions.

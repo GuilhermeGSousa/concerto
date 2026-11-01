@@ -64,6 +64,10 @@ struct ClipPreviewRoot;
 pub struct ShowClip(pub Arc<AnimationClip>);
 impl Signal for ShowClip {}
 
+/// Leaves the preview with no clip, so it no longer writes the bones.
+pub struct ClearClip;
+impl Signal for ClearClip {}
+
 /// Replaces the scene the preview shows; `None` leaves the stage empty.
 pub struct ShowClipScene(pub Option<Scene>);
 impl Signal for ShowClipScene {}
@@ -328,6 +332,11 @@ fn show_clip(on: On<ShowClip>, mut preview: ResMut<ClipPreview>) {
     preview.time = 0.0;
 }
 
+fn clear_clip(_: On<ClearClip>, mut preview: ResMut<ClipPreview>) {
+    preview.clip = None;
+    preview.time = 0.0;
+}
+
 fn show_clip_scene(
     on: On<ShowClipScene>,
     roots: Query<Entity, With<ClipPreviewRoot>>,
@@ -372,7 +381,8 @@ fn set_skeleton_gizmo(
     }
 }
 
-pub(super) fn clip_preview(app: &mut App) {
+/// Adds a clip preview to `app`: it poses every rooted skeleton from the clip [`ShowClip`] gives it.
+pub fn clip_preview(app: &mut App) {
     if app.is_plugin_added::<RenderPlugin>() && !app.is_plugin_added::<DebugGizmosPlugin>() {
         app.register_plugin(DebugGizmosPlugin);
     }
@@ -397,6 +407,7 @@ pub(super) fn clip_preview(app: &mut App) {
         )
         .add_system(LateUpdate, report_clip.after(pose_clip).at_preview_time())
         .add_listener(show_clip.at_preview_time())
+        .add_listener(clear_clip.at_preview_time())
         .add_listener(show_clip_scene.at_preview_time())
         .add_listener(set_clip_transport.at_preview_time())
         .add_listener(seek_clip.at_preview_time())
@@ -731,6 +742,22 @@ mod tests {
 
         assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
         assert_eq!(stage.transform(rig.root).translation, ROOT_REST);
+    }
+
+    #[test]
+    fn a_cleared_clip_stops_posing_and_goes_back_to_the_start() {
+        let mut stage = Stage::new();
+        stage.world.add_listener(clear_clip);
+        let rig = stage.rig();
+        stage.show_clip();
+        stage.seek(1.0);
+
+        stage.world.trigger(ClearClip);
+        stage.frame();
+
+        assert!(stage.preview().clip.is_none());
+        assert_eq!(stage.preview().time, 0.0);
+        assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
     }
 
     #[test]

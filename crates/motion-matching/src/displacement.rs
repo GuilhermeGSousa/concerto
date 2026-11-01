@@ -78,9 +78,12 @@ impl Default for Clamp {
     }
 }
 
-/// Names the capsule whose `CharacterSimulation` a visible character follows, inserted by the game at spawn.
+/// Names a character's capsule, which holds its `CharacterSimulation`, and its skeleton, which holds its `SkeletonComponent` and `AnimationPlayer`; the game inserts it on the visible character.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct DisplacementSimulation(pub Entity);
+pub struct CharacterLink {
+    pub capsule: Entity,
+    pub skeleton: Entity,
+}
 
 /// Where a body stands and how it faces, in world space.
 #[derive(Clone, Copy, Debug, PartialEq)]
