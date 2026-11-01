@@ -1,6 +1,5 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_ecs::{reflect::ReflectComponent, Component};
-use concerto_foundation::assets::{handle::AssetHandle, AssetId, CreatableAsset};
+use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
@@ -48,8 +47,8 @@ fn entry(range: Option<(f32, f32)>) -> MotionEntry {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct HeightChannel {
     scale: f32,
 }
@@ -106,14 +105,6 @@ fn definition_defaults_match_the_spec() {
     assert_eq!(definition.simulation.facing_window, 61);
     assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);
     assert_eq!(definition.trajectory.sample_count, 3);
-}
-
-#[test]
-fn a_new_definition_is_the_default() {
-    assert_eq!(
-        MotionDatabaseDefinition::new_asset(),
-        MotionDatabaseDefinition::default()
-    );
 }
 
 #[test]

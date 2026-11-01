@@ -1,5 +1,4 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
@@ -402,8 +401,8 @@ fn model_velocities_follow_the_parent_chain() {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct ProbeChannel {
     tag: f32,
 }
@@ -420,8 +419,8 @@ impl FeatureChannel for ProbeChannel {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct PoseChannel {
     unused: f32,
 }
@@ -438,8 +437,8 @@ impl FeatureChannel for PoseChannel {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct PairChannel {
     gain: f32,
 }
@@ -785,8 +784,8 @@ fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
 const SAMPLES: usize = 3;
 const BODY_DIMS: usize = 6 + 7 + SAMPLES * 10;
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct BodyChannel {
     unused: f32,
 }
@@ -812,8 +811,8 @@ impl FeatureChannel for BodyChannel {
 
 const LOCAL_DIMS: usize = 6 + SAMPLES * 10;
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct LocalChannel {
     unused: f32,
 }
@@ -1001,8 +1000,8 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
     }
 }
 
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct WeightedChannel {
     weight: f32,
     value: f32,
@@ -1035,8 +1034,8 @@ impl FeatureChannel for WeightedChannel {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct RejectingChannel {
     reason: String,
 }

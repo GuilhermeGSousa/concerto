@@ -7,8 +7,8 @@ use concerto_ecs::{
     },
 };
 use concerto_editor::{
+    asset_editor::ActiveEditor,
     asset_picker::{picker_button, picker_caret, picker_label},
-    hosted::EditWorld,
     inspector::{
         EditContext, EditError, PropertyCommits, PropertyEditor, PropertyRow, PropertyRowValue,
     },
@@ -24,8 +24,8 @@ use concerto_ui::{
 use concerto_window::input::MouseButton;
 
 use crate::{
+    document::DefinitionDocument,
     menu::{NameMenu, close_menu, open_name_menu},
-    preview::SkeletonBones,
 };
 
 const NO_NAME: &str = "None";
@@ -90,9 +90,17 @@ fn joint_of(values: &Query<&PropertyRowValue>, row: Entity) -> Option<JointName>
         .cloned()
 }
 
+fn front_bones<'a>(
+    active: &ActiveEditor,
+    documents: &'a Query<&DefinitionDocument>,
+) -> Option<&'a [String]> {
+    documents.get_entity(active.0?)?.bones.as_deref()
+}
+
 fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
-           bones: EditWorld<Option<Res<SkeletonBones>>>,
+           active: Res<ActiveEditor>,
+           documents: Query<&DefinitionDocument>,
            values: Query<&PropertyRowValue>,
            menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
            theme: Res<UITheme>,
@@ -100,13 +108,13 @@ fn toggle_joint_menu(row: Entity) -> Listener<UIClick> {
         if on.signal().button != MouseButton::Left {
             return;
         }
-        let Some(bones) = bones.as_deref() else {
+        let Some(bones) = front_bones(&active, &documents) else {
             return;
         };
         let current = joint_of(&values, row);
         open_name_menu(
             on.entity(),
-            &bones.0,
+            bones,
             current.as_deref(),
             |name| pick_joint(row, name.into()),
             &menus,
@@ -137,14 +145,15 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
 }
 
 pub(crate) fn refresh_joint_rows(
-    bones: EditWorld<Option<Res<SkeletonBones>>>,
+    active: Res<ActiveEditor>,
+    documents: Query<&DefinitionDocument>,
     values: Query<&PropertyRowValue>,
     labels: Query<(&JointNameLabel, &mut UIText)>,
     disabled: Query<&UIDisabled>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let bones = bones.as_deref();
+    let bones = front_bones(&active, &documents);
     for (label, mut text) in labels.iter() {
         let Some(name) = joint_of(&values, label.row) else {
             continue;
@@ -155,7 +164,7 @@ pub(crate) fn refresh_joint_rows(
         }
         let color = match bones {
             None => theme.text_muted,
-            Some(bones) if bones.0.iter().any(|bone| *bone == *name) => theme.text,
+            Some(bones) if bones.iter().any(|bone| *bone == *name) => theme.text,
             Some(_) => theme.warning,
         };
         if text.color != color {

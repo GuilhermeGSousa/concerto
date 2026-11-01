@@ -20,16 +20,17 @@ use concerto_mesh::JointName;
 use concerto_motion_matching::MotionDatabaseDefinition;
 
 pub use build::{BakedState, BakedStats, BuildState, ChannelStats, EntryStats};
-pub use document::{DefinitionDocument, MotionDatabaseEditor, read_definition};
+pub use document::{
+    ChannelId, DatabaseSettings, DefinitionDocument, HeldChannel, MotionDatabaseEditor,
+    read_definition,
+};
 pub use facts::{EntryFacts, read_skeleton};
 pub use joint::JointNameEditor;
 pub use playback::{BakedPlayback, DatabaseProgress, SeekDatabase, ShowDatabase};
-pub use preview::{ChannelKind, ChannelOrder, DatabaseSettings, SkeletonBones, database_preview};
+pub use preview::database_preview;
 
-use build::{check_baked, finish_build, mark_background_work, request_builds, start_build};
-use document::{
-    clear_status_on_edit, follow_definition_edits, forget_discarded_edits, load_definition,
-};
+use build::{check_baked, finish_build, mark_background_work, start_build};
+use document::{clear_status_on_edit, follow_definition_edits, load_definition};
 use facts::{follow_skeleton, read_entry_facts};
 use joint::refresh_joint_rows;
 use menu::close_name_menu;
@@ -37,7 +38,7 @@ use panels::{
     build_definition_panels, sync_channel_rows, sync_definition_panels, sync_panel_scroll,
 };
 use playback::{follow_playback, follow_preview_time};
-use save::{request_definition_saves, save_definition};
+use save::save_definitions;
 
 /// Adds the motion database editor to the editor's `App`.
 pub fn install(app: &mut App) {
@@ -49,8 +50,8 @@ pub fn install(app: &mut App) {
             (
                 (
                     follow_definition_edits,
-                    request_definition_saves,
-                    request_builds,
+                    save_definitions,
+                    start_build,
                     load_definition,
                     follow_skeleton,
                     read_entry_facts,
@@ -65,15 +66,12 @@ pub fn install(app: &mut App) {
                     build_definition_panels,
                     sync_definition_panels,
                     sync_channel_rows,
+                    close_name_menu,
                 )
                     .chain(),
             )
                 .chain(),
         )
         .add_system(LateUpdate, (refresh_joint_rows, sync_panel_scroll))
-        .add_listener(save_definition)
-        .add_listener(start_build)
-        .add_listener(clear_status_on_edit)
-        .add_listener(forget_discarded_edits)
-        .add_listener(close_name_menu);
+        .add_listener(clear_status_on_edit);
 }

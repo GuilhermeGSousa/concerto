@@ -30,16 +30,13 @@ use concerto_motion_matching::{
 };
 use concerto_reflect::{TypeRegistry, to_value};
 use glam::{Quat, Vec3};
-use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
 use crate::{
     database_preview,
     panels::tests::{Tab, bone_id, clip_of, skeleton_of, tab_of},
-    tests::{
-        channels, database_recipe, fixture_with, save, set, state, write_asset, write_definition,
-    },
+    tests::{database_recipe, edit, fixture_with, save, state, write_asset, write_definition},
 };
 
 const NEAR: f32 = 1e-3;
@@ -772,9 +769,8 @@ fn another_skeleton_stops_the_database_and_plays_the_clip() {
 fn a_build_that_is_out_of_date_keeps_playing() {
     let mut tab = built(logging());
     let document = tab.document;
-    let channel = channels(&mut tab.f, document)[0];
 
-    set::<BonePositions>(&mut tab.f, channel, ["weight"], json!(2.0));
+    edit(&mut tab.f, document, "BonePositions", "weight", 2.0);
     tab.f.frame();
     save(&mut tab.f, document);
     tab.until_settled();

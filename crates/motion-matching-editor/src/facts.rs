@@ -15,7 +15,7 @@ use concerto_foundation::assets::{
 use concerto_mesh::Skeleton;
 use serde::de::DeserializeOwned;
 
-use crate::{document::DefinitionDocument, preview::ShowSkeletonBones};
+use crate::document::DefinitionDocument;
 
 /// What an entry's clip holds and how much of `skeleton` it drives, or why it could not be read.
 #[derive(Clone, Debug, PartialEq)]
@@ -106,11 +106,10 @@ pub(crate) fn follow_skeleton(
         }
         let mut shown = read_shown(id, &project.root, &assets);
         previews.trigger(document, scene_of(&mut shown, &project.root, &assets));
-        let bones = shown
+        state.bones = shown
             .skeleton
             .as_ref()
             .map(|skeleton| skeleton.names.to_vec());
-        previews.trigger(document, ShowSkeletonBones(bones));
         state.shown_skeleton = Some(shown);
     }
 }

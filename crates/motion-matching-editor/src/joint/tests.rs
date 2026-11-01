@@ -1,61 +1,30 @@
-use std::any::TypeId;
-
-use concerto_ecs::{Entity, IntoSystem, Res, System, entity::hierarchy::ChildOf};
+use concerto_ecs::{Entity, entity::hierarchy::ChildOf};
 use concerto_editor::{
-    hosted::testing::SceneFixture,
-    inspector::{InspectorRegistry, Property, PropertyKind, PropertyRow, row_systems, spawn_panel},
-    tools::{edits::SetValue, selection::Select},
+    hosted::EditTarget,
+    inspector::{PropertyCommits, PropertyRow},
 };
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::JointName;
 use concerto_motion_matching::{BonePositions, MotionDatabaseDefinition};
-use concerto_reflect::{PathSegment, PropertyPath, Reflect};
-use concerto_ui::{interaction::UIDisabled, node::UINode, text::UIText, theme::UITheme};
-use serde_json::json;
+use concerto_ui::{interaction::UIDisabled, text::UIText, theme::UITheme};
 
 use super::*;
 use crate::{
-    DatabaseSettings,
+    DefinitionDocument,
     panels::tests::{Tab, skeleton_of, tab_with},
-    preview::SkeletonBones,
     read_definition,
-    tests::{
-        channels, component, fixture, save, set, settings_entity, write_asset, write_definition,
-    },
+    tests::{channel_at, fixture, row_of, save, show, state, write_asset, write_definition},
 };
 
-fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
-    let parent = cmd.spawn(UINode::default()).entity();
-    spawn_panel(&mut cmd, parent, &theme);
-}
-
-pub(crate) fn with_inspector(f: &mut SceneFixture) {
-    let mut panel = build_inspector.into_system();
-    panel.initialize(&mut f.world);
-    panel.run_and_apply((), &mut f.world);
-    for system in row_systems() {
-        f.add_delivery(system);
-    }
-}
-
-fn inspecting(mut f: SceneFixture) -> Tab {
-    with_inspector(&mut f);
-    f.add_delivery(refresh_joint_rows.into_boxed_system());
-    let mut tab = tab_with(f);
+fn inspecting() -> Tab {
+    let mut tab = tab_with(fixture());
     tab.until_read();
     tab
 }
 
-fn select(tab: &mut Tab, entity: Entity) {
-    tab.f.signal(Select(Some(entity)));
-    for _ in 0..3 {
-        tab.f.frame();
-    }
-}
-
-fn select_settings(tab: &mut Tab) {
-    let settings = settings_entity(&mut tab.f, tab.document);
-    select(tab, settings);
+fn show_settings(tab: &mut Tab) {
+    let document = tab.document;
+    show(&mut tab.f, document, "Settings");
 }
 
 fn label_of(tab: &mut Tab, path: &str) -> Entity {
@@ -91,53 +60,45 @@ fn button_of(tab: &Tab, label: Entity) -> Entity {
         .parent()
 }
 
-fn bones_in_preview(tab: &Tab) -> Option<Vec<String>> {
-    tab.f
-        .scene_world(tab.document)
-        .get_resource::<SkeletonBones>()
-        .map(|bones| bones.0.clone())
+fn write_joint(tab: &mut Tab, name: &str, path: &str, joint: &str) {
+    let document = tab.document;
+    let row = row_of(&mut tab.f, document, name, path);
+    let commits = tab.f.world.get_resource_mut::<PropertyCommits>().unwrap();
+    commits
+        .push::<JointName, JointNameEditor>(&row, joint.into())
+        .unwrap();
+    tab.f.frame();
+    tab.f.frame();
 }
 
-fn kinds(value: &dyn Reflect, tab: &Tab, registry: &InspectorRegistry) -> Vec<Property> {
-    let types = tab
-        .f
-        .scene_world(tab.document)
-        .get_resource::<concerto_ecs::reflect::AppTypeRegistry>()
+fn pick_skeleton(tab: &mut Tab, id: AssetId) {
+    tab.f
+        .world
+        .get_component_for_entity_mut::<DefinitionDocument>(tab.document)
         .unwrap()
-        .read();
-    registry.collect(value, &types)
+        .skeleton = AssetHandle::weak(id);
+    tab.f.frame();
+    tab.f.frame();
 }
 
 #[test]
 fn a_joint_name_has_a_row_of_its_own_on_a_field_and_in_a_list() {
-    let mut tab = tab_with(fixture());
-    tab.until_read();
-    let settings = settings_entity(&mut tab.f, tab.document);
-    let channel = channels(&mut tab.f, tab.document)[0];
-    let registry = tab.f.world.get_resource::<InspectorRegistry>().unwrap();
+    let mut tab = inspecting();
+    show_settings(&mut tab);
 
-    let settings: DatabaseSettings = component(&tab.f, tab.document, settings);
-    let settings = kinds(&settings, &tab, registry);
-    let channel: BonePositions = component(&tab.f, tab.document, channel);
-    let channel = kinds(&channel, &tab, registry);
+    label_of(&mut tab, "simulation.position_joint");
+    label_of(&mut tab, "simulation.facing_joint");
 
-    for (properties, path) in [
-        (&settings, "simulation.position_joint"),
-        (&settings, "simulation.facing_joint"),
-        (&channel, "bones.0"),
-    ] {
-        let property = properties
-            .iter()
-            .find(|property| property.path.to_string() == path)
-            .unwrap();
-        assert!(matches!(property.kind, PropertyKind::Value(_)), "{path}");
-    }
+    let document = tab.document;
+    show(&mut tab.f, document, "BonePositions");
+
+    label_of(&mut tab, "bones.0");
 }
 
 #[test]
 fn a_row_reads_the_stored_name() {
-    let mut tab = inspecting(fixture());
-    select_settings(&mut tab);
+    let mut tab = inspecting();
+    show_settings(&mut tab);
 
     let label = label_of(&mut tab, "simulation.facing_joint");
 
@@ -146,29 +107,28 @@ fn a_row_reads_the_stored_name() {
 
 #[test]
 fn the_row_follows_an_edit_made_elsewhere() {
-    let mut tab = inspecting(fixture());
-    select_settings(&mut tab);
-    let settings = settings_entity(&mut tab.f, tab.document);
+    let mut tab = inspecting();
 
-    set::<DatabaseSettings>(
-        &mut tab.f,
-        settings,
-        ["simulation", "facing_joint"],
-        json!("Spine"),
-    );
-    tab.f.frame();
-    tab.f.frame();
+    write_joint(&mut tab, "Settings", "simulation.facing_joint", "Spine");
 
     let label = label_of(&mut tab, "simulation.facing_joint");
     assert_eq!(text_of(&tab, label).text, "Spine");
 }
 
 #[test]
-fn the_menu_lists_the_skeletons_bones() {
-    let mut tab = inspecting(fixture());
-    select_settings(&mut tab);
+fn the_menu_lists_the_skeletons_bones_with_no_edit_target() {
+    let mut tab = inspecting();
+    show_settings(&mut tab);
     let label = label_of(&mut tab, "simulation.facing_joint");
     let button = button_of(&tab, label);
+    assert!(
+        tab.f
+            .world
+            .query::<&EditTarget, ()>()
+            .iter(&mut tab.f.world)
+            .next()
+            .is_none()
+    );
 
     tab.click(button);
 
@@ -182,8 +142,8 @@ fn the_menu_lists_the_skeletons_bones() {
 
 #[test]
 fn picking_a_bone_writes_it_marks_the_document_unsaved_and_saves() {
-    let mut tab = inspecting(fixture());
-    select_settings(&mut tab);
+    let mut tab = inspecting();
+    show_settings(&mut tab);
     let label = label_of(&mut tab, "simulation.facing_joint");
     let button = button_of(&tab, label);
 
@@ -194,9 +154,8 @@ fn picking_a_bone_writes_it_marks_the_document_unsaved_and_saves() {
     tab.f.frame();
 
     assert!(!tab.name_menu_open());
-    let settings = settings_entity(&mut tab.f, tab.document);
-    let shown: DatabaseSettings = component(&tab.f, tab.document, settings);
-    assert_eq!(shown.simulation.facing_joint, "Head".into());
+    let settings = tab.state().settings.as_ref().unwrap();
+    assert_eq!(settings.simulation.facing_joint, "Head".into());
     assert!(tab.f.unsaved(tab.document));
     assert_eq!(text_of(&tab, label).text, "Head");
 
@@ -208,9 +167,9 @@ fn picking_a_bone_writes_it_marks_the_document_unsaved_and_saves() {
 
 #[test]
 fn picking_a_bone_for_a_list_element_writes_that_element() {
-    let mut tab = inspecting(fixture());
-    let channel = channels(&mut tab.f, tab.document)[0];
-    select(&mut tab, channel);
+    let mut tab = inspecting();
+    let document = tab.document;
+    show(&mut tab.f, document, "BonePositions");
     let label = label_of(&mut tab, "bones.1");
     let button = button_of(&tab, label);
 
@@ -220,15 +179,15 @@ fn picking_a_bone_for_a_list_element_writes_that_element() {
     tab.f.frame();
     tab.f.frame();
 
-    let bones = component::<BonePositions>(&tab.f, tab.document, channel).bones;
+    let bones = &channel_at::<BonePositions>(&tab.f, document, 0).bones;
     assert_eq!(bones[1], JointName::from("Head"));
     assert_eq!(bones[0], JointName::from("LeftFoot"));
 }
 
 #[test]
 fn a_name_the_skeleton_lacks_shows_in_the_warning_colour() {
-    let mut tab = inspecting(fixture());
-    select_settings(&mut tab);
+    let mut tab = inspecting();
+    show_settings(&mut tab);
     let theme = UITheme::default();
 
     let lacking = label_of(&mut tab, "simulation.position_joint");
@@ -247,15 +206,16 @@ fn with_no_skeleton_the_row_is_a_disabled_button_reading_the_stored_name() {
         "content/plain.gasset",
         &MotionDatabaseDefinition::default(),
     );
-    let mut tab = inspecting(f);
+    let mut tab = tab_with(f);
+    tab.until_read();
     crate::tests::open(&mut tab.f, &asset);
     tab.f.frame();
-    select_settings(&mut tab);
+    show_settings(&mut tab);
 
     let label = label_of(&mut tab, "simulation.facing_joint");
     let button = button_of(&tab, label);
 
-    assert_eq!(bones_in_preview(&tab), None);
+    assert_eq!(state(&tab.f, tab.document).bones, None);
     assert_eq!(text_of(&tab, label).text, "Hips");
     assert_eq!(text_of(&tab, label).color, UITheme::default().text_muted);
     assert!(
@@ -271,68 +231,50 @@ fn with_no_skeleton_the_row_is_a_disabled_button_reading_the_stored_name() {
 
 #[test]
 fn an_empty_name_reads_as_none() {
-    let mut tab = inspecting(fixture());
-    let channel = channels(&mut tab.f, tab.document)[0];
-    tab.f.signal(SetValue {
-        entity: channel,
-        component: TypeId::of::<BonePositions>(),
-        path: PropertyPath::new([PathSegment::Field("bones"), PathSegment::Index(0)]),
-        value: json!(""),
-    });
-    select(&mut tab, channel);
+    let mut tab = inspecting();
+
+    write_joint(&mut tab, "BonePositions", "bones.0", "");
 
     let label = label_of(&mut tab, "bones.0");
-
     assert_eq!(text_of(&tab, label).text, "None");
 }
 
 #[test]
-fn the_bones_of_a_picked_skeleton_reach_the_preview() {
+fn a_picked_skeleton_gives_the_document_its_bones() {
     let mut f = fixture();
     let rig = write_asset(
         &mut f,
         "content/rig.gasset",
         &skeleton_of(&["Root", "Tail"]),
     );
-    let mut tab = inspecting(f);
-    assert_eq!(bones_in_preview(&tab).unwrap(), ["Hips", "Spine", "Head"]);
-    tab.f
-        .world
-        .get_component_for_entity_mut::<crate::DefinitionDocument>(tab.document)
-        .unwrap()
-        .skeleton = AssetHandle::weak(rig.id);
-    tab.f.frame();
-    tab.f.frame();
+    let mut tab = tab_with(f);
+    tab.until_read();
+    assert_eq!(
+        tab.state().bones.as_deref().unwrap(),
+        ["Hips", "Spine", "Head"]
+    );
 
-    assert_eq!(bones_in_preview(&tab).unwrap(), ["Root", "Tail"]);
+    pick_skeleton(&mut tab, rig.id);
+
+    assert_eq!(tab.state().bones.as_deref().unwrap(), ["Root", "Tail"]);
 }
 
 #[test]
-fn a_skeleton_that_cannot_be_read_leaves_the_preview_with_no_bones() {
-    let mut tab = inspecting(fixture());
-    assert!(bones_in_preview(&tab).is_some());
-    std::fs::write(
-        tab.f.project_root.join(&tab.skeleton.address),
-        b"not a skeleton",
-    )
-    .unwrap();
+fn a_skeleton_that_cannot_be_read_leaves_the_document_with_no_bones() {
+    let mut tab = inspecting();
+    assert!(tab.state().bones.is_some());
     let other = write_asset(&mut tab.f, "content/rig.gasset", &skeleton_of(&["Root"]));
     std::fs::write(tab.f.project_root.join(&other.address), b"not a skeleton").unwrap();
-    tab.f
-        .world
-        .get_component_for_entity_mut::<crate::DefinitionDocument>(tab.document)
-        .unwrap()
-        .skeleton = AssetHandle::weak(other.id);
-    tab.f.frame();
-    tab.f.frame();
 
-    assert_eq!(bones_in_preview(&tab), None);
+    pick_skeleton(&mut tab, other.id);
+
+    assert_eq!(tab.state().bones, None);
 }
 
 #[test]
-fn the_menu_closes_when_the_tab_stops_being_the_edit_target() {
-    let mut tab = inspecting(fixture());
-    select_settings(&mut tab);
+fn the_menu_closes_when_another_tab_comes_to_the_front() {
+    let mut tab = inspecting();
+    show_settings(&mut tab);
     let label = label_of(&mut tab, "simulation.facing_joint");
     let button = button_of(&tab, label);
     tab.click(button);

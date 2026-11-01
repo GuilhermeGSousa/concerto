@@ -151,8 +151,8 @@ Because both fills go through the same `extract`, a channel written in terms of
 the inverse of `simulation` yields the same features in both.
 
 ```rust
-#[derive(Component, Reflect, Default)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default)]
+#[reflect(FeatureChannel)]
 struct RootSpeed {
     scale: f32,
 }
@@ -168,12 +168,8 @@ impl FeatureChannel for RootSpeed {
 app.register_type::<RootSpeed>();
 ```
 
-A channel is a component, so the editor's inspector can show one: it needs
-`Component`, `Reflect` and `Default`, and `#[reflect(Component, FeatureChannel)]`.
-A channel without `Component` does not compile, in a game as in this crate.
-Leave `Default` out of `#[reflect(..)]`, or the channel joins every scene's Add
-Component menu. The registered type name is what a `StoredChannel` refers to; a
-stored value is applied over `Default`.
+A channel needs `Reflect` and `Default`. The registered type name is what a
+`StoredChannel` refers to; a stored value is applied over `Default`.
 
 A channel may also override three methods:
 

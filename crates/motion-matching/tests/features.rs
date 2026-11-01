@@ -1,5 +1,4 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_ecs::{reflect::ReflectComponent, Component, World};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{bake, trajectory_samples};
@@ -9,12 +8,12 @@ use concerto_motion_matching::{
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
     TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
-use concerto_reflect::{to_value, Reflect, ReflectDefault, ReflectedValue, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct RampChannel {
     weight: f32,
 }
@@ -34,8 +33,8 @@ impl FeatureChannel for RampChannel {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct FlatChannel {
     weight: f32,
 }
@@ -642,42 +641,6 @@ fn reference_registry() -> TypeRegistry {
     registry.register::<TrajectoryPositions>();
     registry.register::<TrajectoryDirections>();
     registry
-}
-
-#[test]
-fn a_reference_channel_is_a_reflected_component_with_no_default() {
-    let registry = reference_registry();
-    for name in [
-        "BonePositions",
-        "BoneVelocities",
-        "TrajectoryPositions",
-        "TrajectoryDirections",
-    ] {
-        let registration = registry.get_by_name(name).unwrap();
-        assert!(registration.data::<ReflectComponent>().is_some(), "{name}");
-        assert!(
-            registration.data::<ReflectFeatureChannel>().is_some(),
-            "{name}"
-        );
-        assert!(registration.data::<ReflectDefault>().is_none(), "{name}");
-    }
-}
-
-#[test]
-fn a_channel_sits_on_an_entity_and_edits_through_its_reflected_component() {
-    let registry = reference_registry();
-    let component = registry
-        .get_by_name("BonePositions")
-        .unwrap()
-        .data::<ReflectComponent>()
-        .copied()
-        .unwrap();
-    let mut world = World::new();
-    let entity = world.spawn(BonePositions::default());
-
-    let found = (component.edit)(&mut world, entity, &mut |_| {});
-
-    assert!(found);
 }
 
 #[test]

@@ -16,18 +16,29 @@ and opens it, and it registers `JointNameEditor` for the inspector.
 
 ## The document
 
-`DefinitionDocument`, in the editor's world, holds the skeleton and the entries.
-The rate, the speed, the simulation bone, the trajectory and the channels live
-in the preview's world, on one `DatabaseSettings` entity and one entity per
-channel, which carries the channel's own type as a component with `ChannelOrder`
-and `ChannelKind`. The preview `App` is the edit target, so the normal inspector
-edits them. Nothing else may add, remove or rename those entities: the preview
-holds `FixedEntities`, and the channel list below sends `AddChannel` and
-`RemoveChannel` to it. A second definition reuses the tab.
+`DefinitionDocument`, in the editor's world, holds the whole definition: the
+skeleton, the entries, a `DatabaseSettings` with the rate, the speed, the
+simulation bone and the trajectory, and one `HeldChannel` per channel, a live
+`FeatureChannel` under the type name a save writes back. It waits for the
+preview, because a game's channel types are only in the preview's type registry.
+The preview `App` holds only the stage, and nothing edits in it. A second
+definition reuses the tab.
+
+Every value is published in `InspectedValues`: `Settings`, then one per channel,
+named by its type's short name and numbered from the second of a type
+(`BoneVelocities`, `BoneVelocities 2`), so MCP reaches each by its `target`. A
+channel's value finds its channel by a `ChannelId`, so a commit queued against a
+removed channel changes nothing, and can't land on the one that took its place.
+The inspector shows the one value `ShownValue` names, `Settings` at first.
 
 Opening a definition is refused with a status when it holds a channel whose type
-is not registered in the game, or that is not a component and a `FeatureChannel`,
-so that a save cannot drop it.
+is not registered in the game, that is not a `FeatureChannel`, or whose stored
+value does not fit its type, so that a save cannot drop or change it.
+
+An edit through a card comes back as `Hosted<PropertyCommitted>`, and an `Ok`
+marks the document `Unsaved`. `save_definitions` saves any document with
+`SaveRequested`, in front or not, writing each channel under its stored type name,
+so a save with no edit writes the same definition.
 
 ## The panels
 
@@ -44,19 +55,18 @@ The `left` host scrolls and holds:
   a clip that cannot be read `Can't read`. A click selects the entry, **+** opens
   the asset picker over every clip and appends the pick as a whole clip, and **−**
   removes the entry. The same clip can be listed twice.
-- **Settings**: a row that selects the `DatabaseSettings` entity.
-- **Channels**: a row per channel with its type's short name. A click selects
-  the entity, **−** removes it, and **+** opens a menu of the types in the game's
-  type registry that are both a component and a `FeatureChannel`. A new channel
-  goes last, at the value its type's `Default` gives it. The type does not
-  declare `ReflectDefault`, so channels stay out of every scene's Add Component
-  menu.
+- **Settings**: a row that picks `Settings`.
+- **Channels**: a row per channel with its value's name. A click picks it, **−**
+  removes it, and **+** opens a menu of the types in the game's type registry
+  that are a `FeatureChannel`. A new channel goes last, at the value its type's
+  `Default` gives it. Adding or removing a channel replaces `InspectedValues` and
+  `ShownValue`, and removing the shown one goes back to `Settings`.
 
-`Selection`, in the preview, is the only record of which row is selected, and
-the inspector shows that entity. An edit there, or any change in `left`, marks
-the document `Unsaved`. With a failed preview there is no world to edit: `left`
-lists what the file holds, its controls are disabled, only an entry can still be
-selected, and Save is refused with a status.
+`ShownValue` is the only record of which row is picked. An edit in the inspector,
+or any change in `left`, marks the document `Unsaved`. Picking an entry does not
+touch the inspector. With a failed preview there are no live channels: the
+inspector shows no card, `left` lists what the file holds, its controls are
+disabled, only an entry can still be selected, and Save is refused with a status.
 
 Clips are read off the main thread: a worker reads each clip that has no
 `EntryFacts` against the current skeleton, on open, when an entry is added and
@@ -83,15 +93,14 @@ Build is off, with the reason on the line below it, while the preview is not
 running, with no skeleton, and with no entry. While it runs it is off and that
 line reads `Baking 2 of 6`: the entry being worked on, out of how many.
 
-Pressing it waits until no property or component edit is queued, then saves if
-the document, or the preview's `SceneDirty`, says anything changed, so a weight
-typed and not yet committed is in the build. A failed save stops it there. A
-worker thread then reads the skeleton and clips, using the preview's
-`AppTypeRegistry`, so a channel the game registers bakes, and hashes them with
-the definition. When `<name>_baked.gasset` next to the definition holds that hash,
-only the weights changed: the worker loads the file and calls `set_weights`, and
-the status reads `Updated the weights in …`. Otherwise it bakes in full, and the
-status reads `Built …`. A `BakeError` shows as `Build failed: …`.
+Pressing it waits until no property edit is queued, then saves if the document
+is `Unsaved`, so a weight typed and not yet committed is in the build. A failed
+save stops it there. A worker thread then reads the skeleton and clips, using the
+preview's `AppTypeRegistry`, so a channel the game registers bakes, and hashes
+them with the definition. When `<name>_baked.gasset` next to the definition holds
+that hash, only the weights changed: the worker loads the file and calls
+`set_weights`, and the status reads `Updated the weights in …`. Otherwise it bakes
+in full, and the status reads `Built …`. A `BakeError` shows as `Build failed: …`.
 
 The main thread writes the file, its id derived from its path, and adds it to the
 registry, only if the document still shows the definition the build started for.
@@ -151,8 +160,10 @@ the preview always plays, and a scrub moves it without pausing.
 ## Joint names
 
 `JointNameEditor` makes a `JointName` a button naming the joint, on a field and
-in a list, which opens a menu of the skeleton's bones. The bones reach the
-preview as the `SkeletonBones` resource, replaced whenever the skeleton changes
-and removed when there is none or it cannot be read. Without it the button is
-disabled, and reads the stored name in the muted colour. A name the skeleton
-lacks uses the warning colour, and `bake` reports it. An empty name reads `None`.
+in a list, which opens a menu of the skeleton's bones. The bones are on the
+document, replaced whenever the skeleton changes and `None` when there is no
+skeleton or it cannot be read, so the row reads the front document and needs no
+edit target.
+Without them the button is disabled, and reads the stored name in the muted
+colour. A name the skeleton lacks uses the warning colour, and `bake` reports it.
+An empty name reads `None`. The menu closes when another tab comes to the front.

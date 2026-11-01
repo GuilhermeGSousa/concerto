@@ -135,15 +135,6 @@ fn joint_pose_to_mat4_scales_then_rotates_then_translates() {
 }
 
 #[test]
-fn a_joint_name_derefs_to_its_text() {
-    let name = JointName::from("Hips");
-
-    assert_eq!(&*name, "Hips");
-    assert_eq!(name.len(), 4);
-    assert_eq!(chain().bone_index(&JointName::from("spine")), Some(1));
-}
-
-#[test]
 fn a_joint_name_reflects_as_a_leaf_holding_the_bytes_of_its_text() {
     let stored = to_value(&JointName::from("Hips")).unwrap();
 

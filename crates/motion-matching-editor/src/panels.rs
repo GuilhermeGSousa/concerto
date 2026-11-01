@@ -1,9 +1,10 @@
+use std::sync::Arc;
+
 use concerto_animation::clip::AnimationClip;
 use concerto_color::Color;
 use concerto_ecs::{
     Added, Component, Entity, Query, Res, With,
     command::{CommandQueue, EntityCommandQueue},
-    reflect::AppTypeRegistry,
     signal::{
         On,
         listener::{IntoListener, Listener},
@@ -16,14 +17,15 @@ use concerto_editor::{
     },
     clip_editor::ClipFacts,
     fonts::{MEDIUM, glyph, icon},
-    hosted::{EditTarget, EditWorld, EditWorldSignals, HostedApp},
+    hosted::HostedApp,
+    inspector::{InspectedValues, ShownValue},
     preview::PreviewFailed,
     timeline::{Timeline, TimelineSelected, frame_at, time_of_frame},
-    tools::selection::{Select, Selection},
 };
 use concerto_foundation::assets::{Asset, AssetId, handle::AssetHandle, registry::AssetRegistry};
 use concerto_mesh::Skeleton;
-use concerto_motion_matching::{MotionEntry, TimeRange};
+use concerto_motion_matching::{MotionEntry, ReflectFeatureChannel, TimeRange};
+use concerto_reflect::TypeRegistry;
 use concerto_ui::elements::{Label, Listening, Pressable, Text, prelude::*};
 use concerto_ui::{
     anchor::UIAnchoredPanel,
@@ -38,13 +40,10 @@ use concerto_window::input::MouseButton;
 
 use crate::{
     build::{BakedStats, BuildRequested, build_refusal, progress_line},
-    document::DefinitionDocument,
+    document::{ChannelId, DefinitionDocument, HeldChannel, publish_values},
     facts::EntryFacts,
     menu::{NameMenu, close_menu, open_name_menu},
     playback::scrub_entry,
-    preview::{
-        AddChannel, ChannelKind, ChannelOrder, DatabaseSettings, RemoveChannel, channel_types,
-    },
 };
 
 const TITLE_HEIGHT: f32 = 16.0;
@@ -85,7 +84,7 @@ struct EntryWidgets {
 }
 
 struct ChannelWidgets {
-    entity: Option<Entity>,
+    id: Option<ChannelId>,
     name: String,
     row: Entity,
 }
@@ -297,67 +296,134 @@ fn pick_clip(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
     }
 }
 
-fn select_settings(
-    on: On<UIClick>,
-    settings: EditWorld<Query<Entity, With<DatabaseSettings>>>,
-    mut scene: EditWorldSignals,
-) {
-    if on.signal().button == MouseButton::Left {
-        scene.trigger(Select(settings.iter().next()));
-    }
-}
-
-fn select_channel(channel: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>, mut scene: EditWorldSignals| {
-        if on.signal().button == MouseButton::Left {
-            scene.trigger(Select(Some(channel)));
+fn pick_value(document: Entity, index: usize) -> Listener<UIClick> {
+    (move |on: On<UIClick>, values: Query<&InspectedValues>, mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        if let Some(value) = values
+            .get_entity(document)
+            .and_then(|values| values.0.get(index))
+        {
+            cmd.insert(ShownValue(value.clone()), document);
         }
     })
     .into_listener()
 }
 
-fn remove_channel(channel: Entity) -> Listener<UIClick> {
-    (move |on: On<UIClick>, mut scene: EditWorldSignals| {
-        if on.signal().button == MouseButton::Left {
-            scene.trigger(RemoveChannel(channel));
+fn shown_index(values: &InspectedValues, shown: &ShownValue) -> Option<usize> {
+    values
+        .0
+        .iter()
+        .position(|value| Arc::ptr_eq(value, &shown.0))
+}
+
+fn shown_channel(
+    state: &DefinitionDocument,
+    values: &InspectedValues,
+    shown: &ShownValue,
+) -> Option<ChannelId> {
+    let channel = shown_index(values, shown)?.checked_sub(1)?;
+    state.channels.get(channel).map(|channel| channel.id)
+}
+
+fn channel_types(registry: &TypeRegistry) -> Vec<String> {
+    let mut names: Vec<String> = registry
+        .iter()
+        .filter(|registration| registration.data::<ReflectFeatureChannel>().is_some())
+        .map(|registration| registration.short_name().to_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+fn remove_channel(document: Entity, id: ChannelId) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           documents: Query<(
+        &mut DefinitionDocument,
+        &HostedApp,
+        &InspectedValues,
+        &ShownValue,
+    )>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
         }
+        let Some((mut state, hosted, values, shown)) = documents.get_entity(document) else {
+            return;
+        };
+        let Some(types) = hosted.type_registry() else {
+            return;
+        };
+        let Some(index) = state.channels.iter().position(|channel| channel.id == id) else {
+            return;
+        };
+        let shown = shown_channel(&state, values, shown).filter(|shown| *shown != id);
+        state.channels.remove(index);
+        publish_values(document, &state, &types.read(), shown, &mut cmd);
+        cmd.insert(Unsaved, document);
     })
     .into_listener()
 }
 
-fn toggle_channel_menu(
-    on: On<UIClick>,
-    types: EditWorld<Option<Res<AppTypeRegistry>>>,
-    menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
-    theme: Res<UITheme>,
-    mut cmd: CommandQueue,
-) {
-    if on.signal().button != MouseButton::Left {
-        return;
-    }
-    let names = types
-        .as_deref()
-        .map_or_else(Vec::new, |types| channel_types(&types.read()));
-    open_name_menu(
-        on.entity(),
-        &names,
-        None,
-        |name| pick_channel(name.to_owned()),
-        &menus,
-        &theme,
-        &mut cmd,
-    );
+fn toggle_channel_menu(document: Entity) -> Listener<UIClick> {
+    (move |on: On<UIClick>,
+           previews: Query<&HostedApp>,
+           menus: Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
+           theme: Res<UITheme>,
+           mut cmd: CommandQueue| {
+        if on.signal().button != MouseButton::Left {
+            return;
+        }
+        let names = previews
+            .get_entity(document)
+            .and_then(HostedApp::type_registry)
+            .map_or_else(Vec::new, |types| channel_types(&types.read()));
+        open_name_menu(
+            on.entity(),
+            &names,
+            None,
+            |name| pick_channel(document, name.to_owned()),
+            &menus,
+            &theme,
+            &mut cmd,
+        );
+    })
+    .into_listener()
 }
 
-fn pick_channel(name: String) -> Listener<UIClick> {
+fn pick_channel(document: Entity, name: String) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
-           mut scene: EditWorldSignals| {
+           documents: Query<(
+        &mut EditorDocument,
+        &mut DefinitionDocument,
+        &HostedApp,
+        &InspectedValues,
+        &ShownValue,
+    )>,
+           mut cmd: CommandQueue| {
         if on.signal().button != MouseButton::Left {
             return;
         }
         close_menu(&menus);
-        scene.trigger(AddChannel(name.clone()));
+        let Some((mut held, mut state, hosted, values, shown)) = documents.get_entity(document)
+        else {
+            return;
+        };
+        let Some(types) = hosted.type_registry() else {
+            return;
+        };
+        let types = types.read();
+        match HeldChannel::empty(&name, &types) {
+            Ok(channel) => {
+                let shown = shown_channel(&state, values, shown);
+                state.channels.push(channel);
+                publish_values(document, &state, &types, shown, &mut cmd);
+                cmd.insert(Unsaved, document);
+            }
+            Err(status) => held.status = status,
+        }
     })
     .into_listener()
 }
@@ -456,7 +522,7 @@ fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) 
             .row()
             .height(UIValue::Px(theme.control_height))
             .padding(UIRect::axes(0.0, ROW_PADDING))
-            .on_click(select_settings),
+            .on_click(pick_value(document, 0)),
     );
     let settings_entity = settings.entity();
     settings.add_child(theme.label("Settings").font_size(theme.font_size_sm).grow());
@@ -464,7 +530,7 @@ fn build_left(host: &mut EntityCommandQueue, document: Entity, theme: &UITheme) 
     let (add_channel, channels) = section(
         &mut content,
         "Channels",
-        toggle_channel_menu.into_listener(),
+        toggle_channel_menu(document),
         theme,
     );
 
@@ -541,7 +607,9 @@ fn spawn_entry_row(
 
 fn spawn_channel_row(
     list: &mut EntityCommandQueue,
-    entity: Option<Entity>,
+    document: Entity,
+    index: usize,
+    id: Option<ChannelId>,
     name: String,
     theme: &UITheme,
 ) -> ChannelWidgets {
@@ -552,9 +620,9 @@ fn spawn_channel_row(
         .grow()
         .shrink(1.0)
         .min_width(UIValue::Px(0.0));
-    let Some(channel) = entity else {
+    let Some(channel) = id else {
         let row = list.spawn_child(label).entity();
-        return ChannelWidgets { entity, name, row };
+        return ChannelWidgets { id, name, row };
     };
     let mut row = list.spawn_child(theme.row().fixed().gap(theme.spacing_xs));
     let mut select = row.spawn_child(
@@ -566,13 +634,17 @@ fn spawn_channel_row(
             .min_width(UIValue::Px(0.0))
             .height(UIValue::Px(theme.control_height))
             .padding(UIRect::axes(0.0, ROW_PADDING))
-            .on_click(select_channel(channel)),
+            .on_click(pick_value(document, index + 1)),
     );
     let select_entity = select.entity();
     select.add_child(label);
-    row.add_child(icon_button(theme, glyph::MINUS, remove_channel(channel)));
+    row.add_child(icon_button(
+        theme,
+        glyph::MINUS,
+        remove_channel(document, channel),
+    ));
     ChannelWidgets {
-        entity,
+        id,
         name,
         row: select_entity,
     }
@@ -850,24 +922,26 @@ fn write_disabled(
     }
 }
 
-fn channel_rows_match(rows: &[ChannelWidgets], wanted: &[(Option<Entity>, String)]) -> bool {
+fn channel_rows_match(rows: &[ChannelWidgets], wanted: &[(Option<ChannelId>, String)]) -> bool {
     rows.len() == wanted.len()
         && rows
             .iter()
             .zip(wanted)
-            .all(|(row, (entity, name))| row.entity == *entity && row.name == *name)
+            .all(|(row, (id, name))| row.id == *id && row.name == *name)
 }
 
 fn build_channel_rows(
     list: Entity,
-    wanted: Vec<(Option<Entity>, String)>,
+    document: Entity,
+    wanted: Vec<(Option<ChannelId>, String)>,
     theme: &UITheme,
     cmd: &mut CommandQueue,
 ) -> Vec<ChannelWidgets> {
     let mut list = cmd.entity(list).despawn_children();
     wanted
         .into_iter()
-        .map(|(entity, name)| spawn_channel_row(&mut list, entity, name, theme))
+        .enumerate()
+        .map(|(index, (id, name))| spawn_channel_row(&mut list, document, index, id, name, theme))
         .collect()
 }
 
@@ -988,50 +1062,58 @@ pub(crate) fn sync_definition_panels(
         ] {
             write_disabled(&disabled, &mut cmd, button, read_only);
         }
+    }
+}
 
-        if let (None, Some(definition)) = (hosted, &state.loaded) {
-            let wanted: Vec<_> = definition
-                .channels
-                .iter()
-                .map(|channel| (None, channel.type_name.clone()))
-                .collect();
-            if !channel_rows_match(&panels.channel_rows, &wanted) {
-                panels.channel_rows = build_channel_rows(panels.channels, wanted, &theme, &mut cmd);
-            }
-        }
+fn wanted_channel_rows(
+    state: &DefinitionDocument,
+    hosted: bool,
+    values: Option<&InspectedValues>,
+) -> Vec<(Option<ChannelId>, String)> {
+    if hosted {
+        let names = values.map_or(&[][..], |values| values.0.get(1..).unwrap_or_default());
+        state
+            .channels
+            .iter()
+            .zip(names)
+            .map(|(channel, value)| (Some(channel.id), value.name()))
+            .collect()
+    } else {
+        state
+            .loaded
+            .iter()
+            .flat_map(|definition| &definition.channels)
+            .map(|channel| (None, channel.type_name.clone()))
+            .collect()
     }
 }
 
 pub(crate) fn sync_channel_rows(
-    channels: EditWorld<Query<(Entity, &ChannelOrder, &ChannelKind)>>,
-    settings: EditWorld<Query<Entity, With<DatabaseSettings>>>,
-    selection: EditWorld<Option<Res<Selection>>>,
-    documents: Query<&mut DefinitionPanels, With<EditTarget>>,
+    documents: Query<(
+        Entity,
+        &DefinitionDocument,
+        &mut DefinitionPanels,
+        Option<&HostedApp>,
+        Option<&InspectedValues>,
+        Option<&ShownValue>,
+    )>,
     styles: Query<&mut UIInteractionStyle>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let Some(mut panels) = documents.iter().next() else {
-        return;
-    };
-    let mut wanted: Vec<_> = channels
-        .iter()
-        .map(|(entity, order, kind)| (*order, Some(entity), kind.0.to_owned()))
-        .collect();
-    wanted.sort_by_key(|(order, _, _)| *order);
-    let wanted: Vec<_> = wanted
-        .into_iter()
-        .map(|(_, entity, name)| (entity, name))
-        .collect();
-    if !channel_rows_match(&panels.channel_rows, &wanted) {
-        panels.channel_rows = build_channel_rows(panels.channels, wanted, &theme, &mut cmd);
-    }
-
-    let selected = selection.as_deref().and_then(Selection::entity);
-    let on_settings = selected.is_some() && settings.iter().next() == selected;
-    write_selected(&styles, &theme, panels.settings, on_settings);
-    for row in &panels.channel_rows {
-        write_selected(&styles, &theme, row.row, row.entity == selected);
+    for (document, state, mut panels, hosted, values, shown) in documents.iter() {
+        let wanted = wanted_channel_rows(state, hosted.is_some(), values);
+        if !channel_rows_match(&panels.channel_rows, &wanted) {
+            panels.channel_rows =
+                build_channel_rows(panels.channels, document, wanted, &theme, &mut cmd);
+        }
+        let shown = values
+            .zip(shown)
+            .and_then(|(values, shown)| shown_index(values, shown));
+        write_selected(&styles, &theme, panels.settings, shown == Some(0));
+        for (index, row) in panels.channel_rows.iter().enumerate() {
+            write_selected(&styles, &theme, row.row, shown == Some(index + 1));
+        }
     }
 }
 

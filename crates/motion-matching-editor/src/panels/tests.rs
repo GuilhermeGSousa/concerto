@@ -8,8 +8,8 @@ use concerto_editor::{
     asset_picker::AssetPickerMenu,
     clip_editor::{ClipFacts, preview::SetClipTransport},
     hosted::testing::SceneFixture,
+    inspector::{InspectedValues, PropertyCommits, ShownValue, commit_number},
     timeline::{Timeline, TimelineSelected, time_of_frame},
-    tools::selection::{Select, Selection},
 };
 use concerto_foundation::assets::{
     AssetId,
@@ -21,6 +21,7 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, MotionDatabaseDefinition, MotionEntry, TimeRange,
 };
+use concerto_reflect::to_value;
 use concerto_ui::{
     anchor::UIAnchoredPanel,
     interaction::{UIClick, UIDisabled, UIInteractionStyle},
@@ -31,17 +32,16 @@ use concerto_ui::{
 };
 use concerto_window::input::MouseButton;
 use glam::{Mat4, Vec2};
-use serde_json::json;
 use uuid::Uuid;
 
 use super::*;
 use crate::{
-    ChannelKind, ChannelOrder, DefinitionDocument, EntryFacts,
+    ChannelId, DefinitionDocument, EntryFacts,
     menu::NameMenu,
     read_definition,
     tests::{
-        broken_recipe, channels, component, definition, fixture, fixture_with, open, request, save,
-        set, settings_entity, state, write_asset, write_definition,
+        broken_recipe, card_names, channel_at, definition, edit, fixture, fixture_with, open,
+        request, row_of, save, show, shown_name, state, value_names, write_asset, write_definition,
     },
 };
 
@@ -413,12 +413,16 @@ impl Tab {
             .unwrap()
     }
 
-    fn selection(&self) -> Option<Entity> {
-        self.f
-            .scene_world(self.document)
-            .get_resource::<Selection>()
-            .unwrap()
-            .entity()
+    fn shown_value(&self) -> String {
+        shown_name(&self.f, self.document).expect("the document shows a value")
+    }
+
+    fn channel_ids(&self) -> Vec<ChannelId> {
+        self.state()
+            .channels
+            .iter()
+            .map(|channel| channel.id)
+            .collect()
     }
 
     fn set_status(&mut self, status: &str) {
@@ -905,30 +909,35 @@ fn a_clip_with_no_detected_rate_has_no_frames_to_select() {
 }
 
 #[test]
-fn the_settings_row_selects_the_settings_entity() {
+fn the_settings_row_shows_the_settings() {
     let mut tab = tab();
-    let settings = settings_entity(&mut tab.f, tab.document);
     let row = tab.panels().settings;
+    tab.f.frame();
+    assert!(tab.selected(row));
+    let channel = tab.channel_row(0).row;
+    tab.clicked(channel);
     assert!(!tab.selected(row));
 
     tab.clicked(row);
+    tab.f.frame();
 
-    assert_eq!(tab.selection(), Some(settings));
+    assert_eq!(tab.shown_value(), "Settings");
+    assert_eq!(card_names(&mut tab.f), ["Settings"]);
     assert!(tab.selected(row));
+    assert!(!tab.selected(channel));
     assert!(!tab.unsaved());
 }
 
 #[test]
-fn a_channel_row_names_its_type_and_selects_its_entity() {
+fn a_channel_row_names_its_value_and_shows_it() {
     let mut tab = tab();
-    let entities = channels(&mut tab.f, tab.document);
 
     assert_eq!(
         tab.channel_names(),
         [
             "BonePositions",
             "BoneVelocities",
-            "BoneVelocities",
+            "BoneVelocities 2",
             "TrajectoryPositions",
             "TrajectoryDirections",
         ]
@@ -936,8 +945,10 @@ fn a_channel_row_names_its_type_and_selects_its_entity() {
 
     let row = tab.channel_row(2).row;
     tab.clicked(row);
+    tab.f.frame();
 
-    assert_eq!(tab.selection(), Some(entities[2]));
+    assert_eq!(tab.shown_value(), "BoneVelocities 2");
+    assert_eq!(card_names(&mut tab.f), ["BoneVelocities 2"]);
     assert!(tab.selected(row));
     assert!(!tab.selected(tab.channel_row(1).row));
     assert!(!tab.selected(tab.panels().settings));
@@ -959,6 +970,7 @@ fn the_add_menu_lists_the_channels_the_game_registers() {
             "BoneVelocities",
             "TrajectoryDirections",
             "TrajectoryPositions",
+            "Unplaced",
         ]
     );
 
@@ -977,14 +989,12 @@ fn a_channel_added_from_the_menu_goes_last_at_its_default_and_marks_the_document
     tab.clicked(item);
 
     assert!(!tab.name_menu_open());
-    let entities = channels(&mut tab.f, tab.document);
-    assert_eq!(entities.len(), 6);
+    assert_eq!(tab.state().channels.len(), 6);
     assert_eq!(
-        component::<BonePositions>(&tab.f, tab.document, entities[5]),
-        BonePositions::default()
+        channel_at::<BonePositions>(&tab.f, tab.document, 5),
+        &BonePositions::default()
     );
-    assert_eq!(tab.channel_names()[5], "BonePositions");
-    assert!(tab.f.scene_world(tab.document).entity_is_valid(entities[5]));
+    assert_eq!(tab.channel_names()[5], "BonePositions 2");
     assert!(tab.unsaved());
 
     save(&mut tab.f, tab.document);
@@ -993,6 +1003,25 @@ fn a_channel_added_from_the_menu_goes_last_at_its_default_and_marks_the_document
     assert_eq!(saved.channels.len(), 6);
     assert_eq!(saved.channels[5].type_name, "BonePositions");
     assert!(!tab.unsaved());
+}
+
+#[test]
+fn adding_a_channel_replaces_the_values_and_keeps_what_is_shown() {
+    let mut tab = tab();
+    let document = tab.document;
+    show(&mut tab.f, document, "BoneVelocities 2");
+    let add = tab.panels().add_channel;
+    tab.click(add);
+    let item = tab.name_item("Unplaced");
+
+    tab.clicked(item);
+    tab.f.frame();
+
+    assert_eq!(value_names(&tab.f, document).last().unwrap(), "Unplaced");
+    assert_eq!(tab.shown_value(), "BoneVelocities 2");
+    assert_eq!(card_names(&mut tab.f), ["BoneVelocities 2"]);
+    let row = tab.channel_row(2).row;
+    assert!(tab.selected(row));
 }
 
 #[test]
@@ -1011,9 +1040,8 @@ fn a_channel_added_after_a_removal_still_goes_last() {
 }
 
 #[test]
-fn removing_a_channel_despawns_it_and_keeps_the_others_in_order() {
+fn removing_a_channel_keeps_the_others_in_order() {
     let mut tab = tab();
-    let entities = channels(&mut tab.f, tab.document);
     let remove = tab.channel_remove(1);
 
     tab.clicked(remove);
@@ -1027,7 +1055,7 @@ fn removing_a_channel_despawns_it_and_keeps_the_others_in_order() {
             "TrajectoryDirections",
         ]
     );
-    assert!(!tab.f.scene_world(tab.document).entity_is_valid(entities[1]));
+    assert_eq!(value_names(&tab.f, tab.document).len(), 5);
     assert!(tab.unsaved());
 
     save(&mut tab.f, tab.document);
@@ -1050,29 +1078,60 @@ fn removing_a_channel_despawns_it_and_keeps_the_others_in_order() {
 }
 
 #[test]
-fn removing_the_selected_channel_clears_the_selection() {
+fn removing_the_shown_channel_goes_back_to_the_settings() {
     let mut tab = tab();
     let (select, remove) = (tab.channel_row(1).row, tab.channel_remove(1));
     tab.clicked(select);
-    assert!(tab.selection().is_some());
+    assert_eq!(tab.shown_value(), "BoneVelocities");
 
     tab.clicked(remove);
+    tab.f.frame();
 
-    assert_eq!(tab.selection(), None);
+    assert_eq!(tab.shown_value(), "Settings");
+    assert_eq!(card_names(&mut tab.f), ["Settings"]);
+    assert!(tab.selected(tab.panels().settings));
 }
 
 #[test]
-fn removing_another_channel_keeps_the_selection() {
+fn removing_another_channel_keeps_what_is_shown() {
     let mut tab = tab();
     let select = tab.channel_row(1).row;
     let remove = tab.channel_remove(3);
     tab.clicked(select);
-    let selected = tab.selection();
 
     tab.clicked(remove);
+    tab.f.frame();
 
-    assert_eq!(tab.selection(), selected);
-    assert!(selected.is_some());
+    assert_eq!(tab.shown_value(), "BoneVelocities");
+    assert_eq!(card_names(&mut tab.f), ["BoneVelocities"]);
+}
+
+#[test]
+fn a_commit_queued_against_a_removed_channel_changes_nothing() {
+    let mut tab = tab();
+    let document = tab.document;
+    let row = row_of(&mut tab.f, document, "BoneVelocities", "weight");
+    let remove = tab.channel_remove(1);
+    tab.clicked(remove);
+    let before: Vec<_> = tab
+        .state()
+        .channels
+        .iter()
+        .map(|channel| to_value(channel.value.as_ref()).unwrap())
+        .collect();
+
+    let commits = tab.f.world.get_resource_mut::<PropertyCommits>().unwrap();
+    commit_number(commits, &row, 9.0).unwrap();
+    tab.f.frame();
+
+    let after: Vec<_> = tab
+        .state()
+        .channels
+        .iter()
+        .map(|channel| to_value(channel.value.as_ref()).unwrap())
+        .collect();
+    assert_eq!(after, before);
+    assert!(tab.f.status(document).contains("failed"));
 }
 
 #[test]
@@ -1122,7 +1181,7 @@ fn a_failed_preview_shows_what_was_read_and_changes_nothing() {
     let panels = tab.panels();
     assert_eq!(tab.text(panels.entry_rows[0].name).text, "walk");
     assert_eq!(tab.channel_names().len(), 5);
-    assert!(tab.channel_row(0).entity.is_none());
+    assert!(tab.channel_row(0).id.is_none());
     for button in [
         panels.skeleton_button,
         panels.add_entry,
@@ -1149,6 +1208,7 @@ fn a_failed_preview_shows_what_was_read_and_changes_nothing() {
             .text
             .starts_with("Preview failed")
     );
+    assert!(card_names(&mut tab.f).is_empty());
 }
 
 #[test]
@@ -1196,11 +1256,11 @@ fn a_second_definition_replaces_the_rows_and_the_timeline() {
 #[test]
 fn a_channel_row_for_a_definition_opened_again_is_not_stale() {
     let mut tab = tab();
-    let first: Vec<Entity> = tab
+    let first: Vec<ChannelId> = tab
         .panels()
         .channel_rows
         .iter()
-        .filter_map(|row| row.entity)
+        .filter_map(|row| row.id)
         .collect();
     let other = write_definition(&mut tab.f, "content/other.gasset", &definition());
     let asset = tab.asset.clone();
@@ -1209,15 +1269,15 @@ fn a_channel_row_for_a_definition_opened_again_is_not_stale() {
     open(&mut tab.f, &asset);
     tab.f.frame();
 
-    let now: Vec<Entity> = tab
+    let now: Vec<ChannelId> = tab
         .panels()
         .channel_rows
         .iter()
-        .filter_map(|row| row.entity)
+        .filter_map(|row| row.id)
         .collect();
     assert_eq!(now.len(), first.len());
     assert_ne!(now, first);
-    assert_eq!(now, channels(&mut tab.f, tab.document));
+    assert_eq!(now, tab.channel_ids());
 }
 
 #[test]
@@ -1241,9 +1301,9 @@ fn an_edit_in_the_inspector_leaves_the_channel_rows_alone() {
         .iter()
         .map(|row| row.row)
         .collect();
-    let channel = channels(&mut tab.f, tab.document)[1];
+    let document = tab.document;
 
-    set::<BoneVelocities>(&mut tab.f, channel, ["weight"], json!(2.5));
+    edit(&mut tab.f, document, "BoneVelocities", "weight", 2.5);
     tab.f.frame();
 
     let now: Vec<Entity> = tab
@@ -1253,6 +1313,10 @@ fn an_edit_in_the_inspector_leaves_the_channel_rows_alone() {
         .map(|row| row.row)
         .collect();
     assert_eq!(now, rows);
+    assert_eq!(
+        channel_at::<BoneVelocities>(&tab.f, document, 1).weight,
+        2.5
+    );
 }
 
 #[test]
@@ -1389,25 +1453,17 @@ fn opening_a_definition_again_reads_its_clips_again() {
 }
 
 #[test]
-fn a_channel_entity_carries_the_name_its_row_shows() {
+fn a_value_shown_from_elsewhere_lights_its_row() {
     let mut tab = tab();
-    let world = tab.f.scene_world_mut(tab.document);
-    let kinds: Vec<(ChannelOrder, &'static str)> = world
-        .query::<(&ChannelOrder, &ChannelKind), ()>()
-        .iter(world)
-        .map(|(order, kind)| (*order, kind.0))
-        .collect();
+    let document = tab.document;
+    let value = tab
+        .world()
+        .get_component_for_entity::<InspectedValues>(document)
+        .unwrap()
+        .0[4]
+        .clone();
 
-    assert_eq!(kinds.len(), 5);
-    assert!(kinds.contains(&(ChannelOrder(0), "BonePositions")));
-}
-
-#[test]
-fn a_select_from_elsewhere_lights_its_row() {
-    let mut tab = tab();
-    let channel = channels(&mut tab.f, tab.document)[3];
-
-    tab.f.signal(Select(Some(channel)));
+    tab.f.world.insert(ShownValue(value), document);
     tab.f.frame();
 
     assert!(tab.selected(tab.channel_row(3).row));

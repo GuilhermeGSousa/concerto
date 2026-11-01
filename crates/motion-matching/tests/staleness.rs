@@ -1,5 +1,4 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
@@ -21,8 +20,8 @@ struct Gait {
     weight: f32,
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 struct Stride {
     scale: f32,
     gait: Gait,

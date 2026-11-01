@@ -1,5 +1,6 @@
 use std::{
-    any::TypeId,
+    any::Any,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -8,25 +9,18 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin},
 };
-use concerto_ecs::{
-    Component, Entity, IntoSystem,
-    reflect::{AppTypeRegistry, ReflectComponent},
-};
+use concerto_ecs::{Entity, IntoSystem, Res, System, command::CommandQueue};
 use concerto_editor::{
     EditorPlugin,
     asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved},
-    guard::DiscardEdits,
-    hosted::{HostedApp, HostedPlugin, input::ViewportShown, testing::*, trigger_on},
-    inspector::{InspectorData, InspectorRegistry, PropertyKind},
+    hosted::{HostedApp, HostedPlugin, input::ViewportShown, testing::*},
+    inspector::{
+        InspectedSnapshots, InspectedValues, InspectorRegistry, PropertyCommits, PropertyRow,
+        PropertyTarget, ShownValue, ValueCard, commit_number, spawn_panel, value_systems,
+    },
     preview::{PreviewFailed, PreviewHostPlugin},
     project::{Project, ProjectState},
     scene::{SaveFailed, ScenePlugin, SceneRecipe, SceneSaved},
-    tools::{
-        edits::{ComponentEdit, EditComponent, SetValue},
-        entity_ops::{EntityEdit, FixedEntities},
-        scene::SceneDirty,
-        selection::{Select, Selection},
-    },
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
@@ -40,28 +34,25 @@ use concerto_motion_matching::{
     MotionEntry, ReflectFeatureChannel, StoredChannel, TimeRange, TrajectoryDirections,
     TrajectoryPositions, weightless_hash,
 };
-use concerto_reflect::{PropertyPath, Reflect, ReflectedValue};
-use concerto_ui::theme::UITheme;
+use concerto_reflect::{Reflect, ReflectedValue};
+use concerto_ui::{node::UINode, theme::UITheme};
 use concerto_window::plugin::{Window, WindowPlugin};
-use serde_json::{Value, json};
 
 use crate::{
-    ChannelOrder, DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
-    build::{check_baked, finish_build, mark_background_work, request_builds, start_build},
-    document::{
-        clear_status_on_edit, follow_definition_edits, forget_discarded_edits, load_definition,
-    },
+    DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
+    build::{check_baked, finish_build, mark_background_work, start_build},
+    document::{clear_status_on_edit, follow_definition_edits, load_definition},
     facts::{follow_skeleton, read_entry_facts},
     install,
-    joint::JointNameEditor,
+    joint::{JointNameEditor, refresh_joint_rows},
     menu::close_name_menu,
     panels::{build_definition_panels, sync_channel_rows, sync_definition_panels},
     playback::{follow_playback, follow_preview_time},
     read_definition,
-    save::{SaveDefinition, request_definition_saves, save_definition},
+    save::save_definitions,
 };
 
-#[derive(Component, Reflect, Default)]
+#[derive(Reflect, Default)]
 #[reflect(FeatureChannel)]
 struct Unplaced;
 
@@ -73,8 +64,19 @@ impl FeatureChannel for Unplaced {
     fn extract(&self, _: &FrameContext, _: &mut [f32]) {}
 }
 
-#[derive(Component, Reflect, Default)]
-#[reflect(Component)]
+#[derive(Reflect, Default)]
+#[reflect(FeatureChannel)]
+struct Settings;
+
+impl FeatureChannel for Settings {
+    fn dims(&self) -> usize {
+        0
+    }
+
+    fn extract(&self, _: &FrameContext, _: &mut [f32]) {}
+}
+
+#[derive(Reflect, Default)]
 struct NoChannel;
 
 pub(crate) fn database_recipe(app: &mut App) {
@@ -87,8 +89,18 @@ pub(crate) fn database_recipe(app: &mut App) {
         .register_type::<NoChannel>();
 }
 
+fn settings_channel_recipe(app: &mut App) {
+    database_recipe(app);
+    app.register_type::<Settings>();
+}
+
 pub(crate) fn broken_recipe(_: &mut App) {
     panic!("the game broke");
+}
+
+fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
+    let parent = cmd.spawn(UINode::default()).entity();
+    spawn_panel(&mut cmd, parent, &theme);
 }
 
 pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
@@ -106,14 +118,19 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     let mut inspector = InspectorRegistry::default();
     inspector.register_property_editor::<JointName, JointNameEditor>();
     f.world.insert_resource(inspector);
-    f.world.add_listener(save_definition);
-    f.world.add_listener(start_build);
+    f.world.insert_resource(InspectedSnapshots::default());
+    let mut panel = build_inspector.into_system();
+    panel.initialize(&mut f.world);
+    panel.run_and_apply((), &mut f.world);
     f.world.add_listener(clear_status_on_edit);
-    f.world.add_listener(forget_discarded_edits);
-    f.world.add_listener(close_name_menu);
+    let mut value_systems = value_systems();
+    let cards = value_systems.split_off(1);
+    for system in value_systems {
+        f.add_delivery(system);
+    }
     f.add_delivery(follow_definition_edits.into_boxed_system());
-    f.add_delivery(request_definition_saves.into_boxed_system());
-    f.add_delivery(request_builds.into_boxed_system());
+    f.add_delivery(save_definitions.into_boxed_system());
+    f.add_delivery(start_build.into_boxed_system());
     f.add_delivery(load_definition.into_boxed_system());
     f.add_delivery(follow_skeleton.into_boxed_system());
     f.add_delivery(read_entry_facts.into_boxed_system());
@@ -125,6 +142,11 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     f.add_delivery(build_definition_panels.into_boxed_system());
     f.add_delivery(sync_definition_panels.into_boxed_system());
     f.add_delivery(sync_channel_rows.into_boxed_system());
+    f.add_delivery(close_name_menu.into_boxed_system());
+    for system in cards {
+        f.add_delivery(system);
+    }
+    f.add_delivery(refresh_joint_rows.into_boxed_system());
     f
 }
 
@@ -189,79 +211,96 @@ pub(crate) fn state(f: &SceneFixture, document: Entity) -> &DefinitionDocument {
         .expect("the document is a definition's")
 }
 
-pub(crate) fn settings_entity(f: &mut SceneFixture, document: Entity) -> Entity {
-    let world = f.scene_world_mut(document);
-    let found: Vec<Entity> = world
-        .query::<(Entity, &DatabaseSettings), ()>()
-        .iter(world)
-        .map(|(entity, _)| entity)
-        .collect();
-    assert_eq!(found.len(), 1, "a preview holds one settings entity");
-    found[0]
+fn state_mut(f: &mut SceneFixture, document: Entity) -> &mut DefinitionDocument {
+    f.world
+        .get_component_for_entity_mut::<DefinitionDocument>(document)
+        .expect("the document is a definition's")
 }
 
-pub(crate) fn channels(f: &mut SceneFixture, document: Entity) -> Vec<Entity> {
-    let world = f.scene_world_mut(document);
-    let mut found: Vec<(ChannelOrder, Entity)> = world
-        .query::<(Entity, &ChannelOrder), ()>()
-        .iter(world)
-        .map(|(entity, order)| (*order, entity))
-        .collect();
-    found.sort_by_key(|(order, _)| *order);
-    found.into_iter().map(|(_, entity)| entity).collect()
+pub(crate) fn value_names(f: &SceneFixture, document: Entity) -> Vec<String> {
+    f.world
+        .get_component_for_entity::<InspectedValues>(document)
+        .map_or_else(Vec::new, |values| {
+            values.0.iter().map(|value| value.name()).collect()
+        })
 }
 
-pub(crate) fn component<T: Component + Clone>(
+pub(crate) fn shown_name(f: &SceneFixture, document: Entity) -> Option<String> {
+    f.world
+        .get_component_for_entity::<ShownValue>(document)
+        .map(|shown| shown.0.name())
+}
+
+pub(crate) fn card_names(f: &mut SceneFixture) -> Vec<String> {
+    let world = &mut f.world;
+    world
+        .query::<&ValueCard, ()>()
+        .iter(world)
+        .map(|card| card.name.clone())
+        .collect()
+}
+
+fn value_named(f: &SceneFixture, document: Entity, name: &str) -> Arc<dyn PropertyTarget> {
+    f.world
+        .get_component_for_entity::<InspectedValues>(document)
+        .and_then(|values| values.0.iter().find(|value| value.name() == name))
+        .cloned()
+        .expect("the document publishes the value")
+}
+
+pub(crate) fn show(f: &mut SceneFixture, document: Entity, name: &str) {
+    let value = value_named(f, document, name);
+    f.world.insert(ShownValue(value), document);
+    f.frame();
+    f.frame();
+    f.frame();
+}
+
+pub(crate) fn row_of(
+    f: &mut SceneFixture,
+    document: Entity,
+    name: &str,
+    path: &str,
+) -> PropertyRow {
+    show(f, document, name);
+    let world = &mut f.world;
+    world
+        .query::<&PropertyRow, ()>()
+        .iter(world)
+        .find(|row| row.address.target.name() == name && row.address.path.to_string() == path)
+        .cloned()
+        .expect("the card shows the row")
+}
+
+pub(crate) fn queue_edit(
+    f: &mut SceneFixture,
+    document: Entity,
+    name: &str,
+    path: &str,
+    number: f64,
+) {
+    let row = row_of(f, document, name, path);
+    let commits = f.world.get_resource_mut::<PropertyCommits>().unwrap();
+    commit_number(commits, &row, number).unwrap();
+}
+
+pub(crate) fn edit(f: &mut SceneFixture, document: Entity, name: &str, path: &str, number: f64) {
+    queue_edit(f, document, name, path, number);
+    f.frame();
+}
+
+pub(crate) fn channel_at<T: FeatureChannel>(
     f: &SceneFixture,
     document: Entity,
-    entity: Entity,
-) -> T {
-    f.scene_world(document)
-        .get_component_for_entity::<T>(entity)
-        .cloned()
-        .expect("the entity carries it")
-}
-
-pub(crate) fn set<T: 'static>(
-    f: &mut SceneFixture,
-    entity: Entity,
-    path: impl IntoIterator<Item = &'static str>,
-    value: Value,
-) {
-    f.signal(SetValue {
-        entity,
-        component: TypeId::of::<T>(),
-        path: PropertyPath::new(path),
-        value,
-    });
+    index: usize,
+) -> &T {
+    let channel: &dyn Any = state(f, document).channels[index].value.as_ref();
+    channel.downcast_ref().expect("the channel is of this type")
 }
 
 pub(crate) fn save(f: &mut SceneFixture, document: Entity) {
     f.world.insert(SaveRequested, document);
     f.deliver();
-}
-
-fn scene_dirty(f: &SceneFixture, document: Entity) -> bool {
-    f.scene_world(document)
-        .get_resource::<SceneDirty>()
-        .unwrap()
-        .0
-}
-
-fn property_rows<T: Component + Reflect>(
-    f: &SceneFixture,
-    document: Entity,
-    entity: Entity,
-) -> Vec<String> {
-    let world = f.scene_world(document);
-    let value = world.get_component_for_entity::<T>(entity).unwrap();
-    let types = world.get_resource::<AppTypeRegistry>().unwrap().read();
-    InspectorRegistry::default()
-        .collect(value, &types)
-        .iter()
-        .filter(|property| matches!(property.kind, PropertyKind::Value(_)))
-        .map(|property| property.path.to_string())
-        .collect()
 }
 
 #[test]
@@ -278,7 +317,7 @@ fn the_testing_feature_opens_a_scene_in_an_extension_crate() {
 }
 
 #[test]
-fn install_registers_a_creatable_editor_that_edits_in_its_preview() {
+fn install_registers_a_creatable_editor_with_a_preview_that_edits_nothing() {
     let mut app = App::new();
     app.register_plugin(MainSchedulePlugin)
         .register_plugin(AssetManagerPlugin)
@@ -296,43 +335,41 @@ fn install_registers_a_creatable_editor_that_edits_in_its_preview() {
     let kind = MotionDatabaseDefinition::name();
     assert!(editors.preview(kind).is_some());
     assert!(editors.bottom_host(kind));
-    assert!(editors.edits_in_preview(kind));
+    assert!(!editors.edits_in_preview(kind));
     assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
 }
 
 #[test]
-fn opening_a_definition_spawns_its_settings_and_its_channels_in_order() {
+fn opening_a_definition_holds_its_settings_and_its_channels_in_order() {
     let mut f = fixture();
     let opened = definition();
     let asset = write_definition(&mut f, "content/database.gasset", &opened);
 
     let document = open(&mut f, &asset);
 
-    let settings = settings_entity(&mut f, document);
     assert_eq!(
-        component::<DatabaseSettings>(&f, document, settings),
-        DatabaseSettings::of(&opened)
+        state(&f, document).settings,
+        Some(DatabaseSettings::of(&opened))
     );
-    let channels = channels(&mut f, document);
-    assert_eq!(channels.len(), 5);
+    assert_eq!(state(&f, document).channels.len(), 5);
     assert_eq!(
-        component::<BonePositions>(&f, document, channels[0]).bones,
+        channel_at::<BonePositions>(&f, document, 0).bones,
         [JointName::from("LeftFoot"), "RightFoot".into()]
     );
     assert_eq!(
-        component::<BoneVelocities>(&f, document, channels[1]).bones,
+        channel_at::<BoneVelocities>(&f, document, 1).bones,
         [JointName::from("LeftFoot"), "RightFoot".into()]
     );
     assert_eq!(
-        component::<BoneVelocities>(&f, document, channels[2]).bones,
+        channel_at::<BoneVelocities>(&f, document, 2).bones,
         [JointName::from("Hips")]
     );
     assert_eq!(
-        component::<TrajectoryPositions>(&f, document, channels[3]).samples,
+        channel_at::<TrajectoryPositions>(&f, document, 3).samples,
         [0, 1, 2]
     );
     assert_eq!(
-        component::<TrajectoryDirections>(&f, document, channels[4]).weight,
+        channel_at::<TrajectoryDirections>(&f, document, 4).weight,
         1.5
     );
     assert_eq!(f.document(document).current, Some(asset));
@@ -341,7 +378,7 @@ fn opening_a_definition_spawns_its_settings_and_its_channels_in_order() {
 }
 
 #[test]
-fn only_the_entries_and_the_skeleton_live_in_the_document() {
+fn a_definition_opens_on_its_first_entry_with_what_was_read() {
     let mut f = fixture();
     let opened = definition();
     let asset = write_definition(&mut f, "content/database.gasset", &opened);
@@ -353,6 +390,52 @@ fn only_the_entries_and_the_skeleton_live_in_the_document() {
     assert_eq!(held.entries, opened.entries);
     assert_eq!(held.selected_entry, Some(0));
     assert_eq!(held.loaded, Some(opened));
+}
+
+#[test]
+fn every_value_is_published_with_a_name_of_its_own_and_the_settings_show_first() {
+    let mut f = fixture();
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
+
+    let document = open(&mut f, &asset);
+    f.frame();
+
+    assert_eq!(
+        value_names(&f, document),
+        [
+            "Settings",
+            "BonePositions",
+            "BoneVelocities",
+            "BoneVelocities 2",
+            "TrajectoryPositions",
+            "TrajectoryDirections",
+        ]
+    );
+    assert_eq!(shown_name(&f, document).as_deref(), Some("Settings"));
+    assert_eq!(card_names(&mut f), ["Settings"]);
+}
+
+#[test]
+fn a_channel_named_like_the_settings_gets_a_name_of_its_own() {
+    let mut f = fixture_with(settings_channel_recipe);
+    let opened = with_channel("Settings", ReflectedValue::Struct(vec![]));
+    let asset = write_definition(&mut f, "content/database.gasset", &opened);
+
+    let document = open(&mut f, &asset);
+
+    assert_eq!(value_names(&f, document).last().unwrap(), "Settings 2");
+}
+
+#[test]
+fn two_channels_of_one_type_each_reach_their_own_value() {
+    let mut f = fixture();
+    let asset = write_definition(&mut f, "content/database.gasset", &definition());
+    let document = open(&mut f, &asset);
+
+    edit(&mut f, document, "BoneVelocities 2", "weight", 2.5);
+
+    assert_eq!(channel_at::<BoneVelocities>(&f, document, 2).weight, 2.5);
+    assert_ne!(channel_at::<BoneVelocities>(&f, document, 1).weight, 2.5);
 }
 
 #[test]
@@ -421,7 +504,8 @@ fn refused(type_name: &str, value: ReflectedValue, reason: &str) {
     assert!(status.contains(reason), "{status}");
     assert_eq!(f.document(document).current, None);
     assert!(state(&f, document).loaded.is_none());
-    assert!(channels(&mut f, document).is_empty());
+    assert!(state(&f, document).channels.is_empty());
+    assert!(value_names(&f, document).is_empty());
 }
 
 #[test]
@@ -434,16 +518,19 @@ fn an_unregistered_channel_refuses_to_open() {
 }
 
 #[test]
-fn a_channel_that_is_not_a_component_refuses_to_open() {
-    refused(
-        "Unplaced",
-        ReflectedValue::Struct(vec![]),
-        "not a component",
-    );
+fn a_channel_needs_no_component_to_open() {
+    let mut f = fixture();
+    let opened = with_channel("Unplaced", ReflectedValue::Struct(vec![]));
+    let asset = write_definition(&mut f, "content/database.gasset", &opened);
+
+    let document = open(&mut f, &asset);
+
+    assert_eq!(f.document(document).current, Some(asset));
+    assert_eq!(state(&f, document).channels.len(), 6);
 }
 
 #[test]
-fn a_component_that_is_not_a_channel_refuses_to_open() {
+fn a_type_that_is_not_a_channel_refuses_to_open() {
     refused(
         "NoChannel",
         ReflectedValue::Struct(vec![]),
@@ -461,7 +548,7 @@ fn a_channel_whose_value_does_not_fit_its_type_refuses_to_open() {
 }
 
 #[test]
-fn a_second_definition_reuses_the_tab_and_replaces_the_entities() {
+fn a_second_definition_reuses_the_tab_and_replaces_the_values() {
     let mut f = fixture();
     let first = write_definition(&mut f, "content/first.gasset", &definition());
     let mut second_definition = definition();
@@ -469,27 +556,21 @@ fn a_second_definition_reuses_the_tab_and_replaces_the_entities() {
     second_definition.channels.truncate(2);
     let second = write_definition(&mut f, "content/second.gasset", &second_definition);
     let document = open(&mut f, &first);
-    let old_settings = settings_entity(&mut f, document);
-    let old_channels = channels(&mut f, document);
-    f.signal(Select(Some(old_channels[0])));
+    let old = state(&f, document).channels[0].id;
+    show(&mut f, document, "BoneVelocities 2");
 
     assert_eq!(open(&mut f, &second), document);
+    f.frame();
 
-    let settings = settings_entity(&mut f, document);
+    assert_eq!(state(&f, document).settings.as_ref().unwrap().rate, 24.0);
+    assert_eq!(state(&f, document).channels.len(), 2);
+    assert_ne!(state(&f, document).channels[0].id, old);
     assert_eq!(
-        component::<DatabaseSettings>(&f, document, settings).rate,
-        24.0
+        value_names(&f, document),
+        ["Settings", "BonePositions", "BoneVelocities"]
     );
-    assert_eq!(channels(&mut f, document).len(), 2);
-    assert_ne!(settings, old_settings);
-    assert!(!f.scene_world(document).entity_is_valid(old_channels[4]));
-    assert_eq!(
-        f.scene_world(document)
-            .get_resource::<Selection>()
-            .unwrap()
-            .entity(),
-        None
-    );
+    assert_eq!(shown_name(&f, document).as_deref(), Some("Settings"));
+    assert_eq!(card_names(&mut f), ["Settings"]);
     assert_eq!(state(&f, document).loaded, Some(second_definition));
     assert_eq!(f.document(document).current, Some(second));
 }
@@ -505,35 +586,30 @@ fn a_refused_second_definition_leaves_the_first_open() {
         &with_channel("NeverRegistered", ReflectedValue::Struct(vec![])),
     );
     let document = open(&mut f, &first);
-    let kept = channels(&mut f, document);
+    let ids = |f: &SceneFixture| -> Vec<_> {
+        state(f, document)
+            .channels
+            .iter()
+            .map(|channel| channel.id)
+            .collect()
+    };
+    let kept = ids(&f);
 
     open(&mut f, &second);
 
     assert!(f.status(document).contains("NeverRegistered"));
     assert_eq!(f.document(document).current, Some(first));
     assert_eq!(state(&f, document).loaded, Some(first_definition));
-    assert_eq!(channels(&mut f, document), kept);
+    assert_eq!(ids(&f), kept);
 }
 
 #[test]
-fn the_inspector_shows_the_settings_and_a_channel_once_selected() {
+fn a_card_shows_the_rows_of_its_value() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    let channel = channels(&mut f, document)[3];
 
-    f.signal(Select(Some(settings)));
-    f.frame();
-    assert_eq!(
-        f.world
-            .get_resource::<InspectorData>()
-            .unwrap()
-            .scene_entity,
-        Some(settings)
-    );
-    let rows = property_rows::<DatabaseSettings>(&f, document, settings);
-    for row in [
+    for path in [
         "rate",
         "speed",
         "simulation.position_window",
@@ -541,38 +617,23 @@ fn the_inspector_shows_the_settings_and_a_channel_once_selected() {
         "trajectory.sample_dt",
         "trajectory.sample_count",
     ] {
-        assert!(rows.contains(&row.to_owned()), "{row} is not in {rows:?}");
+        row_of(&mut f, document, "Settings", path);
     }
-
-    f.signal(Select(Some(channel)));
-    f.frame();
-    assert_eq!(
-        f.world
-            .get_resource::<InspectorData>()
-            .unwrap()
-            .scene_entity,
-        Some(channel)
-    );
-    let rows = property_rows::<TrajectoryPositions>(&f, document, channel);
-    assert!(rows.contains(&"weight".to_owned()), "{rows:?}");
-    assert!(rows.contains(&"samples.0".to_owned()), "{rows:?}");
+    for path in ["weight", "samples.0"] {
+        row_of(&mut f, document, "TrajectoryPositions", path);
+    }
 }
 
 #[test]
-fn an_applied_edit_marks_the_document_unsaved() {
+fn an_edit_through_a_card_marks_the_document_unsaved() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
 
-    set::<DatabaseSettings>(&mut f, settings, ["rate"], json!(48.0));
+    edit(&mut f, document, "Settings", "rate", 48.0);
 
-    assert_eq!(
-        component::<DatabaseSettings>(&f, document, settings).rate,
-        48.0
-    );
+    assert_eq!(state(&f, document).settings.as_ref().unwrap().rate, 48.0);
     assert!(f.unsaved(document));
-    assert!(scene_dirty(&f, document));
 }
 
 #[test]
@@ -580,51 +641,15 @@ fn a_refused_edit_leaves_the_document_saved() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
+    let row = row_of(&mut f, document, "Settings", "rate");
+    state_mut(&mut f, document).settings = None;
 
-    set::<DatabaseSettings>(&mut f, settings, ["rate"], json!("fast"));
-    set::<DatabaseSettings>(&mut f, settings, ["no_such_field"], json!(1.0));
+    let commits = f.world.get_resource_mut::<PropertyCommits>().unwrap();
+    commit_number(commits, &row, 48.0).unwrap();
+    f.frame();
 
     assert!(!f.unsaved(document));
-}
-
-#[test]
-fn structural_edits_change_nothing_and_leave_the_document_saved() {
-    let mut f = fixture();
-    let asset = write_definition(&mut f, "content/database.gasset", &definition());
-    let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-
-    f.signal(EntityEdit::Delete(settings));
-    f.signal(EditComponent(ComponentEdit::Remove {
-        entity: settings,
-        component: TypeId::of::<DatabaseSettings>(),
-    }));
-
-    assert!(
-        f.scene_world(document)
-            .get_resource::<FixedEntities>()
-            .is_some()
-    );
-    assert_eq!(settings_entity(&mut f, document), settings);
-    assert!(!f.unsaved(document));
-}
-
-#[test]
-fn an_applied_component_edit_marks_the_document_unsaved() {
-    let mut f = fixture();
-    let asset = write_definition(&mut f, "content/database.gasset", &definition());
-    let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    f.scene_world_mut(document)
-        .remove_resource::<FixedEntities>();
-
-    f.signal(EditComponent(ComponentEdit::Remove {
-        entity: settings,
-        component: TypeId::of::<DatabaseSettings>(),
-    }));
-
-    assert!(f.unsaved(document));
+    assert!(f.status(document).starts_with("Set Settings.rate failed"));
 }
 
 #[test]
@@ -632,17 +657,13 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    let channels = channels(&mut f, document);
-    set::<DatabaseSettings>(&mut f, settings, ["rate"], json!(48.0));
-    set::<DatabaseSettings>(
-        &mut f,
-        settings,
-        ["simulation", "position_joint"],
-        json!("Head"),
-    );
-    set::<DatabaseSettings>(&mut f, settings, ["trajectory", "sample_count"], json!(4));
-    set::<BoneVelocities>(&mut f, channels[2], ["weight"], json!(2.5));
+    edit(&mut f, document, "Settings", "rate", 48.0);
+    edit(&mut f, document, "BoneVelocities 2", "weight", 2.5);
+    {
+        let settings = state_mut(&mut f, document).settings.as_mut().unwrap();
+        settings.simulation.position_joint = "Head".into();
+        settings.trajectory.sample_count = 4;
+    }
     assert!(f.unsaved(document));
 
     save(&mut f, document);
@@ -675,7 +696,6 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
             .is_none()
     );
     assert!(!f.unsaved(document));
-    assert!(!scene_dirty(&f, document));
     assert_eq!(
         f.written::<SceneSaved>(),
         [SceneSaved {
@@ -694,18 +714,13 @@ fn a_saved_channel_edit_reopens_with_its_value() {
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let other = write_definition(&mut f, "content/other.gasset", &definition());
     let document = open(&mut f, &asset);
-    let channel = channels(&mut f, document)[2];
-    set::<BoneVelocities>(&mut f, channel, ["weight"], json!(2.5));
+    edit(&mut f, document, "BoneVelocities 2", "weight", 2.5);
     save(&mut f, document);
 
     open(&mut f, &other);
     open(&mut f, &asset);
 
-    let channel = channels(&mut f, document)[2];
-    assert_eq!(
-        component::<BoneVelocities>(&f, document, channel).weight,
-        2.5
-    );
+    assert_eq!(channel_at::<BoneVelocities>(&f, document, 2).weight, 2.5);
 }
 
 #[test]
@@ -748,8 +763,7 @@ fn a_background_tab_saves_its_own_edits() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(2.0));
+    edit(&mut f, document, "Settings", "speed", 2.0);
 
     let front = f.open();
     assert_ne!(front, document);
@@ -763,23 +777,14 @@ fn a_background_tab_saves_its_own_edits() {
 }
 
 #[test]
-fn an_edit_saved_before_its_event_arrives_leaves_the_document_saved() {
+fn a_commit_and_a_save_in_one_frame_leave_the_document_saved() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
 
-    trigger_on(
-        &mut f.world,
-        document,
-        SetValue {
-            entity: settings,
-            component: TypeId::of::<DatabaseSettings>(),
-            path: PropertyPath::new(["speed"]),
-            value: json!(2.0),
-        },
-    );
-    f.world.trigger(SaveDefinition { document });
+    queue_edit(&mut f, document, "Settings", "speed", 2.0);
+    f.world.insert(SaveRequested, document);
+    f.frame();
     f.frame();
 
     assert_eq!(read_definition(&f.project_root, &asset).unwrap().speed, 2.0);
@@ -791,13 +796,11 @@ fn the_next_edit_clears_the_saved_line() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(2.0));
+    edit(&mut f, document, "Settings", "speed", 2.0);
     save(&mut f, document);
     assert_eq!(f.status(document), "Saved content/database.gasset");
 
-    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(3.0));
-    f.frame();
+    edit(&mut f, document, "Settings", "speed", 3.0);
 
     assert!(f.unsaved(document));
     assert_eq!(f.status(document), "");
@@ -808,8 +811,7 @@ fn a_save_that_cannot_write_reports_it_and_stays_unsaved() {
     let mut f = fixture();
     let asset = write_definition(&mut f, "content/database.gasset", &definition());
     let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(2.0));
+    edit(&mut f, document, "Settings", "speed", 2.0);
     f.make_project_unwritable();
 
     save(&mut f, document);
@@ -824,21 +826,11 @@ fn a_save_that_cannot_write_reports_it_and_stays_unsaved() {
     );
     assert!(f.written::<SceneSaved>().is_empty());
     assert!(f.unsaved(document));
-    assert!(scene_dirty(&f, document));
-}
-
-#[test]
-fn discarding_forgets_that_the_preview_was_edited() {
-    let mut f = fixture();
-    let asset = write_definition(&mut f, "content/database.gasset", &definition());
-    let document = open(&mut f, &asset);
-    let settings = settings_entity(&mut f, document);
-    set::<DatabaseSettings>(&mut f, settings, ["speed"], json!(2.0));
-    assert!(scene_dirty(&f, document));
-
-    f.world.trigger(DiscardEdits(document));
-
-    assert!(!scene_dirty(&f, document));
+    assert!(
+        f.world
+            .get_component_for_entity::<SaveRequested>(document)
+            .is_none()
+    );
 }
 
 #[test]
@@ -864,6 +856,9 @@ fn a_failed_preview_keeps_the_definition_and_refuses_save() {
     assert_eq!(f.document(document).current, Some(asset.clone()));
     assert_eq!(state(&f, document).loaded, Some(opened));
     assert!(f.status(document).starts_with("Preview failed"));
+    assert!(state(&f, document).settings.is_none());
+    assert!(value_names(&f, document).is_empty());
+    assert!(card_names(&mut f).is_empty());
 
     save(&mut f, document);
 
@@ -877,28 +872,15 @@ fn a_failed_preview_keeps_the_definition_and_refuses_save() {
 }
 
 fn edit_speed(app: &mut App, document: Entity) -> bool {
-    let Some(hosted) = app
-        .main_mut()
-        .world_mut()
-        .get_component_for_entity_mut::<HostedApp>(document)
+    let world = app.main_mut().world_mut();
+    let Some(settings) = world
+        .get_component_for_entity_mut::<DefinitionDocument>(document)
+        .and_then(|state| state.settings.as_mut())
     else {
         return false;
     };
-    let preview = hosted.world_mut();
-    let settings = preview
-        .query::<(Entity, &DatabaseSettings), ()>()
-        .iter(preview)
-        .map(|(entity, _)| entity)
-        .next();
-    let Some(entity) = settings else {
-        return false;
-    };
-    preview.trigger(SetValue {
-        entity,
-        component: TypeId::of::<DatabaseSettings>(),
-        path: PropertyPath::new(["speed"]),
-        value: json!(3.0),
-    });
+    settings.speed = 3.0;
+    world.insert(Unsaved, document);
     true
 }
 
@@ -930,6 +912,7 @@ fn install_opens_and_saves_a_definition_in_the_editors_schedule() {
         .insert_resource(assets)
         .insert_resource(ViewportShown(None))
         .insert_resource(InspectorRegistry::default())
+        .insert_resource(PropertyCommits::default())
         .insert_resource(UITheme::default())
         .register_plugin(HostedPlugin)
         .register_plugin(PreviewHostPlugin)
@@ -967,10 +950,6 @@ fn install_opens_and_saves_a_definition_in_the_editors_schedule() {
             .get_component_for_entity::<Unsaved>(document)
             .is_some()
     };
-    while !unsaved(&app) {
-        app.update();
-        assert!(Instant::now() < deadline, "the edit never reached the tab");
-    }
     app.main_mut().world_mut().insert(SaveRequested, document);
     while unsaved(&app) {
         app.update();

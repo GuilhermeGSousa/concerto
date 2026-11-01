@@ -1,9 +1,8 @@
 use concerto_ecs::{
-    Component, Entity, Query, With,
-    command::CommandQueue,
-    signal::{On, lifecycle::Remove, listener::Listener},
+    Component, Entity, Query, Res, With, command::CommandQueue,
+    query::change_detection::DetectChanges, signal::listener::Listener,
 };
-use concerto_editor::hosted::EditTarget;
+use concerto_editor::asset_editor::ActiveEditor;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::{UIAnchorAlign, UIAnchorSide, UIAnchorTarget, UIAnchoredPanel},
@@ -121,9 +120,12 @@ pub(crate) fn close_menu(menus: &Query<&mut UIAnchoredPanel, With<NameMenu>>) {
 }
 
 pub(crate) fn close_name_menu(
-    _: On<Remove<EditTarget>>,
+    active: Res<ActiveEditor>,
     menus: Query<&mut UIAnchoredPanel, With<NameMenu>>,
 ) {
+    if !active.is_changed() {
+        return;
+    }
     for mut panel in menus.iter() {
         if panel.open {
             panel.open = false;

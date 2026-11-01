@@ -1,13 +1,12 @@
-use std::{any::TypeId, sync::atomic::AtomicUsize, time::Duration};
+use std::{sync::atomic::AtomicUsize, time::Duration};
 
 use concerto_app::App;
-use concerto_ecs::{IntoSystem, System, reflect::ReflectComponent};
+use concerto_ecs::{IntoSystem, System};
 use concerto_editor::{
     asset_editor::Unsaved,
-    hosted::{testing::SceneFixture, trigger_on},
-    inspector::{PropertyCommits, PropertyRow, commit_number},
+    hosted::testing::SceneFixture,
+    inspector::commit_number,
     scene::{SaveFailed, SceneSaved},
-    tools::{edits::SetValue, selection::Select},
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
@@ -21,19 +20,16 @@ use concerto_motion_matching::{
     BonePositions, FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition,
     ReflectFeatureChannel, StoredChannel, TimeRange,
 };
-use concerto_reflect::{PropertyPath, Reflect, to_value};
+use concerto_reflect::{Reflect, to_value};
 use concerto_ui::transform::UIValue;
-use serde_json::json;
 
 use super::*;
 use crate::{
-    DatabaseSettings,
-    joint::tests::with_inspector,
     panels::tests::{Tab, clip_of, stat_warnings, tab_of},
     read_definition,
     tests::{
-        broken_recipe, channels, database_recipe, fixture, fixture_with, save, set,
-        settings_entity, write_asset, write_definition,
+        broken_recipe, database_recipe, edit, fixture, fixture_with, queue_edit, row_of, save,
+        write_asset, write_definition,
     },
 };
 
@@ -101,21 +97,6 @@ fn status(tab: &Tab) -> String {
     tab.f.status(tab.document)
 }
 
-fn weight_row(tab: &mut Tab, document: Entity) -> PropertyRow {
-    let channel = channels(&mut tab.f, document)[0];
-    tab.f.signal(Select(Some(channel)));
-    for _ in 0..3 {
-        tab.f.frame();
-    }
-    let world = &mut tab.f.world;
-    world
-        .query::<&PropertyRow, ()>()
-        .iter(world)
-        .find(|row| row.address.path.to_string() == "weight")
-        .cloned()
-        .expect("the inspector shows the channel's weight")
-}
-
 fn resaved(tab: &mut Tab) {
     save(&mut tab.f, tab.document);
     tab.until_settled();
@@ -135,8 +116,8 @@ fn gated_job(tab: &Tab, finished: usize, total: usize) -> (BuildJob, std::sync::
     (job, release)
 }
 
-#[derive(Component, Reflect, Default)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default)]
+#[reflect(FeatureChannel)]
 struct GameChannel {
     weight: f32,
 }
@@ -295,9 +276,9 @@ fn a_bake_error_shows_on_the_status_line_and_writes_nothing() {
 #[test]
 fn a_weight_only_change_takes_the_fast_path() {
     let mut tab = built();
-    let channel = channels(&mut tab.f, tab.document)[0];
+    let document = tab.document;
 
-    set::<BonePositions>(&mut tab.f, channel, ["weight"], json!(2.5));
+    edit(&mut tab.f, document, "BonePositions", "weight", 2.5);
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Updated the weights in {BAKED}"));
@@ -308,9 +289,9 @@ fn a_weight_only_change_takes_the_fast_path() {
 #[test]
 fn a_changed_setting_bakes_in_full() {
     let mut tab = built();
-    let settings = settings_entity(&mut tab.f, tab.document);
+    let document = tab.document;
 
-    set::<DatabaseSettings>(&mut tab.f, settings, ["rate"], json!(30.0));
+    edit(&mut tab.f, document, "Settings", "rate", 30.0);
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Built {BAKED}"));
@@ -580,9 +561,9 @@ fn a_clean_document_builds_without_saving() {
 #[test]
 fn an_edited_document_saves_before_it_builds() {
     let mut tab = ready(fixture());
-    let settings = settings_entity(&mut tab.f, tab.document);
+    let document = tab.document;
 
-    set::<DatabaseSettings>(&mut tab.f, settings, ["rate"], json!(30.0));
+    edit(&mut tab.f, document, "Settings", "rate", 30.0);
     press_build(&mut tab);
 
     assert_eq!(tab.f.written::<SceneSaved>().len(), 1);
@@ -593,40 +574,11 @@ fn an_edited_document_saves_before_it_builds() {
 }
 
 #[test]
-fn an_edit_whose_event_has_not_arrived_counts_as_an_edit() {
-    let mut tab = ready(fixture());
-    let settings = settings_entity(&mut tab.f, tab.document);
-    assert!(!is_edited(&tab.f.world, tab.document));
-
-    trigger_on(
-        &mut tab.f.world,
-        tab.document,
-        SetValue {
-            entity: settings,
-            component: TypeId::of::<DatabaseSettings>(),
-            path: PropertyPath::new(["rate"]),
-            value: json!(30.0),
-        },
-    );
-
-    assert!(
-        tab.world()
-            .get_component_for_entity::<Unsaved>(tab.document)
-            .is_none()
-    );
-    assert!(is_edited(&tab.f.world, tab.document));
-}
-
-#[test]
 fn a_weight_typed_but_not_yet_committed_is_in_the_build() {
-    let mut f = fixture();
-    with_inspector(&mut f);
-    let mut tab = ready(f);
+    let mut tab = ready(fixture());
     let document = tab.document;
-    let row = weight_row(&mut tab, document);
 
-    let commits = tab.f.world.get_resource_mut::<PropertyCommits>().unwrap();
-    commit_number(commits, &row, 3.5).unwrap();
+    queue_edit(&mut tab.f, document, "BonePositions", "weight", 3.5);
     press_build(&mut tab);
 
     assert_eq!(baked_database(&tab).channels()[0].weight, 3.5);
@@ -634,10 +586,31 @@ fn a_weight_typed_but_not_yet_committed_is_in_the_build() {
 }
 
 #[test]
+fn a_build_waits_while_a_commit_is_queued() {
+    let mut tab = ready(fixture());
+    let document = tab.document;
+    let row = row_of(&mut tab.f, document, "BonePositions", "weight");
+    let commits = tab.f.world.get_resource_mut::<PropertyCommits>().unwrap();
+    commit_number(commits, &row, 3.5).unwrap();
+    tab.f.world.insert(BuildRequested, document);
+
+    let mut start = start_build.into_system();
+    start.initialize(&mut tab.f.world);
+    start.run_and_apply((), &mut tab.f.world);
+
+    assert!(!tab.state().build.is_running());
+    assert!(
+        tab.world()
+            .get_component_for_entity::<BuildRequested>(document)
+            .is_some()
+    );
+}
+
+#[test]
 fn a_failed_save_stops_the_build() {
     let mut tab = ready(fixture());
-    let settings = settings_entity(&mut tab.f, tab.document);
-    set::<DatabaseSettings>(&mut tab.f, settings, ["rate"], json!(30.0));
+    let document = tab.document;
+    edit(&mut tab.f, document, "Settings", "rate", 30.0);
     tab.f.make_project_unwritable();
 
     let build = tab.panels().build;
@@ -646,6 +619,11 @@ fn a_failed_save_stops_the_build() {
     assert!(!tab.state().build.is_running());
     assert!(status(&tab).starts_with("Save failed: "));
     assert_eq!(tab.f.written::<SaveFailed>().len(), 1);
+    assert!(
+        tab.world()
+            .get_component_for_entity::<BuildRequested>(document)
+            .is_none()
+    );
 }
 
 #[test]
@@ -691,9 +669,9 @@ fn reopening_a_built_definition_reads_up_to_date_with_its_stats() {
 #[test]
 fn a_changed_definition_reads_out_of_date_after_a_save() {
     let mut tab = built();
-    let settings = settings_entity(&mut tab.f, tab.document);
+    let document = tab.document;
 
-    set::<DatabaseSettings>(&mut tab.f, settings, ["rate"], json!(30.0));
+    edit(&mut tab.f, document, "Settings", "rate", 30.0);
     tab.f.frame();
     assert_eq!(tab.state().baked, BakedState::UpToDate);
     resaved(&mut tab);
@@ -705,9 +683,9 @@ fn a_changed_definition_reads_out_of_date_after_a_save() {
 #[test]
 fn a_changed_weight_reads_out_of_date_after_a_save() {
     let mut tab = built();
-    let channel = channels(&mut tab.f, tab.document)[0];
+    let document = tab.document;
 
-    set::<BonePositions>(&mut tab.f, channel, ["weight"], json!(2.5));
+    edit(&mut tab.f, document, "BonePositions", "weight", 2.5);
     tab.f.frame();
     resaved(&mut tab);
 

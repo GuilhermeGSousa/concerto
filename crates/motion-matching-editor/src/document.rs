@@ -1,40 +1,115 @@
-use std::path::Path;
+use std::{collections::HashMap, path::Path, sync::Arc};
 
 use anyhow::Context;
 use concerto_ecs::{
     Component, Entity, Query, Res, With,
     command::{CommandQueue, EntityCommandQueue},
     events::event_reader::EventReader,
-    reflect::AppTypeRegistry,
     signal::{On, lifecycle::Add},
 };
 use concerto_editor::{
     asset_editor::{AssetEditor, EditorDocument, PreviewSpec, Unsaved, finish_asset_request},
-    guard::DiscardEdits,
     hosted::{Hosted, HostedApp},
+    inspector::{DocumentValue, InspectedValues, PropertyTarget, RefreshInspector, ShownValue},
     preview::{PreviewFailed, PreviewSignals},
     project::ProjectState,
-    tools::edits::{ComponentEdited, PropertyCommitted},
+    tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
     Asset, AssetId, content::read_content_asset, handle::AssetHandle, registry::AssetEntry,
 };
 use concerto_mesh::Skeleton;
-use concerto_motion_matching::{MotionDatabaseDefinition, MotionEntry};
+use concerto_motion_matching::{
+    FeatureChannel, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
+    SimulationBoneSettings, StoredChannel, TrajectorySettings,
+};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_value};
+use uuid::Uuid;
 
 use crate::{
     build::{BakedJob, BakedState, BakedStats, BuildState},
     facts::{EntryFacts, FactsJob, ShownSkeleton},
     playback::{BakedPlayback, ClipJob, ShowDatabase},
-    preview::{DatabaseSettings, ShowDefinition, database_preview, live_channel},
+    preview::database_preview,
 };
 
-/// What a definition's tab holds; its other settings and its channels live in the preview's world.
+const SETTINGS: &str = "Settings";
+
+/// A definition's settings that belong to no channel, as the inspector edits them.
+#[derive(Reflect, Clone, Debug, PartialEq)]
+pub struct DatabaseSettings {
+    pub rate: f32,
+    pub speed: f32,
+    pub simulation: SimulationBoneSettings,
+    pub trajectory: TrajectorySettings,
+}
+
+impl DatabaseSettings {
+    /// The settings `definition` holds.
+    pub fn of(definition: &MotionDatabaseDefinition) -> Self {
+        Self {
+            rate: definition.rate,
+            speed: definition.speed,
+            simulation: definition.simulation.clone(),
+            trajectory: definition.trajectory,
+        }
+    }
+}
+
+/// Names one held channel for as long as the document holds it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChannelId(Uuid);
+
+/// A live channel of a definition, under the type name a save writes back.
+pub struct HeldChannel {
+    pub id: ChannelId,
+    pub type_name: String,
+    pub value: Box<dyn FeatureChannel>,
+}
+
+impl HeldChannel {
+    pub(crate) fn of(stored: &StoredChannel, registry: &TypeRegistry) -> Result<Self, String> {
+        let name = &stored.type_name;
+        let registration = registry
+            .get_by_name(name)
+            .ok_or_else(|| format!("Channel {name} is not registered in the game"))?;
+        let channel = registration
+            .data::<ReflectFeatureChannel>()
+            .ok_or_else(|| format!("{name} is not a feature channel"))?;
+        let value = (channel.from_value)(&stored.value)
+            .map_err(|reason| format!("Channel {name} cannot be built: {reason}"))?;
+        Ok(Self {
+            id: ChannelId(Uuid::new_v4()),
+            type_name: name.clone(),
+            value,
+        })
+    }
+
+    pub(crate) fn empty(name: &str, registry: &TypeRegistry) -> Result<Self, String> {
+        let stored = StoredChannel {
+            type_name: name.to_owned(),
+            value: ReflectedValue::Struct(Vec::new()),
+        };
+        Self::of(&stored, registry)
+    }
+
+    fn stored(&self) -> anyhow::Result<StoredChannel> {
+        Ok(StoredChannel {
+            type_name: self.type_name.clone(),
+            value: to_value(self.value.as_ref())?,
+        })
+    }
+}
+
+/// Everything a definition's tab holds, its settings and channels included.
 #[derive(Component, Default)]
 pub struct DefinitionDocument {
     pub skeleton: AssetHandle<Skeleton>,
     pub entries: Vec<MotionEntry>,
     pub selected_entry: Option<usize>,
+    pub settings: Option<DatabaseSettings>,
+    pub channels: Vec<HeldChannel>,
+    pub bones: Option<Vec<String>>,
     pub loaded: Option<MotionDatabaseDefinition>,
     pub build: BuildState,
     pub baked: BakedState,
@@ -59,15 +134,43 @@ impl DefinitionDocument {
             .iter()
             .find(|facts| facts.clip == clip && facts.skeleton == skeleton)
     }
+
+    pub(crate) fn definition(&self) -> anyhow::Result<MotionDatabaseDefinition> {
+        let settings = self
+            .settings
+            .clone()
+            .context("The preview is not running, so the channels cannot be written")?;
+        Ok(MotionDatabaseDefinition {
+            skeleton: self.skeleton.clone(),
+            entries: self.entries.clone(),
+            rate: settings.rate,
+            speed: settings.speed,
+            simulation: settings.simulation,
+            trajectory: settings.trajectory,
+            channels: self
+                .channels
+                .iter()
+                .map(HeldChannel::stored)
+                .collect::<anyhow::Result<_>>()?,
+        })
+    }
+
+    fn channel(&self, id: ChannelId) -> Option<&HeldChannel> {
+        self.channels.iter().find(|channel| channel.id == id)
+    }
+
+    fn channel_mut(&mut self, id: ChannelId) -> Option<&mut HeldChannel> {
+        self.channels.iter_mut().find(|channel| channel.id == id)
+    }
 }
 
-/// Opens a `MotionDatabaseDefinition` in a tab whose preview `App` holds what the inspector edits.
+/// Opens a `MotionDatabaseDefinition` in a tab that holds it, with a preview that plays it.
 #[derive(Default)]
 pub struct MotionDatabaseEditor;
 
 impl AssetEditor for MotionDatabaseEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
-        editor.insert(DefinitionDocument::default());
+        editor.insert((DefinitionDocument::default(), InspectedValues::default()));
     }
 
     fn preview(&self) -> Option<PreviewSpec> {
@@ -79,10 +182,75 @@ impl AssetEditor for MotionDatabaseEditor {
     fn bottom_host(&self) -> bool {
         true
     }
+}
 
-    fn edits_in_preview(&self) -> bool {
-        true
-    }
+fn settings_value(document: Entity) -> Arc<dyn PropertyTarget> {
+    Arc::new(DocumentValue::<DefinitionDocument> {
+        name: SETTINGS.to_owned(),
+        document,
+        read: Box::new(|state| state.settings.as_ref().map(|settings| settings as _)),
+        edit: Box::new(|state| state.settings.as_mut().map(|settings| settings as _)),
+    })
+}
+
+fn channel_value(document: Entity, id: ChannelId, name: String) -> Arc<dyn PropertyTarget> {
+    Arc::new(DocumentValue::<DefinitionDocument> {
+        name,
+        document,
+        read: Box::new(move |state| {
+            state
+                .channel(id)
+                .map(|channel| channel.value.as_ref() as &dyn Reflect)
+        }),
+        edit: Box::new(move |state| {
+            state
+                .channel_mut(id)
+                .map(|channel| channel.value.as_mut() as &mut dyn Reflect)
+        }),
+    })
+}
+
+fn channel_names(channels: &[HeldChannel], registry: &TypeRegistry) -> Vec<String> {
+    let mut seen = HashMap::from([(SETTINGS, 1)]);
+    channels
+        .iter()
+        .map(|channel| {
+            let name = registry
+                .get_by_name(&channel.type_name)
+                .map_or(channel.type_name.as_str(), |registration| {
+                    registration.short_name()
+                });
+            let count = seen.entry(name).or_insert(0);
+            *count += 1;
+            match *count {
+                1 => name.to_owned(),
+                count => format!("{name} {count}"),
+            }
+        })
+        .collect()
+}
+
+/// Replaces the document's values, showing the channel `shown`, or the settings without one.
+pub(crate) fn publish_values(
+    document: Entity,
+    state: &DefinitionDocument,
+    registry: &TypeRegistry,
+    shown: Option<ChannelId>,
+    cmd: &mut CommandQueue,
+) {
+    let names = channel_names(&state.channels, registry);
+    let channels = state.channels.iter().zip(names);
+    let values: Vec<_> = std::iter::once(settings_value(document))
+        .chain(channels.map(|(channel, name)| channel_value(document, channel.id, name)))
+        .collect();
+    let index = state
+        .channels
+        .iter()
+        .position(|channel| Some(channel.id) == shown)
+        .map_or(0, |index| index + 1);
+    let shown = ShownValue(values[index].clone());
+    cmd.insert((InspectedValues(values), shown), document);
+    cmd.trigger(RefreshInspector);
 }
 
 /// Reads the definition `asset` names under `root`, checking its id and its kind.
@@ -99,16 +267,15 @@ pub fn read_definition(
     Ok(bincode::deserialize(payload)?)
 }
 
-fn check_channels(definition: &MotionDatabaseDefinition, hosted: &HostedApp) -> anyhow::Result<()> {
-    let registry = hosted
-        .world()
-        .get_resource::<AppTypeRegistry>()
-        .context("The preview has no type registry")?
-        .read();
-    for channel in &definition.channels {
-        live_channel(channel, &registry).map_err(anyhow::Error::msg)?;
-    }
-    Ok(())
+fn live_channels(
+    definition: &MotionDatabaseDefinition,
+    registry: &TypeRegistry,
+) -> anyhow::Result<Vec<HeldChannel>> {
+    definition
+        .channels
+        .iter()
+        .map(|channel| HeldChannel::of(channel, registry).map_err(anyhow::Error::msg))
+        .collect()
 }
 
 pub(crate) fn load_definition(
@@ -121,6 +288,7 @@ pub(crate) fn load_definition(
     )>,
     project: Res<ProjectState>,
     mut previews: PreviewSignals,
+    mut cmd: CommandQueue,
 ) {
     let Some(root) = project.project.as_ref().map(|project| project.root.clone()) else {
         return;
@@ -132,19 +300,25 @@ pub(crate) fn load_definition(
         let Some(asset) = document.pending.clone() else {
             continue;
         };
-        let definition = read_definition(&root, &asset).and_then(|definition| {
-            if let Some(hosted) = hosted {
-                check_channels(&definition, hosted)?;
-            }
-            Ok(definition)
+        let types = hosted.and_then(HostedApp::type_registry);
+        let read = read_definition(&root, &asset).and_then(|definition| {
+            let channels = types
+                .as_ref()
+                .map(|types| live_channels(&definition, &types.read()))
+                .transpose()?;
+            Ok((definition, channels))
         });
-        let definition = match definition {
-            Ok(definition) => definition,
+        let (definition, channels) = match read {
+            Ok(read) => read,
             Err(error) => {
                 finish_asset_request(&mut document, &asset, Err(error));
                 continue;
             }
         };
+        state.settings = channels
+            .is_some()
+            .then(|| DatabaseSettings::of(&definition));
+        state.channels = channels.unwrap_or_default();
         state.skeleton = definition.skeleton.clone();
         state.entries = definition.entries.clone();
         state.selected_entry = (!definition.entries.is_empty()).then_some(0);
@@ -159,13 +333,9 @@ pub(crate) fn load_definition(
         state.playback = None;
         state.sought_entry = None;
         previews.trigger(entity, ShowDatabase(None));
-        previews.trigger(
-            entity,
-            ShowDefinition {
-                settings: DatabaseSettings::of(&definition),
-                channels: definition.channels.clone(),
-            },
-        );
+        if let Some(types) = types {
+            publish_values(entity, &state, &types.read(), None, &mut cmd);
+        }
         state.loaded = Some(definition);
         finish_asset_request(&mut document, &asset, Ok(()));
     }
@@ -173,24 +343,12 @@ pub(crate) fn load_definition(
 
 pub(crate) fn follow_definition_edits(
     mut committed: EventReader<Hosted<PropertyCommitted>>,
-    mut edited: EventReader<Hosted<ComponentEdited>>,
-    previews: Query<&HostedApp, With<DefinitionDocument>>,
+    documents: Query<Entity, With<DefinitionDocument>>,
     mut cmd: CommandQueue,
 ) {
-    let committed = committed
-        .read()
-        .filter(|hosted| hosted.event.result.is_ok())
-        .map(|hosted| hosted.document);
-    let edited = edited
-        .read()
-        .filter(|hosted| hosted.event.result.is_ok())
-        .map(|hosted| hosted.document);
-    for document in committed.chain(edited) {
-        if previews
-            .get_entity(document)
-            .is_some_and(HostedApp::scene_dirty)
-        {
-            cmd.insert(Unsaved, document);
+    for hosted in committed.read() {
+        if hosted.event.result.is_ok() && documents.get_entity(hosted.document).is_some() {
+            cmd.insert(Unsaved, hosted.document);
         }
     }
 }
@@ -203,14 +361,5 @@ pub(crate) fn clear_status_on_edit(
         && !document.status.is_empty()
     {
         document.status.clear();
-    }
-}
-
-pub(crate) fn forget_discarded_edits(
-    on: On<DiscardEdits>,
-    documents: Query<&mut HostedApp, With<DefinitionDocument>>,
-) {
-    if let Some(mut hosted) = documents.get_entity(on.signal().0) {
-        hosted.mark_saved();
     }
 }

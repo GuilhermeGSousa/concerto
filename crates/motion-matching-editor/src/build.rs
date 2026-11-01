@@ -10,17 +10,16 @@ use std::{
 use anyhow::{Context, anyhow, ensure};
 use concerto_animation::clip::AnimationClip;
 use concerto_ecs::{
-    Component, Entity, Query, Res, ResMut, With, World,
-    command::CommandQueue,
-    reflect::AppTypeRegistry,
-    signal::{On, Signal},
+    Component, Entity, Query, Res, ResMut, With, command::CommandQueue,
+    events::event_writer::EventWriter, reflect::AppTypeRegistry,
 };
 use concerto_editor::{
     asset_editor::{BackgroundWork, EditorDocument, Unsaved},
     hosted::HostedApp,
-    inspector::{ComponentEdits, PropertyCommits},
+    inspector::PropertyCommits,
     preview::PreviewSignals,
     project::ProjectState,
+    scene::{SaveFailed, SceneSaved},
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
@@ -40,7 +39,7 @@ use crate::{
     document::DefinitionDocument,
     facts::{decode, read_bytes},
     playback::{BakedPlayback, ShowDatabase},
-    save::{captured, save_and_report, set_status},
+    save::save_and_report,
 };
 
 /// How a definition's baked file compares with the definition as last saved.
@@ -209,12 +208,6 @@ pub(crate) fn build_refusal(state: &DefinitionDocument, hosted: bool) -> Option<
 #[derive(Component)]
 pub(crate) struct BuildRequested;
 
-pub(crate) struct StartBuild {
-    document: Entity,
-}
-
-impl Signal for StartBuild {}
-
 struct Source {
     label: String,
     asset: Option<AssetEntry>,
@@ -351,59 +344,19 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
     packed(&database, &address, false)
 }
 
-pub(crate) fn request_builds(
-    requested: Query<Entity, (With<BuildRequested>, With<DefinitionDocument>)>,
-    commits: Res<PropertyCommits>,
-    edits: Res<ComponentEdits>,
-    mut cmd: CommandQueue,
-) {
-    if !commits.0.is_empty() || !edits.0.is_empty() {
-        return;
-    }
-    for document in requested.iter() {
-        cmd.remove::<BuildRequested>(document);
-        cmd.trigger(StartBuild { document });
-    }
-}
-
-fn is_edited(world: &World, document: Entity) -> bool {
-    world
-        .get_component_for_entity::<Unsaved>(document)
-        .is_some()
-        || world
-            .get_component_for_entity::<HostedApp>(document)
-            .is_some_and(HostedApp::scene_dirty)
-}
-
-fn can_start(world: &World, document: Entity) -> bool {
-    let hosted = world
-        .get_component_for_entity::<HostedApp>(document)
-        .is_some();
-    world
-        .get_component_for_entity::<DefinitionDocument>(document)
-        .is_some_and(|state| !state.build.is_running() && build_refusal(state, hosted).is_none())
-}
-
-fn begin(world: &mut World, document: Entity) -> anyhow::Result<BuildJob> {
-    let definition = captured(world, document)?;
-    let asset = world
-        .get_component_for_entity::<EditorDocument>(document)
-        .and_then(|document| document.current.clone())
-        .context("No definition is open")?;
-    let root = world
-        .get_resource::<ProjectState>()
-        .and_then(|state| state.project.as_ref())
-        .context("Open a project before building")?
-        .root
-        .clone();
-    let types = world
-        .get_component_for_entity::<HostedApp>(document)
-        .and_then(|hosted| hosted.world().get_resource::<AppTypeRegistry>())
-        .context("The preview has no type registry")?
-        .clone();
-    let assets = world
-        .get_resource::<AssetRegistry>()
-        .context("The editor has no asset registry")?;
+fn begin(
+    document: &EditorDocument,
+    state: &DefinitionDocument,
+    hosted: Option<&HostedApp>,
+    root: Option<&Path>,
+    assets: &AssetRegistry,
+) -> anyhow::Result<BuildJob> {
+    let definition = state.definition()?;
+    let asset = document.current.clone().context("No definition is open")?;
+    let root = root.context("Open a project before building")?.to_owned();
+    let types = hosted
+        .and_then(HostedApp::type_registry)
+        .context("The preview has no type registry")?;
     let sources = Sources::of(&definition, root, assets);
     let total = definition.entries.len();
     let progress = Arc::new(AtomicUsize::new(0));
@@ -422,23 +375,57 @@ fn begin(world: &mut World, document: Entity) -> anyhow::Result<BuildJob> {
     })
 }
 
-pub(crate) fn start_build(on: On<StartBuild>, world: &mut World) {
-    let document = on.signal().document;
-    if !can_start(world, document) {
+pub(crate) fn start_build(
+    requested: Query<
+        (
+            Entity,
+            &mut EditorDocument,
+            &mut DefinitionDocument,
+            Option<&HostedApp>,
+            Option<&Unsaved>,
+        ),
+        With<BuildRequested>,
+    >,
+    commits: Res<PropertyCommits>,
+    project: Res<ProjectState>,
+    mut assets: ResMut<AssetRegistry>,
+    mut saved: EventWriter<SceneSaved>,
+    mut failed: EventWriter<SaveFailed>,
+    mut cmd: CommandQueue,
+) {
+    if !commits.0.is_empty() {
         return;
     }
-    if is_edited(world, document) && !save_and_report(world, document) {
-        return;
-    }
-    match begin(world, document) {
-        Ok(job) => {
-            set_status(world, document, String::new());
-            if let Some(state) = world.get_component_for_entity_mut::<DefinitionDocument>(document)
-            {
+    let root = project
+        .project
+        .as_ref()
+        .map(|project| project.root.as_path());
+    for (entity, mut document, mut state, hosted, unsaved) in requested.iter() {
+        cmd.remove::<BuildRequested>(entity);
+        if state.build.is_running() || build_refusal(&state, hosted.is_some()).is_some() {
+            continue;
+        }
+        if unsaved.is_some()
+            && !save_and_report(
+                entity,
+                &mut document,
+                &mut state,
+                root,
+                &mut assets,
+                &mut saved,
+                &mut failed,
+                &mut cmd,
+            )
+        {
+            continue;
+        }
+        match begin(&document, &state, hosted, root, &assets) {
+            Ok(job) => {
+                document.status.clear();
                 state.build.job = Some(job);
             }
+            Err(error) => document.status = format!("Build failed: {error:#}"),
         }
-        Err(error) => set_status(world, document, format!("Build failed: {error:#}")),
     }
 }
 
@@ -612,17 +599,18 @@ pub(crate) fn check_baked(
         if !state.baked_wanted || state.baked_job.is_some() {
             continue;
         }
-        let types = hosted.and_then(|hosted| hosted.world().get_resource::<AppTypeRegistry>());
-        let (Some(asset), Some(definition), Some(types)) =
-            (&document.current, &state.loaded, types)
-        else {
+        let (Some(asset), Some(definition), Some(types)) = (
+            &document.current,
+            &state.loaded,
+            hosted.and_then(HostedApp::type_registry),
+        ) else {
             continue;
         };
         let input = CheckInput {
             definition: definition.clone(),
             sources: Sources::of(definition, project.root.clone(), &assets),
             address: baked_address(asset),
-            types: types.clone(),
+            types,
             assets: assets.clone(),
         };
         state.baked_wanted = false;

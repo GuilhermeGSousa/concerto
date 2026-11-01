@@ -1,5 +1,4 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_foundation::assets::handle::AssetHandle;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
@@ -18,8 +17,8 @@ use crate::{
 
 pub(crate) const TURN_RATE: f32 = 1.5;
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub(crate) struct YawRate {
     weight: f32,
 }
@@ -38,8 +37,8 @@ impl FeatureChannel for YawRate {
     }
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub(crate) struct Speed {
     weight: f32,
 }
@@ -106,8 +105,8 @@ pub(crate) fn turn_left() -> AnimationClip {
     clip
 }
 
-#[derive(Component, Reflect, Default, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Default, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub(crate) struct Pace {
     weight: f32,
 }

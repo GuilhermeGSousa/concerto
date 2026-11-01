@@ -1,4 +1,3 @@
-use concerto_ecs::{reflect::ReflectComponent, Component};
 use concerto_mesh::{JointName, Skeleton};
 use concerto_reflect::{to_value, Reflect};
 use glam::{Quat, Vec3};
@@ -41,8 +40,8 @@ fn check_samples(samples: &[usize], trajectory: &TrajectorySettings) -> Result<(
 }
 
 /// The model-space positions of bones, in the simulation bone's frame; 3 values per bone.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub struct BonePositions {
     pub bones: Vec<JointName>,
     pub weight: f32,
@@ -87,8 +86,8 @@ impl FeatureChannel for BonePositions {
 }
 
 /// The model-space velocities of bones, in the simulation bone's frame; 3 values per bone.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub struct BoneVelocities {
     pub bones: Vec<JointName>,
     pub weight: f32,
@@ -133,8 +132,8 @@ impl FeatureChannel for BoneVelocities {
 }
 
 /// The ground-plane positions of trajectory samples, in the simulation bone's frame; x and z per sample.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub struct TrajectoryPositions {
     pub samples: Vec<usize>,
     pub weight: f32,
@@ -183,8 +182,8 @@ impl FeatureChannel for TrajectoryPositions {
 }
 
 /// The ground-plane facing of trajectory samples, in the simulation bone's frame; x and z per sample.
-#[derive(Component, Reflect, Clone, Debug, PartialEq)]
-#[reflect(Component, FeatureChannel)]
+#[derive(Reflect, Clone, Debug, PartialEq)]
+#[reflect(FeatureChannel)]
 pub struct TrajectoryDirections {
     pub samples: Vec<usize>,
     pub weight: f32,
