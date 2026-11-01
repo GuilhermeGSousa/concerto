@@ -286,8 +286,9 @@ pub fn trajectory_samples(
     let last = simulation.len() - 1;
     (0..settings.sample_count)
         .map(|k| {
-            let offset = (settings.sample_dt * (k + 1) as f32 * rate).round() as usize;
-            let target = frame.saturating_add(offset).min(last);
+            let target = frame
+                .saturating_add(settings.frame_offset(k, rate))
+                .min(last);
             TrajectorySample {
                 position: simulation[target].translation,
                 velocity: motion[target].velocity,

@@ -6,9 +6,9 @@ use concerto_motion_matching::bake::{
     sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
-    TrajectorySample, TrajectorySettings,
+    BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, MotionDatabase,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -917,6 +917,52 @@ fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
         let angular = vec3(database.features(frame), 3);
         assert!(angular.x.abs() < 1e-3 && angular.z.abs() < 1e-3, "{frame}");
         assert!((angular.y.abs() - 0.5).abs() < 1e-2, "{frame}: {angular:?}");
+    }
+}
+
+fn two_range_database(channels: Vec<StoredChannel>) -> MotionDatabase {
+    let skeleton = body_skeleton();
+    let clip = walk_clip(3.0);
+    let definition = trajectory_definition(
+        vec![entry(Some((0.0, 1.0))), entry(Some((1.0, 3.0)))],
+        1.0,
+        channels,
+    );
+    bake(&definition, &skeleton, &[&clip, &clip], &body_registry()).unwrap()
+}
+
+#[test]
+fn trajectory_samples_sit_ahead_of_a_frame_and_stop_at_the_end_of_its_range() {
+    let database = two_range_database(Vec::new());
+    let positions = |frames: [usize; 3]| frames.map(|frame| database.simulation(frame).translation);
+    let samples_at = |frame: usize| -> Vec<Vec3> {
+        database
+            .trajectory_samples(frame)
+            .iter()
+            .map(|sample| sample.position)
+            .collect()
+    };
+
+    assert_eq!(samples_at(5), positions([11, 17, 23]));
+    assert_eq!(samples_at(20), positions([26, 29, 29]));
+    assert_eq!(samples_at(30), positions([36, 42, 48]));
+    assert!(samples_at(90).is_empty());
+}
+
+#[test]
+fn trajectory_samples_are_the_ones_the_bake_gave_the_channels() {
+    let database = two_range_database(vec![body_channel()]);
+
+    for frame in [0, 5, 20, 29, 30, 89] {
+        let samples = database.trajectory_samples(frame);
+        let features = database.features(frame);
+        assert_eq!(samples.len(), SAMPLES);
+        for (index, sample) in samples.iter().enumerate() {
+            let at = 13 + index * 10;
+            assert!(sample.position.distance(vec3(features, at)) < 1e-5);
+            assert!(sample.velocity.distance(vec3(features, at + 3)) < 1e-5);
+            assert!(sample.rotation.dot(quat(features, at + 6)).abs() > 1.0 - 1e-5);
+        }
     }
 }
 

@@ -1,4 +1,4 @@
-use std::{path::PathBuf, sync::Arc, thread::JoinHandle};
+use std::{ops::Range, path::PathBuf, sync::Arc, thread::JoinHandle};
 
 use concerto_animation::clip::AnimationClip;
 use concerto_app::{App, edit_time::AtPreviewTime, schedule_groups::LateUpdate};
@@ -19,6 +19,7 @@ use concerto_editor::{
         read_clip,
     },
     hosted::HostedAppEvents,
+    inspector::{InspectedValues, ShownValue},
     preview::PreviewSignals,
     project::ProjectState,
     timeline::TimelineScrubbed,
@@ -33,14 +34,24 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
-use concerto_motion_matching::MotionDatabase;
+use concerto_motion_matching::{
+    BodyMotion, FeatureChannel, FeatureShape, FrameContext, MotionDatabase, bake::model_pose,
+    preview_features,
+};
 
-use crate::{build::BakedState, document::DefinitionDocument};
+use crate::{build::BakedState, document::DefinitionDocument, panels::shown_index};
 
 const SIMULATION_COLOR: Color = Color::rgba(1.0, 0.85, 0.1, 1.0);
 const SIMULATION_RADIUS: f32 = 0.3;
 const SIMULATION_ARROW: f32 = 0.6;
 const SIMULATION_WIDTH: f32 = 2.0;
+const CHANNEL_COLORS: [Color; 4] = [
+    Color::rgba(0.2, 0.8, 1.0, 1.0),
+    Color::rgba(0.3, 1.0, 0.4, 1.0),
+    Color::rgba(1.0, 0.35, 0.9, 1.0),
+    Color::rgba(1.0, 0.5, 0.15, 1.0),
+];
+const DIMMED: f32 = 0.4;
 
 /// A baked database with the skeleton and the clips it samples, as a preview plays it.
 #[derive(Clone)]
@@ -48,6 +59,7 @@ pub struct BakedPlayback {
     pub database: Arc<MotionDatabase>,
     pub skeleton: Arc<Skeleton>,
     pub clips: Vec<Arc<AnimationClip>>,
+    pub channels: Arc<[Box<dyn FeatureChannel>]>,
 }
 
 /// Replaces the baked database the preview plays; `None` stops it.
@@ -63,6 +75,11 @@ pub struct SeekDatabase {
 
 impl Signal for SeekDatabase {}
 
+/// Names the baked channel the preview draws at full colour; the others are dimmed.
+pub struct ShowChannel(pub Option<usize>);
+
+impl Signal for ShowChannel {}
+
 /// Which entry the shown baked frame belongs to and where it sits in the clip; written when the frame changes.
 #[derive(Event, Clone, Debug, PartialEq)]
 pub struct DatabaseProgress {
@@ -73,6 +90,8 @@ pub struct DatabaseProgress {
 #[derive(Resource, Default)]
 pub(crate) struct DatabasePlayback {
     pub(crate) shown: Option<BakedPlayback>,
+    pub(crate) picked: Option<usize>,
+    looped: Option<usize>,
     position: f32,
     reported: Option<usize>,
 }
@@ -87,8 +106,18 @@ pub(crate) struct ClipJob {
     handle: JoinHandle<anyhow::Result<AnimationClip>>,
 }
 
-fn stepped(position: f32, delta: f32, rate: f32, frames: usize) -> f32 {
-    (position + delta * rate) % frames.max(1) as f32
+fn stepped(position: f32, delta: f32, rate: f32, range: Range<usize>) -> f32 {
+    let start = range.start as f32;
+    if !range.contains(&(position as usize)) {
+        return start;
+    }
+    start + (position - start + delta * rate) % range.len() as f32
+}
+
+fn looped_range(database: &MotionDatabase, entry: Option<usize>) -> Range<usize> {
+    entry
+        .and_then(|entry| database.ranges().nth(entry))
+        .unwrap_or(0..database.frame_count())
 }
 
 fn frame_in_entry(database: &MotionDatabase, entry: usize, time: f32) -> Option<usize> {
@@ -99,9 +128,12 @@ fn frame_in_entry(database: &MotionDatabase, entry: usize, time: f32) -> Option<
     Some(range.start + (along.round().max(0.0) as usize).min(last))
 }
 
-fn placed_pose(shown: &BakedPlayback, frame: usize) -> Option<Vec<JointPose>> {
+fn local_pose(shown: &BakedPlayback, frame: usize) -> Option<Vec<JointPose>> {
     let clips: Vec<&AnimationClip> = shown.clips.iter().map(Arc::as_ref).collect();
-    let mut pose = shown.database.pose(frame, &shown.skeleton, &clips).ok()?;
+    shown.database.pose(frame, &shown.skeleton, &clips).ok()
+}
+
+fn placed_pose(shown: &BakedPlayback, frame: usize, mut pose: Vec<JointPose>) -> Vec<JointPose> {
     let simulation = shown.database.simulation(frame);
     for (joint, parent) in pose.iter_mut().zip(shown.skeleton.parents.iter()) {
         if parent.is_none() {
@@ -109,7 +141,7 @@ fn placed_pose(shown: &BakedPlayback, frame: usize) -> Option<Vec<JointPose>> {
             joint.rotation = simulation.rotation * joint.rotation;
         }
     }
-    Some(pose)
+    pose
 }
 
 fn write_pose(
@@ -146,10 +178,10 @@ fn play_database(
         playback.position,
         time.delta().as_secs_f32(),
         shown.database.rate(),
-        shown.database.frame_count(),
+        looped_range(&shown.database, playback.looped),
     );
     let frame = playback.position as usize;
-    let Some(pose) = placed_pose(shown, frame) else {
+    let Some(pose) = local_pose(shown, frame).map(|pose| placed_pose(shown, frame, pose)) else {
         return;
     };
     if let Some(stores) = stores {
@@ -170,6 +202,75 @@ fn play_database(
     }
 }
 
+fn frame_shapes(shown: &BakedPlayback, frame: usize) -> Option<Vec<Vec<FeatureShape>>> {
+    let local = local_pose(shown, frame)?;
+    let model = model_pose(&shown.skeleton, &placed_pose(shown, frame, local.clone()));
+    let trajectory = shown.database.trajectory_samples(frame);
+    let context = FrameContext {
+        skeleton: &shown.skeleton,
+        local_pose: &local,
+        model_pose: &model,
+        model_velocities: &[],
+        simulation: shown.database.simulation(frame),
+        body: BodyMotion::default(),
+        trajectory: &trajectory,
+    };
+    Some(preview_features(
+        &shown.channels,
+        &context,
+        shown.database.features(frame),
+    ))
+}
+
+fn placed_shape(bone: &Transform, shape: FeatureShape) -> FeatureShape {
+    match shape {
+        FeatureShape::Ring { center, radius } => FeatureShape::Ring {
+            center: bone.transform_point(center),
+            radius,
+        },
+        FeatureShape::Line { start, end } => FeatureShape::Line {
+            start: bone.transform_point(start),
+            end: bone.transform_point(end),
+        },
+        FeatureShape::Arrow { start, end } => FeatureShape::Arrow {
+            start: bone.transform_point(start),
+            end: bone.transform_point(end),
+        },
+    }
+}
+
+fn draw_shape(gizmos: &mut DebugGizmos, bone: &Transform, shape: FeatureShape, color: Color) {
+    match placed_shape(bone, shape) {
+        FeatureShape::Ring { center, radius } => {
+            gizmos.circle(center, bone.local_y(), radius, color)
+        }
+        FeatureShape::Line { start, end } => gizmos.line(start, end, color),
+        FeatureShape::Arrow { start, end } => gizmos.arrow(start, end, color),
+    }
+}
+
+fn channel_color(channel: usize, picked: Option<usize>) -> Color {
+    let color = CHANNEL_COLORS[channel % CHANNEL_COLORS.len()];
+    if picked == Some(channel) {
+        return color;
+    }
+    let [red, green, blue, alpha] = color.to_array();
+    Color::rgba(red * DIMMED, green * DIMMED, blue * DIMMED, alpha)
+}
+
+fn stage_of(
+    skeletons: &Query<&SkeletonComponent>,
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+) -> Transform {
+    skeletons
+        .iter()
+        .find_map(SkeletonComponent::root)
+        .and_then(|root| parents.get_entity(root))
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map_or(Transform::IDENTITY, GlobalTransform::to_transform)
+}
+
 fn draw_simulation_bone(
     playback: Res<DatabasePlayback>,
     skeletons: Query<&SkeletonComponent>,
@@ -180,12 +281,7 @@ fn draw_simulation_bone(
     let Some(shown) = &playback.shown else {
         return;
     };
-    let stage = skeletons
-        .iter()
-        .find_map(SkeletonComponent::root)
-        .and_then(|root| parents.get_entity(root))
-        .and_then(|parent| globals.get_entity(parent.parent()))
-        .map_or(Transform::IDENTITY, GlobalTransform::to_transform);
+    let stage = stage_of(&skeletons, &parents, &globals);
     let bone = stage.mul_transform(shown.database.simulation(playback.frame()));
     let tip = bone.translation + bone.local_z() * SIMULATION_ARROW;
     gizmos.set_line_width(SIMULATION_WIDTH);
@@ -196,6 +292,39 @@ fn draw_simulation_bone(
         SIMULATION_COLOR,
     );
     gizmos.arrow(bone.translation, tip, SIMULATION_COLOR);
+}
+
+fn draw_feature_channels(
+    playback: Res<DatabasePlayback>,
+    skeletons: Query<&SkeletonComponent>,
+    parents: Query<&ChildOf>,
+    globals: Query<&GlobalTransform>,
+    mut gizmos: DebugGizmos,
+) {
+    let Some(shown) = playback
+        .shown
+        .as_ref()
+        .filter(|shown| !shown.channels.is_empty())
+    else {
+        return;
+    };
+    let frame = playback.frame();
+    let Some(channels) = frame_shapes(shown, frame) else {
+        return;
+    };
+    let stage = stage_of(&skeletons, &parents, &globals);
+    let bone = stage.mul_transform(shown.database.simulation(frame));
+    gizmos.set_line_width(SIMULATION_WIDTH);
+    for (channel, shapes) in channels.iter().enumerate() {
+        let color = channel_color(channel, playback.picked);
+        for shape in shapes {
+            draw_shape(&mut gizmos, &bone, *shape, color);
+        }
+    }
+}
+
+fn show_channel(on: On<ShowChannel>, mut playback: ResMut<DatabasePlayback>) {
+    playback.picked = on.signal().0;
 }
 
 fn show_database(on: On<ShowDatabase>, mut playback: ResMut<DatabasePlayback>) {
@@ -218,6 +347,7 @@ fn seek_database(on: On<SeekDatabase>, mut playback: ResMut<DatabasePlayback>) {
         .and_then(|shown| frame_in_entry(&shown.database, entry, time));
     if let Some(frame) = frame {
         playback.position = frame as f32;
+        playback.looped = Some(entry);
     }
 }
 
@@ -265,8 +395,24 @@ fn start_clip_job(asset: AssetEntry, root: PathBuf) -> ClipJob {
     }
 }
 
+fn picked_channel(
+    state: &DefinitionDocument,
+    values: Option<&InspectedValues>,
+    shown: Option<&ShownValue>,
+) -> Option<usize> {
+    let index = shown_index(values?, shown?)?.checked_sub(1)?;
+    let held = state.channels.get(index)?;
+    let baked = state.playback.as_ref()?.database.channels().get(index)?;
+    (held.type_name == baked.type_name).then_some(index)
+}
+
 pub(crate) fn follow_playback(
-    documents: Query<(Entity, &mut DefinitionDocument)>,
+    documents: Query<(
+        Entity,
+        &mut DefinitionDocument,
+        Option<&InspectedValues>,
+        Option<&ShownValue>,
+    )>,
     project: Res<ProjectState>,
     assets: Res<AssetRegistry>,
     mut previews: PreviewSignals,
@@ -274,7 +420,7 @@ pub(crate) fn follow_playback(
     let Some(project) = project.project.as_ref() else {
         return;
     };
-    for (document, mut state) in documents.iter() {
+    for (document, mut state, values, shown) in documents.iter() {
         let skeleton = state.skeleton.id();
         if state
             .playback
@@ -283,6 +429,12 @@ pub(crate) fn follow_playback(
         {
             state.playback = None;
             previews.trigger(document, ShowDatabase(None));
+        }
+
+        let picked = picked_channel(&state, values, shown);
+        if state.picked_channel != picked {
+            state.picked_channel = picked;
+            previews.trigger(document, ShowChannel(picked));
         }
 
         let sought = baked_entry(&state);
@@ -348,11 +500,18 @@ pub(crate) fn database_playback(app: &mut App) {
                 .at_preview_time(),
         )
         .add_listener(show_database.at_preview_time())
-        .add_listener(seek_database.at_preview_time());
+        .add_listener(seek_database.at_preview_time())
+        .add_listener(show_channel.at_preview_time());
     if app.is_plugin_added::<DebugGizmosPlugin>() {
         app.add_system(
             LateUpdate,
             draw_simulation_bone
+                .after(propagate_global_transforms)
+                .at_preview_time(),
+        );
+        app.add_system(
+            LateUpdate,
+            draw_feature_channels
                 .after(propagate_global_transforms)
                 .at_preview_time(),
         );

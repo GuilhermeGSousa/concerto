@@ -135,14 +135,25 @@ The worker that works out the baked state also loads what the baked file needs t
 play: the database, its skeleton and the clips it names, which may no longer be
 the definition's. They reach the preview as `Arc`s in a `ShowDatabase` signal, and
 the editor sends `ClearClip` with it, so only one system writes the bones. Then
-`play_database` steps a frame index at the database's `rate`, through all the
-frames in order and back to the first, and writes `database.pose(frame, ..)` to
-every bone with a match by id in the skeleton's `bone_ids`. That pose holds each
+`play_database` steps a frame index at the database's `rate`, looping the entry
+last sought, or every frame in order until one is, and writes
+`database.pose(frame, ..)` to every bone with a match by id in the skeleton's `bone_ids`. That pose holds each
 parentless bone relative to the simulation bone, so it is placed by
 `database.simulation(frame)` first: the character goes where the clip takes it,
 the camera follows it, and the simulation bone, a yellow ring with an arrow along
 its facing, is drawn under it with `DebugGizmos`. An out-of-date file plays until
 the next build, and the baked state says so.
+
+Every channel also draws the frame's features, through its `preview` and
+`preview_features`, so a game's channel can add its own shapes. The channels are
+built from the values in the baked file, so an out-of-date file draws what it
+baked, and channels that cannot be built draw nothing while the database plays.
+Channels take colours in turn from a palette without the simulation bone's yellow.
+Each is dimmed unless it is the one picked under **Channels**, which draws at full
+colour, so with `Settings` picked they are all dimmed. `ShowChannel` tells the
+preview which one, by its index among the baked channels, and only when the
+definition's channel there has the type the baked one has, so an out-of-date file
+never highlights the wrong channel.
 
 With no baked data to play, the preview plays the selected entry's whole clip
 through `clip_preview`, read on a worker, and that is also the fallback for a
@@ -154,10 +165,10 @@ flashes a clip when it opens.
 The `Timeline` is always the selected entry's. With a clip its head is the
 preview's time and a scrub sends `SeekClip`. With a database, selecting an entry
 moves the playback to the entry's first frame, a scrub sends `SeekDatabase` to the
-nearest baked frame of that entry, and `DatabaseProgress` moves the head while the
-playback is inside the entry; once it moves on, the head waits at the entry's last
-frame until the playback comes round. An entry whose clip is not the one baked at
-its place is not sought, so the head stays where it is. The tab has no transport:
+nearest baked frame of that entry, and `DatabaseProgress` moves the head, so it
+returns to the entry's first frame each time the entry loops. An entry whose clip
+is not the one baked at its place is not sought, so the head stays where it is and
+the playback goes on looping the entry it was in. The tab has no transport:
 the preview always plays, and a scrub moves it without pausing.
 
 ## Joint names

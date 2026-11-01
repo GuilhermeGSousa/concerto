@@ -123,6 +123,7 @@ pub struct DefinitionDocument {
     pub(crate) baked_job: Option<BakedJob>,
     pub(crate) playback: Option<BakedPlayback>,
     pub(crate) sought_entry: Option<usize>,
+    pub(crate) picked_channel: Option<usize>,
     pub(crate) shown_clip: Option<AssetId>,
     pub(crate) clip_job: Option<ClipJob>,
 }

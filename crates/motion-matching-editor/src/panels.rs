@@ -311,7 +311,7 @@ fn pick_value(document: Entity, index: usize) -> Listener<UIClick> {
     .into_listener()
 }
 
-fn shown_index(values: &InspectedValues, shown: &ShownValue) -> Option<usize> {
+pub(crate) fn shown_index(values: &InspectedValues, shown: &ShownValue) -> Option<usize> {
     values
         .0
         .iter()
