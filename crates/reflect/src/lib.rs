@@ -10,7 +10,8 @@ mod value;
 use std::any::Any;
 
 /// Implements [`Reflect`] for a struct or an enum, whose fields must all be `Reflect`;
-/// `#[reflect(opaque)]` makes the type a serde [`Leaf`] instead.
+/// `#[reflect(opaque)]` makes the type a serde [`Leaf`] instead, and `#[reflect(skip)]` on a
+/// struct field leaves that field out, so nothing reflective reads, writes or stores it.
 ///
 /// ```compile_fail
 /// struct Opaque;

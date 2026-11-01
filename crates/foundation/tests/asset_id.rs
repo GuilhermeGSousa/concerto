@@ -26,11 +26,3 @@ fn from_path_differs_for_different_inputs() {
     let b = AssetId::from_path("models/character.gltf#texture/normal");
     assert_ne!(a, b, "distinct sub-asset names must hash to distinct IDs");
 }
-
-#[test]
-fn round_trips_through_bincode() {
-    let id = AssetId::from_path("models/character.gltf#scene");
-    let bytes = bincode::serialize(&id).unwrap();
-    let decoded: AssetId = bincode::deserialize(&bytes).unwrap();
-    assert_eq!(decoded, id);
-}

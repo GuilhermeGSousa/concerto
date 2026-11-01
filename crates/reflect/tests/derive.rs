@@ -1,8 +1,8 @@
 use std::any::{Any, TypeId};
 
 use concerto_reflect::{
-    PathError, PathSegment, PropertyPath, PropertyVisitor, PropertyVisitorMut, Reflect,
-    with_property, with_property_mut,
+    PathError, PathSegment, PropertyPath, PropertyVisitor, PropertyVisitorMut, Reflect, ReflectRef,
+    apply_value, to_value, with_property, with_property_mut,
 };
 use glam::{Quat, Vec3};
 
@@ -370,4 +370,59 @@ fn downcast_reads_the_concrete_type_and_refuses_another() {
     value.downcast_mut::<Inner>().unwrap().weight = 5.0;
     assert_eq!(value.downcast_ref::<Inner>().unwrap().weight, 5.0);
     assert!(value.downcast_mut::<f32>().is_none());
+}
+
+struct Unreflected(u32);
+
+impl Default for Unreflected {
+    fn default() -> Self {
+        Self(7)
+    }
+}
+
+#[derive(Reflect, Default)]
+struct WithSkipped {
+    first: f32,
+    #[reflect(skip)]
+    hidden: Unreflected,
+    last: f32,
+}
+
+#[test]
+fn a_skipped_field_is_not_a_field() {
+    let value = WithSkipped {
+        first: 1.0,
+        hidden: Unreflected(3),
+        last: 2.0,
+    };
+    let ReflectRef::Struct(fields) = value.reflect_ref() else {
+        panic!("a struct reflects as a struct");
+    };
+
+    assert_eq!(fields.field_len(), 2);
+    assert_eq!(fields.name_at(0), Some("first"));
+    assert_eq!(fields.name_at(1), Some("last"));
+    assert_eq!(fields.field_at(1).unwrap().downcast_ref(), Some(&2.0f32));
+    assert_eq!(
+        with_property(&value, &PropertyPath::new(["hidden"]), &mut |_| {}),
+        Err(PathError::NotFound)
+    );
+}
+
+#[test]
+fn a_skipped_field_keeps_its_value_when_a_stored_value_is_applied() {
+    let stored = to_value(&WithSkipped {
+        first: 1.0,
+        hidden: Unreflected(3),
+        last: 2.0,
+    })
+    .unwrap();
+
+    let mut loaded = WithSkipped::default();
+    let warnings = apply_value(&mut loaded, &stored);
+
+    assert!(warnings.is_empty());
+    assert_eq!(loaded.first, 1.0);
+    assert_eq!(loaded.last, 2.0);
+    assert_eq!(loaded.hidden.0, 7);
 }

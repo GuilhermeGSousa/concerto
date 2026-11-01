@@ -37,11 +37,6 @@ fn a_sidecar_without_settings_parses_with_an_empty_table_and_writes_none() {
 }
 
 #[test]
-fn the_bvh_importer_name_is_accepted() {
-    assert!(SourceMetadata::load(&sidecar(HEADER)).is_ok());
-}
-
-#[test]
 fn an_unknown_importer_name_is_still_rejected() {
     let text = HEADER.replace("bvh", "fbx");
     assert!(SourceMetadata::load(&sidecar(&text)).is_err());

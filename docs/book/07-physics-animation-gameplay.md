@@ -98,11 +98,12 @@ fn walk(input: Res<Input>, players: Query<(&mut DesiredMotion, &GroundProbe), Wi
 ```
 
 Each fixed step the simulation advances its velocity and facing springs
-(halflife 0.27 s by default) toward `DesiredMotion`, sets the body's
-horizontal velocity to the spring's, and reads the body's position back after
-collisions. It also fills `CharacterSimulation::trajectory` with
-`sample_count` predicted samples, `sample_dt` apart, assuming the desired
-motion holds.
+(halflife 0.27 s by default) toward `DesiredMotion` and sets the body's
+horizontal velocity to the spring's. After the physics step it predicts
+`sample_count` samples of the path ahead, `sample_dt` apart, assuming the
+desired motion holds, for motion matching to search with. The springs and the
+prediction are internal; to read how a character moves, ask its body with
+`physics.linear_velocity(body_id)`.
 
 The default halflife changed from 0.1 s, the old `CharacterMovement` value, to
 0.27 s.
@@ -225,6 +226,48 @@ Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
+
+### Root motion
+
+A clip whose root bone moves gives root motion: a `RootMotion` that says how the
+root moved this frame, with a `translation` and a `rotation` that read as
+"forward, as the character faced last frame". Every source in a graph produces
+one, and blends and transitions carry it with the pose, so it works for any
+graph. Each frame the result lands on the root bone, in
+`AnimationRootBone::root_motion`, and the bone's own `Transform` stays at its
+bind pose. A paused player, an unloaded skeleton or graph, or a clip with no
+channels for the root gives `RootMotion::IDENTITY`.
+
+Nothing applies it on its own. To have it move a character, make the visible
+character a separate entity from the capsule, with the skeleton under it, and
+give it a `CharacterDisplacement` and a `DisplacementSimulation` naming the
+capsule:
+
+```rust
+use concerto::motion_matching::{CharacterDisplacement, Clamp, DisplacementSimulation};
+
+cmd.spawn((
+    CharacterDisplacement::Clamp(Clamp::default()),
+    DisplacementSimulation(capsule),
+    Transform::default(),
+));
+```
+
+Each frame the character moves by its root motion, and is then reconciled with
+the capsule by one of three methods, which are mutually exclusive:
+
+- `Synchronization` places both at a weighted average each frame, set by `data_factor`: 0
+  is code-driven, 1 is data-driven. The capsule is pulled through its velocity,
+  so physics still stops it at a wall.
+- `Adjustment`, the default, damps the character towards the capsule, by no more
+  than a ratio of this frame's root motion, so a standing character is not
+  dragged.
+- `Clamp` keeps the character within a distance and an angle of the capsule.
+
+Height is always the capsule's. Do not parent the character to its capsule: it
+would move twice, so it is skipped with a warning. The
+[crate's README](../../crates/motion-matching/README.md) has the fields and what
+each method promises at a wall.
 
 ## Gameplay helpers
 

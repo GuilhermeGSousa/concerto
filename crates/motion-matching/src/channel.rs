@@ -56,7 +56,7 @@ pub struct FrameContext<'a> {
     pub trajectory: &'a [TrajectorySample],
 }
 
-/// The simulation bone's linear and angular velocity, in the space of `FrameContext::simulation`.
+/// The simulation bone's linear and angular velocity, in the same space as `FrameContext::simulation`, not in the bone's own frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BodyMotion {
     pub velocity: Vec3,

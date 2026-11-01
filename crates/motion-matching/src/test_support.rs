@@ -207,6 +207,22 @@ pub(crate) fn pace_database(
     skeleton_handle: AssetHandle<Skeleton>,
     clip_handles: [AssetHandle<AnimationClip>; 2],
 ) -> MotionDatabase {
+    pace_database_of(
+        speed,
+        skeleton_handle,
+        clip_handles,
+        &skeleton(),
+        &[&walk_forward(), &turn_left()],
+    )
+}
+
+pub(crate) fn pace_database_of(
+    speed: f32,
+    skeleton_handle: AssetHandle<Skeleton>,
+    clip_handles: [AssetHandle<AnimationClip>; 2],
+    skeleton: &Skeleton,
+    clips: &[&AnimationClip; 2],
+) -> MotionDatabase {
     let definition = two_clip_definition(
         vec![StoredChannel {
             type_name: "Pace".into(),
@@ -220,11 +236,5 @@ pub(crate) fn pace_database(
         skeleton_handle,
         clip_handles,
     );
-    bake(
-        &definition,
-        &skeleton(),
-        &[&walk_forward(), &turn_left()],
-        &registry(),
-    )
-    .unwrap()
+    bake(&definition, skeleton, clips, &registry()).unwrap()
 }

@@ -70,7 +70,7 @@ fn label_of(tab: &mut Tab, path: &str) -> Entity {
         .find(|(_, row)| {
             world
                 .get_component_for_entity::<PropertyRow>(*row)
-                .is_some_and(|row| row.path.to_string() == path)
+                .is_some_and(|row| row.address.path.to_string() == path)
         })
         .map(|(label, _)| label)
         .expect("the inspector shows the joint's row")

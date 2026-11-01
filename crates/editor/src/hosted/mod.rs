@@ -18,6 +18,7 @@ use concerto_ecs::{
     command::CommandQueue,
     events::{event_channel::EventChannel, event_writer::EventWriter},
     query::change_detection::DetectChanges,
+    reflect::AppTypeRegistry,
     signal::{On, Signal},
     system::NonSendMarker,
 };
@@ -77,6 +78,11 @@ impl HostedApp {
     /// The texture this `App` draws its window into.
     pub fn picture(&self) -> &SharedTexture {
         &self.picture
+    }
+
+    /// The type registry of this `App`'s world.
+    pub fn type_registry(&self) -> Option<AppTypeRegistry> {
+        self.world().get_resource::<AppTypeRegistry>().cloned()
     }
 
     pub(crate) fn capture_scene(&mut self) -> Result<Scene, String> {

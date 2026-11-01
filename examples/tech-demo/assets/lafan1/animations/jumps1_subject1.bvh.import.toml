@@ -1,0 +1,12 @@
+version = 1
+source_id = "cc770c18-97d2-4649-9fe7-1c97dd85d6bc"
+importer = "bvh"
+
+[outputs."animation/jumps1_subject1"]
+asset_id = "3c5bcfbc-6ac3-4149-9878-183eeeb17f8e"
+
+[outputs.scene]
+asset_id = "58c71028-c9cc-453d-9654-0d8e64d69941"
+
+[outputs."skeleton/0"]
+asset_id = "0aa88fe7-f697-4754-a6ba-e9df2c6c77b6"

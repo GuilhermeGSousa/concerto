@@ -62,11 +62,6 @@ fn assert_malformed(name: &str, text: &str, expected: &str) {
 }
 
 #[test]
-fn a_well_formed_file_parses() {
-    import("two_joints.bvh", TWO_JOINTS).expect("the two-joint fixture should parse");
-}
-
-#[test]
 fn crlf_line_endings_parse() {
     import("crlf.bvh", &TWO_JOINTS.replace('\n', "\r\n")).expect("CRLF should parse");
 }

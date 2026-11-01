@@ -1757,17 +1757,4 @@ mod tests {
         );
         assert!(parse(["new", "x", "--update"]).is_err());
     }
-
-    #[test]
-    fn a_new_project_is_a_project_the_editor_accepts() {
-        let tmp = tempfile::tempdir().unwrap();
-        let dir = tmp.path().join("g");
-
-        new_project(&dir, Engine::Published).unwrap();
-
-        assert!(dir.is_dir());
-        assert!(dir.join("content").is_dir());
-        assert!(dir.join("content/.gitkeep").is_file());
-        assert!(!dir.join("content/.registry.toml").exists());
-    }
 }

@@ -111,7 +111,7 @@ fn weight_row(tab: &mut Tab, document: Entity) -> PropertyRow {
     world
         .query::<&PropertyRow, ()>()
         .iter(world)
-        .find(|row| row.path.to_string() == "weight")
+        .find(|row| row.address.path.to_string() == "weight")
         .cloned()
         .expect("the inspector shows the channel's weight")
 }

@@ -133,7 +133,7 @@ executable's directory otherwise.
 ## Editor
 
 A game that has an editor is a library plus a thin binary; `tech-demo` is the
-one example built that way, and the other four are binaries only. The library
+one example built that way, and the others are binaries only. The library
 exposes one recipe, `pub fn game(app: &mut App)`, which registers the game's
 plugins, components, systems, and startup scene; `main` is
 `concerto::run(<game>::game, concerto::content_registry!())`. The editor is a
@@ -214,7 +214,8 @@ editor's world, which systems read with `EventReader<Hosted<E>>`. Whether the
 scene has unsaved edits is state, `SceneDirty`, kept in the edit `App`: edits set
 it and a successful save clears it, and the editor's `Unsaved` follows it. A save
 asks the edit `App` for the scene directly with `HostedApp::capture_scene`.
-The inspector edits components through `PropertyEditor<T>` adapters over
-`reflect`. Each asset type has one editor, registered with
-`register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
+The inspector edits reflected values through `PropertyEditor<T>` adapters over
+`reflect`: a `PropertyTarget` addresses each one, a component in the edit
+target's world or a value a document holds in the editor's. Each asset type has
+one editor, registered with `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
 covers all of it.

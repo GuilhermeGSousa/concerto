@@ -1,0 +1,12 @@
+version = 1
+source_id = "55db7e52-5226-4ae4-bc96-93f3d53cf348"
+importer = "bvh"
+
+[outputs."animation/fight1_subject5"]
+asset_id = "e7c3e790-d8da-40e8-9529-b84f24c50158"
+
+[outputs.scene]
+asset_id = "5d7438e9-bfe8-4c0e-83de-9c8344ef61e1"
+
+[outputs."skeleton/0"]
+asset_id = "2dc69bdb-f860-4f41-b040-bc939bf4901d"

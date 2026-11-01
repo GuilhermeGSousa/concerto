@@ -10,19 +10,33 @@ the crate as `concerto::motion_matching`.
 
 - `DesiredMotion`: a world velocity in m/s and a world facing. Other systems
   write it. It holds no gait or strafe. Default: zero velocity, identity.
-- `CharacterSimulation`: requires `DesiredMotion` and a physics body.
+- `CharacterSimulation`: requires `DesiredMotion` and a physics body. Its fields
+  are its tuning. The springs it steps and the trajectory it predicts are
+  internal: no field, accessor or reflection reaches them.
 
 | Field | Meaning | Default |
 |---|---|---|
-| `state` | position, velocity and acceleration of the velocity spring | zero |
-| `rotation`, `angular_velocity` | facing and its scaled angle-axis rate | identity, zero |
 | `velocity_halflife` | spring halflife for velocity | 0.27 s |
 | `rotation_halflife` | spring halflife for facing | 0.27 s |
 | `sample_dt`, `sample_count` | trajectory sampling | 1/3 s, 3 |
-| `trajectory` | predicted `TrajectorySample`s, `sample_dt * (i + 1)` ahead | empty |
+| `max_pull_speed` | how fast a pull can take the body; a spring already faster keeps its speed | 8 m/s |
+
+A halflife here is the one in orangeduck/Motion-Matching: a spring at rest covers
+about 40% of the distance in it, where
+`Spring::critically_damped_with_halflife` covers 50%.
 
 `sample_dt` and `sample_count` must match the motion database that queries the
 trajectory.
+
+`max_pull_speed` must keep one fixed step under the capsule's radius: bodies use
+discrete collision, so a faster pull could carry the capsule through a wall. The
+default is about 0.27 m a step, so a capsule thinner than that needs a lower one.
+A pull never takes the body past that speed, or past the spring's own speed when
+that is higher, so a fast spring needs the same care.
+
+A game that wants to know how a character moves asks its body:
+`PhysicsState::linear_velocity` and `body_transform` say where it went after
+collisions, which the springs do not know.
 
 ## Motion database
 
@@ -128,9 +142,10 @@ The context is filled in two ways:
   `simulation` is the smoothed simulation bone, `body` its central-difference
   velocities per database second (one-sided at the ends of a range) and
   `trajectory` the `TrajectorySettings` samples above.
-- Online, by the runtime query: the space is the world. `simulation` and `body`
-  come from `CharacterSimulation` and `trajectory` is its `trajectory`; pose
-  and velocities come from the animation system.
+- Online, by the runtime query: the space is the world. `simulation` is the
+  body's position with the simulation's facing and `trajectory` is the published
+  path. `body`, the pose and the velocities are left empty, since only
+  `Trajectory` channels run online and they do not read them.
 
 Because both fills go through the same `extract`, a channel written in terms of
 the inverse of `simulation` yields the same features in both.
@@ -280,20 +295,30 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
 
 ## Systems
 
-- `drive_body`, in `FixedUpdate`, before `step_simulation`: advances the spring
-  one fixed step toward `DesiredMotion::velocity`, with zero vertical velocity,
-  advances the facing, and sets the body's horizontal velocity to the
-  spring's. The body keeps its own vertical velocity.
-- `read_back_body`, in `LateFixedUpdate`, after `step_simulation`: sets the
-  simulation's horizontal position to the body's after collisions.
-- `predict_trajectory_system`, in `LateFixedUpdate`, after `read_back_body`:
-  fills `trajectory`.
+- `drive_body`, in `FixedUpdate`, before `step_simulation`: advances the
+  velocity spring one fixed step toward `DesiredMotion::velocity`, with zero
+  vertical velocity, advances the facing, and sets the body's horizontal
+  velocity to the spring's. It takes the simulation's pull, the world offset
+  from the body to where it should be, and adds the velocity that closes half
+  of it in the step, at no more than `max_pull_speed` or the spring's own speed,
+  whichever is higher. The springs never see the pull, so the prediction is
+  undisturbed. The body keeps its own vertical velocity.
+- `publish_trajectory`, in `LateFixedUpdate`, after `step_simulation`: predicts
+  the path from where the body ended the step and writes it to the character's
+  `AnimationPlayer`, which is on the simulation's entity, or on or under an
+  entity whose `DisplacementSimulation` names it.
+- `apply_character_displacement`, in `LateUpdate`, after `animate_targets` and
+  before `propagate_global_transforms`: places each character; see
+  [Displacement](#displacement).
 
-An entity without a `BodyId` is skipped.
+An entity without a `BodyId` is skipped. The simulation holds no position: the
+body has it.
 
-`predict_trajectory` is the pure function behind the last system. It holds the
-current `DesiredMotion` constant: there is no input extrapolation and no
-collision, so the prediction does not see walls.
+The prediction starts from the springs and the body's position and holds the
+current `DesiredMotion` constant, sampling the same springs `drive_body` steps,
+so sample `i` is where the simulation gets to `sample_dt * (i + 1)` from now
+while that motion holds. There is no input extrapolation and no collision, so
+the prediction does not see walls. Its height is the body's, unchanged.
 
 ## Example
 
@@ -313,9 +338,8 @@ fn walk(mut players: Query<&mut DesiredMotion, With<Player>>) {
 
 ## Not here
 
-Capsule traces for collision-aware prediction, past samples, gamepad input,
-and synchronising the skeleton and the capsule with spring dampers are
-separate work. The simulation does not rotate the capsule.
+Capsule traces for collision-aware prediction, past samples and gamepad input
+are separate work. The simulation does not rotate the capsule.
 
 ## Playing a database
 
@@ -332,11 +356,14 @@ node.
 | `same_frame_tolerance` | a search result this many frames or fewer from the playhead is ignored | 1 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
-Each fixed step `publish_trajectory` copies a character's
-`CharacterSimulation` into its `AnimationPlayer`'s blackboard as a
-`MotionMatchingTrajectory` under the key `"trajectory"`. A player whose
-character has no simulation, or a preview `App`, has no trajectory; the node
-then plays the database without searching.
+Each fixed step `publish_trajectory` writes the character's predicted path to
+the blackboard of its `AnimationPlayer`, where only this crate reads it. The
+player sits on the simulation's entity, or, when the visible character is a
+separate entity from the capsule, on or under an entity with a
+`DisplacementSimulation` naming the capsule: a player with no simulation of its
+own climbs `ChildOf` to the nearest one. A player that finds neither, or a
+preview `App`, has no trajectory; the node then plays the database without
+searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
@@ -347,4 +374,119 @@ every frame, with an early out. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
 
 `MotionMatchingInstance::root_motion` is the simulation bone's velocity and
-angular velocity at the playhead. Nothing reads it yet.
+angular velocity at the playhead, in model space. Each step turns them back by
+the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
+scales them by the frame's time into a `RootMotion` on `instance.output`:
+`translation = q⁻¹ * (velocity * dt)` and `rotation =
+from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
+clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
+the same way. The root joint is the database skeleton's first without a parent.
+A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`, and so
+does a frame that holds the pose at the end of its range.
+
+## Displacement
+
+The visible character and the capsule are two entities, and they drift apart:
+root motion moves one and the player moves the other. `CharacterDisplacement`
+goes on the character and reconciles the two each frame.
+`DisplacementSimulation` names the capsule, which holds `CharacterSimulation`,
+`DesiredMotion` and the body, and needs `ColliderOffset::bottom_origin` for the
+character to stand on the ground. The game inserts it at spawn.
+
+```rust
+commands.spawn((
+    CharacterDisplacement::Clamp(Clamp::default()),
+    DisplacementSimulation(capsule),
+    Transform::default(),
+));
+```
+
+The skeleton goes anywhere under the character: each `AnimationRootBone` climbs
+`ChildOf` to the nearest entity with a `CharacterDisplacement`, so a
+scene-spawned skeleton needs no link. A character with two skeletons uses the
+first one found. A character whose skeleton has not spawned has no root motion
+and still gets its method's correction.
+
+A character's `Transform` is written in world space. It is not a child of its
+capsule: one under it would move twice, so the system skips it and warns once
+for that entity. A `DisplacementSimulation` naming an entity with no
+`CharacterSimulation` gets the same. A character without a
+`DisplacementSimulation` does not move.
+
+### Methods
+
+The variants are mutually exclusive. orangeduck's demo combines adjustment with
+clamping; here a character has one or the other. Each holds a struct, so a
+variant switch in the inspector gives that struct's defaults and loses tuned
+numbers in the old variant.
+
+| Variant | Each frame | Against a wall |
+|---|---|---|
+| `Synchronization` | The character's position and yaw are a weighted average of its own, moved by root motion, and the capsule's, and the capsule gets the same target. | The capsule stops. The character goes on as far as `data_factor` lets it, and the pull does not take the capsule through the wall while `max_pull_speed` keeps one step under its radius. |
+| `Adjustment` | The character moves by root motion and is damped towards the capsule. | The capsule stops. The character keeps going on its root motion, pulled back only as far as the ratios allow. |
+| `Clamp` | The character moves by root motion and is kept within reach of the capsule. | The capsule stops, and the character stops within `max_distance` of it. |
+
+`data_factor` is clamped to 0..=1. The average is of positions, taken once a
+frame, so at 0 and at 1 the character moves at the code's speed or the data's,
+and between them its speed depends on the frame rate and is not the same average
+of the two speeds.
+
+Give each character its own capsule: a second character naming the same one
+overwrites the first's pull.
+
+| Field | Meaning | Default |
+|---|---|---|
+| `Synchronization::data_factor` | 0 puts the character on the capsule, code-driven; 1 follows root motion and pulls the capsule to it, data-driven | 1.0 |
+| `Adjustment::by_velocity` | cut each correction to its ratio of this frame's root motion, so a standing character is not dragged | on |
+| `Adjustment::position_halflife`, `rotation_halflife` | seconds to close half the gap | 0.1 s, 0.2 s |
+| `Adjustment::position_max_ratio`, `rotation_max_ratio` | the most a correction may be, as a ratio of this frame's root motion, with `by_velocity` | 0.5 |
+| `Clamp::max_distance` | the furthest the character gets from the capsule, on the plane | 0.15 m |
+| `Clamp::max_angle` | the furthest its yaw gets from the simulation's | `FRAC_PI_2` radians |
+
+`CharacterDisplacement` defaults to `Adjustment`.
+
+A clip whose root does not move gives no root motion, so a `Clamp` or
+`Adjustment` character on such clips stands still while the capsule walks off,
+as far as the method lets it. Such a game wants `Synchronization { data_factor:
+0.0 }`.
+
+### Height, pull and yaw
+
+Height is always the capsule's, in every method. The vertical part of root
+motion is ignored, as is any turn out of yaw.
+
+Only `Synchronization` moves the capsule. `apply_character_displacement` sets
+the simulation's pull to the offset from the capsule to the target each frame,
+and every other method leaves it at zero. `drive_body` takes it and adds half
+of it as velocity, within the limit above, so physics still resolves
+collisions. The capsule shows the body up to a step late, which is why it adds
+half: a full correction would be issued again before the last one showed. So
+the capsule closes the gap over a few steps, and lags a character running ahead
+of its spring by about two fixed steps.
+
+Root motion past `max_pull_speed` leaves the capsule behind, and the gap grows
+until the character slows down: the default clears LAFAN1's sprints, which reach
+6.8 m/s at a database `speed` of 1.1. Only a frame's first fixed step takes the
+pull, so a frame long enough for two steps halves what the pull can reach.
+
+Yaw needs no pull, since the facing is not physics. Under `Synchronization` the
+system turns the simulation's facing and the facing it interpolates from by the
+same amount, so the simulation's yaw lands on the target while the spring keeps
+its velocity. At a `data_factor` of 0 that turn is zero and the spring is left
+to itself.
+
+The capsule's position is its interpolated `Transform`, and the simulation's
+yaw is interpolated between fixed steps the same way, so neither ticks at the
+fixed rate.
+
+### Transform order
+
+Writing the character's `Transform` before propagation means its skeleton and
+model reach rendering in the same frame. The two orderings on
+`apply_character_displacement` also put `propagate_global_transforms` after
+`animate_targets` in every `App` with both `MotionMatchingPlugin` and
+`AnimationPlugin`, so bones reach their globals a frame sooner there than in an
+`App` with `AnimationPlugin` alone.
+
+The system is not marked `.at_preview_time()`, since a preview has no physics.
+Its orderings still hold there, so a preview has the same transform order.

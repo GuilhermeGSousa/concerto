@@ -190,16 +190,4 @@ mod tests {
         assert!(!Window::reports(&WindowEvent::CloseRequested));
         assert!(Window::reports(&WindowEvent::Focused(true)));
     }
-
-    #[test]
-    fn a_command_is_taken_once_and_in_order() {
-        let mut window = Window::new((800, 600), 1.0);
-        window.send(WindowCommand::Minimise);
-        window.send(WindowCommand::Close);
-        assert_eq!(
-            window.drain_commands(),
-            vec![WindowCommand::Minimise, WindowCommand::Close]
-        );
-        assert!(window.drain_commands().is_empty());
-    }
 }

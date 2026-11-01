@@ -17,10 +17,12 @@ concerto-render.workspace = true
 concerto-scene.workspace = true
 tobj = { version = "4.0.3", default-features = false }
 anyhow = "1.0.97"
-bincode = "1.3"
 glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 
 [dependencies.image]
 version = "0.25.5"
 default-features = true
+
+[dev-dependencies]
+bincode = "1.3"

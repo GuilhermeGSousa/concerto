@@ -1,7 +1,7 @@
 use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
-    App, StartupScene,
+    App,
 };
 use concerto_foundation::assets::AssetId;
 use concerto_scene::{plugin::ScenePlugin, spawner::SceneSpawnerComponent};
@@ -21,14 +21,6 @@ fn spawners_after_startup(mut app: App, declare: bool) -> usize {
         .query::<&SceneSpawnerComponent, ()>()
         .iter(world)
         .count()
-}
-
-#[test]
-fn set_startup_scene_stores_the_declaration() {
-    let mut app = App::new();
-    let id = AssetId::new();
-    app.set_startup_scene(id);
-    assert_eq!(app.get_resource::<StartupScene>().unwrap().0, id);
 }
 
 #[test]

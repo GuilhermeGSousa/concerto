@@ -1,0 +1,12 @@
+version = 1
+source_id = "45c83f43-f80f-43a0-aa71-6ba763accf52"
+importer = "bvh"
+
+[outputs."animation/fightAndSports1_subject1"]
+asset_id = "a9e27694-8417-4087-8db2-2ead0616c602"
+
+[outputs.scene]
+asset_id = "8ac22ae8-21b7-4c6a-b0c7-33374c9fa3aa"
+
+[outputs."skeleton/0"]
+asset_id = "484fe8ad-6a09-41db-9e36-46a48830b883"

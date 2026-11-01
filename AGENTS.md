@@ -5,8 +5,8 @@ renderer, an offline asset pipeline, and an engine-native editor. Everything is
 work in progress; `concerto` 0.1.0 is on crates.io and predates the hosting
 work.
 
-The workspace is `crates/*` (33 engine crates, all named `concerto-<dir>`) plus
-`examples/*` (five standalone games). The root crate re-exports the engine and
+The workspace is `crates/*` (the engine crates, all named `concerto-<dir>`)
+plus `examples/*` (standalone games). The root crate re-exports the engine and
 defines `DefaultPlugins`.
 
 ## Read when relevant
@@ -32,6 +32,9 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 
 - The Jolt submodule: `git submodule update --init`. Without it every native
   build fails in `concerto-jolt-ffi`.
+- Git LFS: `git lfs install` before cloning, or `git lfs pull` in a clone made
+  without it. `.gasset` files are LFS objects, and building a game from their
+  pointers fails with `missing the GRDY magic prefix`.
 - Linux system packages: `libasound2-dev libudev-dev libwayland-dev`.
 - The wasm target: `rustup target add wasm32-unknown-unknown`.
 - `trunk` to run an example in a browser.
@@ -152,6 +155,12 @@ style follow the file you are in.
 cloud pipeline session writes the test first but cannot run it, so the red step
 is not observed.
 
+**What a test is for.** A test covers behaviour the engine owns. Do not test a
+getter, a one-line wrapper, or a derive from another crate (`std`, `serde`), and
+do not test what an external library does on its own. Engine maths, a value's
+persisted encoding, and a test that is the only cover for a behaviour stay
+however simple they look.
+
 ## Constraints
 
 - A game crate never depends on `concerto-editor`. The editor hosts the game;
@@ -167,6 +176,10 @@ is not observed.
 - `content/` trees and `<source>.import.toml` files are committed. Never run a
   flow that saves or imports against `examples/*`; copy the project's `content/`
   somewhere disposable first.
+- `examples/tech-demo/assets/lafan1` is Ubisoft's LAFAN1 data under CC BY-NC-ND
+  4.0, not the engine's licence. Keep its files byte-identical to the release,
+  with its `README.md` and `license.txt` beside them. Ask the owner before
+  committing anything imported or adapted from it, `.gasset` files included.
 
 ## Git
 

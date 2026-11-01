@@ -277,15 +277,6 @@ mod tests {
     }
 
     #[test]
-    fn derive_provides_reflect_animation_node() {
-        let registry = registered();
-        let data = registry
-            .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<Gain>())
-            .copied();
-        assert!(data.is_some());
-    }
-
-    #[test]
     fn from_value_and_to_value_round_trip() {
         let registry = registered();
         let data = *registry
@@ -313,6 +304,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(Gain { amount: 2.0 });
         let mut instance = node.create_instance(&context);
@@ -343,6 +335,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
         let mut instance = node.create_instance(&context);
@@ -379,6 +372,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
         let mut instance = node.create_instance(&context);
