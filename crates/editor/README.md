@@ -37,9 +37,10 @@ and everything else the editor registers, and before the MCP plugins under
 `--mcp`. `run` is `run_with` with an empty list.
 
 An extension crate's tests can use the `testing` feature, which exposes
-`hosted::testing` and its `SceneFixture`, and `inspector::row_systems`, the
-systems that turn a selection into inspector rows and send their edits; take it
-as a dev-dependency:
+`hosted::testing` and its `SceneFixture`, `inspector::row_systems`, the systems
+that turn a selection into inspector rows and send their edits, and
+`inspector::value_systems`, the same for a document's values; take it as a
+dev-dependency:
 
 ```toml
 [dev-dependencies]
@@ -726,9 +727,16 @@ titled by its name, with no name field, add-component row or ⋯ menu, since tho
 belong to entity cards. `read` or `edit` returning `None` means the value is
 gone: its card has no rows and an edit is refused with
 `EditError::MissingTarget`. The workspace shows the inspector with the document's
-`inspector` host above it, and the host stops growing while `InspectedValues` is
-there, so the two do not split the card in half. `InspectedValues` is replaced,
-never removed, because a removal is not noticed; an empty list shows no cards.
+`inspector` host above it, and the host neither grows nor shrinks while
+`InspectedValues` is there, so the two do not split the card in half and what
+the host holds is not clipped. `InspectedValues` is replaced, never removed,
+because a removal is not noticed; an empty list shows no cards.
+
+A document that publishes several values can show one at a time by adding a
+`ShownValue` holding one of its targets: the panel then shows only that value's
+card, and inserting another `ShownValue` swaps it. Every value in
+`InspectedValues` stays reachable by name over MCP. `ShownValue` is replaced,
+never removed, for the same reason.
 
 A value's types are the ones registered in the document's preview `App` when it
 has one, because a game's types are registered there, and otherwise in the
@@ -738,10 +746,11 @@ registry does not hold reads "Unsupported type", and MCP refuses to write JSON
 into a value whose root type is missing.
 
 A value has no change detection and is not polled. It is read when an edit lands,
-when `ActiveEditor`, `InspectedValues` or the editor registrations change, when a
-preview arrives, and on the public signal `RefreshInspector`. Anything else that
-writes the value, such as a load replacing it, triggers `RefreshInspector`
-itself; the cost of forgetting is a panel that stays stale until the next edit.
+when `ActiveEditor`, `InspectedValues`, `ShownValue` or the editor registrations
+change, when a preview arrives, and on the public signal `RefreshInspector`.
+Anything else that writes the value, such as a load replacing it, triggers
+`RefreshInspector` itself; the cost of forgetting is a panel that stays stale
+until the next edit.
 Targets that are the same `Arc`s keep their cards and their rows, so a focused
 field keeps its text. Different targets rebuild the cards and reset the scroll.
 

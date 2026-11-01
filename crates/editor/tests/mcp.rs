@@ -36,7 +36,7 @@ use concerto_editor::{
     hosted::{EditTarget, EditWorld, EditWorldSignals, Hosted},
     inspector::{
         DocumentValue, EditContext, EditError, EditableApp, InspectedValues, PropertyEditor,
-        PropertyTarget,
+        PropertyTarget, ShownValue,
     },
     project::{EditorCommand, EditorCommands, ProjectState},
     scene::Play,
@@ -4956,45 +4956,59 @@ struct HeldTune {
     loose: Loose,
 }
 
+fn tune_values(document: Entity) -> Vec<Arc<dyn PropertyTarget>> {
+    vec![
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Tuning".into(),
+            document,
+            read: Box::new(|held| Some(&held.tuning)),
+            edit: Box::new(|held| Some(&mut held.tuning)),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Loose".into(),
+            document,
+            read: Box::new(|held| Some(&held.loose)),
+            edit: Box::new(|held| Some(&mut held.loose)),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Absent".into(),
+            document,
+            read: Box::new(|_| None),
+            edit: Box::new(|_| None),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Twin".into(),
+            document,
+            read: Box::new(|held| Some(&held.tuning)),
+            edit: Box::new(|held| Some(&mut held.tuning)),
+        }),
+        Arc::new(DocumentValue::<HeldTune> {
+            name: "Twin".into(),
+            document,
+            read: Box::new(|held| Some(&held.loose)),
+            edit: Box::new(|held| Some(&mut held.loose)),
+        }),
+    ]
+}
+
 #[derive(Default)]
 struct TuneEditor;
 
 impl AssetEditor for TuneEditor {
     fn build(&self, editor: &mut EntityCommandQueue) {
-        let document = editor.entity();
-        let targets: Vec<Arc<dyn PropertyTarget>> = vec![
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Tuning".into(),
-                document,
-                read: Box::new(|held| Some(&held.tuning)),
-                edit: Box::new(|held| Some(&mut held.tuning)),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Loose".into(),
-                document,
-                read: Box::new(|held| Some(&held.loose)),
-                edit: Box::new(|held| Some(&mut held.loose)),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Absent".into(),
-                document,
-                read: Box::new(|_| None),
-                edit: Box::new(|_| None),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Twin".into(),
-                document,
-                read: Box::new(|held| Some(&held.tuning)),
-                edit: Box::new(|held| Some(&mut held.tuning)),
-            }),
-            Arc::new(DocumentValue::<HeldTune> {
-                name: "Twin".into(),
-                document,
-                read: Box::new(|held| Some(&held.loose)),
-                edit: Box::new(|held| Some(&mut held.loose)),
-            }),
-        ];
+        let targets = tune_values(editor.entity());
         editor.insert((HeldTune::default(), InspectedValues(targets)));
+    }
+}
+
+#[derive(Default)]
+struct ShownTuneEditor;
+
+impl AssetEditor for ShownTuneEditor {
+    fn build(&self, editor: &mut EntityCommandQueue) {
+        let targets = tune_values(editor.entity());
+        let shown = ShownValue(targets[1].clone());
+        editor.insert((HeldTune::default(), InspectedValues(targets), shown));
     }
 }
 
@@ -5028,6 +5042,13 @@ fn tune_editor(app: &mut App) {
     app.register_type::<Tuning>()
         .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune)
         .add_system(LateUpdate, note_value_edits);
+}
+
+fn shown_tune_editor(app: &mut App) {
+    app.register_asset_editor::<Tune, ShownTuneEditor>()
+        .unwrap();
+    app.register_type::<Tuning>()
+        .add_tool::<FinishTune, _>(McpTool::new("finish_tune"), finish_tune);
 }
 
 async fn open_tune(client: &Client) -> String {
@@ -5074,6 +5095,38 @@ struct ValueCalls {
     removed: String,
     after: Value,
     idle: String,
+}
+
+#[test]
+fn a_shown_value_leaves_every_value_reachable_by_name() {
+    let fixture = Fixture::new();
+    fixture.add("content/tune.gasset", "Tune");
+    let log = Log::default();
+    let Some(served) = serve_with(
+        &fixture,
+        &log,
+        game,
+        shown_tune_editor,
+        |client| async move {
+            open_tune(&client).await;
+            ok(&client, "finish_tune").await;
+            let status = until(&client, "status", |status| status.ends_with("busy: no")).await;
+            let hidden = inspected_target(&client, "Tuning").await;
+            let written = set_on_target(&client, "Tuning", "gain", json!(0.75)).await;
+            client.cancel().await.unwrap();
+            (status, hidden, written)
+        },
+    ) else {
+        return;
+    };
+
+    let (status, hidden, written) = served.result;
+    assert_eq!(
+        line(&status, "values: "),
+        "Tuning, Loose, Absent, Twin, Twin"
+    );
+    assert_eq!(hidden["name"], "Tuning");
+    assert_eq!(written["value"]["gain"], 0.75);
 }
 
 #[test]

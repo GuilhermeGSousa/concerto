@@ -403,6 +403,7 @@ impl SceneFixture {
         });
         world.insert_resource(project);
         world.insert_resource(registry);
+        world.insert_resource(AssetServer::new());
 
         world.insert_resource(Routing::default());
         world.insert_resource(HostCursor::default());
