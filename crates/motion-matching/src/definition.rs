@@ -36,7 +36,7 @@ impl Default for SimulationBoneSettings {
         Self {
             position_joint: "Spine2".into(),
             facing_joint: "Hips".into(),
-            facing_axis: Vec3::Z,
+            facing_axis: Vec3::Y,
             position_window: 31,
             facing_window: 61,
         }

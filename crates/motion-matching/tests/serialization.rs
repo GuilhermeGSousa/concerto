@@ -100,7 +100,7 @@ fn definition_defaults_match_the_spec() {
     assert_eq!(definition.speed, 1.1);
     assert_eq!(definition.simulation.position_joint, "Spine2".into());
     assert_eq!(definition.simulation.facing_joint, "Hips".into());
-    assert_eq!(definition.simulation.facing_axis, Vec3::Z);
+    assert_eq!(definition.simulation.facing_axis, Vec3::Y);
     assert_eq!(definition.simulation.position_window, 31);
     assert_eq!(definition.simulation.facing_window, 61);
     assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);

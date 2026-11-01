@@ -4,10 +4,20 @@ use concerto_animation::{
     inertialization::{Inertializer, PoseVelocity},
     pose::Pose,
 };
+use concerto_foundation::transform::Transform;
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
-use crate::{channel::BodyMotion, query::FeatureQuery};
+use crate::{channel::BodyMotion, query::FeatureQuery, simulation::TrajectorySample};
+
+/// One search's raw query and what it was built from, so a drawn query is a single moment in time.
+#[derive(Clone)]
+pub struct LastQuery {
+    pub features: Vec<f32>,
+    pub frame: usize,
+    pub simulation: Transform,
+    pub trajectory: Vec<TrajectorySample>,
+}
 
 /// The per-player state of a motion matching node.
 pub struct MotionMatchingInstance {
@@ -31,6 +41,7 @@ pub struct MotionMatchingInstance {
     pub inertializer: Option<Inertializer>,
     pub output: Pose,
     pub query: Option<FeatureQuery>,
+    pub last_query: Option<LastQuery>,
     pub bone_indices: HashMap<Uuid, usize>,
     pub root_motion: BodyMotion,
 }
@@ -58,6 +69,7 @@ impl MotionMatchingInstance {
             inertializer: None,
             output: Pose::identity(0),
             query: None,
+            last_query: None,
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
         }
