@@ -1077,6 +1077,7 @@ mod tests {
         desired: DesiredMotion,
         method: CharacterDisplacement,
         character_at: Vec3,
+        root_motion: RootMotion,
     ) -> (World, Entity, Entity) {
         let mut world = displacement_world();
         world.register_component::<Collider>();
@@ -1105,7 +1106,7 @@ mod tests {
             Transform::IDENTITY,
         ));
         let character = spawn_character(&mut world, capsule, method, character_at);
-        spawn_root_bone(&mut world, character, forward_by(0.1));
+        spawn_root_bone(&mut world, character, root_motion);
         run_once(&mut world, register_colliders);
         (world, capsule, character)
     }
@@ -1131,6 +1132,7 @@ mod tests {
             walking_into_it,
             clamp(max_distance, FRAC_PI_2),
             Vec3::ZERO,
+            forward_by(0.1),
         );
 
         run_fixed_steps(&mut world, 150);
@@ -1155,6 +1157,7 @@ mod tests {
             DesiredMotion::default(),
             synchronization(1.0),
             Vec3::new(12.0, 0.0, 0.0),
+            forward_by(0.1),
         );
 
         run_fixed_steps(&mut world, 150);
@@ -1163,5 +1166,27 @@ mod tests {
         assert!(held.x < WALL_X - wall_half_width, "{held:?}");
         let uncapped_step = (position_of(&world, character).x - held.x) / 2.0;
         assert!(uncapped_step > 2.0 * wall_half_width, "{uncapped_step}");
+    }
+
+    #[test]
+    fn a_capsule_keeps_up_with_a_character_sprinting_at_the_springs_speed() {
+        let dt = Time::fixed_delta_time().as_secs_f32();
+        let sprint = 6.8;
+        let sprinting = DesiredMotion {
+            velocity: Vec3::new(-sprint, 0.0, 0.0),
+            ..DesiredMotion::default()
+        };
+        let (mut world, capsule, character) = walled_world(
+            0.5,
+            sprinting,
+            synchronization(1.0),
+            Vec3::ZERO,
+            forward_by(-sprint * dt),
+        );
+
+        run_fixed_steps(&mut world, 150);
+
+        let gap = position_of(&world, capsule).distance(position_of(&world, character));
+        assert!(gap < 2.0 * sprint * dt, "{gap}");
     }
 }

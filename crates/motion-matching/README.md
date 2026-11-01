@@ -19,7 +19,7 @@ the crate as `concerto::motion_matching`.
 | `velocity_halflife` | spring halflife for velocity | 0.27 s |
 | `rotation_halflife` | spring halflife for facing | 0.27 s |
 | `sample_dt`, `sample_count` | trajectory sampling | 1/3 s, 3 |
-| `max_pull_speed` | how fast a pull can take the body; a spring already faster keeps its speed | 5 m/s |
+| `max_pull_speed` | how fast a pull can take the body; a spring already faster keeps its speed | 8 m/s |
 
 A halflife here is the one in orangeduck/Motion-Matching: a spring at rest covers
 about 40% of the distance in it, where
@@ -30,9 +30,9 @@ trajectory.
 
 `max_pull_speed` must keep one fixed step under the capsule's radius: bodies use
 discrete collision, so a faster pull could carry the capsule through a wall. The
-default is about 0.17 m a step. A pull never takes the body past that speed, or
-past the spring's own speed when that is higher, so a fast spring needs the same
-care.
+default is about 0.27 m a step, so a capsule thinner than that needs a lower one.
+A pull never takes the body past that speed, or past the spring's own speed when
+that is higher, so a fast spring needs the same care.
 
 A game that wants to know how a character moves asks its body:
 `PhysicsState::linear_velocity` and `body_transform` say where it went after
@@ -412,8 +412,13 @@ and every other method leaves it at zero. `drive_body` takes it and adds half
 of it as velocity, within the limit above, so physics still resolves
 collisions. The capsule shows the body up to a step late, which is why it adds
 half: a full correction would be issued again before the last one showed. So
-the capsule closes the gap over a few steps, and lags the character by a little
-more than a fixed step.
+the capsule closes the gap over a few steps, and lags a character running ahead
+of its spring by about two fixed steps.
+
+Root motion past `max_pull_speed` leaves the capsule behind, and the gap grows
+until the character slows down: the default clears LAFAN1's sprints, which reach
+6.8 m/s at a database `speed` of 1.1. Only a frame's first fixed step takes the
+pull, so a frame long enough for two steps halves what the pull can reach.
 
 Yaw needs no pull, since the facing is not physics. Under `Synchronization` the
 system turns the simulation's facing and the facing it interpolates from by the

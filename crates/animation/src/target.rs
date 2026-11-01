@@ -57,12 +57,11 @@ pub fn animate_targets(
         if evaluated {
             continue;
         }
-        let root_bone = skeleton_component
-            .bones()
-            .iter()
-            .find_map(|bone| bone.entity().and_then(|bone| root_bones.get_entity(bone)));
-        if let Some(mut root_bone) = root_bone {
-            root_bone.root_motion = RootMotion::IDENTITY;
+        for bone in skeleton_component.bones() {
+            if let Some(mut root_bone) = bone.entity().and_then(|bone| root_bones.get_entity(bone))
+            {
+                root_bone.root_motion = RootMotion::IDENTITY;
+            }
         }
     }
 }
@@ -245,6 +244,7 @@ mod tests {
         skeleton: AssetHandle<Skeleton>,
         rest: JointPose,
         names_root: bool,
+        leading_root_bone: bool,
     }
 
     impl Rig {
@@ -269,11 +269,17 @@ mod tests {
                 skeleton,
                 rest,
                 names_root: true,
+                leading_root_bone: false,
             }
         }
 
         fn unnamed_root(mut self) -> Self {
             self.names_root = false;
+            self
+        }
+
+        fn with_leading_root_bone(mut self) -> Self {
+            self.leading_root_bone = true;
             self
         }
 
@@ -328,11 +334,16 @@ mod tests {
                     root_motion: stale_motion(),
                 },
             ));
+            let mut bones = vec![SceneEntityRef::Entity(root)];
+            if self.leading_root_bone {
+                let leading = world.spawn(AnimationRootBone::default());
+                bones.insert(0, SceneEntityRef::Entity(leading));
+            }
             world.spawn((
                 player,
                 SkeletonComponent {
                     skeleton: self.skeleton,
-                    bones: vec![SceneEntityRef::Entity(root)],
+                    bones,
                     root: self.names_root.then_some(SceneEntityRef::Entity(root)),
                 },
             ));
@@ -455,6 +466,22 @@ mod tests {
 
         assert_eq!(
             rig.unnamed_root().root_motion_after_animating(player),
+            RootMotion::IDENTITY
+        );
+    }
+
+    #[test]
+    fn a_paused_player_clears_every_root_bone() {
+        let mut rig = Rig::new(Quat::IDENTITY).loaded_skeleton();
+        let clip = rig.moving_clip(Vec3::X);
+        let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
+        let mut player = rig.player(graph);
+        rig.update(&mut player, 0.5);
+        player.set_paused(true);
+
+        assert_eq!(
+            rig.with_leading_root_bone()
+                .root_motion_after_animating(player),
             RootMotion::IDENTITY
         );
     }

@@ -123,9 +123,11 @@ impl Synchronization {
 impl Adjustment {
     fn apply(&self, dt: f32, capsule: Placement, moved: Placement, delta: RootMotion) -> Placement {
         let gap = (capsule.position - moved.position).with_y(0.0);
-        let mut shift = damp_adjustment_exact(gap, self.position_halflife, dt, ADJUSTMENT_EPS);
+        let halflife = self.position_halflife.max(0.0);
+        let mut shift = damp_adjustment_exact(gap, halflife, dt, ADJUSTMENT_EPS);
         let yaw_gap = yaw_from(moved.rotation, capsule.rotation);
-        let mut turn = damp_adjustment_exact(yaw_gap, self.rotation_halflife, dt, ADJUSTMENT_EPS);
+        let halflife = self.rotation_halflife.max(0.0);
+        let mut turn = damp_adjustment_exact(yaw_gap, halflife, dt, ADJUSTMENT_EPS);
         if self.by_velocity {
             let turned = to_scaled_angle_axis(quat_abs(delta.rotation)).length();
             let max_shift = self.position_max_ratio * delta.translation.length();
@@ -286,6 +288,7 @@ mod tests {
         );
 
         assert_position(result.character.position, Vec3::new(1.0, 0.0, 2.0));
+        assert_yaw(result.character.rotation, 0.4);
     }
 
     #[test]
@@ -305,6 +308,27 @@ mod tests {
         );
 
         assert_position(result.character.position, Vec3::new(2.0, 0.0, 0.0));
+        assert_yaw(result.character.rotation, 0.1);
+    }
+
+    #[test]
+    fn a_negative_halflife_closes_the_gap_at_once() {
+        let negative = CharacterDisplacement::Adjustment(Adjustment {
+            by_velocity: false,
+            position_halflife: -1.0,
+            rotation_halflife: -1.0,
+            ..Adjustment::default()
+        });
+
+        let result = negative.displace(
+            0.016,
+            at(0.0, 0.0, 0.0),
+            at(1.0, 0.0, 0.5),
+            RootMotion::IDENTITY,
+        );
+
+        assert_position(result.character.position, Vec3::ZERO);
+        assert_yaw(result.character.rotation, 0.0);
     }
 
     #[test]

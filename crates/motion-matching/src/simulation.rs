@@ -71,7 +71,7 @@ impl Default for CharacterSimulation {
             rotation_halflife: halflife,
             sample_dt: 1.0 / 3.0,
             sample_count: 3,
-            max_pull_speed: 5.0,
+            max_pull_speed: 8.0,
             velocity: Spring::critically_damped(Vec3::ZERO, frequency(halflife)),
             facing: Spring::critically_damped(Quat::IDENTITY, frequency(halflife)),
             pull: Vec3::ZERO,
