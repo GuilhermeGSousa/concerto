@@ -402,6 +402,14 @@ impl Tab {
         &self.panels().channel_rows[index]
     }
 
+    pub(crate) fn channel_row_entity(&self, index: usize) -> Entity {
+        self.channel_row(index).row
+    }
+
+    pub(crate) fn settings_row(&self) -> Entity {
+        self.panels().settings
+    }
+
     fn channel_remove(&self, index: usize) -> Entity {
         let row = self.parent(self.channel_row(index).row);
         self.world()

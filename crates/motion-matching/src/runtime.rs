@@ -19,7 +19,6 @@ use concerto_reflect::TypeRegistry;
 use log::error;
 
 use crate::{
-    channel::BodyMotion,
     database::{BakeError, MotionDatabase},
     instance::MotionMatchingInstance,
     node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
@@ -67,32 +66,6 @@ fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeE
         second_pose
     };
     Ok((pose, velocity))
-}
-
-fn body_motion_at(database: &MotionDatabase, frame: usize) -> BodyMotion {
-    let Some(range) = database.range_of(frame) else {
-        return BodyMotion::default();
-    };
-    let previous = if frame > range.start {
-        frame - 1
-    } else {
-        frame
-    };
-    let next = if frame + 1 < range.end {
-        frame + 1
-    } else {
-        frame
-    };
-    if previous == next {
-        return BodyMotion::default();
-    }
-    let dt = (next - previous) as f32 / database.rate();
-    let previous = database.simulation(previous);
-    let next = database.simulation(next);
-    BodyMotion {
-        velocity: (next.translation - previous.translation) / dt,
-        angular_velocity: angular_velocity(next.rotation, previous.rotation, dt),
-    }
 }
 
 fn root_delta(instance: &MotionMatchingInstance, sources: &Sources) -> RootMotion {
@@ -177,7 +150,7 @@ fn initialise(instance: &mut MotionMatchingInstance, sources: &Sources) -> Resul
     instance.rotation_change = 0.0;
     instance.query = Some(query);
     instance.bone_indices = bone_indices;
-    instance.root_motion = body_motion_at(database, frame);
+    instance.root_motion = database.body_motion(frame);
     scatter(instance, sources);
     instance.initialised = true;
     Ok(())
@@ -324,7 +297,7 @@ fn run(
         );
     }
     instance.last_delta = dt;
-    instance.root_motion = body_motion_at(database, instance.frame);
+    instance.root_motion = database.body_motion(instance.frame);
     let held = instance.frame == previous_frame && instance.frame + 1 == range.end;
     let delta = if held {
         RootMotion::IDENTITY

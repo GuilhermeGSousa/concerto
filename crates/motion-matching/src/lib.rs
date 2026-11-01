@@ -21,8 +21,8 @@ mod test_support;
 
 pub use bake::{bake, bake_with_progress};
 pub use channel::{
-    build_channels, extract_features, BodyMotion, ChannelSource, FeatureChannel, FrameContext,
-    ReflectFeatureChannel,
+    build_channels, extract_features, preview_features, BodyMotion, ChannelSource, FeatureChannel,
+    FeatureShape, FrameContext, ReflectFeatureChannel,
 };
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{

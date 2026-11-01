@@ -1,4 +1,8 @@
-use std::{f32::consts::FRAC_1_SQRT_2, sync::Arc, time::Duration};
+use std::{
+    f32::consts::{FRAC_1_SQRT_2, FRAC_PI_2},
+    sync::Arc,
+    time::Duration,
+};
 
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
 use concerto_app::{App, edit_time::AtPreviewTime, plugins::TransformPlugin};
@@ -25,8 +29,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
-    BonePositions, MotionDatabase, MotionDatabaseDefinition, MotionEntry, StoredChannel, TimeRange,
-    bake,
+    BonePositions, BoneVelocities, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    StoredChannel, TimeRange, TrajectoryPositions, bake,
 };
 use concerto_reflect::{TypeRegistry, to_value};
 use glam::{Quat, Vec3};
@@ -82,11 +86,19 @@ fn entry(range: Option<TimeRange>) -> MotionEntry {
 }
 
 fn baked_from(entries: Vec<MotionEntry>, speed: f32) -> BakedPlayback {
+    baked_with(entries, speed, Vec::new())
+}
+
+fn baked_with(
+    entries: Vec<MotionEntry>,
+    speed: f32,
+    channels: Vec<StoredChannel>,
+) -> BakedPlayback {
     let mut definition = MotionDatabaseDefinition {
         skeleton: AssetHandle::weak(AssetId::new()),
         rate: RATE,
         speed,
-        channels: Vec::new(),
+        channels,
         ..Default::default()
     };
     definition.simulation.position_joint = "Spine".into();
@@ -94,11 +106,38 @@ fn baked_from(entries: Vec<MotionEntry>, speed: f32) -> BakedPlayback {
     definition.entries = entries;
     let skeleton = skeleton();
     let sampled: Vec<&AnimationClip> = clips.iter().collect();
-    let database = bake(&definition, &skeleton, &sampled, &TypeRegistry::default()).unwrap();
+    let mut registry = TypeRegistry::default();
+    registry.register::<BoneVelocities>();
+    registry.register::<TrajectoryPositions>();
+    let database = bake(&definition, &skeleton, &sampled, &registry).unwrap();
+    let channels = database.live_channels(&registry).unwrap();
     BakedPlayback {
         database: Arc::new(database),
         skeleton: Arc::new(skeleton),
         clips: clips.into_iter().map(Arc::new).collect(),
+        channels: channels.into(),
+    }
+}
+
+fn spine_velocities() -> StoredChannel {
+    StoredChannel {
+        type_name: "BoneVelocities".into(),
+        value: to_value(&BoneVelocities {
+            bones: vec!["Spine".into()],
+            weight: 1.0,
+        })
+        .unwrap(),
+    }
+}
+
+fn trajectory_positions() -> StoredChannel {
+    StoredChannel {
+        type_name: "TrajectoryPositions".into(),
+        value: to_value(&TrajectoryPositions {
+            samples: vec![0, 1, 2],
+            weight: 1.0,
+        })
+        .unwrap(),
     }
 }
 
@@ -145,6 +184,7 @@ struct Stage {
     play: BoxedSystem,
     propagate: BoxedSystem,
     draw: BoxedSystem,
+    features: BoxedSystem,
 }
 
 impl Stage {
@@ -161,10 +201,12 @@ impl Stage {
         world.insert_resource(EventChannel::<DatabaseProgress>::new());
         world.add_listener(show_database);
         world.add_listener(seek_database);
+        world.add_listener(show_channel);
         let mut play = play_database.into_boxed_system();
         let mut propagate = propagate_global_transforms.into_boxed_system();
         let mut draw = draw_simulation_bone.into_boxed_system();
-        for system in [&mut play, &mut propagate, &mut draw] {
+        let mut features = draw_feature_channels.into_boxed_system();
+        for system in [&mut play, &mut propagate, &mut draw, &mut features] {
             system.initialize(&mut world);
         }
         Self {
@@ -172,6 +214,7 @@ impl Stage {
             play,
             propagate,
             draw,
+            features,
         }
     }
 
@@ -185,6 +228,7 @@ impl Stage {
         self.play.run_and_apply((), &mut self.world);
         self.propagate.run_and_apply((), &mut self.world);
         self.draw.run_and_apply((), &mut self.world);
+        self.features.run_and_apply((), &mut self.world);
         self.world.tick();
     }
 
@@ -225,12 +269,46 @@ impl Stage {
 
 #[test]
 fn the_position_steps_at_the_rate() {
-    assert_eq!(stepped(3.0, 0.5, 30.0, 100), 18.0);
+    assert_eq!(stepped(3.0, 0.5, 30.0, 0..100), 18.0);
 }
 
 #[test]
 fn the_position_wraps_past_the_last_frame() {
-    assert_eq!(stepped(9.5, 0.1, 10.0, 10), 0.5);
+    assert_eq!(stepped(9.5, 0.1, 10.0, 0..10), 0.5);
+}
+
+#[test]
+fn the_position_wraps_to_the_start_of_its_range() {
+    assert_eq!(stepped(14.5, 0.1, 10.0, 10..15), 10.5);
+}
+
+#[test]
+fn a_position_outside_the_range_starts_it() {
+    assert_eq!(stepped(3.0, 0.1, 10.0, 10..15), 10.0);
+    assert_eq!(stepped(0.0, 0.1, 10.0, 0..0), 0.0);
+}
+
+#[test]
+fn with_no_entry_sought_the_whole_database_loops() {
+    let database = baked().database;
+
+    assert_eq!(looped_range(&database, None), 0..database.frame_count());
+    assert_eq!(looped_range(&database, Some(7)), 0..database.frame_count());
+}
+
+#[test]
+fn a_sought_entry_loops_on_itself_and_does_not_run_into_the_next() {
+    let mut stage = Stage::shown();
+    stage.seek(0, 1.99);
+    stage.world.get_resource_mut::<Time>().unwrap().update();
+    std::thread::sleep(Duration::from_secs_f32(3.0 / RATE));
+    stage.world.get_resource_mut::<Time>().unwrap().update();
+
+    stage.frame();
+
+    let frame = stage.playback().frame();
+    assert_eq!(stage.database().entry_of(frame), Some(0));
+    assert!(frame < 30, "{frame}");
 }
 
 #[test]
@@ -430,6 +508,112 @@ fn the_simulation_bone_is_drawn_while_a_database_plays() {
 }
 
 #[test]
+fn a_shape_goes_through_the_simulation_bone() {
+    let bone = Transform::from_translation_rotation(
+        Vec3::new(1.0, 0.0, 2.0),
+        Quat::from_rotation_y(FRAC_PI_2),
+    );
+
+    let ring = FeatureShape::Ring {
+        center: Vec3::Z,
+        radius: 0.5,
+    };
+    let FeatureShape::Ring { center, radius } = placed_shape(&bone, ring) else {
+        panic!("a ring stays a ring");
+    };
+    assert!(center.distance(Vec3::new(2.0, 0.0, 2.0)) < NEAR, "{center}");
+    assert_eq!(radius, 0.5);
+
+    let arrow = FeatureShape::Arrow {
+        start: Vec3::Z,
+        end: Vec3::new(0.0, 1.0, 2.0),
+    };
+    let FeatureShape::Arrow { start, end } = placed_shape(&bone, arrow) else {
+        panic!("an arrow stays an arrow");
+    };
+    assert!(start.distance(Vec3::new(2.0, 0.0, 2.0)) < NEAR, "{start}");
+    assert!(end.distance(Vec3::new(3.0, 1.0, 2.0)) < NEAR, "{end}");
+}
+
+#[test]
+fn a_bone_velocity_starts_at_the_bone_of_the_shown_frame() {
+    let shown = baked_with(vec![entry(None)], 1.0, vec![spine_velocities()]);
+
+    let shapes = frame_shapes(&shown, 6).unwrap();
+
+    let [FeatureShape::Arrow { start, .. }] = shapes[0][..] else {
+        panic!("{shapes:?}");
+    };
+    assert!(start.distance(Vec3::new(0.0, 1.525, 0.0)) < NEAR, "{start}");
+}
+
+#[test]
+fn the_shapes_draw_the_features_of_the_shown_frame() {
+    let shown = baked_with(vec![entry(None)], 1.0, vec![trajectory_positions()]);
+
+    let shapes = frame_shapes(&shown, 30).unwrap();
+
+    let features = shown.database.features(30);
+    let FeatureShape::Line { end, .. } = shapes[0][0] else {
+        panic!("{shapes:?}");
+    };
+    assert_eq!(end, Vec3::new(features[0], 0.0, features[1]));
+}
+
+#[test]
+fn every_channel_is_drawn_while_a_database_plays() {
+    let drawn = |channels: Vec<StoredChannel>| {
+        let mut stage = Stage::new();
+        let shown = baked_with(vec![entry(None)], 1.0, channels);
+        stage.world.trigger(ShowDatabase(Some(shown)));
+        stage.frame();
+        stage.segments()
+    };
+
+    let none = drawn(Vec::new());
+    let one = drawn(vec![spine_velocities()]);
+    let both = drawn(vec![spine_velocities(), trajectory_positions()]);
+
+    assert!(one > none);
+    assert!(both > one);
+}
+
+#[test]
+fn the_picked_channel_has_its_full_colour_and_the_others_are_dimmed() {
+    let full = channel_color(1, Some(1)).to_array();
+
+    for dimmed in [channel_color(1, None), channel_color(1, Some(0))] {
+        let dimmed = dimmed.to_array();
+        for index in 0..3 {
+            assert!((dimmed[index] - full[index] * 0.4).abs() < NEAR);
+        }
+        assert_eq!(dimmed[3], full[3]);
+    }
+}
+
+#[test]
+fn channels_take_their_colours_in_turn() {
+    let full = |channel| channel_color(channel, Some(channel));
+
+    assert_ne!(full(0), full(1));
+    assert_eq!(full(CHANNEL_COLORS.len()), full(0));
+}
+
+#[test]
+fn no_channel_uses_the_simulation_bones_colour() {
+    assert!(!CHANNEL_COLORS.contains(&SIMULATION_COLOR));
+}
+
+#[test]
+fn the_preview_keeps_the_channel_it_was_told_about() {
+    let mut stage = Stage::shown();
+
+    stage.world.trigger(ShowChannel(Some(2)));
+
+    assert_eq!(stage.playback().picked, Some(2));
+}
+
+#[test]
 fn no_simulation_bone_is_drawn_with_no_database() {
     let mut stage = Stage::new();
 
@@ -560,6 +744,14 @@ fn preview_shows_a_database(tab: &Tab) -> bool {
         .unwrap()
         .shown
         .is_some()
+}
+
+fn picked_in_preview(tab: &Tab) -> Option<usize> {
+    tab.f
+        .scene_world(tab.document)
+        .get_resource::<DatabasePlayback>()
+        .unwrap()
+        .picked
 }
 
 fn scrub(tab: &mut Tab, time: f32) {
@@ -873,6 +1065,27 @@ fn the_timeline_follows_the_baked_frames_of_the_selected_entry() {
 }
 
 #[test]
+fn the_timeline_head_comes_back_without_the_playback_leaving_the_selected_entry() {
+    let mut tab = built(logging());
+    let document = tab.document;
+    let database = tab.state().playback.as_ref().unwrap().database.clone();
+    let last = database.ranges().next().unwrap().end - 1;
+    let (_, end) = database.clip_time(last).unwrap();
+
+    scrub(&mut tab, end);
+
+    tab.f.frames_until("the head never came back", |f| {
+        let frame = f
+            .scene_world(document)
+            .get_resource::<DatabasePlayback>()
+            .unwrap()
+            .frame();
+        assert_eq!(database.entry_of(frame), Some(0));
+        state(f, document).time < end
+    });
+}
+
+#[test]
 fn the_timeline_ignores_frames_of_other_entries() {
     let mut tab = built(logging());
     tab.state_mut().selected_entry = Some(1);
@@ -922,4 +1135,39 @@ fn a_clip_being_read_marks_the_document() {
     release.send(()).unwrap();
     tab.until_settled();
     assert!(!tab.working());
+}
+
+#[test]
+fn picking_a_channel_row_tells_the_preview_and_settings_clears_it() {
+    let mut tab = built(fixture_with(database_recipe));
+    assert_eq!(picked_in_preview(&tab), None);
+
+    let row = tab.channel_row_entity(0);
+    tab.clicked(row);
+    tab.f.frame();
+    assert_eq!(picked_in_preview(&tab), Some(0));
+
+    let settings = tab.settings_row();
+    tab.clicked(settings);
+    tab.f.frame();
+    assert_eq!(picked_in_preview(&tab), None);
+}
+
+#[test]
+fn a_channel_whose_type_differs_from_the_baked_one_is_not_highlighted() {
+    let mut tab = built(fixture_with(database_recipe));
+    let row = tab.channel_row_entity(0);
+    tab.clicked(row);
+    tab.f.frame();
+
+    tab.f
+        .world
+        .get_component_for_entity_mut::<DefinitionDocument>(tab.document)
+        .unwrap()
+        .channels[0]
+        .type_name = "SomethingElse".into();
+    tab.f.frame();
+    tab.f.frame();
+
+    assert_eq!(picked_in_preview(&tab), None);
 }
