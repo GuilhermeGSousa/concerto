@@ -18,12 +18,14 @@ directory; a name Cargo would reject (anything but letters, digits, `-` and
 `_`, a leading digit, a Rust keyword, `test`, or a Cargo build directory name:
 `build`, `deps`, `examples`, `incremental`) is refused, and so is the name of an
 engine crate the project depends on (`concerto`, `concerto-editor`,
-`concerto-asset-build`).
+`concerto-asset-build`, `concerto-animation-editor`).
 
 It writes:
 
-- `Cargo.toml`: the game package, with a `[lib]` of the default crate type and
-  a `[[bin]]` named after the package.
+- `Cargo.toml`: the game package, with a `[lib]` of the default crate type, a
+  `[[bin]]` named after the package, and a `[package.metadata.concerto.editor]`
+  table listing `concerto-animation-editor`, so the project's editor has the
+  clip editor and calls `run_with`; see Editor plugins.
 - `src/lib.rs`: the recipe, `pub fn game(app: &mut App)`, which registers
   `DefaultPlugins`.
 - `src/main.rs`: `concerto::run(<crate>::game, concerto::content_registry!())`.
@@ -83,6 +85,19 @@ fn main() {
 
 With no list, or an empty one, the generated files are as above.
 
+`new` writes one entry, the clip editor, and a project that doesn't want it
+removes it and runs `editor --update`:
+
+```toml
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+]
+```
+
+`editor` adds nothing to a game's list, so a game without that entry has no clip
+tab until it adds the entry and runs `editor --update`.
+
 An entry has these keys, and no others:
 
 - `package`: the Cargo package. It cannot be the game or `concerto-editor`, and
@@ -125,8 +140,8 @@ and the published 0.1.0 does not, so the tool warns when `--engine` is absent.
 
 With `--engine <path>`, a Concerto checkout resolved against the working
 directory, each dependency also names its own crate in that checkout: `.` for
-`concerto`, `crates/asset-build` for `concerto-asset-build`, and
-`crates/editor` for `concerto-editor`.
+`concerto`, `crates/asset-build` for `concerto-asset-build`, `crates/editor` for
+`concerto-editor`, and `crates/<dir>` for a plugin package `concerto-<dir>`.
 
 ```toml
 concerto = { version = "0.1.0", path = "../.." }

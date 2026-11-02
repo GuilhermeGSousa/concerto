@@ -1,4 +1,5 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation_editor::{ClipFacts, preview::SetClipTransport};
 use concerto_ecs::{
     Changed, Entity, IntoSystem, Query, ResMut, Resource, With, World,
     entity::hierarchy::{ChildOf, Children},
@@ -6,7 +7,6 @@ use concerto_ecs::{
 use concerto_editor::{
     asset_editor::{BackgroundWork, EditorDocument, EditorHosts},
     asset_picker::AssetPickerMenu,
-    clip_editor::{ClipFacts, preview::SetClipTransport},
     hosted::testing::SceneFixture,
     inspector::{InspectedValues, PropertyCommits, ShownValue, commit_number},
     timeline::{Timeline, TimelineSelected, time_of_frame},

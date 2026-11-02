@@ -1,8 +1,11 @@
 use std::{ops::Range, path::PathBuf, sync::Arc, thread::JoinHandle};
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation_editor::{
+    preview::{ClearClip, ClipPreviewProgress, SeekClip, ShowClip},
+    read_clip,
+};
 use concerto_app::{App, edit_time::AtPreviewTime, schedule_groups::LateUpdate};
-use concerto_color::Color;
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
 use concerto_ecs::{
     Entity, Event, IntoSystemConfig, Query, Res, ResMut, Resource,
@@ -14,10 +17,6 @@ use concerto_ecs::{
     },
 };
 use concerto_editor::{
-    clip_editor::{
-        preview::{ClearClip, ClipPreviewProgress, SeekClip, ShowClip},
-        read_clip,
-    },
     hosted::HostedAppEvents,
     inspector::{InspectedValues, ShownValue},
     preview::PreviewSignals,
@@ -34,24 +33,13 @@ use concerto_foundation::{
     transform::{GlobalTransform, Transform, systems::propagate_global_transforms},
 };
 use concerto_mesh::{JointPose, Skeleton, SkeletonComponent};
-use concerto_motion_matching::{
-    BodyMotion, FeatureChannel, FeatureShape, FrameContext, MotionDatabase, bake::model_pose,
-    preview_features,
+use concerto_motion_matching::{FeatureChannel, FeatureShape, MotionDatabase, preview_features};
+use concerto_motion_matching_gizmos::{
+    BakedFrame, SIMULATION_WIDTH, channel_color, draw_shape, draw_simulation, local_pose,
+    placed_pose,
 };
 
 use crate::{build::BakedState, document::DefinitionDocument, panels::shown_index};
-
-const SIMULATION_COLOR: Color = Color::rgba(1.0, 0.85, 0.1, 1.0);
-const SIMULATION_RADIUS: f32 = 0.3;
-const SIMULATION_ARROW: f32 = 0.6;
-const SIMULATION_WIDTH: f32 = 2.0;
-const CHANNEL_COLORS: [Color; 4] = [
-    Color::rgba(0.2, 0.8, 1.0, 1.0),
-    Color::rgba(0.3, 1.0, 0.4, 1.0),
-    Color::rgba(1.0, 0.35, 0.9, 1.0),
-    Color::rgba(1.0, 0.5, 0.15, 1.0),
-];
-const DIMMED: f32 = 0.4;
 
 /// A baked database with the skeleton and the clips it samples, as a preview plays it.
 #[derive(Clone)]
@@ -128,20 +116,8 @@ fn frame_in_entry(database: &MotionDatabase, entry: usize, time: f32) -> Option<
     Some(range.start + (along.round().max(0.0) as usize).min(last))
 }
 
-fn local_pose(shown: &BakedPlayback, frame: usize) -> Option<Vec<JointPose>> {
-    let clips: Vec<&AnimationClip> = shown.clips.iter().map(Arc::as_ref).collect();
-    shown.database.pose(frame, &shown.skeleton, &clips).ok()
-}
-
-fn placed_pose(shown: &BakedPlayback, frame: usize, mut pose: Vec<JointPose>) -> Vec<JointPose> {
-    let simulation = shown.database.simulation(frame);
-    for (joint, parent) in pose.iter_mut().zip(shown.skeleton.parents.iter()) {
-        if parent.is_none() {
-            joint.translation = simulation.rotation * joint.translation + simulation.translation;
-            joint.rotation = simulation.rotation * joint.rotation;
-        }
-    }
-    pose
+fn sampled_clips(shown: &BakedPlayback) -> Vec<&AnimationClip> {
+    shown.clips.iter().map(Arc::as_ref).collect()
 }
 
 fn write_pose(
@@ -181,7 +157,10 @@ fn play_database(
         looped_range(&shown.database, playback.looped),
     );
     let frame = playback.position as usize;
-    let Some(pose) = local_pose(shown, frame).map(|pose| placed_pose(shown, frame, pose)) else {
+    let clips = sampled_clips(shown);
+    let Some(pose) = local_pose(&shown.database, &shown.skeleton, &clips, frame)
+        .map(|pose| placed_pose(&shown.skeleton, &shown.database.simulation(frame), pose))
+    else {
         return;
     };
     if let Some(stores) = stores {
@@ -203,59 +182,13 @@ fn play_database(
 }
 
 fn frame_shapes(shown: &BakedPlayback, frame: usize) -> Option<Vec<Vec<FeatureShape>>> {
-    let local = local_pose(shown, frame)?;
-    let model = model_pose(&shown.skeleton, &placed_pose(shown, frame, local.clone()));
-    let trajectory = shown.database.trajectory_samples(frame);
-    let context = FrameContext {
-        skeleton: &shown.skeleton,
-        local_pose: &local,
-        model_pose: &model,
-        model_velocities: &[],
-        simulation: shown.database.simulation(frame),
-        body: BodyMotion::default(),
-        trajectory: &trajectory,
-    };
+    let clips = sampled_clips(shown);
+    let baked = BakedFrame::new(&shown.database, &shown.skeleton, &clips, frame)?;
     Some(preview_features(
         &shown.channels,
-        &context,
+        &baked.context(&shown.skeleton),
         shown.database.features(frame),
     ))
-}
-
-fn placed_shape(bone: &Transform, shape: FeatureShape) -> FeatureShape {
-    match shape {
-        FeatureShape::Ring { center, radius } => FeatureShape::Ring {
-            center: bone.transform_point(center),
-            radius,
-        },
-        FeatureShape::Line { start, end } => FeatureShape::Line {
-            start: bone.transform_point(start),
-            end: bone.transform_point(end),
-        },
-        FeatureShape::Arrow { start, end } => FeatureShape::Arrow {
-            start: bone.transform_point(start),
-            end: bone.transform_point(end),
-        },
-    }
-}
-
-fn draw_shape(gizmos: &mut DebugGizmos, bone: &Transform, shape: FeatureShape, color: Color) {
-    match placed_shape(bone, shape) {
-        FeatureShape::Ring { center, radius } => {
-            gizmos.circle(center, bone.local_y(), radius, color)
-        }
-        FeatureShape::Line { start, end } => gizmos.line(start, end, color),
-        FeatureShape::Arrow { start, end } => gizmos.arrow(start, end, color),
-    }
-}
-
-fn channel_color(channel: usize, picked: Option<usize>) -> Color {
-    let color = CHANNEL_COLORS[channel % CHANNEL_COLORS.len()];
-    if picked == Some(channel) {
-        return color;
-    }
-    let [red, green, blue, alpha] = color.to_array();
-    Color::rgba(red * DIMMED, green * DIMMED, blue * DIMMED, alpha)
 }
 
 fn stage_of(
@@ -283,15 +216,8 @@ fn draw_simulation_bone(
     };
     let stage = stage_of(&skeletons, &parents, &globals);
     let bone = stage.mul_transform(shown.database.simulation(playback.frame()));
-    let tip = bone.translation + bone.local_z() * SIMULATION_ARROW;
     gizmos.set_line_width(SIMULATION_WIDTH);
-    gizmos.circle(
-        bone.translation,
-        bone.local_y(),
-        SIMULATION_RADIUS,
-        SIMULATION_COLOR,
-    );
-    gizmos.arrow(bone.translation, tip, SIMULATION_COLOR);
+    draw_simulation(&mut gizmos, &bone);
 }
 
 fn draw_feature_channels(

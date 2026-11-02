@@ -43,7 +43,7 @@ fn frequency(halflife: f32) -> f32 {
     halflife_to_damping(halflife) / 2.0
 }
 
-/// The spring simulation of a character, stepped on the fixed timestep and sampled ahead for motion matching; its tuning is public and its state is not.
+/// The spring simulation of a character, stepped on the fixed timestep and sampled ahead for motion matching; its tuning is public and its state is private, read through `interpolated_facing`.
 #[derive(Component, Reflect, Clone, Debug, PartialEq)]
 #[reflect(Component, Default)]
 #[require(DesiredMotion)]
@@ -92,6 +92,11 @@ impl CharacterSimulation {
                 ..self.facing
             },
         )
+    }
+
+    /// The facing `alpha` of the way from the last fixed step to the current one.
+    pub fn interpolated_facing(&self, alpha: f32) -> Quat {
+        self.previous_facing.slerp(self.facing.value, alpha)
     }
 
     /// Advances the springs `dt` towards `desired` and returns the horizontal velocity the body should move at.

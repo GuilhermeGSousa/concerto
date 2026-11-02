@@ -90,10 +90,16 @@ impl FeatureChannel for BonePositions {
     }
 
     fn preview(&self, _frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
-        out.extend(features.chunks_exact(3).map(|value| FeatureShape::Ring {
-            center: Vec3::from_slice(value),
-            radius: BONE_RING,
-        }));
+        out.extend(
+            features
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|value| FeatureShape::Ring {
+                    center: Vec3::from_slice(value),
+                    radius: BONE_RING,
+                }),
+        );
     }
 }
 
@@ -143,7 +149,7 @@ impl FeatureChannel for BoneVelocities {
     }
 
     fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
-        for (bone, velocity) in self.bones.iter().zip(features.chunks_exact(3)) {
+        for (bone, velocity) in self.bones.iter().zip(features.as_chunks::<3>().0) {
             let pose = frame
                 .skeleton
                 .bone_index(bone)
@@ -210,7 +216,7 @@ impl FeatureChannel for TrajectoryPositions {
 
     fn preview(&self, _frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
         let mut previous = Vec3::ZERO;
-        for value in features.chunks_exact(2) {
+        for value in features.as_chunks::<2>().0 {
             let position = Vec3::new(value[0], 0.0, value[1]);
             out.push(FeatureShape::Line {
                 start: previous,
@@ -274,7 +280,7 @@ impl FeatureChannel for TrajectoryDirections {
     }
 
     fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
-        for (sample, value) in self.samples.iter().zip(features.chunks_exact(2)) {
+        for (sample, value) in self.samples.iter().zip(features.as_chunks::<2>().0) {
             let direction = Vec3::new(value[0], 0.0, value[1]).normalize_or_zero();
             if let (Some(sample), true) = (frame.trajectory.get(*sample), direction != Vec3::ZERO) {
                 let start = local_point(frame, sample.position);

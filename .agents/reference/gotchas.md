@@ -121,8 +121,11 @@ fix the entry in the same commit as the change that made it false.
   skinned mesh entity a real world transform as well transforms it twice.
 - **`Pose::identity` has zero translation per joint.** Applying a pose that was
   never evaluated collapses every bone to the origin and the mesh folds onto
-  itself. `AnimationPlayer::evaluate` returns early when no graph evaluated;
-  keep that guard in any new pose path.
+  itself. A pose from `PosePool::acquire` starts at the skeleton's rest pose,
+  recycled ones too, so a node that writes nothing leaves rest; don't overwrite
+  `output` with identity. A pool that was never given a rest pose, as in a test,
+  hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and
+  returns early when no graph evaluated; keep that guard in any new pose path.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 

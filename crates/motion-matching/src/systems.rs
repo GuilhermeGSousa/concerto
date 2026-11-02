@@ -98,9 +98,7 @@ pub fn apply_character_displacement(
         let Some(mut character) = transforms.get_entity(entity) else {
             continue;
         };
-        let rotation = simulation
-            .previous_facing
-            .slerp(simulation.facing.value, alpha);
+        let rotation = simulation.interpolated_facing(alpha);
         let displaced = method.displace(
             dt,
             Placement { position, rotation },
@@ -912,6 +910,89 @@ mod tests {
         let placed = position_of(world, character);
         assert!(placed.z < 0.0, "{placed:?}");
         assert_eq!(placed.y, height);
+    }
+
+    #[test]
+    fn a_skeleton_on_a_root_standing_across_its_rest_moves_and_turns_the_character() {
+        let mut app = app_with_every_plugin();
+        let root_id = Uuid::from_u128(22);
+        let base = Quat::from_rotation_x(-FRAC_PI_2);
+        let server = app.get_resource::<AssetServer>().unwrap().clone();
+        let mut clip = AnimationClip::default();
+        clip.add_channel(
+            root_id,
+            AnimationChannel::new(
+                vec![0.0, 10.0],
+                AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, -10.0)]),
+            ),
+        );
+        let seconds: Vec<f32> = (0..=10).map(|second| second as f32).collect();
+        let rotations = seconds
+            .iter()
+            .map(|second| Quat::from_rotation_y(*second) * base)
+            .collect();
+        clip.add_channel(
+            root_id,
+            AnimationChannel::new(seconds, AnimationChanelOutput::Rotation(rotations)),
+        );
+        let clip = server.add(clip);
+        let graph = server.add(AnimationGraph::from_node(AnimationClipNode::new(clip)));
+        let skeleton = server.add(
+            Skeleton::new(
+                vec![Mat4::IDENTITY],
+                vec![None],
+                vec!["Root".to_string()],
+                vec![JointPose::IDENTITY],
+                vec![root_id],
+            )
+            .unwrap(),
+        );
+        app.update();
+
+        let world = app.main_mut().world_mut();
+        let capsule = spawn_capsule(world, Vec3::ZERO);
+        let root = world.spawn(Transform::IDENTITY);
+        let character =
+            spawn_linked_character(world, capsule, root, synchronization(1.0), Vec3::ZERO);
+        world.insert(
+            (
+                ChildOf::new(character),
+                AnimationRootBone::default(),
+                AnimationPlayer::new(1),
+                AnimationHandleComponent::new(graph),
+                SkeletonComponent::new(
+                    skeleton,
+                    vec![SceneEntityRef::Entity(root)],
+                    Some(SceneEntityRef::Entity(root)),
+                ),
+            ),
+            root,
+        );
+
+        app.update();
+        app.update();
+        let world = app.main().world();
+        let start = position_of(world, character);
+        let start_facing = rotation_of(world, character);
+
+        let mut elapsed = 0.0;
+        for _ in 0..4 {
+            thread::sleep(Duration::from_millis(5));
+            app.update();
+            elapsed += app.get_resource::<Time>().unwrap().delta().as_secs_f32();
+        }
+
+        let world = app.main().world();
+        let moved = position_of(world, character) - start;
+        assert!(
+            moved.distance(Vec3::new(0.0, 0.0, -elapsed)) < 0.1 * elapsed,
+            "{moved:?} in {elapsed}"
+        );
+        let turned = rotation_of(world, character) * start_facing.inverse();
+        assert!(
+            turned.angle_between(Quat::from_rotation_y(elapsed)) < 0.1 * elapsed,
+            "{turned:?} in {elapsed}"
+        );
     }
 
     #[test]

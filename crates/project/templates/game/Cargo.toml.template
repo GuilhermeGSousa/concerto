@@ -4,6 +4,11 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+]
+
 [lib]
 
 [[bin]]

@@ -1,4 +1,5 @@
 use concerto_foundation::assets::asset_store::AssetStore;
+use glam::Vec3;
 
 use crate::{
     blackboard::AnimationBlackboard,
@@ -41,11 +42,12 @@ impl Default for AnimationGraphEvaluator {
     }
 }
 
-/// The bone root motion is read from: its index in the pose and its rest joint.
+/// The bone root motion is read from: its index in the pose, its rest joint and the unit up of its parent's space.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RootBone {
     pub index: usize,
     pub rest: JointPose,
+    pub up: Vec3,
 }
 
 pub struct AnimationGraphContext<'a> {

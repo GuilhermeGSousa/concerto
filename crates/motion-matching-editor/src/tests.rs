@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use concerto_animation::clip::AnimationClip;
 use concerto_app::{
     App,
     main_schedule::MainSchedulePlugin,
@@ -12,9 +13,16 @@ use concerto_app::{
 use concerto_ecs::{Entity, IntoSystem, Res, System, command::CommandQueue};
 use concerto_editor::{
     EditorPlugin,
-    asset_editor::{ActiveEditor, AssetEditorRegistry, EditorDocument, SaveRequested, Unsaved},
+    asset_editor::{
+        ActiveEditor, AssetEditorCommand, AssetEditorCommands, AssetEditorRegistry, EditorDocument,
+        SaveRequested, Unsaved,
+    },
     guard::DiscardEdits,
-    hosted::{HostedApp, HostedPlugin, input::ViewportShown, testing::*},
+    hosted::{
+        HostedApp, HostedPlugin,
+        input::{ViewportShown, ViewportView},
+        testing::*,
+    },
     inspector::{
         InspectedSnapshots, InspectedValues, InspectorRegistry, PropertyCommits, PropertyRow,
         PropertyTarget, ShownValue, ValueCard, commit_number, spawn_panel, value_systems,
@@ -38,6 +46,7 @@ use concerto_motion_matching::{
 use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_ui::{node::UINode, theme::UITheme};
 use concerto_window::plugin::{Window, WindowPlugin};
+use glam::Vec2;
 
 use crate::{
     DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
@@ -49,7 +58,10 @@ use crate::{
     install,
     joint::{JointNameEditor, refresh_joint_rows},
     menu::close_name_menu,
-    panels::{build_definition_panels, sync_channel_rows, sync_definition_panels},
+    panels::{
+        build_definition_panels, sync_channel_rows, sync_definition_panels,
+        tests::{clip_of, skeleton_of},
+    },
     playback::{follow_playback, follow_preview_time},
     read_definition,
     save::save_definitions,
@@ -346,6 +358,77 @@ fn install_registers_a_creatable_editor_with_a_preview() {
     assert!(editors.preview(kind).is_some());
     assert!(editors.bottom_host(kind));
     assert!(editors.creatable().any(|(creatable, _)| creatable == kind));
+}
+
+#[test]
+fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_editor() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let mut assets = AssetRegistry::default();
+    let skeleton = skeleton_of(&["Hips", "Spine", "Head"]);
+    let skeleton =
+        save_content_asset_into(&skeleton, root, "content/hero/skeleton.gasset", &mut assets);
+    let walk = clip_of(10, 0..3);
+    let walk = save_content_asset_into(&walk, root, "content/hero/walk.gasset", &mut assets);
+    let opened = MotionDatabaseDefinition {
+        skeleton: AssetHandle::weak(skeleton.unwrap()),
+        entries: vec![MotionEntry {
+            clip: AssetHandle::weak(walk.unwrap()),
+            range: None,
+        }],
+        ..Default::default()
+    };
+    let id = save_content_asset_into(&opened, root, "content/hero/database.gasset", &mut assets);
+    let asset = assets.get(id.unwrap()).unwrap().clone();
+    let mut project = ProjectState::default();
+    project.project = Some(Project {
+        root: root.into(),
+        content_root: "content".into(),
+    });
+    let mut app = App::new();
+    app.register_plugin(MainSchedulePlugin)
+        .register_plugin(AssetManagerPlugin)
+        .register_plugin(TimePlugin)
+        .register_plugin(WindowPlugin)
+        .register_plugin(EditorPlugin {
+            project: None,
+            decorated: false,
+            recipe: database_recipe,
+        })
+        .insert_resource(ViewportShown(Some(ViewportView {
+            origin: Vec2::ZERO,
+            size: (64, 64),
+            over: false,
+            typing: false,
+        })));
+
+    install(&mut app);
+    app.finish_plugin_build();
+
+    let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
+    assert_eq!(editors.editor_kind(AnimationClip::name()), None);
+    app.insert_resource(project).insert_resource(assets);
+    let world = app.main_mut().world_mut();
+    world
+        .get_resource_mut::<AssetEditorCommands>()
+        .unwrap()
+        .0
+        .push_back(AssetEditorCommand::Open(asset));
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        app.update();
+        let world = app.main_mut().world_mut();
+        let played = world
+            .query::<&DefinitionDocument, ()>()
+            .iter(world)
+            .any(|state| state.time > 0.0);
+        if played {
+            break;
+        }
+        assert!(Instant::now() < deadline, "the head never moved");
+        std::thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]
