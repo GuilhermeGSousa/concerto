@@ -287,7 +287,10 @@ impl MotionDatabase {
             frame_count: self.frame_count,
         })?;
         let mut local = sample_pose(skeleton, clips[entry], time);
-        if let Some(axis) = self.mirror_axis.filter(|_| self.mirrored[entry]) {
+        if let Some(axis) = self
+            .mirror_axis
+            .filter(|_| self.mirrored.get(entry).copied().unwrap_or(false))
+        {
             let sampled = local.clone();
             PoseMirror::new(skeleton, axis)
                 .and_then(|mirror| mirror.mirror_into(&sampled, &mut local))

@@ -1,4 +1,4 @@
-use std::fmt;
+use std::{collections::HashMap, fmt};
 
 use concerto_mesh::skeleton::{JointPose, Skeleton};
 use glam::{Mat3, Quat, Vec3};
@@ -109,6 +109,13 @@ impl PoseMirror {
 }
 
 fn twins(skeleton: &Skeleton) -> Result<Box<[u16]>, MirrorError> {
+    let indices: HashMap<&str, usize> = skeleton
+        .names
+        .iter()
+        .enumerate()
+        .rev()
+        .map(|(bone, name)| (name.as_str(), bone))
+        .collect();
     skeleton
         .names
         .iter()
@@ -119,9 +126,9 @@ fn twins(skeleton: &Skeleton) -> Result<Box<[u16]>, MirrorError> {
                 (false, true) => name.replace("Right", "Left"),
                 _ => return Ok(bone as u16),
             };
-            skeleton
-                .bone_index(&twin_name)
-                .map(|twin| twin as u16)
+            indices
+                .get(twin_name.as_str())
+                .map(|twin| *twin as u16)
                 .ok_or(MirrorError::MissingTwin {
                     joint: name.clone(),
                     twin: twin_name,
