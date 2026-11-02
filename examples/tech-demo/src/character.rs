@@ -14,10 +14,8 @@ use concerto::mesh::{MeshComponent, primitives::cuboid};
 use concerto::motion_matching::{
     CharacterDisplacement, CharacterLink, CharacterSimulation, DesiredMotion, MotionMatchingNode,
 };
-use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
-use concerto::physics::physics_state::PhysicsState;
 use concerto::physics::rigid_body::MotionType::Dynamic;
 use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto::physics::shape::MeshCollider;
@@ -40,6 +38,9 @@ const WALLS: [(Vec3, Vec3); 2] = [
     (Vec3::new(5.0, 1.0, -28.0), Vec3::new(0.5, 2.0, 8.0)),
 ];
 const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
+
+const CAMERA_HEIGHT: f32 = 1.4;
+const CAMERA_DISTANCE: f32 = 5.0;
 
 #[derive(Component)]
 pub(crate) struct Player;
@@ -124,12 +125,15 @@ pub(crate) fn spawn_character(
             spawn_point.clone(),
             EntityFollow {
                 target: capsule,
-                offset: Vec3::Y,
+                offset: Vec3::Y * CAMERA_HEIGHT,
             },
         ))
         .add_child((
             VirtualCamera::new(0),
-            Transform::from_translation_rotation(Vec3::NEG_Z * 10.0, Quat::from_rotation_y(PI)),
+            Transform::from_translation_rotation(
+                Vec3::NEG_Z * CAMERA_DISTANCE,
+                Quat::from_rotation_y(PI),
+            ),
         ));
 
         spawner.should_spawn = false;
@@ -166,75 +170,61 @@ pub(crate) fn setup_character_animations(
     }
 }
 
-/// Locks the character's yaw to the camera's so it always faces away from the
-/// camera, into the screen — movement input below is world-axis, not
-/// camera-relative, so this is the only thing that turns the model.
-///
-/// No extra flip needed: the camera child is spawned rotated 180°
-/// (`spawn_character`) to look back at the pivot it orbits, and the model's
-/// own rest pose already faces the opposite way from the engine's generic
-/// `-Z`-forward convention, so the two flips cancel out.
-pub(crate) fn face_camera_direction(
-    players: Query<(&mut Transform, &mut DesiredMotion), With<Player>>,
-    pivots: Query<&CameraPivot>,
-) {
-    let Some(pivot) = pivots.iter().next() else {
-        return;
-    };
+const WALK_SPEED: f32 = 1.75;
+const RUN_SPEED: f32 = 4.0;
 
-    let facing = Quat::from_rotation_y(pivot.yaw());
-    for (mut transform, mut desired) in players.iter() {
-        transform.rotation = facing;
-        desired.rotation = facing;
-    }
+const MOVEMENT_KEYS: [(KeyCode, Vec2); 8] = [
+    (KeyCode::KeyW, Vec2::Y),
+    (KeyCode::ArrowUp, Vec2::Y),
+    (KeyCode::KeyS, Vec2::NEG_Y),
+    (KeyCode::ArrowDown, Vec2::NEG_Y),
+    (KeyCode::KeyA, Vec2::X),
+    (KeyCode::ArrowLeft, Vec2::X),
+    (KeyCode::KeyD, Vec2::NEG_X),
+    (KeyCode::ArrowRight, Vec2::NEG_X),
+];
+
+fn held(input: &Input, key: KeyCode) -> bool {
+    input.is_held(PhysicalKey::Code(key))
 }
 
-const PLAYER_SPEED: f32 = 5.0;
+fn desired_velocity(input: &Input, yaw: f32) -> Vec3 {
+    let direction: Vec2 = MOVEMENT_KEYS
+        .iter()
+        .filter(|(key, _)| held(input, *key))
+        .map(|(_, direction)| *direction)
+        .sum();
+    let speed = if held(input, KeyCode::ShiftLeft) || held(input, KeyCode::ShiftRight) {
+        RUN_SPEED
+    } else {
+        WALK_SPEED
+    };
+    Quat::from_rotation_y(yaw)
+        * Vec3::new(direction.x, 0.0, direction.y).normalize_or_zero()
+        * speed
+}
 
-fn desired_velocity(player_input: Vec2) -> Vec3 {
-    Vec3::new(player_input.x, 0.0, player_input.y) * PLAYER_SPEED
+fn facing(velocity: Vec3, current: Quat) -> Quat {
+    if velocity == Vec3::ZERO {
+        current
+    } else {
+        Quat::from_rotation_y(velocity.x.atan2(velocity.z))
+    }
 }
 
 pub(crate) fn update_movement(
-    movement: Query<(&mut DesiredMotion, &GroundProbe, &BodyId), With<Player>>,
-    anim_players: Query<&mut AnimationPlayer>,
+    movement: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>,
+    pivots: Query<&CameraPivot>,
     input: Res<Input>,
-    physics: Res<PhysicsState>,
 ) {
-    let mut player_input = Vec2::ZERO;
-    if input.is_held(PhysicalKey::Code(KeyCode::ArrowUp)) {
-        player_input += Vec2::Y;
-    }
+    let yaw = pivots.iter().next().map_or(0.0, |pivot| pivot.yaw());
+    let velocity = desired_velocity(&input, yaw);
 
-    if input.is_held(PhysicalKey::Code(KeyCode::ArrowDown)) {
-        player_input -= Vec2::Y;
-    }
-
-    if input.is_held(PhysicalKey::Code(KeyCode::ArrowRight)) {
-        player_input -= Vec2::X;
-    }
-
-    if input.is_held(PhysicalKey::Code(KeyCode::ArrowLeft)) {
-        player_input += Vec2::X;
-    }
-
-    for (mut desired, ground, body_id) in movement.iter() {
-        // One skinned character, so the sole AnimationPlayer (on a spawned
-        // descendant of the Player entity) is this character's.
-        let Some(mut animation_player) = anim_players.iter().next() else {
-            continue;
-        };
-
-        let current_vel = physics.linear_velocity(*body_id);
-
-        animation_player.set_vec2_param(
-            "movement",
-            Vec2::new(-current_vel.x, current_vel.z) / PLAYER_SPEED,
-        );
-
+    for (mut desired, ground) in movement.iter() {
         if ground.is_grounded() {
-            desired.velocity = desired_velocity(player_input);
+            desired.velocity = velocity;
         }
+        desired.rotation = facing(velocity, desired.rotation);
     }
 }
 
@@ -253,21 +243,17 @@ mod tests {
         },
         transform::Transform,
     };
-    use concerto::gameplay::camera::CameraPivot;
     use concerto::mesh::{Mesh, MeshComponent};
     use concerto::motion_matching::{
         CharacterDisplacement, CharacterLink, CharacterSimulation, DesiredMotion, MotionDatabase,
         MotionMatchingNode,
     };
-    use concerto::physics::body::BodyId;
     use concerto::physics::physics_state::PhysicsState;
-    use concerto::physics::{
-        collider::register_colliders, ground::GroundProbe, rigid_body::RigidBody,
-    };
     use concerto::physics::{
         collider::{Collider, ColliderOffset},
         shape::MeshCollider,
     };
+    use concerto::physics::{ground::GroundProbe, rigid_body::RigidBody};
     use concerto::reflect::{apply_value, to_value};
     use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
     use concerto::scene::{
@@ -276,11 +262,11 @@ mod tests {
     };
     use concerto::window::input::{Input, KeyCode, PhysicalKey};
     use concerto_motion_matching_gizmos::MotionMatchingGizmos;
-    use glam::{Quat, Vec2, Vec3};
+    use glam::{Quat, Vec3};
 
     use super::{
-        CHARACTER_SCENE, DATABASE, PLAYER_SPEED, Player, PlayerSpawner, desired_velocity,
-        face_camera_direction, setup_character_animations, spawn_character, update_movement,
+        CHARACTER_SCENE, DATABASE, Player, PlayerSpawner, RUN_SPEED, WALK_SPEED, desired_velocity,
+        facing, setup_character_animations, spawn_character, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -523,59 +509,81 @@ mod tests {
             desired,
             GroundProbe::default(),
         ));
-        world.spawn(AnimationPlayer::new(1));
-        let mut registration = register_colliders.into_system();
-        registration.initialize(&mut world);
-        registration.run_and_apply((), &mut world);
         world
     }
 
-    fn holding_arrow_up() -> Input {
+    fn holding(keys: &[KeyCode]) -> Input {
         let mut input = Input::new();
-        input.update_key_input(PhysicalKey::Code(KeyCode::ArrowUp), true);
+        for key in keys {
+            input.update_key_input(PhysicalKey::Code(*key), true);
+        }
         input
     }
 
     #[test]
     fn arrow_input_maps_to_a_world_velocity_at_player_speed() {
-        assert_eq!(
-            desired_velocity(Vec2::new(-1.0, 1.0)),
-            Vec3::new(-PLAYER_SPEED, 0.0, PLAYER_SPEED)
+        assert!(
+            desired_velocity(&holding(&[KeyCode::ArrowUp]), 0.0)
+                .abs_diff_eq(Vec3::Z * WALK_SPEED, 1e-5)
         );
-        assert_eq!(desired_velocity(Vec2::ZERO), Vec3::ZERO);
+        assert!(
+            desired_velocity(&holding(&[KeyCode::ArrowRight]), 0.0)
+                .abs_diff_eq(Vec3::NEG_X * WALK_SPEED, 1e-5)
+        );
+        assert_eq!(desired_velocity(&Input::new(), 0.0), Vec3::ZERO);
     }
 
     #[test]
-    fn the_movement_parameter_reads_the_body_velocity() {
-        let mut world = world_with_player(DesiredMotion::default());
-        world.insert_resource(Input::new());
-        let body = world
-            .query::<&BodyId, With<Player>>()
-            .iter(&mut world)
-            .next()
-            .copied()
-            .unwrap();
-        world
-            .get_resource_mut::<PhysicsState>()
-            .unwrap()
-            .set_linear_velocity(body, Vec3::new(2.5, 0.0, 1.0));
+    fn wasd_and_the_arrows_move_the_same_way_relative_to_the_camera_yaw() {
+        let yaw = 0.7;
+        let keys = [
+            (KeyCode::KeyW, KeyCode::ArrowUp, Vec3::Z),
+            (KeyCode::KeyS, KeyCode::ArrowDown, Vec3::NEG_Z),
+            (KeyCode::KeyA, KeyCode::ArrowLeft, Vec3::X),
+            (KeyCode::KeyD, KeyCode::ArrowRight, Vec3::NEG_X),
+        ];
+        for (letter, arrow, direction) in keys {
+            let expected = Quat::from_rotation_y(yaw) * direction * WALK_SPEED;
+            assert!(desired_velocity(&holding(&[letter]), yaw).abs_diff_eq(expected, 1e-5));
+            assert!(desired_velocity(&holding(&[arrow]), yaw).abs_diff_eq(expected, 1e-5));
+        }
+    }
 
-        let mut system = update_movement.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
+    #[test]
+    fn a_diagonal_is_no_faster_than_a_straight_line() {
+        let velocity = desired_velocity(&holding(&[KeyCode::KeyW, KeyCode::KeyD]), 0.0);
 
-        let parameters: Vec<Option<Vec2>> = world
-            .query::<&AnimationPlayer, ()>()
-            .iter(&mut world)
-            .map(|player| player.get_vec2_param("movement"))
-            .collect();
-        assert_eq!(parameters, vec![Some(Vec2::new(-2.5, 1.0) / PLAYER_SPEED)]);
+        assert!(velocity.abs_diff_eq(Vec3::new(-1.0, 0.0, 1.0).normalize() * WALK_SPEED, 1e-5));
+    }
+
+    #[test]
+    fn shift_runs() {
+        for shift in [KeyCode::ShiftLeft, KeyCode::ShiftRight] {
+            let velocity = desired_velocity(&holding(&[KeyCode::KeyW, shift]), 0.0);
+            assert!(velocity.abs_diff_eq(Vec3::Z * RUN_SPEED, 1e-5));
+        }
+    }
+
+    #[test]
+    fn the_desired_rotation_turns_forward_onto_the_velocity_and_holds_without_input() {
+        let held = Quat::from_rotation_y(0.3);
+        for velocity in [
+            Vec3::Z,
+            Vec3::NEG_Z,
+            Vec3::X * RUN_SPEED,
+            Vec3::new(-1.0, 0.0, -2.0),
+        ] {
+            let forward = facing(velocity, held) * Vec3::Z;
+            assert!(forward.cross(velocity).length() < 1e-5);
+            assert!(forward.dot(velocity) > 0.0);
+        }
+        assert_eq!(facing(Vec3::ZERO, held), held);
     }
 
     #[test]
     fn input_in_the_air_does_not_change_the_desired_velocity() {
         let mut world = world_with_player(DesiredMotion::default());
-        world.insert_resource(holding_arrow_up());
+        world.insert_resource(holding(&[KeyCode::ArrowUp]));
 
         let mut system = update_movement.into_system();
         system.initialize(&mut world);
@@ -587,26 +595,5 @@ mod tests {
             .map(|desired| desired.velocity)
             .collect();
         assert_eq!(velocities, vec![Vec3::ZERO]);
-    }
-
-    #[test]
-    fn the_desired_rotation_follows_the_camera_yaw() {
-        let desired = DesiredMotion {
-            velocity: Vec3::ZERO,
-            rotation: Quat::from_rotation_y(1.0),
-        };
-        let mut world = world_with_player(desired);
-        world.spawn(CameraPivot::default());
-
-        let mut system = face_camera_direction.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
-
-        let rotations: Vec<Quat> = world
-            .query::<&DesiredMotion, With<Player>>()
-            .iter(&mut world)
-            .map(|desired| desired.rotation)
-            .collect();
-        assert_eq!(rotations, vec![Quat::from_rotation_y(0.0)]);
     }
 }
