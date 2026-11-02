@@ -325,7 +325,7 @@ mod tests {
     use concerto::animation::player::AnimationPlayer;
     use concerto::ecs::{IntoSystem, System, With, World};
     use concerto::foundation::{
-        assets::{asset_server::AssetServer, asset_store::AssetStore},
+        assets::{asset_server::AssetServer, asset_store::AssetStore, content::read_content_asset},
         transform::Transform,
     };
     use concerto::gameplay::camera::CameraPivot;
@@ -337,7 +337,8 @@ mod tests {
     use concerto::physics::{
         collider::register_colliders, ground::GroundProbe, rigid_body::RigidBody,
     };
-    use concerto::scene::scene::Scene;
+    use concerto::reflect::apply_value;
+    use concerto::scene::scene::{Scene, SceneNode};
     use concerto::window::input::{Input, KeyCode, PhysicalKey};
     use glam::{Quat, Vec2, Vec3};
 
@@ -369,6 +370,48 @@ mod tests {
             .map(|transform| transform.translation)
             .collect();
         assert_eq!(characters, vec![spawn_point]);
+    }
+
+    fn holds<T>(node: &SceneNode) -> bool {
+        node.components
+            .iter()
+            .any(|component| component.type_name == std::any::type_name::<T>())
+    }
+
+    #[test]
+    fn the_forest_holds_a_root_spawner_and_a_ground_collider() {
+        let bytes = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("content/forest/scene.gasset"),
+        )
+        .unwrap();
+        let (_, payload) = read_content_asset(&bytes).unwrap();
+        let scene: Scene = bincode::deserialize(payload).unwrap();
+
+        let children: Vec<usize> = scene
+            .nodes
+            .iter()
+            .flat_map(|node| node.children.iter().copied())
+            .collect();
+        let spawners: Vec<bool> = scene
+            .nodes
+            .iter()
+            .enumerate()
+            .filter(|(index, node)| holds::<PlayerSpawner>(node) && !children.contains(index))
+            .flat_map(|(_, node)| &node.components)
+            .filter(|component| component.type_name == std::any::type_name::<PlayerSpawner>())
+            .map(|component| {
+                let mut spawner = PlayerSpawner::default();
+                apply_value(&mut spawner, &component.value);
+                spawner.should_spawn
+            })
+            .collect();
+        assert_eq!(spawners, vec![true]);
+        assert!(
+            scene
+                .nodes
+                .iter()
+                .any(|node| node.name == "Plane" && holds::<MeshCollider>(node))
+        );
     }
 
     fn world_with_spawner() -> (World, Vec3) {
