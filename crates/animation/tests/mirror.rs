@@ -147,9 +147,9 @@ fn each_joint_lands_at_the_reflection_of_its_twin() {
     let right_foot = mirrored[5].w_axis.truncate();
     let left_foot = original[4].w_axis.truncate();
     assert!(right_foot.abs_diff_eq(m * left_foot, 1e-5));
-    for bone in 0..skeleton.bone_count() {
+    for (bone, model) in mirrored.iter().enumerate() {
         let twin = mirror_x.twin(bone).unwrap();
-        let position = mirrored[bone].w_axis.truncate();
+        let position = model.w_axis.truncate();
         assert!(position.abs_diff_eq(m * original[twin].w_axis.truncate(), 1e-5));
     }
 }
@@ -166,10 +166,10 @@ fn with_identity_rest_rotations_the_model_rotation_is_conjugated_by_the_reflecti
         .forward_kinematics(&mirror(&mirror_x, &pose))
         .unwrap();
 
-    for bone in 0..skeleton.bone_count() {
+    for (bone, model) in mirrored.iter().enumerate() {
         let twin = mirror_x.twin(bone).unwrap();
         let expected = m * Mat3::from_mat4(original[twin]) * m;
-        assert!(Mat3::from_mat4(mirrored[bone]).abs_diff_eq(expected, 1e-5));
+        assert!(Mat3::from_mat4(*model).abs_diff_eq(expected, 1e-5));
     }
 }
 
