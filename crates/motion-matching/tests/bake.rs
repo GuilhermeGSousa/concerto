@@ -1394,6 +1394,28 @@ fn a_mirrored_frames_pose_is_the_mirrored_sampled_pose_under_its_simulation_bone
 }
 
 #[test]
+fn a_mirrored_frames_pose_on_a_skeleton_that_cannot_be_mirrored_is_a_mirror_error() {
+    let clip = diagonal_turning_clip(2.0);
+    let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
+    let clips = [&clip, &clip];
+    let database = bake(
+        &definition,
+        &symmetric_skeleton(),
+        &clips,
+        &probe_registry(),
+    )
+    .unwrap();
+    let asymmetric = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
+    let frame = database.ranges().nth(1).unwrap().start;
+
+    assert!(database.pose(0, &asymmetric, &clips).is_ok());
+    assert!(matches!(
+        database.pose(frame, &asymmetric, &clips),
+        Err(BakeError::Mirror(MirrorError::Asymmetric { .. }))
+    ));
+}
+
+#[test]
 fn a_mirrored_entry_needs_a_finite_horizontal_mirror_axis() {
     let skeleton = symmetric_skeleton();
     let clip = diagonal_turning_clip(1.0);
