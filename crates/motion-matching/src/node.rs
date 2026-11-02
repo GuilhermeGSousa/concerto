@@ -43,6 +43,8 @@ pub struct MotionMatchingNode {
     pub velocity_change_threshold: f32,
     pub rotation_change_threshold: f32,
     pub same_frame_tolerance: usize,
+    pub ignore_surrounding: usize,
+    pub ignore_range_end: usize,
     pub blend_halflife: f32,
 }
 
@@ -54,6 +56,8 @@ impl Default for MotionMatchingNode {
             velocity_change_threshold: 50.0,
             rotation_change_threshold: 50.0,
             same_frame_tolerance: 1,
+            ignore_surrounding: 20,
+            ignore_range_end: 20,
             blend_halflife: 0.1,
         }
     }
@@ -127,6 +131,8 @@ mod tests {
         assert_eq!(node.velocity_change_threshold, 50.0);
         assert_eq!(node.rotation_change_threshold, 50.0);
         assert_eq!(node.same_frame_tolerance, 1);
+        assert_eq!(node.ignore_surrounding, 20);
+        assert_eq!(node.ignore_range_end, 20);
         assert_eq!(node.blend_halflife, 0.1);
         assert_eq!(
             node.database.id(),
@@ -152,6 +158,8 @@ mod tests {
             velocity_change_threshold: 12.0,
             rotation_change_threshold: 13.0,
             same_frame_tolerance: 3,
+            ignore_surrounding: 7,
+            ignore_range_end: 9,
             blend_halflife: 0.4,
             ..Default::default()
         };
@@ -167,6 +175,8 @@ mod tests {
         assert_eq!(restored.velocity_change_threshold, 12.0);
         assert_eq!(restored.rotation_change_threshold, 13.0);
         assert_eq!(restored.same_frame_tolerance, 3);
+        assert_eq!(restored.ignore_surrounding, 7);
+        assert_eq!(restored.ignore_range_end, 9);
         assert_eq!(restored.blend_halflife, 0.4);
     }
 

@@ -23,7 +23,7 @@ use crate::{
     instance::{LastQuery, MotionMatchingInstance},
     node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
     query::FeatureQuery,
-    search::{cost_of, excluded_tail, search},
+    search::{cost_of, search},
     simulation::TrajectorySample,
 };
 
@@ -218,21 +218,34 @@ fn find_better_frame(
     };
     let mut features = raw.clone();
     database.normalise(&mut features);
+    let end_of_range = database
+        .range_of(instance.frame)
+        .is_some_and(|range| instance.frame + 1 == range.end);
+    let current = (!end_of_range).then_some(instance.frame);
+    let found = search(
+        database,
+        &features,
+        current,
+        node.ignore_surrounding,
+        node.ignore_range_end,
+    );
     instance.last_query = Some(LastQuery {
         features: raw,
         frame: instance.frame,
         simulation,
         trajectory: trajectory.samples.clone(),
+        best_cost: found.map(|(_, cost)| cost),
     });
-    let Some((best, best_cost)) =
-        search(database, &features, instance.frame, excluded_tail(database))
-    else {
+    let Some((best, best_cost)) = found else {
         return Ok(None);
     };
+    if end_of_range {
+        return Ok((best != instance.frame).then_some(best));
+    }
+    let differs = best.abs_diff(instance.frame) > node.same_frame_tolerance;
     let Some(current_cost) = cost_of(database, &features, instance.frame) else {
         return Ok(None);
     };
-    let differs = best.abs_diff(instance.frame) > node.same_frame_tolerance;
     Ok((best_cost < current_cost && differs).then_some(best))
 }
 
@@ -269,10 +282,10 @@ fn run(
     if timer_due {
         instance.search_timer = node.search_period;
     }
-    let in_tail = instance.frame + excluded_tail(database) >= range.end;
+    let in_range_end = instance.frame + node.ignore_range_end >= range.end;
 
     let mut better = None;
-    if timer_due || forced || in_tail {
+    if timer_due || forced || in_range_end {
         if let Some(trajectory) = trajectory {
             better = find_better_frame(node, instance, trajectory, sources)?;
         }
@@ -394,7 +407,10 @@ pub fn run_motion_matching(
 
 #[cfg(test)]
 mod tests {
-    use std::{f32::consts::FRAC_PI_2, time::Duration};
+    use std::{
+        f32::consts::FRAC_PI_2,
+        time::{Duration, Instant},
+    };
 
     use concerto_animation::{
         blackboard::AnimationBlackboard,
@@ -408,10 +424,18 @@ mod tests {
     use concerto_ecs::{
         component::scene::SceneEntityRef,
         system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
+        world::World,
         Entity,
     };
     use concerto_foundation::{
-        assets::{asset_store::AssetStore, handle::AssetHandle, AssetId},
+        assets::{
+            asset_server::{handle_asset_load_events, AssetServer},
+            asset_store::AssetStore,
+            content::save_content_asset_into,
+            handle::AssetHandle,
+            registry::AssetRegistry,
+            AssetId, ContentAssetRoot,
+        },
         time::Time,
         transform::Transform,
     };
@@ -427,7 +451,7 @@ mod tests {
         node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
         plugin::register_runtime,
         query::FeatureQuery,
-        search::{excluded_tail, search},
+        search::search,
         simulation::TrajectorySample,
         test_support::{
             pace_database, pace_database_of, registry, skeleton, turn_left, walk_forward, Pace,
@@ -655,10 +679,42 @@ mod tests {
                 samples,
             )
             .unwrap();
-        let tail = excluded_tail(&fixture.database);
-        let (expected, _) = search(&fixture.database, &query, 3, tail).unwrap();
+        let (expected, _) = search(
+            &fixture.database,
+            &query,
+            Some(3),
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        )
+        .unwrap();
         assert_ne!(expected, 3);
         assert_eq!(instance.frame, expected);
+    }
+
+    #[test]
+    fn a_search_skips_the_frames_the_node_ignores_around_the_current_one() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode {
+            ignore_surrounding: 1000,
+            ..Default::default()
+        };
+
+        let instance = searched(&fixture, &node);
+
+        assert_eq!(instance.frame, 3);
+    }
+
+    #[test]
+    fn a_search_skips_the_range_ends_the_node_ignores() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode {
+            ignore_range_end: 1000,
+            ..Default::default()
+        };
+
+        let instance = searched(&fixture, &node);
+
+        assert_eq!(instance.frame, 3);
     }
 
     fn searched(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingInstance {
@@ -719,6 +775,75 @@ mod tests {
         assert_eq!(last.simulation.translation, published.translation);
         assert_eq!(last.simulation.rotation, published.rotation);
         assert_eq!(last.trajectory, published.samples);
+    }
+
+    #[test]
+    fn a_search_keeps_the_cost_of_the_frame_it_found() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+
+        let instance = searched(&fixture, &node);
+
+        let last = instance.last_query.as_ref().unwrap();
+        let mut query = last.features.clone();
+        fixture.database.normalise(&mut query);
+        let (_, expected) = search(
+            &fixture.database,
+            &query,
+            Some(last.frame),
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        )
+        .unwrap();
+        assert_eq!(last.best_cost, Some(expected));
+    }
+
+    #[test]
+    fn the_node_passes_each_exclusion_to_its_own_side_of_the_search() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode {
+            ignore_surrounding: 1,
+            ignore_range_end: 60,
+            ..Default::default()
+        };
+
+        let instance = searched(&fixture, &node);
+
+        let last = instance.last_query.as_ref().unwrap();
+        let mut query = last.features.clone();
+        fixture.database.normalise(&mut query);
+        let cost_with = |surrounding, range_end| {
+            search(
+                &fixture.database,
+                &query,
+                Some(last.frame),
+                surrounding,
+                range_end,
+            )
+            .map(|(_, cost)| cost)
+        };
+        assert_ne!(cost_with(1, 60), cost_with(60, 1));
+        assert_eq!(last.best_cost, cost_with(1, 60));
+    }
+
+    #[test]
+    fn a_non_finite_query_leaves_no_best_cost() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(
+            &node,
+            &mut instance,
+            &trajectory(f32::INFINITY, 2),
+            &fixture.sources(),
+        );
+
+        let last = instance.last_query.as_ref().unwrap();
+        assert_eq!(last.best_cost, None);
     }
 
     #[test]
@@ -791,12 +916,12 @@ mod tests {
     }
 
     #[test]
-    fn the_excluded_tail_forces_a_search_before_the_timer_is_due() {
+    fn the_last_ignore_range_end_frames_force_a_search_before_the_timer_is_due() {
         let fixture = fixture(1.0);
         let node = MotionMatchingNode::default();
         let mut instance = instance(&node, 0.0);
         step(&node, &mut instance, &quiet(), &fixture.sources());
-        instance.frame = 56;
+        instance.frame = 40;
         instance.search_timer = 10.0;
 
         instance.activate(0.0);
@@ -808,6 +933,84 @@ mod tests {
         );
 
         assert_eq!(fixture.database.entry_of(instance.frame), Some(1));
+    }
+
+    #[test]
+    fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let last = fixture.database.range_of(0).unwrap().end - 1;
+        instance.frame = last;
+        instance.search_timer = 10.0;
+        let simulation = fixture.database.simulation(last);
+        let mut board = AnimationBlackboard::default();
+        board.set(
+            TRAJECTORY_KEY,
+            MotionMatchingTrajectory {
+                translation: simulation.translation,
+                rotation: simulation.rotation,
+                samples: fixture.database.trajectory_samples(last),
+            },
+        );
+
+        instance.activate(0.0);
+        step(&node, &mut instance, &board, &fixture.sources());
+
+        assert_ne!(instance.frame, last);
+    }
+
+    #[test]
+    fn the_last_frame_of_a_range_moves_to_the_next_ranges_first_frame() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let last = fixture.database.range_of(0).unwrap().end - 1;
+        instance.frame = last;
+        instance.search_timer = 10.0;
+
+        instance.activate(0.0);
+        step(
+            &node,
+            &mut instance,
+            &trajectory(0.0, 2),
+            &fixture.sources(),
+        );
+
+        let mut query = instance.last_query.as_ref().unwrap().features.clone();
+        fixture.database.normalise(&mut query);
+        let (best, _) = search(
+            &fixture.database,
+            &query,
+            None,
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        )
+        .unwrap();
+        assert_eq!(best, last + 1);
+        assert_eq!(instance.frame, last + 1);
+    }
+
+    #[test]
+    fn a_nan_query_leaves_no_best_cost() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(
+            &node,
+            &mut instance,
+            &trajectory(f32::NAN, 2),
+            &fixture.sources(),
+        );
+
+        let last = instance.last_query.as_ref().unwrap();
+        assert_eq!(last.best_cost, None);
     }
 
     #[test]
@@ -1232,7 +1435,93 @@ mod tests {
         );
     }
 
-    fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
+    #[test]
+    fn on_load_makes_the_clips_and_skeleton_strong_with_the_same_ids() {
+        let mut app = motion_app();
+        let world = app.main_mut().world_mut();
+        let server = world.get_resource::<AssetServer>().unwrap().clone();
+        let skeleton_id = AssetId::new();
+        let clip_ids = [AssetId::new(), AssetId::new()];
+        let handle = server.add(pace_database(
+            1.0,
+            AssetHandle::weak(skeleton_id),
+            clip_ids.map(AssetHandle::weak),
+        ));
+        handle_asset_load_events(world);
+
+        let databases = world.get_resource::<AssetStore<MotionDatabase>>().unwrap();
+        let database = databases.get(&handle).unwrap();
+        assert!(matches!(database.skeleton(), AssetHandle::Strong(..)));
+        assert_eq!(database.skeleton().id(), skeleton_id);
+        assert!(database
+            .clips()
+            .iter()
+            .all(|clip| matches!(clip, AssetHandle::Strong(..))));
+        let ids: Vec<_> = database.clips().iter().map(AssetHandle::id).collect();
+        assert_eq!(ids, clip_ids);
+    }
+
+    #[test]
+    fn a_database_loaded_through_the_server_plays() {
+        let root = std::env::temp_dir().join(format!(
+            "motion-database-load-{}",
+            AssetId::new().simple_hex()
+        ));
+        let mut registry = AssetRegistry::new();
+        let skeleton_id =
+            save_content_asset_into(&skeleton(), &root, "content/skeleton.gasset", &mut registry)
+                .unwrap();
+        let walk_id =
+            save_content_asset_into(&walk_forward(), &root, "content/walk.gasset", &mut registry)
+                .unwrap();
+        let turn_id =
+            save_content_asset_into(&turn_left(), &root, "content/turn.gasset", &mut registry)
+                .unwrap();
+        let database = pace_database(
+            1.0,
+            AssetHandle::weak(skeleton_id),
+            [AssetHandle::weak(walk_id), AssetHandle::weak(turn_id)],
+        );
+        let database_id =
+            save_content_asset_into(&database, &root, "content/database.gasset", &mut registry)
+                .unwrap();
+
+        let mut app = motion_app();
+        let world = app.main_mut().world_mut();
+        let server = world.get_resource::<AssetServer>().unwrap().clone();
+        server.publish_content_source(ContentAssetRoot::Directory(root.clone()), registry);
+        let _database = server.load::<MotionDatabase>(database_id);
+        let bones = start_playing(
+            world,
+            AssetHandle::weak(database_id),
+            AssetHandle::weak(skeleton_id),
+        );
+
+        let started = Instant::now();
+        while server.is_loading() {
+            assert!(started.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(1));
+            world.run_schedule(LateUpdate);
+        }
+        world.run_schedule(LateUpdate);
+        world.run_schedule(LateUpdate);
+        std::fs::remove_dir_all(&root).ok();
+
+        let expected = database
+            .pose(0, &skeleton(), &[&walk_forward(), &turn_left()])
+            .unwrap();
+        let hips_transform = world
+            .get_component_for_entity::<Transform>(bones[1])
+            .unwrap();
+        assert!(
+            hips_transform.translation.distance(expected[1].translation) < 1e-4,
+            "{:?} vs {:?}",
+            hips_transform.translation,
+            expected[1].translation
+        );
+    }
+
+    fn motion_app() -> App {
         let mut app = App::new();
         app.register_plugin(AssetManagerPlugin);
         app.insert_resource(Time::new());
@@ -1241,7 +1530,11 @@ mod tests {
         app.register_type::<Pace>();
         app.register_type::<MotionMatchingNode>();
         register_runtime(&mut app);
+        app
+    }
 
+    fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
+        let mut app = motion_app();
         let world = app.main_mut().world_mut();
         let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
         let walk_handle = AssetHandle::<AnimationClip>::weak(AssetId::new());
@@ -1268,6 +1561,15 @@ mod tests {
             .unwrap()
             .insert(database_handle.id(), database.clone());
 
+        let entities = start_playing(world, database_handle, skeleton_handle);
+        (app, entities, database)
+    }
+
+    fn start_playing(
+        world: &mut World,
+        database_handle: AssetHandle<MotionDatabase>,
+        skeleton_handle: AssetHandle<Skeleton>,
+    ) -> Vec<Entity> {
         let mut type_registry = TypeRegistry::default();
         register_animation_types(&mut type_registry);
         type_registry.register::<MotionMatchingNode>();
@@ -1303,6 +1605,6 @@ mod tests {
         let schedules = world.remove_resource::<Schedules>().unwrap();
         let compiled = schedules.compile::<SingleThreadedExecutor>(world);
         world.insert_resource(compiled);
-        (app, entities, database)
+        entities
     }
 }
