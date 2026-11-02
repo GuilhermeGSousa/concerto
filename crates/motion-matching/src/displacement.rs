@@ -1,7 +1,11 @@
 use std::f32::consts::FRAC_PI_2;
 
 use concerto_animation::pose::{twist_about, RootMotion};
-use concerto_ecs::{reflect::ReflectComponent, Component, Entity};
+use concerto_ecs::{
+    component::scene::SceneEntityRef,
+    reflect::{ReflectComponent, ReflectSceneComponent},
+    Component,
+};
 use concerto_foundation::math::spring_damper::{
     damp_adjustment_exact, from_scaled_angle_axis, quat_abs, to_scaled_angle_axis,
 };
@@ -79,10 +83,11 @@ impl Default for Clamp {
 }
 
 /// Names a character's capsule, which holds its `CharacterSimulation`, and its skeleton, which holds its `SkeletonComponent` and `AnimationPlayer`; the game inserts it on the visible character.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[reflect(Component, SceneComponent, Default)]
 pub struct CharacterLink {
-    pub capsule: Entity,
-    pub skeleton: Entity,
+    pub capsule: SceneEntityRef,
+    pub skeleton: SceneEntityRef,
 }
 
 /// Where a body stands and how it faces, in world space.
@@ -196,8 +201,12 @@ mod tests {
     use std::any::TypeId;
 
     use concerto_app::{plugins::AssetManagerPlugin, App};
-    use concerto_ecs::reflect::AppTypeRegistry;
+    use concerto_ecs::{
+        entity::hierarchy::{ChildOf, Children},
+        reflect::AppTypeRegistry,
+    };
     use concerto_reflect::{apply_value, to_value, with_property_mut, Enum, PropertyPath};
+    use concerto_scene::{capture::capture_scene, spawner::spawn_scene_in_world};
 
     use super::*;
     use crate::plugin::MotionMatchingPlugin;
@@ -595,6 +604,41 @@ mod tests {
         ] {
             assert!(registry.get_type_data::<ReflectDefault>(id).is_some());
         }
+    }
+
+    #[test]
+    fn a_link_captured_into_a_scene_spawns_back_naming_the_spawned_capsule_and_skeleton() {
+        let mut app = App::new();
+        app.register_plugin(AssetManagerPlugin);
+        app.register_plugin(MotionMatchingPlugin);
+        let world = app.main_mut().world_mut();
+        world.register_component::<ChildOf>();
+        world.register_component::<Children>();
+        let root = world.spawn(());
+        let capsule = world.spawn(());
+        let skeleton = world.spawn(());
+        let character = world.spawn(CharacterLink {
+            capsule: SceneEntityRef::Entity(capsule),
+            skeleton: SceneEntityRef::Entity(skeleton),
+        });
+        for child in [capsule, character, skeleton] {
+            world.entity_mut(root).add_child(child);
+        }
+
+        let scene = capture_scene(world, root).unwrap();
+        let parent = world.spawn(());
+        let spawned = spawn_scene_in_world(world, &scene, parent).node_entities;
+
+        let link = world
+            .get_component_for_entity::<CharacterLink>(spawned[1])
+            .unwrap();
+        assert_eq!(
+            *link,
+            CharacterLink {
+                capsule: SceneEntityRef::Entity(spawned[0]),
+                skeleton: SceneEntityRef::Entity(spawned[2]),
+            }
+        );
     }
 
     fn written_through_path<T: Reflect + Copy>(

@@ -316,8 +316,8 @@ impl Stage {
         let character = world.spawn((
             MotionMatchingGizmos::default(),
             CharacterLink {
-                capsule,
-                skeleton: player,
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::Entity(player),
             },
             GlobalTransform::new(Mat4::from_translation(Vec3::new(2.2, 0.0, 1.0))),
         ));

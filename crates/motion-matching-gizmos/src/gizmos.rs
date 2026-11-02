@@ -182,10 +182,14 @@ pub fn draw_motion_matching(
 ) {
     gizmos.set_line_width(SIMULATION_WIDTH);
     for (mut shown, link, character) in characters.iter() {
+        let (Some(capsule), Some(skeleton)) = (link.capsule.entity(), link.skeleton.entity())
+        else {
+            continue;
+        };
         let (Some(capsule), Some(simulation), Some(mut player)) = (
-            globals.get_entity(link.capsule),
-            simulations.get_entity(link.capsule),
-            players.get_entity(link.skeleton),
+            globals.get_entity(capsule),
+            simulations.get_entity(capsule),
+            players.get_entity(skeleton),
         ) else {
             continue;
         };
