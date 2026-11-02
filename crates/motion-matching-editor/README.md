@@ -14,6 +14,11 @@ plugins = [{ package = "concerto-motion-matching-editor", install = "concerto_mo
 **New ▸ New MotionDatabaseDefinition** in the content browser makes a definition
 and opens it, and it registers `JointNameEditor` for the inspector.
 
+Listing this crate doesn't bring the clip tab. A definition's preview still plays
+clips, through `concerto-animation-editor`'s `clip_preview`, but a game that wants
+to open a clip in a tab lists that crate as well; see its
+[README](../animation-editor/README.md).
+
 ## The document
 
 `DefinitionDocument`, in the editor's world, holds the whole definition: the

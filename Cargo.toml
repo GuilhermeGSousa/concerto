@@ -40,6 +40,7 @@ license = "PolyForm-Noncommercial-1.0.0"
 # `workspace.package.version`.
 [workspace.dependencies]
 concerto-animation = { path = "crates/animation", version = "0.1.0" }
+concerto-animation-editor = { path = "crates/animation-editor", version = "0.1.0" }
 concerto-app = { path = "crates/app", version = "0.1.0" }
 concerto-asset-build = { path = "crates/asset-build", version = "0.1.0" }
 concerto-asset-format = { path = "crates/asset-format", version = "0.1.0" }

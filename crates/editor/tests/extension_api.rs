@@ -1,6 +1,3 @@
-use std::path::Path;
-
-use concerto_app::App;
 use concerto_ecs::{
     CommandQueue, Entity, IntoSystem, Query, Res, System, World,
     entity::hierarchy::{ChildOf, Children},
@@ -9,20 +6,10 @@ use concerto_ecs::{
         listener::{IntoListener, Listener},
     },
 };
-use concerto_editor::{
-    asset_picker::{
-        AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
-    },
-    clip_editor::{
-        ClipFacts,
-        preview::{ClearClip, clip_preview},
-        read_clip, read_shown_scene,
-    },
+use concerto_editor::asset_picker::{
+    AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
 };
-use concerto_foundation::assets::{
-    AssetId,
-    registry::{AssetEntry, AssetRegistry},
-};
+use concerto_foundation::assets::{AssetId, registry::AssetRegistry};
 use concerto_ui::{anchor::UIAnchoredPanel, interaction::UIClick, theme::UITheme};
 
 fn pick(_: AssetId) -> Listener<UIClick> {
@@ -76,9 +63,4 @@ fn an_extension_crate_reaches_what_it_builds_on() {
         asset_name(&AssetRegistry::default(), AssetId::new()),
         "Missing"
     );
-    let _ = ClearClip;
-    let _: fn(&mut App) = clip_preview;
-    let _: fn(&Path, &AssetEntry) -> anyhow::Result<_> = read_clip;
-    let _ = read_shown_scene;
-    let _ = ClipFacts::of;
 }

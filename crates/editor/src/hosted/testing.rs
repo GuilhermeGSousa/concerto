@@ -277,6 +277,11 @@ fn fixture_recipe(app: &mut App) {
         .add_system(Update, count_frame.at_edit_time());
 }
 
+/// The system that re-writes every `E` a hosted `App` writes as a [`Hosted<E>`], for a fixture's delivery.
+pub fn forwarding<E: Event + Clone + 'static>() -> BoxedSystem {
+    forward_events::<E>.into_boxed_system()
+}
+
 pub fn scene_entry(name: &str) -> AssetEntry {
     AssetEntry {
         id: AssetId::new(),

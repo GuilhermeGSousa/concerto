@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation_editor::ClipFacts;
 use concerto_color::Color;
 use concerto_ecs::{
     Added, Component, Entity, Query, Res, With,
@@ -15,7 +16,6 @@ use concerto_editor::{
     asset_picker::{
         AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
     },
-    clip_editor::ClipFacts,
     fonts::{MEDIUM, glyph, icon},
     hosted::HostedApp,
     inspector::{InspectedValues, ShownValue},

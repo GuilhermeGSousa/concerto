@@ -1,5 +1,5 @@
+use concerto_animation_editor::preview::clip_preview;
 use concerto_app::App;
-use concerto_editor::clip_editor::preview::clip_preview;
 
 use crate::{document::DatabaseSettings, playback::database_playback};
 

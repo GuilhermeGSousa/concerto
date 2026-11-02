@@ -7,11 +7,10 @@ use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, TableLike, Value};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+const GAME_MANIFEST_TEMPLATE: &str = include_str!("../templates/game/Cargo.toml.template");
+
 const GAME_FILES: &[(&str, &str)] = &[
-    (
-        "Cargo.toml",
-        include_str!("../templates/game/Cargo.toml.template"),
-    ),
+    ("Cargo.toml", GAME_MANIFEST_TEMPLATE),
     ("src/lib.rs", include_str!("../templates/game/src/lib.rs")),
     ("src/main.rs", include_str!("../templates/game/src/main.rs")),
     ("build.rs", include_str!("../templates/game/build.rs")),
@@ -50,6 +49,7 @@ const RESERVED: &[&str] = &[
     "concerto",
     "concerto_editor",
     "concerto_asset_build",
+    "concerto_animation_editor",
 ];
 
 /// How to run the tool.
@@ -173,15 +173,10 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
     } else {
         OWN_WORKSPACE
     };
-    let game = Game {
-        dir: dir.clone(),
-        crate_name: name.replace('-', "_"),
-        name,
-        plugins: Vec::new(),
-    };
+    let crate_name = name.replace('-', "_");
     let vars = [
-        ("name", game.name.as_str()),
-        ("crate", game.crate_name.as_str()),
+        ("name", name.as_str()),
+        ("crate", crate_name.as_str()),
         ("concerto", &dependency(checkout.as_deref(), "", &dir, &dir)),
         (
             "concerto_asset_build",
@@ -189,6 +184,15 @@ pub fn new_project(dir: impl AsRef<Path>, engine: Engine) -> Result<Report> {
         ),
         ("workspace", own_workspace),
     ];
+    let manifest: DocumentMut = render(GAME_MANIFEST_TEMPLATE, &vars)
+        .parse()
+        .context("the game template is not valid TOML")?;
+    let game = Game {
+        dir: dir.clone(),
+        name: name.clone(),
+        crate_name: crate_name.clone(),
+        plugins: editor_plugins(&manifest, &name)?,
+    };
     let mut report = Report::default();
     let written = GAME_FILES
         .iter()
@@ -962,9 +966,41 @@ mod tests {
         assert!(editor.contains(&format!("concerto-editor = \"{VERSION}\"")));
         assert_eq!(
             read(dir.join("editor/src/main.rs")),
-            "fn main() {\n    concerto_editor::run(my_game::game, concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"));\n}\n"
+            "fn main() {\n    concerto_editor::run_with(\n        my_game::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_animation_editor::install],\n    );\n}\n"
         );
         assert!(!read(dir.join("build.rs")).contains("//"));
+    }
+
+    #[test]
+    fn a_new_project_lists_the_clip_editor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let checkout = tmp.path().join("engine");
+        fs::create_dir_all(&checkout).unwrap();
+        let dir = tmp.path().join("projects/g");
+
+        new_project(&dir, Engine::Checkout(checkout.clone())).unwrap();
+
+        let manifest: DocumentMut = read(dir.join("Cargo.toml")).parse().unwrap();
+        let plugins: Vec<_> = editor_plugins(&manifest, "g")
+            .unwrap()
+            .into_iter()
+            .map(|plugin| (plugin.package, plugin.install))
+            .collect();
+        assert_eq!(
+            plugins,
+            [(
+                "concerto-animation-editor".to_string(),
+                "concerto_animation_editor::install".to_string()
+            )]
+        );
+        let checkout = slashed(&canonical(&checkout));
+        assert!(read(dir.join("editor/Cargo.toml")).contains(&format!(
+            "concerto-animation-editor = {{ version = \"{VERSION}\", path = \"{checkout}/crates/animation-editor\" }}"
+        )));
+        assert_eq!(
+            read(dir.join("editor/src/main.rs")),
+            "fn main() {\n    concerto_editor::run_with(\n        g::game,\n        concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/..\"),\n        &[concerto_animation_editor::install],\n    );\n}\n"
+        );
     }
 
     #[test]
@@ -1039,6 +1075,8 @@ mod tests {
             "concerto-editor",
             "concerto_editor",
             "concerto-asset-build",
+            "concerto-animation-editor",
+            "concerto_animation_editor",
         ] {
             let dir = tmp.path().join(name);
 
