@@ -32,11 +32,11 @@ pub fn cost_of(database: &MotionDatabase, query: &[f32], frame: usize) -> Option
     cost(database, &database.divisors(), query, frame, f32::INFINITY)
 }
 
-/// The frame nearest `query` by squared distance and that distance; `current_cost_frame` seeds the best, and no frame within `ignore_surrounding` of it or in the last `ignore_range_end` of a range is a candidate.
+/// The frame nearest `query` by squared distance and that distance; `current` seeds the best, and no frame within `ignore_surrounding` of it or in the last `ignore_range_end` of a range is a candidate.
 pub fn search(
     database: &MotionDatabase,
     query: &[f32],
-    current_cost_frame: usize,
+    current: Option<usize>,
     ignore_surrounding: usize,
     ignore_range_end: usize,
 ) -> Option<(usize, f32)> {
@@ -44,18 +44,13 @@ pub fn search(
         return None;
     }
     let divisors = database.divisors();
+    let current = current.filter(|current| *current < database.frame_count());
     let mut best = None;
-    let mut current = None;
-    if current_cost_frame < database.frame_count() {
-        let seed = cost(
-            database,
-            &divisors,
-            query,
-            current_cost_frame,
-            f32::INFINITY,
-        )?;
-        best = Some((current_cost_frame, seed));
-        current = Some(current_cost_frame);
+    if let Some(current) = current {
+        best = Some((
+            current,
+            cost(database, &divisors, query, current, f32::INFINITY)?,
+        ));
     }
     for range in database.ranges() {
         let end = range.end.saturating_sub(ignore_range_end).max(range.start);
@@ -128,7 +123,7 @@ mod tests {
         let database = two_clip_database();
         let query = normalised(&database, TURN_RATE, 0.0);
 
-        let (frame, _) = search(&database, &query, 5, SURROUNDING, RANGE_END).unwrap();
+        let (frame, _) = search(&database, &query, Some(5), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(database.entry_of(frame), Some(1), "frame {frame}");
     }
@@ -138,7 +133,7 @@ mod tests {
         let database = two_clip_database();
         let query = normalised(&database, 0.0, 1.0);
 
-        let (frame, _) = search(&database, &query, 80, SURROUNDING, RANGE_END).unwrap();
+        let (frame, _) = search(&database, &query, Some(80), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(database.entry_of(frame), Some(0), "frame {frame}");
     }
@@ -149,7 +144,7 @@ mod tests {
 
         for target in 0..database.frame_count() {
             let query = database.normalised_features(target);
-            let (frame, _) = search(&database, &query, 0, 0, RANGE_END).unwrap();
+            let (frame, _) = search(&database, &query, Some(0), 0, RANGE_END).unwrap();
             let range = database.range_of(frame).unwrap();
             assert!(
                 frame < range.end - RANGE_END,
@@ -165,7 +160,7 @@ mod tests {
 
         for target in 0..database.frame_count() {
             let query = database.normalised_features(target);
-            let (frame, _) = search(&database, &query, current, SURROUNDING, 0).unwrap();
+            let (frame, _) = search(&database, &query, Some(current), SURROUNDING, 0).unwrap();
             assert!(
                 frame == current || frame.abs_diff(current) >= SURROUNDING,
                 "query {target} gave frame {frame}"
@@ -178,7 +173,7 @@ mod tests {
         let database = two_clip_database();
         let query = database.normalised_features(66);
 
-        let (frame, value) = search(&database, &query, 63, 0, 0).unwrap();
+        let (frame, value) = search(&database, &query, Some(63), 0, 0).unwrap();
 
         assert_eq!(frame, 66);
         assert!(value < 1e-10);
@@ -194,7 +189,7 @@ mod tests {
                 query[0] += 0.37;
                 query[1] -= 0.21;
 
-                let found = search(&database, &query, current, SURROUNDING, RANGE_END).unwrap();
+                let found = search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
                 let expected = reference(&database, &query, current, SURROUNDING, RANGE_END);
 
                 assert_eq!(found.0, expected.0, "target {target} current {current}");
@@ -209,7 +204,7 @@ mod tests {
         let current = 55;
         let query = database.normalised_features(current);
 
-        let (frame, value) = search(&database, &query, current, SURROUNDING, RANGE_END).unwrap();
+        let (frame, value) = search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(frame, current);
         assert!(value < 1e-10);
@@ -220,7 +215,7 @@ mod tests {
         let database = two_clip_database();
         let query = database.normalised_features(70);
 
-        let (frame, _) = search(&database, &query, 70, 0, 0).unwrap();
+        let (frame, _) = search(&database, &query, Some(70), 0, 0).unwrap();
 
         assert_eq!(frame, 70);
     }
@@ -229,7 +224,7 @@ mod tests {
     fn a_query_of_the_wrong_length_finds_nothing() {
         let database = two_clip_database();
 
-        assert_eq!(search(&database, &[0.0], 0, 0, 0), None);
+        assert_eq!(search(&database, &[0.0], Some(0), 0, 0), None);
     }
 
     #[test]
@@ -237,7 +232,7 @@ mod tests {
         let database = two_clip_database();
         let query = database.normalised_features(10);
 
-        let (frame, _) = search(&database, &query, 3, 0, 500).unwrap();
+        let (frame, _) = search(&database, &query, Some(3), 0, 500).unwrap();
 
         assert_eq!(frame, 3);
     }
@@ -247,7 +242,7 @@ mod tests {
         let database = two_clip_database();
         let query = database.normalised_features(70);
 
-        let (frame, value) = search(&database, &query, 70, 0, 0).unwrap();
+        let (frame, value) = search(&database, &query, Some(70), 0, 0).unwrap();
 
         assert_eq!(frame, 70);
         assert_eq!(cost_of(&database, &query, 70), Some(value));

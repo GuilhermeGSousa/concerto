@@ -411,7 +411,8 @@ for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
 force: a squared distance over the normalised features of every frame, with an
 early out. The playhead's frame seeds the best, and a candidate replaces it only
-when its cost is strictly lower. Frames within `ignore_surrounding` of the
+when its cost is strictly lower. At the last frame of a range nothing seeds it,
+so the playhead always leaves. Frames within `ignore_surrounding` of the
 playhead and the last `ignore_range_end` of each range are not candidates, as
 in orangeduck's Motion-Matching. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.

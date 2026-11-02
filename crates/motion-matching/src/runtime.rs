@@ -218,10 +218,14 @@ fn find_better_frame(
     };
     let mut features = raw.clone();
     database.normalise(&mut features);
+    let end_of_range = database
+        .range_of(instance.frame)
+        .is_some_and(|range| instance.frame + 1 == range.end);
+    let current = (!end_of_range).then_some(instance.frame);
     let found = search(
         database,
         &features,
-        instance.frame,
+        current,
         node.ignore_surrounding,
         node.ignore_range_end,
     );
@@ -235,10 +239,13 @@ fn find_better_frame(
     let Some((best, best_cost)) = found else {
         return Ok(None);
     };
+    let differs = best.abs_diff(instance.frame) > node.same_frame_tolerance;
+    if end_of_range {
+        return Ok(differs.then_some(best));
+    }
     let Some(current_cost) = cost_of(database, &features, instance.frame) else {
         return Ok(None);
     };
-    let differs = best.abs_diff(instance.frame) > node.same_frame_tolerance;
     Ok((best_cost < current_cost && differs).then_some(best))
 }
 
@@ -675,7 +682,7 @@ mod tests {
         let (expected, _) = search(
             &fixture.database,
             &query,
-            3,
+            Some(3),
             node.ignore_surrounding,
             node.ignore_range_end,
         )
@@ -783,7 +790,7 @@ mod tests {
         let (_, expected) = search(
             &fixture.database,
             &query,
-            last.frame,
+            Some(last.frame),
             node.ignore_surrounding,
             node.ignore_range_end,
         )
@@ -898,6 +905,32 @@ mod tests {
         );
 
         assert_eq!(fixture.database.entry_of(instance.frame), Some(1));
+    }
+
+    #[test]
+    fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let last = fixture.database.range_of(0).unwrap().end - 1;
+        instance.frame = last;
+        instance.search_timer = 10.0;
+        let simulation = fixture.database.simulation(last);
+        let mut board = AnimationBlackboard::default();
+        board.set(
+            TRAJECTORY_KEY,
+            MotionMatchingTrajectory {
+                translation: simulation.translation,
+                rotation: simulation.rotation,
+                samples: fixture.database.trajectory_samples(last),
+            },
+        );
+
+        instance.activate(0.0);
+        step(&node, &mut instance, &board, &fixture.sources());
+
+        assert_ne!(instance.frame, last);
     }
 
     #[test]
