@@ -23,7 +23,7 @@ const PANEL_PADDING: UIRect = UIRect {
     left: 10.0,
 };
 const LINE_HEIGHT: f32 = 16.0;
-const LINES: usize = 8;
+const LINES: usize = 9;
 const STATS_CLEARANCE: f32 = 54.0;
 
 /// Marker for the readout's panel, whose colour tracks the grounded state.
@@ -55,6 +55,7 @@ fn readout(
     state: &str,
     matching: Option<&Matching>,
     method: &CharacterDisplacement,
+    faces_camera: bool,
 ) -> String {
     let dashes = || "--".to_string();
     let entry = matching
@@ -66,6 +67,7 @@ fn readout(
         .filter(|cost| !cost.is_nan())
         .map_or_else(dashes, |cost| format!("{cost:.3}"));
     let method = method_name(method);
+    let faces_camera = if faces_camera { "on" } else { "off" };
     format!(
         "grounded: {is_grounded}\n\
          state:    {state}\n\
@@ -74,6 +76,7 @@ fn readout(
          cost:     {cost}\n\
          WASD/arrows move, Shift run\n\
          1-4 toggle gizmo layers\n\
+         F face camera: {faces_camera}\n\
          M method: {method}"
     )
 }
@@ -130,7 +133,7 @@ pub(crate) fn spawn_grounded_overlay(mut cmd: CommandQueue) {
 }
 
 pub(crate) fn update_grounded_overlay(
-    probes: Query<&GroundProbe, With<Player>>,
+    probes: Query<(&GroundProbe, &Player)>,
     characters: Query<(&CharacterDisplacement, Option<&CharacterLink>)>,
     players: Query<&mut AnimationPlayer>,
     graphs: Res<AssetStore<AnimationGraph>>,
@@ -138,7 +141,7 @@ pub(crate) fn update_grounded_overlay(
     texts: Query<&mut UIText, With<GroundedText>>,
     panels: Query<&mut UIMaterial, With<GroundedPanel>>,
 ) {
-    let Some(probe) = probes.iter().next() else {
+    let Some((probe, player_state)) = probes.iter().next() else {
         return;
     };
     let Some((method, link)) = characters.iter().next() else {
@@ -171,7 +174,13 @@ pub(crate) fn update_grounded_overlay(
         });
     }
 
-    let text = readout(is_grounded, state, matching.as_ref(), method);
+    let text = readout(
+        is_grounded,
+        state,
+        matching.as_ref(),
+        method,
+        player_state.faces_camera,
+    );
     for mut ui_text in texts.iter() {
         if ui_text.text != text {
             ui_text.text = text.clone();
@@ -202,7 +211,8 @@ mod tests {
                 true,
                 "OnGround",
                 Some(&matching),
-                &CharacterDisplacement::default()
+                &CharacterDisplacement::default(),
+                false
             ),
             "grounded: true\n\
              state:    OnGround\n\
@@ -211,13 +221,20 @@ mod tests {
              cost:     0.500\n\
              WASD/arrows move, Shift run\n\
              1-4 toggle gizmo layers\n\
+             F face camera: off\n\
              M method: Adjustment"
         );
     }
 
     #[test]
     fn the_readout_shows_dashes_before_any_search() {
-        let text = readout(false, "InAir", None, &CharacterDisplacement::default());
+        let text = readout(
+            false,
+            "InAir",
+            None,
+            &CharacterDisplacement::default(),
+            false,
+        );
 
         assert!(text.contains("entry:    --\nframe:    --\ncost:     --\n"));
     }
@@ -234,6 +251,7 @@ mod tests {
             "OnGround",
             Some(&matching),
             &CharacterDisplacement::default(),
+            false,
         );
 
         assert!(text.contains("entry:    --\nframe:    7\ncost:     --\n"));
@@ -250,7 +268,7 @@ mod tests {
         let lines: Vec<String> = methods
             .iter()
             .map(|method| {
-                readout(true, "OnGround", None, method)
+                readout(true, "OnGround", None, method, false)
                     .lines()
                     .last()
                     .unwrap()
@@ -267,6 +285,19 @@ mod tests {
                 "M method: Synchronization 1.0",
             ]
         );
+    }
+
+    #[test]
+    fn the_help_line_says_whether_the_character_faces_the_camera() {
+        let text = readout(
+            true,
+            "OnGround",
+            None,
+            &CharacterDisplacement::default(),
+            true,
+        );
+
+        assert!(text.contains("F face camera: on\n"));
     }
 
     #[test]

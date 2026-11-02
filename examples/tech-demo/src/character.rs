@@ -43,8 +43,10 @@ const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 const CAMERA_HEIGHT: f32 = 1.4;
 const CAMERA_DISTANCE: f32 = 5.0;
 
-#[derive(Component)]
-pub(crate) struct Player;
+#[derive(Component, Default)]
+pub(crate) struct Player {
+    pub(crate) faces_camera: bool,
+}
 
 /// The capsule a visible character links to once its skeleton spawns, and the graph that skeleton plays.
 #[derive(Component)]
@@ -81,7 +83,7 @@ pub(crate) fn spawn_character(
         let offset = ColliderOffset::bottom_origin(&collider);
         let capsule = cmd
             .spawn((
-                Player,
+                Player::default(),
                 RigidBody {
                     density: 1000.0,
                     allowed_dofs: AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y,
@@ -171,8 +173,22 @@ pub(crate) fn setup_character_animations(
     }
 }
 
-const WALK_SPEED: f32 = 1.75;
-const RUN_SPEED: f32 = 4.0;
+struct Speeds {
+    forward: f32,
+    side: f32,
+    back: f32,
+}
+
+const WALK: Speeds = Speeds {
+    forward: 1.75,
+    side: 1.5,
+    back: 1.25,
+};
+const RUN: Speeds = Speeds {
+    forward: 4.0,
+    side: 3.0,
+    back: 2.5,
+};
 
 const MOVEMENT_KEYS: [(KeyCode, Vec2); 8] = [
     (KeyCode::KeyW, Vec2::Y),
@@ -189,20 +205,31 @@ fn held(input: &Input, key: KeyCode) -> bool {
     input.is_held(PhysicalKey::Code(key))
 }
 
-fn desired_velocity(input: &Input, yaw: f32) -> Vec3 {
-    let direction: Vec2 = MOVEMENT_KEYS
+fn movement(input: &Input, yaw: f32, faces_camera: bool, current: Quat) -> (Vec3, Quat) {
+    let keys: Vec2 = MOVEMENT_KEYS
         .iter()
         .filter(|(key, _)| held(input, *key))
         .map(|(_, direction)| *direction)
         .sum();
-    let speed = if held(input, KeyCode::ShiftLeft) || held(input, KeyCode::ShiftRight) {
-        RUN_SPEED
+    let direction = Quat::from_rotation_y(yaw) * Vec3::new(keys.x, 0.0, keys.y).normalize_or_zero();
+    let rotation = if faces_camera {
+        Quat::from_rotation_y(yaw)
     } else {
-        WALK_SPEED
+        facing(direction, current)
     };
-    Quat::from_rotation_y(yaw)
-        * Vec3::new(direction.x, 0.0, direction.y).normalize_or_zero()
-        * speed
+    let speeds = if held(input, KeyCode::ShiftLeft) || held(input, KeyCode::ShiftRight) {
+        &RUN
+    } else {
+        &WALK
+    };
+    let local = rotation.inverse() * direction;
+    let along = if local.z > 0.0 {
+        speeds.forward
+    } else {
+        speeds.back
+    };
+    let velocity = rotation * Vec3::new(local.x * speeds.side, 0.0, local.z * along);
+    (velocity, rotation)
 }
 
 fn facing(velocity: Vec3, current: Quat) -> Quat {
@@ -214,18 +241,22 @@ fn facing(velocity: Vec3, current: Quat) -> Quat {
 }
 
 pub(crate) fn update_movement(
-    movement: Query<(&mut DesiredMotion, &GroundProbe), With<Player>>,
+    players: Query<(&mut Player, &mut DesiredMotion, &GroundProbe)>,
     pivots: Query<&CameraPivot>,
     input: Res<Input>,
 ) {
     let yaw = pivots.iter().next().map_or(0.0, |pivot| pivot.yaw());
-    let velocity = desired_velocity(&input, yaw);
+    let toggled = input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyF));
 
-    for (mut desired, ground) in movement.iter() {
+    for (mut player, mut desired, ground) in players.iter() {
+        if toggled {
+            player.faces_camera = !player.faces_camera;
+        }
+        let (velocity, rotation) = movement(&input, yaw, player.faces_camera, desired.rotation);
         if ground.is_grounded() {
             desired.velocity = velocity;
         }
-        desired.rotation = facing(velocity, desired.rotation);
+        desired.rotation = rotation;
     }
 }
 
@@ -305,8 +336,8 @@ mod tests {
     use glam::{Quat, Vec3};
 
     use super::{
-        CHARACTER_SCENE, DATABASE, Player, PlayerSpawner, RUN_SPEED, WALK_SPEED, debug_keys,
-        desired_velocity, facing, setup_character_animations, spawn_character, update_movement,
+        CHARACTER_SCENE, DATABASE, Player, PlayerSpawner, RUN, WALK, debug_keys, facing, movement,
+        setup_character_animations, spawn_character, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -540,7 +571,7 @@ mod tests {
         world.register_component::<Transform>();
         world.insert_resource(PhysicsState::new());
         world.spawn((
-            Player,
+            Player::default(),
             RigidBody::default(),
             Collider::capsule(2.0, 1.0),
             Transform::from_translation_rotation(Vec3::new(0.0, 5.0, 0.0), Quat::IDENTITY),
@@ -559,17 +590,76 @@ mod tests {
         input
     }
 
+    fn walk(input: &Input, yaw: f32) -> Vec3 {
+        movement(input, yaw, false, Quat::IDENTITY).0
+    }
+
+    #[test]
+    fn facing_the_camera_holds_its_yaw_whatever_the_input() {
+        let yaw = 0.7;
+        let held = Quat::from_rotation_y(-1.2);
+        let inputs: [&[KeyCode]; 3] = [&[], &[KeyCode::KeyD], &[KeyCode::KeyS, KeyCode::ShiftLeft]];
+        for keys in inputs {
+            let (_, rotation) = movement(&holding(keys), yaw, true, held);
+            assert!(
+                rotation.abs_diff_eq(Quat::from_rotation_y(yaw), 1e-5),
+                "{keys:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn facing_the_camera_moves_at_the_side_and_back_speeds() {
+        let yaw = 0.7;
+        let camera = Quat::from_rotation_y(yaw);
+        let cases = [
+            (vec![KeyCode::KeyW], Vec3::Z * WALK.forward),
+            (vec![KeyCode::KeyS], Vec3::NEG_Z * WALK.back),
+            (vec![KeyCode::KeyA], Vec3::X * WALK.side),
+            (
+                vec![KeyCode::KeyD, KeyCode::ShiftLeft],
+                Vec3::NEG_X * RUN.side,
+            ),
+            (
+                vec![KeyCode::KeyS, KeyCode::ShiftRight],
+                Vec3::NEG_Z * RUN.back,
+            ),
+        ];
+        for (keys, local) in cases {
+            let (velocity, _) = movement(&holding(&keys), yaw, true, Quat::IDENTITY);
+            assert!(velocity.abs_diff_eq(camera * local, 1e-5), "{keys:?}");
+        }
+    }
+
+    #[test]
+    fn f_toggles_facing_the_camera() {
+        let mut world = world_with_player(DesiredMotion::default());
+        let faces_camera = |world: &mut World| {
+            world
+                .query::<&Player, ()>()
+                .iter(world)
+                .next()
+                .unwrap()
+                .faces_camera
+        };
+
+        for expected in [true, false] {
+            world.insert_resource(holding(&[KeyCode::KeyF]));
+            let mut system = update_movement.into_system();
+            system.initialize(&mut world);
+            system.run_and_apply((), &mut world);
+            assert_eq!(faces_camera(&mut world), expected);
+        }
+    }
+
     #[test]
     fn arrow_input_maps_to_a_world_velocity_at_player_speed() {
+        assert!(walk(&holding(&[KeyCode::ArrowUp]), 0.0).abs_diff_eq(Vec3::Z * WALK.forward, 1e-5));
         assert!(
-            desired_velocity(&holding(&[KeyCode::ArrowUp]), 0.0)
-                .abs_diff_eq(Vec3::Z * WALK_SPEED, 1e-5)
+            walk(&holding(&[KeyCode::ArrowRight]), 0.0)
+                .abs_diff_eq(Vec3::NEG_X * WALK.forward, 1e-5)
         );
-        assert!(
-            desired_velocity(&holding(&[KeyCode::ArrowRight]), 0.0)
-                .abs_diff_eq(Vec3::NEG_X * WALK_SPEED, 1e-5)
-        );
-        assert_eq!(desired_velocity(&Input::new(), 0.0), Vec3::ZERO);
+        assert_eq!(walk(&Input::new(), 0.0), Vec3::ZERO);
     }
 
     #[test]
@@ -582,24 +672,24 @@ mod tests {
             (KeyCode::KeyD, KeyCode::ArrowRight, Vec3::NEG_X),
         ];
         for (letter, arrow, direction) in keys {
-            let expected = Quat::from_rotation_y(yaw) * direction * WALK_SPEED;
-            assert!(desired_velocity(&holding(&[letter]), yaw).abs_diff_eq(expected, 1e-5));
-            assert!(desired_velocity(&holding(&[arrow]), yaw).abs_diff_eq(expected, 1e-5));
+            let expected = Quat::from_rotation_y(yaw) * direction * WALK.forward;
+            assert!(walk(&holding(&[letter]), yaw).abs_diff_eq(expected, 1e-5));
+            assert!(walk(&holding(&[arrow]), yaw).abs_diff_eq(expected, 1e-5));
         }
     }
 
     #[test]
     fn a_diagonal_is_no_faster_than_a_straight_line() {
-        let velocity = desired_velocity(&holding(&[KeyCode::KeyW, KeyCode::KeyD]), 0.0);
+        let velocity = walk(&holding(&[KeyCode::KeyW, KeyCode::KeyD]), 0.0);
 
-        assert!(velocity.abs_diff_eq(Vec3::new(-1.0, 0.0, 1.0).normalize() * WALK_SPEED, 1e-5));
+        assert!(velocity.abs_diff_eq(Vec3::new(-1.0, 0.0, 1.0).normalize() * WALK.forward, 1e-5));
     }
 
     #[test]
     fn shift_runs() {
         for shift in [KeyCode::ShiftLeft, KeyCode::ShiftRight] {
-            let velocity = desired_velocity(&holding(&[KeyCode::KeyW, shift]), 0.0);
-            assert!(velocity.abs_diff_eq(Vec3::Z * RUN_SPEED, 1e-5));
+            let velocity = walk(&holding(&[KeyCode::KeyW, shift]), 0.0);
+            assert!(velocity.abs_diff_eq(Vec3::Z * RUN.forward, 1e-5));
         }
     }
 
@@ -609,7 +699,7 @@ mod tests {
         for velocity in [
             Vec3::Z,
             Vec3::NEG_Z,
-            Vec3::X * RUN_SPEED,
+            Vec3::X * RUN.forward,
             Vec3::new(-1.0, 0.0, -2.0),
         ] {
             let forward = facing(velocity, held) * Vec3::Z;
@@ -694,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn input_in_the_air_does_not_change_the_desired_velocity() {
+    fn input_in_the_air_does_not_change_the_walk() {
         let mut world = world_with_player(DesiredMotion::default());
         world.insert_resource(holding(&[KeyCode::ArrowUp]));
 
