@@ -239,10 +239,12 @@ or a clip with no channels for the root gives `RootMotion::IDENTITY`.
 
 The root bone's `Transform` is written like any other bone's, net of what root
 motion took: its yaw, measured from the rest pose, and its ground translation.
-Its height, pitch, roll and scale stay in the bone. Yaw and ground translation
-are always removed, with or without a `CharacterDisplacement`, so a clip that
-turns or walks stays on the spot in a game that applies nothing. A joint a clip
-has no channels for shows the skeleton's rest pose.
+Its height, pitch, roll and scale stay in the bone. That split assumes the root's
+rest pose stands upright, and on a skeleton whose rest doesn't, such as a BVH's,
+lean can read as yaw. Yaw and ground translation are always removed, with or
+without a `CharacterDisplacement`, so a clip that turns or walks stays on the
+spot in a game that applies nothing. A joint a clip has no channels for shows the
+skeleton's rest pose.
 
 Nothing applies it on its own. To have it move a character, make the visible
 character a separate entity from the capsule, with the skeleton under it, and
