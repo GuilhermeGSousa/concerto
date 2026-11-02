@@ -45,7 +45,7 @@ fn method_name(method: &CharacterDisplacement) -> String {
         CharacterDisplacement::Adjustment(_) => "Adjustment".to_string(),
         CharacterDisplacement::Clamp(_) => "Clamp".to_string(),
         CharacterDisplacement::Synchronization(sync) => {
-            format!("Synchronization {}", sync.data_factor)
+            format!("Synchronization {:.1}", sync.data_factor)
         }
     }
 }
@@ -187,7 +187,7 @@ pub(crate) fn update_grounded_overlay(
 mod tests {
     use concerto::motion_matching::{Adjustment, CharacterDisplacement, Clamp, Synchronization};
 
-    use super::{Matching, readout};
+    use super::{Matching, method_name, readout};
 
     #[test]
     fn the_readout_shows_the_entry_frame_and_cost_of_the_last_search() {
@@ -263,9 +263,16 @@ mod tests {
             [
                 "M method: Adjustment",
                 "M method: Clamp",
-                "M method: Synchronization 0",
-                "M method: Synchronization 1",
+                "M method: Synchronization 0.0",
+                "M method: Synchronization 1.0",
             ]
         );
+    }
+
+    #[test]
+    fn a_tuned_synchronization_factor_reads_with_one_decimal() {
+        let method = CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.333 });
+
+        assert_eq!(method_name(&method), "Synchronization 0.3");
     }
 }

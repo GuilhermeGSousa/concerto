@@ -21,7 +21,7 @@ fn cost(
             return None;
         }
     }
-    Some(sum)
+    sum.is_finite().then_some(sum)
 }
 
 /// The squared distance from `query` to `frame`, or `None` for a query of the wrong length or a frame outside the database.
@@ -116,6 +116,15 @@ mod tests {
         let database = two_clip_database();
 
         assert_eq!(database.ranges().collect::<Vec<_>>(), [0..60, 60..120]);
+    }
+
+    #[test]
+    fn a_nan_query_finds_no_frame() {
+        let database = two_clip_database();
+        let query = vec![f32::NAN; database.feature_dims()];
+
+        assert_eq!(search(&database, &query, Some(5), SURROUNDING, RANGE_END), None);
+        assert_eq!(search(&database, &query, None, SURROUNDING, RANGE_END), None);
     }
 
     #[test]

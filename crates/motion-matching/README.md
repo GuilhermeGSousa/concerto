@@ -394,8 +394,8 @@ node.
 | `search_period` | seconds between searches | 0.1 |
 | `velocity_change_threshold`, `rotation_change_threshold` | the change per second of the first trajectory sample's velocity and facing that forces a search once it settles | 50 |
 | `same_frame_tolerance` | a search result this many frames or fewer from the playhead is ignored | 1 |
-| `ignore_surrounding` | a search returns no other frame fewer than this many frames from the playhead, though the playhead's own frame stays when nothing beats it | 20 |
-| `ignore_range_end` | a search never returns the last this many frames of a range; at 2 or below, the playhead can hold or loop the last frames of a range | 20 |
+| `ignore_surrounding` | a search returns no other frame fewer than this many frames from the playhead, though the playhead's own frame stays when nothing beats it; at the last frame of a range nothing is excluded around the playhead | 20 |
+| `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
@@ -411,19 +411,20 @@ for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
 force: a squared distance over the normalised features of every frame, with an
 early out. The playhead's frame seeds the best, and a candidate replaces it only
-when its cost is strictly lower. At the last frame of a range nothing seeds it,
-so the playhead leaves as long as `ignore_range_end` is above
-`same_frame_tolerance`. Frames within `ignore_surrounding` of the
+when its cost is strictly lower. Frames within `ignore_surrounding` of the
 playhead and the last `ignore_range_end` of each range are not candidates, as
-in orangeduck's Motion-Matching. `run_motion_matching` runs after
+in orangeduck's Motion-Matching. At the last frame of a range nothing seeds the
+search and nothing around the playhead is excluded, and any frame it finds other
+than the playhead's is taken, so the playhead leaves unless `ignore_range_end`
+is 0. A query that holds a NaN or an infinity finds nothing. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
 
 `MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
 `Pose` channels from, `simulation` and `trajectory` what it was built with, and
 `best_cost` the squared distance to the frame the search found, or `None` when it
-found none: a non-finite query, or a search at a range's last frame when every
-range is no longer than `ignore_range_end`. All five come from one moment, so a
+found none: a query that holds a NaN or an infinity, or a search at a range's
+last frame when every range is no longer than `ignore_range_end`. All five come from one moment, so a
 drawn query does not mix bones from one frame with arrows from a later one. It
 is `None` until a search runs and after
 `reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale

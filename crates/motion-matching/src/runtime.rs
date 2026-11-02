@@ -239,10 +239,10 @@ fn find_better_frame(
     let Some((best, best_cost)) = found else {
         return Ok(None);
     };
-    let differs = best.abs_diff(instance.frame) > node.same_frame_tolerance;
     if end_of_range {
-        return Ok(differs.then_some(best));
+        return Ok((best != instance.frame).then_some(best));
     }
+    let differs = best.abs_diff(instance.frame) > node.same_frame_tolerance;
     let Some(current_cost) = cost_of(database, &features, instance.frame) else {
         return Ok(None);
     };
@@ -959,6 +959,58 @@ mod tests {
         step(&node, &mut instance, &board, &fixture.sources());
 
         assert_ne!(instance.frame, last);
+    }
+
+    #[test]
+    fn the_last_frame_of_a_range_moves_to_the_next_ranges_first_frame() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+        let last = fixture.database.range_of(0).unwrap().end - 1;
+        instance.frame = last;
+        instance.search_timer = 10.0;
+
+        instance.activate(0.0);
+        step(
+            &node,
+            &mut instance,
+            &trajectory(0.0, 2),
+            &fixture.sources(),
+        );
+
+        let mut query = instance.last_query.as_ref().unwrap().features.clone();
+        fixture.database.normalise(&mut query);
+        let (best, _) = search(
+            &fixture.database,
+            &query,
+            None,
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        )
+        .unwrap();
+        assert_eq!(best, last + 1);
+        assert_eq!(instance.frame, last + 1);
+    }
+
+    #[test]
+    fn a_nan_query_leaves_no_best_cost() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(
+            &node,
+            &mut instance,
+            &trajectory(f32::NAN, 2),
+            &fixture.sources(),
+        );
+
+        let last = instance.last_query.as_ref().unwrap();
+        assert_eq!(last.best_cost, None);
     }
 
     #[test]
