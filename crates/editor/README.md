@@ -177,7 +177,8 @@ On either route a value that does not decode to the property's type answers
 live id such as `42v3`, and an asset handle is an asset id that loads through
 the edit `App`'s `AssetServer`, as a spawned scene's handles do. A handle field
 is edited by the asset picker, so an id that is not one of the project's assets
-of the field's kind answers `refused`.
+of the field's kind answers `refused`. A `SceneEntityRef` field is edited by the
+entity picker, which refuses a node index other than the unset value.
 A path `inspect` marks `enum` takes the whole enum, its variant's name for a
 variant without fields (`"Point"`) or an object with the variant's name as its
 one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
@@ -845,11 +846,33 @@ row's text current; `EditorPlugin` adds it. The picker's `edit_to` takes the
 handle's id, so MCP's `set_property` on a handle field picks that asset through
 the same checks.
 
+### Entity references
+
+`EntityPicker` edits every `SceneEntityRef` field, which is how a component
+names another entity of its scene, as `CharacterLink` names a capsule and a
+skeleton. The row names the referenced entity: its `Name`, `Entity 42` as the
+hierarchy writes an entity with no name, or `(not in this scene)` when the
+value is unset or names an entity the hierarchy doesn't list. The button beside
+it selects that entity and reveals it in the hierarchy.
+
+The row opens a menu with a filter field, `None`, and the entities the
+hierarchy lists for the edit target, indented by depth, without the scene root:
+a scene saves only its root's children, so a reference to the root couldn't be
+saved. Typing keeps the entities whose label contains the text, and their
+ancestors. `None` writes the unset value. A field whose entity was deleted keeps
+naming it and makes saving fail until it is cleared or picked again. While a
+game plays the menu lists the running game's entities, and an edit is lost on
+Stop like any other. `EntityPickerPlugin`, added by `EditorPlugin`, keeps the
+row's text current and closes the menu when its edit target goes. The picker's
+`edit_to` takes the value, so MCP's `set_property` writes an entity reference
+as a live id such as `42v3`, or the unset value, and refuses any other node
+index.
+
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
 `value`; it still goes through `apply`, with its `EditContext`, so validation
-holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool` and the
-asset picker implement it; `Quat` goes
+holds. The built-in editors for `f32`, `f64`, `usize`, `Vec3`, `Quat` and `bool`, the
+asset picker and the entity picker implement it; `Quat` goes
 through the widget's XYZ degrees, so it comes back normalized and equal up to
 rounding. It defaults to `None`, which says the editor offers no value edit. A
 custom editor opts in by implementing it; MCP's `set_property` writes a field
