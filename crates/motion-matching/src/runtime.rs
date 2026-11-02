@@ -799,6 +799,34 @@ mod tests {
     }
 
     #[test]
+    fn the_node_passes_each_exclusion_to_its_own_side_of_the_search() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode {
+            ignore_surrounding: 1,
+            ignore_range_end: 60,
+            ..Default::default()
+        };
+
+        let instance = searched(&fixture, &node);
+
+        let last = instance.last_query.as_ref().unwrap();
+        let mut query = last.features.clone();
+        fixture.database.normalise(&mut query);
+        let cost_with = |surrounding, range_end| {
+            search(
+                &fixture.database,
+                &query,
+                Some(last.frame),
+                surrounding,
+                range_end,
+            )
+            .map(|(_, cost)| cost)
+        };
+        assert_ne!(cost_with(1, 60), cost_with(60, 1));
+        assert_eq!(last.best_cost, cost_with(1, 60));
+    }
+
+    #[test]
     fn a_non_finite_query_leaves_no_best_cost() {
         let fixture = fixture(1.0);
         let node = MotionMatchingNode::default();
