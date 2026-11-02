@@ -356,5 +356,6 @@ fix the entry in the same commit as the change that made it false.
 - **There are no system fonts on wasm.** The UI embeds DejaVu Sans Mono and
   uses it for every generic family.
 - **Assets are fetched over HTTP on wasm,** so `content/` must be served from
-  the page's origin. An example's `index.html` does this with a `copy-dir` link.
+  the page's origin. An example's `index.html` does this with `copy-dir` and
+  `copy-file` links, and a file no link copies is a 404.
 - **wasm has no threads.** Jolt is not built there; physics is Rapier.

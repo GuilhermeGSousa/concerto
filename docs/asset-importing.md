@@ -295,9 +295,11 @@ let output_path = out_dir.ancestors().nth(3).unwrap()
 ```
 
 On wasm each example is served from its own Trunk origin, so there is
-nothing to disambiguate and the default is correct. Trunk's
-`<link data-trunk rel="copy-dir" href="content" …>`
-in `index.html` ships the tree.
+nothing to disambiguate and the default is correct. `index.html` ships the
+files the game loads with Trunk `copy-dir` and `copy-file` links, each with a
+`data-target-path` that keeps its address under `content/`. A file the game
+loads that no link copies is a 404 on the web. `tech-demo` copies only what its
+scene, character and motion database use, not the whole tree.
 
 ## Loading at runtime
 
