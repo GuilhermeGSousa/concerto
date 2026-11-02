@@ -421,9 +421,11 @@ scales them by the frame's time into a `RootMotion` on `instance.output`:
 `translation = q⁻¹ * (velocity * dt)` and `rotation =
 from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
-the same way. The root joint is the database skeleton's first without a parent.
-A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`, and so
-does a frame that holds the pose at the end of its range.
+the same way. The root joint is the database skeleton's first without a parent,
+and `rest` is that bone's rest on the skeleton playing it, so a database baked on
+one skeleton plays on another with the same bone ids. A frame with no step, on a
+missing asset, gives `RootMotion::IDENTITY`, and so does a frame that holds the
+pose at the end of its range.
 
 The root joint is written to the root bone's `Transform` like any other joint,
 relative to the simulation bone. Ground motion and yaw belong to the simulation

@@ -72,11 +72,16 @@ fn root_delta(instance: &MotionMatchingInstance, sources: &Sources) -> RootMotio
     let skeleton = sources.skeleton;
     let root = skeleton.parents.iter().position(Option::is_none);
     let Some((joint, rest)) = root.and_then(|root| {
+        let played = skeleton
+            .bone_ids
+            .get(root)
+            .and_then(|id| instance.bone_indices.get(id))
+            .and_then(|index| sources.player_skeleton.rest_pose.get(*index));
         instance
             .pose
             .joints()
             .get(root)
-            .zip(skeleton.rest_pose.get(root))
+            .zip(played.or(skeleton.rest_pose.get(root)))
     }) else {
         return RootMotion::IDENTITY;
     };
@@ -1007,6 +1012,55 @@ mod tests {
             );
             assert!(motion.rotation.angle_between(Quat::IDENTITY) < 1e-3);
         }
+    }
+
+    #[test]
+    fn root_motion_turns_out_the_rest_of_the_skeleton_it_plays_on() {
+        let root = Uuid::from_u128(1);
+        let baked_rest = Quat::from_rotation_y(0.6);
+        let played_rest = Quat::from_rotation_x(FRAC_PI_2);
+        let mut walk = AnimationClip::default();
+        walk.add_channel(
+            root,
+            AnimationChannel::new(
+                vec![0.0, 2.0],
+                AnimationChanelOutput::Translation(vec![Vec3::ZERO, Vec3::new(0.0, 0.0, -2.0)]),
+            ),
+        );
+        walk.add_channel(
+            root,
+            AnimationChannel::new(
+                vec![0.0, 2.0],
+                AnimationChanelOutput::Rotation(vec![baked_rest; 2]),
+            ),
+        );
+        let fixture = fixture_of(baked_rest, walk);
+        let mut rest_pose = vec![concerto_mesh::JointPose::IDENTITY; 3];
+        rest_pose[1].rotation = played_rest;
+        let played = Skeleton::new(
+            vec![glam::Mat4::IDENTITY; 3],
+            vec![None, Some(0), Some(1)],
+            vec!["Spine2".into(), "Root".into(), "Hips".into()],
+            rest_pose,
+            vec![Uuid::from_u128(3), root, Uuid::from_u128(2)],
+        )
+        .unwrap();
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.1);
+        let sources = Sources {
+            player_skeleton: &played,
+            ..fixture.sources()
+        };
+
+        step(&node, &mut instance, &quiet(), &sources);
+
+        let expected = played_rest * baked_rest.inverse() * Vec3::new(0.0, 0.0, -0.1);
+        let motion = instance.output.root_motion();
+        assert!(
+            motion.translation.distance(expected) < 1e-3,
+            "{:?}",
+            motion.translation
+        );
     }
 
     #[test]
