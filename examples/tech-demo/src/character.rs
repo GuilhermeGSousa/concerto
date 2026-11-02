@@ -5,6 +5,7 @@ use concerto::animation::graph::AnimationGraph;
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
 use concerto::color::Color;
 use concerto::director::VirtualCamera;
+use concerto::ecs::component::scene::SceneEntityRef;
 use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
@@ -164,8 +165,8 @@ pub(crate) fn setup_character_animations(
         );
         cmd.insert(
             CharacterLink {
-                capsule: pending.capsule,
-                skeleton,
+                capsule: SceneEntityRef::Entity(pending.capsule),
+                skeleton: SceneEntityRef::Entity(skeleton),
             },
             character,
         );
@@ -303,6 +304,7 @@ pub(crate) fn debug_keys(
 mod tests {
     use concerto::animation::graph::AnimationGraph;
     use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
+    use concerto::ecs::component::scene::SceneEntityRef;
     use concerto::ecs::{Entity, IntoSystem, System, With, Without, World};
     use concerto::foundation::{
         assets::{
@@ -444,7 +446,10 @@ mod tests {
 
         assert_eq!(
             world.get_component_for_entity::<CharacterLink>(character),
-            Some(&CharacterLink { capsule, skeleton })
+            Some(&CharacterLink {
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::Entity(skeleton),
+            })
         );
         let handle: AssetHandle<AnimationGraph> = (**world
             .get_component_for_entity::<AnimationHandleComponent>(skeleton)

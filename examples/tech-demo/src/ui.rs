@@ -156,7 +156,10 @@ pub(crate) fn update_grounded_overlay(
     };
 
     let mut matching = None;
-    if let Some(mut player) = link.and_then(|link| players.get_entity(link.skeleton)) {
+    if let Some(mut player) = link
+        .and_then(|link| link.skeleton.entity())
+        .and_then(|skeleton| players.get_entity(skeleton))
+    {
         player.for_each_instance_mut::<MotionMatchingNode>(&graphs, |node, instance, _| {
             let Some(last) = &instance.last_query else {
                 return;
