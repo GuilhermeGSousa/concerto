@@ -178,7 +178,8 @@ live id such as `42v3`, and an asset handle is an asset id that loads through
 the edit `App`'s `AssetServer`, as a spawned scene's handles do. A handle field
 is edited by the asset picker, so an id that is not one of the project's assets
 of the field's kind answers `refused`. A `SceneEntityRef` field is edited by the
-entity picker, which refuses a node index other than the unset value.
+entity picker, which refuses a node index other than the unset value; one inside
+an `Option` or a list is written whole with the rest of it, unchecked (#377).
 A path `inspect` marks `enum` takes the whole enum, its variant's name for a
 variant without fields (`"Point"`) or an object with the variant's name as its
 one key (`{"Spot": {"cone_angle": 40}}`), so it can switch variants; a field
