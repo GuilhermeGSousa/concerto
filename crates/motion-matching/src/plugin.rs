@@ -6,7 +6,8 @@ use concerto_app::{
 };
 use concerto_ecs::IntoSystemConfig;
 use concerto_foundation::{
-    assets::handle::AssetHandle, transform::systems::propagate_global_transforms,
+    assets::handle::AssetHandle,
+    transform::systems::{propagate_global_transforms, update_simple_entities},
 };
 use concerto_physics::step_simulation;
 
@@ -61,6 +62,7 @@ impl Plugin for MotionMatchingPlugin {
                 LateUpdate,
                 apply_character_displacement
                     .after(animate_targets)
+                    .before(update_simple_entities)
                     .before(propagate_global_transforms),
             );
         register_runtime(app);
