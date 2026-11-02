@@ -48,6 +48,11 @@ whose `new_asset()` is its `Default`. The database stores no poses: it stores
 features, the simulation bone and, per frame, which clip and time the frame
 plays. `MotionDatabase::pose` samples the pose from the clip.
 
+A database loaded through the `AssetServer`, or added with
+`AssetServer::add`, loads its skeleton and clips in `on_load` and holds them
+by strong handles, as `StandardMaterial` does its textures. A game loads only
+the database; it needs no handles of its own to the clips for it to play.
+
 ### Definition
 
 | Field | Meaning | Default |
@@ -427,6 +432,8 @@ node.
 | `search_period` | seconds between searches | 0.1 |
 | `velocity_change_threshold`, `rotation_change_threshold` | the change per second of the first trajectory sample's velocity and facing that forces a search once it settles | 50 |
 | `same_frame_tolerance` | a search result this many frames or fewer from the playhead is ignored | 1 |
+| `ignore_surrounding` | a search returns no other frame fewer than this many frames from the playhead, though the playhead's own frame stays when nothing beats it; at the last frame of a range nothing is excluded around the playhead | 20 |
+| `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
@@ -438,17 +445,26 @@ then plays the database without searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
-for it, or when the playhead is in the last `ceil(sample_count * sample_dt *
-rate)` frames of its range, and on a better frame jumps with inertialization.
-The search is brute force: a squared distance over the normalised features of
-every frame, with an early out. `run_motion_matching` runs after
+for it, or when the playhead is in the last `ignore_range_end` frames of its
+range, and on a better frame jumps with inertialization. The search is brute
+force: a squared distance over the normalised features of every frame, with an
+early out. The playhead's frame seeds the best, and a candidate replaces it only
+when its cost is strictly lower. Frames within `ignore_surrounding` of the
+playhead and the last `ignore_range_end` of each range are not candidates, as
+in orangeduck's Motion-Matching. At the last frame of a range nothing seeds the
+search and nothing around the playhead is excluded, and any frame it finds other
+than the playhead's is taken, so the playhead leaves unless `ignore_range_end`
+is 0. A query that holds a NaN or an infinity finds nothing. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
 
 `MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
-`Pose` channels from, and `simulation` and `trajectory` what it was built with.
-All four come from one moment, so a drawn query does not mix bones from one
-frame with arrows from a later one. It is `None` until a search runs and after
+`Pose` channels from, `simulation` and `trajectory` what it was built with, and
+`best_cost` the squared distance to the frame the search found, or `None` when it
+found none: a query that holds a NaN or an infinity, or a search at a range's
+last frame when every range is no longer than `ignore_range_end`. All five come from one moment, so a
+drawn query does not mix bones from one frame with arrows from a later one. It
+is `None` until a search runs and after
 `reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale
 query is not drawn. A frame with no search due keeps the last one.
 
@@ -474,18 +490,24 @@ bone, so what shows on the bone is the root's height, lean and offset from it.
 The visible character and the capsule are two entities, and they drift apart:
 root motion moves one and the player moves the other. `CharacterDisplacement`
 goes on the character and reconciles the two each frame. `CharacterLink`, also
-on the character, names the entities it works with, and the game provides both:
+on the character, names the entities it works with. Both fields are
+`SceneEntityRef`s, so a link is a scene component: set it in the editor's
+inspector and it is saved with the scene, or insert it from code naming
+`SceneEntityRef::Entity(..)`. Its default leaves both fields unresolved.
 
 - `capsule` holds `CharacterSimulation`, `DesiredMotion` and the body, and needs
   `ColliderOffset::bottom_origin` for the character to stand on the ground.
 - `skeleton` holds the `SkeletonComponent` with a root and its
   `AnimationPlayer`. A scene-spawned skeleton exists only once its scene has, so
-  the game inserts the link then.
+  a game that builds the link in code inserts it then.
 
 ```rust
 commands.spawn((
     CharacterDisplacement::Clamp(Clamp::default()),
-    CharacterLink { capsule, skeleton },
+    CharacterLink {
+        capsule: SceneEntityRef::Entity(capsule),
+        skeleton: SceneEntityRef::Entity(skeleton),
+    },
     Transform::default(),
 ));
 ```
@@ -509,9 +531,11 @@ the delta reads this frame's pose and the space holds last frame's blended one,
 so they miss by a little every frame, and by more during an inertialized jump.
 
 A `skeleton` with no `SkeletonComponent`, or no root, gives no root motion, and
-the character still gets its method's correction. A `capsule` with no
-`CharacterSimulation` leaves the character where it is, and so does having no
-`CharacterLink`.
+the character still gets its method's correction. An unresolved `skeleton` is
+the same: no trajectory is published, and the character is corrected with no
+root motion. A `capsule` with no `CharacterSimulation`, or an unresolved
+`capsule`, leaves the character where it is and publishes no trajectory, and
+so does having no `CharacterLink`.
 
 A character's `Transform` is written in world space. Do not make it a child of
 its capsule: nothing checks, and it would move twice.

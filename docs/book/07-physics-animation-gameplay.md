@@ -71,7 +71,7 @@ other systems write, and `GroundProbe` reports whether it stands on something:
 use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
 use concerto::physics::ground::GroundProbe;
 
-let collider = Collider::capsule(2.0, 1.0);
+let collider = Collider::capsule(0.5, 0.3);
 let offset = ColliderOffset::bottom_origin(&collider);
 cmd.spawn((
     Player,
@@ -182,9 +182,12 @@ Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
 blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
 takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
 missing or holds another type; the typed methods are wrappers over those two.
-The tech demo's
-`examples/tech-demo/src/character.rs` builds a full locomotion graph with a
-jump state machine.
+`crates/animation/tests/graph_serialization.rs` builds a graph with a blend
+space and a state machine. The tech demo's character plays no authored graph:
+`examples/tech-demo/src/character.rs` gives it one `MotionMatchingNode`, which
+plays a motion database, and the
+[motion matching README](../../crates/motion-matching/README.md#playing-a-database)
+covers that node.
 
 ### Your own nodes
 
@@ -249,14 +252,19 @@ skeleton's rest pose.
 Nothing applies it on its own. To have it move a character, make the visible
 character a separate entity from the capsule, with the skeleton under it, and
 give it a `CharacterDisplacement` and a `CharacterLink` naming the capsule and
-the skeleton:
+the skeleton. The link's fields are `SceneEntityRef`s: pick both in the
+editor's inspector and the link is saved with the scene, or build it in code:
 
 ```rust
+use concerto::ecs::component::scene::SceneEntityRef;
 use concerto::motion_matching::{CharacterDisplacement, CharacterLink, Clamp};
 
 cmd.spawn((
     CharacterDisplacement::Clamp(Clamp::default()),
-    CharacterLink { capsule, skeleton },
+    CharacterLink {
+        capsule: SceneEntityRef::Entity(capsule),
+        skeleton: SceneEntityRef::Entity(skeleton),
+    },
     Transform::default(),
 ));
 ```

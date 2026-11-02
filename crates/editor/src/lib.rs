@@ -5,6 +5,7 @@ pub mod asset_picker;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
+pub mod entity_picker;
 pub mod fonts;
 pub mod guard;
 pub mod hierarchy;
@@ -33,6 +34,7 @@ use concerto_app::{App, Plugin};
 use std::path::PathBuf;
 
 use crate::asset_picker::AssetPickerPlugin;
+use crate::entity_picker::EntityPickerPlugin;
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -98,6 +100,7 @@ impl Plugin for EditorPlugin {
         });
         app.register_type::<MeshComponent>();
         app.register_plugin(AssetPickerPlugin);
+        app.register_plugin(EntityPickerPlugin);
 
         if let Some(path) = &self.project {
             app.get_resource_mut::<project::EditorCommands>()

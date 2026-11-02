@@ -38,10 +38,14 @@ pub fn publish_trajectory(
     physics: Res<PhysicsState>,
 ) {
     for link in links.iter() {
-        let Some(mut player) = players.get_entity(link.skeleton) else {
+        let (Some(capsule), Some(skeleton)) = (link.capsule.entity(), link.skeleton.entity())
+        else {
             continue;
         };
-        let Some((simulation, desired, body_id)) = simulations.get_entity(link.capsule) else {
+        let Some(mut player) = players.get_entity(skeleton) else {
+            continue;
+        };
+        let Some((simulation, desired, body_id)) = simulations.get_entity(capsule) else {
             continue;
         };
         let translation = physics.body_transform(*body_id).translation;
@@ -86,11 +90,14 @@ pub fn apply_character_displacement(
     let dt = time.delta().as_secs_f32();
     let alpha = time.fixed_alpha();
     for (entity, method, link) in characters.iter() {
-        let Some(mut simulation) = simulations.get_entity(link.capsule) else {
+        let Some(capsule) = link.capsule.entity() else {
+            continue;
+        };
+        let Some(mut simulation) = simulations.get_entity(capsule) else {
             continue;
         };
         let Some(position) = transforms
-            .get_entity(link.capsule)
+            .get_entity(capsule)
             .map(|capsule| capsule.translation)
         else {
             continue;
@@ -106,7 +113,10 @@ pub fn apply_character_displacement(
                 position: character.translation,
                 rotation: character.rotation,
             },
-            root_motion_of(link.skeleton, &skeletons, &root_bones).unwrap_or(RootMotion::IDENTITY),
+            link.skeleton
+                .entity()
+                .and_then(|skeleton| root_motion_of(skeleton, &skeletons, &root_bones))
+                .unwrap_or(RootMotion::IDENTITY),
         );
         character.translation = displaced.character.position;
         character.rotation = displaced.character.rotation;
@@ -393,8 +403,8 @@ mod tests {
         let entity = world.spawn((CharacterSimulation::default(), AnimationPlayer::new(1)));
         world.insert(
             CharacterLink {
-                capsule: entity,
-                skeleton: entity,
+                capsule: SceneEntityRef::Entity(entity),
+                skeleton: SceneEntityRef::Entity(entity),
             },
             entity,
         );
@@ -426,7 +436,10 @@ mod tests {
     fn publish_trajectory_writes_the_capsules_path_to_the_skeletons_player() {
         let (mut world, capsule, simulation, desired) = moving_capsule();
         let skeleton = world.spawn(AnimationPlayer::new(1));
-        world.spawn(CharacterLink { capsule, skeleton });
+        world.spawn(CharacterLink {
+            capsule: SceneEntityRef::Entity(capsule),
+            skeleton: SceneEntityRef::Entity(skeleton),
+        });
 
         run_once(&mut world, publish_trajectory);
 
@@ -445,8 +458,8 @@ mod tests {
         let (mut world, capsule, ..) = moving_capsule();
         world.insert(AnimationPlayer::new(1), capsule);
         world.spawn(CharacterLink {
-            capsule,
-            skeleton: capsule,
+            capsule: SceneEntityRef::Entity(capsule),
+            skeleton: SceneEntityRef::Entity(capsule),
         });
 
         run_once(&mut world, publish_trajectory);
@@ -461,8 +474,8 @@ mod tests {
         let plain = world.spawn(());
         let dangling = world.spawn(AnimationPlayer::new(1));
         world.spawn(CharacterLink {
-            capsule: plain,
-            skeleton: dangling,
+            capsule: SceneEntityRef::Entity(plain),
+            skeleton: SceneEntityRef::Entity(dangling),
         });
 
         run_once(&mut world, publish_trajectory);
@@ -506,7 +519,10 @@ mod tests {
     ) -> Entity {
         world.spawn((
             method,
-            CharacterLink { capsule, skeleton },
+            CharacterLink {
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::Entity(skeleton),
+            },
             Transform::from_translation(position),
         ))
     }
@@ -647,8 +663,8 @@ mod tests {
         ));
         world.insert(
             CharacterLink {
-                capsule,
-                skeleton: character,
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::Entity(character),
             },
             character,
         );
@@ -821,6 +837,64 @@ mod tests {
         let plain = world.spawn(Transform::IDENTITY);
         let start = Vec3::new(3.0, 0.0, 0.0);
         let character = spawn_character(&mut world, plain, clamp(0.5, 1.0), start);
+
+        run_once(&mut world, apply_character_displacement);
+
+        assert_eq!(position_of(&world, character), start);
+    }
+
+    #[test]
+    fn an_unresolved_skeleton_publishes_no_trajectory_and_still_corrects_the_character() {
+        let (mut world, capsule, ..) = moving_capsule();
+        world.insert_resource(Time::new());
+        world.insert(AnimationPlayer::new(1), capsule);
+        let character = world.spawn((
+            clamp(0.5, FRAC_PI_2),
+            CharacterLink {
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::default(),
+            },
+            AnimationPlayer::new(1),
+            Transform::from_translation(Vec3::new(6.0, 5.0, -2.0)),
+        ));
+
+        run_once(&mut world, publish_trajectory);
+        run_once(&mut world, apply_character_displacement);
+
+        assert_eq!(published(&world, capsule), None);
+        assert_eq!(published(&world, character), None);
+        assert_near(position_of(&world, character), Vec3::new(3.5, 5.0, -2.0));
+    }
+
+    #[test]
+    fn an_unresolved_capsule_publishes_no_trajectory() {
+        let (mut world, capsule, ..) = moving_capsule();
+        world.insert_resource(Time::new());
+        world.insert(AnimationPlayer::new(1), capsule);
+        world.spawn(CharacterLink {
+            capsule: SceneEntityRef::default(),
+            skeleton: SceneEntityRef::Entity(capsule),
+        });
+
+        run_once(&mut world, publish_trajectory);
+
+        assert_eq!(published(&world, capsule), None);
+    }
+
+    #[test]
+    fn an_unresolved_capsule_leaves_the_character_where_it_is() {
+        let mut world = displacement_world();
+        spawn_capsule(&mut world, Vec3::ZERO);
+        let skeleton = spawn_skeleton(&mut world, Mat4::IDENTITY, forward_by(0.5));
+        let start = Vec3::new(3.0, 0.0, 0.0);
+        let character = world.spawn((
+            synchronization(1.0),
+            CharacterLink {
+                capsule: SceneEntityRef::default(),
+                skeleton: SceneEntityRef::Entity(skeleton),
+            },
+            Transform::from_translation(start),
+        ));
 
         run_once(&mut world, apply_character_displacement);
 

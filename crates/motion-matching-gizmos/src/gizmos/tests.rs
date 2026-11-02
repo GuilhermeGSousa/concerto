@@ -319,8 +319,8 @@ impl Stage {
         let character = world.spawn((
             MotionMatchingGizmos::default(),
             CharacterLink {
-                capsule,
-                skeleton: player,
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::Entity(player),
             },
             GlobalTransform::new(Mat4::from_translation(Vec3::new(2.2, 0.0, 1.0))),
         ));
@@ -416,6 +416,7 @@ impl Stage {
                 frame,
                 simulation,
                 trajectory,
+                best_cost: None,
             });
         });
     }
@@ -577,6 +578,29 @@ fn a_character_whose_skeleton_is_gone_draws_nothing() {
     stage.tick();
 
     assert_eq!(stage.segments(), 0);
+}
+
+#[test]
+fn a_link_with_an_unresolved_field_draws_nothing() {
+    for unresolve in [
+        (|link: &mut CharacterLink| link.capsule = SceneEntityRef::default())
+            as fn(&mut CharacterLink),
+        |link: &mut CharacterLink| link.skeleton = SceneEntityRef::default(),
+    ] {
+        let mut stage = Stage::new();
+        let character = stage.character;
+        unresolve(
+            stage
+                .world()
+                .get_component_for_entity_mut::<CharacterLink>(character)
+                .unwrap(),
+        );
+
+        stage.tick();
+        stage.tick();
+
+        assert_eq!(stage.segments(), 0);
+    }
 }
 
 #[test]

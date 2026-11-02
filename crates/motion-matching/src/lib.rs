@@ -38,6 +38,6 @@ pub use node::MotionMatchingNode;
 pub use plugin::MotionMatchingPlugin;
 pub use query::FeatureQuery;
 pub use runtime::run_motion_matching;
-pub use search::{cost_of, excluded_tail, search};
+pub use search::{cost_of, search};
 pub use simulation::{CharacterSimulation, DesiredMotion, TrajectorySample};
 pub use staleness::{is_stale, weightless_hash, weights_changed_only, weights_of};

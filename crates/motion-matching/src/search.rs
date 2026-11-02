@@ -1,11 +1,5 @@
 use crate::database::MotionDatabase;
 
-/// How many frames at the end of each range are never search results: the trajectory window of the database, in frames.
-pub fn excluded_tail(database: &MotionDatabase) -> usize {
-    let settings = database.trajectory();
-    (settings.sample_count as f32 * settings.sample_dt * database.rate()).ceil() as usize
-}
-
 fn cost(
     database: &MotionDatabase,
     divisors: &[f32],
@@ -27,7 +21,7 @@ fn cost(
             return None;
         }
     }
-    Some(sum)
+    sum.is_finite().then_some(sum)
 }
 
 /// The squared distance from `query` to `frame`, or `None` for a query of the wrong length or a frame outside the database.
@@ -38,31 +32,32 @@ pub fn cost_of(database: &MotionDatabase, query: &[f32], frame: usize) -> Option
     cost(database, &database.divisors(), query, frame, f32::INFINITY)
 }
 
-/// The frame nearest `query` by squared distance and that distance; `current_cost_frame` seeds the best, and the last `tail` frames of each range are never candidates.
+/// The frame nearest `query` by squared distance and that distance; `current` seeds the best, and no frame within `ignore_surrounding` of it or in the last `ignore_range_end` of a range is a candidate.
 pub fn search(
     database: &MotionDatabase,
     query: &[f32],
-    current_cost_frame: usize,
-    tail: usize,
+    current: Option<usize>,
+    ignore_surrounding: usize,
+    ignore_range_end: usize,
 ) -> Option<(usize, f32)> {
     if query.len() != database.feature_dims() {
         return None;
     }
     let divisors = database.divisors();
+    let current = current.filter(|current| *current < database.frame_count());
     let mut best = None;
-    if current_cost_frame < database.frame_count() {
-        let seed = cost(
-            database,
-            &divisors,
-            query,
-            current_cost_frame,
-            f32::INFINITY,
-        )?;
-        best = Some((current_cost_frame, seed));
+    if let Some(current) = current {
+        best = Some((
+            current,
+            cost(database, &divisors, query, current, f32::INFINITY)?,
+        ));
     }
     for range in database.ranges() {
-        let end = range.end.saturating_sub(tail).max(range.start);
+        let end = range.end.saturating_sub(ignore_range_end).max(range.start);
         for frame in range.start..end {
+            if current.is_some_and(|current| frame.abs_diff(current) < ignore_surrounding) {
+                continue;
+            }
             let limit = best.map_or(f32::INFINITY, |(_, best)| best);
             if let Some(value) = cost(database, &divisors, query, frame, limit) {
                 best = Some((frame, value));
@@ -77,6 +72,9 @@ mod tests {
     use super::*;
     use crate::test_support::{two_clip_database, TURN_RATE};
 
+    const SURROUNDING: usize = 20;
+    const RANGE_END: usize = 20;
+
     fn normalised(database: &MotionDatabase, yaw_rate: f32, speed: f32) -> Vec<f32> {
         let mut query = vec![yaw_rate, speed];
         database.normalise(&mut query);
@@ -87,7 +85,8 @@ mod tests {
         database: &MotionDatabase,
         query: &[f32],
         current: usize,
-        tail: usize,
+        surrounding: usize,
+        range_end: usize,
     ) -> (usize, f32) {
         let distance = |frame: usize| -> f32 {
             database
@@ -99,7 +98,10 @@ mod tests {
         };
         let mut best = (current, distance(current));
         for range in database.ranges() {
-            for frame in range.start..range.end - tail {
+            for frame in range.start..range.end - range_end {
+                if frame.abs_diff(current) < surrounding {
+                    continue;
+                }
                 let value = distance(frame);
                 if value < best.1 {
                     best = (frame, value);
@@ -117,10 +119,18 @@ mod tests {
     }
 
     #[test]
-    fn the_excluded_tail_is_the_trajectory_window_in_frames_rounded_up() {
+    fn a_nan_query_finds_no_frame() {
         let database = two_clip_database();
+        let query = vec![f32::NAN; database.feature_dims()];
 
-        assert_eq!(excluded_tail(&database), 23);
+        assert_eq!(
+            search(&database, &query, Some(5), SURROUNDING, RANGE_END),
+            None
+        );
+        assert_eq!(
+            search(&database, &query, None, SURROUNDING, RANGE_END),
+            None
+        );
     }
 
     #[test]
@@ -128,7 +138,7 @@ mod tests {
         let database = two_clip_database();
         let query = normalised(&database, TURN_RATE, 0.0);
 
-        let (frame, _) = search(&database, &query, 5, excluded_tail(&database)).unwrap();
+        let (frame, _) = search(&database, &query, Some(5), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(database.entry_of(frame), Some(1), "frame {frame}");
     }
@@ -138,7 +148,7 @@ mod tests {
         let database = two_clip_database();
         let query = normalised(&database, 0.0, 1.0);
 
-        let (frame, _) = search(&database, &query, 80, excluded_tail(&database)).unwrap();
+        let (frame, _) = search(&database, &query, Some(80), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(database.entry_of(frame), Some(0), "frame {frame}");
     }
@@ -146,23 +156,47 @@ mod tests {
     #[test]
     fn the_last_frames_of_each_range_are_never_returned() {
         let database = two_clip_database();
-        let tail = excluded_tail(&database);
 
         for target in 0..database.frame_count() {
             let query = database.normalised_features(target);
-            let (frame, _) = search(&database, &query, 0, tail).unwrap();
+            let (frame, _) = search(&database, &query, Some(0), 0, RANGE_END).unwrap();
             let range = database.range_of(frame).unwrap();
             assert!(
-                frame < range.end - tail,
+                frame < range.end - RANGE_END,
                 "query {target} gave frame {frame}"
             );
         }
     }
 
     #[test]
+    fn frames_near_the_current_one_are_never_returned() {
+        let database = two_clip_database();
+        let current = 63;
+
+        for target in 0..database.frame_count() {
+            let query = database.normalised_features(target);
+            let (frame, _) = search(&database, &query, Some(current), SURROUNDING, 0).unwrap();
+            assert!(
+                frame == current || frame.abs_diff(current) >= SURROUNDING,
+                "query {target} gave frame {frame}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_frame_near_the_current_one_wins_with_no_surrounding_ignored() {
+        let database = two_clip_database();
+        let query = database.normalised_features(66);
+
+        let (frame, value) = search(&database, &query, Some(63), 0, 0).unwrap();
+
+        assert_eq!(frame, 66);
+        assert!(value < 1e-10);
+    }
+
+    #[test]
     fn the_early_out_returns_the_same_answer_as_the_full_sum() {
         let database = two_clip_database();
-        let tail = excluded_tail(&database);
 
         for target in (0..database.frame_count()).step_by(7) {
             for current in [0, 45, 100] {
@@ -170,8 +204,9 @@ mod tests {
                 query[0] += 0.37;
                 query[1] -= 0.21;
 
-                let found = search(&database, &query, current, tail).unwrap();
-                let expected = reference(&database, &query, current, tail);
+                let found =
+                    search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
+                let expected = reference(&database, &query, current, SURROUNDING, RANGE_END);
 
                 assert_eq!(found.0, expected.0, "target {target} current {current}");
                 assert!((found.1 - expected.1).abs() < 1e-5);
@@ -180,13 +215,13 @@ mod tests {
     }
 
     #[test]
-    fn the_current_frames_cost_seeds_the_best_even_inside_the_tail() {
+    fn the_current_frames_cost_seeds_the_best_even_inside_the_range_end() {
         let database = two_clip_database();
-        let tail = excluded_tail(&database);
         let current = 55;
         let query = database.normalised_features(current);
 
-        let (frame, value) = search(&database, &query, current, tail).unwrap();
+        let (frame, value) =
+            search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(frame, current);
         assert!(value < 1e-10);
@@ -197,7 +232,7 @@ mod tests {
         let database = two_clip_database();
         let query = database.normalised_features(70);
 
-        let (frame, _) = search(&database, &query, 70, 0).unwrap();
+        let (frame, _) = search(&database, &query, Some(70), 0, 0).unwrap();
 
         assert_eq!(frame, 70);
     }
@@ -206,15 +241,15 @@ mod tests {
     fn a_query_of_the_wrong_length_finds_nothing() {
         let database = two_clip_database();
 
-        assert_eq!(search(&database, &[0.0], 0, 0), None);
+        assert_eq!(search(&database, &[0.0], Some(0), 0, 0), None);
     }
 
     #[test]
-    fn a_tail_longer_than_a_range_leaves_only_the_current_frame() {
+    fn a_range_end_longer_than_a_range_leaves_only_the_current_frame() {
         let database = two_clip_database();
         let query = database.normalised_features(10);
 
-        let (frame, _) = search(&database, &query, 3, 500).unwrap();
+        let (frame, _) = search(&database, &query, Some(3), 0, 500).unwrap();
 
         assert_eq!(frame, 3);
     }
@@ -224,7 +259,7 @@ mod tests {
         let database = two_clip_database();
         let query = database.normalised_features(70);
 
-        let (frame, value) = search(&database, &query, 70, 0).unwrap();
+        let (frame, value) = search(&database, &query, Some(70), 0, 0).unwrap();
 
         assert_eq!(frame, 70);
         assert_eq!(cost_of(&database, &query, 70), Some(value));
