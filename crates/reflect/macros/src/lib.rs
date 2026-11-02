@@ -44,6 +44,9 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         Ok(found) => found,
         Err(error) => return error.to_compile_error().into(),
     };
+    if let Err(error) = check_field_attributes(&ast.data) {
+        return error.to_compile_error().into();
+    }
 
     let root = caller_reflect_root();
     let (impl_generics, type_generics, where_clause) = ast.generics.split_for_impl();
@@ -173,7 +176,12 @@ pub fn derive_reflect(input: TokenStream) -> TokenStream {
         Vec::new()
     } else {
         match &ast.data {
-            Data::Struct(data) => data.fields.iter().map(|field| &field.ty).collect(),
+            Data::Struct(data) => data
+                .fields
+                .iter()
+                .filter(|field| !is_skipped(field))
+                .map(|field| &field.ty)
+                .collect(),
             Data::Enum(data) => data
                 .variants
                 .iter()
@@ -265,7 +273,12 @@ fn field_labels(fields: &Fields) -> Vec<(String, Member, proc_macro2::Span)> {
 }
 
 fn struct_fields(root: &proc_macro2::TokenStream, fields: &Fields) -> proc_macro2::TokenStream {
-    let labels = field_labels(fields);
+    let labels: Vec<_> = field_labels(fields)
+        .into_iter()
+        .zip(fields.iter())
+        .filter(|(_, field)| !is_skipped(field))
+        .map(|(label, _)| label)
+        .collect();
     let len = labels.len();
     let names = labels
         .iter()
@@ -395,6 +408,47 @@ fn enum_fields(root: &proc_macro2::TokenStream, data: &DataEnum) -> proc_macro2:
                 #(#muts,)*
             }
         }
+    }
+}
+
+fn is_skipped(field: &syn::Field) -> bool {
+    field
+        .attrs
+        .iter()
+        .any(|attribute| attribute.path().is_ident("reflect"))
+}
+
+fn check_field_attributes(data: &Data) -> syn::Result<()> {
+    match data {
+        Data::Struct(data) => {
+            for attribute in data
+                .fields
+                .iter()
+                .flat_map(|field| &field.attrs)
+                .filter(|attribute| attribute.path().is_ident("reflect"))
+            {
+                attribute.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("skip") {
+                        Ok(())
+                    } else {
+                        Err(meta.error("a field takes only `#[reflect(skip)]`"))
+                    }
+                })?;
+            }
+            Ok(())
+        }
+        Data::Enum(data) => data
+            .variants
+            .iter()
+            .flat_map(|variant| &variant.fields)
+            .find(|field| is_skipped(field))
+            .map_or(Ok(()), |field| {
+                Err(syn::Error::new_spanned(
+                    field,
+                    "`#[reflect(skip)]` is for struct fields only",
+                ))
+            }),
+        Data::Union(_) => Ok(()),
     }
 }
 

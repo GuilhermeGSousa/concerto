@@ -709,23 +709,33 @@ mod tests {
         );
     }
 
-    fn animated_recipe(app: &mut App) {
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Versioned;
+
+    impl Asset for Versioned {
+        const FORMAT_VERSION: u32 = 2;
+
+        fn name() -> &'static str {
+            "Versioned"
+        }
+    }
+
+    fn versioned_recipe(app: &mut App) {
         crate::hosted::testing::scene_recipe(app);
-        app.register_plugin(concerto_animation::plugin::AnimationPlugin);
+        app.register_asset::<Versioned>();
     }
 
     #[test]
     fn a_project_with_outdated_content_is_reported_once_when_its_first_scene_opens() {
         use crate::{asset_editor::AssetEditorCommand, hosted::testing::SceneFixture};
-        use concerto_animation::clip::AnimationClip;
         use concerto_ecs::{IntoSystem, System};
 
         let mut f = SceneFixture::new();
         f.world
             .get_resource_mut::<crate::scene::SceneRecipe>()
             .unwrap()
-            .recipe = animated_recipe;
-        f.add_to_project(&versioned(AnimationClip::name(), Some(0)));
+            .recipe = versioned_recipe;
+        f.add_to_project(&versioned(Versioned::name(), Some(1)));
         let mut report = report_outdated_content.into_system();
         report.initialize(&mut f.world);
         f.world

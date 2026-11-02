@@ -3,9 +3,9 @@ use concerto_reflect::Reflect;
 use uuid::Uuid;
 
 use crate::{
-    clip::AnimationClip,
-    evaluation::AnimationGraphContext,
-    pose::{EvaluatedPose, Pose, PosePool},
+    clip::{AnimationChannel, AnimationClip},
+    evaluation::{AnimationGraphContext, RootBone},
+    pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion, twist_about},
 };
 
 pub mod blend_space;
@@ -85,6 +85,8 @@ impl AnimationNode for BlendNode {
 
 pub struct AnimationClipNodeInstance {
     time: f32,
+    previous_time: f32,
+    wrapped: bool,
     start_time: f32,
     is_paused: bool,
     play_rate: f32,
@@ -95,6 +97,8 @@ impl AnimationClipNodeInstance {
     pub fn new() -> Self {
         Self {
             time: 0.0,
+            previous_time: 0.0,
+            wrapped: false,
             start_time: 0.0,
             is_paused: false,
             play_rate: 1.0,
@@ -105,13 +109,20 @@ impl AnimationClipNodeInstance {
     pub fn with_start_time(mut self, start_time: f32) -> Self {
         self.start_time = start_time;
         self.time = start_time;
+        self.previous_time = start_time;
         self
     }
 
     pub fn play(&mut self) {
-        self.time = self.start_time;
+        self.restart();
         self.is_paused = false;
         self.is_finished = false;
+    }
+
+    fn restart(&mut self) {
+        self.time = self.start_time;
+        self.previous_time = self.start_time;
+        self.wrapped = false;
     }
 
     pub fn current_time(&self) -> f32 {
@@ -138,6 +149,9 @@ impl AnimationNode for AnimationClipNode {
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
+        instance.previous_time = instance.time;
+        instance.wrapped = false;
+
         if instance.is_finished {
             instance.is_finished = false;
         }
@@ -156,6 +170,7 @@ impl AnimationNode for AnimationClipNode {
             AnimationPlayMode::Loop => {
                 if instance.time > clip.duration() {
                     instance.time = instance.start_time;
+                    instance.wrapped = true;
                     instance.is_finished = true;
                 }
             }
@@ -197,11 +212,22 @@ impl AnimationNode for AnimationClipNode {
                 for animation_channel in animation_channels {
                     animation_channel.sample_transform(instance.current_time(), joint_pose);
                 }
+
+                if let Some(root) = context.root().filter(|root| root.index == bone_index) {
+                    net_of_root_motion(joint_pose, root);
+                }
             });
+
+        output.set_root_motion(root_motion(
+            instance,
+            animation_clip,
+            context.root(),
+            bone_ids,
+        ));
     }
 
     fn reset(&self, instance: &mut AnimationClipNodeInstance) {
-        instance.time = instance.start_time;
+        instance.restart();
         instance.is_finished = false;
         instance.is_paused = false;
     }
@@ -209,6 +235,50 @@ impl AnimationNode for AnimationClipNode {
     fn is_finished(&self, instance: &AnimationClipNodeInstance) -> bool {
         instance.is_finished
     }
+}
+
+fn net_of_root_motion(joint: &mut JointPose, root: &RootBone) {
+    let turned = joint.rotation * root.rest.rotation.inverse();
+    joint.rotation = twist_about(turned, root.up).inverse() * joint.rotation;
+    let lifted = (joint.translation - root.rest.translation).dot(root.up);
+    joint.translation = root.rest.translation + root.up * lifted;
+}
+
+fn root_motion(
+    instance: &AnimationClipNodeInstance,
+    clip: &AnimationClip,
+    root: Option<&RootBone>,
+    bone_ids: &[Uuid],
+) -> RootMotion {
+    let Some((root, channels)) = root.and_then(|root| {
+        let channels = clip.get_channels(bone_ids.get(root.index)?)?;
+        Some((root, channels))
+    }) else {
+        return RootMotion::IDENTITY;
+    };
+
+    let stretch = |from: f32, to: f32| {
+        RootMotion::between(
+            &sample_root(channels, &root.rest, from),
+            &sample_root(channels, &root.rest, to),
+            root.rest.rotation,
+        )
+    };
+
+    if instance.wrapped {
+        stretch(instance.previous_time, clip.duration())
+            .then(stretch(instance.start_time, instance.time))
+    } else {
+        stretch(instance.previous_time, instance.time)
+    }
+}
+
+fn sample_root(channels: &[AnimationChannel], rest: &JointPose, time: f32) -> JointPose {
+    let mut joint = rest.clone();
+    for channel in channels {
+        channel.sample_transform(time, &mut joint);
+    }
+    joint
 }
 
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
@@ -255,5 +325,434 @@ impl AnimationClipNode {
     pub fn with_play_rate(mut self, play_rate: f32) -> Self {
         self.play_rate = play_rate.max(0.0);
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{
+        asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+    };
+    use glam::{Quat, Vec3};
+    use uuid::Uuid;
+
+    use super::{AnimationClipNode, AnimationClipNodeInstance, AnimationNode, AnimationPlayMode};
+    use crate::{
+        blackboard::AnimationBlackboard,
+        clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        evaluation::{AnimationGraphContext, RootBone},
+        graph::AnimationGraph,
+        pose::{JointPose, Pose, PosePool, RootMotion},
+    };
+
+    const ROOT: Uuid = Uuid::from_u128(1);
+    const OTHER: Uuid = Uuid::from_u128(2);
+
+    struct Rig {
+        _server: AssetServer,
+        clips: AssetStore<AnimationClip>,
+        graphs: AssetStore<AnimationGraph>,
+        blackboard: AnimationBlackboard,
+        rest: JointPose,
+        up: Vec3,
+        clip: AssetHandle<AnimationClip>,
+    }
+
+    impl Rig {
+        fn new(clip: AnimationClip, rest: JointPose) -> Self {
+            let mut server = AssetServer::new();
+            let mut clips = AssetStore::<AnimationClip>::new();
+            server.register_asset(&clips);
+            let handle = server.add(AnimationClip::default());
+            clips.insert(handle.id(), clip);
+            Self {
+                _server: server,
+                clips,
+                graphs: AssetStore::new(),
+                blackboard: AnimationBlackboard::default(),
+                rest,
+                up: Vec3::Y,
+                clip: handle,
+            }
+        }
+
+        fn with_up(mut self, up: Vec3) -> Self {
+            self.up = up;
+            self
+        }
+
+        fn context(&self) -> AnimationGraphContext<'_> {
+            AnimationGraphContext {
+                animation_clips: &self.clips,
+                animation_graphs: &self.graphs,
+                blackboard: &self.blackboard,
+                root: Some(RootBone {
+                    index: 0,
+                    rest: self.rest.clone(),
+                    up: self.up,
+                }),
+            }
+        }
+
+        fn node(&self) -> AnimationClipNode {
+            AnimationClipNode::new(self.clip.clone())
+        }
+
+        fn pose(&self, bones: &[Uuid]) -> Pose {
+            let node = self.node();
+            let mut instance = node.create_instance(&self.context());
+            let mut pool = PosePool::new(bones.len());
+            pool.set_rest(&vec![self.rest.clone(); bones.len()]);
+            let mut output = pool.acquire();
+            node.evaluate(
+                &mut instance,
+                &self.context(),
+                bones,
+                &[],
+                &mut pool,
+                &mut output,
+            );
+            output
+        }
+
+        fn motion(
+            &self,
+            node: &AnimationClipNode,
+            instance: &mut AnimationClipNodeInstance,
+        ) -> RootMotion {
+            let mut pool = PosePool::new(1);
+            let mut output = pool.acquire();
+            node.evaluate(
+                instance,
+                &self.context(),
+                &[ROOT],
+                &[],
+                &mut pool,
+                &mut output,
+            );
+            output.root_motion()
+        }
+
+        fn step(
+            &self,
+            node: &AnimationClipNode,
+            instance: &mut AnimationClipNodeInstance,
+            delta_time: f32,
+        ) -> RootMotion {
+            node.update(instance, delta_time, &self.context());
+            self.motion(node, instance)
+        }
+    }
+
+    fn translation_channel(from: Vec3, to: Vec3) -> AnimationChannel {
+        AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::Translation(vec![from, to]),
+        )
+    }
+
+    fn rotation_channel(from: Quat, to: Quat) -> AnimationChannel {
+        AnimationChannel::new(
+            vec![0.0, 1.0],
+            AnimationChanelOutput::Rotation(vec![from, to]),
+        )
+    }
+
+    fn clip(channels: Vec<AnimationChannel>) -> AnimationClip {
+        let mut clip = AnimationClip::default();
+        for channel in channels {
+            clip.add_channel(ROOT, channel);
+        }
+        clip
+    }
+
+    fn at_rest(rotation: Quat) -> JointPose {
+        JointPose {
+            translation: Vec3::new(0.0, 1.0, 0.0),
+            rotation,
+            scale: Vec3::ONE,
+        }
+    }
+
+    fn turned_armature() -> Quat {
+        Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)
+    }
+
+    fn assert_motion(actual: RootMotion, translation: Vec3, rotation: Quat) {
+        assert!(
+            actual.translation.abs_diff_eq(translation, 1e-4),
+            "expected translation {translation}, got {}",
+            actual.translation
+        );
+        assert!(
+            actual.rotation.angle_between(rotation) < 1e-3,
+            "expected rotation {rotation}, got {}",
+            actual.rotation
+        );
+    }
+
+    fn held(rotation: Quat) -> AnimationChannel {
+        rotation_channel(rotation, rotation)
+    }
+
+    fn assert_rotation(actual: Quat, expected: Quat) {
+        assert!(
+            actual.angle_between(expected) < 1e-3,
+            "expected rotation {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn a_clip_gives_up_the_yaw_of_its_root_and_keeps_the_pitch() {
+        let rest = turned_armature();
+        let pitch = Quat::from_rotation_x(0.4);
+        let rig = Rig::new(
+            clip(vec![held(Quat::from_rotation_y(1.0) * pitch * rest)]),
+            at_rest(rest),
+        );
+
+        assert_rotation(rig.pose(&[ROOT]).joints()[0].rotation, pitch * rest);
+    }
+
+    #[test]
+    fn a_clip_measures_its_yaw_about_the_up_of_the_root() {
+        let rest = turned_armature();
+        let pitch = Quat::from_rotation_x(0.4);
+        let rig = Rig::new(
+            clip(vec![held(Quat::from_rotation_z(1.0) * pitch * rest)]),
+            at_rest(rest),
+        )
+        .with_up(Vec3::Z);
+
+        assert_rotation(rig.pose(&[ROOT]).joints()[0].rotation, pitch * rest);
+    }
+
+    #[test]
+    fn a_clip_keeps_the_height_of_its_root_and_leaves_the_ground_translation_at_rest() {
+        let keyed = Vec3::new(3.0, 1.75, -2.0);
+        let rig = Rig::new(
+            clip(vec![translation_channel(keyed, keyed)]),
+            at_rest(Quat::IDENTITY),
+        );
+
+        assert_eq!(
+            rig.pose(&[ROOT]).joints()[0].translation,
+            Vec3::new(0.0, 1.75, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_clip_reads_the_height_of_its_root_along_up() {
+        let keyed = Vec3::new(3.0, 5.0, 0.5);
+        let rig = Rig::new(
+            clip(vec![translation_channel(keyed, keyed)]),
+            at_rest(Quat::IDENTITY),
+        )
+        .with_up(Vec3::Z);
+
+        assert_eq!(
+            rig.pose(&[ROOT]).joints()[0].translation,
+            Vec3::new(0.0, 1.0, 0.5)
+        );
+    }
+
+    #[test]
+    fn a_joint_that_is_not_the_root_keeps_what_the_clip_gives_it() {
+        let moved = Vec3::new(3.0, 2.0, 1.0);
+        let turned = Quat::from_rotation_y(1.0);
+        let mut both = clip(vec![held(turned)]);
+        both.add_channel(OTHER, translation_channel(moved, moved));
+        both.add_channel(OTHER, held(turned));
+        let rig = Rig::new(both, at_rest(Quat::IDENTITY));
+
+        let pose = rig.pose(&[ROOT, OTHER]);
+
+        assert_eq!(pose.joints()[1].translation, moved);
+        assert_rotation(pose.joints()[1].rotation, turned);
+    }
+
+    #[test]
+    fn blending_two_clips_that_turn_differently_leaves_no_yaw() {
+        let rest = turned_armature();
+        let pitch = Quat::from_rotation_x(0.4);
+        let turning_by = |angle: f32| {
+            let turned = Quat::from_rotation_y(angle) * pitch * rest;
+            Rig::new(clip(vec![held(turned)]), at_rest(rest)).pose(&[ROOT])
+        };
+
+        let mut blended = turning_by(1.0);
+        blended.blend(&turning_by(-0.6), 0.5);
+
+        assert_rotation(blended.joints()[0].rotation, pitch * rest);
+    }
+
+    #[test]
+    fn a_clip_delta_is_the_difference_of_two_samples_measured_from_a_turned_rest() {
+        let rest = turned_armature();
+        let rig = Rig::new(
+            clip(vec![
+                translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0)),
+                rotation_channel(rest, Quat::from_rotation_y(1.0) * rest),
+            ]),
+            at_rest(rest),
+        );
+        let node = rig.node();
+        let mut instance = node.create_instance(&rig.context());
+
+        assert_motion(
+            rig.step(&node, &mut instance, 0.25),
+            Vec3::new(0.5, 0.0, 1.0),
+            Quat::from_rotation_y(0.25),
+        );
+        assert_motion(
+            rig.step(&node, &mut instance, 0.25),
+            Quat::from_rotation_y(-0.25) * Vec3::new(0.5, 0.0, 1.0),
+            Quat::from_rotation_y(0.25),
+        );
+    }
+
+    #[test]
+    fn a_root_with_no_rotation_channel_reads_as_its_rest() {
+        let rest = turned_armature();
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0));
+        let rig = Rig::new(clip(vec![moving]), at_rest(rest));
+        let node = rig.node();
+        let mut instance = node.create_instance(&rig.context());
+
+        assert_motion(
+            rig.step(&node, &mut instance, 0.5),
+            Vec3::new(1.0, 0.0, 2.0),
+            Quat::IDENTITY,
+        );
+    }
+
+    #[test]
+    fn a_root_with_a_one_key_rotation_channel_reads_as_its_rest() {
+        let rest = turned_armature();
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0));
+        let held = AnimationChannel::new(
+            vec![0.0],
+            AnimationChanelOutput::Rotation(vec![Quat::from_rotation_y(1.0)]),
+        );
+        let rig = Rig::new(clip(vec![moving, held]), at_rest(rest));
+        let node = rig.node();
+        let mut instance = node.create_instance(&rig.context());
+
+        assert_motion(
+            rig.step(&node, &mut instance, 0.5),
+            Vec3::new(1.0, 0.0, 2.0),
+            Quat::IDENTITY,
+        );
+    }
+
+    #[test]
+    fn a_clip_with_no_channels_for_the_root_gives_no_root_motion() {
+        let mut other_bone_only = AnimationClip::default();
+        other_bone_only.add_channel(OTHER, translation_channel(Vec3::ZERO, Vec3::X));
+        let rig = Rig::new(other_bone_only, at_rest(Quat::IDENTITY));
+        let node = rig.node();
+        let mut instance = node.create_instance(&rig.context());
+
+        assert_eq!(
+            rig.step(&node, &mut instance, 0.5),
+            RootMotion::IDENTITY,
+            "a root the clip does not animate has not moved"
+        );
+    }
+
+    #[test]
+    fn a_delta_turned_by_the_root_reads_forward_from_the_way_it_faced_last_frame() {
+        let rest = turned_armature();
+        let facing_x = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+        let rig = Rig::new(
+            clip(vec![
+                translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0)),
+                rotation_channel(facing_x * rest, facing_x * rest),
+            ]),
+            at_rest(rest),
+        );
+        let node = rig.node();
+        let mut instance = node.create_instance(&rig.context());
+
+        assert_motion(
+            rig.step(&node, &mut instance, 0.5),
+            Vec3::new(0.0, 0.0, 1.0),
+            Quat::IDENTITY,
+        );
+    }
+
+    #[test]
+    fn a_loop_delta_across_the_wrap_is_the_distance_covered_and_not_a_jump_back() {
+        let rig = Rig::new(
+            clip(vec![
+                translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0)),
+                rotation_channel(Quat::IDENTITY, Quat::from_rotation_y(1.0)),
+            ]),
+            at_rest(Quat::IDENTITY),
+        );
+        let node = rig.node().with_start_time(0.2);
+        let mut instance = node.create_instance(&rig.context());
+
+        rig.step(&node, &mut instance, 0.4);
+        rig.step(&node, &mut instance, 0.3);
+        assert_motion(
+            rig.step(&node, &mut instance, 0.4),
+            Quat::from_rotation_y(-0.9) * Vec3::new(0.2, 0.0, 0.0),
+            Quat::from_rotation_y(0.1),
+        );
+        assert_motion(
+            rig.step(&node, &mut instance, 0.4),
+            Quat::from_rotation_y(-0.2) * Vec3::new(0.8, 0.0, 0.0),
+            Quat::from_rotation_y(0.4),
+        );
+    }
+
+    #[test]
+    fn a_clip_restarted_after_a_wrap_gives_no_root_motion() {
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0));
+        let rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
+        let node = rig.node();
+
+        let mut instance = node.create_instance(&rig.context());
+        rig.step(&node, &mut instance, 0.8);
+        rig.step(&node, &mut instance, 0.8);
+        node.reset(&mut instance);
+        assert_eq!(rig.motion(&node, &mut instance), RootMotion::IDENTITY);
+
+        let mut instance = node.create_instance(&rig.context());
+        rig.step(&node, &mut instance, 0.8);
+        rig.step(&node, &mut instance, 0.8);
+        instance.play();
+        assert_eq!(rig.motion(&node, &mut instance), RootMotion::IDENTITY);
+    }
+
+    #[test]
+    fn a_start_time_gives_no_delta_on_the_first_evaluation() {
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0));
+        let rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
+        let node = rig.node().with_start_time(0.5);
+        let mut instance = node.create_instance(&rig.context());
+
+        assert_eq!(rig.motion(&node, &mut instance), RootMotion::IDENTITY);
+    }
+
+    #[test]
+    fn a_play_once_clip_gives_its_last_delta_and_then_none() {
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0));
+        let rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
+        let node = rig.node().with_play_mode(AnimationPlayMode::PlayOnce);
+        let mut instance = node.create_instance(&rig.context());
+
+        rig.step(&node, &mut instance, 0.75);
+        assert_motion(
+            rig.step(&node, &mut instance, 0.5),
+            Vec3::new(0.5, 0.0, 0.0),
+            Quat::IDENTITY,
+        );
+        assert_eq!(
+            rig.step(&node, &mut instance, 0.5),
+            RootMotion::IDENTITY,
+            "a finished clip must not repeat its last delta"
+        );
     }
 }

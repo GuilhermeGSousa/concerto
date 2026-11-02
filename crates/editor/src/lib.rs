@@ -2,7 +2,6 @@
 pub mod actions;
 pub mod asset_editor;
 pub mod asset_picker;
-pub mod clip_editor;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
@@ -28,7 +27,7 @@ pub mod window_chrome;
 mod workspace;
 
 use concerto_mesh::MeshComponent;
-pub use run::run;
+pub use run::{run, run_with};
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
@@ -77,7 +76,6 @@ impl Plugin for EditorPlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
-        app.register_plugin(clip_editor::ClipEditorPlugin);
         app.register_plugin(timeline::TimelinePlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,

@@ -69,7 +69,7 @@ pub(crate) struct AssetPickerLabel {
 
 /// The menu every picker shares, pointed at the row whose button opened it last, if a row did.
 #[derive(Component)]
-pub(crate) struct AssetPickerMenu {
+pub struct AssetPickerMenu {
     row: Option<Entity>,
 }
 
@@ -143,7 +143,8 @@ fn held(values: &Query<&PropertyRowValue>, row: Entity) -> Option<AssetId> {
         .and_then(|value| value.downcast::<AssetId>().copied())
 }
 
-pub(crate) fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
+/// The name of the asset `id` names, `None` for a nil id and `Missing` for one not in `registry`.
+pub fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
     if id.is_nil() {
         return "None".into();
     }
@@ -162,7 +163,7 @@ fn menu_panel(button: Entity) -> UIAnchoredPanel {
 }
 
 /// A picker's button, which takes the free space of the row it sits in.
-pub(crate) fn picker_button(theme: &UITheme) -> Pressable {
+pub fn picker_button(theme: &UITheme) -> Pressable {
     theme
         .pressable()
         .bordered()
@@ -177,7 +178,7 @@ pub(crate) fn picker_button(theme: &UITheme) -> Pressable {
 }
 
 /// The text inside a [`picker_button`], for the name of the asset it holds.
-pub(crate) fn picker_label(theme: &UITheme) -> Label {
+pub fn picker_label(theme: &UITheme) -> Label {
     theme
         .label("")
         .font_size(theme.font_size_sm)
@@ -188,7 +189,7 @@ pub(crate) fn picker_label(theme: &UITheme) -> Label {
 }
 
 /// The caret that closes a [`picker_button`].
-pub(crate) fn picker_caret(theme: &UITheme) -> (UINode, Text) {
+pub fn picker_caret(theme: &UITheme) -> (UINode, Text) {
     (
         UINode::default().with_flex_shrink(0.0),
         icon(theme, glyph::CARET_DOWN, theme.font_size_sm).muted(),
@@ -222,7 +223,7 @@ fn toggle_asset_picker(row: Entity, kind: &'static str) -> Listener<UIClick> {
 }
 
 /// Opens the shared menu under `button` on `kind`'s assets, each item's click built by `pick`, or closes it if `button` opened it; `row` is `None` for a menu that commits to no property.
-pub(crate) fn open_asset_menu(
+pub fn open_asset_menu(
     button: Entity,
     kind: &str,
     row: Option<Entity>,

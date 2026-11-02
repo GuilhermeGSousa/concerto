@@ -17,6 +17,7 @@ use concerto_ecs::{
     system::input::SystemLocal,
     world::FromWorld,
 };
+use concerto_editor::preview::OrbitCamera;
 use concerto_foundation::{
     assets::asset_store::AssetStore,
     time::Time,
@@ -29,8 +30,6 @@ use concerto_mesh::{
 use concerto_render::plugin::RenderPlugin;
 use concerto_scene::{scene::Scene, spawner::spawn_scene};
 use glam::Vec3;
-
-use crate::preview::OrbitCamera;
 
 #[derive(Resource)]
 pub(super) struct ClipPreview {
@@ -63,6 +62,10 @@ struct ClipPreviewRoot;
 /// Replaces the clip the preview plays and goes back to its start.
 pub struct ShowClip(pub Arc<AnimationClip>);
 impl Signal for ShowClip {}
+
+/// Leaves the preview with no clip, so it no longer writes the bones.
+pub struct ClearClip;
+impl Signal for ClearClip {}
 
 /// Replaces the scene the preview shows; `None` leaves the stage empty.
 pub struct ShowClipScene(pub Option<Scene>);
@@ -328,6 +331,11 @@ fn show_clip(on: On<ShowClip>, mut preview: ResMut<ClipPreview>) {
     preview.time = 0.0;
 }
 
+fn clear_clip(_: On<ClearClip>, mut preview: ResMut<ClipPreview>) {
+    preview.clip = None;
+    preview.time = 0.0;
+}
+
 fn show_clip_scene(
     on: On<ShowClipScene>,
     roots: Query<Entity, With<ClipPreviewRoot>>,
@@ -372,7 +380,8 @@ fn set_skeleton_gizmo(
     }
 }
 
-pub(super) fn clip_preview(app: &mut App) {
+/// Adds a clip preview to `app`: it poses every rooted skeleton from the clip [`ShowClip`] gives it.
+pub fn clip_preview(app: &mut App) {
     if app.is_plugin_added::<RenderPlugin>() && !app.is_plugin_added::<DebugGizmosPlugin>() {
         app.register_plugin(DebugGizmosPlugin);
     }
@@ -397,6 +406,7 @@ pub(super) fn clip_preview(app: &mut App) {
         )
         .add_system(LateUpdate, report_clip.after(pose_clip).at_preview_time())
         .add_listener(show_clip.at_preview_time())
+        .add_listener(clear_clip.at_preview_time())
         .add_listener(show_clip_scene.at_preview_time())
         .add_listener(set_clip_transport.at_preview_time())
         .add_listener(seek_clip.at_preview_time())
@@ -407,10 +417,6 @@ pub(super) fn clip_preview(app: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        hosted::testing::plain_recipe,
-        preview::{OrbitCamera, PreviewPlugin},
-    };
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
     use concerto_app::plugins::TransformPlugin;
     use concerto_ecs::{
@@ -419,6 +425,10 @@ mod tests {
         entity::hierarchy::{ChildOf, Children},
         events::{event_channel::EventChannel, event_cursor::EventCursor},
         system::BoxedSystem,
+    };
+    use concerto_editor::{
+        hosted::testing::plain_recipe,
+        preview::{OrbitCamera, PreviewPlugin},
     };
     use concerto_foundation::{
         assets::{AssetId, asset_store::AssetStore, handle::AssetHandle},
@@ -488,7 +498,7 @@ mod tests {
 
     #[test]
     fn a_document_starts_with_the_previews_values() {
-        let document = crate::clip_editor::ClipDocument::default();
+        let document = crate::ClipDocument::default();
         let preview = ClipPreview::default();
 
         assert_eq!(document.time, preview.time);
@@ -731,6 +741,22 @@ mod tests {
 
         assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
         assert_eq!(stage.transform(rig.root).translation, ROOT_REST);
+    }
+
+    #[test]
+    fn a_cleared_clip_stops_posing_and_goes_back_to_the_start() {
+        let mut stage = Stage::new();
+        stage.world.add_listener(clear_clip);
+        let rig = stage.rig();
+        stage.show_clip();
+        stage.seek(1.0);
+
+        stage.world.trigger(ClearClip);
+        stage.frame();
+
+        assert!(stage.preview().clip.is_none());
+        assert_eq!(stage.preview().time, 0.0);
+        assert_eq!(stage.transform(rig.driven).translation, DRIVEN_REST);
     }
 
     #[test]

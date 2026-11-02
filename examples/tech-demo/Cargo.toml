@@ -7,6 +7,12 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+    { package = "concerto-motion-matching-editor", install = "concerto_motion_matching_editor::install" },
+]
+
 [features]
 tracy = ["concerto/tracy"]
 

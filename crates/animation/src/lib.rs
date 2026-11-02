@@ -19,11 +19,12 @@ mod tests {
     use concerto_foundation::assets::{
         LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
+    use glam::Vec3;
     use uuid::Uuid;
 
     use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-    use crate::evaluation::AnimationGraphContext;
+    use crate::evaluation::{AnimationGraphContext, RootBone};
     use crate::graph::{AnimationGraph, made_live};
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
@@ -33,7 +34,7 @@ mod tests {
         AnimationClipNode, AnimationClipNodeInstance, AnimationNode, ErasedAnimationNode,
         NodeInstance,
     };
-    use crate::pose::PosePool;
+    use crate::pose::{JointPose, PosePool, RootMotion};
     use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {
@@ -83,6 +84,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
 
         let node = erased(AnimationClipNode::new(handle).with_start_time(0.4));
@@ -119,6 +121,7 @@ mod tests {
             animation_clips: &clips,
             animation_graphs: &graphs,
             blackboard: &blackboard,
+            root: None,
         };
 
         let node = erased(
@@ -239,6 +242,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard: &blackboard,
+                root: None,
             };
             fsm.create_instance(&context)
         };
@@ -248,6 +252,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard,
+                root: None,
             };
             fsm.update(instance, FRAME, &context);
             state_name(instance)
@@ -338,6 +343,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard: &blackboard,
+                root: None,
             };
             fsm.create_instance(&context)
         };
@@ -347,6 +353,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard: &blackboard,
+                root: None,
             };
             fsm.update(instance, FRAME, &context);
         };
@@ -356,6 +363,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard: &blackboard,
+                root: None,
             };
             let mut pool = PosePool::new(1);
             let mut pose = pool.acquire();
@@ -429,6 +437,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard: &blackboard,
+                root: None,
             };
             fsm.create_instance(&context)
         };
@@ -438,6 +447,7 @@ mod tests {
                 animation_clips: &clips,
                 animation_graphs: &graphs,
                 blackboard,
+                root: None,
             };
             fsm.update(instance, FRAME, &context);
             state_name(instance)
@@ -502,6 +512,7 @@ mod tests {
         instance: NodeInstance,
         bone: Uuid,
         pool: PosePool,
+        root_motion: RootMotion,
     }
 
     impl Machine {
@@ -549,6 +560,7 @@ mod tests {
                     animation_clips: &clips,
                     animation_graphs: &graphs,
                     blackboard: &blackboard,
+                    root: None,
                 };
                 fsm.create_instance(&context)
             };
@@ -562,6 +574,7 @@ mod tests {
                 instance,
                 bone,
                 pool: PosePool::new(1),
+                root_motion: RootMotion::IDENTITY,
             }
         }
 
@@ -574,6 +587,11 @@ mod tests {
                 animation_clips: &self.clips,
                 animation_graphs: &self.graphs,
                 blackboard: &self.blackboard,
+                root: Some(RootBone {
+                    index: 0,
+                    rest: JointPose::IDENTITY,
+                    up: Vec3::X,
+                }),
             };
             self.fsm.update(&mut self.instance, MACHINE_FRAME, &context);
             let mut pose = self.pool.acquire();
@@ -586,6 +604,7 @@ mod tests {
                 &mut pose,
             );
             let x = pose.get_joint_pose(0).unwrap().translation.x;
+            self.root_motion = pose.root_motion();
             self.pool.release(pose);
             x
         }
@@ -691,5 +710,86 @@ mod tests {
             );
         }
         assert_eq!(machine.state(), "a");
+    }
+
+    #[test]
+    fn a_skeleton_swap_drops_an_unsettled_inertializer() {
+        let mut machine = inertialize_machine(0.3);
+        machine.run(10);
+        machine.set("to_b", true);
+        machine.step();
+        machine.set("to_b", false);
+        machine.step();
+
+        machine.pool.set_rest(&[JointPose::IDENTITY; 2]);
+        let x = machine.step();
+
+        assert!((x - 10.0).abs() < 1e-4, "expected the destination, got {x}");
+    }
+
+    #[test]
+    fn a_later_transition_inertializes_on_the_swapped_skeleton() {
+        let mut machine = inertialize_machine(0.1);
+        machine.run(10);
+        machine.set("to_b", true);
+        machine.step();
+        machine.set("to_b", false);
+        let before = machine.run(600);
+
+        machine.pool.set_rest(&[JointPose::IDENTITY; 2]);
+        machine.run(2);
+        machine.set("to_c", true);
+        let on_transition = machine.step();
+
+        assert_eq!(machine.state(), "c");
+        assert!(
+            (on_transition - before).abs() < 1e-3,
+            "expected the source pose {before}, got {on_transition}"
+        );
+    }
+
+    fn machine_moving_at(a_speed: f32, b_speed: f32, blender: TransitionBlender) -> Machine {
+        let bone = Uuid::new_v4();
+        Machine::new(
+            bone,
+            linear_x_clip(bone, a_speed),
+            linear_x_clip(bone, b_speed),
+            constant_x_clip(bone, 0.0),
+            0.1,
+            blender,
+        )
+    }
+
+    #[test]
+    fn a_cross_fade_blends_root_motion_by_the_weight_of_the_fade() {
+        let mut machine = machine_moving_at(2.0, 8.0, TransitionBlender::CrossFade);
+        machine.run(5);
+        machine.set("to_b", true);
+
+        machine.step();
+
+        let weight = MACHINE_FRAME / 0.1;
+        let expected = (2.0 + (8.0 - 2.0) * weight) * MACHINE_FRAME;
+        assert!(
+            (machine.root_motion.translation.x - expected).abs() < 1e-4,
+            "expected {expected}, got {}",
+            machine.root_motion.translation.x
+        );
+    }
+
+    #[test]
+    fn inertialization_gives_the_destination_root_motion_from_the_transition_frame() {
+        let mut machine = machine_moving_at(2.0, 8.0, TransitionBlender::Inertialization);
+        machine.run(5);
+        machine.set("to_b", true);
+
+        machine.step();
+
+        let expected = 8.0 * MACHINE_FRAME;
+        assert!(
+            (machine.root_motion.translation.x - expected).abs() < 1e-4,
+            "expected {expected}, got {}",
+            machine.root_motion.translation.x
+        );
     }
 }

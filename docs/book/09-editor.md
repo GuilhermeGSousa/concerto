@@ -8,12 +8,32 @@ compiled together with your game's library, by a small crate in your project,
 
 ```rust
 fn main() {
-    concerto_editor::run(my_game::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run_with(
+        my_game::game,
+        concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
+        &[concerto_animation_editor::install],
+    );
 }
 ```
 
-`cargo concerto new` writes it, and `cargo concerto editor <dir>` adds it to
-an existing game. Because the editor holds your recipe, every scene it opens is
+`cargo concerto new` writes it. The last argument lists the crates that extend
+the editor. It comes from your game's `Cargo.toml`, which in a new project lists
+the clip editor:
+
+```toml
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+]
+```
+
+`cargo concerto editor <dir>` adds `editor/` to an existing game. With no list
+in its `Cargo.toml`, the game gets `concerto_editor::run` instead, which takes
+only the first two arguments, and it has no clip tab. To get one, add the entry
+above and run `cargo concerto editor <dir> --update`; see the
+[project tool's README](../../crates/project/README.md#editor-plugins).
+
+Because the editor holds your recipe, every scene it opens is
 built from your recipe: your components appear in the inspector, and your
 edit-time systems run in the viewport. A game crate never depends on the
 editor; the editor depends on the game.

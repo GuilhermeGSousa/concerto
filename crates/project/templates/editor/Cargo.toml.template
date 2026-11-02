@@ -6,4 +6,4 @@ publish = false
 
 [dependencies]
 {{name}} = { path = ".." }
-concerto-editor = {{concerto_editor}}
+concerto-editor = {{concerto_editor}}{{plugin_dependencies}}

@@ -121,8 +121,11 @@ fix the entry in the same commit as the change that made it false.
   skinned mesh entity a real world transform as well transforms it twice.
 - **`Pose::identity` has zero translation per joint.** Applying a pose that was
   never evaluated collapses every bone to the origin and the mesh folds onto
-  itself. `AnimationPlayer::evaluate` returns early when no graph evaluated;
-  keep that guard in any new pose path.
+  itself. A pose from `PosePool::acquire` starts at the skeleton's rest pose,
+  recycled ones too, so a node that writes nothing leaves rest; don't overwrite
+  `output` with identity. A pool that was never given a rest pose, as in a test,
+  hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and
+  returns early when no graph evaluated; keep that guard in any new pose path.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 
@@ -172,6 +175,9 @@ fix the entry in the same commit as the change that made it false.
 - **`#[reflect(opaque)]` makes a type a serde leaf.** It is stored as bytes
   through its `Serialize` and `Deserialize`, so it needs both. Use it only for
   values with no reflected inside; structs and enums derive `Reflect` plainly.
+- **`#[reflect(skip)]` hides a struct field from everything reflective.** The
+  inspector, MCP, property paths and scenes do not see it, its type need not be
+  `Reflect`, and a load leaves it at its default.
 - **A handle type must be registered to load from a scene.** Registering the
   component that holds `AssetHandle<A>` registers it. A handle whose type
   nothing registered spawns weak and loads nothing, with a warning.
@@ -216,12 +222,23 @@ fix the entry in the same commit as the change that made it false.
   `EntityEdit`, `Select`, or `SetGizmoMode`; they do not mutate the scene, the
   selection, or the gizmo themselves. The listeners live in
   `crates/editor/src/tools/`, which names no document, tab, or panel type.
+  `CommitValue`, which edits a value a document holds, is the exception: it
+  needs `EditorDocument`, so its listener lives in
+  `crates/editor/src/inspector/values.rs`.
 - **Hosted events arrive in the editor a frame after a signal wrote them.**
   `forward_events::<E>` runs in `First`, after the hosted step. An event written
   during the step reaches `EventReader<Hosted<E>>` systems in the same frame;
   one written by a signal (`EditWorldSignals`, `hosted::trigger_on`) arrives on the
   next frame. Decisions that must not lag, such as Play's "save first", read
-  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event.
+  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event. A
+  value's `Hosted<PropertyCommitted>` does not lag: the value lives in the
+  editor's world, and the event is written there directly.
+- **The inspector's one `ComponentStack` has two owners.** Entity cards and
+  value cards share it, because it is the scroll area's content.
+  `sync_value_cards` returns while a document has `EditTarget`, despawns only
+  `ValueCard`s, and never writes `ComponentStack`;
+  `sync_inspected_components`' rebuild clears the stack's children, which
+  removes any value card left there.
 - **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
   `follow_unsaved_edits` inserts or removes it each frame while the document is
   `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
@@ -308,7 +325,9 @@ fix the entry in the same commit as the change that made it false.
   `asset_request_is_current`. A result for a replaced or cancelled request is
   discarded; a closed tab, and every tab after a project switch, is gone. A
   late result of a request repeated for the same asset is accepted, since it
-  read the same file.
+  read the same file. Work started after a document has opened cannot use it,
+  since `pending` is then empty: it compares `current` with the captured entry
+  and requires `pending` to be empty, as `finish_build` does.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
   keys, buttons, wheel, or raw motion, and closing the gate releases whatever
   was held; the cursor position is still folded. The editor closes its own

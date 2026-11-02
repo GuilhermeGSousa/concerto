@@ -5,8 +5,8 @@ renderer, an offline asset pipeline, and an engine-native editor. Everything is
 work in progress; `concerto` 0.1.0 is on crates.io and predates the hosting
 work.
 
-The workspace is `crates/*` (31 engine crates, all named `concerto-<dir>`) plus
-`examples/*` (five standalone games). The root crate re-exports the engine and
+The workspace is `crates/*` (the engine crates, all named `concerto-<dir>`)
+plus `examples/*` (standalone games). The root crate re-exports the engine and
 defines `DefaultPlugins`.
 
 ## Read when relevant
@@ -51,6 +51,7 @@ cargo run -p concerto-editor --example custom_property
 cd examples/tech-demo && trunk serve
 cargo install --path crates/project
 cargo concerto new|editor <dir> [--engine <path>]
+cargo concerto editor <dir> --update [--engine <path>]
 ```
 
 Examples are `tech-demo` and `ui-showcase`. Sources are imported through the editor's Import…, over a

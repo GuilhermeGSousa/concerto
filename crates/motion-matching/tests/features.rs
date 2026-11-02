@@ -8,7 +8,7 @@ use concerto_motion_matching::{
     MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
     TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
-use concerto_reflect::{to_value, Reflect, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -117,6 +117,7 @@ fn baked(channels: Vec<StoredChannel>) -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -346,6 +347,7 @@ fn bake_with(channel: StoredChannel) -> Result<MotionDatabase, BakeError> {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -442,6 +444,7 @@ fn query_database() -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
+            facing_axis: Vec3::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -490,6 +493,39 @@ fn a_query_for_a_database_frame_equals_its_normalised_features() {
 
         assert_close(&built, &database.normalised_features(frame));
     }
+}
+
+#[test]
+fn a_raw_query_holds_its_trajectory_span_in_metres_and_its_pose_spans_as_baked() {
+    let database = query_database();
+    let query = FeatureQuery::new(&database, &query_registry()).unwrap();
+    let simulation = Transform::from_translation(Vec3::new(1.0, 0.0, 2.0));
+    let trajectory = [
+        Vec3::new(1.0, 0.0, 5.0),
+        Vec3::new(9.0, 0.0, 9.0),
+        Vec3::new(4.0, 0.0, 2.0),
+    ]
+    .map(|position| TrajectorySample {
+        position,
+        ..Default::default()
+    });
+
+    let raw = query
+        .raw(&database, &skeleton(), 7, &simulation, &trajectory)
+        .unwrap();
+
+    let span = &database.channels()[1];
+    assert_eq!(span.source, ChannelSource::Trajectory);
+    assert_close(
+        &raw[span.offset..span.offset + span.dims],
+        &[0.0, 3.0, 3.0, 0.0],
+    );
+    let ramp = &database.channels()[0];
+    assert_eq!(ramp.source, ChannelSource::Pose);
+    assert_close(
+        &raw[ramp.offset..ramp.offset + ramp.dims],
+        &database.features(7)[ramp.offset..ramp.offset + ramp.dims],
+    );
 }
 
 #[test]
@@ -632,4 +668,38 @@ fn a_query_needs_every_channel_type_registered() {
         matches!(error, BakeError::UnregisteredChannel(_)),
         "{error:?}"
     );
+}
+
+fn reference_registry() -> TypeRegistry {
+    let mut registry = TypeRegistry::default();
+    registry.register::<BonePositions>();
+    registry.register::<BoneVelocities>();
+    registry.register::<TrajectoryPositions>();
+    registry.register::<TrajectoryDirections>();
+    registry
+}
+
+#[test]
+fn an_empty_stored_value_builds_a_channel_at_its_defaults() {
+    let registry = reference_registry();
+    let data = registry
+        .get_by_name("BonePositions")
+        .unwrap()
+        .data::<ReflectFeatureChannel>()
+        .copied()
+        .unwrap();
+
+    let built = (data.from_value)(&ReflectedValue::Struct(Vec::new())).unwrap();
+
+    assert_eq!(
+        (data.to_value)(built.as_ref()).unwrap(),
+        to_value(&BonePositions::default()).unwrap()
+    );
+}
+
+#[test]
+fn a_channel_registers_its_joint_names() {
+    let registry = reference_registry();
+
+    assert!(registry.get_by_name("JointName").is_some());
 }

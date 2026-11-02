@@ -455,7 +455,7 @@ impl AnimationGraphInstance {
         let mut result = graph_evaluator
             .pop_evaluation()
             .map(|evaluated_pose| evaluated_pose.pose)
-            .unwrap_or(Pose::identity(bone_ids.len()));
+            .unwrap_or_else(|| pool.acquire());
 
         std::mem::swap(output_pose, &mut result);
         pool.release(result);

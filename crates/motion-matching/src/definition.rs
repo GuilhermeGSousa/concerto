@@ -1,6 +1,6 @@
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
-use concerto_mesh::Skeleton;
+use concerto_foundation::assets::{handle::AssetHandle, Asset, CreatableAsset, LoadableAsset};
+use concerto_mesh::{JointName, Skeleton};
 use concerto_reflect::{Reflect, ReflectedValue};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -24,8 +24,8 @@ pub struct MotionEntry {
 /// Which joints place and orient the simulation bone, and how much to smooth it.
 #[derive(Reflect, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SimulationBoneSettings {
-    pub position_joint: String,
-    pub facing_joint: String,
+    pub position_joint: JointName,
+    pub facing_joint: JointName,
     pub facing_axis: Vec3,
     pub position_window: usize,
     pub facing_window: usize,
@@ -36,7 +36,7 @@ impl Default for SimulationBoneSettings {
         Self {
             position_joint: "Spine2".into(),
             facing_joint: "Hips".into(),
-            facing_axis: Vec3::Z,
+            facing_axis: Vec3::Y,
             position_window: 31,
             facing_window: 61,
         }
@@ -48,6 +48,13 @@ impl Default for SimulationBoneSettings {
 pub struct TrajectorySettings {
     pub sample_dt: f32,
     pub sample_count: usize,
+}
+
+impl TrajectorySettings {
+    /// How many frames ahead sample `sample` sits at `rate`, rounded to a whole frame.
+    pub fn frame_offset(&self, sample: usize, rate: f32) -> usize {
+        (self.sample_dt * (sample + 1) as f32 * rate).round() as usize
+    }
 }
 
 impl Default for TrajectorySettings {
@@ -89,6 +96,12 @@ impl Default for MotionDatabaseDefinition {
             trajectory: TrajectorySettings::default(),
             channels: reference_channels(),
         }
+    }
+}
+
+impl CreatableAsset for MotionDatabaseDefinition {
+    fn new_asset() -> Self {
+        Self::default()
     }
 }
 

@@ -7,6 +7,16 @@ use concerto_ecs::{
         listener::{IntoListener, Listener},
     },
 };
+use concerto_editor::{
+    asset_editor::{EditorDocument, EditorHosts},
+    asset_picker::{
+        AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
+    },
+    fonts::{MEDIUM, glyph, icon},
+    preview::PreviewSignals,
+    project::ProjectState,
+    timeline::{Timeline, TimelineScrubbed, TimelineSelected, frame_at, time_of_frame},
+};
 use concerto_foundation::assets::{Asset, AssetId, registry::AssetRegistry};
 use concerto_scene::scene::Scene;
 use concerto_ui::elements::{Label, Listening, Pressable, Text, prelude::*};
@@ -25,16 +35,6 @@ use super::{
     ClipDocument,
     preview::{SeekClip, SetClipTransport, SetRootMotion, SetSkeletonGizmo},
     scene_signal,
-};
-use crate::{
-    asset_editor::{EditorDocument, EditorHosts},
-    asset_picker::{
-        AssetPickerMenu, asset_name, open_asset_menu, picker_button, picker_caret, picker_label,
-    },
-    fonts::{MEDIUM, glyph, icon},
-    preview::PreviewSignals,
-    project::ProjectState,
-    timeline::{Timeline, TimelineScrubbed, TimelineSelected, frame_at, time_of_frame},
 };
 
 const TITLE_HEIGHT: f32 = 16.0;
@@ -595,9 +595,9 @@ mod tests {
         },
     };
     use super::*;
-    use crate::{hosted::testing::SceneFixture, inspector::PropertyCommits};
     use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use concerto_ecs::{Changed, IntoSystem, ResMut, Resource, World, entity::hierarchy::ChildOf};
+    use concerto_editor::{hosted::testing::SceneFixture, inspector::PropertyCommits};
     use concerto_foundation::assets::registry::AssetEntry;
     use uuid::Uuid;
 

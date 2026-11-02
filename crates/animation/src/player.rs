@@ -1,27 +1,29 @@
 use std::ops::Deref;
 
 use concerto_ecs::{
+    Entity,
     component::{Component, scene::SceneEntityRef},
+    entity::hierarchy::ChildOf,
     query::Query,
 };
 use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
-    transform::Transform,
+    transform::{GlobalTransform, Transform},
 };
 use concerto_reflect::Reflect;
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
-    evaluation::AnimationGraphContext,
+    evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
     node::{
         AnimationClipNodeInstance, AnimationNode, ErasedAnimationNode, NodeInstance,
         state_machine::AnimationStateMachineInstance,
     },
-    pose::PosePool,
+    pose::{JointPose, PosePool},
     root::AnimationRootBone,
 };
 
@@ -148,6 +150,7 @@ impl AnimationPlayer {
             animation_clips: clips,
             animation_graphs: graphs,
             blackboard: &self.blackboard,
+            root: None,
         };
         self.graph_instance.initialize(animation_graph, &context);
     }
@@ -162,6 +165,7 @@ impl AnimationPlayer {
             animation_clips: clips,
             animation_graphs: graphs,
             blackboard: &self.blackboard,
+            root: None,
         };
         self.graph_instance.update(delta_time, &context);
     }
@@ -171,16 +175,37 @@ impl AnimationPlayer {
         clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
         bone_ids: &[Uuid],
+        rest_pose: &[JointPose],
         bones: &[SceneEntityRef],
         transforms: &Query<&mut Transform>,
         root_bones: &Query<&mut AnimationRootBone>,
-    ) {
+        parents: &Query<&ChildOf>,
+        globals: &Query<&GlobalTransform>,
+    ) -> bool {
+        let root = bones
+            .iter()
+            .enumerate()
+            .find_map(|(index, bone)| {
+                let entity = bone.entity()?;
+                root_bones
+                    .contains_entity(entity)
+                    .then_some((index, entity))
+            })
+            .and_then(|(index, entity)| {
+                Some(RootBone {
+                    index,
+                    rest: rest_pose.get(index)?.clone(),
+                    up: up_of(entity, parents, globals),
+                })
+            });
         let context = AnimationGraphContext {
             animation_clips: clips,
             animation_graphs: graphs,
             blackboard: &self.blackboard,
+            root,
         };
 
+        self.pose_pool.set_rest(rest_pose);
         let mut output_pose = self.pose_pool.acquire();
         if !self
             .graph_instance
@@ -188,9 +213,10 @@ impl AnimationPlayer {
         {
             // No graph evaluated — keep the bones' current (default) pose.
             self.pose_pool.release(output_pose);
-            return;
+            return false;
         }
 
+        let root_motion = output_pose.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {
                 continue;
@@ -200,8 +226,7 @@ impl AnimationPlayer {
             };
 
             if let Some(mut root_bone) = root_bones.get_entity(bone_entity) {
-                root_bone.displacement = joint_pose.translation;
-                continue;
+                root_bone.root_motion = root_motion;
             }
 
             if let Some(mut transform) = transforms.get_entity(bone_entity) {
@@ -212,7 +237,17 @@ impl AnimationPlayer {
         }
 
         self.pose_pool.release(output_pose);
+        true
     }
+}
+
+fn up_of(root: Entity, parents: &Query<&ChildOf>, globals: &Query<&GlobalTransform>) -> Vec3 {
+    parents
+        .get_entity(root)
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map(|parent| parent.rotation().inverse() * Vec3::Y)
+        .filter(|up| up.is_finite())
+        .unwrap_or(Vec3::Y)
 }
 
 #[derive(Component)]

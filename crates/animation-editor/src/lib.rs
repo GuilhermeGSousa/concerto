@@ -5,19 +5,12 @@ pub mod preview;
 use std::{path::Path, sync::Arc};
 
 use concerto_animation::clip::AnimationClip;
-use concerto_app::{App, Plugin, schedule_groups::Update};
+use concerto_app::{App, schedule_groups::Update};
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res, command::EntityCommandQueue,
     events::event_reader::EventReader,
 };
-use concerto_foundation::assets::{
-    AssetId,
-    content::decode_content_asset,
-    registry::{AssetEntry, AssetRegistry},
-};
-use concerto_scene::scene::Scene;
-
-use crate::{
+use concerto_editor::{
     asset_editor::{
         AssetEditor, AssetEditorAppExt, EditorDocument, PreviewSpec, finish_asset_request,
     },
@@ -27,6 +20,13 @@ use crate::{
     scene::load_scene,
     timeline::frame_count,
 };
+use concerto_foundation::assets::{
+    AssetId,
+    content::decode_content_asset,
+    registry::{AssetEntry, AssetRegistry},
+};
+use concerto_scene::scene::Scene;
+
 use panels::{build_clip_panels, sync_clip_panels};
 use preview::{
     ClipPreviewBones, ClipPreviewProgress, SetClipTransport, ShowClip, ShowClipScene, clip_preview,
@@ -81,7 +81,8 @@ pub struct ClipFacts {
 }
 
 impl ClipFacts {
-    fn of(clip: &AnimationClip) -> Self {
+    /// What `clip` holds; the bones a skeleton uses are left at zero.
+    pub fn of(clip: &AnimationClip) -> Self {
         let duration = clip.duration();
         let stored = clip.frame_rate();
         let rate = stored.or_else(|| clip.detected_frame_rate());
@@ -136,7 +137,8 @@ pub(crate) fn sync_clip_preview(
     }
 }
 
-fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
+/// Reads the clip `asset` names under `root`, checking its id and its kind.
+pub fn read_clip(root: &Path, asset: &AssetEntry) -> anyhow::Result<AnimationClip> {
     let bytes = std::fs::read(root.join(&asset.address))?;
     let (header, clip) = decode_content_asset::<AnimationClip>(&bytes)?;
     anyhow::ensure!(header.asset_id == asset.id, "Asset identity mismatch");
@@ -149,7 +151,8 @@ fn default_scene<'a>(clip: &AssetEntry, assets: &'a AssetRegistry) -> Option<&'a
         .find(|entry| entry.name() == "scene" && entry.folder() == clip.folder())
 }
 
-fn read_shown_scene(
+/// Reads the `picked` scene, or else the one named `scene` in `clip`'s folder, with its id.
+pub fn read_shown_scene(
     root: &Path,
     clip: Option<&AssetEntry>,
     picked: Option<AssetId>,
@@ -230,36 +233,38 @@ pub(crate) fn load_clip(
     }
 }
 
-/// Registers the clip editor and forwards what its preview reports; `EditorPlugin` registers it.
-pub struct ClipEditorPlugin;
-
-impl Plugin for ClipEditorPlugin {
-    fn build(&self, app: &mut App) {
-        app.register_asset_editor::<AnimationClip, AnimationClipEditor>()
-            .expect("ClipEditorPlugin requires the asset-editor registry")
-            .forward_hosted_event::<ClipPreviewProgress>()
-            .forward_hosted_event::<ClipPreviewBones>()
-            .add_system(
-                Update,
-                (
-                    sync_clip_preview,
-                    load_clip,
-                    build_clip_panels,
-                    sync_clip_panels,
-                )
-                    .chain(),
-            );
-    }
+/// Adds the clip editor to the editor's `App`.
+pub fn install(app: &mut App) {
+    app.register_asset_editor::<AnimationClip, AnimationClipEditor>()
+        .expect("the editor's App holds the asset-editor registry")
+        .forward_hosted_event::<ClipPreviewProgress>()
+        .forward_hosted_event::<ClipPreviewBones>()
+        .add_system(
+            Update,
+            (
+                sync_clip_preview,
+                load_clip,
+                build_clip_panels,
+                sync_clip_panels,
+            )
+                .chain(),
+        );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
+    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
+    use concerto_app::{
+        main_schedule::MainSchedulePlugin,
+        plugins::{AssetManagerPlugin, TimePlugin},
+    };
+    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
+    use concerto_editor::{
+        EditorPlugin,
         asset_editor::{ActiveEditor, AssetEditorRegistry},
         hosted::{
             HostRole, Hosted, HostedApp, HostedPlugin,
-            events::forward_events,
             input::{ViewportShown, ViewportView},
             testing::*,
         },
@@ -267,12 +272,6 @@ mod tests {
         project::Project,
         scene::SceneRecipe,
     };
-    use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel};
-    use concerto_app::{
-        main_schedule::MainSchedulePlugin,
-        plugins::{AssetManagerPlugin, TimePlugin},
-    };
-    use concerto_ecs::{IntoSystem, System, events::event_channel::EventChannel};
     use concerto_foundation::assets::{Asset, content::save_content_asset_into};
     use concerto_mesh::skeleton::SkeletonComponent;
     use concerto_render::ExclusiveCamera;
@@ -319,8 +318,8 @@ mod tests {
             .insert_resource(EventChannel::<Hosted<ClipPreviewProgress>>::new());
         f.world
             .insert_resource(EventChannel::<Hosted<ClipPreviewBones>>::new());
-        f.add_delivery(forward_events::<ClipPreviewProgress>.into_boxed_system());
-        f.add_delivery(forward_events::<ClipPreviewBones>.into_boxed_system());
+        f.add_delivery(forwarding::<ClipPreviewProgress>());
+        f.add_delivery(forwarding::<ClipPreviewBones>());
         f.add_delivery(sync_clip_preview.into_boxed_system());
         f.add_delivery(load_clip.into_boxed_system());
         f
@@ -747,8 +746,8 @@ mod tests {
                 size: (64, 64),
                 over: false,
                 typing: false,
-            })))
-            .register_plugin(ClipEditorPlugin);
+            })));
+        install(&mut app);
         app.finish_plugin_build();
         let world = app.main_mut().world_mut();
         let document = world.spawn((
@@ -782,19 +781,20 @@ mod tests {
     }
 
     #[test]
-    fn the_editor_plugin_registers_the_clip_editor_and_forwards_its_reports() {
+    fn install_registers_the_clip_editor_and_forwards_its_reports() {
         let mut app = App::new();
         app.register_plugin(MainSchedulePlugin)
             .register_plugin(AssetManagerPlugin)
             .register_plugin(TimePlugin)
             .register_plugin(WindowPlugin)
-            .register_plugin(crate::EditorPlugin {
+            .register_plugin(EditorPlugin {
                 project: None,
                 decorated: false,
                 recipe: plain_recipe,
             });
 
-        assert!(app.is_plugin_added::<ClipEditorPlugin>());
+        install(&mut app);
+
         let editors = app.get_resource::<AssetEditorRegistry>().unwrap();
         assert!(editors.preview(AnimationClip::name()).is_some());
         assert!(
