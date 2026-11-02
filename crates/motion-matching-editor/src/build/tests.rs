@@ -10,9 +10,7 @@ use concerto_editor::{
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, read_content_asset, write_content_asset,
-    },
+    content::{ContentAssetHeader, read_content_asset, write_content_asset},
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -147,6 +145,7 @@ fn the_baked_file_sits_next_to_the_definition() {
         id: AssetId::from_path(address),
         address: address.into(),
         kind: MotionDatabaseDefinition::name().into(),
+        kind_version: None,
         provenance: None,
     };
 
@@ -746,10 +745,10 @@ fn a_missing_skeleton_reads_cant_read() {
 fn a_baked_file_in_an_old_layout_reads_not_built() {
     let mut tab = built();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: AssetId::from_path(BAKED),
         references: Vec::new(),
         kind: MotionDatabase::name().to_string(),
+        kind_version: MotionDatabase::FORMAT_VERSION,
         provenance: None,
     };
     std::fs::write(
@@ -768,10 +767,10 @@ fn a_baked_file_in_an_old_layout_reads_not_built() {
 fn a_baked_file_in_an_old_layout_is_rebuilt_in_full() {
     let mut tab = built();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: AssetId::from_path(BAKED),
         references: Vec::new(),
         kind: MotionDatabase::name().to_string(),
+        kind_version: MotionDatabase::FORMAT_VERSION,
         provenance: None,
     };
     std::fs::write(

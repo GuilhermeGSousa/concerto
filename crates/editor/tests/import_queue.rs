@@ -9,7 +9,7 @@ use concerto_editor::{
 use concerto_foundation::assets::{
     AssetId,
     asset_server::AssetServer,
-    content::{CONTENT_FORMAT_VERSION, ContentAssetHeader, write_content_asset},
+    content::{ContentAssetHeader, write_content_asset},
     registry::AssetRegistry,
 };
 use std::path::{Path, PathBuf};
@@ -362,10 +362,10 @@ fn rows_queued_with_no_project_open_are_dropped() {
 
 fn authored_asset(root: &Path, name: &str) -> AssetId {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: AssetId::new(),
         references: vec![],
         kind: "Scene".into(),
+        kind_version: 1,
         provenance: None,
     };
     std::fs::create_dir_all(root.join("content")).expect("content");

@@ -1,5 +1,5 @@
 //! Framing for game-ready content assets: `magic | u32 header_len |
-//! bincode(ContentAssetHeader) | payload (verbatim)`. The header is read
+//! bincode(u32 format version, ContentAssetHeader) | payload (verbatim)`. The header is read
 //! without touching the payload, so a future asset registry can index a
 //! whole content tree by scanning headers alone.
 use std::path::Path;
@@ -14,6 +14,63 @@ pub use concerto_asset_format::{
     ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
+/// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
+pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
+    let (header, payload) = read_content_asset(bytes)?;
+    if header.kind != A::name() {
+        anyhow::bail!(
+            "content asset holds a {} but a {} was requested",
+            header.kind,
+            A::name()
+        );
+    }
+    let version = header.kind_version;
+    let current = A::FORMAT_VERSION;
+    let value = match version.cmp(&current) {
+        std::cmp::Ordering::Equal => bincode::deserialize(payload)
+            .with_context(|| format!("failed to deserialize {} payload", A::name()))?,
+        std::cmp::Ordering::Less => A::migrate(version, payload).with_context(|| {
+            format!(
+                "{name} payload is version {version}; this build's {name} is version {current}",
+                name = A::name()
+            )
+        })?,
+        std::cmp::Ordering::Greater => anyhow::bail!(
+            "{} payload is version {version}, newer than this build's version {current}",
+            A::name()
+        ),
+    };
+    Ok((header, value))
+}
+
+/// Compares `value`'s payload encoding with `<dir>/<A::name()>.v<A::FORMAT_VERSION>.bin`, for a crate's encoding test.
+pub fn check_encoding<A: Asset>(value: &A, dir: &Path) {
+    let name = A::name();
+    let version = A::FORMAT_VERSION;
+    let path = dir.join(format!("{name}.v{version}.bin"));
+    let bytes = bincode::serialize(value)
+        .unwrap_or_else(|error| panic!("failed to serialize {name}: {error}"));
+    if std::env::var("CONCERTO_BLESS_ENCODING").as_deref() == Ok("1") {
+        std::fs::create_dir_all(dir)
+            .unwrap_or_else(|error| panic!("failed to create '{}': {error}", dir.display()));
+        std::fs::write(&path, &bytes)
+            .unwrap_or_else(|error| panic!("failed to write '{}': {error}", path.display()));
+        return;
+    }
+    let Ok(fixture) = std::fs::read(&path) else {
+        panic!(
+            "no encoding fixture for {name} version {version} at {}; run this test with CONCERTO_BLESS_ENCODING=1 to write it",
+            path.display()
+        );
+    };
+    if fixture != bytes {
+        panic!(
+            "the encoding of {name} changed but its FORMAT_VERSION is still {version}: raise it to {next}, add a migration from {version} or accept that version-{version} files are rejected (docs/asset-importing.md, \"Changing an asset type's encoding\"), then run with CONCERTO_BLESS_ENCODING=1",
+            next = version + 1
+        );
+    }
+}
+
 /// Writes `value` as a content asset at `project_root/address`, records it in `registry`, and returns its id, reusing the one already in the file's header.
 pub fn save_content_asset_into<A: Asset>(
     value: &A,
@@ -24,10 +81,10 @@ pub fn save_content_asset_into<A: Asset>(
     let path = project_root.join(address);
     let asset_id = mint_or_reuse_id(&path)?;
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id,
         references: value.referenced_sub_assets(),
         kind: A::name().to_string(),
+        kind_version: A::FORMAT_VERSION,
         provenance: None,
     };
     let kind = header.kind.clone();
@@ -45,6 +102,7 @@ pub fn save_content_asset_into<A: Asset>(
         id: asset_id,
         address: address.to_owned(),
         kind,
+        kind_version: Some(A::FORMAT_VERSION),
         provenance: None,
     });
     Ok(asset_id)
