@@ -389,7 +389,7 @@ fn database_encoding_matches_its_fixture() {
         &registry,
     )
     .unwrap()
-    .with_source_hash(0x5eed_0f_ba4e);
+    .with_source_hash(0x5eed_f00d);
 
     check_encoding(&database, encoding_dir());
 }
