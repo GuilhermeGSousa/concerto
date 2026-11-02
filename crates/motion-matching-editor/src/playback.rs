@@ -279,8 +279,11 @@ fn seek_database(on: On<SeekDatabase>, mut playback: ResMut<DatabasePlayback>) {
 
 pub(crate) fn baked_entry(state: &DefinitionDocument) -> Option<usize> {
     let index = state.selected_entry?;
-    let baked = state.playback.as_ref()?.database.clips().get(index)?;
-    (state.entries.get(index)?.clip.id() == baked.id()).then_some(index)
+    let database = &state.playback.as_ref()?.database;
+    let baked = database.clips().get(index)?;
+    let mirrored = *database.mirrored().get(index)?;
+    let entry = state.entries.get(index)?;
+    (entry.clip.id() == baked.id() && entry.mirrored == mirrored).then_some(index)
 }
 
 pub(crate) fn scrub_entry(document: Entity) -> Listener<TimelineScrubbed> {

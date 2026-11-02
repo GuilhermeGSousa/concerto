@@ -1063,6 +1063,17 @@ fn an_entry_whose_clip_moved_since_the_build_is_not_sought() {
 }
 
 #[test]
+fn an_entry_mirrored_since_the_build_is_not_sought() {
+    let mut tab = built(logging());
+    tab.state_mut().selected_entry = Some(1);
+    assert_eq!(baked_entry(tab.state()), Some(1));
+
+    tab.state_mut().entries[1].mirrored = true;
+
+    assert_eq!(baked_entry(tab.state()), None);
+}
+
+#[test]
 fn a_clip_being_read_marks_the_document() {
     let mut tab = ready(logging());
     let (release, wait) = std::sync::mpsc::channel::<()>();

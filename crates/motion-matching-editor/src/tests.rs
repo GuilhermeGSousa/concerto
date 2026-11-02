@@ -46,7 +46,7 @@ use concerto_motion_matching::{
 use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_ui::{node::UINode, theme::UITheme};
 use concerto_window::plugin::{Window, WindowPlugin};
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 
 use crate::{
     DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
@@ -880,6 +880,35 @@ fn a_no_op_save_keeps_the_definition() {
 
     let saved = read_definition(&f.project_root, &asset).unwrap();
     assert_eq!(saved, opened);
+}
+
+#[test]
+fn a_saved_definition_keeps_mirrored_entries_and_the_mirror_axis() {
+    let mut f = fixture();
+    let mut opened = definition();
+    opened.entries[1].mirrored = true;
+    opened.mirror_axis = Vec3::Z;
+    let asset = write_definition(&mut f, "content/database.gasset", &opened);
+    let document = open(&mut f, &asset);
+    assert_eq!(
+        state(&f, document).settings.as_ref().unwrap().mirror_axis,
+        Vec3::Z
+    );
+
+    save(&mut f, document);
+    assert_eq!(read_definition(&f.project_root, &asset).unwrap(), opened);
+
+    state_mut(&mut f, document)
+        .settings
+        .as_mut()
+        .unwrap()
+        .mirror_axis = Vec3::NEG_Z;
+    save(&mut f, document);
+
+    let saved = read_definition(&f.project_root, &asset).unwrap();
+    assert_eq!(saved.mirror_axis, Vec3::NEG_Z);
+    assert!(saved.entries[1].mirrored);
+    assert!(!saved.entries[0].mirrored);
 }
 
 #[test]

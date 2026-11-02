@@ -47,6 +47,7 @@ pub struct DatabaseSettings {
     pub speed: f32,
     pub simulation: SimulationBoneSettings,
     pub trajectory: TrajectorySettings,
+    pub mirror_axis: Vec3,
 }
 
 impl DatabaseSettings {
@@ -57,6 +58,7 @@ impl DatabaseSettings {
             speed: definition.speed,
             simulation: definition.simulation.clone(),
             trajectory: definition.trajectory,
+            mirror_axis: definition.mirror_axis,
         }
     }
 }
@@ -158,7 +160,7 @@ impl DefinitionDocument {
                 .iter()
                 .map(HeldChannel::stored)
                 .collect::<anyhow::Result<_>>()?,
-            mirror_axis: Vec3::X,
+            mirror_axis: settings.mirror_axis,
         })
     }
 
