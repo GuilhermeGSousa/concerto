@@ -20,17 +20,35 @@ fn encoding_dir() -> &'static Path {
 
 fn skeleton() -> Skeleton {
     Skeleton::new(
-        vec![Mat4::IDENTITY; 2],
-        vec![None, Some(0)],
-        vec!["Root".into(), "Child".into()],
+        vec![Mat4::IDENTITY; 4],
+        vec![None, Some(0), Some(1), Some(1)],
+        vec![
+            "Root".into(),
+            "Child".into(),
+            "LeftFoot".into(),
+            "RightFoot".into(),
+        ],
         vec![
             JointPose::IDENTITY,
             JointPose {
                 translation: Vec3::new(0.0, 1.0, 0.0),
                 ..JointPose::IDENTITY
             },
+            JointPose {
+                translation: Vec3::new(0.0, -0.5, 0.2),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: Vec3::new(0.0, -0.5, -0.2),
+                ..JointPose::IDENTITY
+            },
         ],
-        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+        vec![
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            Uuid::from_u128(4),
+        ],
     )
     .unwrap()
 }
@@ -253,7 +271,7 @@ fn deviations_hold_one_value_per_channel() {
 fn accessors_index_frame_major() {
     let database = database();
     assert_eq!(database.frame_count(), 15);
-    assert_eq!(database.bone_count(), 2);
+    assert_eq!(database.bone_count(), 4);
     assert_eq!(database.rate(), 10.0);
     assert_eq!(database.speed(), 2.0);
     assert_eq!(database.clips().len(), 2);
@@ -352,7 +370,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
                     start: 0.5,
                     end: 1.5,
                 }),
-                mirrored: false,
+                mirrored: true,
             },
         ],
         rate: 10.0,
@@ -372,7 +390,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             type_name: "HeightChannel".into(),
             value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
         }],
-        mirror_axis: Vec3::X,
+        mirror_axis: Vec3::Z,
     }
 }
 
@@ -395,6 +413,7 @@ fn database_encoding_matches_its_fixture() {
     )
     .unwrap()
     .with_source_hash(0x5eed_f00d);
+    assert_eq!(database.mirror_axis(), Some(Vec3::Z));
 
     check_encoding(&database, encoding_dir());
 }
