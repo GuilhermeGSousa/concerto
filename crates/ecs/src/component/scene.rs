@@ -166,7 +166,12 @@ impl FromType<SceneEntityRef> for ReflectSceneLeaf {
                         })?
                     }
                 };
-                encode_leaf(&(index as u64))
+                let stored = if index == usize::MAX {
+                    u64::MAX
+                } else {
+                    index as u64
+                };
+                encode_leaf(&stored)
             },
         }
     }

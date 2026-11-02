@@ -82,7 +82,7 @@ impl Default for Clamp {
     }
 }
 
-/// Names a character's capsule, which holds its `CharacterSimulation`, and its skeleton, which holds its `SkeletonComponent` and `AnimationPlayer`; the game inserts it on the visible character.
+/// Names a character's capsule, which holds its `CharacterSimulation`, and its skeleton, which holds its `SkeletonComponent` and `AnimationPlayer`; it goes on the visible character, set in the editor or inserted by the game.
 #[derive(Component, Reflect, Clone, Copy, Debug, Default, PartialEq)]
 #[reflect(Component, SceneComponent, Default)]
 pub struct CharacterLink {

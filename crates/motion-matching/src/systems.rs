@@ -867,6 +867,21 @@ mod tests {
     }
 
     #[test]
+    fn an_unresolved_capsule_publishes_no_trajectory() {
+        let (mut world, capsule, ..) = moving_capsule();
+        world.insert_resource(Time::new());
+        world.insert(AnimationPlayer::new(1), capsule);
+        world.spawn(CharacterLink {
+            capsule: SceneEntityRef::default(),
+            skeleton: SceneEntityRef::Entity(capsule),
+        });
+
+        run_once(&mut world, publish_trajectory);
+
+        assert_eq!(published(&world, capsule), None);
+    }
+
+    #[test]
     fn an_unresolved_capsule_leaves_the_character_where_it_is() {
         let mut world = displacement_world();
         spawn_capsule(&mut world, Vec3::ZERO);

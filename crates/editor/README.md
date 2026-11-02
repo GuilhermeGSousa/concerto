@@ -850,10 +850,11 @@ the same checks.
 
 `EntityPicker` edits every `SceneEntityRef` field, which is how a component
 names another entity of its scene, as `CharacterLink` names a capsule and a
-skeleton. The row names the referenced entity: its `Name`, `Entity 42` as the
-hierarchy writes an entity with no name, or `(not in this scene)` when the
-value is unset or names an entity the hierarchy doesn't list. The button beside
-it selects that entity and reveals it in the hierarchy.
+skeleton. The row names the referenced entity: its `Name`, or `Entity 42` as the
+hierarchy writes an entity with no name or an empty one. It reads
+`(not in this scene)` when the value is unset or names an entity the menu below
+doesn't offer, the scene root included. The button beside it selects that
+entity and reveals it in the hierarchy.
 
 The row opens a menu with a filter field, `None`, and the entities the
 hierarchy lists for the edit target, indented by depth, without the scene root:
@@ -866,7 +867,9 @@ Stop like any other. `EntityPickerPlugin`, added by `EditorPlugin`, keeps the
 row's text current and closes the menu when its edit target goes. The picker's
 `edit_to` takes the value, so MCP's `set_property` writes an entity reference
 as a live id such as `42v3`, or the unset value, and refuses any other node
-index.
+index. The unset value is the node index `18446744073709551615`, `u64::MAX`, as
+`inspect` shows it; a client that reads JSON numbers as doubles must pass it
+through unchanged.
 
 An edit is the widget's own type, so a value alone cannot pass through it.
 `PropertyEditor::edit_to(&value)` returns the edit that sets the field to
