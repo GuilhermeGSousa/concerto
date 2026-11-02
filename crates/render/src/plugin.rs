@@ -13,7 +13,6 @@ use crate::{
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
         },
         skeleton::{extract_skeletons, SkinUniforms},
-        world_environment::WorldEnvironment,
     },
     device::RenderDevice,
     draw_target::DrawTarget,
@@ -39,7 +38,6 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateRender, LateUpdate, Render, RenderMain, Update},
 };
-use concerto_color::Color;
 use concerto_ecs::{IntoSetConfig, IntoSystemConfig, World};
 
 fn offscreen_config(format: wgpu::TextureFormat) -> wgpu::SurfaceConfiguration {
@@ -258,7 +256,6 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
-            .insert_resource(skin_uniforms)
-            .insert_resource(WorldEnvironment::new(Color::rgba(0.1, 0.1, 0.1, 0.1)));
+            .insert_resource(skin_uniforms);
     }
 }
