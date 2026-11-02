@@ -394,6 +394,8 @@ node.
 | `search_period` | seconds between searches | 0.1 |
 | `velocity_change_threshold`, `rotation_change_threshold` | the change per second of the first trajectory sample's velocity and facing that forces a search once it settles | 50 |
 | `same_frame_tolerance` | a search result this many frames or fewer from the playhead is ignored | 1 |
+| `ignore_surrounding` | a search never returns a frame fewer than this many frames from the playhead | 20 |
+| `ignore_range_end` | a search never returns the last this many frames of a range | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
@@ -405,10 +407,13 @@ then plays the database without searching.
 
 Per frame `run_motion_matching` advances the playhead at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
-for it, or when the playhead is in the last `ceil(sample_count * sample_dt *
-rate)` frames of its range, and on a better frame jumps with inertialization.
-The search is brute force: a squared distance over the normalised features of
-every frame, with an early out. `run_motion_matching` runs after
+for it, or when the playhead is in the last `ignore_range_end` frames of its
+range, and on a better frame jumps with inertialization. The search is brute
+force: a squared distance over the normalised features of every frame, with an
+early out. The playhead's frame seeds the best, and a candidate replaces it only
+when its cost is strictly lower. Frames within `ignore_surrounding` of the
+playhead and the last `ignore_range_end` of each range are not candidates, as
+in orangeduck's Motion-Matching. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
 
 `MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:

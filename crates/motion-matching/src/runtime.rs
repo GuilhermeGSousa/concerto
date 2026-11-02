@@ -23,7 +23,7 @@ use crate::{
     instance::{LastQuery, MotionMatchingInstance},
     node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
     query::FeatureQuery,
-    search::{cost_of, excluded_tail, search},
+    search::{cost_of, search},
     simulation::TrajectorySample,
 };
 
@@ -218,7 +218,13 @@ fn find_better_frame(
     };
     let mut features = raw.clone();
     database.normalise(&mut features);
-    let found = search(database, &features, instance.frame, excluded_tail(database));
+    let found = search(
+        database,
+        &features,
+        instance.frame,
+        node.ignore_surrounding,
+        node.ignore_range_end,
+    );
     instance.last_query = Some(LastQuery {
         features: raw,
         frame: instance.frame,
@@ -269,10 +275,10 @@ fn run(
     if timer_due {
         instance.search_timer = node.search_period;
     }
-    let in_tail = instance.frame + excluded_tail(database) >= range.end;
+    let in_range_end = instance.frame + node.ignore_range_end >= range.end;
 
     let mut better = None;
-    if timer_due || forced || in_tail {
+    if timer_due || forced || in_range_end {
         if let Some(trajectory) = trajectory {
             better = find_better_frame(node, instance, trajectory, sources)?;
         }
@@ -438,7 +444,7 @@ mod tests {
         node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
         plugin::register_runtime,
         query::FeatureQuery,
-        search::{excluded_tail, search},
+        search::search,
         simulation::TrajectorySample,
         test_support::{
             pace_database, pace_database_of, registry, skeleton, turn_left, walk_forward, Pace,
@@ -666,10 +672,42 @@ mod tests {
                 samples,
             )
             .unwrap();
-        let tail = excluded_tail(&fixture.database);
-        let (expected, _) = search(&fixture.database, &query, 3, tail).unwrap();
+        let (expected, _) = search(
+            &fixture.database,
+            &query,
+            3,
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        )
+        .unwrap();
         assert_ne!(expected, 3);
         assert_eq!(instance.frame, expected);
+    }
+
+    #[test]
+    fn a_search_skips_the_frames_the_node_ignores_around_the_current_one() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode {
+            ignore_surrounding: 1000,
+            ..Default::default()
+        };
+
+        let instance = searched(&fixture, &node);
+
+        assert_eq!(instance.frame, 3);
+    }
+
+    #[test]
+    fn a_search_skips_the_range_ends_the_node_ignores() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode {
+            ignore_range_end: 1000,
+            ..Default::default()
+        };
+
+        let instance = searched(&fixture, &node);
+
+        assert_eq!(instance.frame, 3);
     }
 
     fn searched(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingInstance {
@@ -742,8 +780,14 @@ mod tests {
         let last = instance.last_query.as_ref().unwrap();
         let mut query = last.features.clone();
         fixture.database.normalise(&mut query);
-        let tail = excluded_tail(&fixture.database);
-        let (_, expected) = search(&fixture.database, &query, last.frame, tail).unwrap();
+        let (_, expected) = search(
+            &fixture.database,
+            &query,
+            last.frame,
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        )
+        .unwrap();
         assert_eq!(last.best_cost, Some(expected));
     }
 
@@ -837,12 +881,12 @@ mod tests {
     }
 
     #[test]
-    fn the_excluded_tail_forces_a_search_before_the_timer_is_due() {
+    fn the_last_ignore_range_end_frames_force_a_search_before_the_timer_is_due() {
         let fixture = fixture(1.0);
         let node = MotionMatchingNode::default();
         let mut instance = instance(&node, 0.0);
         step(&node, &mut instance, &quiet(), &fixture.sources());
-        instance.frame = 56;
+        instance.frame = 40;
         instance.search_timer = 10.0;
 
         instance.activate(0.0);
