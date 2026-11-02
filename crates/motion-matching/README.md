@@ -466,7 +466,7 @@ stays in the bone. So a root that stands across Y, as LAFAN1's hips do at about
 90°, moves along the body, where a space without it would read forward motion as
 vertical and drop it. The two cancel exactly only for a clip. In motion matching
 the delta reads this frame's pose and the space holds last frame's blended one,
-so they miss by a little every frame, at most 2° of yaw in a simulation.
+so they miss by a little every frame, and by more during an inertialized jump.
 
 A `skeleton` with no `SkeletonComponent`, or no root, gives no root motion, and
 the character still gets its method's correction. A `capsule` with no
