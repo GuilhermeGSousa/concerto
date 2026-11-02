@@ -273,8 +273,8 @@ impl Stage {
         world.spawn((
             MotionMatchingGizmos::default(),
             CharacterLink {
-                capsule,
-                skeleton: player,
+                capsule: SceneEntityRef::Entity(capsule),
+                skeleton: SceneEntityRef::Entity(player),
             },
             Transform::from_translation(START),
         ));

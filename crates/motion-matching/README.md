@@ -452,18 +452,24 @@ bone, so what shows on the bone is the root's height, lean and offset from it.
 The visible character and the capsule are two entities, and they drift apart:
 root motion moves one and the player moves the other. `CharacterDisplacement`
 goes on the character and reconciles the two each frame. `CharacterLink`, also
-on the character, names the entities it works with, and the game provides both:
+on the character, names the entities it works with. Both fields are
+`SceneEntityRef`s, so a link is a scene component: set it in the editor's
+inspector and it is saved with the scene, or insert it from code naming
+`SceneEntityRef::Entity(..)`. Its default leaves both fields unresolved.
 
 - `capsule` holds `CharacterSimulation`, `DesiredMotion` and the body, and needs
   `ColliderOffset::bottom_origin` for the character to stand on the ground.
 - `skeleton` holds the `SkeletonComponent` with a root and its
   `AnimationPlayer`. A scene-spawned skeleton exists only once its scene has, so
-  the game inserts the link then.
+  a game that builds the link in code inserts it then.
 
 ```rust
 commands.spawn((
     CharacterDisplacement::Clamp(Clamp::default()),
-    CharacterLink { capsule, skeleton },
+    CharacterLink {
+        capsule: SceneEntityRef::Entity(capsule),
+        skeleton: SceneEntityRef::Entity(skeleton),
+    },
     Transform::default(),
 ));
 ```
@@ -487,9 +493,11 @@ the delta reads this frame's pose and the space holds last frame's blended one,
 so they miss by a little every frame, and by more during an inertialized jump.
 
 A `skeleton` with no `SkeletonComponent`, or no root, gives no root motion, and
-the character still gets its method's correction. A `capsule` with no
-`CharacterSimulation` leaves the character where it is, and so does having no
-`CharacterLink`.
+the character still gets its method's correction. An unresolved `skeleton` is
+the same: no trajectory is published, and the character is corrected with no
+root motion. A `capsule` with no `CharacterSimulation`, or an unresolved
+`capsule`, leaves the character where it is and publishes no trajectory, and
+so does having no `CharacterLink`.
 
 A character's `Transform` is written in world space. Do not make it a child of
 its capsule: nothing checks, and it would move twice.

@@ -35,10 +35,10 @@ use crate::inspector::{
     PropertyRowValue,
 };
 
-const MENU_WIDTH: f32 = 240.0;
-const ITEM_HEIGHT: f32 = 26.0;
-const LIST_MAX_HEIGHT: f32 = 280.0;
-const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
+pub(crate) const MENU_WIDTH: f32 = 240.0;
+pub(crate) const ITEM_HEIGHT: f32 = 26.0;
+pub(crate) const LIST_MAX_HEIGHT: f32 = 280.0;
+pub(crate) const SCROLLBAR_GUTTER: f32 = SCROLLBAR_WIDTH + 2.0;
 
 /// Picks the asset a reflected asset handle names from the project's assets of its kind.
 pub struct AssetPicker {
@@ -153,7 +153,7 @@ pub fn asset_name(registry: &AssetRegistry, id: AssetId) -> String {
         .map_or_else(|| "Missing".into(), |entry| entry.name().into())
 }
 
-fn menu_panel(button: Entity) -> UIAnchoredPanel {
+pub(crate) fn menu_panel(button: Entity) -> UIAnchoredPanel {
     UIAnchoredPanel::new(UIAnchorTarget::from_node(button))
         .with_owner(button)
         .with_side(UIAnchorSide::Below)

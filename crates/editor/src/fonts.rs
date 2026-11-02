@@ -90,4 +90,6 @@ pub mod glyph {
     pub const SKIP_BACK: char = '\u{E5A4}';
     /// `skip-forward` — one frame forward.
     pub const SKIP_FORWARD: char = '\u{E5A6}';
+    /// `crosshair` — selecting the entity a field names.
+    pub const CROSSHAIR: char = '\u{E1D6}';
 }
