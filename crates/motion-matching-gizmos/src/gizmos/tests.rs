@@ -586,7 +586,7 @@ fn a_link_with_an_unresolved_field_draws_nothing() {
         let mut stage = Stage::new();
         let character = stage.character;
         unresolve(
-            &mut stage
+            stage
                 .world()
                 .get_component_for_entity_mut::<CharacterLink>(character)
                 .unwrap(),
