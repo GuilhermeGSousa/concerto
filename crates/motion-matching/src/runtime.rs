@@ -394,7 +394,10 @@ pub fn run_motion_matching(
 
 #[cfg(test)]
 mod tests {
-    use std::{f32::consts::FRAC_PI_2, time::Duration};
+    use std::{
+        f32::consts::FRAC_PI_2,
+        time::{Duration, Instant},
+    };
 
     use concerto_animation::{
         blackboard::AnimationBlackboard,
@@ -408,10 +411,18 @@ mod tests {
     use concerto_ecs::{
         component::scene::SceneEntityRef,
         system::{executor::single_thread::SingleThreadedExecutor, schedule::Schedules},
+        world::World,
         Entity,
     };
     use concerto_foundation::{
-        assets::{asset_store::AssetStore, handle::AssetHandle, AssetId},
+        assets::{
+            asset_server::{handle_asset_load_events, AssetServer},
+            asset_store::AssetStore,
+            content::save_content_asset_into,
+            handle::AssetHandle,
+            registry::AssetRegistry,
+            AssetId, ContentAssetRoot,
+        },
         time::Time,
         transform::Transform,
     };
@@ -1267,7 +1278,93 @@ mod tests {
         );
     }
 
-    fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
+    #[test]
+    fn on_load_makes_the_clips_and_skeleton_strong_with_the_same_ids() {
+        let mut app = motion_app();
+        let world = app.main_mut().world_mut();
+        let server = world.get_resource::<AssetServer>().unwrap().clone();
+        let skeleton_id = AssetId::new();
+        let clip_ids = [AssetId::new(), AssetId::new()];
+        let handle = server.add(pace_database(
+            1.0,
+            AssetHandle::weak(skeleton_id),
+            clip_ids.map(AssetHandle::weak),
+        ));
+        handle_asset_load_events(world);
+
+        let databases = world.get_resource::<AssetStore<MotionDatabase>>().unwrap();
+        let database = databases.get(&handle).unwrap();
+        assert!(matches!(database.skeleton(), AssetHandle::Strong(..)));
+        assert_eq!(database.skeleton().id(), skeleton_id);
+        assert!(database
+            .clips()
+            .iter()
+            .all(|clip| matches!(clip, AssetHandle::Strong(..))));
+        let ids: Vec<_> = database.clips().iter().map(AssetHandle::id).collect();
+        assert_eq!(ids, clip_ids);
+    }
+
+    #[test]
+    fn a_database_loaded_through_the_server_plays() {
+        let root = std::env::temp_dir().join(format!(
+            "motion-database-load-{}",
+            AssetId::new().simple_hex()
+        ));
+        let mut registry = AssetRegistry::new();
+        let skeleton_id =
+            save_content_asset_into(&skeleton(), &root, "content/skeleton.gasset", &mut registry)
+                .unwrap();
+        let walk_id =
+            save_content_asset_into(&walk_forward(), &root, "content/walk.gasset", &mut registry)
+                .unwrap();
+        let turn_id =
+            save_content_asset_into(&turn_left(), &root, "content/turn.gasset", &mut registry)
+                .unwrap();
+        let database = pace_database(
+            1.0,
+            AssetHandle::weak(skeleton_id),
+            [AssetHandle::weak(walk_id), AssetHandle::weak(turn_id)],
+        );
+        let database_id =
+            save_content_asset_into(&database, &root, "content/database.gasset", &mut registry)
+                .unwrap();
+
+        let mut app = motion_app();
+        let world = app.main_mut().world_mut();
+        let server = world.get_resource::<AssetServer>().unwrap().clone();
+        server.publish_content_source(ContentAssetRoot::Directory(root.clone()), registry);
+        let _database = server.load::<MotionDatabase>(database_id);
+        let bones = start_playing(
+            world,
+            AssetHandle::weak(database_id),
+            AssetHandle::weak(skeleton_id),
+        );
+
+        let started = Instant::now();
+        while server.is_loading() {
+            assert!(started.elapsed() < Duration::from_secs(10));
+            std::thread::sleep(Duration::from_millis(1));
+            world.run_schedule(LateUpdate);
+        }
+        world.run_schedule(LateUpdate);
+        world.run_schedule(LateUpdate);
+        std::fs::remove_dir_all(&root).ok();
+
+        let expected = database
+            .pose(0, &skeleton(), &[&walk_forward(), &turn_left()])
+            .unwrap();
+        let hips_transform = world
+            .get_component_for_entity::<Transform>(bones[1])
+            .unwrap();
+        assert!(
+            hips_transform.translation.distance(expected[1].translation) < 1e-4,
+            "{:?} vs {:?}",
+            hips_transform.translation,
+            expected[1].translation
+        );
+    }
+
+    fn motion_app() -> App {
         let mut app = App::new();
         app.register_plugin(AssetManagerPlugin);
         app.insert_resource(Time::new());
@@ -1276,7 +1373,11 @@ mod tests {
         app.register_type::<Pace>();
         app.register_type::<MotionMatchingNode>();
         register_runtime(&mut app);
+        app
+    }
 
+    fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
+        let mut app = motion_app();
         let world = app.main_mut().world_mut();
         let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
         let walk_handle = AssetHandle::<AnimationClip>::weak(AssetId::new());
@@ -1303,6 +1404,15 @@ mod tests {
             .unwrap()
             .insert(database_handle.id(), database.clone());
 
+        let entities = start_playing(world, database_handle, skeleton_handle);
+        (app, entities, database)
+    }
+
+    fn start_playing(
+        world: &mut World,
+        database_handle: AssetHandle<MotionDatabase>,
+        skeleton_handle: AssetHandle<Skeleton>,
+    ) -> Vec<Entity> {
         let mut type_registry = TypeRegistry::default();
         register_animation_types(&mut type_registry);
         type_registry.register::<MotionMatchingNode>();
@@ -1338,6 +1448,6 @@ mod tests {
         let schedules = world.remove_resource::<Schedules>().unwrap();
         let compiled = schedules.compile::<SingleThreadedExecutor>(world);
         world.insert_resource(compiled);
-        (app, entities, database)
+        entities
     }
 }

@@ -48,6 +48,11 @@ whose `new_asset()` is its `Default`. The database stores no poses: it stores
 features, the simulation bone and, per frame, which clip and time the frame
 plays. `MotionDatabase::pose` samples the pose from the clip.
 
+A database loaded through the `AssetServer`, or added with
+`AssetServer::add`, loads its skeleton and clips in `on_load` and holds them
+by strong handles, as `StandardMaterial` does its textures. A game loads only
+the database; it needs no handles of its own to the clips for it to play.
+
 ### Definition
 
 | Field | Meaning | Default |
