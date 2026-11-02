@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use concerto_foundation::assets::content::{
     read_content_asset, read_content_asset_header, save_content_asset_into, write_content_asset,
-    ContentAssetHeader, ImportProvenance, CONTENT_FORMAT_VERSION,
+    ContentAssetHeader, ImportProvenance,
 };
 use concerto_foundation::assets::registry::{AssetEntry, AssetRegistry};
 use concerto_foundation::assets::AssetId;
@@ -296,10 +296,10 @@ fn an_output_owned_by_another_source_rejects_import_before_any_writes() {
     let occupied = project.path("content/triangle/scene.gasset");
     std::fs::create_dir_all(occupied.parent().unwrap()).unwrap();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: AssetId::new(),
         references: vec![],
         kind: "Scene".into(),
+        kind_version: 1,
         provenance: Some(ImportProvenance {
             source: "assets/another_source.gltf".into(),
             sub_asset: "scene".into(),
@@ -346,10 +346,10 @@ fn legacy_content_bootstraps_metadata_and_retains_its_uuid_and_address() {
     let legacy_path = project.path(legacy_address);
     std::fs::create_dir_all(legacy_path.parent().unwrap()).unwrap();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: legacy_id,
         references: vec![],
         kind: "Scene".into(),
+        kind_version: 1,
         provenance: Some(ImportProvenance {
             source: "assets/characters/hero.gltf".into(),
             sub_asset: "scene".into(),
@@ -409,10 +409,10 @@ fn external_legacy_source_bootstraps_without_changing_its_identity() {
     let path = project.path(address);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: vec![],
         kind: "Scene".into(),
+        kind_version: 1,
         provenance: Some(ImportProvenance {
             source: source.to_str().unwrap().into(),
             sub_asset: "scene".into(),

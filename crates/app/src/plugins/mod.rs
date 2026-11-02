@@ -168,6 +168,7 @@ mod tests {
             id: AssetId::new(),
             address: "content/hero.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: None,
             provenance: None,
         };
         let mut registry = AssetRegistry::new();
@@ -192,6 +193,7 @@ mod tests {
             id: AssetId::new(),
             address: "content/supplied.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: None,
             provenance: None,
         };
         let mut registry = AssetRegistry::new();
@@ -268,7 +270,10 @@ mod tests {
         );
         assert_eq!(
             app.get_resource::<AssetRegistry>().unwrap().get(id),
-            scanned.get(id)
+            Some(&AssetEntry {
+                kind_version: None,
+                ..scanned.get(id).unwrap().clone()
+            })
         );
         std::fs::remove_dir_all(root).unwrap();
     }
@@ -363,6 +368,7 @@ mod tests {
             id: AssetId::new(),
             address: "content/hero.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: None,
             provenance: None,
         };
         let mut registry = AssetRegistry::new();

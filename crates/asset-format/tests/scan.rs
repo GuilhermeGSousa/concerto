@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use concerto_asset_format::{
     parse_registry, scan_content, write_content_asset, write_registry, AssetId, ContentAssetHeader,
-    ContentConfig, ImportProvenance, ScannedEntry, CONTENT_FORMAT_VERSION,
+    ContentConfig, ImportProvenance, ScannedEntry,
 };
 
 fn temp_root(tag: &str) -> PathBuf {
@@ -14,10 +14,10 @@ fn temp_root(tag: &str) -> PathBuf {
 
 fn write_asset(path: &Path, id: AssetId, kind: &str, provenance: Option<ImportProvenance>) {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: id,
         references: Vec::new(),
         kind: kind.to_string(),
+        kind_version: 1,
         provenance,
     };
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -61,12 +61,14 @@ fn scanning_a_tree_lists_every_file_of_the_extension_relative_to_the_base() {
                 id: idle,
                 address: "content/hero/anim/idle.gasset".into(),
                 kind: "AnimationClip".into(),
+                kind_version: Some(1),
                 provenance: None,
             },
             ScannedEntry {
                 id: body,
                 address: "content/hero/mesh_Body.gasset".into(),
                 kind: "Mesh".into(),
+                kind_version: Some(1),
                 provenance,
             },
         ]
@@ -90,6 +92,7 @@ fn scanning_honours_the_extension_and_a_non_canonical_base() {
             id,
             address: "data/a.asset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -136,18 +139,47 @@ fn an_unreadable_header_is_an_error_naming_its_path() {
 }
 
 #[test]
+fn a_scan_reads_the_kind_version_and_registry_text_has_none() {
+    let base = temp_root("scan-kind-version");
+    let id = AssetId::new();
+    let header = ContentAssetHeader {
+        asset_id: id,
+        references: Vec::new(),
+        kind: "AnimationClip".to_string(),
+        kind_version: 3,
+        provenance: None,
+    };
+    std::fs::create_dir_all(base.join("content")).unwrap();
+    std::fs::write(
+        base.join("content/idle.gasset"),
+        write_content_asset(&header, b"payload").unwrap(),
+    )
+    .unwrap();
+
+    let scanned = scan_content(&base, &base.join("content"), "gasset").expect("scan");
+    assert_eq!(scanned[0].kind_version, Some(3));
+
+    let parsed = parse_registry(&write_registry(&scanned)).expect("parses");
+    assert_eq!(parsed[0].kind_version, None);
+
+    std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
 fn the_registry_text_round_trips() {
     let entries = vec![
         ScannedEntry {
             id: AssetId::new(),
             address: "content/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: None,
             provenance: None,
         },
         ScannedEntry {
             id: AssetId::new(),
             address: "content/quoted \"b\".gasset".into(),
             kind: "Scene".into(),
+            kind_version: None,
             provenance: None,
         },
     ];
@@ -169,6 +201,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
             id: ids[1],
             address: "content/b.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: None,
             provenance: Some(ImportProvenance {
                 source: "assets/b.glb".into(),
                 sub_asset: "b".into(),
@@ -178,6 +211,7 @@ fn writing_the_registry_drops_provenance_and_orders_by_id() {
             id: ids[0],
             address: "content/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: None,
             provenance: None,
         },
     ];
@@ -325,6 +359,7 @@ fn a_symlinked_content_directory_keeps_content_addresses() {
             id,
             address: "content/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -350,6 +385,7 @@ fn a_symlink_cycle_lists_each_entry_once_and_terminates() {
             id,
             address: "content/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -373,6 +409,7 @@ fn a_directory_reached_through_two_paths_is_listed_once_under_the_first_name() {
             id,
             address: "content/alias/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -396,6 +433,7 @@ fn a_directory_outside_the_base_keeps_the_walked_path_as_its_address() {
             id,
             address: other.join("a.gasset").to_string_lossy().replace('\\', "/"),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -421,6 +459,7 @@ fn a_base_with_parent_after_a_symlink_is_normalised_lexically() {
             id,
             address: "link/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -445,6 +484,7 @@ fn a_dangling_directory_symlink_is_skipped() {
             id,
             address: "content/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );
@@ -496,6 +536,7 @@ fn two_symlinks_to_one_directory_list_it_once_under_the_first_name() {
             id,
             address: "content/alias_a/a.gasset".into(),
             kind: "Mesh".into(),
+            kind_version: Some(1),
             provenance: None,
         }]
     );

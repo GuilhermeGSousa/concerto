@@ -24,8 +24,7 @@ use concerto_editor::{
 use concerto_foundation::assets::{
     Asset, AssetId,
     content::{
-        CONTENT_FORMAT_VERSION, ContentAssetHeader, read_content_asset, read_content_asset_header,
-        write_content_asset,
+        ContentAssetHeader, decode_content_asset, read_content_asset_header, write_content_asset,
     },
     registry::{AssetEntry, AssetRegistry},
 };
@@ -279,19 +278,17 @@ impl SourceBytes {
 
 fn read_baked(root: &Path, address: &str) -> Option<MotionDatabase> {
     let bytes = std::fs::read(root.join(address)).ok()?;
-    let (header, payload) = read_content_asset(&bytes).ok()?;
-    if header.kind != MotionDatabase::name() {
-        return None;
-    }
-    bincode::deserialize(payload).ok()
+    decode_content_asset::<MotionDatabase>(&bytes)
+        .ok()
+        .map(|(_, database)| database)
 }
 
 fn packed(database: &MotionDatabase, address: &str, weights_only: bool) -> anyhow::Result<Built> {
     let header = ContentAssetHeader {
-        format_version: CONTENT_FORMAT_VERSION,
         asset_id: AssetId::from_path(address),
         references: database.referenced_sub_assets(),
         kind: MotionDatabase::name().to_string(),
+        kind_version: MotionDatabase::FORMAT_VERSION,
         provenance: None,
     };
     let payload = bincode::serialize(database).context("failed to serialize the database")?;
@@ -458,6 +455,7 @@ fn install(
         id: AssetId::from_path(&address),
         address: address.clone(),
         kind: MotionDatabase::name().to_string(),
+        kind_version: Some(MotionDatabase::FORMAT_VERSION),
         provenance: None,
     });
     Ok(address)

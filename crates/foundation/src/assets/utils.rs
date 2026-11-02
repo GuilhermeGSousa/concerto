@@ -1,27 +1,20 @@
 use anyhow::Context;
 use cfg_if::cfg_if;
 
-use super::ContentAssetRoot;
+use super::{Asset, ContentAssetRoot};
 
-/// Reads an asset's payload from the content asset at `<root>/<address>`.
-pub async fn load_content_asset_bytes(
+/// Loads the content asset at `<root>/<address>` as `A`, through [`decode_content_asset`](crate::assets::content::decode_content_asset).
+pub async fn load_content_asset<A: Asset>(
     root: &ContentAssetRoot,
     address: &str,
-    expected_kind: &str,
-) -> anyhow::Result<Vec<u8>> {
+) -> anyhow::Result<A> {
     let raw = try_read_relative(root, address)
         .await?
         .with_context(|| format!("no content asset at '{address}'"))?;
 
-    let (header, payload) = crate::assets::content::read_content_asset(&raw)
+    let (_, asset) = crate::assets::content::decode_content_asset::<A>(&raw)
         .with_context(|| format!("malformed content asset '{address}'"))?;
-    if header.kind != expected_kind {
-        anyhow::bail!(
-            "content asset '{address}' holds a {} but a {expected_kind} was requested",
-            header.kind
-        );
-    }
-    Ok(payload.to_vec())
+    Ok(asset)
 }
 
 /// Reads `<root>/<relative>`, returning `Ok(None)` when it simply is not

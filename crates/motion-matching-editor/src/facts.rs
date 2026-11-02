@@ -6,11 +6,10 @@ use concerto_ecs::{Entity, Query, Res};
 use concerto_editor::{preview::PreviewSignals, project::ProjectState};
 use concerto_foundation::assets::{
     Asset, AssetId,
-    content::read_content_asset,
+    content::{decode_content_asset, read_content_asset},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_mesh::Skeleton;
-use serde::de::DeserializeOwned;
 
 use crate::document::DefinitionDocument;
 
@@ -40,9 +39,8 @@ pub(crate) fn read_bytes<A: Asset>(root: &Path, asset: &AssetEntry) -> anyhow::R
     Ok(bytes)
 }
 
-pub(crate) fn decode<A: DeserializeOwned>(bytes: &[u8]) -> anyhow::Result<A> {
-    let (_, payload) = read_content_asset(bytes)?;
-    Ok(bincode::deserialize(payload)?)
+pub(crate) fn decode<A: Asset>(bytes: &[u8]) -> anyhow::Result<A> {
+    Ok(decode_content_asset::<A>(bytes)?.1)
 }
 
 /// Reads the skeleton `asset` names under `root`, checking its id and its kind.
