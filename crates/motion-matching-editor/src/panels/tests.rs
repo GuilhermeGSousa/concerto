@@ -101,6 +101,7 @@ fn entry_of(clip: &AssetEntry, range: Option<TimeRange>) -> MotionEntry {
     MotionEntry {
         clip: AssetHandle::weak(clip.id),
         range,
+        mirrored: false,
     }
 }
 
@@ -637,6 +638,7 @@ fn a_clip_gone_from_the_project_reads_as_missing() {
     tab.state_mut().entries.push(MotionEntry {
         clip: gone,
         range: None,
+        mirrored: false,
     });
 
     tab.until_read();
@@ -690,6 +692,7 @@ fn add_opens_the_clip_picker_and_a_pick_appends_a_whole_clip_entry_and_selects_i
         MotionEntry {
             clip: AssetHandle::weak(jog.id),
             range: None,
+            mirrored: false,
         }
     );
     assert_eq!(tab.state().selected_entry, Some(2));

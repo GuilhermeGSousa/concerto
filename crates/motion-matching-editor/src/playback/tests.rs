@@ -78,6 +78,7 @@ fn entry(range: Option<TimeRange>) -> MotionEntry {
     MotionEntry {
         clip: AssetHandle::weak(AssetId::new()),
         range,
+        mirrored: false,
     }
 }
 

@@ -167,10 +167,12 @@ fn baked(
             MotionEntry {
                 clip: walk_handle,
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: turn_handle,
                 range: None,
+                mirrored: false,
             },
         ],
         rate: 30.0,
@@ -186,6 +188,7 @@ fn baked(
             sample_count: 2,
         },
         channels,
+        mirror_axis: Vec3::X,
     };
     bake(&definition, &skeleton(), &[&walk(), &turn()], &registry()).unwrap()
 }

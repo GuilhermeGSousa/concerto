@@ -14,11 +14,12 @@ pub struct TimeRange {
     pub end: f32,
 }
 
-/// One clip of a motion database and the part of it to bake; no range means the whole clip.
+/// One clip of a motion database, the part of it to bake, and whether it plays mirrored; no range means the whole clip.
 #[derive(Reflect, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MotionEntry {
     pub clip: AssetHandle<AnimationClip>,
     pub range: Option<TimeRange>,
+    pub mirrored: bool,
 }
 
 /// Which joints place and orient the simulation bone, and how much to smooth it.
@@ -75,6 +76,7 @@ pub struct StoredChannel {
 
 /// What to bake into a [`MotionDatabase`](crate::MotionDatabase): the clips, sampling, simulation bone, trajectory and feature channels.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[asset(version = 2)]
 pub struct MotionDatabaseDefinition {
     pub skeleton: AssetHandle<Skeleton>,
     pub entries: Vec<MotionEntry>,
@@ -83,6 +85,7 @@ pub struct MotionDatabaseDefinition {
     pub simulation: SimulationBoneSettings,
     pub trajectory: TrajectorySettings,
     pub channels: Vec<StoredChannel>,
+    pub mirror_axis: Vec3,
 }
 
 impl Default for MotionDatabaseDefinition {
@@ -95,6 +98,7 @@ impl Default for MotionDatabaseDefinition {
             simulation: SimulationBoneSettings::default(),
             trajectory: TrajectorySettings::default(),
             channels: reference_channels(),
+            mirror_axis: Vec3::X,
         }
     }
 }

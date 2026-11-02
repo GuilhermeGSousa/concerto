@@ -51,6 +51,7 @@ fn entry(range: Option<(f32, f32)>) -> MotionEntry {
     MotionEntry {
         clip: Default::default(),
         range: range.map(|(start, end)| TimeRange { start, end }),
+        mirrored: false,
     }
 }
 
@@ -298,6 +299,7 @@ fn a_database_with_channels_and_handles_round_trips_through_bincode() {
             .map(|id| MotionEntry {
                 clip: AssetHandle::weak(*id),
                 range: None,
+                mirrored: false,
             })
             .collect(),
         rate: 10.0,
@@ -342,6 +344,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("content/hero/walk.gasset")),
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("content/hero/run.gasset")),
@@ -349,6 +352,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
                     start: 0.5,
                     end: 1.5,
                 }),
+                mirrored: false,
             },
         ],
         rate: 10.0,
@@ -368,6 +372,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             type_name: "HeightChannel".into(),
             value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
         }],
+        mirror_axis: Vec3::X,
     }
 }
 

@@ -1,6 +1,7 @@
 use std::f32::consts::{PI, TAU};
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation::mirror::PoseMirror;
 use concerto_foundation::{math::spring_damper::angular_velocity, transform::Transform};
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
@@ -317,6 +318,7 @@ pub fn bake_with_progress(
     mut on_entry: impl FnMut(usize, usize),
 ) -> Result<MotionDatabase, BakeError> {
     let plans = plan_entries(definition, skeleton, clips)?;
+    let mirror = mirror_of(definition, skeleton)?;
     check_window("position_window", definition.simulation.position_window)?;
     check_window("facing_window", definition.simulation.facing_window)?;
     find_joint(skeleton, &definition.simulation.position_joint)?;
@@ -361,7 +363,7 @@ pub fn bake_with_progress(
     let mut simulation_frames = Vec::with_capacity(frame_count);
 
     for (index, (plan, clip)) in plans.iter().zip(clips).enumerate() {
-        let locals: Vec<Vec<JointPose>> = (0..plan.frames)
+        let mut locals: Vec<Vec<JointPose>> = (0..plan.frames)
             .map(|index| {
                 sample_pose(
                     skeleton,
@@ -370,6 +372,17 @@ pub fn bake_with_progress(
                 )
             })
             .collect();
+        if let Some(mirror) = mirror
+            .as_ref()
+            .filter(|_| definition.entries[index].mirrored)
+        {
+            for local in &mut locals {
+                let sampled = local.clone();
+                mirror
+                    .mirror_into(&sampled, local)
+                    .map_err(BakeError::Mirror)?;
+            }
+        }
         let models: Vec<Vec<Transform>> = locals
             .iter()
             .map(|local| model_pose(skeleton, local))
@@ -417,6 +430,12 @@ pub fn bake_with_progress(
             .iter()
             .map(|entry| entry.clip.clone())
             .collect(),
+        definition
+            .entries
+            .iter()
+            .map(|entry| entry.mirrored)
+            .collect(),
+        mirror.as_ref().map(|_| definition.mirror_axis),
         rate,
         definition.speed,
         definition.trajectory,
@@ -431,6 +450,25 @@ pub fn bake_with_progress(
         offset,
         deviations,
     ))
+}
+
+fn mirror_of(
+    definition: &MotionDatabaseDefinition,
+    skeleton: &Skeleton,
+) -> Result<Option<PoseMirror>, BakeError> {
+    if !definition.entries.iter().any(|entry| entry.mirrored) {
+        return Ok(None);
+    }
+    let axis = definition.mirror_axis;
+    let horizontal = axis
+        .try_normalize()
+        .is_some_and(|normal| normal.y.abs() <= 1e-3);
+    if !horizontal {
+        return Err(BakeError::InvalidMirrorAxis(axis));
+    }
+    PoseMirror::new(skeleton, axis)
+        .map(Some)
+        .map_err(BakeError::Mirror)
 }
 
 fn feature_statistics(

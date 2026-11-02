@@ -28,6 +28,7 @@ use concerto_motion_matching::{
     SimulationBoneSettings, StoredChannel, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_value};
+use glam::Vec3;
 use uuid::Uuid;
 
 use crate::{
@@ -157,6 +158,7 @@ impl DefinitionDocument {
                 .iter()
                 .map(HeldChannel::stored)
                 .collect::<anyhow::Result<_>>()?,
+            mirror_axis: Vec3::X,
         })
     }
 

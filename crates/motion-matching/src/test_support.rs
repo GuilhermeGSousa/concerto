@@ -154,10 +154,12 @@ fn two_clip_definition(
             MotionEntry {
                 clip: walk,
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: turn,
                 range: None,
+                mirrored: false,
             },
         ],
         rate: 30.0,
@@ -170,6 +172,7 @@ fn two_clip_definition(
         },
         trajectory,
         channels,
+        mirror_axis: Vec3::X,
     }
 }
 

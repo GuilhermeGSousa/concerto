@@ -177,6 +177,7 @@ pub(crate) fn entry(seconds: f32) -> MotionEntry {
             start: 0.0,
             end: seconds,
         }),
+        mirrored: false,
     }
 }
 
@@ -375,6 +376,7 @@ fn install_alone_plays_a_clip_in_a_definitions_preview_and_registers_no_clip_edi
         entries: vec![MotionEntry {
             clip: AssetHandle::weak(walk.unwrap()),
             range: None,
+            mirrored: false,
         }],
         ..Default::default()
     };

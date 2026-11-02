@@ -113,6 +113,7 @@ fn baked(channels: Vec<StoredChannel>) -> MotionDatabase {
         entries: vec![MotionEntry {
             clip: Default::default(),
             range: None,
+            mirrored: false,
         }],
         rate: 30.0,
         speed: 1.0,
@@ -343,6 +344,7 @@ fn bake_with(channel: StoredChannel) -> Result<MotionDatabase, BakeError> {
         entries: vec![MotionEntry {
             clip: Default::default(),
             range: None,
+            mirrored: false,
         }],
         rate: 30.0,
         speed: 1.0,
@@ -440,6 +442,7 @@ fn query_database() -> MotionDatabase {
         entries: vec![MotionEntry {
             clip: Default::default(),
             range: None,
+            mirrored: false,
         }],
         rate: 30.0,
         speed: 1.0,

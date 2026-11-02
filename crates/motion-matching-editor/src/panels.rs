@@ -287,6 +287,7 @@ fn pick_clip(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
                 state.entries.push(MotionEntry {
                     clip: AssetHandle::weak(id),
                     range: None,
+                    mirrored: false,
                 });
                 state.selected_entry = Some(state.entries.len() - 1);
                 cmd.insert(Unsaved, document);
