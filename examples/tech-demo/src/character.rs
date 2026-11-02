@@ -12,7 +12,8 @@ use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraPivot, EntityFollow};
 use concerto::mesh::{MeshComponent, primitives::cuboid};
 use concerto::motion_matching::{
-    CharacterDisplacement, CharacterLink, CharacterSimulation, DesiredMotion, MotionMatchingNode,
+    Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp, DesiredMotion,
+    MotionMatchingNode, Synchronization,
 };
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
@@ -228,6 +229,45 @@ pub(crate) fn update_movement(
     }
 }
 
+fn next_displacement(current: &CharacterDisplacement) -> CharacterDisplacement {
+    match current {
+        CharacterDisplacement::Adjustment(_) => CharacterDisplacement::Clamp(Clamp::default()),
+        CharacterDisplacement::Clamp(_) => {
+            CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.0 })
+        }
+        CharacterDisplacement::Synchronization(sync) if sync.data_factor == 0.0 => {
+            CharacterDisplacement::Synchronization(Synchronization { data_factor: 1.0 })
+        }
+        CharacterDisplacement::Synchronization(_) => {
+            CharacterDisplacement::Adjustment(Adjustment::default())
+        }
+    }
+}
+
+pub(crate) fn debug_keys(
+    characters: Query<(&mut MotionMatchingGizmos, &mut CharacterDisplacement)>,
+    input: Res<Input>,
+) {
+    let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
+    for (mut gizmos, mut displacement) in characters.iter() {
+        if pressed(KeyCode::Digit1) {
+            gizmos.simulation = !gizmos.simulation;
+        }
+        if pressed(KeyCode::Digit2) {
+            gizmos.query = !gizmos.query;
+        }
+        if pressed(KeyCode::Digit3) {
+            gizmos.matched = !gizmos.matched;
+        }
+        if pressed(KeyCode::Digit4) {
+            gizmos.history = !gizmos.history;
+        }
+        if pressed(KeyCode::KeyM) {
+            **displacement = next_displacement(&displacement);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use concerto::animation::graph::AnimationGraph;
@@ -245,8 +285,8 @@ mod tests {
     };
     use concerto::mesh::{Mesh, MeshComponent};
     use concerto::motion_matching::{
-        CharacterDisplacement, CharacterLink, CharacterSimulation, DesiredMotion, MotionDatabase,
-        MotionMatchingNode,
+        Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp,
+        DesiredMotion, MotionDatabase, MotionMatchingNode, Synchronization,
     };
     use concerto::physics::physics_state::PhysicsState;
     use concerto::physics::{
@@ -265,8 +305,8 @@ mod tests {
     use glam::{Quat, Vec3};
 
     use super::{
-        CHARACTER_SCENE, DATABASE, Player, PlayerSpawner, RUN_SPEED, WALK_SPEED, desired_velocity,
-        facing, setup_character_animations, spawn_character, update_movement,
+        CHARACTER_SCENE, DATABASE, Player, PlayerSpawner, RUN_SPEED, WALK_SPEED, debug_keys,
+        desired_velocity, facing, setup_character_animations, spawn_character, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -578,6 +618,80 @@ mod tests {
             assert!(forward.dot(velocity) > 0.0);
         }
         assert_eq!(facing(Vec3::ZERO, held), held);
+    }
+
+    fn debugged_character(world: &mut World) -> Entity {
+        world.spawn((
+            MotionMatchingGizmos::default(),
+            CharacterDisplacement::default(),
+        ))
+    }
+
+    fn pressed(world: &mut World, key: KeyCode) {
+        world.insert_resource(holding(&[key]));
+        let mut system = debug_keys.into_system();
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
+
+    fn layers(world: &World, character: Entity) -> [bool; 4] {
+        let gizmos = world
+            .get_component_for_entity::<MotionMatchingGizmos>(character)
+            .unwrap();
+        [
+            gizmos.simulation,
+            gizmos.query,
+            gizmos.matched,
+            gizmos.history,
+        ]
+    }
+
+    #[test]
+    fn each_number_key_toggles_its_gizmo_layer() {
+        let keys = [
+            KeyCode::Digit1,
+            KeyCode::Digit2,
+            KeyCode::Digit3,
+            KeyCode::Digit4,
+        ];
+        for (layer, key) in keys.into_iter().enumerate() {
+            let mut world = World::new();
+            let character = debugged_character(&mut world);
+
+            pressed(&mut world, key);
+            let mut expected = [true; 4];
+            expected[layer] = false;
+            assert_eq!(layers(&world, character), expected);
+
+            pressed(&mut world, key);
+            assert_eq!(layers(&world, character), [true; 4]);
+        }
+    }
+
+    #[test]
+    fn m_cycles_the_displacement_method() {
+        let mut world = World::new();
+        let character = debugged_character(&mut world);
+
+        let methods: Vec<CharacterDisplacement> = (0..4)
+            .map(|_| {
+                pressed(&mut world, KeyCode::KeyM);
+                world
+                    .get_component_for_entity::<CharacterDisplacement>(character)
+                    .unwrap()
+                    .clone()
+            })
+            .collect();
+
+        assert_eq!(
+            methods,
+            vec![
+                CharacterDisplacement::Clamp(Clamp::default()),
+                CharacterDisplacement::Synchronization(Synchronization { data_factor: 0.0 }),
+                CharacterDisplacement::Synchronization(Synchronization { data_factor: 1.0 }),
+                CharacterDisplacement::Adjustment(Adjustment::default()),
+            ]
+        );
     }
 
     #[test]

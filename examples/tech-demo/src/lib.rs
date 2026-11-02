@@ -10,7 +10,9 @@ use concerto::{
 use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 
 use crate::{
-    character::{PlayerSpawner, setup_character_animations, spawn_character, update_movement},
+    character::{
+        PlayerSpawner, debug_keys, setup_character_animations, spawn_character, update_movement,
+    },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
 
@@ -30,6 +32,7 @@ pub fn game(app: &mut App) {
         .add_system(Startup, spawn_grounded_overlay)
         .add_system(Update, setup_character_animations)
         .add_system(Update, update_movement)
+        .add_system(Update, debug_keys)
         .add_system(Update, update_grounded_overlay);
 }
 
