@@ -189,7 +189,8 @@ mod tests {
                 query[0] += 0.37;
                 query[1] -= 0.21;
 
-                let found = search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
+                let found =
+                    search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
                 let expected = reference(&database, &query, current, SURROUNDING, RANGE_END);
 
                 assert_eq!(found.0, expected.0, "target {target} current {current}");
@@ -204,7 +205,8 @@ mod tests {
         let current = 55;
         let query = database.normalised_features(current);
 
-        let (frame, value) = search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
+        let (frame, value) =
+            search(&database, &query, Some(current), SURROUNDING, RANGE_END).unwrap();
 
         assert_eq!(frame, current);
         assert!(value < 1e-10);
