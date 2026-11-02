@@ -421,9 +421,15 @@ scales them by the frame's time into a `RootMotion` on `instance.output`:
 `translation = q⁻¹ * (velocity * dt)` and `rotation =
 from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
-the same way. The root joint is the database skeleton's first without a parent.
-A frame with no step, on a missing asset, gives `RootMotion::IDENTITY`, and so
-does a frame that holds the pose at the end of its range.
+the same way. The root joint is the database skeleton's first without a parent,
+and `rest` is that bone's rest on the skeleton playing it, so a database baked on
+one skeleton plays on another with the same bone ids. A frame with no step, on a
+missing asset, gives `RootMotion::IDENTITY`, and so does a frame that holds the
+pose at the end of its range.
+
+The root joint is written to the root bone's `Transform` like any other joint,
+relative to the simulation bone. Ground motion and yaw belong to the simulation
+bone, so what shows on the bone is the root's height, lean and offset from it.
 
 ## Displacement
 
@@ -446,11 +452,23 @@ commands.spawn((
 ));
 ```
 
-Root motion is in the space of the root bone's parent, and the system reads that
-space from the skeleton's `GlobalTransform`. The skeleton has to be in it: a
-glTF skinned node beside its root joint with no transform of its own, or a BVH
-root joint, which rests unrotated. Any other skeleton moves the character the
-wrong way.
+The system reads the space root motion is in from the skeleton's
+`GlobalTransform`. On a glTF skeleton that is the skinned node beside the root
+joint, so the space is the one the root's parent has. The root's parent must
+have no transform of its own: the bake treats a parentless joint's local pose as
+model space, and the simulation bone stands at Y = 0 in it, so a transform there
+puts the root bone somewhere the database never saw and moves the character the
+wrong way. UAL's `Armature` has none, and LAFAN1 has no armature.
+
+A BVH scene puts `SkeletonComponent` on the root joint itself, so its space is
+the root's own global, which holds the rotation written to the root. That is on
+purpose. A delta has the root's rotation turned out of it, `q⁻¹` above and the
+same in a clip's root motion, and a space holding that rotation puts back what
+stays in the bone. So a root that stands across Y, as LAFAN1's hips do at about
+90°, moves along the body, where a space without it would read forward motion as
+vertical and drop it. The two cancel exactly only for a clip. In motion matching
+the delta reads this frame's pose and the space holds last frame's blended one,
+so they miss by a little every frame, and by more during an inertialized jump.
 
 A `skeleton` with no `SkeletonComponent`, or no root, gives no root motion, and
 the character still gets its method's correction. A `capsule` with no

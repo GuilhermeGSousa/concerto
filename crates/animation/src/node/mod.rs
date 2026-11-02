@@ -5,7 +5,7 @@ use uuid::Uuid;
 use crate::{
     clip::{AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, RootBone},
-    pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion},
+    pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion, twist_about},
 };
 
 pub mod blend_space;
@@ -212,6 +212,10 @@ impl AnimationNode for AnimationClipNode {
                 for animation_channel in animation_channels {
                     animation_channel.sample_transform(instance.current_time(), joint_pose);
                 }
+
+                if let Some(root) = context.root().filter(|root| root.index == bone_index) {
+                    net_of_root_motion(joint_pose, root);
+                }
             });
 
         output.set_root_motion(root_motion(
@@ -231,6 +235,13 @@ impl AnimationNode for AnimationClipNode {
     fn is_finished(&self, instance: &AnimationClipNodeInstance) -> bool {
         instance.is_finished
     }
+}
+
+fn net_of_root_motion(joint: &mut JointPose, root: &RootBone) {
+    let turned = joint.rotation * root.rest.rotation.inverse();
+    joint.rotation = twist_about(turned, root.up).inverse() * joint.rotation;
+    let lifted = (joint.translation - root.rest.translation).dot(root.up);
+    joint.translation = root.rest.translation + root.up * lifted;
 }
 
 fn root_motion(
@@ -331,7 +342,7 @@ mod tests {
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
         graph::AnimationGraph,
-        pose::{JointPose, PosePool, RootMotion},
+        pose::{JointPose, Pose, PosePool, RootMotion},
     };
 
     const ROOT: Uuid = Uuid::from_u128(1);
@@ -343,6 +354,7 @@ mod tests {
         graphs: AssetStore<AnimationGraph>,
         blackboard: AnimationBlackboard,
         rest: JointPose,
+        up: Vec3,
         clip: AssetHandle<AnimationClip>,
     }
 
@@ -359,8 +371,14 @@ mod tests {
                 graphs: AssetStore::new(),
                 blackboard: AnimationBlackboard::default(),
                 rest,
+                up: Vec3::Y,
                 clip: handle,
             }
+        }
+
+        fn with_up(mut self, up: Vec3) -> Self {
+            self.up = up;
+            self
         }
 
         fn context(&self) -> AnimationGraphContext<'_> {
@@ -371,12 +389,30 @@ mod tests {
                 root: Some(RootBone {
                     index: 0,
                     rest: self.rest.clone(),
+                    up: self.up,
                 }),
             }
         }
 
         fn node(&self) -> AnimationClipNode {
             AnimationClipNode::new(self.clip.clone())
+        }
+
+        fn pose(&self, bones: &[Uuid]) -> Pose {
+            let node = self.node();
+            let mut instance = node.create_instance(&self.context());
+            let mut pool = PosePool::new(bones.len());
+            pool.set_rest(&vec![self.rest.clone(); bones.len()]);
+            let mut output = pool.acquire();
+            node.evaluate(
+                &mut instance,
+                &self.context(),
+                bones,
+                &[],
+                &mut pool,
+                &mut output,
+            );
+            output
         }
 
         fn motion(
@@ -453,6 +489,101 @@ mod tests {
             "expected rotation {rotation}, got {}",
             actual.rotation
         );
+    }
+
+    fn held(rotation: Quat) -> AnimationChannel {
+        rotation_channel(rotation, rotation)
+    }
+
+    fn assert_rotation(actual: Quat, expected: Quat) {
+        assert!(
+            actual.angle_between(expected) < 1e-3,
+            "expected rotation {expected}, got {actual}"
+        );
+    }
+
+    #[test]
+    fn a_clip_gives_up_the_yaw_of_its_root_and_keeps_the_pitch() {
+        let rest = turned_armature();
+        let pitch = Quat::from_rotation_x(0.4);
+        let rig = Rig::new(
+            clip(vec![held(Quat::from_rotation_y(1.0) * pitch * rest)]),
+            at_rest(rest),
+        );
+
+        assert_rotation(rig.pose(&[ROOT]).joints()[0].rotation, pitch * rest);
+    }
+
+    #[test]
+    fn a_clip_measures_its_yaw_about_the_up_of_the_root() {
+        let rest = turned_armature();
+        let pitch = Quat::from_rotation_x(0.4);
+        let rig = Rig::new(
+            clip(vec![held(Quat::from_rotation_z(1.0) * pitch * rest)]),
+            at_rest(rest),
+        )
+        .with_up(Vec3::Z);
+
+        assert_rotation(rig.pose(&[ROOT]).joints()[0].rotation, pitch * rest);
+    }
+
+    #[test]
+    fn a_clip_keeps_the_height_of_its_root_and_leaves_the_ground_translation_at_rest() {
+        let keyed = Vec3::new(3.0, 1.75, -2.0);
+        let rig = Rig::new(
+            clip(vec![translation_channel(keyed, keyed)]),
+            at_rest(Quat::IDENTITY),
+        );
+
+        assert_eq!(
+            rig.pose(&[ROOT]).joints()[0].translation,
+            Vec3::new(0.0, 1.75, 0.0)
+        );
+    }
+
+    #[test]
+    fn a_clip_reads_the_height_of_its_root_along_up() {
+        let keyed = Vec3::new(3.0, 5.0, 0.5);
+        let rig = Rig::new(
+            clip(vec![translation_channel(keyed, keyed)]),
+            at_rest(Quat::IDENTITY),
+        )
+        .with_up(Vec3::Z);
+
+        assert_eq!(
+            rig.pose(&[ROOT]).joints()[0].translation,
+            Vec3::new(0.0, 1.0, 0.5)
+        );
+    }
+
+    #[test]
+    fn a_joint_that_is_not_the_root_keeps_what_the_clip_gives_it() {
+        let moved = Vec3::new(3.0, 2.0, 1.0);
+        let turned = Quat::from_rotation_y(1.0);
+        let mut both = clip(vec![held(turned)]);
+        both.add_channel(OTHER, translation_channel(moved, moved));
+        both.add_channel(OTHER, held(turned));
+        let rig = Rig::new(both, at_rest(Quat::IDENTITY));
+
+        let pose = rig.pose(&[ROOT, OTHER]);
+
+        assert_eq!(pose.joints()[1].translation, moved);
+        assert_rotation(pose.joints()[1].rotation, turned);
+    }
+
+    #[test]
+    fn blending_two_clips_that_turn_differently_leaves_no_yaw() {
+        let rest = turned_armature();
+        let pitch = Quat::from_rotation_x(0.4);
+        let turning_by = |angle: f32| {
+            let turned = Quat::from_rotation_y(angle) * pitch * rest;
+            Rig::new(clip(vec![held(turned)]), at_rest(rest)).pose(&[ROOT])
+        };
+
+        let mut blended = turning_by(1.0);
+        blended.blend(&turning_by(-0.6), 0.5);
+
+        assert_rotation(blended.joints()[0].rotation, pitch * rest);
     }
 
     #[test]

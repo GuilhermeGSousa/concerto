@@ -33,6 +33,14 @@ impl InertializationBlender {
         }
     }
 
+    fn drop_other_skeleton(&mut self, bone_count: usize) {
+        self.inertializer
+            .take_if(|inertializer| inertializer.bone_count() != bone_count);
+        self.last_output.take_if(|pose| pose.len() != bone_count);
+        self.previous_output
+            .take_if(|pose| pose.len() != bone_count);
+    }
+
     fn source_velocity(&self, bone_count: usize) -> PoseVelocity {
         match (&self.previous_output, &self.last_output) {
             (Some(previous), Some(last)) if self.last_delta_time > 0.0 => {
@@ -77,6 +85,7 @@ impl AnimationTransitionBlender for InertializationBlender {
             .sample(bone_ids, graph_instances, context, pool, output);
 
         let bone_count = output.len();
+        self.drop_other_skeleton(bone_count);
         let delta_time = std::mem::take(&mut self.delta_time);
         let zero_velocity = PoseVelocity::zero(bone_count);
 
