@@ -107,7 +107,8 @@ Each tick:
    3. If `<target>` is gone and it's still under 50 GB, something else is taking
       the space. Send a push notification saying so and end the tick.
 4. For each open issue labelled `agent:claimed-local`: drive it, from "Start:
-   an issue you already hold", up to the next wait.
+   an issue you already hold", up to the next wait. Drive first the issue whose
+   worktree `<target>/.last-worktree` names.
 5. If fewer than 2 open issues carry `agent:claimed-local`, claim one: the
    first eligible issue in tier order, preferring `agent:local` ones within
    each tier. Add
@@ -118,6 +119,41 @@ Each tick:
 
 GitHub does not wake the local runner. Each tick reads the PR's comments since
 your last marked comment and acts on them.
+
+### Switching worktrees
+
+Every worktree builds into the same `<target>`. Cargo names a workspace member's
+artifacts by its path inside the workspace, so worktrees share those names, and
+an artifact built in another worktree would be reused, along with any path baked
+into it. `<target>/.last-worktree` holds the absolute path of the worktree that
+last used `<target>`.
+
+Before any cargo command, test run, game, editor or role in issue `<n>`'s
+worktree, read `<target>/.last-worktree`. If it holds that worktree's absolute
+path, go on. A missing file counts as another worktree. Otherwise:
+
+1. If this session has an agent, build, test run, game or editor running in
+   another worktree, run none of these in issue `<n>`'s worktree this tick.
+   Reading and answering the PR, and editing its description, go on.
+2. From issue `<n>`'s worktree, run
+   ```sh
+   cargo clean --workspace
+   cargo clean --workspace --release
+   cargo clean --workspace --profile profiling
+   cargo clean --workspace --target wasm32-unknown-unknown
+   cargo clean --workspace --target wasm32-unknown-unknown --release
+   rm -rf <target>/*/*-content <target>/*/*/*-content
+   ```
+   These remove the workspace members' artifacts and build-script output,
+   Jolt's included, and keep third-party crates. The `rm` removes the
+   `content/` copies the examples' build scripts make, which cargo does not
+   track. If a command fails, do not write the file, and run nothing in that
+   worktree this tick.
+3. `mkdir -p <target>`, then write the worktree's absolute path to
+   `<target>/.last-worktree`.
+
+The first build after a switch rebuilds every workspace member. A role runs in
+one worktree, so check before starting it.
 
 ## Driving an issue
 
