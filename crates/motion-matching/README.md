@@ -343,9 +343,8 @@ returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
   the path from where the body ended the step and writes it to the
   `AnimationPlayer` on the skeleton of each `CharacterLink`.
 - `apply_character_displacement`, in `LateUpdate`, after `animate_targets` and
-  before `update_simple_entities` and `propagate_global_transforms`: places
-  each character; see
-  [Displacement](#displacement).
+  before `update_simple_entities` and `propagate_global_transforms`: places each
+  character; see [Displacement](#displacement).
 
 An entity without a `BodyId` is skipped. The simulation holds no position: the
 body has it.
@@ -550,10 +549,10 @@ fixed rate.
 Writing the character's `Transform` before propagation means the character, its
 skeleton and its model reach rendering in the same frame, whether the character
 has children or not. The orderings on
-`apply_character_displacement` also put `propagate_global_transforms` after
-`animate_targets` in every `App` with both `MotionMatchingPlugin` and
-`AnimationPlugin`, so bones reach their globals a frame sooner there than in an
-`App` with `AnimationPlugin` alone.
+`apply_character_displacement` also put `update_simple_entities` and
+`propagate_global_transforms` after `animate_targets` in every `App` with both
+`MotionMatchingPlugin` and `AnimationPlugin`, so bones reach their globals a
+frame sooner there than in an `App` with `AnimationPlugin` alone.
 
 The system is not marked `.at_preview_time()`, since a preview has no physics.
 Its orderings still hold there, so a preview has the same transform order.
