@@ -278,7 +278,7 @@ mod tests {
             Asset, AssetId,
             asset_server::{AssetServer, handle_asset_load_events},
             asset_store::AssetStore,
-            content::read_content_asset,
+            content::decode_content_asset,
             handle::AssetHandle,
         },
         transform::Transform,
@@ -446,8 +446,7 @@ mod tests {
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("content/forest/scene.gasset"),
         )
         .unwrap();
-        let (_, payload) = read_content_asset(&bytes).unwrap();
-        let scene: Scene = bincode::deserialize(payload).unwrap();
+        let (_, scene) = decode_content_asset::<Scene>(&bytes).unwrap();
 
         let children: Vec<usize> = scene
             .nodes

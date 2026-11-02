@@ -23,9 +23,6 @@ glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 derive_more = { version = "2", features = ["full"] }
 
-[dev-dependencies]
-bincode = "1.3"
-
 [build-dependencies]
 concerto-asset-build = { path = "../../crates/asset-build" }
 anyhow = "1.0.97"
