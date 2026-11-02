@@ -307,6 +307,7 @@ impl Editing {
             id: AssetId::new(),
             address: format!("{}.gasset", A::name()),
             kind: A::name().into(),
+            kind_version: None,
             provenance: Some(ImportProvenance {
                 source: "fixture".into(),
                 sub_asset: A::name().into(),
@@ -1030,6 +1031,7 @@ fn a_picked_asset_lands_in_a_value_when_the_editors_server_knows_its_type() {
         id: AssetId::new(),
         address: "content/cube.gasset".into(),
         kind: Mesh::name().into(),
+        kind_version: None,
         provenance: None,
     };
     w.world()

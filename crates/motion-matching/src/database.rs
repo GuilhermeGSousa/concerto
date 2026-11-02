@@ -2,7 +2,9 @@ use std::fmt;
 use std::ops::Range;
 
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_foundation::assets::{
+    asset_server::AssetLoadContext, handle::AssetHandle, Asset, LoadableAsset,
+};
 use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
@@ -368,7 +370,16 @@ impl MotionDatabase {
     }
 }
 
-impl LoadableAsset for MotionDatabase {}
+impl LoadableAsset for MotionDatabase {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        let server = context.asset_server();
+        self.skeleton = server.load(self.skeleton.id());
+        for clip in &mut self.clips {
+            *clip = server.load(clip.id());
+        }
+        Ok(())
+    }
+}
 
 /// Why a motion database could not be baked, or a baked frame's pose could not be sampled.
 #[derive(Clone, Debug, PartialEq)]

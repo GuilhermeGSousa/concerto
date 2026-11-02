@@ -111,9 +111,11 @@ app.register_type::<PlayerSpawner>();
 ```
 
 The tech demo works this way: its forest scene contains an entity with a
-`PlayerSpawner`, placed in the editor, and a system spawns the character where
-it stands. The component itself must implement `Default`: spawning builds it
-with `Default::default()` and then sets the saved fields. So must anything the
+`PlayerSpawner`, placed in the editor at the scene's root, and a system spawns
+the character and its capsule where it stands. The system reads the spawner's
+local `Transform`, so a spawner under a scaled parent would put the character
+somewhere else. The component itself must implement `Default`: spawning builds
+it with `Default::default()` and then sets the saved fields. So must anything the
 reflection has to build from nothing: a type held in an `Option` or a `Vec`,
 and the fields of an enum's variants. Asset handles are saved as their ids,
 and entity references as positions in the scene's tree.

@@ -17,7 +17,10 @@ use concerto_editor::{
     tools::edits::PropertyCommitted,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId, content::read_content_asset, handle::AssetHandle, registry::AssetEntry,
+    Asset, AssetId,
+    content::{decode_content_asset, read_content_asset},
+    handle::AssetHandle,
+    registry::AssetEntry,
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
@@ -260,12 +263,12 @@ pub fn read_definition(
     asset: &AssetEntry,
 ) -> anyhow::Result<MotionDatabaseDefinition> {
     let bytes = std::fs::read(root.join(&asset.address))?;
-    let (header, payload) = read_content_asset(&bytes)?;
+    let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
         header.asset_id == asset.id && header.kind == MotionDatabaseDefinition::name(),
         "Asset identity or type mismatch"
     );
-    Ok(bincode::deserialize(payload)?)
+    Ok(decode_content_asset::<MotionDatabaseDefinition>(&bytes)?.1)
 }
 
 fn hold_definition(

@@ -1091,6 +1091,30 @@ mod tests {
         assert_near(global, Vec3::new(0.5, 1.0, 0.0));
     }
 
+    #[test]
+    fn a_childless_characters_placement_reaches_its_global_in_the_same_frame() {
+        let mut app = app_with_every_plugin();
+        let world = app.main_mut().world_mut();
+        let capsule = spawn_capsule(world, Vec3::ZERO);
+        let character = spawn_character(world, capsule, clamp(0.5, 1.0), Vec3::new(3.0, 0.0, 0.0));
+        app.update();
+
+        let world = app.main_mut().world_mut();
+        world
+            .get_component_for_entity_mut::<Transform>(capsule)
+            .unwrap()
+            .translation = Vec3::new(0.0, -2.0, 0.0);
+        app.update();
+
+        let world = app.main().world();
+        let global = world
+            .get_component_for_entity::<GlobalTransform>(character)
+            .unwrap()
+            .translation();
+        assert_near(global, position_of(world, character));
+        assert_near(global, Vec3::new(0.5, -2.0, 0.0));
+    }
+
     const WALL_X: f32 = 2.0;
     const CAPSULE_RADIUS: f32 = 0.3;
 

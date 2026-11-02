@@ -1335,6 +1335,7 @@ mod tests {
             id: AssetId::new(),
             address: address.into(),
             kind: kind.into(),
+            kind_version: None,
             provenance: None,
         }
     }

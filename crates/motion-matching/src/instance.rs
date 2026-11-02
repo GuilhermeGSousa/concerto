@@ -17,6 +17,7 @@ pub struct LastQuery {
     pub frame: usize,
     pub simulation: Transform,
     pub trajectory: Vec<TrajectorySample>,
+    pub best_cost: Option<f32>,
 }
 
 /// The per-player state of a motion matching node.

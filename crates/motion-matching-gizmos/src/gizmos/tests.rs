@@ -413,6 +413,7 @@ impl Stage {
                 frame,
                 simulation,
                 trajectory,
+                best_cost: None,
             });
         });
     }
