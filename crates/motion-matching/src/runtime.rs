@@ -218,15 +218,15 @@ fn find_better_frame(
     };
     let mut features = raw.clone();
     database.normalise(&mut features);
+    let found = search(database, &features, instance.frame, excluded_tail(database));
     instance.last_query = Some(LastQuery {
         features: raw,
         frame: instance.frame,
         simulation,
         trajectory: trajectory.samples.clone(),
+        best_cost: found.map(|(_, cost)| cost),
     });
-    let Some((best, best_cost)) =
-        search(database, &features, instance.frame, excluded_tail(database))
-    else {
+    let Some((best, best_cost)) = found else {
         return Ok(None);
     };
     let Some(current_cost) = cost_of(database, &features, instance.frame) else {
@@ -719,6 +719,41 @@ mod tests {
         assert_eq!(last.simulation.translation, published.translation);
         assert_eq!(last.simulation.rotation, published.rotation);
         assert_eq!(last.trajectory, published.samples);
+    }
+
+    #[test]
+    fn a_search_keeps_the_cost_of_the_frame_it_found() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+
+        let instance = searched(&fixture, &node);
+
+        let last = instance.last_query.as_ref().unwrap();
+        let mut query = last.features.clone();
+        fixture.database.normalise(&mut query);
+        let tail = excluded_tail(&fixture.database);
+        let (_, expected) = search(&fixture.database, &query, last.frame, tail).unwrap();
+        assert_eq!(last.best_cost, Some(expected));
+    }
+
+    #[test]
+    fn a_non_finite_query_leaves_no_best_cost() {
+        let fixture = fixture(1.0);
+        let node = MotionMatchingNode::default();
+        let mut instance = instance(&node, 0.0);
+        step(&node, &mut instance, &quiet(), &fixture.sources());
+
+        instance.activate(0.1);
+        instance.search_timer = 0.0;
+        step(
+            &node,
+            &mut instance,
+            &trajectory(f32::INFINITY, 2),
+            &fixture.sources(),
+        );
+
+        let last = instance.last_query.as_ref().unwrap();
+        assert_eq!(last.best_cost, None);
     }
 
     #[test]

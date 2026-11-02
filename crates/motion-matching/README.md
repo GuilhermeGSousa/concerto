@@ -408,9 +408,11 @@ every frame, with an early out. `run_motion_matching` runs after
 
 `MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
-`Pose` channels from, and `simulation` and `trajectory` what it was built with.
-All four come from one moment, so a drawn query does not mix bones from one
-frame with arrows from a later one. It is `None` until a search runs and after
+`Pose` channels from, `simulation` and `trajectory` what it was built with, and
+`best_cost` the squared distance to the frame the search found, or `None` when it
+found none, which takes a non-finite query. All five come from one moment, so a
+drawn query does not mix bones from one frame with arrows from a later one. It
+is `None` until a search runs and after
 `reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale
 query is not drawn. A frame with no search due keeps the last one.
 
