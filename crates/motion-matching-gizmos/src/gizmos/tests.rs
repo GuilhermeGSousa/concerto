@@ -577,6 +577,29 @@ fn a_character_whose_skeleton_is_gone_draws_nothing() {
 }
 
 #[test]
+fn a_link_with_an_unresolved_field_draws_nothing() {
+    for unresolve in [
+        (|link: &mut CharacterLink| link.capsule = SceneEntityRef::default())
+            as fn(&mut CharacterLink),
+        |link: &mut CharacterLink| link.skeleton = SceneEntityRef::default(),
+    ] {
+        let mut stage = Stage::new();
+        let character = stage.character;
+        unresolve(
+            &mut stage
+                .world()
+                .get_component_for_entity_mut::<CharacterLink>(character)
+                .unwrap(),
+        );
+
+        stage.tick();
+        stage.tick();
+
+        assert_eq!(stage.segments(), 0);
+    }
+}
+
+#[test]
 fn a_missing_database_skeleton_or_clip_draws_no_features() {
     let wipes: [fn(&mut World); 3] = [
         |world| world.insert_resource(AssetStore::<MotionDatabase>::new()),
