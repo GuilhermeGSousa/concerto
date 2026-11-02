@@ -87,8 +87,9 @@ under `../concerto-issues/`, sharing one `target/` there, and never touches your
 checkout. When it moves to a different worktree than the last one built, it runs
 `cargo clean --workspace` there first. Worktrees otherwise reuse each other's
 builds of the workspace crates, so the first build after a switch rebuilds them,
-Jolt included. Third-party crates stay shared. It runs the full done gate and checks visual changes on screen. When
-the disk holding the shared `target/` has under 50 GB free, it deletes the
+Jolt included. Third-party crates stay shared. It runs the full done gate and
+checks visual changes on screen. When the disk holding the shared `target/` has
+under 50 GB free, it deletes the
 incremental data there, then the whole `target/` if that wasn't enough and it
 has nothing running, and it takes no new issue until there's room. If the disk
 is still short with `target/` gone, it sends you a notification and stops that
