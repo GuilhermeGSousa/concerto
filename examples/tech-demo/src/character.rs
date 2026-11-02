@@ -1,19 +1,19 @@
 use concerto::{asset_id, foundation::assets::AssetId};
 use std::f32::consts::PI;
 
-use concerto::animation::clip::AnimationClip;
 use concerto::animation::graph::AnimationGraph;
-use concerto::animation::node::AnimationClipNode;
-use concerto::animation::node::AnimationPlayMode::PlayOnce;
-use concerto::animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
+use concerto::color::Color;
 use concerto::director::VirtualCamera;
 use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
-use concerto::ecs::{Entity, Query, ResMut, With, Without};
+use concerto::ecs::{Entity, Query, With, Without};
+use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto::foundation::transform::Transform;
 use concerto::gameplay::camera::{CameraPivot, EntityFollow};
-use concerto::mesh::MeshComponent;
-use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
+use concerto::mesh::{MeshComponent, primitives::cuboid};
+use concerto::motion_matching::{
+    CharacterDisplacement, CharacterLink, CharacterSimulation, DesiredMotion, MotionMatchingNode,
+};
 use concerto::physics::body::BodyId;
 use concerto::physics::collider::{Collider, ColliderOffset};
 use concerto::physics::ground::GroundProbe;
@@ -21,6 +21,7 @@ use concerto::physics::physics_state::PhysicsState;
 use concerto::physics::rigid_body::MotionType::Dynamic;
 use concerto::physics::rigid_body::{AllowedDofs, RigidBody};
 use concerto::physics::shape::MeshCollider;
+use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
@@ -28,28 +29,27 @@ use concerto::{
     foundation::assets::asset_server::AssetServer,
     reflect::{Reflect, ReflectDefault},
 };
+use concerto_motion_matching_gizmos::MotionMatchingGizmos;
 use glam::{Quat, Vec2, Vec3};
 
-const CHAR_SCENE: AssetId = asset_id!("content/UAL1/scene.gasset");
+const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
+const DATABASE: AssetId = asset_id!("content/lafan_database_baked.gasset");
 
-const IDLE_LOOP: AssetId = asset_id!("content/UAL1/animation_Idle_Loop.gasset");
-const JOG_FWD_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Fwd_Loop.gasset");
-const JOG_FWD_L_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Fwd_L_Loop.gasset");
-const JOG_FWD_R_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Fwd_R_Loop.gasset");
-const JOG_LEFT_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Left_Loop.gasset");
-const JOG_RIGHT_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Right_Loop.gasset");
-const JOG_BWD_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Bwd_Loop.gasset");
-const JOG_BWD_L_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Bwd_L_Loop.gasset");
-const JOG_BWD_R_LOOP: AssetId = asset_id!("content/UAL1/animation_Jog_Bwd_R_Loop.gasset");
-const JUMP_START: AssetId = asset_id!("content/UAL1/animation_Jump_Start.gasset");
-const JUMP_LOOP: AssetId = asset_id!("content/UAL1/animation_Jump_Loop.gasset");
-const JUMP_LAND: AssetId = asset_id!("content/UAL1/animation_Jump_Land.gasset");
+const WALLS: [(Vec3, Vec3); 2] = [
+    (Vec3::new(0.0, 1.0, -18.0), Vec3::new(6.0, 2.0, 0.5)),
+    (Vec3::new(5.0, 1.0, -28.0), Vec3::new(0.5, 2.0, 8.0)),
+];
+const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 #[derive(Component)]
 pub(crate) struct Player;
 
+/// The capsule a visible character links to once its skeleton spawns, and the graph that skeleton plays.
 #[derive(Component)]
-pub(crate) struct AnimationsReady;
+pub(crate) struct PendingLink {
+    capsule: Entity,
+    graph: AssetHandle<AnimationGraph>,
+}
 
 #[derive(Component, Reflect, Default)]
 #[reflect(Component, Default, SceneComponent)]
@@ -57,6 +57,7 @@ pub(crate) struct PlayerSpawner {
     should_spawn: bool,
 }
 
+/// Spawns the capsule, the visible character and the two walls at the spawner, once the ground has its collider.
 pub(crate) fn spawn_character(
     spawners: Query<(&Transform, &mut PlayerSpawner)>,
     pending_ground: Query<Entity, (With<MeshCollider>, With<MeshComponent>, Without<Collider>)>,
@@ -72,12 +73,13 @@ pub(crate) fn spawn_character(
             return;
         }
 
-        let collider = Collider::capsule(2.0, 1.0);
+        let placement =
+            Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation);
+        let collider = Collider::capsule(0.5, 0.3);
         let offset = ColliderOffset::bottom_origin(&collider);
-        let character = cmd
+        let capsule = cmd
             .spawn((
                 Player,
-                SceneSpawnerComponent(asset_server.load::<Scene>(CHAR_SCENE)),
                 RigidBody {
                     density: 1000.0,
                     allowed_dofs: AllowedDofs::TRANSLATION | AllowedDofs::ROTATION_Y,
@@ -85,19 +87,43 @@ pub(crate) fn spawn_character(
                 },
                 CharacterSimulation::default(),
                 collider,
-                // Origin at the capsule's bottom so the GLTF skeleton root sits on
-                // the ground instead of floating at the capsule center.
                 offset,
-                Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation),
+                placement.clone(),
                 GroundProbe::default(),
             ))
             .entity();
+
+        let graph = asset_server.add(AnimationGraph::from_node(MotionMatchingNode {
+            database: asset_server.load(DATABASE),
+            ..Default::default()
+        }));
+        cmd.spawn((
+            placement,
+            CharacterDisplacement::default(),
+            MotionMatchingGizmos::default(),
+            SceneSpawnerComponent(asset_server.load::<Scene>(CHARACTER_SCENE)),
+            PendingLink { capsule, graph },
+        ));
+
+        for (centre, size) in WALLS {
+            cmd.spawn((
+                Transform::from_translation(centre),
+                Collider::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5),
+                MeshComponent {
+                    handle: asset_server.add(cuboid(size)),
+                },
+                MaterialComponent {
+                    handle: asset_server
+                        .add(StandardMaterial::default().with_base_color_factor(WALL_COLOR)),
+                },
+            ));
+        }
 
         cmd.spawn((
             CameraPivot::default(),
             spawn_point.clone(),
             EntityFollow {
-                target: character,
+                target: capsule,
                 offset: Vec3::Y,
             },
         ))
@@ -110,130 +136,34 @@ pub(crate) fn spawn_character(
     }
 }
 
-/// Builds the movement blend space + jump FSM once the spawned scene has
-/// inserted its `AnimationPlayer`. Exactly one skinned character exists, so the
-/// sole player (on a spawned descendant of the `Player` entity) is
-/// unambiguously ours; `AnimationsReady` guards against re-running.
-///
-// TODO(asset-import-pipeline): the jump FSM's runtime behaviour is unverified —
-// the hard-coded UAL1 animation indices compile and import, but the state
-// transitions have not been exercised in this task.
+/// Gives the sole `AnimationPlayer` its character's graph once that graph is in the store, and links the character to its capsule and skeleton.
 pub(crate) fn setup_character_animations(
-    players: Query<(Entity, &AnimationPlayer), Without<AnimationsReady>>,
-    server: Res<AssetServer>,
+    players: Query<Entity, With<AnimationPlayer>>,
+    characters: Query<(Entity, &PendingLink)>,
+    graphs: Res<AssetStore<AnimationGraph>>,
     mut cmd: CommandQueue,
 ) {
-    let Some((player_entity, _player)) = players.iter().next() else {
+    let Some(skeleton) = players.iter().next() else {
         return;
     };
 
-    let idle = server.load::<AnimationClip>(IDLE_LOOP);
-    let jog = server.load::<AnimationClip>(JOG_FWD_LOOP);
-    let jog_fw_l = server.load::<AnimationClip>(JOG_FWD_L_LOOP);
-    let jog_fw_r = server.load::<AnimationClip>(JOG_FWD_R_LOOP);
-    let jog_l = server.load::<AnimationClip>(JOG_LEFT_LOOP);
-    let jog_r = server.load::<AnimationClip>(JOG_RIGHT_LOOP);
-    let jog_bw = server.load::<AnimationClip>(JOG_BWD_LOOP);
-    let job_bw_l = server.load::<AnimationClip>(JOG_BWD_L_LOOP);
-    let job_bw_r = server.load::<AnimationClip>(JOG_BWD_R_LOOP);
-    let _jump_start = server.load::<AnimationClip>(JUMP_START);
-    let jump_loop = server.load::<AnimationClip>(JUMP_LOOP);
-    let jump_land = server.load::<AnimationClip>(JUMP_LAND);
-
-    let clips = [
-        idle.clone(),
-        jog.clone(),
-        jog_fw_l.clone(),
-        jog_fw_r.clone(),
-        jog_l.clone(),
-        jog_r.clone(),
-        jog_bw.clone(),
-        job_bw_l.clone(),
-        job_bw_r.clone(),
-        jump_loop.clone(),
-        jump_land.clone(),
-    ];
-
-    let mut movement_graph = AnimationGraph::new();
-    movement_graph
-        .result_node()
-        .with_blend_space_2d_input("movement", |context| {
-            context
-                .animation_clip_input(idle.clone(), Vec2::ZERO)
-                .animation_clip_input(jog.clone(), Vec2::new(0.0, 1.0))
-                .animation_clip_input(jog_fw_l.clone(), Vec2::new(-1.0, 1.0))
-                .animation_clip_input(jog_fw_r.clone(), Vec2::new(1.0, 1.0))
-                .animation_clip_input(jog_l.clone(), Vec2::new(-1.0, 0.0))
-                .animation_clip_input(jog_r.clone(), Vec2::new(1.0, 0.0))
-                .animation_clip_input(jog_bw.clone(), Vec2::new(0.0, -1.0))
-                .animation_clip_input(job_bw_l.clone(), Vec2::new(-1.0, -1.0))
-                .animation_clip_input(job_bw_r.clone(), Vec2::new(1.0, -1.0));
-        });
-
-    let movement_handle = server.add(movement_graph);
-    let air_handle = server.add(AnimationGraph::from_node(AnimationClipNode::new(jump_loop)));
-    let land_handle = server.add(AnimationGraph::from_node(
-        AnimationClipNode::new(jump_land)
-            .with_play_mode(PlayOnce)
-            .with_start_time(0.1),
-    ));
-    let state_graphs = [
-        movement_handle.clone(),
-        air_handle.clone(),
-        land_handle.clone(),
-    ];
-
-    let mut graph = AnimationGraph::new();
-    graph.result_node().with_input(
-        AnimationStateMachine::from_initial_state("movement", movement_handle, |transition| {
-            transition
-                // TODO: not supported yet, jump need to be triggered by an animation event
-                // .to(
-                //     "jump_start",
-                //     AnimationFSMTrigger::on_bool("jumped", true),
-                //     0.01,
-                // );
-                .to(
-                    "air",
-                    AnimationFSMTrigger::on_bool("is_grounded", false),
-                    0.1,
-                );
-        })
-        .state("air", air_handle, |transition| {
-            transition
-                .to(
-                    "land",
-                    AnimationFSMTrigger::on_bool("is_grounded", true),
-                    0.1,
-                )
-                .to(
-                    "movement",
-                    AnimationFSMTrigger::on_bool("is_grounded", true),
-                    0.1,
-                );
-        })
-        .state("land", land_handle, |transition| {
-            transition
-                .to("movement", AnimationFSMTrigger::OnAnimationEnd, 0.1)
-                .to(
-                    "jump_start",
-                    AnimationFSMTrigger::on_bool("jumped", true),
-                    0.1,
-                )
-                .to(
-                    "movement",
-                    AnimationFSMTrigger::on_non_zero_vec("movement"),
-                    0.1,
-                );
-        })
-        .build(),
-        |_node_context| {},
-    );
-
-    let graph_handle = server.add(graph);
-    drop((clips, state_graphs));
-    cmd.insert(AnimationHandleComponent::new(graph_handle), player_entity);
-    cmd.insert(AnimationsReady, player_entity);
+    for (character, pending) in characters.iter() {
+        if graphs.get(&pending.graph).is_none() {
+            continue;
+        }
+        cmd.insert(
+            AnimationHandleComponent::new(pending.graph.clone()),
+            skeleton,
+        );
+        cmd.insert(
+            CharacterLink {
+                capsule: pending.capsule,
+                skeleton,
+            },
+            character,
+        );
+        cmd.remove::<PendingLink>(character);
+    }
 }
 
 /// Locks the character's yaw to the camera's so it always faces away from the
@@ -269,7 +199,7 @@ pub(crate) fn update_movement(
     movement: Query<(&mut DesiredMotion, &GroundProbe, &BodyId), With<Player>>,
     anim_players: Query<&mut AnimationPlayer>,
     input: Res<Input>,
-    mut physics: ResMut<PhysicsState>,
+    physics: Res<PhysicsState>,
 ) {
     let mut player_input = Vec2::ZERO;
     if input.is_held(PhysicalKey::Code(KeyCode::ArrowUp)) {
@@ -297,24 +227,12 @@ pub(crate) fn update_movement(
 
         let current_vel = physics.linear_velocity(*body_id);
 
-        let just_pressed_jump = input.is_just_pressed(PhysicalKey::Code(KeyCode::Space));
-
-        animation_player.set_bool_param("jumped", just_pressed_jump);
-
         animation_player.set_vec2_param(
             "movement",
             Vec2::new(-current_vel.x, current_vel.z) / PLAYER_SPEED,
         );
 
-        let is_grounded = ground.is_grounded();
-
-        if is_grounded && just_pressed_jump {
-            physics.add_impulse(*body_id, Vec3::Y * 100000.0);
-        }
-
-        animation_player.set_bool_param("is_grounded", is_grounded);
-
-        if is_grounded {
+        if ground.is_grounded() {
             desired.velocity = desired_velocity(player_input);
         }
     }
@@ -322,54 +240,172 @@ pub(crate) fn update_movement(
 
 #[cfg(test)]
 mod tests {
-    use concerto::animation::player::AnimationPlayer;
-    use concerto::ecs::{IntoSystem, System, With, World};
+    use concerto::animation::graph::AnimationGraph;
+    use concerto::animation::player::{AnimationHandleComponent, AnimationPlayer};
+    use concerto::ecs::{Entity, IntoSystem, System, With, Without, World};
     use concerto::foundation::{
-        assets::{asset_server::AssetServer, asset_store::AssetStore, content::read_content_asset},
+        assets::{
+            Asset, AssetId,
+            asset_server::{AssetServer, handle_asset_load_events},
+            asset_store::AssetStore,
+            content::read_content_asset,
+            handle::AssetHandle,
+        },
         transform::Transform,
     };
     use concerto::gameplay::camera::CameraPivot;
-    use concerto::mesh::MeshComponent;
-    use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
+    use concerto::mesh::{Mesh, MeshComponent};
+    use concerto::motion_matching::{
+        CharacterDisplacement, CharacterLink, CharacterSimulation, DesiredMotion, MotionDatabase,
+        MotionMatchingNode,
+    };
     use concerto::physics::body::BodyId;
     use concerto::physics::physics_state::PhysicsState;
-    use concerto::physics::{collider::Collider, shape::MeshCollider};
     use concerto::physics::{
         collider::register_colliders, ground::GroundProbe, rigid_body::RigidBody,
     };
-    use concerto::reflect::apply_value;
-    use concerto::scene::scene::{Scene, SceneNode};
+    use concerto::physics::{
+        collider::{Collider, ColliderOffset},
+        shape::MeshCollider,
+    };
+    use concerto::reflect::{apply_value, to_value};
+    use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
+    use concerto::scene::{
+        scene::{Scene, SceneNode},
+        spawner::SceneSpawnerComponent,
+    };
     use concerto::window::input::{Input, KeyCode, PhysicalKey};
+    use concerto_motion_matching_gizmos::MotionMatchingGizmos;
     use glam::{Quat, Vec2, Vec3};
 
     use super::{
-        PLAYER_SPEED, Player, PlayerSpawner, desired_velocity, face_camera_direction,
-        spawn_character, update_movement,
+        CHARACTER_SCENE, DATABASE, PLAYER_SPEED, Player, PlayerSpawner, desired_velocity,
+        face_camera_direction, setup_character_animations, spawn_character, update_movement,
     };
 
-    #[test]
-    fn the_character_spawns_at_the_spawn_point() {
-        let mut world = World::new();
-        world.insert_resource(PhysicsState::new());
-        let mut server = AssetServer::new();
-        server.register_asset(&AssetStore::<Scene>::new());
-        world.insert_resource(server);
-        let spawn_point = Vec3::new(3.0, 1.5, -7.0);
-        world.spawn((
-            Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),
-            PlayerSpawner { should_spawn: true },
-        ));
-
+    fn spawned(world: &mut World) {
         let mut system = spawn_character.into_system();
-        system.initialize(&mut world);
-        system.run_and_apply((), &mut world);
+        system.initialize(world);
+        system.run_and_apply((), world);
+    }
 
-        let characters: Vec<Vec3> = world
-            .query::<&Transform, With<Player>>()
-            .iter(&mut world)
-            .map(|transform| transform.translation)
+    fn capsules(world: &mut World) -> Vec<(Entity, Vec3)> {
+        world
+            .query::<(
+                Entity,
+                &Transform,
+                &RigidBody,
+                &CharacterSimulation,
+                &Collider,
+                &ColliderOffset,
+                &GroundProbe,
+            ), With<Player>>()
+            .iter(world)
+            .map(|(entity, transform, ..)| (entity, transform.translation))
+            .collect()
+    }
+
+    fn visible_characters(
+        world: &mut World,
+    ) -> Vec<(Entity, Vec3, CharacterDisplacement, AssetId)> {
+        world
+            .query::<(
+                Entity,
+                &Transform,
+                &CharacterDisplacement,
+                &MotionMatchingGizmos,
+                &SceneSpawnerComponent,
+            ), ()>()
+            .iter(world)
+            .map(|(entity, transform, displacement, _, scene)| {
+                (
+                    entity,
+                    transform.translation,
+                    displacement.clone(),
+                    scene.0.id(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn spawning_gives_the_capsule_the_character_and_two_walls() {
+        let (mut world, spawn_point) = world_with_spawner();
+
+        spawned(&mut world);
+
+        let capsules: Vec<Vec3> = capsules(&mut world)
+            .into_iter()
+            .map(|(_, position)| position)
             .collect();
-        assert_eq!(characters, vec![spawn_point]);
+        assert_eq!(capsules, vec![spawn_point]);
+        let characters: Vec<(Vec3, CharacterDisplacement, AssetId)> =
+            visible_characters(&mut world)
+                .into_iter()
+                .map(|(_, position, displacement, scene)| (position, displacement, scene))
+                .collect();
+        assert_eq!(
+            characters,
+            vec![(
+                spawn_point,
+                CharacterDisplacement::default(),
+                CHARACTER_SCENE
+            )]
+        );
+        let walls = world
+            .query::<(&Collider, &MeshComponent, &MaterialComponent, &Transform), Without<RigidBody>>()
+            .iter(&mut world)
+            .count();
+        assert_eq!(walls, 2);
+    }
+
+    #[test]
+    fn the_skeleton_is_linked_and_given_the_graph_once_the_graph_has_landed() {
+        let (mut world, _) = world_with_spawner();
+        spawned(&mut world);
+        let (capsule, _) = capsules(&mut world)[0];
+        let (character, ..) = visible_characters(&mut world)[0];
+        let skeleton = world.spawn(AnimationPlayer::new(1));
+
+        let mut setup = setup_character_animations.into_system();
+        setup.initialize(&mut world);
+        setup.run_and_apply((), &mut world);
+        assert!(
+            world
+                .get_component_for_entity::<AnimationHandleComponent>(skeleton)
+                .is_none()
+        );
+        assert!(
+            world
+                .get_component_for_entity::<CharacterLink>(character)
+                .is_none()
+        );
+
+        handle_asset_load_events(&mut world);
+        setup.run_and_apply((), &mut world);
+        setup.run_and_apply((), &mut world);
+
+        assert_eq!(
+            world.get_component_for_entity::<CharacterLink>(character),
+            Some(&CharacterLink { capsule, skeleton })
+        );
+        let handle: AssetHandle<AnimationGraph> = (**world
+            .get_component_for_entity::<AnimationHandleComponent>(skeleton)
+            .unwrap())
+        .clone();
+        let graphs = world.get_resource::<AssetStore<AnimationGraph>>().unwrap();
+        let nodes: Vec<_> = graphs
+            .get(&handle)
+            .unwrap()
+            .stored_nodes()
+            .filter(|(name, _)| *name == std::any::type_name::<MotionMatchingNode>())
+            .map(|(_, value)| value.clone())
+            .collect();
+        let expected = MotionMatchingNode {
+            database: AssetHandle::weak(DATABASE),
+            ..Default::default()
+        };
+        assert_eq!(nodes, vec![to_value(&expected).unwrap()]);
     }
 
     fn holds<T>(node: &SceneNode) -> bool {
@@ -414,11 +450,21 @@ mod tests {
         );
     }
 
+    fn stored<A: Asset + 'static>(world: &mut World, server: &mut AssetServer) {
+        let store = AssetStore::<A>::new();
+        server.register_asset(&store);
+        world.insert_resource(store);
+    }
+
     fn world_with_spawner() -> (World, Vec3) {
         let mut world = World::new();
         world.insert_resource(PhysicsState::new());
         let mut server = AssetServer::new();
-        server.register_asset(&AssetStore::<Scene>::new());
+        stored::<Scene>(&mut world, &mut server);
+        stored::<Mesh>(&mut world, &mut server);
+        stored::<StandardMaterial>(&mut world, &mut server);
+        stored::<AnimationGraph>(&mut world, &mut server);
+        stored::<MotionDatabase>(&mut world, &mut server);
         world.insert_resource(server);
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);
         world.spawn((

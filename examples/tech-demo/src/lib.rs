@@ -7,6 +7,7 @@ use concerto::{
     asset_id,
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
 };
+use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 
 use crate::{
     character::{
@@ -22,6 +23,7 @@ mod ui;
 /// Builds tech-demo: the forest, the character, and its overlay.
 pub fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
+        .register_plugin(MotionMatchingGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
