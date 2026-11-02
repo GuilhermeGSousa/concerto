@@ -123,8 +123,14 @@ mod tests {
         let database = two_clip_database();
         let query = vec![f32::NAN; database.feature_dims()];
 
-        assert_eq!(search(&database, &query, Some(5), SURROUNDING, RANGE_END), None);
-        assert_eq!(search(&database, &query, None, SURROUNDING, RANGE_END), None);
+        assert_eq!(
+            search(&database, &query, Some(5), SURROUNDING, RANGE_END),
+            None
+        );
+        assert_eq!(
+            search(&database, &query, None, SURROUNDING, RANGE_END),
+            None
+        );
     }
 
     #[test]
