@@ -9,7 +9,7 @@ use log::warn;
 use crate::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationNodeContext, AnimationNodeIndex, SerializedAnimationNode},
+    graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
@@ -127,7 +127,7 @@ pub struct BlendSpace2DBuilderContext<'a> {
     pub(crate) graph: &'a mut AnimationGraph,
     pub(crate) output_node_index: AnimationNodeIndex,
     pub(crate) points: Vec<Vec2>,
-    pub(crate) nodes: Vec<SerializedAnimationNode>,
+    pub(crate) nodes: Vec<AnimationNodeData>,
     pub(crate) input: BlendInput,
 }
 
@@ -152,7 +152,7 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
 
     pub fn input<T: AnimationNode>(&mut self, node: T, point: Vec2) -> &mut Self {
         self.points.push(point);
-        self.nodes.push(SerializedAnimationNode::of(&node));
+        self.nodes.push(AnimationNodeData::of(&node));
         self
     }
 
@@ -163,7 +163,7 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
     ) -> &mut Self {
         self.points.push(point);
         self.nodes
-            .push(SerializedAnimationNode::of(&AnimationClipNode::new(clip)));
+            .push(AnimationNodeData::of(&AnimationClipNode::new(clip)));
         self
     }
 }

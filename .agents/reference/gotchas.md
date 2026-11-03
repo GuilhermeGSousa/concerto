@@ -206,6 +206,15 @@ fix the entry in the same commit as the change that made it false.
   load requested from inside another plugin's
   `build` sees a partial registry, since plugins register their types in
   `build`, before `Startup`.
+- **A cached copy of a live value is replaced with it, never alone.** A
+  `ChannelSpan` caches its channel's `weight`, `dims` and `source`; writing only
+  the cached weight would be undone when the channel is next loaded from its
+  value. `MotionDatabase::reweigh` replaces the channel and the cache together.
+- **An asset's bytes do not change with its in-memory type.** The
+  `check_encoding` fixtures under each crate's `tests/encoding` fail when they
+  do. Keep the old layout with a private mirror struct behind a hand-written
+  `Serialize` and `Deserialize`. Bumping `FORMAT_VERSION` is no way out for
+  data a type registry would compute: `Asset::migrate` gets no registry.
 - **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
   `Loaded` event.** When `on_load` fails, it logs an error and inserts nothing:
   the handle it returned never resolves.

@@ -136,6 +136,11 @@ mut commits: ResMut<PropertyCommits>| { … }).into_listener() }`, attached with
 compile as a listener. A component stays when something besides its listener
 reads it.
 
+**Decode reflected data once, at load.** An asset holding trait objects by
+type name builds them in `on_load` into a `Stored`/`Live` data enum; runtime
+code reads the live values and never takes a `TypeRegistry`. See Assets in
+[architecture.md](.agents/reference/architecture.md).
+
 **No revision counters.** Do not add a number that is bumped to say "this
 changed" and compared somewhere else. State that changed is read through change
 detection (`Changed<T>`, `is_changed()`). Something that happened is an event.

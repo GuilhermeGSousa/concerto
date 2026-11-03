@@ -215,15 +215,17 @@ receive it. Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
 `AnimationGraph::from_node`.
 
-A graph stores each node as its registry `type_name` plus its reflected value,
-which is what a `.gasset` file holds. The live nodes are built from that data
-by `make_live`, which the asset server runs in `on_load`, so a graph loaded
-from disk and a graph built in code both go live when they reach the asset
-server: `assets.add(graph)` runs it before the handle resolves. A player skips
-a graph that is not live. A node whose type is not registered, or whose stored
-value does not apply, becomes a `PlaceholderNode` that passes its first input
+A graph holds each node as an `AnimationNodeData`, written to a `.gasset` file
+as its registry `type_name` plus its reflected value. A node added in code or
+read from disk is `Stored`; `make_live` builds it `Live`, and the asset server
+runs `make_live` in `on_load`, so a graph loaded from disk and a graph built in
+code both go live when they reach the asset server: `assets.add(graph)` runs it
+before the handle resolves. A player skips a graph that is not live. A node
+whose type is not registered, or whose stored value does not apply, becomes a
+`Placeholder` that plays as a `PlaceholderNode`, passing its first input
 through, and a warning is logged and kept in `AnimationGraph::load_warnings()`.
-The stored data is left as it was, so saving the graph does not lose the node.
+The placeholder keeps the stored value, so saving the graph does not lose the
+node, and a later `make_live` with the type registered builds it.
 
 Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by

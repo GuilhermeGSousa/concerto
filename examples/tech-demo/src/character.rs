@@ -459,9 +459,9 @@ mod tests {
         let nodes: Vec<_> = graphs
             .get(&handle)
             .unwrap()
-            .stored_nodes()
-            .filter(|(name, _)| *name == std::any::type_name::<MotionMatchingNode>())
-            .map(|(_, value)| value.clone())
+            .nodes()
+            .filter(|node| node.type_name() == std::any::type_name::<MotionMatchingNode>())
+            .map(|node| node.value().unwrap().into_owned())
             .collect();
         let expected = MotionMatchingNode {
             database: AssetHandle::weak(DATABASE),
