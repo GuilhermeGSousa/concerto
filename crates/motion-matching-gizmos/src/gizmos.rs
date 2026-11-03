@@ -78,7 +78,7 @@ fn placed_channels(
     features: &[f32],
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let channels = instance.query.as_ref()?.channels();
+    let channels = instance.query()?.channels();
     let dims: usize = channels.iter().map(|channel| channel.dims()).sum();
     if features.len() != database.feature_dims() || features.len() != dims {
         return None;
@@ -104,11 +104,11 @@ pub fn matched_shapes(
     skeleton: &Skeleton,
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let frame = instance.frame;
+    let frame = instance.frame();
     database.range_of(frame)?;
     let baked = BakedFrame::placed(
         skeleton,
-        instance.pose.joints().to_vec(),
+        instance.pose().joints().to_vec(),
         database.simulation(frame),
         database.trajectory_samples(frame),
     );
@@ -130,7 +130,7 @@ pub fn query_shapes(
     clips: &[&AnimationClip],
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let query = instance.last_query.as_ref()?;
+    let query = instance.last_query()?;
     database.range_of(query.frame)?;
     let baked = BakedFrame::placed(
         skeleton,
@@ -217,7 +217,7 @@ pub fn draw_motion_matching(
         }
         let mut drawn = false;
         player.for_each_instance_mut::<MotionMatchingNode>(&graphs, |node, instance, _| {
-            if drawn || !instance.initialised || instance.failed {
+            if drawn || !instance.is_initialised() || instance.has_failed() {
                 return;
             }
             drawn = true;

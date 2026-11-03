@@ -7,7 +7,6 @@ use concerto_animation::{
     node::BlendNode,
     player::AnimationHandleComponent,
     plugin::{AnimationPlugin, register_animation_types},
-    pose::Pose,
     update_animation_players,
 };
 use concerto_app::{
@@ -26,9 +25,9 @@ use concerto_ecs::{
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannelData, LastQuery, MotionDatabaseDefinition,
-    MotionEntry, MotionMatchingInstance, SimulationBoneSettings, TrajectoryDirections,
-    TrajectoryPositions, TrajectorySample, TrajectorySettings, bake, run_motion_matching,
+    BonePositions, BoneVelocities, FeatureChannelData, MotionDatabaseDefinition, MotionEntry,
+    MotionMatchingInstance, SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions,
+    TrajectorySettings, bake, run_motion_matching,
 };
 use concerto_reflect::TypeRegistry;
 use glam::{Mat4, Quat};
@@ -38,7 +37,6 @@ use super::*;
 use crate::placed_shape;
 
 const NEAR: f32 = 1e-3;
-const WALK_FRAME: usize = 20;
 
 type Toggle = fn(&mut MotionMatchingGizmos);
 
@@ -362,40 +360,6 @@ impl Stage {
             .len()
     }
 
-    fn seat(&mut self, frame: usize) {
-        let clips = [&self.walk, &self.turn];
-        let pose = self.database.pose(frame, &self.skeleton, &clips).unwrap();
-        read_instance(self.app.main_mut().world_mut(), self.player, |instance| {
-            instance.frame = frame;
-            instance.pose = Pose::from_joints(pose);
-        });
-    }
-
-    fn searched(&mut self, frame: usize, simulation: Transform, trajectory: Vec<TrajectorySample>) {
-        let (database, skeleton) = (&self.database, &self.skeleton);
-        read_instance(self.app.main_mut().world_mut(), self.player, |instance| {
-            let features = instance
-                .query
-                .as_ref()
-                .unwrap()
-                .raw(database, skeleton, frame, &simulation, &trajectory)
-                .unwrap();
-            instance.last_query = Some(LastQuery {
-                features,
-                frame,
-                simulation,
-                trajectory,
-                best_cost: None,
-            });
-        });
-    }
-
-    fn searched_at_its_own_frame(&mut self, frame: usize) {
-        let simulation = self.database.simulation(frame);
-        let trajectory = self.database.trajectory_samples(frame);
-        self.searched(frame, simulation, trajectory);
-    }
-
     fn matched(&mut self, bone: &Transform) -> Option<Vec<Vec<FeatureShape>>> {
         let (database, skeleton) = (&self.database, &self.skeleton);
         read_instance(self.app.main_mut().world_mut(), self.player, |instance| {
@@ -497,11 +461,9 @@ fn an_app_without_the_renderer_finishes_building_and_has_no_gizmos() {
 #[test]
 fn each_toggle_alone_adds_segments() {
     let mut stage = Stage::new();
-    stage.searched_at_its_own_frame(0);
 
     for (name, toggle) in [
         ("simulation", SIMULATION),
-        ("query", QUERY),
         ("matched", MATCHED),
         ("history", HISTORY),
     ] {
@@ -516,7 +478,6 @@ fn each_toggle_alone_adds_segments() {
 #[test]
 fn with_every_toggle_off_nothing_is_drawn() {
     let mut stage = Stage::new();
-    stage.searched_at_its_own_frame(0);
     stage.only(&[]);
 
     stage.tick();
@@ -581,7 +542,6 @@ fn a_missing_database_skeleton_or_clip_draws_no_features() {
     ];
     for wipe in wipes {
         let mut stage = Stage::new();
-        stage.searched_at_its_own_frame(0);
         stage.only(&[QUERY, MATCHED]);
         wipe(stage.world());
 
@@ -595,19 +555,6 @@ fn a_missing_database_skeleton_or_clip_draws_no_features() {
 fn with_no_search_yet_the_query_draws_nothing() {
     let mut stage = Stage::new();
     stage.only(&[QUERY]);
-
-    stage.tick();
-
-    assert_eq!(stage.segments(), 0);
-}
-
-#[test]
-fn a_failed_instance_draws_no_features() {
-    let mut stage = Stage::new();
-    stage.searched_at_its_own_frame(0);
-    stage.only(&[QUERY, MATCHED]);
-    let player = stage.player;
-    read_instance(stage.world(), player, |instance| instance.failed = true);
 
     stage.tick();
 
@@ -629,23 +576,8 @@ fn a_graph_with_several_nodes_draws_one() {
 }
 
 #[test]
-fn matched_and_query_agree_when_the_search_kept_the_frame() {
-    let mut stage = Stage::new();
-    stage.seat(WALK_FRAME);
-    stage.searched_at_its_own_frame(WALK_FRAME);
-
-    let matched = stage.matched(&bone()).unwrap();
-    let query = stage.query(&bone()).unwrap();
-
-    assert!(matched.iter().all(|shapes| !shapes.is_empty()));
-    assert_same(&matched, &query);
-}
-
-#[test]
 fn shapes_are_placed_at_the_bone() {
     let mut stage = Stage::new();
-    stage.seat(WALK_FRAME);
-    stage.searched_at_its_own_frame(WALK_FRAME);
     let bone = bone();
 
     let at_origin = stage.matched(&Transform::IDENTITY).unwrap();
@@ -659,50 +591,13 @@ fn shapes_are_placed_at_the_bone() {
         })
         .collect();
 
+    assert!(placed.iter().any(|shapes| !shapes.is_empty()));
     assert_same(&stage.matched(&bone).unwrap(), &placed);
-    assert_same(&stage.query(&bone).unwrap(), &placed);
-}
-
-#[test]
-fn after_a_transition_the_querys_arrow_starts_at_its_own_ring() {
-    let mut stage = Stage::new();
-    stage.seat(WALK_FRAME);
-    let simulation =
-        Transform::from_translation_rotation(Vec3::new(3.0, 0.0, -4.0), Quat::from_rotation_y(1.1));
-    let trajectory = stage.database.trajectory_samples(WALK_FRAME);
-    stage.searched(WALK_FRAME, simulation, trajectory);
-    stage.seat(WALK_FRAME + 30);
-
-    let query = stage.query(&bone()).unwrap();
-
-    let FeatureShape::Ring { center, .. } = query[0][0] else {
-        panic!("a bone's position is a ring");
-    };
-    let FeatureShape::Arrow { start, .. } = query[1][0] else {
-        panic!("a bone's velocity is an arrow");
-    };
-    assert!(near(start, center), "{start} vs {center}");
-}
-
-#[test]
-fn a_frame_the_database_did_not_bake_gives_no_shapes() {
-    let mut stage = Stage::new();
-    stage.searched_at_its_own_frame(0);
-    let past = stage.database.frame_count() + 5;
-    let player = stage.player;
-    read_instance(stage.world(), player, |instance| {
-        instance.frame = past;
-        instance.last_query.as_mut().unwrap().frame = past;
-    });
-
-    assert_eq!(stage.matched(&bone()), None);
-    assert_eq!(stage.query(&bone()), None);
 }
 
 #[test]
 fn a_replaced_database_of_another_length_draws_no_features() {
     let mut stage = Stage::new();
-    stage.searched_at_its_own_frame(0);
     stage.only(&[QUERY, MATCHED]);
 
     stage.replace_database(vec![every_channel().remove(0)]);

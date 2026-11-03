@@ -1,14 +1,28 @@
 use std::collections::HashMap;
 
 use concerto_animation::{
+    blackboard::AnimationBlackboard,
+    clip::AnimationClip,
     inertialization::{Inertializer, PoseVelocity},
-    pose::Pose,
+    pose::{Pose, RootMotion},
 };
-use concerto_foundation::transform::Transform;
+use concerto_foundation::{
+    math::spring_damper::{angular_velocity, from_scaled_angle_axis},
+    transform::Transform,
+};
+use concerto_mesh::skeleton::Skeleton;
 use glam::{Quat, Vec3};
+use log::error;
 use uuid::Uuid;
 
-use crate::{channel::BodyMotion, query::FeatureQuery, simulation::TrajectorySample};
+use crate::{
+    channel::BodyMotion,
+    database::{BakeError, MotionDatabase},
+    node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
+    query::FeatureQuery,
+    search::{cost_of, search},
+    simulation::TrajectorySample,
+};
 
 /// One search's raw query and what it was built from, so a drawn query is a single moment in time.
 #[derive(Clone)]
@@ -22,29 +36,29 @@ pub struct LastQuery {
 
 /// The per-player state of a motion matching node.
 pub struct MotionMatchingInstance {
-    pub initialised: bool,
-    pub failed: bool,
-    pub active: bool,
-    pub delta_time: f32,
-    pub frame: usize,
-    pub sub_frame_time: f32,
-    pub search_timer: f32,
-    pub forced_search_timer: f32,
-    pub desired_velocity: Vec3,
-    pub desired_rotation: Quat,
-    pub velocity_change: f32,
-    pub rotation_change: f32,
-    pub pose: Pose,
-    pub velocity: PoseVelocity,
-    pub blended: Pose,
-    pub previous_blended: Pose,
-    pub last_delta: f32,
-    pub inertializer: Option<Inertializer>,
-    pub output: Pose,
-    pub query: Option<FeatureQuery>,
-    pub last_query: Option<LastQuery>,
-    pub bone_indices: HashMap<Uuid, usize>,
-    pub root_motion: BodyMotion,
+    initialised: bool,
+    failed: bool,
+    active: bool,
+    delta_time: f32,
+    frame: usize,
+    sub_frame_time: f32,
+    search_timer: f32,
+    forced_search_timer: f32,
+    desired_velocity: Vec3,
+    desired_rotation: Quat,
+    velocity_change: f32,
+    rotation_change: f32,
+    pose: Pose,
+    velocity: PoseVelocity,
+    blended: Pose,
+    previous_blended: Pose,
+    last_delta: f32,
+    inertializer: Option<Inertializer>,
+    output: Pose,
+    query: Option<FeatureQuery>,
+    last_query: Option<LastQuery>,
+    bone_indices: HashMap<Uuid, usize>,
+    root_motion: BodyMotion,
 }
 
 impl MotionMatchingInstance {
@@ -77,71 +91,381 @@ impl MotionMatchingInstance {
     }
 
     /// Marks the instance to be advanced by the runtime this frame by `delta_time` seconds.
-    pub fn activate(&mut self, delta_time: f32) {
+    pub(crate) fn activate(&mut self, delta_time: f32) {
         self.active = true;
         self.delta_time = delta_time;
     }
 
-    /// The simulation bone's velocity and angular velocity at the current frame.
-    pub fn root_motion(&self) -> BodyMotion {
-        self.root_motion
+    /// Whether the node asked for the instance to be advanced this frame.
+    pub(crate) fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// Whether the instance has played its first frame.
+    pub fn is_initialised(&self) -> bool {
+        self.initialised
+    }
+
+    /// Whether the instance stopped on an error; it stays stopped.
+    pub fn has_failed(&self) -> bool {
+        self.failed
+    }
+
+    /// The database frame the instance plays.
+    pub fn frame(&self) -> usize {
+        self.frame
+    }
+
+    /// The local pose of the frame the instance plays, before blending.
+    pub fn pose(&self) -> &Pose {
+        &self.pose
+    }
+
+    /// The live feature channels the instance queries with, once initialised.
+    pub fn query(&self) -> Option<&FeatureQuery> {
+        self.query.as_ref()
+    }
+
+    /// The last search's raw query and what it was built from.
+    pub fn last_query(&self) -> Option<&LastQuery> {
+        self.last_query.as_ref()
+    }
+
+    pub(crate) fn clear_root_motion(&mut self) {
+        self.output.set_root_motion(RootMotion::IDENTITY);
     }
 
     /// Copies the instance's pose into `output` and returns true, or returns false and leaves `output` untouched until the instance is initialised.
-    pub fn write_output(&self, output: &mut Pose) -> bool {
+    pub(crate) fn write_output(&self, output: &mut Pose) -> bool {
         if !self.initialised || self.output.len() != output.len() {
             return false;
         }
         output.copy_from(&self.output);
         true
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use concerto_animation::pose::Pose;
-    use concerto_mesh::JointPose;
-    use glam::Vec3;
-
-    use super::MotionMatchingInstance;
-
-    fn moved(x: f32) -> JointPose {
-        JointPose {
-            translation: Vec3::new(x, 0.0, 0.0),
-            ..JointPose::IDENTITY
+    fn root_delta(&self, sources: &Sources) -> RootMotion {
+        let skeleton = sources.skeleton;
+        let root = skeleton.parents.iter().position(Option::is_none);
+        let Some((joint, rest)) = root.and_then(|root| {
+            let played = skeleton
+                .bone_ids
+                .get(root)
+                .and_then(|id| self.bone_indices.get(id))
+                .and_then(|index| sources.player_skeleton.rest_pose.get(*index));
+            self.pose
+                .joints()
+                .get(root)
+                .zip(played.or(skeleton.rest_pose.get(root)))
+        }) else {
+            return RootMotion::IDENTITY;
+        };
+        let simulation = sources.database.simulation(self.frame).rotation;
+        let turn_back = (simulation * joint.rotation * rest.rotation.inverse()).inverse();
+        let dt = self.delta_time;
+        RootMotion {
+            translation: turn_back * (self.root_motion.velocity * dt),
+            rotation: from_scaled_angle_axis(turn_back * (self.root_motion.angular_velocity * dt)),
         }
     }
 
-    #[test]
-    fn an_uninitialised_instance_leaves_the_output_untouched() {
-        let mut instance = MotionMatchingInstance::new(0.1);
-        instance.output = Pose::from_joints(vec![moved(5.0)]);
-        let mut output = Pose::from_joints(vec![moved(1.0)]);
-
-        assert!(!instance.write_output(&mut output));
-        assert_eq!(output.joints()[0].translation.x, 1.0);
+    fn scatter(&mut self, sources: &Sources) {
+        for (bone, id) in sources.skeleton.bone_ids.iter().enumerate() {
+            let Some(index) = self.bone_indices.get(id).copied() else {
+                continue;
+            };
+            if let (Some(joint), Some(source)) = (
+                self.output.get_joint_pose_mut(index),
+                self.blended.joints().get(bone),
+            ) {
+                *joint = source.clone();
+            }
+        }
     }
 
-    #[test]
-    fn an_initialised_instance_copies_its_pose_to_the_output() {
-        let mut instance = MotionMatchingInstance::new(0.1);
-        instance.output = Pose::from_joints(vec![moved(5.0)]);
-        instance.initialised = true;
-        let mut output = Pose::from_joints(vec![moved(1.0)]);
+    fn initialise(&mut self, sources: &Sources) -> Result<(), String> {
+        let database = sources.database;
+        let bone_count = database.bone_count();
+        if sources.skeleton.bone_count() != bone_count {
+            return Err(BakeError::BoneCountMismatch {
+                expected: bone_count,
+                actual: sources.skeleton.bone_count(),
+            }
+            .to_string());
+        }
+        let mut bone_indices = HashMap::new();
+        for id in sources.skeleton.bone_ids.iter() {
+            if let Some(index) = sources
+                .player_skeleton
+                .bone_ids
+                .iter()
+                .position(|player_id| player_id == id)
+            {
+                bone_indices.insert(*id, index);
+            }
+        }
+        if bone_indices.is_empty() {
+            return Err("no bone of the database skeleton is in the player's skeleton".into());
+        }
+        let query = FeatureQuery::new(database).map_err(|error| error.to_string())?;
+        let frame = database
+            .ranges()
+            .next()
+            .map(|range| range.start)
+            .ok_or_else(|| "the database has no frames".to_string())?;
+        let (pose, velocity) = sample(sources, frame).map_err(|error| error.to_string())?;
 
-        assert!(instance.write_output(&mut output));
-        assert_eq!(output.joints()[0].translation.x, 5.0);
+        self.output = Pose::from_joints(sources.player_skeleton.rest_pose.to_vec());
+        self.inertializer = Some(Inertializer::new(bone_count));
+        self.blended = copy_pose(&pose);
+        self.previous_blended = copy_pose(&pose);
+        self.pose = pose;
+        self.velocity = velocity;
+        self.frame = frame;
+        self.sub_frame_time = 0.0;
+        self.search_timer = 0.0;
+        self.forced_search_timer = 0.0;
+        self.last_delta = 0.0;
+        self.velocity_change = 0.0;
+        self.rotation_change = 0.0;
+        self.query = Some(query);
+        self.bone_indices = bone_indices;
+        self.root_motion = database.body_motion(frame);
+        self.scatter(sources);
+        self.initialised = true;
+        Ok(())
     }
 
-    #[test]
-    fn a_new_instance_is_inactive_and_activate_records_the_delta_time() {
-        let mut instance = MotionMatchingInstance::new(0.1);
-        assert!(!instance.active);
+    fn forced_search(
+        &mut self,
+        node: &MotionMatchingNode,
+        first: &TrajectorySample,
+        dt: f32,
+    ) -> bool {
+        let (velocity_change, rotation_change) = if dt > 0.0 {
+            (
+                (first.velocity - self.desired_velocity).length() / dt,
+                angular_velocity(first.rotation, self.desired_rotation, dt).length(),
+            )
+        } else {
+            (self.velocity_change, self.rotation_change)
+        };
+        let fired = self.forced_search_timer <= 0.0
+            && ((self.velocity_change >= node.velocity_change_threshold
+                && velocity_change < node.velocity_change_threshold)
+                || (self.rotation_change >= node.rotation_change_threshold
+                    && rotation_change < node.rotation_change_threshold));
+        if fired {
+            self.forced_search_timer = node.search_period;
+        }
+        self.velocity_change = velocity_change;
+        self.rotation_change = rotation_change;
+        self.desired_velocity = first.velocity;
+        self.desired_rotation = first.rotation;
+        fired
+    }
 
-        instance.activate(0.25);
+    fn find_better_frame(
+        &mut self,
+        node: &MotionMatchingNode,
+        trajectory: &MotionMatchingTrajectory,
+        sources: &Sources,
+    ) -> Result<Option<usize>, String> {
+        let database = sources.database;
+        let Some(query) = self.query.as_ref() else {
+            return Ok(None);
+        };
+        let simulation =
+            Transform::from_translation_rotation(trajectory.translation, trajectory.rotation);
+        let raw = match query.raw(
+            database,
+            sources.skeleton,
+            self.frame,
+            &simulation,
+            &trajectory.samples,
+        ) {
+            Ok(raw) => raw,
+            Err(BakeError::TrajectoryTooShort { .. }) => {
+                self.last_query = None;
+                return Ok(None);
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut features = raw.clone();
+        database.normalise(&mut features);
+        let end_of_range = database
+            .range_of(self.frame)
+            .is_some_and(|range| self.frame + 1 == range.end);
+        let current = (!end_of_range).then_some(self.frame);
+        let found = search(
+            database,
+            &features,
+            current,
+            node.ignore_surrounding,
+            node.ignore_range_end,
+        );
+        self.last_query = Some(LastQuery {
+            features: raw,
+            frame: self.frame,
+            simulation,
+            trajectory: trajectory.samples.clone(),
+            best_cost: found.map(|(_, cost)| cost),
+        });
+        let Some((best, best_cost)) = found else {
+            return Ok(None);
+        };
+        if end_of_range {
+            return Ok((best != self.frame).then_some(best));
+        }
+        let differs = best.abs_diff(self.frame) > node.same_frame_tolerance;
+        let Some(current_cost) = cost_of(database, &features, self.frame) else {
+            return Ok(None);
+        };
+        Ok((best_cost < current_cost && differs).then_some(best))
+    }
 
-        assert!(instance.active);
-        assert_eq!(instance.delta_time, 0.25);
-        assert_eq!(instance.root_motion().velocity, Vec3::ZERO);
+    fn run(
+        &mut self,
+        node: &MotionMatchingNode,
+        blackboard: &AnimationBlackboard,
+        sources: Sources,
+    ) -> Result<(), String> {
+        if !self.initialised {
+            self.initialise(&sources)?;
+        }
+        let database = sources.database;
+        let dt = self.delta_time;
+        let rate = database.rate();
+        let range = database
+            .range_of(self.frame)
+            .ok_or_else(|| "the instance's frame left the database".to_string())?;
+
+        self.search_timer -= dt;
+        self.forced_search_timer -= dt;
+        self.sub_frame_time += dt;
+        let whole = (self.sub_frame_time * rate).floor().max(0.0) as usize;
+        self.sub_frame_time -= whole as f32 / rate;
+        let previous_frame = self.frame;
+        self.frame = (self.frame + whole).min(range.end - 1);
+        let moved = self.frame != previous_frame;
+
+        let trajectory = blackboard.get::<MotionMatchingTrajectory>(TRAJECTORY_KEY);
+        let forced = trajectory
+            .and_then(|trajectory| trajectory.samples.first())
+            .is_some_and(|first| self.forced_search(node, first, dt));
+        let timer_due = self.search_timer <= 0.0;
+        if timer_due {
+            self.search_timer = node.search_period;
+        }
+        let in_range_end = self.frame + node.ignore_range_end >= range.end;
+
+        let mut better = None;
+        if timer_due || forced || in_range_end {
+            if let Some(trajectory) = trajectory {
+                better = self.find_better_frame(node, trajectory, &sources)?;
+            }
+        }
+
+        if let Some(best) = better {
+            let (pose, velocity) = sample(&sources, best).map_err(|error| error.to_string())?;
+            let source_velocity = if self.last_delta > 0.0 {
+                PoseVelocity::between(&self.previous_blended, &self.blended, self.last_delta)
+            } else {
+                copy_velocity(&self.velocity)
+            };
+            if let Some(inertializer) = self.inertializer.as_mut() {
+                inertializer.transition(&self.blended, &source_velocity, &pose, &velocity);
+            }
+            self.frame = best;
+            self.pose = pose;
+            self.velocity = velocity;
+        } else if moved {
+            let (pose, velocity) =
+                sample(&sources, self.frame).map_err(|error| error.to_string())?;
+            self.pose = pose;
+            self.velocity = velocity;
+        }
+
+        self.previous_blended.copy_from(&self.blended);
+        if let Some(inertializer) = self.inertializer.as_mut() {
+            inertializer.update(
+                &self.pose,
+                &self.velocity,
+                node.blend_halflife,
+                dt,
+                &mut self.blended,
+            );
+        }
+        self.last_delta = dt;
+        self.root_motion = database.body_motion(self.frame);
+        let held = self.frame == previous_frame && self.frame + 1 == range.end;
+        let delta = if held {
+            RootMotion::IDENTITY
+        } else {
+            self.root_delta(&sources)
+        };
+        self.output.set_root_motion(delta);
+        self.scatter(&sources);
+        Ok(())
+    }
+
+    pub(crate) fn step(
+        &mut self,
+        node: &MotionMatchingNode,
+        blackboard: &AnimationBlackboard,
+        sources: Sources,
+    ) {
+        self.active = false;
+        if self.failed {
+            return;
+        }
+        if let Err(reason) = self.run(node, blackboard, sources) {
+            error!("motion matching stopped: {reason}");
+            self.failed = true;
+            self.initialised = false;
+        }
     }
 }
+
+pub(crate) struct Sources<'a> {
+    pub database: &'a MotionDatabase,
+    pub skeleton: &'a Skeleton,
+    pub player_skeleton: &'a Skeleton,
+    pub clips: Vec<&'a AnimationClip>,
+}
+
+fn copy_pose(pose: &Pose) -> Pose {
+    Pose::from_joints(pose.joints().to_vec())
+}
+
+fn copy_velocity(velocity: &PoseVelocity) -> PoseVelocity {
+    PoseVelocity {
+        linear: velocity.linear.clone(),
+        angular: velocity.angular.clone(),
+    }
+}
+
+fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeError> {
+    let database = sources.database;
+    let range = database.range_of(frame).ok_or(BakeError::FrameOutOfRange {
+        frame,
+        frame_count: database.frame_count(),
+    })?;
+    let (first, second) = if frame + 1 < range.end {
+        (frame, frame + 1)
+    } else {
+        (frame - 1, frame)
+    };
+    let first_pose = Pose::from_joints(database.pose(first, sources.skeleton, &sources.clips)?);
+    let second_pose = Pose::from_joints(database.pose(second, sources.skeleton, &sources.clips)?);
+    let velocity = PoseVelocity::between(&first_pose, &second_pose, 1.0 / database.rate());
+    let pose = if first == frame {
+        first_pose
+    } else {
+        second_pose
+    };
+    Ok((pose, velocity))
+}
+
+#[cfg(test)]
+mod tests;

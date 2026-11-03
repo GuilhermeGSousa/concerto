@@ -295,13 +295,13 @@ impl Stage {
                 .get_component_for_entity_mut::<AnimationPlayer>(player)
                 .unwrap()
                 .for_each_instance_mut::<MotionMatchingNode>(graphs, |_, instance, _| {
-                    assert!(!instance.failed);
-                    let Some(last_query) = instance.last_query.clone() else {
+                    assert!(!instance.has_failed());
+                    let Some(last_query) = instance.last_query().cloned() else {
                         return;
                     };
                     drawn = Some(Drawn {
                         last_query,
-                        frame: instance.frame,
+                        frame: instance.frame(),
                         query: query_shapes(instance, database, skeleton, &clips, &bone).unwrap(),
                         matched: matched_shapes(instance, database, skeleton, &bone).unwrap(),
                         bone: bone.clone(),

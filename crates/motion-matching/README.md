@@ -437,7 +437,13 @@ than the playhead's is taken, so the playhead leaves unless `ignore_range_end`
 is 0. A query that holds a NaN or an infinity finds nothing. `run_motion_matching` runs after
 `update_animation_players` and before `animate_targets`.
 
-`MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:
+`MotionMatchingInstance` is the node's per-player state. Its fields are
+private: the step that advances it is its own method, which
+`run_motion_matching` calls for each active instance. Other crates read it
+through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
+`last_query()`.
+
+`MotionMatchingInstance::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
 `Pose` channels from, `simulation` and `trajectory` what it was built with, and
 `best_cost` the squared distance to the frame the search found, or `None` when it
@@ -448,8 +454,8 @@ is `None` until a search runs and after
 `reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale
 query is not drawn. A frame with no search due keeps the last one.
 
-`MotionMatchingInstance::root_motion` is the simulation bone's velocity and
-angular velocity at the playhead, in model space. Each step turns them back by
+The instance keeps the simulation bone's velocity and angular velocity at the
+playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
 scales them by the frame's time into a `RootMotion` on `instance.output`:
 `translation = q⁻¹ * (velocity * dt)` and `rotation =

@@ -41,7 +41,7 @@ All four default to on.
 | Toggle | Draws |
 |---|---|
 | `simulation` | The ring and arrow of the simulation bone, and a line from it to the character, so the gap between capsule and character shows. |
-| `query` | `MotionMatchingInstance::last_query`, in each channel's palette colour, dimmed: the feature bones of the pose it read and the desired trajectory. Nothing before the first search. |
+| `query` | `MotionMatchingInstance::last_query()`, in each channel's palette colour, dimmed: the feature bones of the pose it read and the desired trajectory. Nothing before the first search. |
 | `matched` | The features of the frame the instance plays, at full colour. Between searches it moves on with playback, and the query stays as it was. |
 | `history` | A line through about the last second of the simulation bone's positions, in game time. It records while the toggle is off, so turning it on shows only that last second. A paused game adds nothing to it. |
 
