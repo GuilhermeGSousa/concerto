@@ -1,7 +1,10 @@
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::ops::Range;
+use std::todo;
 
 use concerto_animation::clip::AnimationClip;
+use concerto_ecs::reflect::AppTypeRegistry;
+use concerto_foundation::assets::registry;
 use concerto_foundation::assets::{
     asset_server::AssetLoadContext, handle::AssetHandle, Asset, LoadableAsset,
 };
@@ -14,20 +17,10 @@ use serde::{Deserialize, Serialize};
 use concerto_reflect::{ReflectedValue, TypeRegistry};
 
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
-use crate::channel::{build_channels, BodyMotion, ChannelSource, FeatureChannel};
-use crate::definition::{StoredChannel, TrajectorySettings};
+use crate::channel::{BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData};
+use crate::definition::{TrajectorySettings};
 use crate::simulation::TrajectorySample;
 
-/// Where one feature channel's values sit in a frame's feature vector.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ChannelSpan {
-    pub type_name: String,
-    pub offset: usize,
-    pub dims: usize,
-    pub weight: f32,
-    pub source: ChannelSource,
-    pub value: ReflectedValue,
-}
 
 /// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -45,13 +38,20 @@ pub struct MotionDatabase {
     simulation: Vec<(Vec3, Quat)>,
     features: Vec<f32>,
     feature_dims: usize,
-    channels: Vec<ChannelSpan>,
+    channels: Vec<FeatureChannelData>,
     offset: Vec<f32>,
     deviations: Vec<f32>,
     source_hash: u64,
 }
 
 const DEVIATION_FLOOR: f32 = 1e-6;
+
+impl LoadableAsset for MotionDatabase {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        self.channels.iter_mut().for_each(|channel| channel.load(context.type_registry()));
+        Ok(())
+    }
+}
 
 impl MotionDatabase {
     #[allow(clippy::too_many_arguments)]
@@ -69,7 +69,7 @@ impl MotionDatabase {
         simulation: Vec<(Vec3, Quat)>,
         features: Vec<f32>,
         feature_dims: usize,
-        channels: Vec<ChannelSpan>,
+        channels: Vec<FeatureChannelData>,
         offset: Vec<f32>,
         deviations: Vec<f32>,
     ) -> Self {
@@ -143,11 +143,6 @@ impl MotionDatabase {
     /// The length of one feature vector.
     pub fn feature_dims(&self) -> usize {
         self.feature_dims
-    }
-
-    /// Where each feature channel sits in a feature vector.
-    pub fn channels(&self) -> &[ChannelSpan] {
-        &self.channels
     }
 
     /// The database frames of every entry, in entry order.

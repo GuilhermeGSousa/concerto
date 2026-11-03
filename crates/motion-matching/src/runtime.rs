@@ -32,7 +32,6 @@ pub(crate) struct Sources<'a> {
     pub skeleton: &'a Skeleton,
     pub player_skeleton: &'a Skeleton,
     pub clips: Vec<&'a AnimationClip>,
-    pub registry: &'a TypeRegistry,
 }
 
 fn copy_pose(pose: &Pose) -> Pose {
@@ -253,10 +252,10 @@ fn run(
     node: &MotionMatchingNode,
     instance: &mut MotionMatchingInstance,
     blackboard: &AnimationBlackboard,
-    sources: &Sources,
+    sources: Sources,
 ) -> Result<(), String> {
     if !instance.initialised {
-        initialise(instance, sources)?;
+        initialise(instance, &sources)?;
     }
     let database = sources.database;
     let dt = instance.delta_time;
@@ -287,12 +286,12 @@ fn run(
     let mut better = None;
     if timer_due || forced || in_range_end {
         if let Some(trajectory) = trajectory {
-            better = find_better_frame(node, instance, trajectory, sources)?;
+            better = find_better_frame(node, instance, trajectory, &sources)?;
         }
     }
 
     if let Some(best) = better {
-        let (pose, velocity) = sample(sources, best).map_err(|error| error.to_string())?;
+        let (pose, velocity) = sample(&sources, best).map_err(|error| error.to_string())?;
         let source_velocity = if instance.last_delta > 0.0 {
             PoseVelocity::between(
                 &instance.previous_blended,
@@ -310,7 +309,7 @@ fn run(
         instance.velocity = velocity;
     } else if moved {
         let (pose, velocity) =
-            sample(sources, instance.frame).map_err(|error| error.to_string())?;
+            sample(&sources, instance.frame).map_err(|error| error.to_string())?;
         instance.pose = pose;
         instance.velocity = velocity;
     }
@@ -331,10 +330,10 @@ fn run(
     let delta = if held {
         RootMotion::IDENTITY
     } else {
-        root_delta(instance, sources)
+        root_delta(instance, &sources)
     };
     instance.output.set_root_motion(delta);
-    scatter(instance, sources);
+    scatter(instance, &sources);
     Ok(())
 }
 
@@ -342,7 +341,7 @@ pub(crate) fn step(
     node: &MotionMatchingNode,
     instance: &mut MotionMatchingInstance,
     blackboard: &AnimationBlackboard,
-    sources: &Sources,
+    sources: Sources,
 ) {
     instance.active = false;
     if instance.failed {
@@ -362,9 +361,7 @@ pub fn run_motion_matching(
     databases: Res<AssetStore<MotionDatabase>>,
     clips: Res<AssetStore<AnimationClip>>,
     skeletons: Res<AssetStore<Skeleton>>,
-    registry: Res<AppTypeRegistry>,
 ) {
-    let registry = registry.read();
     for (mut player, component) in players.iter() {
         if player.is_paused() {
             continue;
@@ -397,9 +394,8 @@ pub fn run_motion_matching(
                     skeleton,
                     player_skeleton,
                     clips: resolved,
-                    registry: &registry,
                 };
-                step(node, instance, blackboard, &sources);
+                step(node, instance, blackboard, sources);
             },
         );
     }

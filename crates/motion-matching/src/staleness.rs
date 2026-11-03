@@ -1,9 +1,8 @@
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 
 use crate::{
-    channel::build_channels,
     database::{BakeError, MotionDatabase},
-    definition::{MotionDatabaseDefinition, StoredChannel},
+    definition::{MotionDatabaseDefinition},
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;

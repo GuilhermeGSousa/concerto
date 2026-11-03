@@ -8,11 +8,7 @@ use glam::{Quat, Vec3};
 use concerto_reflect::TypeRegistry;
 
 use crate::{
-    channel::{build_channels, extract_features, BodyMotion, FrameContext},
-    database::{BakeError, ChannelSpan, MotionDatabase},
-    definition::{MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings},
-    filter::savitzky_golay,
-    simulation::TrajectorySample,
+    channel::{BodyMotion, FeatureChannelData, FrameContext, extract_features}, database::{BakeError, MotionDatabase}, definition::{MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings}, filter::savitzky_golay, simulation::TrajectorySample,
 };
 
 /// Where one entry's frames sit in the database and which clip time its first frame samples.
@@ -321,7 +317,7 @@ pub fn bake_with_progress(
     check_window("facing_window", definition.simulation.facing_window)?;
     find_joint(skeleton, &definition.simulation.position_joint)?;
     find_joint(skeleton, &definition.simulation.facing_joint)?;
-    let channels = build_channels(&definition.channels, registry)?;
+    let channels = definition.channels;
     for (stored, channel) in definition.channels.iter().zip(&channels) {
         channel
             .validate(skeleton, &definition.trajectory)
@@ -339,18 +335,11 @@ pub fn bake_with_progress(
     let bone_count = skeleton.bone_count();
     let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
 
-    let mut spans = Vec::with_capacity(channels.len());
+    let mut channel_data = Vec::with_capacity(channels.len());
     let mut feature_dims = 0;
     for (stored, channel) in definition.channels.iter().zip(&channels) {
         let dims = channel.dims();
-        spans.push(ChannelSpan {
-            type_name: stored.type_name.clone(),
-            offset: feature_dims,
-            dims,
-            weight: channel.weight(),
-            source: channel.source(),
-            value: stored.value.clone(),
-        });
+        channel_data.push(FeatureChannelData::Live { type_name: (), offset: feature_dims, data: () });
         feature_dims += dims;
     }
 
@@ -399,7 +388,7 @@ pub fn bake_with_progress(
                 trajectory: &trajectory,
             };
             let row = (plan.first_frame + frame) * feature_dims;
-            extract_features(&channels, &context, &mut features[row..row + feature_dims]);
+            extract_features(definition.channels().expect("Definition should have been loaded by now."), &context, &mut features[row..row + feature_dims]);
         }
         range_starts.push(plan.first_frame);
         range_stops.push(plan.first_frame + plan.frames);
@@ -407,7 +396,7 @@ pub fn bake_with_progress(
         on_entry(index + 1, plans.len());
     }
 
-    let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);
+    let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &channel_data);
 
     Ok(MotionDatabase::new(
         definition.skeleton.clone(),
@@ -427,17 +416,19 @@ pub fn bake_with_progress(
         simulation_frames,
         features,
         feature_dims,
-        spans,
+        channel_data,
         offset,
         deviations,
     ))
 }
 
+
+// todo: dont return tuples its gross
 fn feature_statistics(
     features: &[f32],
     frame_count: usize,
     feature_dims: usize,
-    spans: &[ChannelSpan],
+    spans: &[FeatureChannelData],
 ) -> (Vec<f32>, Vec<f32>) {
     if frame_count == 0 {
         return (vec![0.0; feature_dims], vec![0.0; spans.len()]);
@@ -462,14 +453,14 @@ fn feature_statistics(
     let deviations = spans
         .iter()
         .map(|span| {
-            if span.dims == 0 {
+            if span.dims() == 0 {
                 return 0.0;
             }
-            let sum: f64 = variances[span.offset..span.offset + span.dims]
+            let sum: f64 = variances[span.offset()..span.offset() + span.dims()]
                 .iter()
                 .map(|variance| (variance / count).sqrt())
                 .sum();
-            (sum / span.dims as f64) as f32
+            (sum / span.dims() as f64) as f32
         })
         .collect();
     (

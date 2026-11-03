@@ -1,3 +1,6 @@
+use std::fmt;
+
+use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_reflect::{
@@ -6,11 +9,7 @@ use concerto_reflect::{
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    database::BakeError,
-    definition::{StoredChannel, TrajectorySettings},
-    simulation::TrajectorySample,
-};
+use crate::{database::BakeError, definition::TrajectorySettings, simulation::TrajectorySample};
 
 /// One group of values a motion database stores per frame; implementors derive `Reflect` and `Default` and declare `#[reflect(FeatureChannel)]`.
 pub trait FeatureChannel: Reflect + Send + Sync + 'static {
@@ -39,6 +38,124 @@ pub trait FeatureChannel: Reflect + Send + Sync + 'static {
     /// Adds the shapes that draw `features`, this channel's raw `dims()` values, to `out`; `frame` only places what the values hold no position for.
     fn preview(&self, frame: &FrameContext, features: &[f32], out: &mut Vec<FeatureShape>) {
         let _ = (frame, features, out);
+    }
+}
+
+pub enum FeatureChannelData {
+    Live {
+        type_name: String,
+        offset: usize,
+        data: Box<dyn FeatureChannel>,
+    },
+    Stored {
+        type_name: String,
+        offset: usize,
+        dims: usize,
+        weight: f32,
+        source: ChannelSource,
+        value: ReflectedValue,
+    },
+}
+
+impl FeatureChannelData {
+    pub fn stored(&self) -> Self {
+        match self {
+            FeatureChannelData::Live { type_name, offset, data } => Self::Stored {
+                type_name: type_name.clone(),
+                offset: *offset,
+                dims: data.dims(),
+                weight: data.weight(),
+                source: data.source(),
+                value: to_value(data.as_ref()).expect(""),
+            },
+            FeatureChannelData::Stored {
+                type_name,
+                offset,
+                dims,
+                weight,
+                source,
+                value,
+            } => Self::Stored {
+                type_name: type_name.clone(),
+                offset: *offset,
+                dims: *dims,
+                weight: *weight,
+                source: *source,
+                value: value.clone(),
+            },
+        }
+    }
+
+    pub fn load(&mut self, registry: &AppTypeRegistry) {
+        todo!()
+    }
+
+    pub fn dims(&self) -> usize
+    {
+        match self {
+            FeatureChannelData::Live { type_name: _, offset: _, data } => data.dims(),
+            FeatureChannelData::Stored { type_name: _, offset: _, dims, weight: _, source: _, value: _ } => *dims,
+        }
+    }
+
+    pub fn weight(&self) -> f32
+    {
+        match self {
+            FeatureChannelData::Live { type_name: _, offset: _, data } => data.weight(),
+            FeatureChannelData::Stored { type_name: _, offset: _, dims: _, weight, source: _, value: _ } => *weight,
+        }
+    }
+
+    pub fn source(&self) -> ChannelSource
+    {
+        match self {
+            FeatureChannelData::Live { type_name: _, offset: _, data } => data.source(),
+            FeatureChannelData::Stored { type_name: _, offset: _, dims: _, weight: _, source, value: _ } => *source,
+        }
+    }
+
+    pub fn offset(&self) -> usize
+    {
+        match self {
+            FeatureChannelData::Live { type_name: _, offset, data: _ } => *offset,
+            FeatureChannelData::Stored { type_name: _, offset, dims: _, weight: _, source: _, value: _ } => *offset,
+        }
+    }
+}
+
+impl Serialize for FeatureChannelData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        todo!()
+    }
+}
+
+impl<'de> Deserialize<'de> for FeatureChannelData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        todo!()
+    }
+}
+
+impl Clone for FeatureChannelData {
+    fn clone(&self) -> Self {
+        todo!()
+    }
+}
+
+impl fmt::Debug for FeatureChannelData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+impl PartialEq for FeatureChannelData {
+    fn eq(&self, other: &Self) -> bool {
+        todo!()
     }
 }
 
@@ -144,24 +261,4 @@ fn from_value<T: FeatureChannel + Default>(
 
 fn store(channel: &dyn FeatureChannel) -> Result<ReflectedValue, EncodeError> {
     to_value(channel)
-}
-
-/// Builds the live channels of a definition, in order; a type name the registry lacks, or one without [`ReflectFeatureChannel`], is an error.
-pub fn build_channels(
-    stored: &[StoredChannel],
-    registry: &TypeRegistry,
-) -> Result<Vec<Box<dyn FeatureChannel>>, BakeError> {
-    stored
-        .iter()
-        .map(|channel| {
-            let data = registry
-                .get_by_name(&channel.type_name)
-                .and_then(|registration| registration.data::<ReflectFeatureChannel>().copied())
-                .ok_or_else(|| BakeError::UnregisteredChannel(channel.type_name.clone()))?;
-            (data.from_value)(&channel.value).map_err(|reason| BakeError::ChannelValue {
-                type_name: channel.type_name.clone(),
-                reason,
-            })
-        })
-        .collect()
 }

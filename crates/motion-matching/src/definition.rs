@@ -1,3 +1,5 @@
+use std::todo;
+
 use concerto_animation::clip::AnimationClip;
 use concerto_foundation::assets::{handle::AssetHandle, Asset, CreatableAsset, LoadableAsset};
 use concerto_mesh::{JointName, Skeleton};
@@ -5,7 +7,7 @@ use concerto_reflect::{Reflect, ReflectedValue};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::features::reference_channels;
+use crate::{FeatureChannel, channel::FeatureChannelData, features::reference_channels};
 
 /// A span of a clip in seconds, from `start` to `end`.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -66,23 +68,23 @@ impl Default for TrajectorySettings {
     }
 }
 
-/// A feature channel as stored on a definition: its registered type name and its reflected value.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct StoredChannel {
-    pub type_name: String,
-    pub value: ReflectedValue,
-}
-
 /// What to bake into a [`MotionDatabase`](crate::MotionDatabase): the clips, sampling, simulation bone, trajectory and feature channels.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabaseDefinition {
-    pub skeleton: AssetHandle<Skeleton>,
-    pub entries: Vec<MotionEntry>,
-    pub rate: f32,
-    pub speed: f32,
-    pub simulation: SimulationBoneSettings,
-    pub trajectory: TrajectorySettings,
-    pub channels: Vec<StoredChannel>,
+    pub(crate) skeleton: AssetHandle<Skeleton>,
+    pub(crate) entries: Vec<MotionEntry>,
+    pub(crate) rate: f32,
+    pub(crate) speed: f32,
+    pub(crate) simulation: SimulationBoneSettings,
+    pub(crate) trajectory: TrajectorySettings,
+    pub(crate) channels: Vec<FeatureChannelData>,
+}
+
+impl MotionDatabaseDefinition {
+    pub(crate) fn channels(&self) ->  Option<&[Box<dyn FeatureChannel>]>
+    {
+        todo!()
+    }
 }
 
 impl Default for MotionDatabaseDefinition {
