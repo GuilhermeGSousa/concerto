@@ -26,11 +26,11 @@ use concerto_ecs::{
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, LastQuery, MotionDatabaseDefinition, MotionEntry,
-    MotionMatchingInstance, SimulationBoneSettings, StoredChannel, TrajectoryDirections,
+    BonePositions, BoneVelocities, FeatureChannelData, LastQuery, MotionDatabaseDefinition,
+    MotionEntry, MotionMatchingInstance, SimulationBoneSettings, TrajectoryDirections,
     TrajectoryPositions, TrajectorySample, TrajectorySettings, bake, run_motion_matching,
 };
-use concerto_reflect::{TypeRegistry, to_value};
+use concerto_reflect::TypeRegistry;
 use glam::{Mat4, Quat};
 use uuid::Uuid;
 
@@ -107,57 +107,29 @@ fn foot() -> Vec<concerto_mesh::JointName> {
     vec!["Foot".into()]
 }
 
-fn stored<T: concerto_reflect::Reflect>(type_name: &str, channel: &T) -> StoredChannel {
-    StoredChannel {
-        type_name: type_name.into(),
-        value: to_value(channel).unwrap(),
-    }
-}
-
-fn every_channel() -> Vec<StoredChannel> {
+fn every_channel() -> Vec<FeatureChannelData> {
     vec![
-        stored(
-            "BonePositions",
-            &BonePositions {
-                bones: foot(),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "BoneVelocities",
-            &BoneVelocities {
-                bones: foot(),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "TrajectoryPositions",
-            &TrajectoryPositions {
-                samples: vec![0, 1],
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "TrajectoryDirections",
-            &TrajectoryDirections {
-                samples: vec![0, 1],
-                weight: 1.0,
-            },
-        ),
+        FeatureChannelData::live(BonePositions {
+            bones: foot(),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(BoneVelocities {
+            bones: foot(),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(TrajectoryPositions {
+            samples: vec![0, 1],
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(TrajectoryDirections {
+            samples: vec![0, 1],
+            weight: 1.0,
+        }),
     ]
 }
 
-fn registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::default();
-    registry.register::<BonePositions>();
-    registry.register::<BoneVelocities>();
-    registry.register::<TrajectoryPositions>();
-    registry.register::<TrajectoryDirections>();
-    registry
-}
-
 fn baked(
-    channels: Vec<StoredChannel>,
+    channels: Vec<FeatureChannelData>,
     skeleton_handle: AssetHandle<Skeleton>,
     [walk_handle, turn_handle]: [AssetHandle<AnimationClip>; 2],
 ) -> MotionDatabase {
@@ -187,7 +159,7 @@ fn baked(
         },
         channels,
     };
-    bake(&definition, &skeleton(), &[&walk(), &turn()], &registry()).unwrap()
+    bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap()
 }
 
 fn read_instance<R>(
@@ -439,7 +411,7 @@ impl Stage {
         })
     }
 
-    fn replace_database(&mut self, channels: Vec<StoredChannel>) {
+    fn replace_database(&mut self, channels: Vec<FeatureChannelData>) {
         let database = baked(
             channels,
             self.skeleton_handle.clone(),

@@ -5,10 +5,12 @@ use concerto_foundation::{math::spring_damper::angular_velocity, transform::Tran
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
 
-use concerto_reflect::TypeRegistry;
-
 use crate::{
-    channel::{BodyMotion, FeatureChannelData, FrameContext, extract_features}, database::{BakeError, MotionDatabase}, definition::{MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings}, filter::savitzky_golay, simulation::TrajectorySample,
+    channel::{extract_features, BodyMotion, FrameContext},
+    database::{BakeError, ChannelSpan, MotionDatabase},
+    definition::{MotionDatabaseDefinition, SimulationBoneSettings, TrajectorySettings},
+    filter::savitzky_golay,
+    simulation::TrajectorySample,
 };
 
 /// Where one entry's frames sit in the database and which clip time its first frame samples.
@@ -294,14 +296,13 @@ pub fn trajectory_samples(
         .collect()
 }
 
-/// Bakes a motion database from its definition, the skeleton, one resolved clip per entry and the registry that knows the feature channel types.
+/// Bakes a motion database from its definition, whose channels are loaded, the skeleton and one resolved clip per entry.
 pub fn bake(
     definition: &MotionDatabaseDefinition,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
-    registry: &TypeRegistry,
 ) -> Result<MotionDatabase, BakeError> {
-    bake_with_progress(definition, skeleton, clips, registry, |_, _| {})
+    bake_with_progress(definition, skeleton, clips, |_, _| {})
 }
 
 /// [`bake`], calling `on_entry(finished, total)` after each entry, with `finished` counting from 1.
@@ -309,7 +310,6 @@ pub fn bake_with_progress(
     definition: &MotionDatabaseDefinition,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
-    registry: &TypeRegistry,
     mut on_entry: impl FnMut(usize, usize),
 ) -> Result<MotionDatabase, BakeError> {
     let plans = plan_entries(definition, skeleton, clips)?;
@@ -317,12 +317,12 @@ pub fn bake_with_progress(
     check_window("facing_window", definition.simulation.facing_window)?;
     find_joint(skeleton, &definition.simulation.position_joint)?;
     find_joint(skeleton, &definition.simulation.facing_joint)?;
-    let channels = definition.channels;
+    let channels = definition.live_channels()?;
     for (stored, channel) in definition.channels.iter().zip(&channels) {
         channel
             .validate(skeleton, &definition.trajectory)
             .map_err(|reason| BakeError::ChannelValue {
-                type_name: stored.type_name.clone(),
+                type_name: stored.type_name().to_owned(),
                 reason,
             })?;
         let weight = channel.weight();
@@ -335,12 +335,12 @@ pub fn bake_with_progress(
     let bone_count = skeleton.bone_count();
     let frame_count: usize = plans.iter().map(|plan| plan.frames).sum();
 
-    let mut channel_data = Vec::with_capacity(channels.len());
+    let mut spans = Vec::with_capacity(channels.len());
     let mut feature_dims = 0;
-    for (stored, channel) in definition.channels.iter().zip(&channels) {
-        let dims = channel.dims();
-        channel_data.push(FeatureChannelData::Live { type_name: (), offset: feature_dims, data: () });
-        feature_dims += dims;
+    for channel in &definition.channels {
+        let span = ChannelSpan::new(feature_dims, channel.clone())?;
+        feature_dims += span.dims();
+        spans.push(span);
     }
 
     let mut features = vec![0.0; frame_count * feature_dims];
@@ -388,7 +388,7 @@ pub fn bake_with_progress(
                 trajectory: &trajectory,
             };
             let row = (plan.first_frame + frame) * feature_dims;
-            extract_features(definition.channels().expect("Definition should have been loaded by now."), &context, &mut features[row..row + feature_dims]);
+            extract_features(&channels, &context, &mut features[row..row + feature_dims]);
         }
         range_starts.push(plan.first_frame);
         range_stops.push(plan.first_frame + plan.frames);
@@ -396,7 +396,7 @@ pub fn bake_with_progress(
         on_entry(index + 1, plans.len());
     }
 
-    let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &channel_data);
+    let (offset, deviations) = feature_statistics(&features, frame_count, feature_dims, &spans);
 
     Ok(MotionDatabase::new(
         definition.skeleton.clone(),
@@ -416,19 +416,18 @@ pub fn bake_with_progress(
         simulation_frames,
         features,
         feature_dims,
-        channel_data,
+        spans,
         offset,
         deviations,
     ))
 }
-
 
 // todo: dont return tuples its gross
 fn feature_statistics(
     features: &[f32],
     frame_count: usize,
     feature_dims: usize,
-    spans: &[FeatureChannelData],
+    spans: &[ChannelSpan],
 ) -> (Vec<f32>, Vec<f32>) {
     if frame_count == 0 {
         return (vec![0.0; feature_dims], vec![0.0; spans.len()]);
@@ -456,7 +455,7 @@ fn feature_statistics(
             if span.dims() == 0 {
                 return 0.0;
             }
-            let sum: f64 = variances[span.offset()..span.offset() + span.dims()]
+            let sum: f64 = variances[span.range()]
                 .iter()
                 .map(|variance| (variance / count).sqrt())
                 .sum();

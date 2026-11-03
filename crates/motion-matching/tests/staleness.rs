@@ -4,10 +4,10 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
     is_stale, weightless_hash, weights_changed_only, weights_of, BakeError, FeatureChannel,
-    FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
-    SimulationBoneSettings, StoredChannel, TimeRange,
+    FeatureChannelData, FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
 };
-use concerto_reflect::{to_value, Reflect, TypeRegistry};
+use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Mat4, Vec3};
 use uuid::Uuid;
 
@@ -42,15 +42,18 @@ impl FeatureChannel for Stride {
     }
 }
 
-fn stride(scale: f32, nested: f32, weight: f32) -> StoredChannel {
-    StoredChannel {
-        type_name: "Stride".into(),
-        value: to_value(&Stride {
-            scale,
-            gait: Gait { weight: nested },
-            weight,
-        })
-        .unwrap(),
+fn stride(scale: f32, nested: f32, weight: f32) -> FeatureChannelData {
+    FeatureChannelData::live(Stride {
+        scale,
+        gait: Gait { weight: nested },
+        weight,
+    })
+}
+
+fn unloaded(channel: &FeatureChannelData) -> FeatureChannelData {
+    FeatureChannelData::Stored {
+        type_name: channel.type_name().into(),
+        value: channel.value().unwrap().into_owned(),
     }
 }
 
@@ -124,7 +127,7 @@ fn hash(definition: &MotionDatabaseDefinition) -> u64 {
 
 fn baked(definition: &MotionDatabaseDefinition) -> MotionDatabase {
     let walk = walk_clip();
-    bake(definition, &skeleton(), &[&walk, &walk], &registry())
+    bake(definition, &skeleton(), &[&walk, &walk])
         .unwrap()
         .with_source_hash(hash(definition))
 }
@@ -201,7 +204,12 @@ fn a_changed_setting_changes_the_hash() {
 #[test]
 fn a_changed_channel_changes_the_hash() {
     assert_changes_the_hash(|definition| definition.channels[0] = stride(9.0, 0.5, 1.0));
-    assert_changes_the_hash(|definition| definition.channels[0].type_name = "Pace".into());
+    assert_changes_the_hash(|definition| {
+        definition.channels[0] = FeatureChannelData::Stored {
+            type_name: "Pace".into(),
+            value: definition.channels[0].value().unwrap().into_owned(),
+        }
+    });
     assert_changes_the_hash(|definition| definition.channels.swap(0, 1));
     assert_changes_the_hash(|definition| {
         definition.channels.pop();
@@ -224,18 +232,29 @@ fn a_changed_nested_weight_changes_the_hash() {
 
 #[test]
 fn weights_of_reads_the_live_channels_in_order() {
+    assert_eq!(weights_of(&definition()).unwrap(), vec![1.0, 0.25]);
+}
+
+#[test]
+fn weights_of_names_a_channel_that_was_not_loaded() {
+    let mut definition = definition();
+    definition.channels[0] = unloaded(&definition.channels[0]);
+
     assert_eq!(
-        weights_of(&definition(), &registry()).unwrap(),
-        vec![1.0, 0.25]
+        weights_of(&definition),
+        Err(BakeError::UnloadedChannel("Stride".into()))
     );
 }
 
 #[test]
-fn weights_of_names_an_unregistered_channel() {
-    assert_eq!(
-        weights_of(&definition(), &TypeRegistry::default()),
-        Err(BakeError::UnregisteredChannel("Stride".into()))
-    );
+fn a_loaded_definition_hashes_as_it_did_stored() {
+    let live = definition();
+    let mut stored = definition();
+    stored.channels = live.channels.iter().map(unloaded).collect();
+    assert_eq!(hash(&stored), hash(&live));
+
+    stored.load_channels(&registry()).unwrap();
+    assert_eq!(weights_of(&stored), weights_of(&live));
 }
 
 #[test]
@@ -245,8 +264,7 @@ fn a_database_baked_from_the_same_input_is_not_stale() {
     assert!(!is_stale(
         &baked(&definition),
         &definition,
-        hash(&definition),
-        &registry()
+        hash(&definition)
     ));
 }
 
@@ -257,7 +275,7 @@ fn a_changed_weight_is_stale_though_the_hash_is_equal() {
     changed.channels[0] = stride(2.0, 0.5, 7.0);
 
     assert_eq!(hash(&changed), database.source_hash());
-    assert!(is_stale(&database, &changed, hash(&changed), &registry()));
+    assert!(is_stale(&database, &changed, hash(&changed)));
 }
 
 #[test]
@@ -266,7 +284,7 @@ fn a_changed_clip_is_stale() {
     let database = baked(&definition);
     let new_hash = weightless_hash(&definition, SKELETON, &[&[4, 5, 7], TURN]);
 
-    assert!(is_stale(&database, &definition, new_hash, &registry()));
+    assert!(is_stale(&database, &definition, new_hash));
 }
 
 #[test]
@@ -275,19 +293,16 @@ fn a_changed_definition_is_stale() {
     let mut changed = definition();
     changed.rate = 30.0;
 
-    assert!(is_stale(&database, &changed, hash(&changed), &registry()));
+    assert!(is_stale(&database, &changed, hash(&changed)));
 }
 
 #[test]
-fn a_channel_that_cannot_be_built_is_stale() {
-    let definition = definition();
+fn a_channel_that_was_not_loaded_is_stale() {
+    let database = baked(&definition());
+    let mut definition = definition();
+    definition.channels[0] = unloaded(&definition.channels[0]);
 
-    assert!(is_stale(
-        &baked(&definition),
-        &definition,
-        hash(&definition),
-        &TypeRegistry::default()
-    ));
+    assert!(is_stale(&database, &definition, hash(&definition)));
 }
 
 #[test]
@@ -296,11 +311,9 @@ fn new_weights_applied_to_the_database_are_not_stale() {
     let mut changed = definition();
     changed.channels[0] = stride(2.0, 0.5, 7.0);
 
-    database
-        .set_weights(&weights_of(&changed, &registry()).unwrap())
-        .unwrap();
+    database.reweigh(&changed).unwrap();
 
-    assert!(!is_stale(&database, &changed, hash(&changed), &registry()));
+    assert!(!is_stale(&database, &changed, hash(&changed)));
 }
 
 #[test]
@@ -311,22 +324,11 @@ fn only_the_weights_changed_when_the_hash_is_equal_and_a_weight_differs() {
     let mut rate = weights.clone();
     rate.rate = 30.0;
 
-    assert!(weights_changed_only(
-        &database,
-        &weights,
-        hash(&weights),
-        &registry()
-    ));
+    assert!(weights_changed_only(&database, &weights, hash(&weights)));
     assert!(!weights_changed_only(
         &database,
         &definition(),
-        hash(&definition()),
-        &registry()
+        hash(&definition())
     ));
-    assert!(!weights_changed_only(
-        &database,
-        &rate,
-        hash(&rate),
-        &registry()
-    ));
+    assert!(!weights_changed_only(&database, &rate, hash(&rate)));
 }

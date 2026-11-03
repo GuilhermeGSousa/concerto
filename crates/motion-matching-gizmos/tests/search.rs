@@ -28,10 +28,10 @@ use concerto_foundation::{
 };
 use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonComponent};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, CharacterLink, CharacterSimulation, DesiredMotion, FeatureShape,
-    LastQuery, MotionDatabase, MotionDatabaseDefinition, MotionEntry, MotionMatchingNode,
-    MotionMatchingPlugin, SimulationBoneSettings, StoredChannel, TrajectoryDirections,
-    TrajectoryPositions, TrajectorySettings, bake,
+    BonePositions, BoneVelocities, CharacterLink, CharacterSimulation, DesiredMotion,
+    FeatureChannelData, FeatureShape, LastQuery, MotionDatabase, MotionDatabaseDefinition,
+    MotionEntry, MotionMatchingNode, MotionMatchingPlugin, SimulationBoneSettings,
+    TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
 };
 use concerto_motion_matching_gizmos::{
     MotionMatchingGizmos, MotionMatchingGizmosPlugin, matched_shapes, query_shapes,
@@ -41,7 +41,6 @@ use concerto_physics::{
     plugin::PhysicsPlugin,
     rigid_body::{AllowedDofs, MotionType, RigidBody},
 };
-use concerto_reflect::{Reflect, TypeRegistry, to_value};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -115,43 +114,24 @@ fn samples() -> Vec<usize> {
     (0..TrajectorySettings::default().sample_count).collect()
 }
 
-fn stored<T: Reflect>(type_name: &str, channel: &T) -> StoredChannel {
-    StoredChannel {
-        type_name: type_name.into(),
-        value: to_value(channel).unwrap(),
-    }
-}
-
-fn channels() -> Vec<StoredChannel> {
+fn channels() -> Vec<FeatureChannelData> {
     vec![
-        stored(
-            "BonePositions",
-            &BonePositions {
-                bones: foot(),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "BoneVelocities",
-            &BoneVelocities {
-                bones: foot(),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "TrajectoryPositions",
-            &TrajectoryPositions {
-                samples: samples(),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "TrajectoryDirections",
-            &TrajectoryDirections {
-                samples: samples(),
-                weight: 1.0,
-            },
-        ),
+        FeatureChannelData::live(BonePositions {
+            bones: foot(),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(BoneVelocities {
+            bones: foot(),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(TrajectoryPositions {
+            samples: samples(),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(TrajectoryDirections {
+            samples: samples(),
+            weight: 1.0,
+        }),
     ]
 }
 
@@ -182,12 +162,7 @@ fn baked(
         trajectory: TrajectorySettings::default(),
         channels: channels(),
     };
-    let mut registry = TypeRegistry::default();
-    registry.register::<BonePositions>();
-    registry.register::<BoneVelocities>();
-    registry.register::<TrajectoryPositions>();
-    registry.register::<TrajectoryDirections>();
-    bake(&definition, &skeleton(), &[&walk(), &turn()], &registry).unwrap()
+    bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap()
 }
 
 fn spawn_capsule(world: &mut World) -> Entity {

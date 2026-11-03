@@ -103,11 +103,12 @@ line reads `Baking 2 of 6`: the entry being worked on, out of how many.
 
 Pressing it waits until no property edit is queued, then saves if the document
 is `Unsaved`, so a weight typed and not yet committed is in the build. A failed
-save stops it there. A worker thread then reads the skeleton and clips, using the
-preview's `AppTypeRegistry`, so a channel the game registers bakes, and hashes
-them with the definition. When `<name>_baked.gasset` next to the definition holds
-that hash, only the weights changed: the worker loads the file and calls
-`set_weights`, and the status reads `Updated the weights in …`. Otherwise it bakes
+save stops it there. The definition's channels were loaded with the preview's
+`AppTypeRegistry` when the document opened, so a channel the game registers
+bakes. A worker thread then reads the skeleton and clips and hashes them with
+the definition. When `<name>_baked.gasset` next to the definition holds that
+hash, only the weights changed: the worker loads the file and calls `reweigh`,
+and the status reads `Updated the weights in …`. Otherwise it bakes
 in full, and the status reads `Built …`. A `BakeError` shows as `Build failed: …`.
 
 The main thread writes the file, its id derived from its path, and adds it to the

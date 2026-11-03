@@ -21,13 +21,12 @@ mod test_support;
 
 pub use bake::{bake, bake_with_progress};
 pub use channel::{
-    build_channels, extract_features, preview_features, BodyMotion, ChannelSource, FeatureChannel,
-    FeatureShape, FrameContext, ReflectFeatureChannel,
+    extract_features, preview_features, BodyMotion, ChannelSource, DynCloneChannel, FeatureChannel,
+    FeatureChannelData, FeatureShape, FrameContext, ReflectFeatureChannel,
 };
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{
-    MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
-    TrajectorySettings,
+    MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TimeRange, TrajectorySettings,
 };
 pub use displacement::{Adjustment, CharacterDisplacement, CharacterLink, Clamp, Synchronization};
 pub use features::{
