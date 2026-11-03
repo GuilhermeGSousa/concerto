@@ -11,7 +11,8 @@ use crate::{
     node::{AnimationNode, ReflectAnimationNode},
 };
 
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_ecs::Res;
+use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_reflect::Reflect;
 use derive_more::Deref;
 use uuid::Uuid;
@@ -231,7 +232,7 @@ impl AnimationStateMachineInstance {
 
     fn transition(
         &mut self,
-        context: &AnimationGraphContext<'_>,
+        graphs: &AssetStore<AnimationGraph>,
         transition: &AnimationStateMachineTransition,
     ) {
         self.current_state = transition.next_state;
@@ -239,7 +240,7 @@ impl AnimationStateMachineInstance {
             transition.next_state.as_graph_id(),
             &mut self.state_graph_instances,
             transition.blend_time,
-            context,
+            graphs,
         );
 
         // The blend stack's newest entry and the FSM's current state are the same fact; they
@@ -254,16 +255,20 @@ impl AnimationStateMachineInstance {
 
 impl AnimationNode for AnimationStateMachine {
     type State = AnimationStateMachineInstance;
+    type CreateInput = Res<'static, AssetStore<AnimationGraph>>;
+    type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
+    type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
 
     fn create_instance(
         &self,
+        graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
     ) -> AnimationStateMachineInstance {
         let mut instanced_internal_graphs = Vec::new();
         let mut state_names = Vec::new();
         for fsm_state in &self.states {
             let mut instanced_internal_graph = AnimationGraphInstance::default();
-            instanced_internal_graph.initialize(fsm_state.graph.clone(), context);
+            instanced_internal_graph.initialize(fsm_state.graph.clone(), graphs, context);
             instanced_internal_graphs.push(instanced_internal_graph);
             state_names.push(fsm_state.name.clone());
         }
@@ -280,6 +285,7 @@ impl AnimationNode for AnimationStateMachine {
         &self,
         instance: &mut AnimationStateMachineInstance,
         delta_time: f32,
+        graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
     ) {
         let Some(transitions) = self.get_state_transitions(instance.current_state) else {
@@ -289,7 +295,7 @@ impl AnimationNode for AnimationStateMachine {
         for transition in transitions {
             match &transition.trigger {
                 AnimationFSMTrigger::Instant => {
-                    instance.transition(context, transition);
+                    instance.transition(graphs, transition);
                     break;
                 }
                 AnimationFSMTrigger::BoolEquals { param, value } => {
@@ -298,7 +304,7 @@ impl AnimationNode for AnimationStateMachine {
                         .get_bool(param)
                         .is_some_and(|v| v == *value)
                     {
-                        instance.transition(context, transition);
+                        instance.transition(graphs, transition);
                         break;
                     }
                 }
@@ -308,7 +314,7 @@ impl AnimationNode for AnimationStateMachine {
                         .get_vec2(param)
                         .is_some_and(|v| v.length_squared() > f32::EPSILON)
                     {
-                        instance.transition(context, transition);
+                        instance.transition(graphs, transition);
                         break;
                     }
                 }
@@ -316,23 +322,27 @@ impl AnimationNode for AnimationStateMachine {
                     if instance
                         .state_graph_instances
                         .get(instance.current_state.as_graph_id())
-                        .is_some_and(|current_graph| current_graph.is_finished(context))
+                        .is_some_and(|current_graph| current_graph.is_finished(graphs))
                     {
-                        instance.transition(context, transition);
+                        instance.transition(graphs, transition);
                         break;
                     }
                 }
             }
         }
 
-        instance
-            .blender
-            .update(delta_time, &mut instance.state_graph_instances, context);
+        instance.blender.update(
+            delta_time,
+            &mut instance.state_graph_instances,
+            graphs,
+            context,
+        );
     }
 
     fn evaluate(
         &self,
         instance: &mut AnimationStateMachineInstance,
+        graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedPose],
@@ -342,6 +352,7 @@ impl AnimationNode for AnimationStateMachine {
         instance.blender.sample(
             bone_ids,
             &mut instance.state_graph_instances,
+            graphs,
             context,
             pool,
             output,

@@ -65,8 +65,15 @@ impl Default for MotionMatchingNode {
 
 impl AnimationNode for MotionMatchingNode {
     type State = MotionMatchingInstance;
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> MotionMatchingInstance {
+    fn create_instance(
+        &self,
+        _: &(),
+        _context: &AnimationGraphContext<'_>,
+    ) -> MotionMatchingInstance {
         MotionMatchingInstance::new(self.search_period)
     }
 
@@ -74,6 +81,7 @@ impl AnimationNode for MotionMatchingNode {
         &self,
         instance: &mut MotionMatchingInstance,
         delta_time: f32,
+        _: &(),
         _context: &AnimationGraphContext<'_>,
     ) {
         instance.activate(delta_time);
@@ -82,6 +90,7 @@ impl AnimationNode for MotionMatchingNode {
     fn evaluate(
         &self,
         instance: &mut MotionMatchingInstance,
+        _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedPose],

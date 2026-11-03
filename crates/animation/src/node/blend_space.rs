@@ -60,8 +60,15 @@ impl BlendSpace2DInstanceNode {
 
 impl AnimationNode for BlendSpace2DNode {
     type State = BlendSpace2DInstanceNode;
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> BlendSpace2DInstanceNode {
+    fn create_instance(
+        &self,
+        _: &(),
+        _context: &AnimationGraphContext<'_>,
+    ) -> BlendSpace2DInstanceNode {
         BlendSpace2DInstanceNode::new(self.points())
     }
 
@@ -69,6 +76,7 @@ impl AnimationNode for BlendSpace2DNode {
         &self,
         instance: &mut BlendSpace2DInstanceNode,
         _delta_time: f32,
+        _: &(),
         context: &AnimationGraphContext<'_>,
     ) {
         let sample = context
@@ -82,6 +90,7 @@ impl AnimationNode for BlendSpace2DNode {
     fn evaluate(
         &self,
         instance: &mut BlendSpace2DInstanceNode,
+        _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[uuid::Uuid],
         evaluated_inputs: &[EvaluatedPose],

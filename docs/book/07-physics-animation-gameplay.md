@@ -193,7 +193,8 @@ covers that node.
 
 The node set is open: any crate can define a node. Derive `Reflect` and
 `Default`, mark it `#[reflect(AnimationNode)]`, implement `AnimationNode`, and
-register the type with `app.register_type::<MyNode>()`.
+register it in your plugin with `app.register_animation_node::<MyNode>()` (from
+`AnimationAppExt`), which registers the type and its inputs.
 
 ```rust
 #[derive(Default, Reflect)]
@@ -204,6 +205,9 @@ struct Gain {
 
 impl AnimationNode for Gain {
     type State = ();
+    type CreateInput = ();
+    type UpdateInput = Res<'static, Tuning>;
+    type EvaluateInput = ();
     // create_instance, update, evaluate, reset; is_finished defaults to true
 }
 ```
@@ -211,7 +215,24 @@ impl AnimationNode for Gain {
 The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_instance` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it. Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
+receive it.
+
+The three input types say what the node reads in each walk of the graph:
+`create_instance` gets `CreateInput`, `update` gets `UpdateInput` and
+`evaluate` gets `EvaluateInput`, already fetched, as their typed data (`&Res<Tuning>`
+above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
+`Query`, or a tuple of them; `()` reads nothing. The systems that walk graphs,
+`initialize_animation_players`, `update_animation_players` and
+`animate_targets`, each declare the union of their walk's inputs over every
+registered node, and nothing else, so `animate_targets` never declares what only
+an update reads. A node whose input is missing, or whose type was registered
+without `register_animation_node`, is skipped in that walk with a warning. The
+clip node reads `AssetStore<AnimationClip>` and the state machine
+`AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
+player's own data: its blackboard, its root bone in `evaluate`, and its
+skeleton.
+
+Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
 `AnimationGraph::from_node`.
 

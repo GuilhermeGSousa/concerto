@@ -15,6 +15,9 @@ pub use target::{animate_targets, update_animation_players};
 pub use transition::TransitionBlender;
 
 #[cfg(test)]
+mod test_walks;
+
+#[cfg(test)]
 mod tests {
     use concerto_foundation::assets::{
         LoadableAsset, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
@@ -24,7 +27,7 @@ mod tests {
 
     use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
-    use crate::evaluation::{AnimationGraphContext, RootBone};
+    use crate::evaluation::RootBone;
     use crate::graph::{AnimationGraph, made_live};
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
@@ -35,6 +38,7 @@ mod tests {
         NodeInstance,
     };
     use crate::pose::{JointPose, PosePool, RootMotion};
+    use crate::test_walks::Walks;
     use crate::transition::TransitionBlender;
 
     fn unit_duration_clip() -> AnimationClip {
@@ -77,29 +81,27 @@ mod tests {
         server.register_asset(&clips);
         let handle = server.add(AnimationClip::default());
         clips.insert(handle.id(), unit_duration_clip());
-        let graphs = AssetStore::<AnimationGraph>::new();
+        let walks = Walks::new(clips, AssetStore::<AnimationGraph>::new());
         let blackboard = AnimationBlackboard::default();
-
-        let context = AnimationGraphContext {
-            animation_clips: &clips,
-            animation_graphs: &graphs,
-            blackboard: &blackboard,
-            root: None,
+        let update = |node: &dyn ErasedAnimationNode, instance: &mut NodeInstance, dt: f32| {
+            walks.update(&blackboard, |context| node.update(instance, dt, context));
         };
 
         let node = erased(AnimationClipNode::new(handle).with_start_time(0.4));
-        let mut instance = node.create_instance(&context);
+        let mut instance = walks
+            .create(&blackboard, |context| node.create_instance(context))
+            .unwrap();
         assert_eq!(current_time(&instance), 0.4);
 
-        node.update(&mut instance, 0.3, &context);
+        update(node.as_ref(), &mut instance, 0.3);
         assert!((current_time(&instance) - 0.7).abs() < 1e-5);
         assert!(!node.is_finished(&instance));
 
-        node.update(&mut instance, 0.4, &context);
+        update(node.as_ref(), &mut instance, 0.4);
         assert_eq!(current_time(&instance), 0.4);
         assert!(node.is_finished(&instance));
 
-        node.update(&mut instance, 0.1, &context);
+        update(node.as_ref(), &mut instance, 0.1);
         assert!((current_time(&instance) - 0.5).abs() < 1e-5);
         assert!(!node.is_finished(&instance));
 
@@ -115,24 +117,22 @@ mod tests {
         server.register_asset(&clips);
         let handle = server.add(AnimationClip::default());
         clips.insert(handle.id(), unit_duration_clip());
-        let graphs = AssetStore::<AnimationGraph>::new();
+        let walks = Walks::new(clips, AssetStore::<AnimationGraph>::new());
         let blackboard = AnimationBlackboard::default();
-        let context = AnimationGraphContext {
-            animation_clips: &clips,
-            animation_graphs: &graphs,
-            blackboard: &blackboard,
-            root: None,
-        };
 
         let node = erased(
             AnimationClipNode::new(handle)
                 .with_play_mode(PlayOnce)
                 .with_start_time(0.4),
         );
-        let mut instance = node.create_instance(&context);
+        let mut instance = walks
+            .create(&blackboard, |context| node.create_instance(context))
+            .unwrap();
         assert_eq!(current_time(&instance), 0.4);
 
-        node.update(&mut instance, 0.7, &context);
+        walks.update(&blackboard, |context| {
+            node.update(&mut instance, 0.7, context)
+        });
         assert!(node.is_finished(&instance));
 
         node.reset(&mut instance);
@@ -237,24 +237,13 @@ mod tests {
         let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
-        let mut instance = {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-                root: None,
-            };
-            fsm.create_instance(&context)
-        };
+        let walks = Walks::new(clips, graphs);
+        let mut instance = walks
+            .create(&blackboard, |context| fsm.create_instance(context))
+            .unwrap();
 
         let step = |instance: &mut NodeInstance, blackboard: &AnimationBlackboard| {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard,
-                root: None,
-            };
-            fsm.update(instance, FRAME, &context);
+            walks.update(blackboard, |context| fsm.update(instance, FRAME, context));
             state_name(instance)
         };
 
@@ -338,36 +327,21 @@ mod tests {
         let mut blackboard = AnimationBlackboard::default();
         blackboard.set("go", true);
 
-        let mut instance = {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-                root: None,
-            };
-            fsm.create_instance(&context)
-        };
+        let walks = Walks::new(clips, graphs);
+        let mut instance = walks
+            .create(&blackboard, |context| fsm.create_instance(context))
+            .unwrap();
 
         let step = |instance: &mut NodeInstance| {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-                root: None,
-            };
-            fsm.update(instance, FRAME, &context);
+            walks.update(&blackboard, |context| fsm.update(instance, FRAME, context));
         };
 
         let sample_x = |instance: &mut NodeInstance| -> f32 {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-                root: None,
-            };
             let mut pool = PosePool::new(1);
             let mut pose = pool.acquire();
-            fsm.evaluate(instance, &context, &[bone], &[], &mut pool, &mut pose);
+            walks.evaluate(&blackboard, None, |context| {
+                fsm.evaluate(instance, context, &[bone], &[], &mut pool, &mut pose)
+            });
             pose.get_joint_pose(0).unwrap().translation.x
         };
 
@@ -432,24 +406,13 @@ mod tests {
         let fsm = erased(fsm);
 
         let mut blackboard = AnimationBlackboard::default();
-        let mut instance = {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard: &blackboard,
-                root: None,
-            };
-            fsm.create_instance(&context)
-        };
+        let walks = Walks::new(clips, graphs);
+        let mut instance = walks
+            .create(&blackboard, |context| fsm.create_instance(context))
+            .unwrap();
 
         let step = |instance: &mut NodeInstance, blackboard: &AnimationBlackboard| -> String {
-            let context = AnimationGraphContext {
-                animation_clips: &clips,
-                animation_graphs: &graphs,
-                blackboard,
-                root: None,
-            };
-            fsm.update(instance, FRAME, &context);
+            walks.update(blackboard, |context| fsm.update(instance, FRAME, context));
             state_name(instance)
         };
 
@@ -505,8 +468,7 @@ mod tests {
 
     struct Machine {
         _server: AssetServer,
-        clips: AssetStore<AnimationClip>,
-        graphs: AssetStore<AnimationGraph>,
+        walks: Walks,
         fsm: Box<dyn ErasedAnimationNode>,
         blackboard: AnimationBlackboard,
         instance: NodeInstance,
@@ -555,20 +517,14 @@ mod tests {
             let fsm = erased(fsm);
 
             let blackboard = AnimationBlackboard::default();
-            let instance = {
-                let context = AnimationGraphContext {
-                    animation_clips: &clips,
-                    animation_graphs: &graphs,
-                    blackboard: &blackboard,
-                    root: None,
-                };
-                fsm.create_instance(&context)
-            };
+            let walks = Walks::new(clips, graphs);
+            let instance = walks
+                .create(&blackboard, |context| fsm.create_instance(context))
+                .unwrap();
 
             Self {
                 _server: server,
-                clips,
-                graphs,
+                walks,
                 fsm,
                 blackboard,
                 instance,
@@ -583,26 +539,26 @@ mod tests {
         }
 
         fn step(&mut self) -> f32 {
-            let context = AnimationGraphContext {
-                animation_clips: &self.clips,
-                animation_graphs: &self.graphs,
-                blackboard: &self.blackboard,
-                root: Some(RootBone {
-                    index: 0,
-                    rest: JointPose::IDENTITY,
-                    up: Vec3::X,
-                }),
+            let root = RootBone {
+                index: 0,
+                rest: JointPose::IDENTITY,
+                up: Vec3::X,
             };
-            self.fsm.update(&mut self.instance, MACHINE_FRAME, &context);
+            self.walks.update(&self.blackboard, |context| {
+                self.fsm.update(&mut self.instance, MACHINE_FRAME, context)
+            });
             let mut pose = self.pool.acquire();
-            self.fsm.evaluate(
-                &mut self.instance,
-                &context,
-                &[self.bone],
-                &[],
-                &mut self.pool,
-                &mut pose,
-            );
+            self.walks
+                .evaluate(&self.blackboard, Some(root), |context| {
+                    self.fsm.evaluate(
+                        &mut self.instance,
+                        context,
+                        &[self.bone],
+                        &[],
+                        &mut self.pool,
+                        &mut pose,
+                    )
+                });
             let x = pose.get_joint_pose(0).unwrap().translation.x;
             self.root_motion = pose.root_motion();
             self.pool.release(pose);

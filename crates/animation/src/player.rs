@@ -5,25 +5,25 @@ use concerto_ecs::{
     component::{Component, scene::SceneEntityRef},
     entity::hierarchy::ChildOf,
     query::Query,
+    system::input::Inputs,
 };
 use concerto_foundation::{
     assets::{asset_store::AssetStore, handle::AssetHandle},
     transform::{GlobalTransform, Transform},
 };
+use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::Reflect;
 use glam::{Vec2, Vec3};
-use uuid::Uuid;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    clip::AnimationClip,
     evaluation::{AnimationGraphContext, RootBone},
     graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
     node::{
         AnimationClipNodeInstance, AnimationNode, ErasedAnimationNode, NodeInstance,
         state_machine::AnimationStateMachineInstance,
     },
-    pose::{JointPose, PosePool},
+    pose::PosePool,
     root::AnimationRootBone,
 };
 
@@ -143,45 +143,48 @@ impl AnimationPlayer {
     pub(crate) fn initialize_graph(
         &mut self,
         animation_graph: AssetHandle<AnimationGraph>,
-        clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
+        inputs: &Inputs<'_, '_>,
     ) {
         let context = AnimationGraphContext {
-            animation_clips: clips,
-            animation_graphs: graphs,
             blackboard: &self.blackboard,
             root: None,
+            skeleton: None,
+            inputs,
         };
-        self.graph_instance.initialize(animation_graph, &context);
+        self.graph_instance
+            .initialize(animation_graph, graphs, &context);
     }
 
     pub(crate) fn update(
         &mut self,
         delta_time: f32,
-        clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
+        skeleton: Option<&Skeleton>,
+        inputs: &Inputs<'_, '_>,
     ) {
         let context = AnimationGraphContext {
-            animation_clips: clips,
-            animation_graphs: graphs,
             blackboard: &self.blackboard,
             root: None,
+            skeleton,
+            inputs,
         };
-        self.graph_instance.update(delta_time, &context);
+        self.graph_instance.update(delta_time, graphs, &context);
     }
 
     pub(crate) fn evaluate(
         &mut self,
-        clips: &AssetStore<AnimationClip>,
         graphs: &AssetStore<AnimationGraph>,
-        bone_ids: &[Uuid],
-        rest_pose: &[JointPose],
+        inputs: &Inputs<'_, '_>,
+        skeleton: &Skeleton,
         bones: &[SceneEntityRef],
         transforms: &Query<&mut Transform>,
         root_bones: &Query<&mut AnimationRootBone>,
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
+        let bone_ids = &skeleton.bone_ids;
+        let rest_pose = &skeleton.rest_pose;
         let root = bones
             .iter()
             .enumerate()
@@ -199,18 +202,21 @@ impl AnimationPlayer {
                 })
             });
         let context = AnimationGraphContext {
-            animation_clips: clips,
-            animation_graphs: graphs,
             blackboard: &self.blackboard,
             root,
+            skeleton: Some(skeleton),
+            inputs,
         };
 
         self.pose_pool.set_rest(rest_pose);
         let mut output_pose = self.pose_pool.acquire();
-        if !self
-            .graph_instance
-            .evaluate(&context, bone_ids, &mut self.pose_pool, &mut output_pose)
-        {
+        if !self.graph_instance.evaluate(
+            graphs,
+            &context,
+            bone_ids,
+            &mut self.pose_pool,
+            &mut output_pose,
+        ) {
             // No graph evaluated — keep the bones' current (default) pose.
             self.pose_pool.release(output_pose);
             return false;
@@ -278,11 +284,12 @@ mod tests {
         clip::AnimationClip,
         graph::{AnimationGraph, made_live},
         node::{AnimationClipNode, BlendNode, ResultNode},
+        test_walks::Walks,
     };
 
     struct Fixture {
         _server: AssetServer,
-        graphs: AssetStore<AnimationGraph>,
+        walks: Walks,
         player: AnimationPlayer,
     }
 
@@ -306,10 +313,11 @@ mod tests {
         graphs.insert(handle.id(), made_live(graph));
 
         let mut player = AnimationPlayer::new(1);
-        player.initialize_graph(handle, &clips, &graphs);
+        let walks = Walks::new(clips, graphs);
+        walks.initialize(&mut player, handle);
         Fixture {
             _server: server,
-            graphs,
+            walks,
             player,
         }
     }
@@ -319,21 +327,22 @@ mod tests {
         let mut fixture = fixture();
 
         let mut clip_nodes = 0;
-        fixture
-            .player
-            .for_each_instance_mut::<AnimationClipNode>(&fixture.graphs, |_, _, _| {
+        fixture.player.for_each_instance_mut::<AnimationClipNode>(
+            fixture.walks.graphs(),
+            |_, _, _| {
                 clip_nodes += 1;
-            });
+            },
+        );
         let mut result_nodes = 0;
         fixture
             .player
-            .for_each_instance_mut::<ResultNode>(&fixture.graphs, |_, _, _| {
+            .for_each_instance_mut::<ResultNode>(fixture.walks.graphs(), |_, _, _| {
                 result_nodes += 1;
             });
         let mut blend_nodes = 0;
         fixture
             .player
-            .for_each_instance_mut::<BlendNode>(&fixture.graphs, |_, _, _| {
+            .for_each_instance_mut::<BlendNode>(fixture.walks.graphs(), |_, _, _| {
                 blend_nodes += 1;
             });
 
@@ -350,7 +359,7 @@ mod tests {
 
         let mut seen = Vec::new();
         fixture.player.for_each_instance_mut::<AnimationClipNode>(
-            &fixture.graphs,
+            fixture.walks.graphs(),
             |_, instance, board| {
                 instance.play();
                 seen.push((board.get_bool("flag"), board.get_float("speed")));
@@ -366,7 +375,7 @@ mod tests {
         let mut player = AnimationPlayer::new(1);
 
         let mut visits = 0;
-        player.for_each_instance_mut::<AnimationClipNode>(&fixture.graphs, |_, _, _| {
+        player.for_each_instance_mut::<AnimationClipNode>(fixture.walks.graphs(), |_, _, _| {
             visits += 1;
         });
 

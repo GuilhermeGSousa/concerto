@@ -19,8 +19,8 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
-        AnimationNode, ErasedAnimationNode, NodeInstance, PlaceholderNode, ReflectAnimationNode,
-        ResultNode, blend_space::BlendSpace2DBuilderContext,
+        AnimationNode, ErasedAnimationNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
+        blend_space::BlendSpace2DBuilderContext,
     },
     player::ActiveNodeInstance,
     pose::{EvaluatedPose, Pose, PosePool},
@@ -440,10 +440,11 @@ impl AnimationGraphInstance {
     pub(crate) fn initialize(
         &mut self,
         animation_graph: AssetHandle<AnimationGraph>,
+        graphs: &AssetStore<AnimationGraph>,
         creation_context: &AnimationGraphContext,
     ) {
         self.graph_state.clear();
-        let Some(graph) = creation_context.animation_graphs.get(&animation_graph) else {
+        let Some(graph) = graphs.get(&animation_graph) else {
             self.graph_handle = None;
             return;
         };
@@ -460,7 +461,9 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let node_instance: NodeInstance = anim_node.create_instance(creation_context);
+            let Some(node_instance) = anim_node.create_instance(creation_context) else {
+                continue;
+            };
             self.graph_state.insert(
                 node_index,
                 ActiveNodeInstance {
@@ -471,8 +474,8 @@ impl AnimationGraphInstance {
         }
     }
 
-    pub(crate) fn reset(&mut self, context: &AnimationGraphContext<'_>) {
-        let Some(graph) = self.get_animation_graph(context) else {
+    pub(crate) fn reset(&mut self, graphs: &AssetStore<AnimationGraph>) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return;
         };
 
@@ -485,8 +488,13 @@ impl AnimationGraphInstance {
             });
     }
 
-    pub(crate) fn update(&mut self, delta_time: f32, context: &AnimationGraphContext<'_>) {
-        let Some(graph) = self.get_animation_graph(context) else {
+    pub(crate) fn update(
+        &mut self,
+        delta_time: f32,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+    ) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return;
         };
 
@@ -503,12 +511,13 @@ impl AnimationGraphInstance {
 
     pub(crate) fn evaluate(
         &mut self,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         pool: &mut PosePool,
         output_pose: &mut Pose,
     ) -> bool {
-        let Some(graph) = self.get_animation_graph(context) else {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return false;
         };
 
@@ -564,15 +573,15 @@ impl AnimationGraphInstance {
 
     pub(crate) fn get_animation_graph<'a>(
         &self,
-        context: &'a AnimationGraphContext<'a>,
+        graphs: &'a AssetStore<AnimationGraph>,
     ) -> Option<&'a AnimationGraph> {
         self.graph_handle
             .as_ref()
-            .and_then(move |handle| context.animation_graphs().get(handle))
+            .and_then(move |handle| graphs.get(handle))
     }
 
-    pub(crate) fn is_finished(&self, context: &AnimationGraphContext<'_>) -> bool {
-        let Some(graph) = self.get_animation_graph(context) else {
+    pub(crate) fn is_finished(&self, graphs: &AssetStore<AnimationGraph>) -> bool {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return true;
         };
 

@@ -225,6 +225,7 @@ mod tests {
     };
 
     use super::{InputSet, register_input};
+    use crate::system::input::InputState;
 
     struct Phase;
 
@@ -375,5 +376,19 @@ mod tests {
         let first = access_of(&mut world, |_: ResMut<First>| {});
 
         assert!(SystemAccess::are_disjoint(&elsewhere, &first));
+    }
+
+    #[test]
+    fn an_input_state_fetches_an_input_set_outside_a_system() {
+        let mut world = registered();
+        world.insert_resource(First(2));
+        world.insert_resource(Second(9));
+        let mut state = InputState::<InputSet<Phase>>::new(&mut world);
+
+        let set = state.get(&world).unwrap();
+        let sum = set.get::<Res<'static, First>>().unwrap().0
+            + set.get::<Res<'static, Second>>().unwrap().0;
+
+        assert_eq!(sum, 11);
     }
 }

@@ -1,4 +1,5 @@
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_ecs::Res;
+use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto_reflect::Reflect;
 use uuid::Uuid;
 
@@ -13,7 +14,8 @@ pub mod definition;
 pub mod state_machine;
 
 pub use definition::{
-    AnimationNode, ErasedAnimationNode, NodeInstance, PlaceholderNode, ReflectAnimationNode,
+    AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, NodeInstance,
+    PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
 };
 
 #[derive(Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
@@ -41,14 +43,18 @@ fn pass_through(evaluated_inputs: &[EvaluatedPose], output: &mut Pose) {
 
 impl AnimationNode for ResultNode {
     type State = ();
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
+    fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
         _: &mut (),
+        _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
         evaluated_inputs: &[EvaluatedPose],
@@ -63,14 +69,18 @@ impl AnimationNode for ResultNode {
 
 impl AnimationNode for BlendNode {
     type State = ();
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
+    fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
         _: &mut (),
+        _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
         evaluated_inputs: &[EvaluatedPose],
@@ -138,8 +148,15 @@ impl Default for AnimationClipNodeInstance {
 
 impl AnimationNode for AnimationClipNode {
     type State = AnimationClipNodeInstance;
+    type CreateInput = ();
+    type UpdateInput = Res<'static, AssetStore<AnimationClip>>;
+    type EvaluateInput = Res<'static, AssetStore<AnimationClip>>;
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> AnimationClipNodeInstance {
+    fn create_instance(
+        &self,
+        _: &(),
+        _context: &AnimationGraphContext<'_>,
+    ) -> AnimationClipNodeInstance {
         AnimationClipNodeInstance::new().with_start_time(self.start_time)
     }
 
@@ -147,7 +164,8 @@ impl AnimationNode for AnimationClipNode {
         &self,
         instance: &mut AnimationClipNodeInstance,
         delta_time: f32,
-        context: &AnimationGraphContext<'_>,
+        clips: &Res<AssetStore<AnimationClip>>,
+        _context: &AnimationGraphContext<'_>,
     ) {
         instance.previous_time = instance.time;
         instance.wrapped = false;
@@ -160,7 +178,7 @@ impl AnimationNode for AnimationClipNode {
             return;
         }
 
-        let Some(clip) = context.animation_clips.get(&self.clip) else {
+        let Some(clip) = clips.get(&self.clip) else {
             return;
         };
 
@@ -186,13 +204,14 @@ impl AnimationNode for AnimationClipNode {
     fn evaluate(
         &self,
         instance: &mut AnimationClipNodeInstance,
+        clips: &Res<AssetStore<AnimationClip>>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedPose],
         _pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        let Some(animation_clip) = context.animation_clips.get(&self.clip) else {
+        let Some(animation_clip) = clips.get(&self.clip) else {
             return;
         };
 
@@ -330,6 +349,7 @@ impl AnimationClipNode {
 
 #[cfg(test)]
 mod tests {
+    use concerto_ecs::Res;
     use concerto_foundation::assets::{
         asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
@@ -341,17 +361,23 @@ mod tests {
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
-        graph::AnimationGraph,
         pose::{JointPose, Pose, PosePool, RootMotion},
+        test_walks::Walks,
     };
 
     const ROOT: Uuid = Uuid::from_u128(1);
+
+    fn clips<'a>(context: &'a AnimationGraphContext<'a>) -> &'a Res<'a, AssetStore<AnimationClip>> {
+        context
+            .inputs
+            .get::<Res<'static, AssetStore<AnimationClip>>>()
+            .unwrap()
+    }
     const OTHER: Uuid = Uuid::from_u128(2);
 
     struct Rig {
         _server: AssetServer,
-        clips: AssetStore<AnimationClip>,
-        graphs: AssetStore<AnimationGraph>,
+        walks: Walks,
         blackboard: AnimationBlackboard,
         rest: JointPose,
         up: Vec3,
@@ -367,8 +393,7 @@ mod tests {
             clips.insert(handle.id(), clip);
             Self {
                 _server: server,
-                clips,
-                graphs: AssetStore::new(),
+                walks: Walks::new(clips, AssetStore::new()),
                 blackboard: AnimationBlackboard::default(),
                 rest,
                 up: Vec3::Y,
@@ -381,17 +406,32 @@ mod tests {
             self
         }
 
-        fn context(&self) -> AnimationGraphContext<'_> {
-            AnimationGraphContext {
-                animation_clips: &self.clips,
-                animation_graphs: &self.graphs,
-                blackboard: &self.blackboard,
-                root: Some(RootBone {
-                    index: 0,
-                    rest: self.rest.clone(),
-                    up: self.up,
-                }),
+        fn root(&self) -> RootBone {
+            RootBone {
+                index: 0,
+                rest: self.rest.clone(),
+                up: self.up,
             }
+        }
+
+        fn create(&self, node: &AnimationClipNode) -> AnimationClipNodeInstance {
+            self.walks.create(&self.blackboard, |context| {
+                AnimationNode::create_instance(node, &(), context)
+            })
+        }
+
+        fn evaluate(
+            &self,
+            node: &AnimationClipNode,
+            instance: &mut AnimationClipNodeInstance,
+            bones: &[Uuid],
+            pool: &mut PosePool,
+            output: &mut Pose,
+        ) {
+            self.walks
+                .evaluate(&self.blackboard, Some(self.root()), |context| {
+                    node.evaluate(instance, clips(context), context, bones, &[], pool, output)
+                });
         }
 
         fn node(&self) -> AnimationClipNode {
@@ -400,18 +440,11 @@ mod tests {
 
         fn pose(&self, bones: &[Uuid]) -> Pose {
             let node = self.node();
-            let mut instance = node.create_instance(&self.context());
+            let mut instance = self.create(&node);
             let mut pool = PosePool::new(bones.len());
             pool.set_rest(&vec![self.rest.clone(); bones.len()]);
             let mut output = pool.acquire();
-            node.evaluate(
-                &mut instance,
-                &self.context(),
-                bones,
-                &[],
-                &mut pool,
-                &mut output,
-            );
+            self.evaluate(&node, &mut instance, bones, &mut pool, &mut output);
             output
         }
 
@@ -422,14 +455,7 @@ mod tests {
         ) -> RootMotion {
             let mut pool = PosePool::new(1);
             let mut output = pool.acquire();
-            node.evaluate(
-                instance,
-                &self.context(),
-                &[ROOT],
-                &[],
-                &mut pool,
-                &mut output,
-            );
+            self.evaluate(node, instance, &[ROOT], &mut pool, &mut output);
             output.root_motion()
         }
 
@@ -439,7 +465,9 @@ mod tests {
             instance: &mut AnimationClipNodeInstance,
             delta_time: f32,
         ) -> RootMotion {
-            node.update(instance, delta_time, &self.context());
+            self.walks.update(&self.blackboard, |context| {
+                node.update(instance, delta_time, clips(context), context)
+            });
             self.motion(node, instance)
         }
     }
@@ -597,7 +625,7 @@ mod tests {
             at_rest(rest),
         );
         let node = rig.node();
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         assert_motion(
             rig.step(&node, &mut instance, 0.25),
@@ -617,7 +645,7 @@ mod tests {
         let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0));
         let rig = Rig::new(clip(vec![moving]), at_rest(rest));
         let node = rig.node();
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         assert_motion(
             rig.step(&node, &mut instance, 0.5),
@@ -636,7 +664,7 @@ mod tests {
         );
         let rig = Rig::new(clip(vec![moving, held]), at_rest(rest));
         let node = rig.node();
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         assert_motion(
             rig.step(&node, &mut instance, 0.5),
@@ -651,7 +679,7 @@ mod tests {
         other_bone_only.add_channel(OTHER, translation_channel(Vec3::ZERO, Vec3::X));
         let rig = Rig::new(other_bone_only, at_rest(Quat::IDENTITY));
         let node = rig.node();
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         assert_eq!(
             rig.step(&node, &mut instance, 0.5),
@@ -672,7 +700,7 @@ mod tests {
             at_rest(rest),
         );
         let node = rig.node();
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         assert_motion(
             rig.step(&node, &mut instance, 0.5),
@@ -691,7 +719,7 @@ mod tests {
             at_rest(Quat::IDENTITY),
         );
         let node = rig.node().with_start_time(0.2);
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         rig.step(&node, &mut instance, 0.4);
         rig.step(&node, &mut instance, 0.3);
@@ -713,13 +741,13 @@ mod tests {
         let rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
         let node = rig.node();
 
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
         rig.step(&node, &mut instance, 0.8);
         rig.step(&node, &mut instance, 0.8);
         node.reset(&mut instance);
         assert_eq!(rig.motion(&node, &mut instance), RootMotion::IDENTITY);
 
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
         rig.step(&node, &mut instance, 0.8);
         rig.step(&node, &mut instance, 0.8);
         instance.play();
@@ -731,7 +759,7 @@ mod tests {
         let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0));
         let rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
         let node = rig.node().with_start_time(0.5);
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         assert_eq!(rig.motion(&node, &mut instance), RootMotion::IDENTITY);
     }
@@ -741,7 +769,7 @@ mod tests {
         let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 0.0));
         let rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
         let node = rig.node().with_play_mode(AnimationPlayMode::PlayOnce);
-        let mut instance = node.create_instance(&rig.context());
+        let mut instance = rig.create(&node);
 
         rig.step(&node, &mut instance, 0.75);
         assert_motion(

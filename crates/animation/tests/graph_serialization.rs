@@ -27,14 +27,18 @@ struct Gain {
 
 impl AnimationNode for Gain {
     type State = ();
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
+    fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
         _: &mut (),
+        _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
         _: &[EvaluatedPose],

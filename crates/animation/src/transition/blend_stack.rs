@@ -1,8 +1,9 @@
+use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraphInstances, GraphId},
+    graph::{AnimationGraph, AnimationGraphInstances, GraphId},
     pose::{Pose, PosePool},
     transition::AnimationTransitionBlender,
 };
@@ -52,6 +53,7 @@ impl AnimationTransitionBlender for BlendStack {
         &mut self,
         bone_ids: &[Uuid],
         graph_instances: &mut AnimationGraphInstances,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,
@@ -62,7 +64,7 @@ impl AnimationTransitionBlender for BlendStack {
 
         // The settled base pose goes straight into the output...
         if let Some(graph_instance) = graph_instances.get_mut(base.graph_id) {
-            graph_instance.evaluate(context, bone_ids, pool, output);
+            graph_instance.evaluate(graphs, context, bone_ids, pool, output);
         }
 
         // ...then each newer graph is cross-faded on top by its current weight.
@@ -70,7 +72,7 @@ impl AnimationTransitionBlender for BlendStack {
             let mut layer_pose = pool.acquire();
 
             if let Some(graph_instance) = graph_instances.get_mut(entry.graph_id) {
-                graph_instance.evaluate(context, bone_ids, pool, &mut layer_pose);
+                graph_instance.evaluate(graphs, context, bone_ids, pool, &mut layer_pose);
             }
 
             output.blend(&layer_pose, entry.weight);
@@ -82,11 +84,12 @@ impl AnimationTransitionBlender for BlendStack {
         &mut self,
         delta_time: f32,
         graph_instances: &mut AnimationGraphInstances,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     ) {
         for entry in &self.entries {
             if let Some(graph_instance) = graph_instances.get_mut(entry.graph_id) {
-                graph_instance.update(delta_time, context);
+                graph_instance.update(delta_time, graphs, context);
             }
         }
 
@@ -106,7 +109,7 @@ impl AnimationTransitionBlender for BlendStack {
         next_graph: GraphId,
         graph_instances: &mut AnimationGraphInstances,
         transition_time: f32,
-        context: &AnimationGraphContext<'_>,
+        graphs: &AssetStore<AnimationGraph>,
     ) {
         if *self.current() == *next_graph {
             return;
@@ -118,7 +121,7 @@ impl AnimationTransitionBlender for BlendStack {
 
         // Anchor the target's clip (and OnAnimationEnd) to the moment of entry (invariant 3).
         if let Some(graph_instance) = graph_instances.get_mut(next_graph) {
-            graph_instance.reset(context);
+            graph_instance.reset(graphs);
         }
 
         self.entries.push(BlendStackEntry {
