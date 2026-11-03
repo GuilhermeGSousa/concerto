@@ -1,15 +1,20 @@
 use concerto_animation::{
+    clip::AnimationClip,
     evaluation::AnimationGraphContext,
     node::{AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_ecs::Res;
+use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
 use crate::{
-    database::MotionDatabase, instance::MotionMatchingInstance, simulation::TrajectorySample,
+    database::MotionDatabase,
+    instance::{MotionMatchingInstance, Sources},
+    simulation::TrajectorySample,
 };
 
 /// The blackboard key under which the trajectory is published.
@@ -32,6 +37,26 @@ impl Default for MotionMatchingTrajectory {
             samples: Vec::new(),
         }
     }
+}
+
+fn sources<'a>(
+    node: &MotionMatchingNode,
+    databases: &'a AssetStore<MotionDatabase>,
+    skeletons: &'a AssetStore<Skeleton>,
+    clips: &'a AssetStore<AnimationClip>,
+    player_skeleton: Option<&'a Skeleton>,
+) -> Option<Sources<'a>> {
+    let database = databases.get(&node.database)?;
+    Some(Sources {
+        database,
+        skeleton: skeletons.get(database.skeleton())?,
+        player_skeleton: player_skeleton?,
+        clips: database
+            .clips()
+            .iter()
+            .map(|handle| clips.get(handle))
+            .collect::<Option<_>>()?,
+    })
 }
 
 /// Plays a motion database, jumping to the frame whose features best match the character's predicted trajectory.
@@ -66,7 +91,11 @@ impl Default for MotionMatchingNode {
 impl AnimationNode for MotionMatchingNode {
     type State = MotionMatchingInstance;
     type CreateInput = ();
-    type UpdateInput = ();
+    type UpdateInput = (
+        Res<'static, AssetStore<MotionDatabase>>,
+        Res<'static, AssetStore<Skeleton>>,
+        Res<'static, AssetStore<AnimationClip>>,
+    );
     type EvaluateInput = ();
 
     fn create_instance(
@@ -81,10 +110,17 @@ impl AnimationNode for MotionMatchingNode {
         &self,
         instance: &mut MotionMatchingInstance,
         delta_time: f32,
-        _: &(),
-        _context: &AnimationGraphContext<'_>,
+        (databases, skeletons, clips): &(
+            Res<AssetStore<MotionDatabase>>,
+            Res<AssetStore<Skeleton>>,
+            Res<AssetStore<AnimationClip>>,
+        ),
+        context: &AnimationGraphContext<'_>,
     ) {
-        instance.activate(delta_time);
+        match sources(self, databases, skeletons, clips, context.skeleton()) {
+            Some(sources) => instance.step(self, delta_time, context.blackboard(), sources),
+            None => instance.clear_root_motion(),
+        }
     }
 
     fn evaluate(

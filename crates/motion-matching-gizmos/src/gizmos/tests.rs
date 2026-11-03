@@ -1,13 +1,11 @@
 use std::{any::TypeId, f32::consts::PI, thread::sleep, time::Duration};
 
 use concerto_animation::{
-    animate_targets,
     clip::{AnimationChanelOutput, AnimationChannel},
     graph::AnimationGraph,
     node::BlendNode,
     player::AnimationHandleComponent,
-    plugin::{AnimationPlugin, register_animation_types},
-    update_animation_players,
+    plugin::{AnimationAppExt, AnimationPlugin, register_animation_types},
 };
 use concerto_app::{
     App,
@@ -27,7 +25,7 @@ use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, FeatureChannelData, MotionDatabaseDefinition, MotionEntry,
     MotionMatchingInstance, SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions,
-    TrajectorySettings, bake, run_motion_matching,
+    TrajectorySettings, bake,
 };
 use concerto_reflect::TypeRegistry;
 use glam::{Mat4, Quat};
@@ -205,17 +203,11 @@ impl Stage {
         app.insert_resource(Time::new());
         app.register_plugin(AnimationPlugin);
         app.register_asset::<MotionDatabase>();
-        app.register_type::<MotionMatchingNode>()
+        app.register_animation_node::<MotionMatchingNode>()
             .register_type::<BonePositions>()
             .register_type::<BoneVelocities>()
             .register_type::<TrajectoryPositions>()
             .register_type::<TrajectoryDirections>();
-        app.add_system(
-            LateUpdate,
-            run_motion_matching
-                .after(update_animation_players)
-                .before(animate_targets),
-        );
         app.register_plugin(DebugGizmosPlugin);
         app.register_plugin(MotionMatchingGizmosPlugin);
 

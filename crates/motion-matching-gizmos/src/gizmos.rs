@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 
-use concerto_animation::{clip::AnimationClip, graph::AnimationGraph, player::AnimationPlayer};
+use concerto_animation::{
+    clip::AnimationClip, graph::AnimationGraph, player::AnimationPlayer, update_animation_players,
+};
 use concerto_app::{plugins::Plugin, schedule_groups::LateUpdate};
 use concerto_color::Color;
 use concerto_debug_gizmos::{DebugGizmos, DebugGizmosPlugin};
@@ -13,7 +15,7 @@ use concerto_foundation::{
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
     CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingInstance,
-    MotionMatchingNode, preview_features, run_motion_matching,
+    MotionMatchingNode, preview_features,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::plugin::RenderPlugin;
@@ -63,7 +65,7 @@ impl Plugin for MotionMatchingGizmosPlugin {
             app.add_system(
                 LateUpdate,
                 draw_motion_matching
-                    .after(run_motion_matching)
+                    .after(update_animation_players)
                     .after(propagate_global_transforms),
             );
         }

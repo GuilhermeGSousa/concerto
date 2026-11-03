@@ -467,3 +467,117 @@ impl TransitionBuilder<'_> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{asset_server::AssetServer, asset_store::AssetStore};
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use uuid::Uuid;
+
+    use super::{AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineInstance};
+    use crate::{
+        blackboard::AnimationBlackboard,
+        evaluation::AnimationGraphContext,
+        graph::{AnimationGraph, GraphId},
+        node::{AnimationNode, ErasedAnimationNode, ReflectAnimationNode, register_node_inputs},
+        plugin::register_animation_types,
+        pose::{EvaluatedPose, Pose, PosePool},
+        test_walks::Walks,
+    };
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Counter {}
+
+    impl AnimationNode for Counter {
+        type State = u32;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
+            0
+        }
+
+        fn update(&self, updates: &mut u32, _: f32, _: &(), _: &AnimationGraphContext<'_>) {
+            *updates += 1;
+        }
+
+        fn evaluate(
+            &self,
+            _: &mut u32,
+            _: &(),
+            _: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedPose],
+            _: &mut PosePool,
+            _: &mut Pose,
+        ) {
+        }
+
+        fn reset(&self, _: &mut u32) {}
+    }
+
+    fn counting_graph() -> AnimationGraph {
+        let mut registry = TypeRegistry::default();
+        register_animation_types(&mut registry);
+        registry.register::<Counter>();
+        let mut graph = AnimationGraph::from_node(Counter {});
+        graph.make_live(&registry, None).unwrap();
+        graph
+    }
+
+    fn updates_in_state(
+        machine: &mut AnimationStateMachineInstance,
+        state: usize,
+        walks: &Walks,
+    ) -> Option<u32> {
+        let mut updates = None;
+        machine
+            .state_graph_instances
+            .get_mut(GraphId::from(state))?
+            .for_each_instance_mut::<Counter>(
+                walks.graphs(),
+                &AnimationBlackboard::default(),
+                |_, state, _| updates = Some(*state),
+            );
+        updates
+    }
+
+    #[test]
+    fn only_the_current_states_graph_is_updated() {
+        let mut server = AssetServer::new();
+        let mut graphs = AssetStore::<AnimationGraph>::new();
+        server.register_asset(&graphs);
+        let mut add = |graph: AnimationGraph| {
+            let handle = server.add(AnimationGraph::default());
+            graphs.insert(handle.id(), graph);
+            handle
+        };
+        let first = add(counting_graph());
+        let second = add(counting_graph());
+        let machine = AnimationStateMachine::from_initial_state("first", first, |transition| {
+            transition.to("second", AnimationFSMTrigger::on_bool("go", true), 0.1);
+        })
+        .state("second", second, |_| {})
+        .build();
+        let machine: Box<dyn ErasedAnimationNode> = Box::new(machine);
+        let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
+        let blackboard = AnimationBlackboard::default();
+        let mut instance = walks
+            .create(&blackboard, |context| machine.create_instance(context))
+            .unwrap();
+
+        for _ in 0..3 {
+            walks.update(&blackboard, |context| {
+                machine.update(&mut instance, 0.1, context)
+            });
+        }
+
+        let machine = instance
+            .downcast_mut::<AnimationStateMachineInstance>()
+            .unwrap();
+        assert_eq!(updates_in_state(machine, 0, &walks), Some(3));
+        assert_eq!(updates_in_state(machine, 1, &walks), Some(0));
+    }
+}

@@ -402,9 +402,9 @@ are separate work. The simulation does not rotate the capsule.
 ## Playing a database
 
 `MotionMatchingNode` is an animation graph node that plays a `MotionDatabase`.
-`MotionMatchingPlugin` registers it and its systems; the plugin is in
-`DefaultPlugins`, so a game needs nothing more than a graph that holds the
-node.
+`MotionMatchingPlugin` registers it with `register_animation_node`, and its
+systems; the plugin is in `DefaultPlugins`, so a game needs nothing more than a
+graph that holds the node.
 
 | Field | Meaning | Default |
 |---|---|---|
@@ -423,7 +423,8 @@ the blackboard of its `AnimationPlayer`, where only this crate reads it. A
 entity. A player no link names, or a preview `App`, has no trajectory; the node
 then plays the database without searching.
 
-Per frame `run_motion_matching` advances the playhead at the database `rate`,
+Each frame the graph walk reaches it, the node's `update` advances the playhead
+at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
 for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
@@ -434,12 +435,19 @@ playhead and the last `ignore_range_end` of each range are not candidates, as
 in orangeduck's Motion-Matching. At the last frame of a range nothing seeds the
 search and nothing around the playhead is excluded, and any frame it finds other
 than the playhead's is taken, so the playhead leaves unless `ignore_range_end`
-is 0. A query that holds a NaN or an infinity finds nothing. `run_motion_matching` runs after
-`update_animation_players` and before `animate_targets`.
+is 0. A query that holds a NaN or an infinity finds nothing.
+
+The step runs inside `update_animation_players`, where the graph is walked, so
+a node the walk does not reach, such as one in a state machine state that is
+not playing, does not advance. Its `UpdateInput` reads the stores of motion
+databases, skeletons and clips, and the player's skeleton comes from the graph
+context; when any of them is missing the node does not step and its root motion
+is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
+left. No other system declares the `MotionDatabase` store.
 
 `MotionMatchingInstance` is the node's per-player state. Its fields are
-private: the step that advances it is its own method, which
-`run_motion_matching` calls for each active instance. Other crates read it
+private: the step that advances it is its own method, which the node's `update`
+calls. Other crates read it
 through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
 `last_query()`.
 

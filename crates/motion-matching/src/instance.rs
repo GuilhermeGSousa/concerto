@@ -38,7 +38,6 @@ pub struct LastQuery {
 pub struct MotionMatchingInstance {
     initialised: bool,
     failed: bool,
-    active: bool,
     delta_time: f32,
     frame: usize,
     sub_frame_time: f32,
@@ -66,7 +65,6 @@ impl MotionMatchingInstance {
         Self {
             initialised: false,
             failed: false,
-            active: false,
             delta_time: 0.0,
             frame: 0,
             sub_frame_time: 0.0,
@@ -88,17 +86,6 @@ impl MotionMatchingInstance {
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
         }
-    }
-
-    /// Marks the instance to be advanced by the runtime this frame by `delta_time` seconds.
-    pub(crate) fn activate(&mut self, delta_time: f32) {
-        self.active = true;
-        self.delta_time = delta_time;
-    }
-
-    /// Whether the node asked for the instance to be advanced this frame.
-    pub(crate) fn is_active(&self) -> bool {
-        self.active
     }
 
     /// Whether the instance has played its first frame.
@@ -412,10 +399,12 @@ impl MotionMatchingInstance {
     pub(crate) fn step(
         &mut self,
         node: &MotionMatchingNode,
+        delta_time: f32,
         blackboard: &AnimationBlackboard,
         sources: Sources,
     ) {
-        self.active = false;
+        self.delta_time = delta_time;
+        self.clear_root_motion();
         if self.failed {
             return;
         }

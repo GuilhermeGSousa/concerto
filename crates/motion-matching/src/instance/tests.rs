@@ -87,7 +87,7 @@ fn trajectory(pace: f32, samples: usize) -> AnimationBlackboard {
 
 fn instance(node: &MotionMatchingNode, dt: f32) -> MotionMatchingInstance {
     let mut instance = MotionMatchingInstance::new(node.search_period);
-    instance.activate(dt);
+    instance.delta_time = dt;
     instance
 }
 
@@ -109,11 +109,10 @@ fn the_first_step_initialises_the_instance_and_outputs_the_first_frame() {
     let mut instance = instance(&node, 0.0);
     assert!(!instance.initialised);
 
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     assert!(instance.initialised);
     assert!(!instance.failed);
-    assert!(!instance.active);
     assert_eq!(instance.frame, 0);
     let expected = fixture
         .database
@@ -130,12 +129,12 @@ fn a_new_instance_after_a_graph_change_starts_uninitialised_and_initialises_agai
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut first = instance(&node, 0.1);
-    first.step(&node, &quiet(), fixture.sources());
+    first.step(&node, first.delta_time, &quiet(), fixture.sources());
     assert!(first.initialised);
 
     let mut second = instance(&node, 0.1);
     assert!(!second.initialised);
-    second.step(&node, &quiet(), fixture.sources());
+    second.step(&node, second.delta_time, &quiet(), fixture.sources());
 
     assert!(second.initialised);
     assert_eq!(second.frame, first.frame);
@@ -146,11 +145,11 @@ fn playback_at_speed_two_advances_two_clip_seconds_per_second() {
     let fixture = fixture(2.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let (_, start) = fixture.database.clip_time(instance.frame).unwrap();
 
-    instance.activate(0.5);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.delta_time = 0.5;
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     let (_, end) = fixture.database.clip_time(instance.frame).unwrap();
     assert!((end - start - 1.0).abs() < 1e-3, "{start} -> {end}");
@@ -161,10 +160,15 @@ fn a_trajectory_shorter_than_needed_skips_the_search_and_keeps_playing() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.1);
-    instance.step(&node, &trajectory(0.0, 1), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 1),
+        fixture.sources(),
+    );
 
     assert!(!instance.failed);
     assert!(instance.initialised);
@@ -177,10 +181,10 @@ fn a_missing_trajectory_keeps_playing_without_a_search() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.1);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     assert!(!instance.failed);
     assert_eq!(instance.frame, 3);
@@ -191,11 +195,16 @@ fn a_standing_trajectory_moves_the_playhead_into_the_turn_clip() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.1);
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
-    instance.step(&node, &trajectory(0.0, 2), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 2),
+        fixture.sources(),
+    );
 
     assert_eq!(fixture.database.entry_of(instance.frame), Some(1));
     assert!((instance.search_timer - node.search_period).abs() < 1e-6);
@@ -206,12 +215,12 @@ fn a_transition_lands_on_the_frame_the_normalised_query_finds() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.1);
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
     let board = trajectory(0.25, 2);
-    instance.step(&node, &board, fixture.sources());
+    instance.step(&node, instance.delta_time, &board, fixture.sources());
 
     let samples = &board
         .get::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
@@ -267,10 +276,15 @@ fn a_search_skips_the_range_ends_the_node_ignores() {
 
 fn searched(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingInstance {
     let mut instance = instance(node, 0.0);
-    instance.step(node, &quiet(), fixture.sources());
-    instance.activate(0.1);
+    instance.step(node, instance.delta_time, &quiet(), fixture.sources());
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
-    instance.step(node, &trajectory(0.25, 2), fixture.sources());
+    instance.step(
+        node,
+        instance.delta_time,
+        &trajectory(0.25, 2),
+        fixture.sources(),
+    );
     instance
 }
 
@@ -280,7 +294,7 @@ fn an_instance_that_has_not_searched_has_no_last_query() {
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.1);
 
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     assert!(instance.initialised);
     assert!(instance.last_query.is_none());
@@ -291,7 +305,7 @@ fn a_search_keeps_its_raw_query_with_what_it_was_built_from() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let published = MotionMatchingTrajectory {
         translation: Vec3::new(1.0, 0.0, 2.0),
         rotation: Quat::from_rotation_y(0.5),
@@ -307,9 +321,9 @@ fn a_search_keeps_its_raw_query_with_what_it_was_built_from() {
     let mut board = AnimationBlackboard::default();
     board.set(TRAJECTORY_KEY, published.clone());
 
-    instance.activate(0.1);
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
-    instance.step(&node, &board, fixture.sources());
+    instance.step(&node, instance.delta_time, &board, fixture.sources());
 
     let last = instance.last_query.as_ref().unwrap();
     assert_eq!(last.features, [0.25]);
@@ -374,11 +388,16 @@ fn a_non_finite_query_leaves_no_best_cost() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.1);
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
-    instance.step(&node, &trajectory(f32::INFINITY, 2), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(f32::INFINITY, 2),
+        fixture.sources(),
+    );
 
     let last = instance.last_query.as_ref().unwrap();
     assert_eq!(last.best_cost, None);
@@ -391,9 +410,14 @@ fn a_trajectory_too_short_to_search_clears_the_last_query() {
     let mut instance = searched(&fixture, &node);
     assert!(instance.last_query.is_some());
 
-    instance.activate(0.1);
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
-    instance.step(&node, &trajectory(0.25, 1), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.25, 1),
+        fixture.sources(),
+    );
 
     assert!(instance.last_query.is_none());
 }
@@ -404,9 +428,14 @@ fn a_tick_with_no_search_due_keeps_the_last_query() {
     let node = MotionMatchingNode::default();
     let mut instance = searched(&fixture, &node);
 
-    instance.activate(0.03);
+    instance.delta_time = 0.03;
     instance.search_timer = 10.0;
-    instance.step(&node, &trajectory(0.5, 2), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.5, 2),
+        fixture.sources(),
+    );
 
     let last = instance.last_query.as_ref().unwrap();
     assert_eq!(last.features, [0.25]);
@@ -429,11 +458,16 @@ fn no_search_runs_before_the_timer_is_due() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.03);
+    instance.delta_time = 0.03;
     instance.search_timer = 10.0;
-    instance.step(&node, &trajectory(0.0, 2), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 2),
+        fixture.sources(),
+    );
 
     assert_eq!(fixture.database.entry_of(instance.frame), Some(0));
 }
@@ -443,12 +477,17 @@ fn the_last_ignore_range_end_frames_force_a_search_before_the_timer_is_due() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     instance.frame = 40;
     instance.search_timer = 10.0;
 
-    instance.activate(0.0);
-    instance.step(&node, &trajectory(0.0, 2), fixture.sources());
+    instance.delta_time = 0.0;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 2),
+        fixture.sources(),
+    );
 
     assert_eq!(fixture.database.entry_of(instance.frame), Some(1));
 }
@@ -458,7 +497,7 @@ fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     instance.frame = last;
     instance.search_timer = 10.0;
@@ -473,8 +512,8 @@ fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
         },
     );
 
-    instance.activate(0.0);
-    instance.step(&node, &board, fixture.sources());
+    instance.delta_time = 0.0;
+    instance.step(&node, instance.delta_time, &board, fixture.sources());
 
     assert_ne!(instance.frame, last);
 }
@@ -484,13 +523,18 @@ fn the_last_frame_of_a_range_moves_to_the_next_ranges_first_frame() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     instance.frame = last;
     instance.search_timer = 10.0;
 
-    instance.activate(0.0);
-    instance.step(&node, &trajectory(0.0, 2), fixture.sources());
+    instance.delta_time = 0.0;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 2),
+        fixture.sources(),
+    );
 
     let mut query = instance.last_query.as_ref().unwrap().features.clone();
     fixture.database.normalise(&mut query);
@@ -511,11 +555,16 @@ fn a_nan_query_leaves_no_best_cost() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
-    instance.activate(0.1);
+    instance.delta_time = 0.1;
     instance.search_timer = 0.0;
-    instance.step(&node, &trajectory(f32::NAN, 2), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(f32::NAN, 2),
+        fixture.sources(),
+    );
 
     let last = instance.last_query.as_ref().unwrap();
     assert_eq!(last.best_cost, None);
@@ -530,19 +579,34 @@ fn a_velocity_change_that_settles_forces_one_search() {
         ..Default::default()
     };
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     instance.search_timer = 100.0;
 
-    instance.activate(0.1);
-    instance.step(&node, &trajectory(0.0, 2), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 2),
+        fixture.sources(),
+    );
     assert!(instance.forced_search_timer <= 0.0);
 
-    instance.activate(0.1);
-    instance.step(&node, &trajectory(5.0, 2), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(5.0, 2),
+        fixture.sources(),
+    );
     assert!(instance.forced_search_timer <= 0.0);
 
-    instance.activate(0.1);
-    instance.step(&node, &trajectory(5.0, 2), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(5.0, 2),
+        fixture.sources(),
+    );
     assert_eq!(instance.forced_search_timer, 100.0);
 }
 
@@ -551,15 +615,20 @@ fn the_output_pose_on_a_transition_frame_equals_the_pose_before_it() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
-    instance.activate(0.1);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let before = joints(&instance.blended);
     let frame_before = instance.frame;
 
-    instance.activate(0.0);
+    instance.delta_time = 0.0;
     instance.search_timer = 0.0;
-    instance.step(&node, &trajectory(0.0, 2), fixture.sources());
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(0.0, 2),
+        fixture.sources(),
+    );
 
     assert_ne!(fixture.database.entry_of(instance.frame), Some(0));
     assert_ne!(instance.frame, frame_before);
@@ -593,7 +662,7 @@ fn the_player_skeleton_is_matched_to_the_database_by_bone_uuid() {
         ..fixture.sources()
     };
 
-    instance.step(&node, &quiet(), sources);
+    instance.step(&node, instance.delta_time, &quiet(), sources);
 
     assert_eq!(instance.bone_indices[&Uuid::from_u128(1)], 1);
     assert_eq!(instance.bone_indices[&Uuid::from_u128(2)], 2);
@@ -628,7 +697,7 @@ fn a_player_skeleton_with_none_of_the_database_bones_stops_the_instance() {
         ..fixture.sources()
     };
 
-    instance.step(&node, &quiet(), sources);
+    instance.step(&node, instance.delta_time, &quiet(), sources);
 
     assert!(instance.failed);
     assert!(!instance.initialised);
@@ -643,7 +712,7 @@ fn a_failed_instance_stays_stopped() {
     let mut instance = instance(&node, 0.0);
     instance.failed = true;
 
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     assert!(!instance.initialised);
 }
@@ -653,9 +722,9 @@ fn root_motion_is_the_simulation_bones_velocity_at_the_frame() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.activate(0.5);
+    instance.delta_time = 0.5;
 
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     let motion = instance.root_motion;
     assert!(
@@ -693,7 +762,7 @@ fn root_motion_reads_forward_for_a_walk_heading_away_from_model_forward() {
         let node = MotionMatchingNode::default();
         let mut instance = instance(&node, 0.1);
 
-        instance.step(&node, &quiet(), fixture.sources());
+        instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
         let motion = instance.output.root_motion();
         assert!(
@@ -743,7 +812,7 @@ fn root_motion_turns_out_the_rest_of_the_skeleton_it_plays_on() {
         ..fixture.sources()
     };
 
-    instance.step(&node, &quiet(), sources);
+    instance.step(&node, instance.delta_time, &quiet(), sources);
 
     let expected = played_rest * baked_rest.inverse() * Vec3::new(0.0, 0.0, -0.1);
     let motion = instance.output.root_motion();
@@ -771,7 +840,7 @@ fn root_motion_carries_a_leaning_root_to_where_it_faces_next() {
     let dt = 0.1;
     let mut instance = instance(&node, dt);
 
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
 
     let (_, time) = fixture.database.clip_time(instance.frame).unwrap();
     let arrived = facing(time) * instance.output.root_motion().rotation;
@@ -783,18 +852,18 @@ fn a_pose_held_at_the_end_of_its_range_gives_no_root_motion() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     instance.frame = last - 1;
 
-    instance.activate(0.1);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     assert_eq!(instance.frame, last);
     assert!(instance.output.root_motion().translation.z < 0.0);
 
     for dt in [0.1, 0.001] {
-        instance.activate(dt);
-        instance.step(&node, &quiet(), fixture.sources());
+        instance.delta_time = dt;
+        instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
         assert_eq!(instance.frame, last);
         assert_eq!(instance.output.root_motion(), RootMotion::IDENTITY);
     }
@@ -805,12 +874,17 @@ fn a_jump_away_from_the_end_of_a_range_moves_the_root_again() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     instance.frame = last;
 
-    instance.activate(0.1);
-    instance.step(&node, &trajectory(1.0, 2), fixture.sources());
+    instance.delta_time = 0.1;
+    instance.step(
+        &node,
+        instance.delta_time,
+        &trajectory(1.0, 2),
+        fixture.sources(),
+    );
 
     assert_ne!(instance.frame, last);
     assert_ne!(instance.output.root_motion(), RootMotion::IDENTITY);
@@ -821,15 +895,15 @@ fn steps_shorter_than_a_database_frame_add_up_to_the_distance_played() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut instance = instance(&node, 0.0);
-    instance.step(&node, &quiet(), fixture.sources());
+    instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
     instance.frame = 20;
     let steps = 40;
     let dt = 0.5 / steps as f32;
 
     let mut travelled = Vec3::ZERO;
     for _ in 0..steps {
-        instance.activate(dt);
-        instance.step(&node, &quiet(), fixture.sources());
+        instance.delta_time = dt;
+        instance.step(&node, instance.delta_time, &quiet(), fixture.sources());
         travelled += instance.output.root_motion().translation;
     }
 
@@ -865,16 +939,4 @@ fn an_initialised_instance_copies_its_pose_to_the_output() {
 
     assert!(instance.write_output(&mut output));
     assert_eq!(output.joints()[0].translation.x, 5.0);
-}
-
-#[test]
-fn a_new_instance_is_inactive_and_activate_records_the_delta_time() {
-    let mut instance = MotionMatchingInstance::new(0.1);
-    assert!(!instance.active);
-
-    instance.activate(0.25);
-
-    assert!(instance.active);
-    assert_eq!(instance.delta_time, 0.25);
-    assert_eq!(instance.root_motion.velocity, Vec3::ZERO);
 }
