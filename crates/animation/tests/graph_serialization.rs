@@ -26,7 +26,7 @@ struct Gain {
 }
 
 impl AnimationNode for Gain {
-    type Instance = ();
+    type State = ();
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
 

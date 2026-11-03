@@ -59,7 +59,7 @@ impl BlendSpace2DInstanceNode {
 }
 
 impl AnimationNode for BlendSpace2DNode {
-    type Instance = BlendSpace2DInstanceNode;
+    type State = BlendSpace2DInstanceNode;
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> BlendSpace2DInstanceNode {
         BlendSpace2DInstanceNode::new(self.points())

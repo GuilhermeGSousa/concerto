@@ -203,12 +203,12 @@ struct Gain {
 }
 
 impl AnimationNode for Gain {
-    type Instance = ();
+    type State = ();
     // create_instance, update, evaluate, reset; is_finished defaults to true
 }
 ```
 
-The node's fields are its data and are stored with the graph. `Instance` is the
+The node's fields are its data and are stored with the graph. `State` is the
 per-player runtime state (a playhead, say): `create_instance` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it. Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`

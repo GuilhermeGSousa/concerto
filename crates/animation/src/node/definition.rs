@@ -17,20 +17,20 @@ pub type NodeInstance = Box<dyn Any + Send + Sync>;
 
 /// A kind of animation graph node: reflected data plus the per-player state it evaluates with.
 pub trait AnimationNode: Reflect + Send + Sync + 'static {
-    type Instance: Send + Sync + 'static;
+    type State: Send + Sync + 'static;
 
-    fn create_instance(&self, context: &AnimationGraphContext<'_>) -> Self::Instance;
+    fn create_instance(&self, context: &AnimationGraphContext<'_>) -> Self::State;
 
     fn update(
         &self,
-        instance: &mut Self::Instance,
+        instance: &mut Self::State,
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     );
 
     fn evaluate(
         &self,
-        instance: &mut Self::Instance,
+        instance: &mut Self::State,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         evaluated_inputs: &[EvaluatedPose],
@@ -38,9 +38,9 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         output: &mut Pose,
     );
 
-    fn reset(&self, instance: &mut Self::Instance);
+    fn reset(&self, instance: &mut Self::State);
 
-    fn is_finished(&self, _instance: &Self::Instance) -> bool {
+    fn is_finished(&self, _instance: &Self::State) -> bool {
         true
     }
 }
@@ -98,7 +98,7 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
-        if let Some(instance) = instance.downcast_mut::<T::Instance>() {
+        if let Some(instance) = instance.downcast_mut::<T::State>() {
             AnimationNode::update(self, instance, delta_time, context);
         }
     }
@@ -112,7 +112,7 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        if let Some(instance) = instance.downcast_mut::<T::Instance>() {
+        if let Some(instance) = instance.downcast_mut::<T::State>() {
             AnimationNode::evaluate(
                 self,
                 instance,
@@ -126,14 +126,14 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
     }
 
     fn reset(&self, instance: &mut NodeInstance) {
-        if let Some(instance) = instance.downcast_mut::<T::Instance>() {
+        if let Some(instance) = instance.downcast_mut::<T::State>() {
             AnimationNode::reset(self, instance);
         }
     }
 
     fn is_finished(&self, instance: &NodeInstance) -> bool {
         instance
-            .downcast_ref::<T::Instance>()
+            .downcast_ref::<T::State>()
             .is_none_or(|instance| AnimationNode::is_finished(self, instance))
     }
 
@@ -187,7 +187,7 @@ fn to_value_of<T: AnimationNode>(
 pub struct PlaceholderNode {}
 
 impl AnimationNode for PlaceholderNode {
-    type Instance = ();
+    type State = ();
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
 
@@ -232,7 +232,7 @@ mod tests {
     }
 
     impl AnimationNode for Gain {
-        type Instance = GainInstance;
+        type State = GainInstance;
 
         fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> GainInstance {
             GainInstance::default()

@@ -40,7 +40,7 @@ fn pass_through(evaluated_inputs: &[EvaluatedPose], output: &mut Pose) {
 }
 
 impl AnimationNode for ResultNode {
-    type Instance = ();
+    type State = ();
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
 
@@ -62,7 +62,7 @@ impl AnimationNode for ResultNode {
 }
 
 impl AnimationNode for BlendNode {
-    type Instance = ();
+    type State = ();
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
 
@@ -137,7 +137,7 @@ impl Default for AnimationClipNodeInstance {
 }
 
 impl AnimationNode for AnimationClipNode {
-    type Instance = AnimationClipNodeInstance;
+    type State = AnimationClipNodeInstance;
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> AnimationClipNodeInstance {
         AnimationClipNodeInstance::new().with_start_time(self.start_time)

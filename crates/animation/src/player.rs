@@ -134,7 +134,7 @@ impl AnimationPlayer {
     pub fn for_each_instance_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
-        f: impl FnMut(&N, &mut N::Instance, &AnimationBlackboard),
+        f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
     ) {
         self.graph_instance
             .for_each_instance_mut(graphs, &self.blackboard, f);

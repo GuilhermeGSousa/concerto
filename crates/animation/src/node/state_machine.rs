@@ -253,7 +253,7 @@ impl AnimationStateMachineInstance {
 }
 
 impl AnimationNode for AnimationStateMachine {
-    type Instance = AnimationStateMachineInstance;
+    type State = AnimationStateMachineInstance;
 
     fn create_instance(
         &self,

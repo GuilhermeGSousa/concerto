@@ -85,7 +85,7 @@ mod tests {
     struct OrderProbe {}
 
     impl AnimationNode for OrderProbe {
-        type Instance = bool;
+        type State = bool;
 
         fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> bool {
             false

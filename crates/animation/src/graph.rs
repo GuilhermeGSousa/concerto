@@ -413,7 +413,7 @@ impl AnimationGraphInstance {
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         blackboard: &AnimationBlackboard,
-        mut f: impl FnMut(&N, &mut N::Instance, &AnimationBlackboard),
+        mut f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
     ) {
         let Some(graph) = self
             .graph_handle
@@ -430,7 +430,7 @@ impl AnimationGraphInstance {
             else {
                 continue;
             };
-            let Some(instance) = node_state.node_instance.downcast_mut::<N::Instance>() else {
+            let Some(instance) = node_state.node_instance.downcast_mut::<N::State>() else {
                 continue;
             };
             f(node, instance, blackboard);

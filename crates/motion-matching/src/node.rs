@@ -64,7 +64,7 @@ impl Default for MotionMatchingNode {
 }
 
 impl AnimationNode for MotionMatchingNode {
-    type Instance = MotionMatchingInstance;
+    type State = MotionMatchingInstance;
 
     fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> MotionMatchingInstance {
         MotionMatchingInstance::new(self.search_period)
