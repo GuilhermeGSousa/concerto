@@ -106,8 +106,10 @@ goes in your reply or in the spec. Leave existing comments alone unless the
 code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
-`Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`, and, in
-an extract system, `Extracted`. In the editor crate a system may also take
+`Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`,
+`InputSet<K>` (the read-only inputs plugins registered under `K` with
+`App::register_input`, declared as their union), and, in an extract system,
+`Extracted`. In the editor crate a system may also take
 `EditWorld<T>`, which reads the world of the scene being edited, or of the running
 game while playing, and `EditWorldSignals`, which sends signals to it. Both skip
 the system while no document is the edit target: no scene is open, a preview is

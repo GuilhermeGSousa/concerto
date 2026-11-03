@@ -1,5 +1,7 @@
 mod component_reader;
+mod input_set;
 pub use component_reader::ComponentMetadata;
+pub use input_set::{InputSet, InputSetState, Inputs, register_input};
 
 use std::{
     borrow::Cow,
@@ -91,6 +93,15 @@ pub trait SystemInput {
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess);
+
+    /// The access of an initialized input, which may depend on its state; the default is [`SystemInput::fill_access`].
+    fn fill_state_access(
+        _state: &Self::State,
+        meta: &mut SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
+        Self::fill_access(meta, access);
+    }
 }
 
 pub trait ReadOnlySystemInput: SystemInput {}
@@ -128,6 +139,14 @@ where
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         typle_for!(i in .. => <T<{i}>>::fill_access(meta, access));
+    }
+
+    fn fill_state_access(
+        state: &Self::State,
+        meta: &mut SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
+        typle_for!(i in .. => <T<{i}>>::fill_state_access(&state[[i]], meta, access));
     }
 }
 
@@ -180,6 +199,14 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         P::fill_access(meta, access);
+    }
+
+    fn fill_state_access(
+        state: &Self::State,
+        meta: &mut SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
+        P::fill_state_access(state, meta, access);
     }
 }
 

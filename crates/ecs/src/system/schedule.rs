@@ -126,7 +126,10 @@ impl Schedule {
         filter: &TagFilter,
     ) -> CompiledSchedule {
         self.stand_in_for_inactive(filter);
-        self.setup_systems_for_compilation();
+        self.systems
+            .iter_mut()
+            .for_each(|system| system.initialize(world));
+        self.setup_systems_for_compilation(world);
 
         let mut graph = SystemDependencyGraph::new();
         let nodes: Vec<SystemNodeIndex> = self
@@ -194,10 +197,6 @@ impl Schedule {
 
         add_implicit_edges(&mut graph, &nodes, &mut reachability);
 
-        self.systems
-            .iter_mut()
-            .for_each(|system| system.initialize(world));
-
         let compiled_data = build_compiled_data(self.systems, &graph, &nodes);
 
         CompiledSchedule {
@@ -207,7 +206,7 @@ impl Schedule {
         }
     }
 
-    fn setup_systems_for_compilation(&mut self) {
+    fn setup_systems_for_compilation(&mut self, world: &mut World) {
         let mut systems = Vec::with_capacity(self.systems.len());
         let mut configs = Vec::with_capacity(self.configs.len());
 
@@ -221,7 +220,9 @@ impl Schedule {
             configs.push(config);
 
             if needs_sync {
-                systems.push(Box::new(SyncPoint));
+                let mut sync_point: Box<dyn System<In = ()>> = Box::new(SyncPoint);
+                sync_point.initialize(world);
+                systems.push(sync_point);
                 configs.push(NodeConfig::default());
             }
         }
