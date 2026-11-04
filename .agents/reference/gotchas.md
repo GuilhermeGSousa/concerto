@@ -26,7 +26,8 @@ fix the entry in the same commit as the change that made it false.
   only what moved.** `propagate_global_transforms` writes each
   `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
   world transform changed. `extract_meshes` relies on it to upload only the
-  meshes that moved.
+  meshes that moved, and `extract_skeletons` to rewrite only the bone palettes
+  of skeletons whose bones moved.
 - **A command-using system's sync point sits at its registration position,
   not after it in the run order.** The scheduler inserts the sync point next
   to the system in registration order, and orders it against other systems
