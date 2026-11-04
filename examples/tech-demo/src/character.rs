@@ -25,12 +25,12 @@ use concerto::render::{MaterialComponent, assets::material::StandardMaterial};
 use concerto::scene::{scene::Scene, spawner::SceneSpawnerComponent};
 use concerto::window::input::{Input, KeyCode, PhysicalKey};
 use concerto::{
-    ecs::{CommandQueue, Component, Res},
+    ecs::{CommandQueue, Component, Res, Resource},
     foundation::assets::asset_server::AssetServer,
     reflect::{Reflect, ReflectDefault},
 };
 use concerto_motion_matching_gizmos::MotionMatchingGizmos;
-use glam::{Quat, Vec2, Vec3};
+use glam::{EulerRot, Quat, Vec2, Vec3};
 
 const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
 const DATABASE: AssetId = asset_id!("content/lafan_database_baked.gasset");
@@ -42,7 +42,39 @@ const WALLS: [(Vec3, Vec3); 2] = [
 const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
-const CAMERA_DISTANCE: f32 = 5.0;
+
+/// The player capsule's size, how far behind it the camera sits, and how the visible character follows it.
+#[derive(Resource, Clone, Debug, PartialEq)]
+pub(crate) struct CharacterConfig {
+    pub(crate) radius: f32,
+    pub(crate) height: f32,
+    pub(crate) camera_distance: f32,
+    pub(crate) displacement: CharacterDisplacement,
+}
+
+impl CharacterConfig {
+    /// The forest's character, which follows its capsule by the default method.
+    pub(crate) fn forest() -> Self {
+        Self {
+            radius: 0.3,
+            height: 1.6,
+            camera_distance: 5.0,
+            displacement: CharacterDisplacement::default(),
+        }
+    }
+
+    /// The sanatorium's character, moved by its root motion alone.
+    pub(crate) fn sanatorium() -> Self {
+        Self {
+            radius: 0.35,
+            height: 1.8,
+            camera_distance: 3.0,
+            displacement: CharacterDisplacement::Synchronization(Synchronization {
+                data_factor: 1.0,
+            }),
+        }
+    }
+}
 
 #[derive(Component, Default)]
 pub(crate) struct Player {
@@ -56,17 +88,25 @@ pub(crate) struct PendingLink {
     graph: AssetHandle<AnimationGraph>,
 }
 
-#[derive(Component, Reflect, Default)]
+#[derive(Component, Reflect, Default, Debug, PartialEq)]
 #[reflect(Component, Default, SceneComponent)]
 pub(crate) struct PlayerSpawner {
     should_spawn: bool,
 }
 
-/// Spawns the capsule, the visible character and the two walls at the spawner, once the ground has its collider.
+impl PlayerSpawner {
+    /// A spawner that places the character on the next run.
+    pub(crate) fn ready() -> Self {
+        Self { should_spawn: true }
+    }
+}
+
+/// Spawns the capsule and the visible character at the spawner, once the ground has its collider.
 pub(crate) fn spawn_character(
     spawners: Query<(&Transform, &mut PlayerSpawner)>,
     pending_ground: Query<Entity, (With<MeshCollider>, With<MeshComponent>, Without<Collider>)>,
     asset_server: Res<AssetServer>,
+    config: Res<CharacterConfig>,
     mut cmd: CommandQueue,
 ) {
     if pending_ground.iter().next().is_some() {
@@ -80,7 +120,7 @@ pub(crate) fn spawn_character(
 
         let placement =
             Transform::from_translation_rotation(spawn_point.translation, spawn_point.rotation);
-        let collider = Collider::capsule(0.5, 0.3);
+        let collider = Collider::capsule(config.height * 0.5 - config.radius, config.radius);
         let offset = ColliderOffset::bottom_origin(&collider);
         let capsule = cmd
             .spawn((
@@ -104,28 +144,15 @@ pub(crate) fn spawn_character(
         }));
         cmd.spawn((
             placement,
-            CharacterDisplacement::default(),
+            config.displacement.clone(),
             MotionMatchingGizmos::default(),
             SceneSpawnerComponent(asset_server.load::<Scene>(CHARACTER_SCENE)),
             PendingLink { capsule, graph },
         ));
 
-        for (centre, size) in WALLS {
-            cmd.spawn((
-                Transform::from_translation(centre),
-                Collider::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5),
-                MeshComponent {
-                    handle: asset_server.add(cuboid(size)),
-                },
-                MaterialComponent {
-                    handle: asset_server
-                        .add(StandardMaterial::default().with_base_color_factor(WALL_COLOR)),
-                },
-            ));
-        }
-
+        let (yaw, _, _) = spawn_point.rotation.to_euler(EulerRot::YXZ);
         cmd.spawn((
-            CameraPivot::default(),
+            CameraPivot::facing(yaw),
             spawn_point.clone(),
             EntityFollow {
                 target: capsule,
@@ -135,12 +162,29 @@ pub(crate) fn spawn_character(
         .add_child((
             VirtualCamera::new(0),
             Transform::from_translation_rotation(
-                Vec3::NEG_Z * CAMERA_DISTANCE,
+                Vec3::NEG_Z * config.camera_distance,
                 Quat::from_rotation_y(PI),
             ),
         ));
 
         spawner.should_spawn = false;
+    }
+}
+
+/// Spawns the forest's two test walls as static colliders.
+pub(crate) fn spawn_forest_walls(asset_server: Res<AssetServer>, mut cmd: CommandQueue) {
+    for (centre, size) in WALLS {
+        cmd.spawn((
+            Transform::from_translation(centre),
+            Collider::cuboid(size.x * 0.5, size.y * 0.5, size.z * 0.5),
+            MeshComponent {
+                handle: asset_server.add(cuboid(size)),
+            },
+            MaterialComponent {
+                handle: asset_server
+                    .add(StandardMaterial::default().with_base_color_factor(WALL_COLOR)),
+            },
+        ));
     }
 }
 
@@ -233,7 +277,7 @@ fn movement(input: &Input, yaw: f32, faces_camera: bool, current: Quat) -> (Vec3
     (velocity, rotation)
 }
 
-fn facing(velocity: Vec3, current: Quat) -> Quat {
+pub(crate) fn facing(velocity: Vec3, current: Quat) -> Quat {
     if velocity == Vec3::ZERO {
         current
     } else {
@@ -276,12 +320,9 @@ fn next_displacement(current: &CharacterDisplacement) -> CharacterDisplacement {
     }
 }
 
-pub(crate) fn debug_keys(
-    characters: Query<(&mut MotionMatchingGizmos, &mut CharacterDisplacement)>,
-    input: Res<Input>,
-) {
+pub(crate) fn debug_keys(characters: Query<&mut MotionMatchingGizmos>, input: Res<Input>) {
     let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
-    for (mut gizmos, mut displacement) in characters.iter() {
+    for mut gizmos in characters.iter() {
         if pressed(KeyCode::Digit1) {
             gizmos.simulation = !gizmos.simulation;
         }
@@ -294,9 +335,15 @@ pub(crate) fn debug_keys(
         if pressed(KeyCode::Digit4) {
             gizmos.history = !gizmos.history;
         }
-        if pressed(KeyCode::KeyM) {
-            **displacement = next_displacement(&displacement);
-        }
+    }
+}
+
+pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, input: Res<Input>) {
+    if !input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyM)) {
+        return;
+    }
+    for mut displacement in characters.iter() {
+        **displacement = next_displacement(&displacement);
     }
 }
 
@@ -337,9 +384,13 @@ mod tests {
     use concerto_motion_matching_gizmos::MotionMatchingGizmos;
     use glam::{Quat, Vec3};
 
+    use concerto::director::VirtualCamera;
+    use concerto::gameplay::camera::CameraPivot;
+
     use super::{
-        CHARACTER_SCENE, DATABASE, Player, PlayerSpawner, RUN, WALK, debug_keys, facing, movement,
-        setup_character_animations, spawn_character, update_movement,
+        CHARACTER_SCENE, CharacterConfig, DATABASE, Player, PlayerSpawner, RUN, WALK,
+        cycle_displacement, debug_keys, facing, movement, setup_character_animations,
+        spawn_character, spawn_forest_walls, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -388,7 +439,7 @@ mod tests {
     }
 
     #[test]
-    fn spawning_gives_the_capsule_the_character_and_two_walls() {
+    fn spawning_gives_the_capsule_and_the_character_and_no_walls() {
         let (mut world, spawn_point) = world_with_spawner();
 
         spawned(&mut world);
@@ -415,7 +466,86 @@ mod tests {
             .query::<(&Collider, &MeshComponent, &MaterialComponent, &Transform), Without<RigidBody>>()
             .iter(&mut world)
             .count();
-        assert_eq!(walls, 2);
+        assert_eq!(walls, 0);
+    }
+
+    #[test]
+    fn the_capsule_and_the_camera_take_their_size_from_the_character_config() {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(CharacterConfig::sanatorium());
+
+        spawned(&mut world);
+
+        let offsets: Vec<Vec3> = world
+            .query::<&ColliderOffset, With<Player>>()
+            .iter(&mut world)
+            .map(|offset| offset.0)
+            .collect();
+        assert_eq!(offsets, vec![Vec3::Y * 0.9]);
+        let cameras: Vec<Vec3> = world
+            .query::<&Transform, With<VirtualCamera>>()
+            .iter(&mut world)
+            .map(|transform| transform.translation)
+            .collect();
+        assert_eq!(cameras, vec![Vec3::NEG_Z * 3.0]);
+    }
+
+    #[test]
+    fn the_character_moves_by_the_displacement_the_config_names() {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(CharacterConfig::sanatorium());
+
+        spawned(&mut world);
+
+        let methods: Vec<CharacterDisplacement> = visible_characters(&mut world)
+            .into_iter()
+            .map(|(_, _, displacement, _)| displacement)
+            .collect();
+        assert_eq!(
+            methods,
+            vec![CharacterDisplacement::Synchronization(Synchronization {
+                data_factor: 1.0
+            })]
+        );
+    }
+
+    #[test]
+    fn the_camera_starts_behind_a_spawner_that_faces_away_from_the_default() {
+        let (mut world, _) = world_with_spawner();
+        for mut transform in world
+            .query::<&mut Transform, With<PlayerSpawner>>()
+            .iter(&mut world)
+        {
+            transform.rotation = Quat::from_rotation_y(std::f32::consts::PI);
+        }
+
+        spawned(&mut world);
+
+        let yaws: Vec<f32> = world
+            .query::<&CameraPivot, ()>()
+            .iter(&mut world)
+            .map(|pivot| pivot.yaw().abs())
+            .collect();
+        assert_eq!(yaws.len(), 1);
+        assert!((yaws[0] - std::f32::consts::PI).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_forest_walls_are_static_colliders() {
+        let (mut world, _) = world_with_spawner();
+        let mut system = spawn_forest_walls.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let walls: Vec<Vec3> = world
+            .query::<(&Transform, &Collider, &MeshComponent, &MaterialComponent), Without<RigidBody>>()
+            .iter(&mut world)
+            .map(|(transform, ..)| transform.translation)
+            .collect();
+        assert_eq!(
+            walls,
+            vec![Vec3::new(0.0, 1.0, -18.0), Vec3::new(5.0, 1.0, -28.0)]
+        );
     }
 
     #[test]
@@ -527,6 +657,7 @@ mod tests {
         stored::<AnimationGraph>(&mut world, &mut server);
         stored::<MotionDatabase>(&mut world, &mut server);
         world.insert_resource(server);
+        world.insert_resource(CharacterConfig::forest());
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);
         world.spawn((
             Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),
@@ -721,11 +852,18 @@ mod tests {
         ))
     }
 
-    fn pressed(world: &mut World, key: KeyCode) {
+    fn pressed<M>(world: &mut World, key: KeyCode, system: impl IntoSystem<(), M>) {
         world.insert_resource(holding(&[key]));
-        let mut system = debug_keys.into_system();
+        let mut system = system.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
+    }
+
+    fn displacement(world: &World, character: Entity) -> CharacterDisplacement {
+        world
+            .get_component_for_entity::<CharacterDisplacement>(character)
+            .unwrap()
+            .clone()
     }
 
     fn layers(world: &World, character: Entity) -> [bool; 4] {
@@ -752,12 +890,12 @@ mod tests {
             let mut world = World::new();
             let character = debugged_character(&mut world);
 
-            pressed(&mut world, key);
+            pressed(&mut world, key, debug_keys);
             let mut expected = [true; 4];
             expected[layer] = false;
             assert_eq!(layers(&world, character), expected);
 
-            pressed(&mut world, key);
+            pressed(&mut world, key, debug_keys);
             assert_eq!(layers(&world, character), [true; 4]);
         }
     }
@@ -769,11 +907,8 @@ mod tests {
 
         let methods: Vec<CharacterDisplacement> = (0..4)
             .map(|_| {
-                pressed(&mut world, KeyCode::KeyM);
-                world
-                    .get_component_for_entity::<CharacterDisplacement>(character)
-                    .unwrap()
-                    .clone()
+                pressed(&mut world, KeyCode::KeyM, cycle_displacement);
+                displacement(&world, character)
             })
             .collect();
 
@@ -785,6 +920,19 @@ mod tests {
                 CharacterDisplacement::Synchronization(Synchronization { data_factor: 1.0 }),
                 CharacterDisplacement::Adjustment(Adjustment::default()),
             ]
+        );
+    }
+
+    #[test]
+    fn the_gizmo_keys_leave_the_displacement_method_alone() {
+        let mut world = World::new();
+        let character = debugged_character(&mut world);
+
+        pressed(&mut world, KeyCode::KeyM, debug_keys);
+
+        assert_eq!(
+            displacement(&world, character),
+            CharacterDisplacement::default()
         );
     }
 

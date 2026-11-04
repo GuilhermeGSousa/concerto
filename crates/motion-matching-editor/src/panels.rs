@@ -29,6 +29,7 @@ use concerto_reflect::TypeRegistry;
 use concerto_ui::elements::{Label, Listening, Pressable, Text, prelude::*};
 use concerto_ui::{
     anchor::UIAnchoredPanel,
+    checkbox::{UICheckbox, UICheckboxChanged},
     interaction::{Interactable, UIClick, UIDisabled, UIInteractionStyle},
     node::{FlexDirection, UILayout, UINode, UIRect},
     scroll::{SCROLLBAR_WIDTH, UIScrollArea},
@@ -50,6 +51,7 @@ const TITLE_HEIGHT: f32 = 16.0;
 const ROW_PADDING: f32 = 4.0;
 const STAT_HEIGHT: f32 = 16.0;
 const STATS_MAX_HEIGHT: f32 = 160.0;
+const CHECKBOX_SIZE: f32 = 12.0;
 
 #[derive(Component)]
 pub(crate) struct DefinitionPanels {
@@ -80,6 +82,7 @@ struct EntryWidgets {
     name: Entity,
     range: Entity,
     driven: Entity,
+    mirrored: Entity,
     remove: Entity,
 }
 
@@ -196,6 +199,22 @@ fn remove_entry(document: Entity, index: usize) -> Listener<UIClick> {
     .into_listener()
 }
 
+fn toggle_mirrored(document: Entity, index: usize) -> Listener<UICheckboxChanged> {
+    (move |on: On<UICheckboxChanged>,
+           documents: Query<&mut DefinitionDocument>,
+           mut cmd: CommandQueue| {
+        let checked = on.signal().checked;
+        if let Some(mut state) = documents.get_entity(document)
+            && let Some(entry) = state.entries.get(index)
+            && entry.mirrored != checked
+        {
+            state.entries[index].mirrored = checked;
+            cmd.insert(Unsaved, document);
+        }
+    })
+    .into_listener()
+}
+
 fn toggle_skeleton_picker(document: Entity) -> Listener<UIClick> {
     (move |on: On<UIClick>,
            documents: Query<&DefinitionDocument>,
@@ -287,6 +306,7 @@ fn pick_clip(document: Entity) -> impl Fn(AssetId) -> Listener<UIClick> {
                 state.entries.push(MotionEntry {
                     clip: AssetHandle::weak(id),
                     range: None,
+                    mirrored: false,
                 });
                 state.selected_entry = Some(state.entries.len() - 1);
                 cmd.insert(Unsaved, document);
@@ -589,6 +609,32 @@ fn spawn_entry_row(
     let driven = facts
         .spawn_child(theme.label("").small().no_wrap())
         .entity();
+    let mirrored = facts
+        .spawn_child(
+            theme
+                .checkbox("", false)
+                .size(UIValue::Px(CHECKBOX_SIZE), UIValue::Px(CHECKBOX_SIZE))
+                .padding(0.0)
+                .margin(UIRect {
+                    left: theme.spacing_sm,
+                    ..UIRect::all(0.0)
+                })
+                .radius_sm()
+                .fixed()
+                .on_change(toggle_mirrored(document, index)),
+        )
+        .entity();
+    facts.add_child(
+        theme
+            .label("Mirrored")
+            .small()
+            .muted()
+            .no_wrap()
+            .margin(UIRect {
+                left: theme.spacing_xs,
+                ..UIRect::all(0.0)
+            }),
+    );
     let remove = row
         .spawn_child(icon_button(
             theme,
@@ -601,6 +647,7 @@ fn spawn_entry_row(
         name,
         range,
         driven,
+        mirrored,
         remove,
     }
 }
@@ -922,6 +969,14 @@ fn write_disabled(
     }
 }
 
+fn write_checked(checkboxes: &Query<&mut UICheckbox>, entity: Entity, checked: bool) {
+    if let Some(mut checkbox) = checkboxes.get_entity(entity)
+        && checkbox.checked != checked
+    {
+        checkbox.checked = checked;
+    }
+}
+
 fn channel_rows_match(rows: &[ChannelWidgets], wanted: &[(Option<ChannelId>, String)]) -> bool {
     rows.len() == wanted.len()
         && rows
@@ -962,6 +1017,7 @@ pub(crate) fn sync_definition_panels(
     timelines: Query<&mut Timeline>,
     texts: Query<&mut UIText>,
     nodes: Query<&mut UINode>,
+    checkboxes: Query<&mut UICheckbox>,
     styles: Query<&mut UIInteractionStyle>,
     disabled: Query<&UIDisabled>,
     assets: Res<AssetRegistry>,
@@ -1028,6 +1084,7 @@ pub(crate) fn sync_definition_panels(
                 driven_line(state.facts_of(clip), !state.skeleton.id().is_nil(), &theme);
             write_text(&texts, row.driven, &driven);
             write_color(&texts, row.driven, color);
+            write_checked(&checkboxes, row.mirrored, entry.mirrored);
             write_selected(
                 &styles,
                 &theme,
@@ -1035,6 +1092,7 @@ pub(crate) fn sync_definition_panels(
                 state.selected_entry == Some(index),
             );
             write_disabled(&disabled, &mut cmd, row.remove, read_only);
+            write_disabled(&disabled, &mut cmd, row.mirrored, read_only);
         }
 
         if let Some(mut timeline) = timelines.get_entity(panels.timeline) {

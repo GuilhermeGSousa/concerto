@@ -23,7 +23,8 @@ to open a clip in a tab lists that crate as well; see its
 
 `DefinitionDocument`, in the editor's world, holds the whole definition: the
 skeleton, the entries, a `DatabaseSettings` with the rate, the speed, the
-simulation bone and the trajectory, and one `HeldChannel` per channel, a live
+simulation bone, the trajectory and the `mirror_axis`, `X` or `Z`, that
+mirrored entries are mirrored across, and one `HeldChannel` per channel, a live
 `FeatureChannel` under the type name a save writes back. It waits for the
 preview, because a game's channel types are only in the preview's type registry.
 The preview `App` holds only the stage, and nothing edits in it. A second
@@ -60,9 +61,13 @@ The `left` host scrolls and holds:
   channel in the clip. It uses the warning colour when that differs from the
   clip's bones, so the clip names bones this skeleton does not have. Before the
   clip has been read it reads `Reading…`, with no skeleton `No skeleton`, and for
-  a clip that cannot be read `Can't read`. A click selects the entry, **+** opens
+  a clip that cannot be read `Can't read`. A **Mirrored** checkbox ends the line:
+  it sets the entry's `mirrored`, so the bake and baked playback take the clip's
+  poses through the mirror across `mirror_axis`, and it is disabled when the
+  document is read-only. A click selects the entry, **+** opens
   the asset picker over every clip and appends the pick as a whole clip, and **−**
-  removes the entry. The same clip can be listed twice.
+  removes the entry. The same clip can be listed twice, once mirrored, to give
+  the database both sides of the motion.
 - **Settings**: a row that picks `Settings`.
 - **Channels**: a row per channel with its value's name. A click picks it, **−**
   removes it, and **+** opens a menu of the types in the game's type registry
@@ -166,14 +171,16 @@ through `clip_preview`, read on a worker, and that is also the fallback for a
 baked file made for another skeleton, one whose clips cannot be read, or one the
 skeleton no longer fits. Picking another skeleton stops a database at once. Nothing
 plays until the baked state is known, so a definition with baked data never
-flashes a clip when it opens.
+flashes a clip when it opens. That clip plays unmirrored, even for a mirrored
+entry; once the database is built, it plays the mirrored frames.
 
 The `Timeline` is always the selected entry's. With a clip its head is the
 preview's time and a scrub sends `SeekClip`. With a database, selecting an entry
 moves the playback to the entry's first frame, a scrub sends `SeekDatabase` to the
 nearest baked frame of that entry, and `DatabaseProgress` moves the head, so it
 returns to the entry's first frame each time the entry loops. An entry whose clip
-is not the one baked at its place is not sought, so the head stays where it is and
+is not the one baked at its place, or whose Mirrored differs from the baked
+entry's, is not sought, so the head stays where it is and
 the playback goes on looping the entry it was in. The tab has no transport:
 the preview always plays, and a scrub moves it without pausing.
 

@@ -24,8 +24,8 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    BakeError, FeatureChannel, FeatureChannelData, MotionDatabaseDefinition, MotionEntry,
-    SimulationBoneSettings, TrajectorySettings,
+    BakeError, FeatureChannel, FeatureChannelData, MirrorAxis, MotionDatabaseDefinition,
+    MotionEntry, SimulationBoneSettings, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
@@ -46,6 +46,7 @@ pub struct DatabaseSettings {
     pub speed: f32,
     pub simulation: SimulationBoneSettings,
     pub trajectory: TrajectorySettings,
+    pub mirror_axis: MirrorAxis,
 }
 
 impl DatabaseSettings {
@@ -56,6 +57,7 @@ impl DatabaseSettings {
             speed: definition.speed,
             simulation: definition.simulation.clone(),
             trajectory: definition.trajectory,
+            mirror_axis: definition.mirror_axis,
         }
     }
 }
@@ -159,6 +161,7 @@ impl DefinitionDocument {
             simulation: settings.simulation,
             trajectory: settings.trajectory,
             channels: self.channels.iter().map(HeldChannel::data).collect(),
+            mirror_axis: settings.mirror_axis,
         })
     }
 

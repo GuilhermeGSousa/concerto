@@ -1,6 +1,7 @@
 use std::f32::consts::{PI, TAU};
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation::mirror::PoseMirror;
 use concerto_foundation::{math::spring_damper::angular_velocity, transform::Transform};
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
@@ -165,7 +166,7 @@ pub fn simulation_bone(
 
     let mut yaws: Vec<f32> = Vec::with_capacity(model_poses.len());
     for pose in model_poses {
-        let direction = pose[facing_joint].rotation * settings.facing_axis;
+        let direction = pose[facing_joint].rotation * settings.facing_axis.vector();
         let flat = Vec3::new(direction.x, 0.0, direction.z);
         let previous = yaws.last().copied();
         let yaw = if flat.length() > 1e-6 {
@@ -313,6 +314,7 @@ pub fn bake_with_progress(
     mut on_entry: impl FnMut(usize, usize),
 ) -> Result<MotionDatabase, BakeError> {
     let plans = plan_entries(definition, skeleton, clips)?;
+    let mirror = mirror_of(definition, skeleton)?;
     check_window("position_window", definition.simulation.position_window)?;
     check_window("facing_window", definition.simulation.facing_window)?;
     find_joint(skeleton, &definition.simulation.position_joint)?;
@@ -350,7 +352,7 @@ pub fn bake_with_progress(
     let mut simulation_frames = Vec::with_capacity(frame_count);
 
     for (index, (plan, clip)) in plans.iter().zip(clips).enumerate() {
-        let locals: Vec<Vec<JointPose>> = (0..plan.frames)
+        let mut locals: Vec<Vec<JointPose>> = (0..plan.frames)
             .map(|index| {
                 sample_pose(
                     skeleton,
@@ -359,6 +361,17 @@ pub fn bake_with_progress(
                 )
             })
             .collect();
+        if let Some(mirror) = mirror
+            .as_ref()
+            .filter(|_| definition.entries[index].mirrored)
+        {
+            for local in &mut locals {
+                let sampled = local.clone();
+                mirror
+                    .mirror_into(&sampled, local)
+                    .map_err(BakeError::Mirror)?;
+            }
+        }
         let models: Vec<Vec<Transform>> = locals
             .iter()
             .map(|local| model_pose(skeleton, local))
@@ -406,6 +419,12 @@ pub fn bake_with_progress(
             .iter()
             .map(|entry| entry.clip.clone())
             .collect(),
+        definition
+            .entries
+            .iter()
+            .map(|entry| entry.mirrored)
+            .collect(),
+        mirror.as_ref().map(|_| definition.mirror_axis),
         rate,
         definition.speed,
         definition.trajectory,
@@ -420,6 +439,18 @@ pub fn bake_with_progress(
         offset,
         deviations,
     ))
+}
+
+fn mirror_of(
+    definition: &MotionDatabaseDefinition,
+    skeleton: &Skeleton,
+) -> Result<Option<PoseMirror>, BakeError> {
+    if !definition.entries.iter().any(|entry| entry.mirrored) {
+        return Ok(None);
+    }
+    PoseMirror::new(skeleton, definition.mirror_axis.normal())
+        .map(Some)
+        .map_err(BakeError::Mirror)
 }
 
 // todo: dont return tuples its gross

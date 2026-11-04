@@ -1,4 +1,5 @@
 use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::mirror::{MirrorError, PoseMirror};
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{
@@ -7,8 +8,8 @@ use concerto_motion_matching::bake::{
 };
 use concerto_motion_matching::{
     BakeError, BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData, FrameContext,
-    MotionDatabase, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
-    SimulationBoneSettings, TimeRange, TrajectorySample, TrajectorySettings,
+    JointAxis, MirrorAxis, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, TimeRange, TrajectorySample, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -56,6 +57,7 @@ fn entry(range: Option<(f32, f32)>) -> MotionEntry {
     MotionEntry {
         clip: Default::default(),
         range: range.map(|(start, end)| TimeRange { start, end }),
+        mirrored: false,
     }
 }
 
@@ -251,7 +253,7 @@ fn a_straight_walk_faces_its_travel_and_moves_at_walk_speed() {
     let poses = walk_model_poses(&skeleton, 2.0, 60.0);
 
     let settings = SimulationBoneSettings {
-        facing_axis: Vec3::Z,
+        facing_axis: JointAxis::Z,
         ..Default::default()
     };
 
@@ -266,6 +268,23 @@ fn a_straight_walk_faces_its_travel_and_moves_at_walk_speed() {
     for pair in simulation.windows(2) {
         let speed = (pair[1].translation - pair[0].translation).length() * 60.0;
         assert!((speed - 1.0).abs() < 1e-2, "{speed}");
+    }
+}
+
+#[test]
+fn a_negative_facing_axis_faces_the_other_way() {
+    let skeleton = body_skeleton();
+    let poses = walk_model_poses(&skeleton, 2.0, 60.0);
+    let settings = SimulationBoneSettings {
+        facing_axis: JointAxis::NegZ,
+        ..Default::default()
+    };
+
+    let simulation = simulation_bone(&settings, &skeleton, &poses).unwrap();
+
+    for (frame, transform) in simulation.iter().enumerate() {
+        let facing = transform.rotation * Vec3::Z;
+        assert!((facing - Vec3::Z).length() < 1e-3, "frame {frame}");
     }
 }
 
@@ -355,7 +374,7 @@ fn a_window_longer_than_the_range_is_clamped() {
     assert_eq!(poses.len(), 6);
 
     let settings = SimulationBoneSettings {
-        facing_axis: Vec3::Z,
+        facing_axis: JointAxis::Z,
         ..Default::default()
     };
 
@@ -370,7 +389,7 @@ fn a_zero_length_facing_vector_holds_the_previous_yaw() {
     let skeleton = body_skeleton();
     let poses = walk_model_poses(&skeleton, 1.0, 60.0);
     let settings = SimulationBoneSettings {
-        facing_axis: Vec3::Y,
+        facing_axis: JointAxis::Y,
         ..Default::default()
     };
 
@@ -491,7 +510,7 @@ fn baking_definition(
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -1197,4 +1216,188 @@ fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
 
     assert!(result.is_err());
     assert_eq!(reports, 0);
+}
+
+fn legged_skeleton(right_leg: Vec3) -> Skeleton {
+    Skeleton::new(
+        vec![Mat4::IDENTITY; 5],
+        vec![None, Some(0), Some(1), Some(1), Some(1)],
+        vec![
+            "Root".into(),
+            "Hips".into(),
+            "Spine2".into(),
+            "LeftLeg".into(),
+            "RightLeg".into(),
+        ],
+        vec![
+            JointPose::IDENTITY,
+            JointPose {
+                translation: Vec3::new(0.0, 1.0, 0.0),
+                rotation: Quat::from_rotation_y(std::f32::consts::PI),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: Vec3::new(0.0, 0.3, 0.0),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: Vec3::new(0.2, -0.1, 0.0),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: right_leg,
+                ..JointPose::IDENTITY
+            },
+        ],
+        (1..=5).map(Uuid::from_u128).collect(),
+    )
+    .unwrap()
+}
+
+fn symmetric_skeleton() -> Skeleton {
+    legged_skeleton(Vec3::new(-0.2, -0.1, 0.0))
+}
+
+fn diagonal_turning_clip(duration: f32) -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        Uuid::from_u128(1),
+        AnimationChannel::new(
+            vec![0.0, duration],
+            AnimationChanelOutput::Translation(vec![
+                Vec3::ZERO,
+                Vec3::new(0.6 * duration, 0.0, -duration),
+            ]),
+        ),
+    );
+    clip.add_channel(
+        Uuid::from_u128(2),
+        AnimationChannel::new(
+            vec![0.0, duration],
+            AnimationChanelOutput::Rotation(vec![
+                Quat::from_rotation_y(std::f32::consts::PI),
+                Quat::from_rotation_y(std::f32::consts::PI + 1.0),
+            ]),
+        ),
+    );
+    clip.add_channel(
+        Uuid::from_u128(4),
+        AnimationChannel::new(
+            vec![0.0, duration],
+            AnimationChanelOutput::Rotation(vec![Quat::IDENTITY, Quat::from_rotation_x(0.7)]),
+        ),
+    );
+    clip
+}
+
+fn mirrored(range: Option<(f32, f32)>) -> MotionEntry {
+    MotionEntry {
+        mirrored: true,
+        ..entry(range)
+    }
+}
+
+fn reflect_x(vector: Vec3) -> Vec3 {
+    Vec3::new(-vector.x, vector.y, vector.z)
+}
+
+#[test]
+fn a_mirrored_entry_bakes_the_mirrored_simulation_bone() {
+    let skeleton = symmetric_skeleton();
+    let clip = diagonal_turning_clip(2.0);
+    let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
+
+    let database = bake(&definition, &skeleton, &[&clip, &clip]).unwrap();
+
+    assert_eq!(database.mirrored(), &[false, true]);
+    assert_eq!(database.mirror_axis(), Some(MirrorAxis::X));
+    assert_eq!(database.clips()[0], database.clips()[1]);
+    let frames = database.frames_of_entry(0).unwrap();
+    assert_eq!(database.frames_of_entry(1), Some(frames));
+    let mut travelled = 0.0f32;
+    for frame in 0..frames {
+        let original = database.simulation(frame);
+        let mirror = database.simulation(frames + frame);
+        travelled = travelled.max(original.translation.x.abs());
+        assert!(
+            (mirror.translation - reflect_x(original.translation)).length() < 1e-4,
+            "frame {frame}: {} vs {}",
+            mirror.translation,
+            original.translation
+        );
+        let forward = mirror.rotation * Vec3::Z;
+        let expected = reflect_x(original.rotation * Vec3::Z);
+        assert!(
+            (forward - expected).length() < 1e-4,
+            "frame {frame}: {forward} vs {expected}"
+        );
+    }
+    assert!(travelled > 0.5);
+}
+
+#[test]
+fn a_mirrored_frames_pose_is_the_mirrored_sampled_pose_under_its_simulation_bone() {
+    let skeleton = symmetric_skeleton();
+    let clip = diagonal_turning_clip(2.0);
+    let definition = baking_definition(vec![entry(None), mirrored(Some((0.5, 1.5)))], Vec::new());
+    let clips = [&clip, &clip];
+    let database = bake(&definition, &skeleton, &clips).unwrap();
+    let mirror = PoseMirror::new(&skeleton, Vec3::X).unwrap();
+
+    for frame in database.ranges().nth(1).unwrap() {
+        let (entry, time) = database.clip_time(frame).unwrap();
+        assert_eq!(entry, 1);
+        let sampled = sample_pose(&skeleton, &clip, time);
+        let mut expected = sampled.clone();
+        mirror.mirror_into(&sampled, &mut expected).unwrap();
+        let model = model_pose(&skeleton, &expected);
+        reexpress_roots(&skeleton, &mut expected, &model, database.simulation(frame));
+
+        assert_eq!(database.pose(frame, &skeleton, &clips).unwrap(), expected);
+    }
+}
+
+#[test]
+fn a_mirrored_frames_pose_on_a_skeleton_that_cannot_be_mirrored_is_a_mirror_error() {
+    let clip = diagonal_turning_clip(2.0);
+    let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
+    let clips = [&clip, &clip];
+    let database = bake(&definition, &symmetric_skeleton(), &clips).unwrap();
+    let asymmetric = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
+    let frame = database.ranges().nth(1).unwrap().start;
+
+    assert!(database.pose(0, &asymmetric, &clips).is_ok());
+    assert!(matches!(
+        database.pose(frame, &asymmetric, &clips),
+        Err(BakeError::Mirror(MirrorError::Asymmetric { .. }))
+    ));
+}
+
+#[test]
+fn a_mirrored_entry_on_an_asymmetric_skeleton_is_a_mirror_error() {
+    let skeleton = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
+    let clip = diagonal_turning_clip(1.0);
+    let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
+
+    let error = bake(&definition, &skeleton, &[&clip, &clip]).err().unwrap();
+
+    assert!(
+        matches!(error, BakeError::Mirror(MirrorError::Asymmetric { .. })),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn without_a_mirrored_entry_the_mirror_is_neither_built_nor_stored() {
+    let skeleton = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
+    let clip = diagonal_turning_clip(1.0);
+    for axis in [MirrorAxis::X, MirrorAxis::Z] {
+        let mut definition = baking_definition(vec![entry(None)], Vec::new());
+        definition.mirror_axis = axis;
+
+        let database = bake(&definition, &skeleton, &[&clip]).unwrap();
+
+        assert_eq!(database.mirror_axis(), None);
+        assert_eq!(database.mirrored(), &[false]);
+    }
 }

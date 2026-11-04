@@ -3,6 +3,7 @@ use std::fmt;
 use std::ops::Range;
 
 use concerto_animation::clip::AnimationClip;
+use concerto_animation::mirror::{MirrorError, PoseMirror};
 use concerto_foundation::assets::{
     asset_server::AssetLoadContext, handle::AssetHandle, Asset, LoadableAsset,
 };
@@ -16,7 +17,7 @@ use concerto_reflect::ReflectedValue;
 
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
 use crate::channel::{BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData};
-use crate::definition::{MotionDatabaseDefinition, TrajectorySettings};
+use crate::definition::{MirrorAxis, MotionDatabaseDefinition, TrajectorySettings};
 use crate::simulation::TrajectorySample;
 
 /// Where one feature channel's values sit in a frame's feature vector, and the channel that wrote them.
@@ -135,10 +136,13 @@ impl<'de> Deserialize<'de> for ChannelSpan {
 
 /// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[asset(version = 2)]
 pub struct MotionDatabase {
     skeleton: AssetHandle<Skeleton>,
     bone_count: usize,
     clips: Vec<AssetHandle<AnimationClip>>,
+    mirrored: Vec<bool>,
+    mirror_axis: Option<MirrorAxis>,
     rate: f32,
     speed: f32,
     trajectory: TrajectorySettings,
@@ -163,6 +167,8 @@ impl MotionDatabase {
         skeleton: AssetHandle<Skeleton>,
         bone_count: usize,
         clips: Vec<AssetHandle<AnimationClip>>,
+        mirrored: Vec<bool>,
+        mirror_axis: Option<MirrorAxis>,
         rate: f32,
         speed: f32,
         trajectory: TrajectorySettings,
@@ -181,6 +187,8 @@ impl MotionDatabase {
             skeleton,
             bone_count,
             clips,
+            mirrored,
+            mirror_axis,
             rate,
             speed,
             trajectory,
@@ -227,6 +235,16 @@ impl MotionDatabase {
     /// One clip per entry, in entry order.
     pub fn clips(&self) -> &[AssetHandle<AnimationClip>] {
         &self.clips
+    }
+
+    /// Whether each entry plays its clip mirrored, in entry order.
+    pub fn mirrored(&self) -> &[bool] {
+        &self.mirrored
+    }
+
+    /// The axis mirrored entries are mirrored across, when some entry is mirrored.
+    pub fn mirror_axis(&self) -> Option<MirrorAxis> {
+        self.mirror_axis
     }
 
     /// Database frames per second.
@@ -377,6 +395,15 @@ impl MotionDatabase {
             frame_count: self.frame_count,
         })?;
         let mut local = sample_pose(skeleton, clips[entry], time);
+        if let Some(axis) = self
+            .mirror_axis
+            .filter(|_| self.mirrored.get(entry).copied().unwrap_or(false))
+        {
+            let sampled = local.clone();
+            PoseMirror::new(skeleton, axis.normal())
+                .and_then(|mirror| mirror.mirror_into(&sampled, &mut local))
+                .map_err(BakeError::Mirror)?;
+        }
         let model = model_pose(skeleton, &local);
         reexpress_roots(skeleton, &mut local, &model, self.simulation(frame));
         Ok(local)
@@ -518,6 +545,7 @@ pub enum BakeError {
     InvalidWeight(f32),
     ChannelCountMismatch { expected: usize, actual: usize },
     TrajectoryTooShort { needed: usize, actual: usize },
+    Mirror(MirrorError),
 }
 
 impl fmt::Display for BakeError {
@@ -583,6 +611,7 @@ impl fmt::Display for BakeError {
                     "the trajectory has {actual} samples, a channel reads {needed}"
                 )
             }
+            BakeError::Mirror(error) => write!(f, "the pose cannot be mirrored: {error}"),
         }
     }
 }

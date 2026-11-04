@@ -25,6 +25,11 @@ pub struct CameraPivot {
 }
 
 impl CameraPivot {
+    /// A level pivot turned `yaw` radians about +Y.
+    pub fn facing(yaw: f32) -> Self {
+        Self { yaw, pitch: 0.0 }
+    }
+
     pub fn yaw(&self) -> f32 {
         self.yaw
     }
