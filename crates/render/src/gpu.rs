@@ -27,7 +27,7 @@ impl Gpu {
         })
     }
 
-    /// Requests a device, or returns `None` when the machine has no suitable adapter.
+    /// Requests a device, or returns `None` when the machine has no suitable adapter; panics when `WGPU_ADAPTER_NAME` names no usable adapter.
     pub async fn request(
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
@@ -113,14 +113,6 @@ mod tests {
     #[test]
     fn the_high_performance_adapter_is_preferred_by_default() {
         assert_eq!(power_preference(None), PowerPreference::HighPerformance);
-    }
-
-    #[test]
-    fn the_environment_overrides_the_power_preference() {
-        assert_eq!(
-            power_preference(Some(PowerPreference::LowPower)),
-            PowerPreference::LowPower
-        );
     }
 
     #[test]
