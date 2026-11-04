@@ -61,12 +61,7 @@ impl RenderAssetBytesPerFrameLimiter {
         let Some(max_bytes) = self.max_bytes else {
             return true;
         };
-        let written = self
-            .bytes_written
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |written| {
-                Some(written.saturating_add(bytes))
-            })
-            .unwrap_or_else(|written| written);
+        let written = self.bytes_written.fetch_add(bytes, Ordering::Relaxed);
         if written >= max_bytes {
             self.deferred.store(true, Ordering::Relaxed);
             return false;
