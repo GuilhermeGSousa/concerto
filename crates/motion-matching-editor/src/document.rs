@@ -24,11 +24,10 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    FeatureChannel, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
+    FeatureChannel, MirrorAxis, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
     SimulationBoneSettings, StoredChannel, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_value};
-use glam::Vec3;
 use uuid::Uuid;
 
 use crate::{
@@ -47,7 +46,7 @@ pub struct DatabaseSettings {
     pub speed: f32,
     pub simulation: SimulationBoneSettings,
     pub trajectory: TrajectorySettings,
-    pub mirror_axis: Vec3,
+    pub mirror_axis: MirrorAxis,
 }
 
 impl DatabaseSettings {

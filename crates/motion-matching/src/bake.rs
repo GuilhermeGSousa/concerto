@@ -168,7 +168,7 @@ pub fn simulation_bone(
 
     let mut yaws: Vec<f32> = Vec::with_capacity(model_poses.len());
     for pose in model_poses {
-        let direction = pose[facing_joint].rotation * settings.facing_axis;
+        let direction = pose[facing_joint].rotation * settings.facing_axis.vector();
         let flat = Vec3::new(direction.x, 0.0, direction.z);
         let previous = yaws.last().copied();
         let yaw = if flat.length() > 1e-6 {
@@ -459,14 +459,7 @@ fn mirror_of(
     if !definition.entries.iter().any(|entry| entry.mirrored) {
         return Ok(None);
     }
-    let axis = definition.mirror_axis;
-    let horizontal = axis
-        .try_normalize()
-        .is_some_and(|normal| normal.y.abs() <= 1e-3);
-    if !horizontal {
-        return Err(BakeError::InvalidMirrorAxis(axis));
-    }
-    PoseMirror::new(skeleton, axis)
+    PoseMirror::new(skeleton, definition.mirror_axis.normal())
         .map(Some)
         .map_err(BakeError::Mirror)
 }

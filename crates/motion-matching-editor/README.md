@@ -23,8 +23,8 @@ to open a clip in a tab lists that crate as well; see its
 
 `DefinitionDocument`, in the editor's world, holds the whole definition: the
 skeleton, the entries, a `DatabaseSettings` with the rate, the speed, the
-simulation bone, the trajectory and the `mirror_axis` that mirrored entries are
-mirrored across, and one `HeldChannel` per channel, a live
+simulation bone, the trajectory and the `mirror_axis`, `X` or `Z`, that
+mirrored entries are mirrored across, and one `HeldChannel` per channel, a live
 `FeatureChannel` under the type name a save writes back. It waits for the
 preview, because a game's channel types are only in the preview's type registry.
 The preview `App` holds only the stage, and nothing edits in it. A second

@@ -4,9 +4,9 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{bake, trajectory_samples};
 use concerto_motion_matching::{
     reference_channels, BakeError, BodyMotion, BonePositions, BoneVelocities, ChannelSource,
-    FeatureChannel, FeatureQuery, FrameContext, MotionDatabase, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel,
-    TrajectoryDirections, TrajectoryPositions, TrajectorySample,
+    FeatureChannel, FeatureQuery, FrameContext, JointAxis, MotionDatabase,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    StoredChannel, TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -118,7 +118,7 @@ fn baked(channels: Vec<StoredChannel>) -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -349,7 +349,7 @@ fn bake_with(channel: StoredChannel) -> Result<MotionDatabase, BakeError> {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -447,7 +447,7 @@ fn query_database() -> MotionDatabase {
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()

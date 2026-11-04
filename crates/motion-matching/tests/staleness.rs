@@ -4,8 +4,8 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
     is_stale, weightless_hash, weights_changed_only, weights_of, BakeError, FeatureChannel,
-    FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
-    SimulationBoneSettings, StoredChannel, TimeRange,
+    FrameContext, MirrorAxis, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
 };
 use concerto_reflect::{to_value, Reflect, TypeRegistry};
 use glam::{Mat4, Vec3};
@@ -198,13 +198,13 @@ fn a_changed_mirrored_flag_changes_the_hash() {
 #[test]
 fn the_mirror_axis_changes_the_hash_only_when_an_entry_is_mirrored() {
     let mut unmirrored = definition();
-    unmirrored.mirror_axis = Vec3::Z;
+    unmirrored.mirror_axis = MirrorAxis::Z;
     assert_eq!(hash(&unmirrored), hash(&definition()));
 
     let mut mirrored = definition();
     mirrored.entries[1].mirrored = true;
     let mut turned = mirrored.clone();
-    turned.mirror_axis = Vec3::Z;
+    turned.mirror_axis = MirrorAxis::Z;
     assert_ne!(hash(&turned), hash(&mirrored));
 }
 

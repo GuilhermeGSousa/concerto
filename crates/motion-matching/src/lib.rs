@@ -26,8 +26,8 @@ pub use channel::{
 };
 pub use database::{BakeError, ChannelSpan, MotionDatabase};
 pub use definition::{
-    MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel, TimeRange,
-    TrajectorySettings,
+    JointAxis, MirrorAxis, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
+    StoredChannel, TimeRange, TrajectorySettings,
 };
 pub use displacement::{Adjustment, CharacterDisplacement, CharacterLink, Clamp, Synchronization};
 pub use features::{

@@ -16,7 +16,7 @@ use concerto_reflect::{ReflectedValue, TypeRegistry};
 
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
 use crate::channel::{build_channels, BodyMotion, ChannelSource, FeatureChannel};
-use crate::definition::{StoredChannel, TrajectorySettings};
+use crate::definition::{MirrorAxis, StoredChannel, TrajectorySettings};
 use crate::simulation::TrajectorySample;
 
 /// Where one feature channel's values sit in a frame's feature vector.
@@ -38,7 +38,7 @@ pub struct MotionDatabase {
     bone_count: usize,
     clips: Vec<AssetHandle<AnimationClip>>,
     mirrored: Vec<bool>,
-    mirror_axis: Option<Vec3>,
+    mirror_axis: Option<MirrorAxis>,
     rate: f32,
     speed: f32,
     trajectory: TrajectorySettings,
@@ -64,7 +64,7 @@ impl MotionDatabase {
         bone_count: usize,
         clips: Vec<AssetHandle<AnimationClip>>,
         mirrored: Vec<bool>,
-        mirror_axis: Option<Vec3>,
+        mirror_axis: Option<MirrorAxis>,
         rate: f32,
         speed: f32,
         trajectory: TrajectorySettings,
@@ -138,8 +138,8 @@ impl MotionDatabase {
         &self.mirrored
     }
 
-    /// The normal of the plane mirrored entries are mirrored across, when some entry is mirrored.
-    pub fn mirror_axis(&self) -> Option<Vec3> {
+    /// The axis mirrored entries are mirrored across, when some entry is mirrored.
+    pub fn mirror_axis(&self) -> Option<MirrorAxis> {
         self.mirror_axis
     }
 
@@ -294,7 +294,7 @@ impl MotionDatabase {
             .filter(|_| self.mirrored.get(entry).copied().unwrap_or(false))
         {
             let sampled = local.clone();
-            PoseMirror::new(skeleton, axis)
+            PoseMirror::new(skeleton, axis.normal())
                 .and_then(|mirror| mirror.mirror_into(&sampled, &mut local))
                 .map_err(BakeError::Mirror)?;
         }
@@ -428,7 +428,6 @@ pub enum BakeError {
     WeightCountMismatch { expected: usize, actual: usize },
     ChannelCountMismatch { expected: usize, actual: usize },
     TrajectoryTooShort { needed: usize, actual: usize },
-    InvalidMirrorAxis(Vec3),
     Mirror(MirrorError),
 }
 
@@ -490,12 +489,6 @@ impl fmt::Display for BakeError {
                 write!(
                     f,
                     "the trajectory has {actual} samples, a channel reads {needed}"
-                )
-            }
-            BakeError::InvalidMirrorAxis(axis) => {
-                write!(
-                    f,
-                    "mirror axis {axis} must be finite, non-zero and horizontal"
                 )
             }
             BakeError::Mirror(error) => write!(f, "the pose cannot be mirrored: {error}"),

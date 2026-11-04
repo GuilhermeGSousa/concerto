@@ -26,9 +26,10 @@ use concerto_ecs::{
 use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, LastQuery, MotionDatabaseDefinition, MotionEntry,
-    MotionMatchingInstance, SimulationBoneSettings, StoredChannel, TrajectoryDirections,
-    TrajectoryPositions, TrajectorySample, TrajectorySettings, bake, run_motion_matching,
+    BonePositions, BoneVelocities, JointAxis, LastQuery, MirrorAxis, MotionDatabaseDefinition,
+    MotionEntry, MotionMatchingInstance, SimulationBoneSettings, StoredChannel,
+    TrajectoryDirections, TrajectoryPositions, TrajectorySample, TrajectorySettings, bake,
+    run_motion_matching,
 };
 use concerto_reflect::{TypeRegistry, to_value};
 use glam::{Mat4, Quat};
@@ -178,7 +179,7 @@ fn baked(
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -188,7 +189,7 @@ fn baked(
             sample_count: 2,
         },
         channels,
-        mirror_axis: Vec3::X,
+        mirror_axis: MirrorAxis::X,
     };
     bake(&definition, &skeleton(), &[&walk(), &turn()], &registry()).unwrap()
 }

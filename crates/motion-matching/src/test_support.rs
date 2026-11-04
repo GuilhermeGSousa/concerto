@@ -10,8 +10,8 @@ use crate::{
     channel::{ChannelSource, FeatureChannel, FrameContext, ReflectFeatureChannel},
     database::MotionDatabase,
     definition::{
-        MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, StoredChannel,
-        TrajectorySettings,
+        JointAxis, MirrorAxis, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
+        StoredChannel, TrajectorySettings,
     },
 };
 
@@ -165,14 +165,14 @@ fn two_clip_definition(
         rate: 30.0,
         speed,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
         },
         trajectory,
         channels,
-        mirror_axis: Vec3::X,
+        mirror_axis: MirrorAxis::X,
     }
 }
 

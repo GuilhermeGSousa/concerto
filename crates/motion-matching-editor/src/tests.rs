@@ -39,14 +39,14 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::JointName;
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannel, FrameContext, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, StoredChannel, TimeRange, TrajectoryDirections,
-    TrajectoryPositions,
+    BonePositions, BoneVelocities, FeatureChannel, FrameContext, MirrorAxis,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, StoredChannel, TimeRange,
+    TrajectoryDirections, TrajectoryPositions,
 };
 use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_ui::{node::UINode, theme::UITheme};
 use concerto_window::plugin::{Window, WindowPlugin};
-use glam::{Vec2, Vec3};
+use glam::Vec2;
 
 use crate::{
     DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
@@ -887,12 +887,12 @@ fn a_saved_definition_keeps_mirrored_entries_and_the_mirror_axis() {
     let mut f = fixture();
     let mut opened = definition();
     opened.entries[1].mirrored = true;
-    opened.mirror_axis = Vec3::Z;
+    opened.mirror_axis = MirrorAxis::Z;
     let asset = write_definition(&mut f, "content/database.gasset", &opened);
     let document = open(&mut f, &asset);
     assert_eq!(
         state(&f, document).settings.as_ref().unwrap().mirror_axis,
-        Vec3::Z
+        MirrorAxis::Z
     );
 
     save(&mut f, document);
@@ -902,11 +902,11 @@ fn a_saved_definition_keeps_mirrored_entries_and_the_mirror_axis() {
         .settings
         .as_mut()
         .unwrap()
-        .mirror_axis = Vec3::NEG_Z;
+        .mirror_axis = MirrorAxis::X;
     save(&mut f, document);
 
     let saved = read_definition(&f.project_root, &asset).unwrap();
-    assert_eq!(saved.mirror_axis, Vec3::NEG_Z);
+    assert_eq!(saved.mirror_axis, MirrorAxis::X);
     assert!(saved.entries[1].mirrored);
     assert!(!saved.entries[0].mirrored);
 }

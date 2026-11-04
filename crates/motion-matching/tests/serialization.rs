@@ -6,9 +6,9 @@ use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    reference_channels, FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition,
-    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, StoredChannel, TimeRange,
-    TrajectorySettings,
+    reference_channels, FeatureChannel, FrameContext, JointAxis, MirrorAxis, MotionDatabase,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
+    StoredChannel, TimeRange, TrajectorySettings,
 };
 use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -126,7 +126,7 @@ fn definition_defaults_match_the_spec() {
     assert_eq!(definition.speed, 1.1);
     assert_eq!(definition.simulation.position_joint, "Spine2".into());
     assert_eq!(definition.simulation.facing_joint, "Hips".into());
-    assert_eq!(definition.simulation.facing_axis, Vec3::Y);
+    assert_eq!(definition.simulation.facing_axis, JointAxis::Y);
     assert_eq!(definition.simulation.position_window, 31);
     assert_eq!(definition.simulation.facing_window, 61);
     assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);
@@ -151,7 +151,7 @@ fn definition_round_trips_through_bincode() {
         simulation: SimulationBoneSettings {
             position_joint: "Chest".into(),
             facing_joint: "Pelvis".into(),
-            facing_axis: Vec3::X,
+            facing_axis: JointAxis::X,
             position_window: 15,
             facing_window: 21,
         },
@@ -378,7 +378,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
         simulation: SimulationBoneSettings {
             position_joint: "Child".into(),
             facing_joint: "Root".into(),
-            facing_axis: Vec3::new(0.0, 0.0, 2.0),
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 7,
         },
@@ -390,7 +390,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             type_name: "HeightChannel".into(),
             value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
         }],
-        mirror_axis: Vec3::Z,
+        mirror_axis: MirrorAxis::Z,
     }
 }
 
@@ -413,7 +413,7 @@ fn database_encoding_matches_its_fixture() {
     )
     .unwrap()
     .with_source_hash(0x5eed_f00d);
-    assert_eq!(database.mirror_axis(), Some(Vec3::Z));
+    assert_eq!(database.mirror_axis(), Some(MirrorAxis::Z));
 
     check_encoding(&database, encoding_dir());
 }

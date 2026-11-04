@@ -64,13 +64,14 @@ the database; it needs no handles of its own to the clips for it to play.
 | `simulation` | `SimulationBoneSettings` | see below |
 | `trajectory` | `TrajectorySettings`: `sample_dt` (1/3 s) and `sample_count` (3) | 1/3 s, 3 |
 | `channels` | `StoredChannel`s: a registered type name and a reflected value, in feature order | `reference_channels()` |
-| `mirror_axis` | the normal, in the skeleton's model space, of the plane mirrored entries are mirrored across | `Vec3::X` |
+| `mirror_axis` | a `MirrorAxis`, `X` or `Z`: the horizontal model-space axis normal to the plane mirrored entries are mirrored across | `MirrorAxis::X` |
 
 An entry bakes `floor((end - start) * rate / speed)` frames.
 
 `SimulationBoneSettings`: `position_joint` (`"Spine2"`) and `facing_joint`
-(`"Hips"`) are `JointName`s; `facing_axis` (`Vec3::Y`) is the facing
-joint's forward in its own space; `position_window` (31) and `facing_window`
+(`"Hips"`) are `JointName`s; `facing_axis` (`JointAxis::Y`) is the facing
+joint's forward in its own space, one of `X`, `NegX`, `Y`, `NegY`, `Z` and
+`NegZ`; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
 ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
@@ -118,13 +119,12 @@ definition that is refused before the first entry.
 | `InvalidRange` | a range outside its clip, or with `start >= end` |
 | `InvalidWindow` | a window that is even or at most 3 |
 | `InvalidRate`, `InvalidSpeed`, `InvalidSampleDt` | `rate`, `speed` or `trajectory.sample_dt` not finite and positive |
-| `InvalidMirrorAxis` | an entry is mirrored and `mirror_axis` is not finite, non-zero and horizontal |
 | `Mirror` | a `MirrorError`: the skeleton cannot be mirrored across `mirror_axis`, in `bake` or `pose` |
 
 ### Mirroring
 
 A `mirrored` entry plays its clip reflected across the plane through the
-model-space origin whose normal is `mirror_axis`, so a clip added twice, once
+model-space origin normal to `mirror_axis`, so a clip added twice, once
 mirrored, gives both sides of the motion. Nothing mirrored is stored: `bake`
 and `pose` pass each sampled local pose through `PoseMirror`, from
 `concerto_animation::mirror`, before model space, so the simulation bone, the
@@ -140,12 +140,12 @@ pose is not symmetric: a bone with a parent whose rest translation is more than
 `1e-3 + 1e-2 * |t|` from its twin's mirrored. `Asymmetric` names the worst
 joint and its distance. Parentless bones are not checked.
 
-The axis must be horizontal, `|n.y| <= 1e-3` once normalised, because the
+`MirrorAxis` offers only the horizontal axes, `X` and `Z`, because the
 simulation bone is a Y-up ground projection with a yaw. LAFAN1's BVH skeleton
-needs `Vec3::Z`. A mirrored entry's simulation bone faces the mirror of the
+needs `MirrorAxis::Z`. A mirrored entry's simulation bone faces the mirror of the
 original's forward only when the facing joint's rest axis, its model-space rest
 rotation times `facing_axis`, lies in the plane; the bake does not check this.
-With no mirrored entry the axis is neither checked nor stored.
+With no mirrored entry no mirror is built and the axis is not stored.
 
 Both assets are at version 2, with no migration: a version-1 definition or
 database fails to load, and the definition has to be re-created in the editor

@@ -25,8 +25,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
-    StoredChannel, TimeRange, TrajectoryPositions, bake,
+    BonePositions, BoneVelocities, JointAxis, MotionDatabase, MotionDatabaseDefinition,
+    MotionEntry, StoredChannel, TimeRange, TrajectoryPositions, bake,
 };
 use concerto_reflect::{TypeRegistry, to_value};
 use glam::{Quat, Vec3};
@@ -99,7 +99,7 @@ fn baked_with(
         ..Default::default()
     };
     definition.simulation.position_joint = "Spine".into();
-    definition.simulation.facing_axis = Vec3::Z;
+    definition.simulation.facing_axis = JointAxis::Z;
     let clips: Vec<AnimationClip> = entries.iter().map(|_| walking()).collect();
     definition.entries = entries;
     let skeleton = skeleton();
