@@ -152,7 +152,9 @@ app.add_listener(greet);
 ```
 
 Use them to keep data in step with a component's presence, rather than polling
-every frame with `Added<T>`.
+every frame with `Added<T>`. To read removals from a system instead, call
+`app.track_removals::<T>()` and take `RemovedComponents<T>`, whose `read()`
+yields each entity that lost `T`, by removal or despawn, once per system.
 
 ## Which one?
 

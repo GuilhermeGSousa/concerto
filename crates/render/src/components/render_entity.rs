@@ -1,6 +1,9 @@
+use std::collections::{HashMap, HashSet};
+
 use concerto_app::extractor::extract as extract_main_world;
 use concerto_ecs::{
-    component::Component, reflect::ReflectSceneComponent, Entity, With, Without, World,
+    component::Component, entity::EntityHash, reflect::ReflectSceneComponent, Entity, With,
+    Without, World,
 };
 use concerto_reflect::Reflect;
 use derive_more::Deref;
@@ -22,7 +25,7 @@ impl RenderEntity {
 }
 
 /// On a render-world entity: the id of the main-world entity it mirrors.
-#[derive(Component, Deref)]
+#[derive(Component, Deref, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MainEntity(Entity);
 
 impl MainEntity {
@@ -30,6 +33,12 @@ impl MainEntity {
         Self(entity)
     }
 }
+
+/// A hash map keyed by [`MainEntity`], hashing each key as one `u64`.
+pub type MainEntityHashMap<V> = HashMap<MainEntity, V, EntityHash>;
+
+/// A hash set of [`MainEntity`], hashing each one as one `u64`.
+pub type MainEntityHashSet = HashSet<MainEntity, EntityHash>;
 
 pub(crate) fn extract(main: &mut World, render: &mut World) {
     sync_render_entities(main, render);
