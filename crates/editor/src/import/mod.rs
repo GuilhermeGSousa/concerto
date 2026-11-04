@@ -378,9 +378,7 @@ fn finish_import(
                     .as_ref()
                     .is_some_and(|project| &project.root == root)
             {
-                for entry in &imported.assets {
-                    registry.insert(entry.clone());
-                }
+                apply_to_registry(&mut registry, &imported);
             }
             let siblings = match imported.siblings.len() {
                 0 => String::new(),
@@ -402,6 +400,15 @@ fn finish_import(
     } else {
         failure_status(&queue.failures, queue.total)
     };
+}
+
+fn apply_to_registry(registry: &mut AssetRegistry, imported: &ImportedSource) {
+    for entry in &imported.assets {
+        registry.insert(entry.clone());
+    }
+    for id in &imported.removed {
+        registry.remove(*id);
+    }
 }
 
 fn failure_status(failures: &[(String, String)], total: usize) -> String {
@@ -679,6 +686,31 @@ mod tests {
             Path::new("C:\\game"),
         );
         assert_eq!(summary, "assets\\a.mtl: missing");
+    }
+
+    #[test]
+    fn importing_a_source_that_drops_an_output_removes_it_from_the_registry() {
+        use concerto_foundation::assets::AssetId;
+        use concerto_foundation::assets::registry::AssetEntry;
+        let entry = |address: &str| AssetEntry {
+            id: AssetId::new(),
+            address: address.into(),
+            kind: "Scene".into(),
+            provenance: None,
+        };
+        let kept = entry("content/a/scene.gasset");
+        let dropped = entry("content/a/old.gasset");
+        let mut registry = AssetRegistry::new();
+        registry.insert(kept.clone());
+        registry.insert(dropped.clone());
+        let imported = ImportedSource {
+            assets: vec![kept.clone()],
+            siblings: Vec::new(),
+            removed: vec![dropped.id],
+        };
+        apply_to_registry(&mut registry, &imported);
+        assert_eq!(registry.get(kept.id), Some(&kept));
+        assert_eq!(registry.get(dropped.id), None);
     }
 
     #[test]
