@@ -1406,7 +1406,7 @@ mod tests {
 
     fn editor_manifest(dependency: &str) -> String {
         format!(
-            "[package]\nname = \"g-editor\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[dependencies]\ng = {{ path = \"..\" }}\nconcerto-editor = \"{VERSION}\"\n{dependency}"
+            "[package]\nname = \"g-editor\"\nversion = \"0.1.0\"\nedition = \"2024\"\npublish = false\n\n[features]\ntracy = [\"concerto-editor/tracy\"]\n\n[dependencies]\ng = {{ path = \"..\" }}\nconcerto-editor = \"{VERSION}\"\n{dependency}"
         )
     }
 

@@ -53,7 +53,9 @@ So the editor opens its own game's project by default; `--project <dir>`
 overrides that. `editor` requires `<dir>/Cargo.toml` and `<dir>/src/lib.rs`,
 refuses if `<dir>/editor` exists, and says that it assumes the recipe is
 `<crate>::game`. Run the editor with `cargo run -p <game>-editor`. A game that
-lists editor plugins gets a `run_with` call instead; see Editor plugins.
+lists editor plugins gets a `run_with` call instead; see Editor plugins. The
+editor crate has a `tracy` feature that turns on `concerto-editor/tracy`; see
+[profiling.md](../../docs/profiling.md).
 
 If `editor` fails after writing `editor/`, it removes that directory, so the
 command can be run again once the cause is fixed. If `new` fails after writing,
