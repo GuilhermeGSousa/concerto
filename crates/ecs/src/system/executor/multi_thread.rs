@@ -176,8 +176,7 @@ impl<'scope, 'env> Context<'scope, 'env> {
     fn run_system(self, system_index: usize) {
         let sys = unsafe { &mut *self.environment.systems[system_index].get() };
         profiling::scope!(sys.name());
-        // SAFETY: the executor starts a system only once no running system
-        // conflicts with its declared access.
+        // SAFETY: the executor starts a system only once no running system conflicts with its access.
         unsafe { sys.run_unsafe((), self.environment.world_cell) };
     }
 
@@ -710,9 +709,81 @@ mod tests {
         meet(&rendezvous.b);
     }
 
+    fn fewer_than_two_threads() -> bool {
+        let fewer = !std::thread::available_parallelism().is_ok_and(|n| n.get() >= 2);
+        if fewer {
+            eprintln!("SKIPPED: fewer than two compute threads are available");
+        }
+        fewer
+    }
+
+    fn assert_pair_met(world: &World) {
+        let rendezvous = world.get_resource::<Rendezvous>().unwrap();
+        assert!(rendezvous.a.met.load(Ordering::SeqCst));
+        assert!(rendezvous.b.met.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn an_exclusive_system_after_a_parallel_pair_runs_on_the_calling_thread() {
+        use crate::IntoSystemConfig;
+        if fewer_than_two_threads() {
+            return;
+        }
+        let mut world = World::new();
+        world.insert_resource(Rendezvous::new());
+        world.insert_resource(ExclusiveRanOn::default());
+        let mut schedule = Schedule::new();
+        schedule.add_system(meet_a).add_system(meet_b).add_system(
+            (|world: &mut World| {
+                world.get_resource_mut::<ExclusiveRanOn>().unwrap().0 =
+                    Some(std::thread::current().id());
+            })
+            .after(meet_a)
+            .after(meet_b),
+        );
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        assert_pair_met(&world);
+        assert_eq!(
+            world.get_resource::<ExclusiveRanOn>().unwrap().0,
+            Some(std::thread::current().id())
+        );
+    }
+
+    #[test]
+    fn a_non_send_system_after_a_parallel_pair_runs_on_the_calling_thread() {
+        use crate::IntoSystemConfig;
+        if fewer_than_two_threads() {
+            return;
+        }
+        let mut world = World::new();
+        world.insert_resource(MainThreadExecutor::new());
+        world.insert_resource(Rendezvous::new());
+        world.insert_resource(RanOn::default());
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(meet_a)
+            .add_system(meet_b)
+            .add_system(record_thread.after(meet_a).after(meet_b));
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        assert_pair_met(&world);
+        assert_eq!(
+            world.get_resource::<RanOn>().unwrap().0,
+            Some(std::thread::current().id())
+        );
+    }
+
     #[test]
     fn a_lone_panicking_system_after_a_parallel_pair_is_raised_and_its_dependant_never_runs() {
         use crate::IntoSystemConfig;
+        if fewer_than_two_threads() {
+            return;
+        }
         let mut world = World::new();
         world.insert_resource(Finished::default());
         world.insert_resource(Rendezvous::new());
@@ -729,12 +800,16 @@ mod tests {
 
         let payload = outcome.expect_err("the panic is raised again");
         assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
+        assert_pair_met(&world);
         let finished = world.get_resource::<Finished>().unwrap();
         assert!(!finished.dependant.load(Ordering::SeqCst));
     }
 
     #[test]
     fn two_systems_ready_at_the_start_run_at_the_same_time() {
+        if fewer_than_two_threads() {
+            return;
+        }
         let mut world = World::new();
         world.insert_resource(Rendezvous::new());
         let mut schedule = Schedule::new();
@@ -743,9 +818,7 @@ mod tests {
             .compile::<MultiThreadedExecutor>(&mut world)
             .run(&mut world);
 
-        let rendezvous = world.get_resource::<Rendezvous>().unwrap();
-        assert!(rendezvous.a.met.load(Ordering::SeqCst));
-        assert!(rendezvous.b.met.load(Ordering::SeqCst));
+        assert_pair_met(&world);
     }
 
     struct Applied;
@@ -773,6 +846,9 @@ mod tests {
 
     #[test]
     fn commands_reached_from_pool_threads_apply_on_the_calling_thread() {
+        if fewer_than_two_threads() {
+            return;
+        }
         for _ in 0..5 {
             let mut world = World::new();
             world.insert_resource(Rendezvous::new());
@@ -784,9 +860,7 @@ mod tests {
                 .compile::<MultiThreadedExecutor>(&mut world)
                 .run(&mut world);
 
-            let rendezvous = world.get_resource::<Rendezvous>().unwrap();
-            assert!(rendezvous.a.met.load(Ordering::SeqCst));
-            assert!(rendezvous.b.met.load(Ordering::SeqCst));
+            assert_pair_met(&world);
             assert_eq!(
                 world.get_resource::<AppliedOn>().unwrap().0,
                 Some(std::thread::current().id())
