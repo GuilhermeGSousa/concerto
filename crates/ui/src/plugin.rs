@@ -2,7 +2,7 @@ use concerto_app::{
     plugins::Plugin,
     schedule_groups::{Extract, LateUpdate, Render},
 };
-use concerto_ecs::{IntoSetConfig, IntoSystemConfig};
+use concerto_ecs::{IntoSetConfig, IntoSystemConfig, entity::hierarchy::Children};
 use concerto_render::{
     device::RenderDevice, material_plugin::MaterialPlugin, queue::RenderQueue,
     resources::RenderContext, sets::RenderSet,
@@ -22,8 +22,9 @@ use crate::{
     },
     interaction::{HoveredNode, UIInputState, apply_interaction_styles, update_ui_interaction},
     items::{
-        UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious, UITreeCollapse,
-        UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items, paint_items,
+        UIHidden, UIListActivate, UIListFirst, UIListLast, UIListNext, UIListPrevious,
+        UITreeCollapse, UITreeExpand, install_listeners, keep_focus_on_shown_items, navigate_items,
+        paint_items,
     },
     list::update_lists,
     material::UIMaterial,
@@ -52,7 +53,7 @@ use crate::{
         setup_text_inputs, update_text_inputs,
     },
     theme::UITheme,
-    tree::update_trees,
+    tree::{UITreeElement, update_trees},
     widgets::{sync_tab_bodies, update_tooltips},
 };
 
@@ -92,6 +93,9 @@ impl Plugin for UIPlugin {
         app.insert_resource(UILayoutEngine::default());
         app.insert_resource(UILayoutDiagnostics::default());
         app.insert_resource(UIPanelStack::default());
+        app.track_removals::<Children>();
+        app.track_removals::<UIHidden>();
+        app.track_removals::<UITreeElement>();
         crate::list::install_listeners(app.main_mut().world_mut());
         crate::tree::install_listeners(app.main_mut().world_mut());
         install_listeners(app.main_mut().world_mut());

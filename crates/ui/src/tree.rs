@@ -3,13 +3,17 @@ use std::collections::HashSet;
 use concerto_ecs::{
     IntoSystem, World,
     command::CommandQueue,
-    component::Component,
+    component::{Component, removed::RemovedComponents},
     entity::{
         Entity,
         hierarchy::{ChildOf, Children},
     },
     events::event_writer::EventWriter,
-    query::{Query, filter::With},
+    query::{
+        Query,
+        change_detection::DetectChanges,
+        filter::{Added, Changed, Or, With},
+    },
     resource::{Res, ResMut},
     signal::{On, lifecycle::Add, listener::IntoListener},
     system::BoxedSystem,
@@ -240,12 +244,15 @@ pub(crate) fn open_to(
     .position(|row| row.entity == item)
 }
 
-/// Registers the listener that sets up each new `UITree`, for a world run without `UIPlugin`.
+/// Registers the listener that sets up each new `UITree` and tracks the removals `update_trees` reads, for a world run without `UIPlugin`.
 pub fn install_listeners(world: &mut World) {
     world.add_listener(set_up_tree);
+    world.track_removals::<Children>();
+    world.track_removals::<UIHidden>();
+    world.track_removals::<UITreeElement>();
 }
 
-/// The system that nests, places and draws every `UITree`'s items, for a world run without `UIPlugin`.
+/// The system that nests, places and draws each `UITree` whose inputs changed, for a world run without `UIPlugin`; it needs [`install_listeners`].
 pub fn update_trees_system() -> BoxedSystem {
     update_trees.into_boxed_system()
 }
@@ -319,8 +326,39 @@ pub(crate) fn update_trees(
     (items, culled, materials): (Query<&UIItem>, Query<&UICulled>, Query<&UIMaterial>),
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
+    (resized, changed_children, changed_elements, added_hidden, parents, removed): (
+        Query<Entity, (With<UITree>, Or<(Changed<UITree>, Changed<UILayout>)>)>,
+        Query<Entity, Changed<Children>>,
+        Query<Entity, Changed<UITreeElement>>,
+        Query<Entity, Added<UIHidden>>,
+        Query<&ChildOf>,
+        (
+            RemovedComponents<Children>,
+            RemovedComponents<UITreeElement>,
+            RemovedComponents<UIHidden>,
+        ),
+    ),
 ) {
+    let (mut removed_children, mut removed_elements, mut removed_hidden) = removed;
+    let touched = changed_children
+        .iter()
+        .chain(changed_elements.iter())
+        .chain(added_hidden.iter())
+        .chain(removed_children.read())
+        .chain(removed_elements.read())
+        .chain(removed_hidden.read())
+        .collect::<Vec<_>>();
+    let mut stale = resized.iter().collect::<HashSet<_>>();
+    stale.extend(
+        touched
+            .into_iter()
+            .filter_map(|entity| owning_tree(entity, &trees, &items, &parents)),
+    );
+    let every_tree = theme.is_changed();
     for (entity, tree, mut area, layout) in trees.iter() {
+        if !every_tree && !area.is_changed() && !stale.contains(&entity) {
+            continue;
+        }
         let row_height = tree.row_height.unwrap_or(theme.row_height);
         let mut roots = Vec::new();
         let mut spacer = None;
@@ -414,6 +452,26 @@ pub(crate) fn update_trees(
         }
         fit_owner(entity, spacer, area.content_extent, &nodes);
     }
+}
+
+fn owning_tree(
+    entity: Entity,
+    trees: &Query<(Entity, &UITree, &mut UIScrollArea, Option<&UILayout>)>,
+    items: &Query<&UIItem>,
+    parents: &Query<&ChildOf>,
+) -> Option<Entity> {
+    let direct = |entity: Entity| {
+        if trees.contains_entity(entity) {
+            Some(entity)
+        } else {
+            items.get_entity(entity).map(UIItem::owner)
+        }
+    };
+    direct(entity).or_else(|| {
+        parents
+            .get_entity(entity)
+            .and_then(|parent| direct(parent.parent()))
+    })
 }
 
 fn shape_item(row: &TreeRow, theme: &UITheme, nodes: &Query<&mut UINode>) {
@@ -1701,6 +1759,116 @@ mod tests {
                 UITheme::default().border.to_linear()
             );
         }
+    }
+
+    #[test]
+    fn losing_its_last_children_makes_an_item_a_leaf() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let parent = item(&mut harness, tree, true);
+        let child = item(&mut harness, parent, false);
+        harness.settle();
+        let shown = caret(&harness, parent).expect("a parent has a caret");
+        assert_eq!(harness.area(tree).content_extent, 2.0 * ROW);
+
+        harness.world.despawn(shown);
+        harness.world.despawn(child);
+        assert!(
+            harness
+                .world
+                .get_component_for_entity::<Children>(parent)
+                .is_none()
+        );
+        harness.settle();
+
+        assert_eq!(harness.area(tree).content_extent, ROW);
+        assert_eq!(caret(&harness, parent), None);
+    }
+
+    #[test]
+    fn removing_hidden_shows_the_row_again() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 200.0);
+        let first = item(&mut harness, tree, false);
+        let second = item(&mut harness, tree, false);
+        hide(&mut harness, &[second]);
+        harness.settle();
+        assert_eq!(rows_of(&harness, &[first, second]), [Some((0, 0)), None]);
+
+        harness.world.remove_component::<UIHidden>(second);
+        harness.settle();
+
+        assert_eq!(
+            rows_of(&harness, &[first, second]),
+            [Some((0, 0)), Some((1, 0))]
+        );
+    }
+
+    #[test]
+    fn scrolling_from_outside_unculls_the_rows_in_view() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 100.0);
+        let items = (0..50)
+            .map(|_| item(&mut harness, tree, false))
+            .collect::<Vec<_>>();
+        harness.settle();
+        assert_eq!(harness.unculled(&items), (0..7).collect::<Vec<_>>());
+
+        harness.set_offset(tree, 20.0 * ROW);
+        harness.settle();
+
+        assert_eq!(harness.unculled(&items), (18..27).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_taller_viewport_unculls_more_rows() {
+        let mut harness = Harness::new();
+        let tree = tree_of(&mut harness, 100.0);
+        let items = (0..50)
+            .map(|_| item(&mut harness, tree, false))
+            .collect::<Vec<_>>();
+        harness.settle();
+        assert_eq!(harness.unculled(&items), (0..7).collect::<Vec<_>>());
+
+        harness
+            .world
+            .get_component_for_entity_mut::<UINode>(tree)
+            .unwrap()
+            .height = UIValue::Px(200.0);
+        harness.settle();
+
+        assert_eq!(harness.unculled(&items), (0..12).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn a_theme_row_height_change_places_the_rows_again() {
+        let mut harness = Harness::new();
+        let root = harness.root();
+        let tree = harness.world.spawn((
+            UINode::default()
+                .with_height(UIValue::Px(200.0))
+                .with_flex_shrink(0.0)
+                .with_flex_direction(FlexDirection::Column),
+            UITree::default(),
+            ChildOf::new(root),
+        ));
+        let first = item(&mut harness, tree, false);
+        let second = item(&mut harness, tree, false);
+        harness.settle();
+        let height = UITheme::default().row_height + 10.0;
+
+        harness
+            .world
+            .get_resource_mut::<UITheme>()
+            .unwrap()
+            .row_height = height;
+        harness.settle();
+
+        assert_eq!(harness.area(tree).content_extent, 2.0 * height);
+        assert_eq!(
+            harness.layout(second).rect.min.y - harness.layout(first).rect.min.y,
+            height
+        );
     }
 
     #[test]

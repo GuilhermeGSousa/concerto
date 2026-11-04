@@ -156,6 +156,17 @@ fix the entry in the same commit as the change that made it false.
   content and its `UILayout` says where it is drawn.
 - **A write to `UIScrollArea` causes a walk of the whole tree,** so compare
   before writing it.
+- **A `UITree` lays out its rows again only when it is stale.** `update_trees`
+  runs a tree's body only when, since it last ran, the tree's `UITree`,
+  `UIScrollArea` or `UILayout` changed; `Children` changed on, or was removed
+  from, the tree or an entity that resolves to it; `UITreeElement` was added
+  to, changed on or removed from such an entity; `UIHidden` was added to or
+  removed from one; or `UITheme` changed. An entity resolves to a tree when it
+  is the tree, through its `UIItem`'s owner, or through its `ChildOf` parent by
+  either of those. A write that bypasses these, such as an item's `UINode`
+  padding, is overwritten only on the tree's next stale run. A world that runs
+  `update_trees` without `UIPlugin` calls `tree::install_listeners`, which
+  tracks the three removals; without the channels the system is skipped.
 - **Changing a label's text lays it out again unless its size cannot depend on
   the text.** That holds when its width and height are `Px` and it cannot
   shrink below them: `flex_shrink` is 0, or each axis has a minimum size or a
