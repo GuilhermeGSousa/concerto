@@ -55,8 +55,9 @@ use crate::{
 //   group layout plus whichever engine bind groups `M` declares it needs via
 //   [`Material::needs_camera`], [`Material::needs_lighting`] and
 //   [`Material::needs_skeleton`].
-// * Adds a render pass (`material_renderpass<M>`) that only processes mesh
-//   entities carrying [`MaterialComponent<M>`].
+// * Adds `queue_material_meshes<M>`, which culls and bins the mesh entities
+//   carrying [`MaterialComponent<M>`] for each camera, and a render pass
+//   (`material_renderpass<M>`) that draws those batches.
 //
 // # Using a custom material
 //
@@ -306,8 +307,8 @@ pub(crate) fn queue_material_meshes<M: Material>(
 
 // Render pass for meshes that use material `M`.
 //
-// Only processes entities tagged with [`RenderMaterialComponent<M>`] so
-// multiple `MaterialPlugin` instantiations for different material types can
+// Draws the batches `queue_material_meshes<M>` built in `MaterialViewBatches<M>`,
+// so multiple `MaterialPlugin` instantiations for different material types can
 // coexist without interfering with each other.
 pub(crate) fn material_renderpass<M: Material>(
     pipeline: Res<MaterialPipeline<M>>,
