@@ -18,9 +18,11 @@ use crate::{
 };
 
 mod character;
+mod grid;
 mod sanatorium;
 mod ui;
 
+pub use grid::grid;
 pub use sanatorium::sanatorium;
 
 /// Builds tech-demo: the forest, the character, and its overlay.

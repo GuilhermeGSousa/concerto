@@ -44,6 +44,7 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 ```sh
 cargo build --workspace
 cargo run -p tech-demo
+cargo run -p tech-demo -- --forest
 cargo run -p tech-demo -- --sanatorium
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
@@ -55,8 +56,11 @@ cargo concerto new|editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
 ```
 
-Examples are `tech-demo` and `ui-showcase`. `tech-demo -- --sanatorium` runs the
-sanatorium graybox instead of the forest, with the character moved by root
+Examples are `tech-demo` and `ui-showcase`. `tech-demo` starts on the grid
+level: the character with every gizmo layer on an empty floor under the world
+grid. That is also the only level of the web build, which ships no forest or
+sanatorium content. `-- --forest` runs the forest, whose scene the editor
+opens. `-- --sanatorium` runs the sanatorium graybox, with the character moved by root
 motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
 method there); its Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`. Sources are imported through the
