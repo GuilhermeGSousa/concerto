@@ -584,7 +584,10 @@ mod tests {
             })
         );
         assert!(value.set_variant("Adjustment"));
-        assert_eq!(value, CharacterDisplacement::default());
+        assert_eq!(
+            value,
+            CharacterDisplacement::Adjustment(Adjustment::default())
+        );
     }
 
     #[test]

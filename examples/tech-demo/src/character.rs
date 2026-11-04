@@ -848,7 +848,7 @@ mod tests {
     fn debugged_character(world: &mut World) -> Entity {
         world.spawn((
             MotionMatchingGizmos::default(),
-            CharacterDisplacement::default(),
+            CharacterDisplacement::Adjustment(Adjustment::default()),
         ))
     }
 
@@ -932,7 +932,7 @@ mod tests {
 
         assert_eq!(
             displacement(&world, character),
-            CharacterDisplacement::default()
+            CharacterDisplacement::Adjustment(Adjustment::default())
         );
     }
 

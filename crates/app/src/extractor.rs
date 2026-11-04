@@ -95,9 +95,10 @@ impl<T: ReadOnlySystemInput + 'static> SystemInput for Extracted<'_, '_, T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::App;
     use concerto_ecs::{
-        query::change_detection::DetectChanges, system::BoxedSystem, IntoSystem, Res, ResMut,
-        System,
+        component::removed::RemovedComponents, query::change_detection::DetectChanges,
+        system::BoxedSystem, Component, Entity, IntoSystem, Res, ResMut, System,
     };
 
     #[derive(Resource)]
@@ -264,5 +265,33 @@ mod tests {
 
         assert_eq!(frames.extract(), Some(true));
         assert_eq!(frames.extract(), Some(false));
+    }
+
+    #[derive(Component)]
+    struct Health;
+
+    #[derive(Resource, Default)]
+    struct Removed(Vec<Entity>);
+
+    fn read_removals(mut removed: Extracted<RemovedComponents<Health>>, mut seen: ResMut<Removed>) {
+        seen.0.extend(removed.read());
+    }
+
+    #[test]
+    fn removals_in_the_main_world_reach_an_extract_system() {
+        let mut app = App::new();
+        app.track_removals::<Health>();
+        let main = app.main_mut().world_mut();
+        let entity = main.spawn(Health);
+        main.remove_component::<Health>(entity);
+        let mut render = World::new();
+        render.insert_resource(Removed::default());
+        render.insert_resource(MainWorld::new(mem::take(main)));
+        let mut system = read_removals.into_system();
+        system.initialize(&mut render);
+
+        system.run_and_apply((), &mut render);
+
+        assert_eq!(render.get_resource::<Removed>().unwrap().0, vec![entity]);
     }
 }

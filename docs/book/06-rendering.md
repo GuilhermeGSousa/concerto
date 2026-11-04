@@ -19,7 +19,8 @@ An entity with none of these components has no copy. See
 [required components](../required-components.md).
 
 Removing a component such as `Light` from a living entity does not remove its
-copy, so the light keeps shining. Despawn the entity instead.
+copy, so the light keeps shining. Despawn the entity instead. Meshes are the
+exception: removing `MeshComponent` stops the mesh drawing.
 
 ## Cameras
 
