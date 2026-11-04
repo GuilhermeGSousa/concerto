@@ -1,5 +1,6 @@
 use std::{
     fmt::{Debug, Display},
+    hash::{Hash, Hasher},
     num::NonZero,
 };
 
@@ -11,14 +12,17 @@ use crate::{
 };
 
 pub mod entity_store;
+pub mod hash;
 pub mod hierarchy;
+
+pub use hash::{EntityHash, EntityHashMap, EntityHashSet, EntityHasher};
 
 /// A lightweight, copyable handle that uniquely identifies a game object in the [`World`](crate::world::World).
 ///
 /// Entities are created with [`World::spawn`](crate::world::World::spawn) and destroyed with
 /// [`World::despawn`](crate::world::World::despawn).  An entity is just an `(index, generation)`
 /// pair — the generation is bumped each time a slot is reused so stale handles can be detected.
-#[derive(Eq, Hash, PartialEq, Clone, Copy)]
+#[derive(Eq, PartialEq, Clone, Copy)]
 pub struct Entity {
     index: u32,
     generation: NonZero<u32>,
@@ -40,6 +44,11 @@ impl Entity {
         self.generation
     }
 
+    /// Packs this entity into one `u64`, index in the low 32 bits and generation in the high 32.
+    pub fn to_bits(&self) -> u64 {
+        u64::from(self.index) | (u64::from(self.generation.get()) << 32)
+    }
+
     /// Writes this entity as a text id, index then generation, such as `42v3`.
     pub fn to_id_string(&self) -> String {
         format!("{}v{}", self.index, self.generation)
@@ -58,6 +67,12 @@ impl Entity {
             digits(index)?,
             NonZero::new(digits(generation)?)?,
         ))
+    }
+}
+
+impl Hash for Entity {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        state.write_u64(self.to_bits());
     }
 }
 
