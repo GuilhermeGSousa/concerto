@@ -25,7 +25,7 @@ pub enum CharacterDisplacement {
 
 impl Default for CharacterDisplacement {
     fn default() -> Self {
-        Self::Adjustment(Adjustment::default())
+        Self::Synchronization(Synchronization::default())
     }
 }
 
