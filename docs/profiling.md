@@ -99,6 +99,10 @@ What you should see:
   `compute-N` threads. A system that is the only one ready while nothing else
   runs shows its zone on the thread that found it ready, which can be the
   thread that runs the schedule. `fixed_update_step` zones tick at ~30 Hz.
+- When an `App` finishes building: one `Plugin::finish` zone per plugin,
+  with the plugin's name as its text, then `App::compile_schedules`,
+  `App::compile_render_schedules`, and `Startup` around the startup schedules
+  of both worlds.
 - `apply_deferred` zones at sync points — long gaps right before them mean
   the scheduler is stalled waiting on one straggler system.
 - wgpu-core's own zones (device/queue internals) appear automatically: wgpu

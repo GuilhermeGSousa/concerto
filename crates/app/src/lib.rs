@@ -371,16 +371,26 @@ impl App {
         let mut i = 0;
         while i < self.plugins.len() {
             core::mem::swap(&mut self.plugins[i], &mut hokeypokey);
-            hokeypokey.finish(self);
+            {
+                profiling::scope!("Plugin::finish", hokeypokey.name());
+                hokeypokey.finish(self);
+            }
             core::mem::swap(&mut self.plugins[i], &mut hokeypokey);
             i += 1;
         }
 
         self.plugin_state = PluginsState::Finished;
 
-        self.compile_schedules();
-        self.compile_render_schedules();
+        {
+            profiling::scope!("App::compile_schedules");
+            self.compile_schedules();
+        }
+        {
+            profiling::scope!("App::compile_render_schedules");
+            self.compile_render_schedules();
+        }
 
+        profiling::scope!("Startup");
         self.subapps.startup();
     }
 
