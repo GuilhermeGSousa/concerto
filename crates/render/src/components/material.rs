@@ -28,18 +28,7 @@ impl<M: Material + Send + Sync + 'static> Default for MaterialComponent<M> {
     }
 }
 
-/// Render-world component placed on mesh entities to identify which material
-/// asset they use for a specific material type `M`.
-///
-/// This component replaces the old `MaterialInstanceTag<M>` (which was a pure
-/// phantom marker) by also carrying the material's [`AssetId`].  This means
-/// [`super::mesh_component::RenderMeshInstance`] no longer needs to store the
-/// material asset id — the two concerns (mesh geometry and material) are kept
-/// in separate components.
-///
-/// The type parameter `M` ensures that `material_renderpass<M>` only picks up
-/// entities belonging to pipeline `M`, so multiple `MaterialPlugin` instances
-/// for different material types coexist without interfering with each other.
+/// On a render-world mesh entity: the asset id of its material of type `M`.
 #[derive(Component)]
 pub(crate) struct RenderMaterialComponent<M: Material + 'static> {
     pub(crate) material_asset_id: AssetId,

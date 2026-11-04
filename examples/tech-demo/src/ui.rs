@@ -214,7 +214,7 @@ mod tests {
                 true,
                 "OnGround",
                 Some(&matching),
-                &CharacterDisplacement::default(),
+                &CharacterDisplacement::Adjustment(Adjustment::default()),
                 false
             ),
             "grounded: true\n\

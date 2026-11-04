@@ -41,8 +41,9 @@ fix the entry in the same commit as the change that made it false.
   register `a` before `b`.
 - **A missing resource skips the system and warns every frame.** A system
   input declines through `SystemInput::get_data`, which returns a
-  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter` and
-  `Extracted` decline as `Missing`, which logs a warning on every skipped run;
+  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter`,
+  `RemovedComponents` and `Extracted` decline as `Missing`, which logs a
+  warning on every skipped run;
   `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
   flood in the log names the system and the missing type. Use `Option<Res<T>>`
   or `Option<ResMut<T>>` where absence is normal.
@@ -120,10 +121,12 @@ fix the entry in the same commit as the change that made it false.
   register the plugin before anything spawns meshes, or the registration
   panics. `entity_ops.rs` keeps `SyncWithRenderWorld` on purpose: an
   editor-created `Name` + `Transform` entity requires nothing.
-- **Extract only inserts and updates.** Removing `Light`, `Camera`, a mesh, a
-  material, or a skeleton from a living entity leaves its render-world copy in
-  place, so a removed light keeps shining. Mirrors go away only when the main
-  entity is despawned. Do not fix this in passing.
+- **Extract only inserts and updates, except for meshes.** Removing
+  `MeshComponent` from a living entity drops it from `RenderMeshInstances` and
+  frees its instance slot, through `RemovedComponents<MeshComponent>`. Removing
+  `Light`, `Camera`, a material, or a skeleton still leaves its render-world
+  copy in place, so a removed light keeps shining. Those mirrors go away only
+  when the main entity is despawned. Do not fix this in passing.
 - **Skinned meshes use an identity instance matrix.** The bone palette carries
   the world transform, and the shader applies it to the position. Giving a
   skinned mesh entity a real world transform as well transforms it twice.
