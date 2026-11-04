@@ -590,10 +590,16 @@ fn seen_frames(
 fn layout_reading(
     mut calls: ToolCalls<LayoutReading>,
     frames: EditWorld<Res<EditFrames>>,
+    names: EditWorld<Query<&Name>>,
     layout: Res<UILayoutDiagnostics>,
 ) {
+    let spawned = names.iter().any(|name| name.as_str() == "Hero");
     for (_, reply) in calls.read() {
-        reply.ok(format!("{} {}", frames.0, layout.layout_passes));
+        if spawned {
+            reply.ok(format!("{} {}", frames.0, layout.layout_passes));
+        } else {
+            reply.ok("loading");
+        }
     }
 }
 
@@ -2348,7 +2354,7 @@ async fn layout_reading_of(client: &Client) -> Option<(u32, u64)> {
         return None;
     }
     let answer = text(&result);
-    let (frames, passes) = answer.split_once(' ').unwrap();
+    let (frames, passes) = answer.split_once(' ')?;
     Some((frames.parse().unwrap(), passes.parse().unwrap()))
 }
 
