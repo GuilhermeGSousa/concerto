@@ -151,6 +151,13 @@ impl RenderAsset for RenderTexture {
         let (device, queue) = params;
         Ok(RenderTexture::from_texture(source_asset, device, queue))
     }
+
+    fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
+        match source.kind {
+            TextureKind::Sampled => Some(source.data().len()),
+            TextureKind::RenderTarget => None,
+        }
+    }
 }
 
 #[derive(Resource)]

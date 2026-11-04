@@ -591,7 +591,7 @@ impl SceneFixture {
         }
         self.world
             .get_component_for_entity_mut::<PendingApp>(document)
-            .and_then(|pending| pending.hosted.as_mut())
+            .and_then(|pending| pending.building_mut())
             .expect("the build is held before it is first asked if it is ready")
             .app
             .insert_resource(HoldReady);
@@ -601,7 +601,7 @@ impl SceneFixture {
         if let Some(hosted) = self
             .world
             .get_component_for_entity_mut::<PendingApp>(document)
-            .and_then(|pending| pending.hosted.as_mut())
+            .and_then(|pending| pending.building_mut())
         {
             hosted
                 .app
@@ -614,7 +614,7 @@ impl SceneFixture {
             let ready = self
                 .world
                 .get_component_for_entity_mut::<PendingApp>(document)
-                .and_then(|pending| pending.hosted.as_mut())
+                .and_then(|pending| pending.building_mut())
                 .is_some_and(|hosted| {
                     hosted.app.plugin_state() == concerto_app::plugins::PluginsState::Ready
                 });
@@ -840,7 +840,7 @@ impl SceneFixture {
     pub fn starting_world(&self, document: Entity) -> Option<WorldId> {
         self.world
             .get_component_for_entity::<PendingPlayApp>(document)
-            .and_then(|pending| pending.0.hosted.as_ref())
+            .and_then(|pending| pending.0.held())
             .map(|hosted| hosted.world().id())
     }
 

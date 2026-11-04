@@ -24,7 +24,7 @@ use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::{
-    component::removed::{record_removal, ComponentRemoved},
+    component::removed::ComponentRemoved,
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
@@ -240,8 +240,12 @@ impl App {
         {
             return self;
         }
-        self.register_event::<ComponentRemoved<T>>();
-        self.add_listener(record_removal::<T>.at_edit_time())
+        self.add_system(
+            First,
+            update_event_channel::<ComponentRemoved<T>>.at_edit_time(),
+        );
+        self.main_mut().world_mut().track_removals::<T>();
+        self
     }
 
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
@@ -371,16 +375,26 @@ impl App {
         let mut i = 0;
         while i < self.plugins.len() {
             core::mem::swap(&mut self.plugins[i], &mut hokeypokey);
-            hokeypokey.finish(self);
+            {
+                profiling::scope!("Plugin::finish", hokeypokey.name());
+                hokeypokey.finish(self);
+            }
             core::mem::swap(&mut self.plugins[i], &mut hokeypokey);
             i += 1;
         }
 
         self.plugin_state = PluginsState::Finished;
 
-        self.compile_schedules();
-        self.compile_render_schedules();
+        {
+            profiling::scope!("App::compile_schedules");
+            self.compile_schedules();
+        }
+        {
+            profiling::scope!("App::compile_render_schedules");
+            self.compile_render_schedules();
+        }
 
+        profiling::scope!("Startup");
         self.subapps.startup();
     }
 

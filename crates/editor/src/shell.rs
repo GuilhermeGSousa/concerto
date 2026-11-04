@@ -4,7 +4,13 @@ use concerto_app::{
     schedule_groups::{LateUpdate, Startup},
 };
 use concerto_color::Color;
-use concerto_ecs::{Component, Query, Res, command::CommandQueue};
+use concerto_ecs::{
+    Component, Entity, Query, Res, World,
+    command::CommandQueue,
+    query::{change_detection::DetectChanges, filter::Added},
+    system::input::SystemLocal,
+    world::FromWorld,
+};
 use concerto_foundation::assets::registry::AssetRegistry;
 use concerto_ui::{
     elements::prelude::*,
@@ -143,13 +149,39 @@ fn build_chrome(mut cmd: CommandQueue, registry: Res<PanelRegistry>, theme: Res<
     }
 }
 
+struct RegistrySeen {
+    present: bool,
+}
+
+impl FromWorld for RegistrySeen {
+    fn from_world(_world: &World) -> Self {
+        Self { present: false }
+    }
+}
+
 fn refresh_chrome(
     project: Res<ProjectState>,
     registry: Option<Res<AssetRegistry>>,
     scenes: Res<SceneState>,
     theme: Res<UITheme>,
     labels: Query<(&Label, &mut UIText)>,
+    added: Query<Entity, Added<Label>>,
+    mut seen: SystemLocal<RegistrySeen>,
 ) {
+    let present = registry.is_some();
+    let registry_moved = seen.present != present
+        || registry
+            .as_ref()
+            .is_some_and(|registry| registry.is_changed());
+    seen.present = present;
+    if !(project.is_changed()
+        || scenes.is_changed()
+        || theme.is_changed()
+        || registry_moved
+        || added.iter().next().is_some())
+    {
+        return;
+    }
     let line = project.line(registry.as_deref());
     let chatter = if project.busy() || scenes.status.is_empty() {
         line
@@ -176,5 +208,86 @@ fn refresh_chrome(
         if component.text != value {
             component.text = value;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::Project;
+    use concerto_ecs::{IntoSystem, System, system::BoxedSystem};
+    use std::path::PathBuf;
+
+    struct Chrome {
+        world: World,
+        refresh: BoxedSystem,
+        chatter: Entity,
+    }
+
+    impl Chrome {
+        fn new() -> Self {
+            let mut world = World::new();
+            let mut project = ProjectState::default();
+            project.project = Some(Project {
+                root: PathBuf::from("game"),
+                content_root: "content".into(),
+            });
+            project.status = String::new();
+            world.insert_resource(project);
+            world.insert_resource(SceneState::default());
+            world.insert_resource(UITheme::default());
+            let chatter = world.spawn((Label::Chatter, UIText::default()));
+            world.spawn((Label::ChatterGlyph, UIText::default()));
+            let mut refresh = refresh_chrome.into_boxed_system();
+            refresh.initialize(&mut world);
+            Self {
+                world,
+                refresh,
+                chatter,
+            }
+        }
+
+        fn refresh(&mut self) {
+            self.refresh.run_and_apply((), &mut self.world);
+            self.world.tick();
+        }
+
+        fn chatter(&self) -> String {
+            self.world
+                .get_component_for_entity::<UIText>(self.chatter)
+                .unwrap()
+                .text
+                .clone()
+        }
+    }
+
+    #[test]
+    fn a_scene_status_change_updates_chatter() {
+        let mut chrome = Chrome::new();
+        chrome.world.insert_resource(AssetRegistry::new());
+        chrome.refresh();
+        chrome.refresh();
+
+        chrome
+            .world
+            .get_resource_mut::<SceneState>()
+            .unwrap()
+            .status = "Saved level".into();
+        chrome.refresh();
+
+        assert!(chrome.chatter().ends_with(" · Saved level"));
+    }
+
+    #[test]
+    fn the_registry_appearing_updates_the_line() {
+        let mut chrome = Chrome::new();
+        chrome.refresh();
+        chrome.refresh();
+        assert_eq!(chrome.chatter(), "");
+
+        chrome.world.insert_resource(AssetRegistry::new());
+        chrome.refresh();
+
+        assert!(chrome.chatter().starts_with("0 assets · 0 scenes · "));
     }
 }

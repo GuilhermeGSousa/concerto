@@ -157,6 +157,17 @@ fix the entry in the same commit as the change that made it false.
   content and its `UILayout` says where it is drawn.
 - **A write to `UIScrollArea` causes a walk of the whole tree,** so compare
   before writing it.
+- **A `UITree` lays out its rows again only when it is stale.** `update_trees`
+  runs a tree's body only when, since it last ran, the tree's `UITree`,
+  `UIScrollArea` or `UILayout` changed; `Children` changed on, or was removed
+  from, the tree or an entity that resolves to it; `UITreeElement` was added
+  to, changed on or removed from such an entity; `UIHidden` was added to or
+  removed from one; or `UITheme` changed. An entity resolves to a tree when it
+  is the tree, through its `UIItem`'s owner, or through its `ChildOf` parent by
+  either of those. A write that bypasses these, such as an item's `UINode`
+  padding, is overwritten only on the tree's next stale run. A world that runs
+  `update_trees` without `UIPlugin` calls `tree::install_listeners`, which
+  tracks the three removals; without the channels the system is skipped.
 - **Changing a label's text lays it out again unless its size cannot depend on
   the text.** That holds when its width and height are `Px` and it cannot
   shrink below them: `flex_shrink` is 0, or each axis has a minimum size or a
@@ -258,6 +269,10 @@ fix the entry in the same commit as the change that made it false.
   the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event. A
   value's `Hosted<PropertyCommitted>` does not lag: the value lives in the
   editor's world, and the event is written there directly.
+- **Events written by a warming-up `App` are never forwarded.** An edit or
+  play `App` is stepped hidden after its build until it settles, and it is not
+  a `HostedApp` yet, so `forward_events` does not read it. A `SceneStatus` or
+  `SceneEdited` it writes then is gone by the time it is shown.
 - **The inspector's one `ComponentStack` has two owners.** Entity cards and
   value cards share it, because it is the scroll area's content.
   `sync_value_cards` returns while a document has `EditTarget`, despawns only
@@ -278,6 +293,13 @@ fix the entry in the same commit as the change that made it false.
   including signals sent through `EditWorldSignals` and direct writes by the
   host. Its first look at a newly targeted world, another scene or a play
   `App`, sees as added and changed everything stamped within `MAX_CHANGE_AGE`.
+- **Hosted `App`s track removals of `Children`, `Name`, `Camera`, `Light` and
+  `MeshComponent` for the editor's panels,** which read them through
+  `EditWorld<RemovedComponents<T>>`. `build_core` does it, so every edit and
+  play `App` has the channels. A panel that needs another removal adds it in
+  `build_core`; without it the system is skipped with a warning every frame.
+  The reader's cursor starts again at the beginning of the channel of each new
+  target world.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
   looked up through `EditWorld<…>`.
@@ -337,11 +359,12 @@ fix the entry in the same commit as the change that made it false.
   `POINTER_GONE`, off the picture, so a hovered gizmo handle lets go. When the
   viewport is under the pointer again, the host moves it to where the editor's
   pointer is, so a press or a wheel before the next move lands in place.
-- **A panic in an edit `App` is caught only while it is built.** A panic in
+- **A panic in an edit `App` is caught only until it is shown.** A panic in
   the recipe or a plugin's `build`, in a plugin's `ready` or `finish`, in
-  `Startup`, or in the ready step that publishes the content and opens the
-  scene becomes the open request's error. A panic while the `App` is stepped
-  or takes a signal still takes the editor down. Catching a panic from a
+  `Startup`, in the ready step that publishes the content and opens the
+  scene, or in a hidden step while it warms up becomes the open request's
+  error. A panic while the shown `App` is stepped or takes a signal still
+  takes the editor down. Catching a panic from a
   schedule is safe only because `TaskPool::scope` re-raises a task's panic
   after every task it spawned has finished; the panicked system's dependants
   never run.

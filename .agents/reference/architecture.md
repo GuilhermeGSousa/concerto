@@ -52,6 +52,9 @@ An `App` does not run itself. A host builds it, feeds it, and steps it:
 1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`.
 2. Apply the recipe, a function that registers plugins and systems.
 3. Poll `plugin_state()` until `Ready`, then call `finish_plugin_build()`.
+   A host may run `finish_plugin_build()` on another thread, as the editor
+   does; it then gives the `App` a `MainThreadExecutor` for that thread while
+   it runs, so non-`Send` `Startup` systems run there, and puts its own back.
 4. Each frame, push `WindowEvent`s into the main world, call `update()`, and
    read `Window` for what the game asked for.
 
@@ -72,7 +75,10 @@ answers read-only calls between frames with `serve(McpRead)`, and quits when
 stdin closes or the `App` closes its window; the editor's `--mcp` uses it. A `DrawTarget::Texture` makes an
 `App` draw its window into a texture the host can sample.
 
-A host never touches the render world once frames are running.
+A host never touches the render world once frames are running. The one
+exception: between frames it may call `render_assets_settled(&app)`, which
+reads whether the last frame prepared or deferred any render asset under the
+`RenderAssetBytesPerFrame` upload budget.
 
 ## ECS
 
@@ -184,7 +190,8 @@ while it runs:
   `World::add_listener` or inserted on an entity, including from a plugin's
   `build`, is never filtered. Its render world runs everything. It is
   held as a `HostedApp` component on the scene's document, and dropped with
-  it. It holds the scene's entities and the scene tools: the editor camera, the
+  it. Like a play `App`, it is stepped hidden after its build until its loads
+  and uploads settle, and only then becomes the `HostedApp`. It holds the scene's entities and the scene tools: the editor camera, the
   grid, picking, and the gizmo. It draws its window into a texture that the
   viewport panel shows.
 - **A play `App`,** while the Scene tab plays its scene. Play (the tab's
@@ -192,7 +199,9 @@ while it runs:
   game role, `App::new()`, from the same recipe plus `EditToolsCorePlugin`
   (selection and edits, no viewport tools), with the project's content and the
   open scene's saved file as its startup scene. While it builds it is a
-  `PendingPlayApp` beside the edit `App`. Once ready, the edit `App` moves to
+  `PendingPlayApp` beside the edit `App`. Once built, it is stepped hidden,
+  with no input, until its loads, scene spawns and render uploads settle, or
+  for at most `WARM_UP_LIMIT` (10 s). Then the edit `App` moves to
   `ParkedEditApp`, where it is not stepped, and the play `App` becomes the
   document's `HostedApp`, so the stepping, the viewport, input, and the panels
   follow it. Stop drops it and puts the parked edit `App` back. The document's

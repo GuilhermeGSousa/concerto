@@ -7,11 +7,12 @@ use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Res, ResMut, Resource, World,
     command::CommandQueue,
+    component::removed::RemovedComponents,
     entity::hierarchy::ChildOf,
     events::event_reader::EventReader,
     query::{
         change_detection::DetectChanges,
-        filter::{Or, With},
+        filter::{Added, Changed, Or, With},
     },
     signal::{
         On,
@@ -163,6 +164,7 @@ pub struct ContentPlugin;
 impl Plugin for ContentPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ContentState::default());
+        app.track_removals::<UISelected>();
         install_listeners(app.main_mut().world_mut());
         app.add_panel(PanelDescriptor {
             id: PANEL_ID,
@@ -1142,10 +1144,13 @@ fn reconcile_content_tree(
 
 fn sync_content_items(
     items: Query<(&ContentItem, Option<&UISelected>)>,
+    changed: Query<Entity, Or<(Changed<ContentItem>, Added<UISelected>)>>,
+    mut deselected: RemovedComponents<UISelected>,
     marks: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
 ) {
-    for (item, selected) in items.iter() {
+    let mut rows: HashSet<Entity> = deselected.read().collect();
+    let apply = |(item, selected): (&ContentItem, Option<&UISelected>)| {
         if let Some((mut node, mut material)) = marks.get_entity(item.mark_node) {
             marks::apply(
                 item.mark,
@@ -1155,7 +1160,15 @@ fn sync_content_items(
                 &mut material,
             );
         }
+    };
+    if theme.is_changed() {
+        items.iter().for_each(apply);
+        return;
     }
+    rows.extend(changed.iter());
+    rows.into_iter()
+        .filter_map(|row| items.get_entity(row))
+        .for_each(apply);
 }
 
 fn render_tags(
@@ -1238,6 +1251,7 @@ mod tests {
         channel::<UITextInputCancelled>(world);
         channel::<UIFocusLost>(world);
         channel::<ProjectOpened>(world);
+        world.track_removals::<UISelected>();
         install_listeners(world);
         run(world, build);
         let mut systems = vec![
@@ -2006,6 +2020,37 @@ mod tests {
             Mark::Group.shape(&theme, true).border.to_linear()
         );
         assert!(f.opened().is_empty());
+    }
+
+    #[test]
+    fn deselecting_an_asset_restores_its_mark() {
+        let mut f = fixture(&[
+            ("content/level.gasset", "Scene"),
+            ("content/rock.gasset", "Mesh"),
+        ]);
+        let level = f.asset_item("content/level.gasset");
+        let rock = f.asset_item("content/rock.gasset");
+        f.world.trigger_on(level, UIItemSelected);
+        f.refresh();
+
+        f.world.trigger_on(rock, UIItemSelected);
+        f.refresh();
+
+        assert!(!f.ui_selected(level));
+        assert_eq!(
+            f.mark_border(level),
+            Mark::Group
+                .shape(&UITheme::default(), false)
+                .border
+                .to_linear()
+        );
+        assert_eq!(
+            f.mark_border(rock),
+            Mark::Mesh
+                .shape(&UITheme::default(), true)
+                .border
+                .to_linear()
+        );
     }
 
     #[test]
