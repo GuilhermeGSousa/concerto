@@ -124,6 +124,30 @@ Instrumentation cost with `--features tracy` is normally low single-digit
 percent. If you need a number for your machine: run a scene for 60 s with and
 without the feature and compare average frame time from the frame-stats log.
 
+## Which GPU renders
+
+`Gpu::request` asks wgpu for the high-performance adapter, so a hybrid laptop
+renders on its discrete GPU, and logs the adapter it got at `info`. Native
+logging shows only errors unless `RUST_LOG` is set, so run with `RUST_LOG=info`
+(or `RUST_LOG=concerto_render=info`) to see it:
+
+```
+Rendering on NVIDIA GeForce RTX 3060 Laptop GPU (DiscreteGpu, Vulkan)
+```
+
+Check that line before reading a capture: a frame bound on the integrated GPU
+shows up as time in `vkAcquireNextImageKHR`, not in any engine zone. Two
+environment variables override the choice:
+
+- `WGPU_POWER_PREF=low|high|none` sets the power preference.
+- `WGPU_ADAPTER_NAME=<substring>` takes the first adapter whose name contains
+  it, ignoring case, among those that can present to the window. wgpu panics
+  when none matches.
+
+```sh
+WGPU_ADAPTER_NAME=intel RUST_LOG=info cargo run --profile profiling -p tech-demo
+```
+
 ## Frame stats without any profiler
 
 A `FrameStats` resource (inserted by `TimePlugin`) keeps a rolling window of
