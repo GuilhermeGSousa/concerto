@@ -17,7 +17,6 @@ use crate::{
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
 
-mod autowalk;
 mod character;
 mod sanatorium;
 mod ui;
