@@ -235,7 +235,9 @@ message, as does a save while the game plays (`Stop to save`), and a scene still
 loading answers `busy`. `play` starts the active scene's game in the viewport,
 as the play button does, and answers once the game has built, plays, has
 spawned every scene it loaded, and has no asset loads in flight: `Playing
-<address> in document <id>; it loaded in <seconds> s.` Like the play button it first saves the scene's unsaved changes,
+<address> in document <id>; it loaded in <seconds> s.` The time runs from
+`PlayStarted`, which comes after the play `App` has warmed up hidden, so it
+covers only what the game still loads once it is shown. Like the play button it first saves the scene's unsaved changes,
 and the answer then says so. If the game is still loading when the call's 30
 second wait runs out, `play` answers anyway, not as an error, saying `it is
 still loading`; `scene_tree` and `screenshot` then show the game as it arrives.
@@ -327,6 +329,14 @@ steps, and drops. The crate has three parts:
   and a refused scene replacement also set a flag the thread reads after
   `finish_plugin_build`: it then cancels the `App`'s loads and skips the ready
   step.
+  An edit or play `App` then warms up: the editor steps it hidden once per
+  `First`, whatever tab is in front and with no input, until a step leaves its
+  `AssetServer` not loading, no `SceneSpawnerComponent` in its world, and
+  `render_assets_settled` true, or until `WARM_UP_LIMIT`, 10 s after the join.
+  Only then does it become the document's `HostedApp`; a panic in a hidden
+  step is the build's failure, in the step `warming up`. A preview `App` skips
+  the warm-up. `finish_blocking` and `PendingApp::finish_now` finish on the
+  calling thread and skip it too.
   Every hosted `App` uploads at most `HOSTED_UPLOAD_BYTES_PER_FRAME`, 32 MiB,
   of render assets per frame, set after the recipe and again after
   `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not

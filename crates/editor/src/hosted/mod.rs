@@ -15,11 +15,12 @@ use std::{
         atomic::{AtomicBool, Ordering},
     },
     thread::JoinHandle,
+    time::{Duration, Instant},
 };
 
 use concerto_app::{App, Plugin, plugins::PluginsState, schedule_groups::First};
 use concerto_ecs::{
-    Component, Entity, Event, IntoSystemConfig, Query, Res, Resource, World,
+    Component, Entity, Event, IntoSystemConfig, Query, Res, Resource, With, World,
     command::CommandQueue,
     events::{event_channel::EventChannel, event_writer::EventWriter},
     query::change_detection::DetectChanges,
@@ -31,10 +32,10 @@ use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegi
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
-    render_asset::RenderAssetBytesPerFrame,
+    render_asset::{RenderAssetBytesPerFrame, render_assets_settled},
     wgpu,
 };
-use concerto_scene::scene::Scene;
+use concerto_scene::{scene::Scene, spawner::SceneSpawnerComponent};
 
 use crate::project::ProjectState;
 use concerto_window::{
@@ -51,6 +52,9 @@ pub const PICTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormS
 
 /// The bytes of render assets a hosted `App` uploads in one frame, whatever its game sets.
 pub const HOSTED_UPLOAD_BYTES_PER_FRAME: usize = 32 * 1024 * 1024;
+
+/// How long an edit or play `App` is stepped hidden, waiting for its loads and uploads to settle, before it is shown anyway.
+pub const WARM_UP_LIMIT: Duration = Duration::from_secs(10);
 
 #[derive(Resource)]
 pub(crate) struct FinishBuildsOffThread;
@@ -144,6 +148,20 @@ impl HostedApp {
             .is_some_and(|window| window.drain_commands().contains(&WindowCommand::Close))
     }
 
+    fn settled(&mut self) -> bool {
+        let loading = self
+            .app
+            .get_resource::<AssetServer>()
+            .is_some_and(AssetServer::is_loading);
+        let world = self.app.main_mut().world_mut();
+        let spawning = world
+            .query::<Entity, With<SceneSpawnerComponent>>()
+            .iter(world)
+            .next()
+            .is_some();
+        !loading && !spawning && render_assets_settled(&self.app)
+    }
+
     fn cancel_loads(&self) {
         if let Some(server) = self.app.get_resource::<AssetServer>() {
             server.cancel_pending();
@@ -174,7 +192,14 @@ type Finished = Result<Option<HostedApp>, String>;
 enum Phase {
     Building(Box<HostedApp>),
     Finishing(JoinHandle<Finished>),
+    WarmingUp(Box<WarmingUp>),
     Done,
+}
+
+struct WarmingUp {
+    hosted: HostedApp,
+    since: Instant,
+    steps: usize,
 }
 
 /// An `App` whose plugins are not all ready yet.
@@ -182,7 +207,8 @@ enum Phase {
 pub struct PendingApp {
     phase: Phase,
     on_ready: Option<OnReady>,
-    started: std::time::Instant,
+    started: Instant,
+    warm_up_limit: Duration,
     cancelled: Arc<AtomicBool>,
     failure: Option<String>,
 }
@@ -197,6 +223,7 @@ impl PendingApp {
         self.failure.as_deref()
     }
 
+    #[cfg(any(test, feature = "testing"))]
     fn building(&self) -> Option<&HostedApp> {
         match &self.phase {
             Phase::Building(hosted) => Some(hosted.as_ref()),
@@ -207,6 +234,22 @@ impl PendingApp {
     fn building_mut(&mut self) -> Option<&mut HostedApp> {
         match &mut self.phase {
             Phase::Building(hosted) => Some(hosted.as_mut()),
+            _ => None,
+        }
+    }
+
+    fn held(&self) -> Option<&HostedApp> {
+        match &self.phase {
+            Phase::Building(hosted) => Some(hosted.as_ref()),
+            Phase::WarmingUp(warming) => Some(&warming.hosted),
+            _ => None,
+        }
+    }
+
+    fn held_mut(&mut self) -> Option<&mut HostedApp> {
+        match &mut self.phase {
+            Phase::Building(hosted) => Some(hosted.as_mut()),
+            Phase::WarmingUp(warming) => Some(&mut warming.hosted),
             _ => None,
         }
     }
@@ -231,15 +274,18 @@ impl PendingApp {
     }
 
     fn finish_if_ready(&mut self) -> Option<HostedApp> {
+        let hosted = self.finish_here()?;
+        log::info!("Hosted App ready in {:?}", self.started.elapsed());
+        Some(hosted)
+    }
+
+    fn finish_here(&mut self) -> Option<HostedApp> {
         if self.stopped() {
             return None;
         }
         let mut hosted = self.take_ready()?;
         match finish_build(&mut hosted, self.on_ready.take(), &self.cancelled) {
-            Ok(true) => {
-                log::info!("Hosted App ready in {:?}", self.started.elapsed());
-                Some(hosted)
-            }
+            Ok(true) => Some(hosted),
             Ok(false) => None,
             Err(failure) => {
                 self.failure = Some(failure);
@@ -257,7 +303,11 @@ impl PendingApp {
                 self.phase = Phase::Finishing(worker);
                 None
             }
-            Phase::Finishing(worker) => self.join(worker, registry),
+            Phase::Finishing(worker) => {
+                let hosted = self.join(worker, registry)?;
+                self.start_warm_up(hosted)
+            }
+            Phase::WarmingUp(warming) => self.warm_up(*warming),
             phase => {
                 self.phase = phase;
                 let hosted = self.take_ready()?;
@@ -284,7 +334,6 @@ impl PendingApp {
                 if let Some(registry) = registry {
                     hosted.receive_registry(registry);
                 }
-                log::info!("Hosted App ready in {:?}", self.started.elapsed());
                 Some(hosted)
             }
             Ok(None) => None,
@@ -295,9 +344,66 @@ impl PendingApp {
         }
     }
 
+    fn start_warm_up(&mut self, hosted: HostedApp) -> Option<HostedApp> {
+        if hosted.role == HostRole::Preview {
+            return Some(self.ready(hosted, 0));
+        }
+        self.phase = Phase::WarmingUp(Box::new(WarmingUp {
+            hosted,
+            since: Instant::now(),
+            steps: 0,
+        }));
+        None
+    }
+
+    fn warm_up(&mut self, mut warming: WarmingUp) -> Option<HostedApp> {
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(|| warming.hosted.step())) {
+            self.failure = Some(panic_message(payload, "warming up"));
+            return None;
+        }
+        warming.steps += 1;
+        if warming.hosted.settled() || warming.since.elapsed() >= self.warm_up_limit {
+            return Some(self.ready(warming.hosted, warming.steps));
+        }
+        self.phase = Phase::WarmingUp(Box::new(warming));
+        None
+    }
+
+    fn ready(&self, hosted: HostedApp, hidden_steps: usize) -> HostedApp {
+        log::info!(
+            "Hosted App ready in {:?} after {hidden_steps} hidden steps",
+            self.started.elapsed()
+        );
+        hosted
+    }
+
     #[cfg(any(test, feature = "testing"))]
     pub(crate) fn finish_now(mut self) -> Option<HostedApp> {
         self.finish_if_ready()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn warm_up_now(&mut self) -> Option<HostedApp> {
+        let hosted = self.finish_here()?;
+        let mut promoted = self.start_warm_up(hosted);
+        while promoted.is_none() && !self.stopped() {
+            let Phase::WarmingUp(warming) = std::mem::replace(&mut self.phase, Phase::Done) else {
+                return None;
+            };
+            promoted = self.warm_up(*warming);
+        }
+        promoted
+    }
+
+    #[cfg(test)]
+    fn with_warm_up_limit(mut self, limit: Duration) -> Self {
+        self.warm_up_limit = limit;
+        self
+    }
+
+    #[cfg(test)]
+    fn warming_up(&self) -> bool {
+        matches!(self.phase, Phase::WarmingUp(_))
     }
 }
 
@@ -356,7 +462,7 @@ pub fn begin(
     extra: impl FnOnce(&mut App),
     on_ready: impl FnOnce(&mut HostedApp) + Send + Sync + 'static,
 ) -> PendingApp {
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     let picture = SharedTexture::new(PICTURE_FORMAT);
     let mut app = match request.role {
         HostRole::Edit => App::for_editing(),
@@ -393,6 +499,7 @@ pub fn begin(
         phase,
         on_ready: Some(Box::new(on_ready)),
         started,
+        warm_up_limit: WARM_UP_LIMIT,
         cancelled: Arc::new(AtomicBool::new(false)),
         failure,
     }
@@ -467,11 +574,11 @@ pub(crate) fn forward_registry(
     };
     for mut app in pending.iter() {
         let created = app.is_added();
-        deliver(app.building_mut(), created);
+        deliver(app.held_mut(), created);
     }
     for mut app in starting.iter() {
         let created = app.is_added();
-        deliver(app.0.building_mut(), created);
+        deliver(app.0.held_mut(), created);
     }
     if registry.is_changed() {
         for mut app in hosted.iter() {
@@ -563,7 +670,7 @@ impl PendingPlayApp {
 
     fn cancel(&self) {
         self.0.cancelled.store(true, Ordering::SeqCst);
-        if let Some(hosted) = self.0.building() {
+        if let Some(hosted) = self.0.held() {
             hosted.cancel_loads();
         }
     }
@@ -2551,5 +2658,143 @@ mod tests {
         });
 
         assert_eq!(upload_budget(&hosted), Some(HOSTED_UPLOAD_BYTES_PER_FRAME));
+    }
+
+    fn hosted_frames(hosted: &HostedApp) -> usize {
+        hosted.world().get_resource::<Frames>().unwrap().0
+    }
+
+    fn loading_server() -> AssetServer {
+        let mut server = AssetServer::new();
+        server.register_asset(&concerto_foundation::assets::asset_store::AssetStore::<
+            GatedAsset,
+        >::new());
+        std::mem::forget(server.load::<GatedAsset>(concerto_foundation::assets::AssetId::new()));
+        server
+    }
+
+    fn never_settling_recipe(app: &mut App) {
+        plain_recipe(app);
+        app.insert_resource(loading_server());
+    }
+
+    fn breaks_each_frame() {
+        panic!("the hidden step broke");
+    }
+
+    fn recipe_breaking_in_update(app: &mut App) {
+        plain_recipe(app);
+        app.add_system(Update, breaks_each_frame.at_edit_time());
+    }
+
+    fn is_warming_up(document: Entity) -> impl Fn(&World) -> bool {
+        move |world| {
+            world
+                .get_component_for_entity::<PendingPlayApp>(document)
+                .is_some_and(|pending| pending.0.warming_up())
+        }
+    }
+
+    #[test]
+    fn a_play_app_still_loading_is_stepped_hidden_until_it_settles() {
+        let (mut world, document) = host_world(plain_recipe);
+        world.insert_resource(FinishBuildsOffThread);
+        let edit = hosted_id(&world, document);
+        let server = loading_server();
+        let play_server = server.clone();
+        start_play(&mut world, document, plain_recipe, move |app| {
+            app.insert_resource(play_server);
+        });
+        frames_until(&mut world, finish_play, is_warming_up(document));
+        finish_play(&mut world);
+        finish_play(&mut world);
+
+        assert_eq!(hosted_id(&world, document), edit);
+        assert!(starting(&world, document));
+        assert_eq!(play_state(&world, document), Some(PlayState::Starting));
+
+        server.cancel_pending();
+        finish_play(&mut world);
+
+        assert_ne!(hosted_id(&world, document), edit);
+        assert_eq!(play_state(&world, document), Some(PlayState::Playing));
+        assert!(frames(&world, document) > 1);
+    }
+
+    #[test]
+    fn an_app_that_never_settles_is_promoted_after_the_warm_up_limit() {
+        let limit = std::time::Duration::from_millis(50);
+        let mut pending =
+            begin(request(never_settling_recipe), |_| {}, |_| {}).with_warm_up_limit(limit);
+        let started = std::time::Instant::now();
+
+        let hosted = pending.warm_up_now().unwrap();
+
+        assert!(started.elapsed() >= limit);
+        assert!(
+            hosted
+                .world()
+                .get_resource::<AssetServer>()
+                .unwrap()
+                .is_loading()
+        );
+        assert!(hosted_frames(&hosted) > 1);
+    }
+
+    #[test]
+    fn a_settled_app_is_promoted_after_one_hidden_step() {
+        let mut pending = begin(request(plain_recipe), |_| {}, |_| {});
+
+        let hosted = pending.warm_up_now().unwrap();
+
+        assert_eq!(hosted_frames(&hosted), 1);
+    }
+
+    #[test]
+    fn a_hidden_step_that_panics_leaves_a_failed_pending_app() {
+        let mut pending = begin(request(recipe_breaking_in_update), |_| {}, |_| {});
+
+        assert!(pending.warm_up_now().is_none());
+
+        assert_eq!(pending.failure(), Some("the hidden step broke"));
+    }
+
+    #[test]
+    fn a_play_app_that_panics_in_a_hidden_step_fails_to_play() {
+        let (mut world, document) = host_world(plain_recipe);
+        world.insert_resource(FinishBuildsOffThread);
+        let edit = hosted_id(&world, document);
+        start_play(&mut world, document, recipe_breaking_in_update, |_| {});
+
+        frames_until(&mut world, finish_play, |world| {
+            world
+                .get_component_for_entity::<PendingPlayApp>(document)
+                .is_none()
+        });
+
+        let failed: Vec<PlayFailed> = world
+            .get_resource::<EventChannel<PlayFailed>>()
+            .unwrap()
+            .read_from(&mut concerto_ecs::events::event_cursor::EventCursor::default())
+            .cloned()
+            .collect();
+        assert_eq!(
+            failed,
+            vec![PlayFailed {
+                document,
+                message: "Could not start the game: the hidden step broke".into(),
+            }]
+        );
+        assert_eq!(play_state(&world, document), Some(PlayState::Editing));
+        assert_eq!(hosted_id(&world, document), edit);
+    }
+
+    #[test]
+    fn a_preview_is_promoted_without_a_warm_up() {
+        let mut pending = begin(preview_request(never_settling_recipe), |_| {}, |_| {});
+
+        let hosted = pending.warm_up_now().unwrap();
+
+        assert_eq!(hosted_frames(&hosted), 0);
     }
 }

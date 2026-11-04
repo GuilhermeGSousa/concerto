@@ -190,7 +190,8 @@ while it runs:
   `World::add_listener` or inserted on an entity, including from a plugin's
   `build`, is never filtered. Its render world runs everything. It is
   held as a `HostedApp` component on the scene's document, and dropped with
-  it. It holds the scene's entities and the scene tools: the editor camera, the
+  it. Like a play `App`, it is stepped hidden after its build until its loads
+  and uploads settle, and only then becomes the `HostedApp`. It holds the scene's entities and the scene tools: the editor camera, the
   grid, picking, and the gizmo. It draws its window into a texture that the
   viewport panel shows.
 - **A play `App`,** while the Scene tab plays its scene. Play (the tab's
@@ -198,7 +199,9 @@ while it runs:
   game role, `App::new()`, from the same recipe plus `EditToolsCorePlugin`
   (selection and edits, no viewport tools), with the project's content and the
   open scene's saved file as its startup scene. While it builds it is a
-  `PendingPlayApp` beside the edit `App`. Once ready, the edit `App` moves to
+  `PendingPlayApp` beside the edit `App`. Once built, it is stepped hidden,
+  with no input, until its loads, scene spawns and render uploads settle, or
+  for at most `WARM_UP_LIMIT` (10 s). Then the edit `App` moves to
   `ParkedEditApp`, where it is not stepped, and the play `App` becomes the
   document's `HostedApp`, so the stepping, the viewport, input, and the panels
   follow it. Stop drops it and puts the parked edit `App` back. The document's
