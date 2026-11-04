@@ -41,8 +41,9 @@ fix the entry in the same commit as the change that made it false.
   register `a` before `b`.
 - **A missing resource skips the system and warns every frame.** A system
   input declines through `SystemInput::get_data`, which returns a
-  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter` and
-  `Extracted` decline as `Missing`, which logs a warning on every skipped run;
+  `ValidationError`. `Res`, `ResMut`, `EventReader`, `EventWriter`,
+  `RemovedComponents` and `Extracted` decline as `Missing`, which logs a
+  warning on every skipped run;
   `EditWorld<T>` and `EditWorldSignals` decline as `Skip`, which is silent. A warning
   flood in the log names the system and the missing type. Use `Option<Res<T>>`
   or `Option<ResMut<T>>` where absence is normal.

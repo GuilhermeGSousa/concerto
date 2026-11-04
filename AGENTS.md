@@ -112,7 +112,7 @@ goes in your reply or in the spec. Leave existing comments alone unless the
 code they describe changes.
 
 **Systems never take the world.** A system's parameters are `Query`, `Res`,
-`Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `SystemLocal`,
+`Option<Res<T>>`, `ResMut`, `Option<ResMut<T>>`, `CommandQueue`, `EventReader`, `EventWriter`, `RemovedComponents<T>` (once a plugin calls `App::track_removals::<T>()`), `SystemLocal`,
 `InputSet<K>` (the read-only inputs plugins registered under `K` with
 `App::register_input`, declared as their union), and, in an extract system,
 `Extracted`. In the editor crate a system may also take

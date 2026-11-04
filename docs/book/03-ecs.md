@@ -137,6 +137,7 @@ The parameters a system may take:
 | `Option<Res<T>>`, `Option<ResMut<T>>` | a resource that may not exist |
 | `CommandQueue` | spawning, despawning, inserting, removing, triggering signals |
 | `EventReader<E>`, `EventWriter<E>` | events, see the next chapter |
+| `RemovedComponents<T>` | entities that lost `T`, by removal or despawn, each read once; it needs `app.track_removals::<T>()`, and without it the system is skipped with a warning |
 | `SystemLocal<T>` | state private to this system, kept between runs; `T` implements `FromWorld` |
 
 A system takes at most twelve parameters; group some in a tuple if you need

@@ -24,6 +24,7 @@ use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::{
+    component::removed::{record_removal, ComponentRemoved},
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
@@ -231,6 +232,18 @@ impl App {
         self
     }
 
+    /// Records every removal of `T` in the main world, for systems taking `RemovedComponents<T>`.
+    pub fn track_removals<T: Component>(&mut self) -> &mut Self {
+        if self
+            .get_resource::<EventChannel<ComponentRemoved<T>>>()
+            .is_some()
+        {
+            return self;
+        }
+        self.register_event::<ComponentRemoved<T>>();
+        self.add_listener(record_removal::<T>.at_edit_time())
+    }
+
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {
         self.main_mut().insert_resource(value);
         self
@@ -424,7 +437,10 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use concerto_ecs::events::{event_channel::EventChannel, event_reader::EventReader};
+    use concerto_ecs::{
+        component::removed::RemovedComponents,
+        events::{event_channel::EventChannel, event_reader::EventReader},
+    };
 
     #[derive(Event)]
     struct ExternalEvent;
@@ -662,6 +678,32 @@ mod tests {
 
         assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
         app.update();
+        assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
+    }
+
+    #[derive(Component)]
+    struct Health;
+
+    fn count_removals(mut removed: RemovedComponents<Health>, mut seen: ResMut<Seen>) {
+        seen.0 += removed.read().count();
+    }
+
+    #[test]
+    fn tracking_removals_twice_records_each_removal_once() {
+        let mut app = App::new();
+        app.register_plugin(main_schedule::MainSchedulePlugin)
+            .register_plugin(plugins::TimePlugin)
+            .track_removals::<Health>()
+            .track_removals::<Health>()
+            .insert_resource(Seen::default())
+            .add_system(Update, count_removals);
+        app.finish_plugin_build();
+        let world = app.main_mut().world_mut();
+        let entity = world.spawn(Health);
+        world.remove_component::<Health>(entity);
+
+        app.update();
+
         assert_eq!(app.get_resource::<Seen>().unwrap().0, 1);
     }
 }
