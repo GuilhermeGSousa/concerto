@@ -7,6 +7,7 @@ to an existing game. It is a Cargo subcommand, a binary named `cargo-concerto`.
 cargo install --path crates/project
 cargo concerto new <dir> [--engine <path>]
 cargo concerto editor <dir> [--engine <path>]
+cargo concerto editor <dir> --update [--engine <path>]
 ```
 
 ## `new`
@@ -17,12 +18,14 @@ directory; a name Cargo would reject (anything but letters, digits, `-` and
 `_`, a leading digit, a Rust keyword, `test`, or a Cargo build directory name:
 `build`, `deps`, `examples`, `incremental`) is refused, and so is the name of an
 engine crate the project depends on (`concerto`, `concerto-editor`,
-`concerto-asset-build`).
+`concerto-asset-build`, `concerto-animation-editor`).
 
 It writes:
 
-- `Cargo.toml`: the game package, with a `[lib]` of the default crate type and
-  a `[[bin]]` named after the package.
+- `Cargo.toml`: the game package, with a `[lib]` of the default crate type, a
+  `[[bin]]` named after the package, and a `[package.metadata.concerto.editor]`
+  table listing `concerto-animation-editor`, so the project's editor has the
+  clip editor and calls `run_with`; see Editor plugins.
 - `src/lib.rs`: the recipe, `pub fn game(app: &mut App)`, which registers
   `DefaultPlugins`.
 - `src/main.rs`: `concerto::run(<crate>::game, concerto::content_registry!())`.
@@ -49,12 +52,82 @@ fn main() {
 So the editor opens its own game's project by default; `--project <dir>`
 overrides that. `editor` requires `<dir>/Cargo.toml` and `<dir>/src/lib.rs`,
 refuses if `<dir>/editor` exists, and says that it assumes the recipe is
-`<crate>::game`. Run the editor with `cargo run -p <game>-editor`.
+`<crate>::game`. Run the editor with `cargo run -p <game>-editor`. A game that
+lists editor plugins gets a `run_with` call instead; see Editor plugins. The
+editor crate has a `tracy` feature that turns on `concerto-editor/tracy`; see
+[profiling.md](../../docs/profiling.md).
 
 If `editor` fails after writing `editor/`, it removes that directory, so the
 command can be run again once the cause is fixed. If `new` fails after writing,
 for example because the enclosing workspace's `members` is not an array, it
 removes the project directory it created, or empties the one it was given.
+
+## Editor plugins
+
+A game names the crates that extend its editor in its own `Cargo.toml`. They
+are data there, so the game gains no dependency on them:
+
+```toml
+[package.metadata.concerto.editor]
+plugins = [{ package = "concerto-motion-matching-editor", install = "concerto_motion_matching_editor::install" }]
+```
+
+`editor` writes each package into `editor/Cargo.toml` and calls `run_with`
+instead of `run`:
+
+```rust
+fn main() {
+    concerto_editor::run_with(
+        my_game::game,
+        concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
+        &[concerto_motion_matching_editor::install],
+    );
+}
+```
+
+With no list, or an empty one, the generated files are as above.
+
+`new` writes one entry, the clip editor, and a project that doesn't want it
+removes it and runs `editor --update`:
+
+```toml
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+]
+```
+
+`editor` adds nothing to a game's list, so a game without that entry has no clip
+tab until it adds the entry and runs `editor --update`.
+
+An entry has these keys, and no others:
+
+- `package`: the Cargo package. It cannot be the game or `concerto-editor`, and
+  it appears once.
+- `install`: the `fn(&mut App)` to call, as a Rust path of at least two
+  segments.
+- `version`, `path`: where the package comes from. A `path` is relative to the
+  game's `Cargo.toml`, and is rewritten for `editor/Cargo.toml`.
+
+A package named `concerto-<dir>` with neither `version` nor `path` is the engine
+crate `crates/<dir>`, and resolves as `concerto-editor` does; see Engine
+dependencies. Any other package must give `version` or `path`.
+
+## `editor --update`
+
+Rewrites `editor/Cargo.toml` and `editor/src/main.rs` from the game's list, and
+nothing else, so run it after changing the list. Anything written by hand in
+those two files is lost. It refuses a missing `editor/`.
+
+Its engine is the one `editor/Cargo.toml` already names, so it never swaps a
+path dependency for the published crate; `--engine` replaces it. It refuses an
+`editor/Cargo.toml` it can't read an engine from, unless `--engine` is given:
+one with no `concerto-editor`, one that inherits it from the workspace, one that
+takes it from a git repository or another registry, or one whose path doesn't
+end in `crates/editor`.
+
+`editor` and `editor --update` validate the whole list before writing anything.
+A malformed entry is quoted in the error.
 
 ## Engine dependencies
 
@@ -69,8 +142,8 @@ and the published 0.1.0 does not, so the tool warns when `--engine` is absent.
 
 With `--engine <path>`, a Concerto checkout resolved against the working
 directory, each dependency also names its own crate in that checkout: `.` for
-`concerto`, `crates/asset-build` for `concerto-asset-build`, and
-`crates/editor` for `concerto-editor`.
+`concerto`, `crates/asset-build` for `concerto-asset-build`, `crates/editor` for
+`concerto-editor`, and `crates/<dir>` for a plugin package `concerto-<dir>`.
 
 ```toml
 concerto = { version = "0.1.0", path = "../.." }

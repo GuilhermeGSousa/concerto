@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use concerto_ecs::{
     Component, Entity, World,
     component::scene::SceneEntityRef,
-    reflect::{ReflectSceneComponent, SceneCapture},
+    reflect::{AppTypeRegistry, ReflectSceneComponent, SceneCapture},
 };
-use concerto_reflect::{Reflect, ReflectedValue, to_value};
+use concerto_reflect::{Reflect, ReflectedValue, ValueWarning, to_value};
 
 #[derive(Component, Reflect, Default, Debug, PartialEq, Clone)]
 #[reflect(SceneComponent)]
@@ -89,6 +89,55 @@ fn a_reference_out_of_range_keeps_its_unresolved_default() {
     assert_eq!(rig.bones[0], SceneEntityRef::default());
     assert_eq!(rig.bones[0].entity(), None);
     assert_eq!(rig.root, Some(SceneEntityRef::Entity(nodes[0])));
+}
+
+fn spawn_rig(world: &mut World, rig: &Rig, entity: Entity, nodes: &[Entity]) -> Vec<ValueWarning> {
+    let spawn = world
+        .get_resource::<AppTypeRegistry>()
+        .unwrap()
+        .read()
+        .get_type_data::<ReflectSceneComponent>(std::any::TypeId::of::<Rig>())
+        .unwrap()
+        .spawn;
+    spawn(world, entity, &to_value(rig).unwrap(), nodes)
+}
+
+#[test]
+fn an_unset_reference_spawns_unset_without_a_warning() {
+    let mut world = World::new();
+    world.register_type::<Rig>();
+    let nodes = [world.spawn(())];
+    let rig = Rig {
+        weight: 1.0,
+        bones: vec![SceneEntityRef::default()],
+        root: Some(SceneEntityRef::default()),
+    };
+
+    let warnings = spawn_rig(&mut world, &rig, nodes[0], &nodes);
+
+    assert_eq!(warnings, Vec::new());
+    assert_eq!(world.get_component_for_entity::<Rig>(nodes[0]), Some(&rig));
+}
+
+#[test]
+fn a_reference_past_the_scene_other_than_unset_warns() {
+    let mut world = World::new();
+    world.register_type::<Rig>();
+    let nodes = [world.spawn(())];
+    let rig = Rig {
+        weight: 1.0,
+        bones: vec![SceneEntityRef::Index(1), SceneEntityRef::default()],
+        root: None,
+    };
+
+    let warnings = spawn_rig(&mut world, &rig, nodes[0], &nodes);
+
+    assert_eq!(
+        warnings.iter().map(|w| w.path.as_str()).collect::<Vec<_>>(),
+        ["bones[0]"]
+    );
+    let spawned = world.get_component_for_entity::<Rig>(nodes[0]).unwrap();
+    assert_eq!(spawned.bones, vec![SceneEntityRef::default(); 2]);
 }
 
 #[test]

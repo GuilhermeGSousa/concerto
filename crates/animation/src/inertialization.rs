@@ -73,6 +73,11 @@ impl Inertializer {
         }
     }
 
+    /// The number of bones this inertializer holds offsets for.
+    pub fn bone_count(&self) -> usize {
+        self.offset_position.len()
+    }
+
     /// Sets the offsets so that `destination` plus the offsets reproduces `source`.
     pub fn transition(
         &mut self,

@@ -3,6 +3,7 @@ mod edit;
 mod input;
 mod observe;
 mod run;
+mod value;
 
 pub use run::PlayTimeout;
 
@@ -27,7 +28,7 @@ use concerto_mcp::{AppMcpExt, FrameDemand, McpPlugin, Needs, ToolError, host::Ho
 use concerto_ui::{sets::UiSet, text::UIText, text_input::UITextInput};
 
 use crate::{
-    asset_editor::{EditorDocument, SaveRequested},
+    asset_editor::{BackgroundWork, EditorDocument, SaveRequested},
     guard::{GuardChoice, UnsavedGuard},
     hosted::{
         EditWorld, HostRole, HostedApp, PendingApp, PendingPlayApp, PlayState, ViewportTarget,
@@ -36,10 +37,14 @@ use crate::{
     timeline::TimelineReadout,
 };
 
-/// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project`, with [`McpPlugin`] and [`EditorMcpPlugin`].
-pub fn editor(recipe: fn(&mut App), project: PathBuf) -> impl FnOnce(&mut App) {
+/// Builds the editor `App` that `--mcp` serves: the editor for `recipe` on `project` with `plugins` added, and [`McpPlugin`] and [`EditorMcpPlugin`].
+pub fn editor(
+    recipe: fn(&mut App),
+    project: PathBuf,
+    plugins: Vec<fn(&mut App)>,
+) -> impl FnOnce(&mut App) {
     move |app| {
-        crate::run::register_editor(app, recipe, project, false);
+        crate::run::register_editor(app, recipe, project, false, &plugins);
         app.register_plugin(McpPlugin)
             .register_plugin(EditorMcpPlugin);
     }
@@ -77,6 +82,7 @@ impl Plugin for EditorMcpPlugin {
         observe::build(app);
         act::build(app);
         edit::build(app);
+        value::build(app);
         run::build(app);
         input::build(app);
     }
@@ -99,11 +105,12 @@ type BusyInputs = (
     Query<'static, 'static, &'static PlayState>,
     Res<'static, PanelTextChanged>,
     Query<'static, 'static, &'static HostedApp, With<ViewportTarget>>,
+    Query<'static, 'static, &'static BackgroundWork>,
     NonSendMarker,
 );
 
 fn is_busy(
-    (project, documents, building, starting, saving, states, text, previews, _): &SystemInputData<
+    (project, documents, building, starting, saving, states, text, previews, work, _): &SystemInputData<
         BusyInputs,
     >,
 ) -> bool {
@@ -113,6 +120,7 @@ fn is_busy(
         || building.iter().next().is_some()
         || starting.iter().next().is_some()
         || saving.iter().next().is_some()
+        || work.iter().next().is_some()
         || states.iter().any(|state| state.is_on())
         || front_preview_is_loading(previews)
 }

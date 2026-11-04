@@ -1,5 +1,7 @@
 mod component_reader;
+mod input_set;
 pub use component_reader::ComponentMetadata;
+pub use input_set::{InputSet, InputSetState, Inputs, register_input};
 
 use std::{
     borrow::Cow,
@@ -91,9 +93,49 @@ pub trait SystemInput {
     fn apply(_state: &mut Self::State, _world: &mut World) {}
 
     fn fill_access(_meta: &mut SystemMetadata, access: &mut SystemAccess);
+
+    /// The access of an initialized input, which may depend on its state; the default is [`SystemInput::fill_access`].
+    fn fill_state_access(
+        _state: &Self::State,
+        meta: &mut SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
+        Self::fill_access(meta, access);
+    }
 }
 
 pub trait ReadOnlySystemInput: SystemInput {}
+
+#[typle(Tuple for 0..=12)]
+impl<T> ReadOnlySystemInput for T
+where
+    T: Tuple,
+    T<_>: ReadOnlySystemInput + 'static,
+{
+}
+
+/// A read-only input fetched outside any system, as often as needed, like a system's own input.
+pub struct InputState<P: SystemInput> {
+    state: P::State,
+}
+
+impl<P: ReadOnlySystemInput + 'static> InputState<P> {
+    pub fn new(world: &mut World) -> Self {
+        Self {
+            state: P::init_state(world),
+        }
+    }
+
+    /// The input's data for `world` now; a declined fetch is the error.
+    pub fn get<'w, 's>(&'s mut self, world: &'w World) -> Result<P::Data<'w, 's>, ValidationError> {
+        let ticks = SystemTicks {
+            last_run: Tick::default(),
+            this_run: world.increment_change_tick(),
+        };
+        // SAFETY: `P` only reads, and `world` stays borrowed for as long as the data lives.
+        unsafe { P::get_data(&mut self.state, world.as_unsafe_world_cell(), ticks) }
+    }
+}
 
 #[allow(unused_variables, unused_mut)]
 #[typle(Tuple for 0..=12)]
@@ -128,6 +170,14 @@ where
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         typle_for!(i in .. => <T<{i}>>::fill_access(meta, access));
+    }
+
+    fn fill_state_access(
+        state: &Self::State,
+        meta: &mut SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
+        typle_for!(i in .. => <T<{i}>>::fill_state_access(&state[[i]], meta, access));
     }
 }
 
@@ -180,6 +230,14 @@ impl<'w, 's, P: SystemInput + 'static> SystemInput for StaticSystemInput<'w, 's,
 
     fn fill_access(meta: &mut SystemMetadata, access: &mut SystemAccess) {
         P::fill_access(meta, access);
+    }
+
+    fn fill_state_access(
+        state: &Self::State,
+        meta: &mut SystemMetadata,
+        access: &mut SystemAccess,
+    ) {
+        P::fill_state_access(state, meta, access);
     }
 }
 

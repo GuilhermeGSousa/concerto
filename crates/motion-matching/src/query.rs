@@ -1,37 +1,50 @@
 use concerto_foundation::transform::Transform;
 use concerto_mesh::Skeleton;
-use concerto_reflect::TypeRegistry;
 
 use crate::{
-    channel::{build_channels, BodyMotion, ChannelSource, FeatureChannel, FrameContext},
+    channel::{BodyMotion, ChannelSource, FeatureChannel, FrameContext},
     database::{BakeError, MotionDatabase},
-    definition::StoredChannel,
     simulation::TrajectorySample,
 };
 
-/// The live feature channels of a database, built once and used to make normalised query vectors.
+/// The live feature channels of a database, built once and used to make query vectors.
 pub struct FeatureQuery {
     channels: Vec<Box<dyn FeatureChannel>>,
 }
 
 impl FeatureQuery {
-    /// Builds the live channels from the values stored in the database's spans; a type the registry lacks is an error.
-    pub fn new(database: &MotionDatabase, registry: &TypeRegistry) -> Result<Self, BakeError> {
-        let stored: Vec<StoredChannel> = database
-            .channels()
-            .iter()
-            .map(|span| StoredChannel {
-                type_name: span.type_name.clone(),
-                value: span.value.clone(),
-            })
-            .collect();
+    /// Copies the live channels of a loaded database; a channel not yet loaded is an error.
+    pub fn new(database: &MotionDatabase) -> Result<Self, BakeError> {
         Ok(Self {
-            channels: build_channels(&stored, registry)?,
+            channels: database
+                .live_channels()?
+                .into_iter()
+                .map(|channel| channel.dyn_clone())
+                .collect(),
         })
+    }
+
+    /// The live channels, in the database's order.
+    pub fn channels(&self) -> &[Box<dyn FeatureChannel>] {
+        &self.channels
     }
 
     /// The normalised feature vector for a character whose pose is database frame `pose_frame` and whose predicted path is `trajectory`, expressed in `simulation`.
     pub fn build(
+        &self,
+        database: &MotionDatabase,
+        skeleton: &Skeleton,
+        pose_frame: usize,
+        simulation: &Transform,
+        trajectory: &[TrajectorySample],
+    ) -> Result<Vec<f32>, BakeError> {
+        let mut features = self.raw(database, skeleton, pose_frame, simulation, trajectory)?;
+        database.normalise(&mut features);
+        Ok(features)
+    }
+
+    /// The vector `build` normalises, in the units `preview_features` reads: pose channels as baked for `pose_frame`, and trajectory channels from `trajectory` expressed in `simulation`.
+    pub fn raw(
         &self,
         database: &MotionDatabase,
         skeleton: &Skeleton,
@@ -61,7 +74,7 @@ impl FeatureQuery {
         let reads_trajectory = database
             .channels()
             .iter()
-            .any(|span| span.source == ChannelSource::Trajectory);
+            .any(|span| span.source() == ChannelSource::Trajectory);
         if reads_trajectory && trajectory.len() < needed {
             return Err(BakeError::TrajectoryTooShort {
                 needed,
@@ -80,12 +93,10 @@ impl FeatureQuery {
         };
         let mut features = database.features(pose_frame).to_vec();
         for (span, channel) in database.channels().iter().zip(&self.channels) {
-            if span.source == ChannelSource::Trajectory {
-                let range = span.offset..span.offset + span.dims;
-                channel.extract(&context, &mut features[range]);
+            if span.source() == ChannelSource::Trajectory {
+                channel.extract(&context, &mut features[span.range()]);
             }
         }
-        database.normalise(&mut features);
         Ok(features)
     }
 }

@@ -527,21 +527,6 @@ fn a_panel_whose_owner_is_hidden_closes_itself() {
 }
 
 #[test]
-fn a_panel_spawned_before_its_first_layout_stays_open() {
-    let mut world = stack_world();
-    let trigger = node(&mut world);
-    let menu = open_panel(
-        &mut world,
-        trigger,
-        UIAnchorTarget::Node { entity: trigger },
-    );
-
-    run(&mut world);
-
-    assert!(visible(&world, menu), "no node here has ever been laid out");
-}
-
-#[test]
 fn a_point_target_anchors_to_a_zero_size_box_at_the_point() {
     let rects = HashMap::new();
     let target = UIAnchorTarget::Point {

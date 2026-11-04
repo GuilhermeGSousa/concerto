@@ -73,6 +73,7 @@ fn saving_into_a_registry_returns_the_id_and_records_it() {
         id: existing,
         address: "content/other.gasset".into(),
         kind: "Widget".into(),
+        kind_version: None,
         provenance: None,
     });
 
@@ -98,6 +99,43 @@ fn saving_into_a_registry_returns_the_id_and_records_it() {
             .unwrap(),
         id,
         "a re-save keeps the identity"
+    );
+
+    std::fs::remove_dir_all(&project_root).ok();
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Axle {
+    length: u32,
+}
+
+impl Asset for Axle {
+    const FORMAT_VERSION: u32 = 4;
+
+    fn name() -> &'static str {
+        "Axle"
+    }
+}
+
+#[test]
+fn a_save_writes_the_type_version() {
+    let project_root =
+        std::env::temp_dir().join(format!("save-content-version-{}", std::process::id()));
+    let address = "content/axles/front.gasset";
+    let mut registry = AssetRegistry::new();
+
+    let id = save_content_asset_into(&Axle { length: 2 }, &project_root, address, &mut registry)
+        .expect("save");
+
+    assert_eq!(
+        read_content_asset_header(&project_root.join(address))
+            .unwrap()
+            .kind_version,
+        4
+    );
+    assert_eq!(
+        registry.get(id).and_then(|entry| entry.kind_version),
+        Some(4)
     );
 
     std::fs::remove_dir_all(&project_root).ok();

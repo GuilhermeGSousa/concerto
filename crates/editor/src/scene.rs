@@ -16,8 +16,8 @@ use concerto_ecs::{
     system::NonSendMarker,
 };
 use concerto_foundation::assets::{
-    Asset, AssetId,
-    content::{read_content_asset, save_content_asset_into},
+    AssetId,
+    content::{decode_content_asset, read_content_asset, save_content_asset_into},
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_render::gpu::Gpu;
@@ -102,7 +102,7 @@ pub(crate) struct SceneEditorState {
     building: Option<AssetEntry>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testing"))]
 impl SceneEditorState {
     pub(crate) fn idle(&self) -> bool {
         self.job.is_none() && self.building.is_none()
@@ -128,18 +128,15 @@ impl AssetEditor for SceneEditor {
     }
 }
 
-pub(crate) fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
+/// Reads the scene at `address` under `root`, checking its id and its kind.
+pub fn load_scene(root: PathBuf, address: String, id: AssetId) -> anyhow::Result<Scene> {
     let bytes = std::fs::read(root.join(address))?;
-    let (header, payload) = read_content_asset(&bytes)?;
+    let (header, _) = read_content_asset(&bytes)?;
     anyhow::ensure!(
         header.asset_id == id,
         "Asset identity changed; reopen the project"
     );
-    anyhow::ensure!(
-        header.kind == Scene::name(),
-        "Selected asset is not a Scene"
-    );
-    Ok(bincode::deserialize(payload)?)
+    Ok(decode_content_asset::<Scene>(&bytes)?.1)
 }
 
 /// Opens, hosts, and saves scenes; `recipe` is what each scene's edit `App` is built from.
@@ -750,7 +747,11 @@ mod tests {
         world_id::WorldId,
     };
     use concerto_foundation::{
-        assets::{asset_server::AssetServer, content::write_content_asset},
+        assets::{
+            Asset,
+            asset_server::AssetServer,
+            content::{read_content_asset, write_content_asset},
+        },
         transform::Transform,
     };
     use concerto_ui::{

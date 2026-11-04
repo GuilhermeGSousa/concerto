@@ -86,3 +86,21 @@ fn a_context_built_without_settings_returns_an_empty_table() {
     let ctx = ImportContext::new(std::path::PathBuf::from("motion/walk.bvh"));
     assert!(ctx.settings().is_empty());
 }
+
+#[derive(Serialize, Deserialize)]
+struct FakeVersionedThing;
+
+impl Asset for FakeVersionedThing {
+    const FORMAT_VERSION: u32 = 5;
+
+    fn name() -> &'static str {
+        "FakeVersionedThing"
+    }
+}
+
+#[test]
+fn emit_records_the_type_version() {
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("models/character.gltf"));
+    ctx.emit("thing/0", &FakeVersionedThing).expect("emit");
+    assert_eq!(ctx.into_parts().sub_assets[0].kind_version, 5);
+}

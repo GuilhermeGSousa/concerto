@@ -1,0 +1,12 @@
+version = 1
+source_id = "dbdeff93-c63d-4fe8-a663-1c495c519136"
+importer = "bvh"
+
+[outputs."animation/fallAndGetUp1_subject5"]
+asset_id = "2679ce78-8f9e-4124-a5cc-2f26c85941fe"
+
+[outputs.scene]
+asset_id = "0eafe65d-4ce4-4a3d-94a0-a15ed4567621"
+
+[outputs."skeleton/0"]
+asset_id = "2110a4ea-ff06-4b62-b47a-cb0fb7400857"

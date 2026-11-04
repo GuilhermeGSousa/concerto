@@ -71,7 +71,7 @@ other systems write, and `GroundProbe` reports whether it stands on something:
 use concerto::motion_matching::{CharacterSimulation, DesiredMotion};
 use concerto::physics::ground::GroundProbe;
 
-let collider = Collider::capsule(2.0, 1.0);
+let collider = Collider::capsule(0.5, 0.3);
 let offset = ColliderOffset::bottom_origin(&collider);
 cmd.spawn((
     Player,
@@ -98,11 +98,12 @@ fn walk(input: Res<Input>, players: Query<(&mut DesiredMotion, &GroundProbe), Wi
 ```
 
 Each fixed step the simulation advances its velocity and facing springs
-(halflife 0.27 s by default) toward `DesiredMotion`, sets the body's
-horizontal velocity to the spring's, and reads the body's position back after
-collisions. It also fills `CharacterSimulation::trajectory` with
-`sample_count` predicted samples, `sample_dt` apart, assuming the desired
-motion holds.
+(halflife 0.27 s by default) toward `DesiredMotion` and sets the body's
+horizontal velocity to the spring's. After the physics step it predicts
+`sample_count` samples of the path ahead, `sample_dt` apart, assuming the
+desired motion holds, for motion matching to search with. The springs and the
+prediction are internal; to read how a character moves, ask its body with
+`physics.linear_velocity(body_id)`.
 
 The default halflife changed from 0.1 s, the old `CharacterMovement` value, to
 0.27 s.
@@ -181,15 +182,19 @@ Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
 blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
 takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
 missing or holds another type; the typed methods are wrappers over those two.
-The tech demo's
-`examples/tech-demo/src/character.rs` builds a full locomotion graph with a
-jump state machine.
+`crates/animation/tests/graph_serialization.rs` builds a graph with a blend
+space and a state machine. The tech demo's character plays no authored graph:
+`examples/tech-demo/src/character.rs` gives it one `MotionMatchingNode`, which
+plays a motion database, and the
+[motion matching README](../../crates/motion-matching/README.md#playing-a-database)
+covers that node.
 
 ### Your own nodes
 
 The node set is open: any crate can define a node. Derive `Reflect` and
 `Default`, mark it `#[reflect(AnimationNode)]`, implement `AnimationNode`, and
-register the type with `app.register_type::<MyNode>()`.
+register it in your plugin with `app.register_animation_node::<MyNode>()` (from
+`AnimationAppExt`), which registers the type and its inputs.
 
 ```rust
 #[derive(Default, Reflect)]
@@ -199,32 +204,109 @@ struct Gain {
 }
 
 impl AnimationNode for Gain {
-    type Instance = ();
-    // create_instance, update, evaluate, reset; is_finished defaults to true
+    type State = ();
+    type CreateInput = ();
+    type UpdateInput = Res<'static, Tuning>;
+    type EvaluateInput = ();
+    // create_state, update, evaluate, reset; is_finished defaults to true
 }
 ```
 
-The node's fields are its data and are stored with the graph. `Instance` is the
-per-player runtime state (a playhead, say): `create_instance` makes one for each
+The node's fields are its data and are stored with the graph. `State` is the
+per-player runtime state (a playhead, say): `create_state` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it. Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
+receive it.
+
+The three input types say what the node reads in each walk of the graph:
+`create_state` gets `CreateInput`, `update` gets `UpdateInput` and
+`evaluate` gets `EvaluateInput`, already fetched, as their typed data (`&Res<Tuning>`
+above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
+`Query`, or a tuple of them; `()` reads nothing. The systems that walk graphs,
+`initialize_animation_players`, `update_animation_players` and
+`animate_targets`, each declare the union of their walk's inputs over every
+registered node, and nothing else, so `animate_targets` never declares what only
+an update reads. A node whose input is missing, or whose type was registered
+without `register_animation_node`, is skipped in that walk with a warning. The
+clip node reads `AssetStore<AnimationClip>` and the state machine
+`AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
+player's own data: its blackboard, its root bone in `evaluate`, and its
+skeleton.
+
+Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
 `AnimationGraph::from_node`.
 
-A graph stores each node as its registry `type_name` plus its reflected value,
-which is what a `.gasset` file holds. The live nodes are built from that data
-by `make_live`, which the asset server runs in `on_load`, so a graph loaded
-from disk and a graph built in code both go live when they reach the asset
-server: `assets.add(graph)` runs it before the handle resolves. A player skips
-a graph that is not live. A node whose type is not registered, or whose stored
-value does not apply, becomes a `PlaceholderNode` that passes its first input
+A graph holds each node as an `AnimationNodeData`, written to a `.gasset` file
+as its registry `type_name` plus its reflected value. A node added in code or
+read from disk is `Stored`; `make_live` builds it `Live`, and the asset server
+runs `make_live` in `on_load`, so a graph loaded from disk and a graph built in
+code both go live when they reach the asset server: `assets.add(graph)` runs it
+before the handle resolves. A player skips a graph that is not live. A node
+whose type is not registered, or whose stored value does not apply, becomes a
+`Placeholder` that plays as a `PlaceholderNode`, passing its first input
 through, and a warning is logged and kept in `AnimationGraph::load_warnings()`.
-The stored data is left as it was, so saving the graph does not lose the node.
+The placeholder keeps the stored value, so saving the graph does not lose the
+node, and a later `make_live` with the type registered builds it.
 
 Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by
 `make_live`. Keep the clip and state graph handles you give to a builder alive
 until `assets.add(graph)` has run.
+
+### Root motion
+
+A clip whose root bone moves gives root motion: a `RootMotion` that says how the
+root moved this frame, with a `translation` and a `rotation` that read as
+"forward, as the character faced last frame". Every source in a graph produces
+one, and blends and transitions carry it with the pose, so it works for any
+graph. Each frame the result lands on the root bone, in
+`AnimationRootBone::root_motion`. A paused player, an unloaded skeleton or graph,
+or a clip with no channels for the root gives `RootMotion::IDENTITY`.
+
+The root bone's `Transform` is written like any other bone's, net of what root
+motion took: its yaw, measured from the rest pose, and its ground translation.
+Its height, pitch, roll and scale stay in the bone. That split assumes the root's
+rest pose stands upright, and on a skeleton whose rest doesn't, such as a BVH's,
+lean can read as yaw. Yaw and ground translation are always removed, with or
+without a `CharacterDisplacement`, so a clip that turns or walks stays on the
+spot in a game that applies nothing. A joint a clip has no channels for shows the
+skeleton's rest pose.
+
+Nothing applies it on its own. To have it move a character, make the visible
+character a separate entity from the capsule, with the skeleton under it, and
+give it a `CharacterDisplacement` and a `CharacterLink` naming the capsule and
+the skeleton. The link's fields are `SceneEntityRef`s: pick both in the
+editor's inspector and the link is saved with the scene, or build it in code:
+
+```rust
+use concerto::ecs::component::scene::SceneEntityRef;
+use concerto::motion_matching::{CharacterDisplacement, CharacterLink, Clamp};
+
+cmd.spawn((
+    CharacterDisplacement::Clamp(Clamp::default()),
+    CharacterLink {
+        capsule: SceneEntityRef::Entity(capsule),
+        skeleton: SceneEntityRef::Entity(skeleton),
+    },
+    Transform::default(),
+));
+```
+
+Each frame the character moves by its root motion, and is then reconciled with
+the capsule by one of three methods, which are mutually exclusive:
+
+- `Synchronization` places both at a weighted average each frame, set by `data_factor`: 0
+  is code-driven, 1 is data-driven. The capsule is pulled through its velocity,
+  so physics still stops it at a wall.
+- `Adjustment`, the default, damps the character towards the capsule, by no more
+  than a ratio of this frame's root motion, so a standing character is not
+  dragged.
+- `Clamp` keeps the character within a distance and an angle of the capsule.
+
+Height is always the capsule's. Do not parent the character to its capsule: it
+would move twice. The [crate's README](../../crates/motion-matching/README.md)
+has the fields, what the skeleton has to be, and what each method promises at a
+wall.
 
 ## Gameplay helpers
 

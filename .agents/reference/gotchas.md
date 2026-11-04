@@ -22,9 +22,11 @@ fix the entry in the same commit as the change that made it false.
   clamped. A tick kept anywhere other than a component, a resource or a
   schedule's system clamps itself in a `CheckChangeTicks` listener. Listener
   ticks are never clamped, as in Bevy.
-- **Transform propagation writes every frame.** `propagate_global_transforms`
-  calls `set_matrix` on every hierarchy member each frame, so
-  `Changed<GlobalTransform>` does not mean "this entity moved".
+- **Transform propagation recomputes every hierarchy each frame, but stamps
+  only what moved.** `propagate_global_transforms` writes each
+  `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
+  world transform changed. `extract_meshes` relies on it to upload only the
+  meshes that moved.
 - **A command-using system's sync point sits at its registration position,
   not after it in the run order.** The scheduler inserts the sync point next
   to the system in registration order, and orders it against other systems
@@ -97,6 +99,12 @@ fix the entry in the same commit as the change that made it false.
   requires another can be inserted before the stored value of the required one.
   The default is added first and the stored value replaces it
   (`Replace<T>`, then `Add<T>`; `Added<T>` is false for the second write).
+- **An `InputSet<K>` holds what was registered before its system was
+  initialized.** Schedules initialize their systems when they compile, so
+  `register_input::<K, P>()` belongs in a plugin's `build`; a member registered
+  later is in no system's access, and `get` refuses it. Read an `InputSet`
+  system's access only after `initialize`: before it, the system declares a
+  read of the whole world.
 
 ## Rendering
 
@@ -121,8 +129,15 @@ fix the entry in the same commit as the change that made it false.
   skinned mesh entity a real world transform as well transforms it twice.
 - **`Pose::identity` has zero translation per joint.** Applying a pose that was
   never evaluated collapses every bone to the origin and the mesh folds onto
-  itself. `AnimationPlayer::evaluate` returns early when no graph evaluated;
-  keep that guard in any new pose path.
+  itself. A pose from `PosePool::acquire` starts at the skeleton's rest pose,
+  recycled ones too, so a node that writes nothing leaves rest; don't overwrite
+  `output` with identity. A pool that was never given a rest pose, as in a test,
+  hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and
+  returns early when no graph evaluated; keep that guard in any new pose path.
+- **An animation node is registered with `register_animation_node`, not
+  `register_type`.** `register_type` alone makes the node load into a graph,
+  but its inputs are in no walk's input set, so every walk skips the node with
+  a warning each frame and its pose stays rest.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 
@@ -172,6 +187,9 @@ fix the entry in the same commit as the change that made it false.
 - **`#[reflect(opaque)]` makes a type a serde leaf.** It is stored as bytes
   through its `Serialize` and `Deserialize`, so it needs both. Use it only for
   values with no reflected inside; structs and enums derive `Reflect` plainly.
+- **`#[reflect(skip)]` hides a struct field from everything reflective.** The
+  inspector, MCP, property paths and scenes do not see it, its type need not be
+  `Reflect`, and a load leaves it at its default.
 - **A handle type must be registered to load from a scene.** Registering the
   component that holds `AssetHandle<A>` registers it. A handle whose type
   nothing registered spawns weak and loads nothing, with a warning.
@@ -200,6 +218,15 @@ fix the entry in the same commit as the change that made it false.
   load requested from inside another plugin's
   `build` sees a partial registry, since plugins register their types in
   `build`, before `Startup`.
+- **A cached copy of a live value is replaced with it, never alone.** A
+  `ChannelSpan` caches its channel's `weight`, `dims` and `source`; writing only
+  the cached weight would be undone when the channel is next loaded from its
+  value. `MotionDatabase::reweigh` replaces the channel and the cache together.
+- **An asset's bytes do not change with its in-memory type.** The
+  `check_encoding` fixtures under each crate's `tests/encoding` fail when they
+  do. Keep the old layout with a private mirror struct behind a hand-written
+  `Serialize` and `Deserialize`. Bumping `FORMAT_VERSION` is no way out for
+  data a type registry would compute: `Asset::migrate` gets no registry.
 - **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
   `Loaded` event.** When `on_load` fails, it logs an error and inserts nothing:
   the handle it returned never resolves.
@@ -216,12 +243,23 @@ fix the entry in the same commit as the change that made it false.
   `EntityEdit`, `Select`, or `SetGizmoMode`; they do not mutate the scene, the
   selection, or the gizmo themselves. The listeners live in
   `crates/editor/src/tools/`, which names no document, tab, or panel type.
+  `CommitValue`, which edits a value a document holds, is the exception: it
+  needs `EditorDocument`, so its listener lives in
+  `crates/editor/src/inspector/values.rs`.
 - **Hosted events arrive in the editor a frame after a signal wrote them.**
   `forward_events::<E>` runs in `First`, after the hosted step. An event written
   during the step reaches `EventReader<Hosted<E>>` systems in the same frame;
   one written by a signal (`EditWorldSignals`, `hosted::trigger_on`) arrives on the
   next frame. Decisions that must not lag, such as Play's "save first", read
-  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event.
+  the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event. A
+  value's `Hosted<PropertyCommitted>` does not lag: the value lives in the
+  editor's world, and the event is written there directly.
+- **The inspector's one `ComponentStack` has two owners.** Entity cards and
+  value cards share it, because it is the scroll area's content.
+  `sync_value_cards` returns while a document has `EditTarget`, despawns only
+  `ValueCard`s, and never writes `ComponentStack`;
+  `sync_inspected_components`' rebuild clears the stack's children, which
+  removes any value card left there.
 - **`Unsaved` on a Scene document follows the edit `App`'s `SceneDirty`.**
   `follow_unsaved_edits` inserts or removes it each frame while the document is
   `Editing`. Clearing `Unsaved` by hand does not stick; mark the scene saved
@@ -308,7 +346,9 @@ fix the entry in the same commit as the change that made it false.
   `asset_request_is_current`. A result for a replaced or cancelled request is
   discarded; a closed tab, and every tab after a project switch, is gone. A
   late result of a request repeated for the same asset is accepted, since it
-  read the same file.
+  read the same file. Work started after a document has opened cannot use it,
+  since `pending` is then empty: it compares `current` with the captured entry
+  and requires `pending` to be empty, as `finish_build` does.
 - **A closed `InputGate` hides input from that `App`.** Its `Input` sees no
   keys, buttons, wheel, or raw motion, and closing the gate releases whatever
   was held; the cursor position is still folded. The editor closes its own
@@ -337,5 +377,6 @@ fix the entry in the same commit as the change that made it false.
 - **There are no system fonts on wasm.** The UI embeds DejaVu Sans Mono and
   uses it for every generic family.
 - **Assets are fetched over HTTP on wasm,** so `content/` must be served from
-  the page's origin. An example's `index.html` does this with a `copy-dir` link.
+  the page's origin. An example's `index.html` does this with `copy-dir` and
+  `copy-file` links, and a file no link copies is a 404.
 - **wasm has no threads.** Jolt is not built there; physics is Rapier.

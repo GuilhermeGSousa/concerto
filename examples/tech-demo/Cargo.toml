@@ -7,11 +7,18 @@ description.workspace = true
 repository.workspace = true
 license.workspace = true
 
+[package.metadata.concerto.editor]
+plugins = [
+    { package = "concerto-animation-editor", install = "concerto_animation_editor::install" },
+    { package = "concerto-motion-matching-editor", install = "concerto_motion_matching_editor::install" },
+]
+
 [features]
 tracy = ["concerto/tracy"]
 
 [dependencies]
 concerto = { path = "../.." }
+concerto-motion-matching-gizmos = { path = "../../crates/motion-matching-gizmos" }
 glam = { version = "0.30.1" }
 serde = { version = "1", features = ["derive"] }
 derive_more = { version = "2", features = ["full"] }

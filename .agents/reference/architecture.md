@@ -8,10 +8,10 @@ Every directory under `crates/` is the package `concerto-<dir>`.
 |---|---|---|
 | Core | `ecs`, `tasks`, `app`, `foundation` | ECS, signals, schedules; task pools; `App`, plugins, sub-apps, extract; assets, transforms, time, math |
 | Assets | `asset-format`, `asset-import`, `asset-build`, `import`, `gltf`, `obj`, `bvh` | `AssetId` and `.gasset` framing; the `Importer` trait; `asset_id!` build tracking and the registry a game embeds; the import library behind the editor's Import…; the glTF, OBJ and BVH importers |
-| Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; a renderer that draws to a terminal |
+| Rendering | `render`, `mesh`, `skybox`, `world-grid`, `debug-gizmos`, `motion-matching-gizmos`, `color`, `terminal-renderer` | wgpu renderer and materials; mesh data and primitives, bounds, ray tests; extra passes; the debug drawing of motion matching, in the running game and the database preview; a renderer that draws to a terminal |
 | Simulation | `physics`, `jolt-ffi`, `motion-matching`, `animation`, `scene`, `director`, `gameplay` | Jolt and Rapier backends behind one API; the Jolt C++ bindings; the spring character simulation that drives the physics body and predicts its trajectory, and the motion database bake; animation graphs; scene spawn and capture; the virtual-camera stack; player and movement helpers |
 | Interface | `window`, `winit`, `ui` | the window, input, and their events as plain data; the winit host; the engine's own UI |
-| Tooling | `editor`, `reflect`, `project`, `mcp` | the editor; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry`, a shared `Arc<RwLock<TypeRegistry>>` that the inspector, scenes and the `AssetServer`'s asset loads read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
+| Tooling | `editor`, `animation-editor`, `motion-matching-editor`, `reflect`, `project`, `mcp` | the editor; its extension crates for animation clips and motion databases; structural, path-addressed access to a value's fields and the `TypeRegistry` of what each type supports, which the ECS holds per world as `AppTypeRegistry`, a shared `Arc<RwLock<TypeRegistry>>` that the inspector, scenes and the `AssetServer`'s asset loads read; `cargo concerto`, which creates game projects and their editor crates; an MCP server whose tools are systems answering `McpCall` events |
 
 `ecs`, `foundation`, `render`, and `reflect` each have a `macros` sub-crate.
 `jolt-ffi` builds Jolt from the submodule at `crates/jolt-ffi/vendor/JoltPhysics`.
@@ -86,6 +86,13 @@ A host never touches the render world once frames are running.
   `cmd.trigger(signal)` queues the dispatch for the next sync point.
 - Ordering is by reference, never by registration: see
   [docs/scheduling.md](../../docs/scheduling.md).
+- Under the multi-threaded executor, a `Send` system runs on a pool thread,
+  or on the thread that found it ready when it is the only one ready and
+  nothing else runs. An exclusive system runs on the thread that runs the
+  schedule. A non-`Send` system runs on the `MainThreadExecutor`'s thread, or
+  on the thread that runs the schedule when there is none.
+- Commands apply on the thread that runs the schedule, when the executor
+  reaches their sync point.
 
 ## Assets
 
@@ -119,6 +126,19 @@ time. The running game never reads them.
   Asset handles are stored as their `AssetId` and entity references as node
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
+- An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
+  the feature channels of a `MotionDatabaseDefinition` and a `MotionDatabase`)
+  keeps each one as a data enum: `Stored { type_name, value }` as decoded and
+  `Live { type_name, <boxed value> }` once built (`AnimationNodeData`,
+  `FeatureChannelData`). Serde writes the type name and the reflected value for
+  every variant and always decodes `Stored`. `on_load` builds the live values
+  once, with `context.type_registry()`; after that nothing takes a
+  `TypeRegistry`, and a value still `Stored` where a live one is needed is an
+  error. A value that cannot be built stays `Stored` with a warning, or, when the
+  asset must still play, becomes a `Placeholder` that keeps its value so a save
+  loses nothing. Do not keep a parallel `#[serde(skip)]` list of live values,
+  rebuild them from the registry at each use, or pass a registry into runtime
+  code to do it.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 
@@ -131,13 +151,15 @@ executable's directory otherwise.
 ## Editor
 
 A game that has an editor is a library plus a thin binary; `tech-demo` is the
-one example built that way, and the other four are binaries only. The library
+one example built that way, and the others are binaries only. The library
 exposes one recipe, `pub fn game(app: &mut App)`, which registers the game's
 plugins, components, systems, and startup scene; `main` is
 `concerto::run(<game>::game, concerto::content_registry!())`. The editor is a
 library too, built per game: the game's `editor/` crate, named `<game>-editor`
 and generated by `cargo concerto editor`, depends on the game's library and calls
-`concerto_editor::run(<game>::game, <project root>)`. A game without an
+`concerto_editor::run(<game>::game, <project root>)`, or
+`concerto_editor::run_with(<game>::game, <project root>, <plugins>)` when the
+game's `Cargo.toml` lists editor extension crates. A game without an
 `editor/` crate has no editor:
 
 ```sh
@@ -207,7 +229,8 @@ editor's world, which systems read with `EventReader<Hosted<E>>`. Whether the
 scene has unsaved edits is state, `SceneDirty`, kept in the edit `App`: edits set
 it and a successful save clears it, and the editor's `Unsaved` follows it. A save
 asks the edit `App` for the scene directly with `HostedApp::capture_scene`.
-The inspector edits components through `PropertyEditor<T>` adapters over
-`reflect`. Each asset type has one editor, registered with
-`register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
+The inspector edits reflected values through `PropertyEditor<T>` adapters over
+`reflect`: a `PropertyTarget` addresses each one, a component in the edit
+target's world or a value a document holds in the editor's. Each asset type has
+one editor, registered with `register_asset_editor`. [crates/editor/README.md](../../crates/editor/README.md)
 covers all of it.

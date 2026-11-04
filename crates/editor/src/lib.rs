@@ -2,10 +2,10 @@
 pub mod actions;
 pub mod asset_editor;
 pub mod asset_picker;
-pub mod clip_editor;
 pub mod content;
 pub mod diagnostics;
 pub mod dock;
+pub mod entity_picker;
 pub mod fonts;
 pub mod guard;
 pub mod hierarchy;
@@ -28,12 +28,13 @@ pub mod window_chrome;
 mod workspace;
 
 use concerto_mesh::MeshComponent;
-pub use run::run;
+pub use run::{run, run_with};
 
 use concerto_app::{App, Plugin};
 use std::path::PathBuf;
 
 use crate::asset_picker::AssetPickerPlugin;
+use crate::entity_picker::EntityPickerPlugin;
 
 pub struct EditorPlugin {
     pub project: Option<PathBuf>,
@@ -77,7 +78,6 @@ impl Plugin for EditorPlugin {
             recipe: self.recipe,
             clipboard: Some(concerto_window::clipboard::WindowClipboard::use_os_clipboard),
         });
-        app.register_plugin(clip_editor::ClipEditorPlugin);
         app.register_plugin(timeline::TimelinePlugin);
         app.add_system(
             concerto_app::schedule_groups::Update,
@@ -100,6 +100,7 @@ impl Plugin for EditorPlugin {
         });
         app.register_type::<MeshComponent>();
         app.register_plugin(AssetPickerPlugin);
+        app.register_plugin(EntityPickerPlugin);
 
         if let Some(path) = &self.project {
             app.get_resource_mut::<project::EditorCommands>()

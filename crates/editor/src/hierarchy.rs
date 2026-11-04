@@ -490,25 +490,66 @@ fn open_row_menu(
     }
 }
 
-fn listed_entities(
-    tops: Vec<Entity>,
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ListRoot {
+    Include,
+    Exclude,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct ListedEntity {
+    pub(crate) entity: Entity,
+    pub(crate) parent: Option<Entity>,
+    pub(crate) depth: usize,
+}
+
+pub(crate) fn listed_entities(
+    roots: &Query<(Entity, &SceneRoot)>,
+    top_level: &Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>,
     scene_children: &Query<&Children>,
-) -> Vec<(Entity, Option<Entity>)> {
+    active: &ActiveEditor,
+    states: &Query<&PlayState>,
+    root: ListRoot,
+) -> Vec<ListedEntity> {
+    let mut tops: Vec<Entity> = if playing(active, states) {
+        top_level.iter().collect()
+    } else {
+        roots.iter().map(|(entity, _)| entity).collect()
+    };
+    tops.sort_by_key(|entity| (entity.index(), entity.generation()));
+    if root == ListRoot::Exclude {
+        tops = tops
+            .into_iter()
+            .flat_map(|top| {
+                if roots.contains_entity(top) {
+                    scene_children
+                        .get_entity(top)
+                        .map(|children| children.iter().copied().collect())
+                        .unwrap_or_default()
+                } else {
+                    vec![top]
+                }
+            })
+            .collect();
+    }
     let mut listed = Vec::new();
-    let mut pending: Vec<(Entity, Option<Entity>)> = tops
+    let mut pending: Vec<ListedEntity> = tops
         .into_iter()
         .rev()
-        .map(|entity| (entity, None))
+        .map(|entity| ListedEntity {
+            entity,
+            parent: None,
+            depth: 0,
+        })
         .collect();
-    while let Some((scene_entity, scene_parent)) = pending.pop() {
-        listed.push((scene_entity, scene_parent));
-        if let Some(children) = scene_children.get_entity(scene_entity) {
-            pending.extend(
-                children
-                    .iter()
-                    .rev()
-                    .map(|child| (*child, Some(scene_entity))),
-            );
+    while let Some(next) = pending.pop() {
+        listed.push(next);
+        if let Some(children) = scene_children.get_entity(next.entity) {
+            pending.extend(children.iter().rev().map(|child| ListedEntity {
+                entity: *child,
+                parent: Some(next.entity),
+                depth: next.depth + 1,
+            }));
         }
     }
     listed
@@ -530,18 +571,21 @@ pub(crate) fn reconcile_structure(
     let Some(view) = views.iter().next() else {
         return;
     };
-    let mut tops: Vec<Entity> = if playing(&active, &states) {
-        top_level.iter().collect()
-    } else {
-        roots.iter().map(|(entity, _)| entity).collect()
-    };
-    tops.sort_by_key(|entity| (entity.index(), entity.generation()));
-    let listed = listed_entities(tops, &scene_children);
-    let wanted: HashSet<Entity> = listed.iter().map(|(entity, _)| *entity).collect();
+    let listed = listed_entities(
+        &roots,
+        &top_level,
+        &scene_children,
+        &active,
+        &states,
+        ListRoot::Include,
+    );
+    let wanted: HashSet<Entity> = listed.iter().map(|listed| listed.entity).collect();
 
     let mut order: HashMap<Entity, Vec<Entity>> = HashMap::new();
-    for &(scene_entity, scene_parent) in &listed {
-        let parent = scene_parent
+    for listed in &listed {
+        let scene_entity = listed.entity;
+        let parent = listed
+            .parent
             .and_then(|scene_parent| state.items.get(&scene_parent).copied())
             .unwrap_or(view);
         let item = match state.items.get(&scene_entity) {
@@ -2016,6 +2060,77 @@ mod tests {
 
         assert_eq!(top_level(&mut f), [f.root]);
         assert!(!f.state().items.contains_key(&stray));
+    }
+
+    #[derive(Resource, Default)]
+    struct Candidates(Vec<ListedEntity>);
+
+    fn candidates(f: &mut Fixture, root: ListRoot) -> Vec<ListedEntity> {
+        f.scene.world.insert_resource(Candidates::default());
+        run(
+            &mut f.scene.world,
+            move |roots: EditWorld<Query<(Entity, &SceneRoot)>>,
+                  top_level: EditWorld<
+                Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>,
+            >,
+                  children: EditWorld<Query<&Children>>,
+                  active: Res<ActiveEditor>,
+                  states: Query<&PlayState>,
+                  mut out: ResMut<Candidates>| {
+                out.0 = listed_entities(&roots, &top_level, &children, &active, &states, root);
+            },
+        );
+        f.scene.world.remove_resource::<Candidates>().unwrap().0
+    }
+
+    fn listed(entity: Entity, parent: Option<Entity>, depth: usize) -> ListedEntity {
+        ListedEntity {
+            entity,
+            parent,
+            depth,
+        }
+    }
+
+    #[test]
+    fn while_editing_the_list_without_the_root_starts_at_its_children() {
+        let mut f = fixture();
+        let child = f.spawn_under(f.node, "child");
+        f.scene
+            .scene_world_mut(f.document)
+            .spawn((Name::new("stray"), Transform::IDENTITY));
+
+        assert_eq!(
+            candidates(&mut f, ListRoot::Exclude),
+            [listed(f.node, None, 0), listed(child, Some(f.node), 1)]
+        );
+        assert_eq!(
+            candidates(&mut f, ListRoot::Include),
+            [
+                listed(f.root, None, 0),
+                listed(f.node, Some(f.root), 1),
+                listed(child, Some(f.node), 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn while_playing_the_list_starts_at_the_top_level_entities() {
+        let mut f = playing_fixture();
+        let character = f.scene.scene_entity(f.document, "character");
+        let camera = f.scene.scene_entity(f.document, "camera");
+        let mut tops = top_level(&mut f);
+        tops.sort_by_key(|entity| (entity.index(), entity.generation()));
+
+        let list = candidates(&mut f, ListRoot::Exclude);
+
+        let listed_tops: Vec<Entity> = list
+            .iter()
+            .filter(|listed| listed.depth == 0)
+            .map(|listed| listed.entity)
+            .collect();
+        assert_eq!(listed_tops, tops);
+        assert!(list.contains(&listed(camera, Some(character), 1)));
+        assert!(list.contains(&listed(f.node, Some(f.root), 1)));
     }
 
     #[test]

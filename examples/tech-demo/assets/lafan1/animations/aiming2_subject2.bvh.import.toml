@@ -1,0 +1,12 @@
+version = 1
+source_id = "c7bdb9d2-0cbc-498a-9b04-501855ee783d"
+importer = "bvh"
+
+[outputs."animation/aiming2_subject2"]
+asset_id = "7c21232e-8a20-4da2-b8ce-7524de2695b2"
+
+[outputs.scene]
+asset_id = "c395b770-2e6d-4c63-91dc-d2ef86abcb6f"
+
+[outputs."skeleton/0"]
+asset_id = "04aa8672-d114-4bae-a367-7238a4fcb100"

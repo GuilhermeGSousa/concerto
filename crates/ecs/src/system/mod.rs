@@ -232,7 +232,10 @@ where
     }
 
     fn fill_access(&self, meta: &mut SystemMetadata, access: &mut SystemAccess) {
-        F::Inputs::fill_access(meta, access);
+        match &self.system_state {
+            Some(state) => F::Inputs::fill_state_access(state, meta, access),
+            None => F::Inputs::fill_access(meta, access),
+        }
     }
 
     fn check_change_tick(&mut self, check: CheckChangeTicks) {

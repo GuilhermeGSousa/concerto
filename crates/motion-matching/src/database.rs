@@ -1,8 +1,12 @@
+use std::borrow::Cow;
 use std::fmt;
 use std::ops::Range;
 
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_foundation::assets::{
+    asset_server::AssetLoadContext, handle::AssetHandle, Asset, LoadableAsset,
+};
+use concerto_foundation::math::spring_damper::angular_velocity;
 use concerto_foundation::transform::Transform;
 use concerto_mesh::{JointPose, Skeleton};
 use glam::{Quat, Vec3};
@@ -11,18 +15,122 @@ use serde::{Deserialize, Serialize};
 use concerto_reflect::ReflectedValue;
 
 use crate::bake::{model_pose, reexpress_roots, sample_pose};
-use crate::channel::ChannelSource;
-use crate::definition::TrajectorySettings;
+use crate::channel::{BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData};
+use crate::definition::{MotionDatabaseDefinition, TrajectorySettings};
+use crate::simulation::TrajectorySample;
 
-/// Where one feature channel's values sit in a frame's feature vector.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+/// Where one feature channel's values sit in a frame's feature vector, and the channel that wrote them.
+#[derive(Clone, Debug, PartialEq)]
 pub struct ChannelSpan {
-    pub type_name: String,
-    pub offset: usize,
-    pub dims: usize,
-    pub weight: f32,
-    pub source: ChannelSource,
-    pub value: ReflectedValue,
+    offset: usize,
+    dims: usize,
+    weight: f32,
+    source: ChannelSource,
+    channel: FeatureChannelData,
+}
+
+impl ChannelSpan {
+    pub(crate) fn new(offset: usize, channel: FeatureChannelData) -> Result<Self, BakeError> {
+        let live = channel.channel()?;
+        Ok(Self {
+            offset,
+            dims: live.dims(),
+            weight: live.weight(),
+            source: live.source(),
+            channel,
+        })
+    }
+
+    /// The index of the span's first value in a feature vector.
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
+    /// How many values the span holds.
+    pub fn dims(&self) -> usize {
+        self.dims
+    }
+
+    /// The feature indices the span covers.
+    pub fn range(&self) -> Range<usize> {
+        self.offset..self.offset + self.dims
+    }
+
+    /// The weight of the span's group.
+    pub fn weight(&self) -> f32 {
+        self.weight
+    }
+
+    /// What the channel reads.
+    pub fn source(&self) -> ChannelSource {
+        self.source
+    }
+
+    /// The registered type name of the channel.
+    pub fn type_name(&self) -> &str {
+        self.channel.type_name()
+    }
+
+    /// The channel, live once the database is loaded.
+    pub fn channel(&self) -> &FeatureChannelData {
+        &self.channel
+    }
+}
+
+#[derive(Serialize)]
+struct SpanRef<'a> {
+    type_name: &'a str,
+    offset: usize,
+    dims: usize,
+    weight: f32,
+    source: ChannelSource,
+    value: Cow<'a, ReflectedValue>,
+}
+
+#[derive(Deserialize)]
+struct StoredSpan {
+    type_name: String,
+    offset: usize,
+    dims: usize,
+    weight: f32,
+    source: ChannelSource,
+    value: ReflectedValue,
+}
+
+impl Serialize for ChannelSpan {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        SpanRef {
+            type_name: self.type_name(),
+            offset: self.offset,
+            dims: self.dims,
+            weight: self.weight,
+            source: self.source,
+            value: self.channel.value().map_err(serde::ser::Error::custom)?,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ChannelSpan {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let stored = StoredSpan::deserialize(deserializer)?;
+        Ok(Self {
+            offset: stored.offset,
+            dims: stored.dims,
+            weight: stored.weight,
+            source: stored.source,
+            channel: FeatureChannelData::Stored {
+                type_name: stored.type_name,
+                value: stored.value,
+            },
+        })
+    }
 }
 
 /// Baked animation frames: per-frame features and simulation bone, and where each frame plays in its clip.
@@ -44,6 +152,7 @@ pub struct MotionDatabase {
     channels: Vec<ChannelSpan>,
     offset: Vec<f32>,
     deviations: Vec<f32>,
+    source_hash: u64,
 }
 
 const DEVIATION_FLOOR: f32 = 1e-6;
@@ -85,7 +194,19 @@ impl MotionDatabase {
             channels,
             offset,
             deviations,
+            source_hash: 0,
         }
+    }
+
+    /// Records the hash of what the database was baked from, as [`weightless_hash`](crate::weightless_hash) gives it.
+    pub fn with_source_hash(mut self, source_hash: u64) -> Self {
+        self.source_hash = source_hash;
+        self
+    }
+
+    /// The hash of what the database was baked from; 0 until [`with_source_hash`](Self::with_source_hash) sets it.
+    pub fn source_hash(&self) -> u64 {
+        self.source_hash
     }
 
     /// The number of baked frames.
@@ -133,12 +254,35 @@ impl MotionDatabase {
         &self.channels
     }
 
+    /// The live channels, in order; a channel not yet loaded is an error.
+    pub fn live_channels(&self) -> Result<Vec<&dyn FeatureChannel>, BakeError> {
+        self.channels
+            .iter()
+            .map(|span| span.channel.channel())
+            .collect()
+    }
+
+    /// Builds every stored channel into a live one; the first channel that can't be built is the error.
+    pub fn load_channels(
+        &mut self,
+        registry: &concerto_reflect::TypeRegistry,
+    ) -> Result<(), BakeError> {
+        self.channels
+            .iter_mut()
+            .try_for_each(|span| span.channel.load(registry))
+    }
+
     /// The database frames of every entry, in entry order.
     pub fn ranges(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.range_starts
             .iter()
             .zip(&self.range_stops)
             .map(|(start, stop)| *start..*stop)
+    }
+
+    /// The number of frames entry `index` baked.
+    pub fn frames_of_entry(&self, index: usize) -> Option<usize> {
+        self.ranges().nth(index).map(|range| range.len())
     }
 
     /// The index of the entry whose range contains `frame`.
@@ -153,6 +297,53 @@ impl MotionDatabase {
     pub fn range_of(&self, frame: usize) -> Option<Range<usize>> {
         let entry = self.entry_of(frame)?;
         Some(self.range_starts[entry]..self.range_stops[entry])
+    }
+
+    /// The simulation bone's velocities at `frame`, by central difference and one-sided at the ends of its range; zero for a frame the database did not bake.
+    pub fn body_motion(&self, frame: usize) -> BodyMotion {
+        let Some(range) = self.range_of(frame) else {
+            return BodyMotion::default();
+        };
+        let previous = if frame > range.start {
+            frame - 1
+        } else {
+            frame
+        };
+        let next = if frame + 1 < range.end {
+            frame + 1
+        } else {
+            frame
+        };
+        if previous == next {
+            return BodyMotion::default();
+        }
+        let dt = (next - previous) as f32 / self.rate;
+        let previous = self.simulation(previous);
+        let next = self.simulation(next);
+        BodyMotion {
+            velocity: (next.translation - previous.translation) / dt,
+            angular_velocity: angular_velocity(next.rotation, previous.rotation, dt),
+        }
+    }
+
+    /// The trajectory samples of `frame` as the bake saw them, in sample order and clamped to its range's last frame; none for a frame the database did not bake.
+    pub fn trajectory_samples(&self, frame: usize) -> Vec<TrajectorySample> {
+        let Some(range) = self.range_of(frame) else {
+            return Vec::new();
+        };
+        (0..self.trajectory.sample_count)
+            .map(|sample| {
+                let target = frame
+                    .saturating_add(self.trajectory.frame_offset(sample, self.rate))
+                    .min(range.end - 1);
+                let simulation = self.simulation(target);
+                TrajectorySample {
+                    position: simulation.translation,
+                    velocity: self.body_motion(target).velocity,
+                    rotation: simulation.rotation,
+                }
+            })
+            .collect()
     }
 
     /// The entry of `frame` and the clip time in seconds that the frame plays.
@@ -208,12 +399,26 @@ impl MotionDatabase {
         &self.offset
     }
 
+    /// The mean standard deviation of each channel's group, one per channel in order.
+    pub fn deviations(&self) -> &[f32] {
+        &self.deviations
+    }
+
+    /// The bytes held by the feature, simulation and range arrays.
+    pub fn size_in_bytes(&self) -> usize {
+        size_of_val(self.features.as_slice())
+            + size_of_val(self.simulation.as_slice())
+            + size_of_val(self.range_starts.as_slice())
+            + size_of_val(self.range_stops.as_slice())
+            + size_of_val(self.clip_starts.as_slice())
+    }
+
     /// The divisor of every feature dimension: its group's floored deviation over the group's weight.
     pub fn scales(&self) -> Vec<f32> {
         let mut scales = vec![1.0; self.feature_dims];
         for (span, deviation) in self.channels.iter().zip(&self.deviations) {
             let scale = deviation.max(DEVIATION_FLOOR) / span.weight;
-            scales[span.offset..span.offset + span.dims].fill(scale);
+            scales[span.range()].fill(scale);
         }
         scales
     }
@@ -222,7 +427,7 @@ impl MotionDatabase {
         let mut divisors = self.scales();
         for (span, deviation) in self.channels.iter().zip(&self.deviations) {
             if *deviation < DEVIATION_FLOOR {
-                divisors[span.offset..span.offset + span.dims].fill(f32::INFINITY);
+                divisors[span.range()].fill(f32::INFINITY);
             }
         }
         divisors
@@ -232,7 +437,7 @@ impl MotionDatabase {
     pub fn normalise(&self, features: &mut [f32]) {
         let scales = self.scales();
         for (span, deviation) in self.channels.iter().zip(&self.deviations) {
-            let range = span.offset..span.offset + span.dims;
+            let range = span.range();
             if *deviation < DEVIATION_FLOOR {
                 features[range].fill(0.0);
                 continue;
@@ -250,28 +455,48 @@ impl MotionDatabase {
         features
     }
 
-    /// Replaces every channel's weight, one per channel in order, without a re-bake.
-    pub fn set_weights(&mut self, weights: &[f32]) -> Result<(), BakeError> {
-        if weights.len() != self.channels.len() {
-            return Err(BakeError::WeightCountMismatch {
-                expected: self.channels.len(),
-                actual: weights.len(),
+    /// Takes `definition`'s channels and their weights without a re-bake; `definition` must differ from what the database was baked from only in weights.
+    pub fn reweigh(&mut self, definition: &MotionDatabaseDefinition) -> Result<(), BakeError> {
+        if definition.channels.len() != self.channels.len() {
+            return Err(BakeError::ChannelCountMismatch {
+                expected: definition.channels.len(),
+                actual: self.channels.len(),
             });
         }
-        if let Some(weight) = weights
+        let spans = self
+            .channels
             .iter()
-            .find(|weight| !(weight.is_finite() && **weight > 0.0))
-        {
-            return Err(BakeError::InvalidWeight(*weight));
-        }
-        for (span, weight) in self.channels.iter_mut().zip(weights) {
-            span.weight = *weight;
-        }
+            .zip(&definition.channels)
+            .map(|(span, channel)| {
+                let span = ChannelSpan::new(span.offset, channel.clone())?;
+                if span.weight.is_finite() && span.weight > 0.0 {
+                    Ok(span)
+                } else {
+                    Err(BakeError::InvalidWeight(span.weight))
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.channels = spans;
         Ok(())
     }
 }
 
-impl LoadableAsset for MotionDatabase {}
+impl LoadableAsset for MotionDatabase {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        let server = context.asset_server();
+        self.skeleton = server.load(self.skeleton.id());
+        for clip in &mut self.clips {
+            *clip = server.load(clip.id());
+        }
+        let registry = context.type_registry().read();
+        for span in &mut self.channels {
+            if let Err(error) = span.channel.load(&registry) {
+                log::warn!("motion database {:?}: {error}", context.asset_id());
+            }
+        }
+        Ok(())
+    }
+}
 
 /// Why a motion database could not be baked, or a baked frame's pose could not be sampled.
 #[derive(Clone, Debug, PartialEq)]
@@ -282,6 +507,7 @@ pub enum BakeError {
     BoneCountMismatch { expected: usize, actual: usize },
     FrameOutOfRange { frame: usize, frame_count: usize },
     UnregisteredChannel(String),
+    UnloadedChannel(String),
     ChannelValue { type_name: String, reason: String },
     RangeTooShort { entry: usize, frames: usize },
     InvalidRange { entry: usize },
@@ -290,7 +516,6 @@ pub enum BakeError {
     InvalidSpeed(f32),
     InvalidSampleDt(f32),
     InvalidWeight(f32),
-    WeightCountMismatch { expected: usize, actual: usize },
     ChannelCountMismatch { expected: usize, actual: usize },
     TrajectoryTooShort { needed: usize, actual: usize },
 }
@@ -317,6 +542,12 @@ impl fmt::Display for BakeError {
             BakeError::UnregisteredChannel(name) => {
                 write!(f, "feature channel type `{name}` is not registered")
             }
+            BakeError::UnloadedChannel(name) => {
+                write!(
+                    f,
+                    "feature channel `{name}` has not been loaded against a type registry"
+                )
+            }
             BakeError::ChannelValue { type_name, reason } => {
                 write!(f, "feature channel `{type_name}` cannot be built: {reason}")
             }
@@ -342,9 +573,6 @@ impl fmt::Display for BakeError {
             }
             BakeError::InvalidWeight(weight) => {
                 write!(f, "channel weight {weight} must be positive and finite")
-            }
-            BakeError::WeightCountMismatch { expected, actual } => {
-                write!(f, "{actual} weights given for {expected} channels")
             }
             BakeError::ChannelCountMismatch { expected, actual } => {
                 write!(f, "the database has {actual} channels, {expected} expected")

@@ -7,11 +7,11 @@ use concerto::{
     asset_id,
     ui::frame_stats_overlay::FrameStatsOverlayPlugin,
 };
+use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 
 use crate::{
     character::{
-        PlayerSpawner, face_camera_direction, setup_character_animations, spawn_character,
-        update_movement,
+        PlayerSpawner, debug_keys, setup_character_animations, spawn_character, update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
@@ -22,6 +22,7 @@ mod ui;
 /// Builds tech-demo: the forest, the character, and its overlay.
 pub fn game(app: &mut App) {
     app.register_plugin(DefaultPlugins)
+        .register_plugin(MotionMatchingGizmosPlugin)
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
@@ -31,7 +32,7 @@ pub fn game(app: &mut App) {
         .add_system(Startup, spawn_grounded_overlay)
         .add_system(Update, setup_character_animations)
         .add_system(Update, update_movement)
-        .add_system(Update, face_camera_direction)
+        .add_system(Update, debug_keys)
         .add_system(Update, update_grounded_overlay);
 }
 

@@ -1,3 +1,10 @@
 fn main() {
-    concerto_editor::run(tech_demo::game, concat!(env!("CARGO_MANIFEST_DIR"), "/.."));
+    concerto_editor::run_with(
+        tech_demo::game,
+        concat!(env!("CARGO_MANIFEST_DIR"), "/.."),
+        &[
+            concerto_animation_editor::install,
+            concerto_motion_matching_editor::install,
+        ],
+    );
 }

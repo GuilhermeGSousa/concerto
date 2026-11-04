@@ -1,24 +1,29 @@
 use concerto_animation::{
+    clip::AnimationClip,
     evaluation::AnimationGraphContext,
     node::{AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
-use concerto_foundation::assets::handle::AssetHandle;
+use concerto_ecs::Res;
+use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_mesh::skeleton::Skeleton;
 use concerto_reflect::{Reflect, ReflectDefault};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
 use crate::{
-    database::MotionDatabase, instance::MotionMatchingInstance, simulation::TrajectorySample,
+    database::MotionDatabase,
+    simulation::TrajectorySample,
+    state::{MotionMatchingState, Sources},
 };
 
 /// The blackboard key under which the trajectory is published.
-pub const TRAJECTORY_KEY: &str = "trajectory";
+pub(crate) const TRAJECTORY_KEY: &str = "trajectory";
 
 /// The character's simulation transform and predicted path, published on the animation blackboard for the node to match against.
 #[derive(Reflect, Clone, Debug, PartialEq)]
 #[reflect(Default)]
-pub struct MotionMatchingTrajectory {
+pub(crate) struct MotionMatchingTrajectory {
     pub translation: Vec3,
     pub rotation: Quat,
     pub samples: Vec<TrajectorySample>,
@@ -34,6 +39,26 @@ impl Default for MotionMatchingTrajectory {
     }
 }
 
+fn sources<'a>(
+    node: &MotionMatchingNode,
+    databases: &'a AssetStore<MotionDatabase>,
+    skeletons: &'a AssetStore<Skeleton>,
+    clips: &'a AssetStore<AnimationClip>,
+    player_skeleton: Option<&'a Skeleton>,
+) -> Option<Sources<'a>> {
+    let database = databases.get(&node.database)?;
+    Some(Sources {
+        database,
+        skeleton: skeletons.get(database.skeleton())?,
+        player_skeleton: player_skeleton?,
+        clips: database
+            .clips()
+            .iter()
+            .map(|handle| clips.get(handle))
+            .collect::<Option<_>>()?,
+    })
+}
+
 /// Plays a motion database, jumping to the frame whose features best match the character's predicted trajectory.
 #[derive(Clone, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode)]
@@ -43,6 +68,8 @@ pub struct MotionMatchingNode {
     pub velocity_change_threshold: f32,
     pub rotation_change_threshold: f32,
     pub same_frame_tolerance: usize,
+    pub ignore_surrounding: usize,
+    pub ignore_range_end: usize,
     pub blend_halflife: f32,
 }
 
@@ -54,41 +81,59 @@ impl Default for MotionMatchingNode {
             velocity_change_threshold: 50.0,
             rotation_change_threshold: 50.0,
             same_frame_tolerance: 1,
+            ignore_surrounding: 20,
+            ignore_range_end: 20,
             blend_halflife: 0.1,
         }
     }
 }
 
 impl AnimationNode for MotionMatchingNode {
-    type Instance = MotionMatchingInstance;
+    type State = MotionMatchingState;
+    type CreateInput = ();
+    type UpdateInput = (
+        Res<'static, AssetStore<MotionDatabase>>,
+        Res<'static, AssetStore<Skeleton>>,
+        Res<'static, AssetStore<AnimationClip>>,
+    );
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> MotionMatchingInstance {
-        MotionMatchingInstance::new(self.search_period)
+    fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> MotionMatchingState {
+        MotionMatchingState::new(self.search_period)
     }
 
     fn update(
         &self,
-        instance: &mut MotionMatchingInstance,
+        state: &mut MotionMatchingState,
         delta_time: f32,
-        _context: &AnimationGraphContext<'_>,
+        (databases, skeletons, clips): &(
+            Res<AssetStore<MotionDatabase>>,
+            Res<AssetStore<Skeleton>>,
+            Res<AssetStore<AnimationClip>>,
+        ),
+        context: &AnimationGraphContext<'_>,
     ) {
-        instance.activate(delta_time);
+        match sources(self, databases, skeletons, clips, context.skeleton()) {
+            Some(sources) => state.step(self, delta_time, context.blackboard(), sources),
+            None => state.clear_root_motion(),
+        }
     }
 
     fn evaluate(
         &self,
-        instance: &mut MotionMatchingInstance,
+        state: &mut MotionMatchingState,
+        _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
         _evaluated_inputs: &[EvaluatedPose],
         _pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        instance.write_output(output);
+        state.write_output(output);
     }
 
-    fn reset(&self, instance: &mut MotionMatchingInstance) {
-        *instance = MotionMatchingInstance::new(self.search_period);
+    fn reset(&self, state: &mut MotionMatchingState) {
+        *state = MotionMatchingState::new(self.search_period);
     }
 }
 
@@ -127,6 +172,8 @@ mod tests {
         assert_eq!(node.velocity_change_threshold, 50.0);
         assert_eq!(node.rotation_change_threshold, 50.0);
         assert_eq!(node.same_frame_tolerance, 1);
+        assert_eq!(node.ignore_surrounding, 20);
+        assert_eq!(node.ignore_range_end, 20);
         assert_eq!(node.blend_halflife, 0.1);
         assert_eq!(
             node.database.id(),
@@ -152,6 +199,8 @@ mod tests {
             velocity_change_threshold: 12.0,
             rotation_change_threshold: 13.0,
             same_frame_tolerance: 3,
+            ignore_surrounding: 7,
+            ignore_range_end: 9,
             blend_halflife: 0.4,
             ..Default::default()
         };
@@ -167,6 +216,8 @@ mod tests {
         assert_eq!(restored.velocity_change_threshold, 12.0);
         assert_eq!(restored.rotation_change_threshold, 13.0);
         assert_eq!(restored.same_frame_tolerance, 3);
+        assert_eq!(restored.ignore_surrounding, 7);
+        assert_eq!(restored.ignore_range_end, 9);
         assert_eq!(restored.blend_halflife, 0.4);
     }
 

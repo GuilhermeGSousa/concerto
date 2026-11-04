@@ -39,10 +39,14 @@ and animation, an engine-native UI, and an editor built on that same UI.
 
 - Rust, stable, from <https://rustup.rs>, and a C++ compiler: Jolt, the
   native physics library, is built from source.
+- [Git LFS](https://git-lfs.com), before you clone. The examples' `.gasset`
+  files are stored in it, and a game built from LFS pointers fails with
+  `missing the GRDY magic prefix`. In a clone made without it, run `git lfs pull`.
 - This repository with its Jolt submodule. Without the submodule every native
   build fails:
 
   ```sh
+  git lfs install
   git clone https://github.com/GuilhermeGSousa/concerto.git
   cd concerto
   git submodule update --init
@@ -69,7 +73,7 @@ cargo run -p tech-demo
 
 | Example | What it shows |
 |---|---|
-| `tech-demo` | A forest with a playable character, a follow camera and animation; the one example with an editor |
+| `tech-demo` | A forest with a motion matched character driven from the keyboard, a follow camera and debug gizmos; the one example with an editor |
 | `ui-showcase` | Every UI element on one screen |
 
 The first build compiles Jolt and takes a while. In the browser:
@@ -132,3 +136,6 @@ open an issue or contact the author to ask for one.
 
 Versions released before the license change, including `concerto` 0.1.0 on
 crates.io, remain available under the MIT license they were published with.
+
+The motion capture data in `examples/tech-demo/assets/lafan1` is Ubisoft's and
+has [its own license](examples/tech-demo/assets/lafan1/README.md).

@@ -201,6 +201,10 @@ pub struct EditorDocument {
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct Unsaved;
 
+/// On a document while one of its workers runs, so MCP `status` reads busy and frames keep running.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct BackgroundWork;
+
 /// Asks the editor owning this document to write it to disk; that editor removes the marker.
 #[derive(Component)]
 pub struct SaveRequested;
@@ -471,6 +475,7 @@ mod tests {
             id: AssetId::from_path(path),
             address: path.into(),
             kind: "TestAsset".into(),
+            kind_version: None,
             provenance: Some(concerto_foundation::assets::content::ImportProvenance {
                 source: path.into(),
                 sub_asset: String::new(),
