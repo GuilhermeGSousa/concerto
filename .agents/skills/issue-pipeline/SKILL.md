@@ -195,8 +195,10 @@ owner next comments or reviews.
 
 ### Checks
 
-- Cloud: `cargo fmt --all -- --check` when Rust changed. Clippy, tests and the
-  wasm build are CI's.
+- Cloud: `cargo fmt --all -- --check` when Rust changed, and
+  `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
+  committing the `Cargo.lock` it rewrites. Clippy, tests and the wasm build are
+  CI's.
 - Local: the done gate from `AGENTS.md`, every command, and
   `visual-verification` where `AGENTS.md` asks for a look at the running
   program.
