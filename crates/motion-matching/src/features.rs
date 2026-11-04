@@ -1,10 +1,13 @@
 use concerto_mesh::{JointName, Skeleton};
-use concerto_reflect::{to_value, Reflect};
+use concerto_reflect::Reflect;
 use glam::{Quat, Vec3};
 
 use crate::{
-    channel::{ChannelSource, FeatureChannel, FeatureShape, FrameContext, ReflectFeatureChannel},
-    definition::{StoredChannel, TrajectorySettings},
+    channel::{
+        ChannelSource, FeatureChannel, FeatureChannelData, FeatureShape, FrameContext,
+        ReflectFeatureChannel,
+    },
+    definition::TrajectorySettings,
 };
 
 const BONE_RING: f32 = 0.05;
@@ -293,54 +296,32 @@ impl FeatureChannel for TrajectoryDirections {
     }
 }
 
-fn stored<T: FeatureChannel>(type_name: &str, channel: &T) -> StoredChannel {
-    StoredChannel {
-        type_name: type_name.into(),
-        value: to_value(channel).expect("a feature channel encodes"),
-    }
-}
-
 fn names(bones: &[&str]) -> Vec<JointName> {
     bones.iter().map(|bone| (*bone).into()).collect()
 }
 
 /// The reference 27-value feature set: foot positions and velocities, hip velocity, and three trajectory positions and directions.
-pub fn reference_channels() -> Vec<StoredChannel> {
+pub fn reference_channels() -> Vec<FeatureChannelData> {
     vec![
-        stored(
-            "BonePositions",
-            &BonePositions {
-                bones: names(&["LeftFoot", "RightFoot"]),
-                weight: 0.75,
-            },
-        ),
-        stored(
-            "BoneVelocities",
-            &BoneVelocities {
-                bones: names(&["LeftFoot", "RightFoot"]),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "BoneVelocities",
-            &BoneVelocities {
-                bones: names(&["Hips"]),
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "TrajectoryPositions",
-            &TrajectoryPositions {
-                samples: vec![0, 1, 2],
-                weight: 1.0,
-            },
-        ),
-        stored(
-            "TrajectoryDirections",
-            &TrajectoryDirections {
-                samples: vec![0, 1, 2],
-                weight: 1.5,
-            },
-        ),
+        FeatureChannelData::live(BonePositions {
+            bones: names(&["LeftFoot", "RightFoot"]),
+            weight: 0.75,
+        }),
+        FeatureChannelData::live(BoneVelocities {
+            bones: names(&["LeftFoot", "RightFoot"]),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(BoneVelocities {
+            bones: names(&["Hips"]),
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(TrajectoryPositions {
+            samples: vec![0, 1, 2],
+            weight: 1.0,
+        }),
+        FeatureChannelData::live(TrajectoryDirections {
+            samples: vec![0, 1, 2],
+            weight: 1.5,
+        }),
     ]
 }

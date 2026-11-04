@@ -1,8 +1,9 @@
+use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraphInstances, GraphId},
+    graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{Pose, PosePool},
 };
 
@@ -33,7 +34,8 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,
@@ -42,15 +44,16 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
     fn update(
         &mut self,
         delta_time: f32,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     );
 
     fn transition(
         &mut self,
         next_graph: GraphId,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         blend_time: f32,
-        context: &AnimationGraphContext<'_>,
+        graphs: &AssetStore<AnimationGraph>,
     );
 }

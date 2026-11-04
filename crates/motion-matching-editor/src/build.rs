@@ -30,8 +30,8 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    MotionDatabase, MotionDatabaseDefinition, bake_with_progress, is_stale, weightless_hash,
-    weights_of,
+    FeatureChannel, MotionDatabase, MotionDatabaseDefinition, bake_with_progress, is_stale,
+    weightless_hash,
 };
 
 use crate::{
@@ -114,10 +114,10 @@ impl BakedStats {
             .iter()
             .zip(database.deviations())
             .map(|(span, deviation)| {
-                let means = &database.offset()[span.offset..span.offset + span.dims];
+                let means = &database.offset()[span.range()];
                 ChannelStats {
-                    name: span.type_name.clone(),
-                    mean: means.iter().sum::<f32>() / span.dims.max(1) as f32,
+                    name: span.type_name().to_owned(),
+                    mean: means.iter().sum::<f32>() / span.dims().max(1) as f32,
                     deviation: *deviation,
                 }
             })
@@ -303,7 +303,6 @@ struct BuildInput {
     definition: MotionDatabaseDefinition,
     sources: Sources,
     address: String,
-    types: AppTypeRegistry,
     progress: Arc<AtomicUsize>,
 }
 
@@ -312,7 +311,6 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
         definition,
         sources,
         address,
-        types,
         progress,
     } = input;
     let read = sources
@@ -320,11 +318,10 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
         .map_err(|asset| anyhow!("Can't read {asset}"))?;
     refuse_another_asset(&sources.root.join(&address), &address)?;
     let hash = read.hash(&definition);
-    let registry = types.read();
     if let Some(mut database) = read_baked(&sources.root, &address)
         && database.source_hash() == hash
     {
-        database.set_weights(&weights_of(&definition, &registry)?)?;
+        database.reweigh(&definition)?;
         return packed(&database, &address, true);
     }
     let skeleton: Skeleton = decode(&read.skeleton)?;
@@ -334,7 +331,7 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
         .map(|clip| decode(clip))
         .collect::<anyhow::Result<Vec<AnimationClip>>>()?;
     let clips: Vec<&AnimationClip> = clips.iter().collect();
-    let database = bake_with_progress(&definition, &skeleton, &clips, &registry, |finished, _| {
+    let database = bake_with_progress(&definition, &skeleton, &clips, |finished, _| {
         progress.store(finished, Ordering::Relaxed);
     })?
     .with_source_hash(hash);
@@ -344,16 +341,12 @@ fn run_build(input: BuildInput) -> anyhow::Result<Built> {
 fn begin(
     document: &EditorDocument,
     state: &DefinitionDocument,
-    hosted: Option<&HostedApp>,
     root: Option<&Path>,
     assets: &AssetRegistry,
 ) -> anyhow::Result<BuildJob> {
     let definition = state.definition()?;
     let asset = document.current.clone().context("No definition is open")?;
     let root = root.context("Open a project before building")?.to_owned();
-    let types = hosted
-        .and_then(HostedApp::type_registry)
-        .context("The preview has no type registry")?;
     let sources = Sources::of(&definition, root, assets);
     let total = definition.entries.len();
     let progress = Arc::new(AtomicUsize::new(0));
@@ -361,7 +354,6 @@ fn begin(
         definition,
         sources,
         address: baked_address(&asset),
-        types,
         progress: progress.clone(),
     };
     Ok(BuildJob {
@@ -416,7 +408,7 @@ pub(crate) fn start_build(
         {
             continue;
         }
-        match begin(&document, &state, hosted, root, &assets) {
+        match begin(&document, &state, root, &assets) {
             Ok(job) => {
                 document.status.clear();
                 state.build.job = Some(job);
@@ -522,14 +514,14 @@ fn baked_state(database: &MotionDatabase, input: &CheckInput) -> BakedState {
         Err(asset) => return BakedState::CantRead(asset),
     };
     let hash = read.hash(&input.definition);
-    if is_stale(database, &input.definition, hash, &input.types.read()) {
+    if is_stale(database, &input.definition, hash) {
         BakedState::OutOfDate
     } else {
         BakedState::UpToDate
     }
 }
 
-fn read_playback(database: MotionDatabase, input: &CheckInput) -> Option<BakedPlayback> {
+fn read_playback(mut database: MotionDatabase, input: &CheckInput) -> Option<BakedPlayback> {
     if database.skeleton().id() != input.definition.skeleton.id() {
         return None;
     }
@@ -546,8 +538,15 @@ fn read_playback(database: MotionDatabase, input: &CheckInput) -> Option<BakedPl
         .collect::<Option<Vec<_>>>()?;
     let sampled: Vec<&AnimationClip> = clips.iter().map(Arc::as_ref).collect();
     database.pose(0, &skeleton, &sampled).ok()?;
-    let channels = database
-        .live_channels(&input.types.read())
+    let channels: Vec<Box<dyn FeatureChannel>> = database
+        .load_channels(&input.types.read())
+        .and_then(|()| database.live_channels())
+        .map(|channels| {
+            channels
+                .into_iter()
+                .map(|channel| channel.dyn_clone())
+                .collect()
+        })
         .unwrap_or_default();
     Some(BakedPlayback {
         database: Arc::new(database),

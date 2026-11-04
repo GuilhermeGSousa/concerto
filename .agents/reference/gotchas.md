@@ -22,9 +22,11 @@ fix the entry in the same commit as the change that made it false.
   clamped. A tick kept anywhere other than a component, a resource or a
   schedule's system clamps itself in a `CheckChangeTicks` listener. Listener
   ticks are never clamped, as in Bevy.
-- **Transform propagation writes every frame.** `propagate_global_transforms`
-  calls `set_matrix` on every hierarchy member each frame, so
-  `Changed<GlobalTransform>` does not mean "this entity moved".
+- **Transform propagation recomputes every hierarchy each frame, but stamps
+  only what moved.** `propagate_global_transforms` writes each
+  `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
+  world transform changed. `extract_meshes` relies on it to upload only the
+  meshes that moved.
 - **A command-using system's sync point sits at its registration position,
   not after it in the run order.** The scheduler inserts the sync point next
   to the system in registration order, and orders it against other systems
@@ -97,6 +99,12 @@ fix the entry in the same commit as the change that made it false.
   requires another can be inserted before the stored value of the required one.
   The default is added first and the stored value replaces it
   (`Replace<T>`, then `Add<T>`; `Added<T>` is false for the second write).
+- **An `InputSet<K>` holds what was registered before its system was
+  initialized.** Schedules initialize their systems when they compile, so
+  `register_input::<K, P>()` belongs in a plugin's `build`; a member registered
+  later is in no system's access, and `get` refuses it. Read an `InputSet`
+  system's access only after `initialize`: before it, the system declares a
+  read of the whole world.
 
 ## Rendering
 
@@ -126,6 +134,10 @@ fix the entry in the same commit as the change that made it false.
   `output` with identity. A pool that was never given a rest pose, as in a test,
   hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and
   returns early when no graph evaluated; keep that guard in any new pose path.
+- **An animation node is registered with `register_animation_node`, not
+  `register_type`.** `register_type` alone makes the node load into a graph,
+  but its inputs are in no walk's input set, so every walk skips the node with
+  a warning each frame and its pose stays rest.
 - **Present mode is whatever the surface lists first,** usually vsync. Frame
   rate is not a measure of CPU cost; see [docs/profiling.md](../../docs/profiling.md).
 
@@ -206,6 +218,15 @@ fix the entry in the same commit as the change that made it false.
   load requested from inside another plugin's
   `build` sees a partial registry, since plugins register their types in
   `build`, before `Startup`.
+- **A cached copy of a live value is replaced with it, never alone.** A
+  `ChannelSpan` caches its channel's `weight`, `dims` and `source`; writing only
+  the cached weight would be undone when the channel is next loaded from its
+  value. `MotionDatabase::reweigh` replaces the channel and the cache together.
+- **An asset's bytes do not change with its in-memory type.** The
+  `check_encoding` fixtures under each crate's `tests/encoding` fail when they
+  do. Keep the old layout with a private mirror struct behind a hand-written
+  `Serialize` and `Deserialize`. Bumping `FORMAT_VERSION` is no way out for
+  data a type registry would compute: `Asset::migrate` gets no registry.
 - **`AssetServer::add` takes a `LoadableAsset` and runs `on_load` before the
   `Loaded` event.** When `on_load` fails, it logs an error and inserts nothing:
   the handle it returned never resolves.

@@ -142,6 +142,7 @@ pub trait CreatableAsset: Asset {
     fn new_asset() -> Self;
 }
 
+// Merge into Asset
 pub trait LoadableAsset: Asset {
     /// Finishes runtime initialization after a cooked load deserializes the payload, or inline in `AssetServer::add`.
     fn on_load(&mut self, _context: &asset_server::AssetLoadContext) -> anyhow::Result<()> {

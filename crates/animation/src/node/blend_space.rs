@@ -9,7 +9,7 @@ use log::warn;
 use crate::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationNodeContext, AnimationNodeIndex, SerializedAnimationNode},
+    graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
@@ -22,7 +22,7 @@ pub struct BlendInput {
 }
 
 /// A 2D blend space definition: the sample points and which blackboard `Vec2`
-/// param drives sampling. Triangulation is built on the instance, not here.
+/// param drives sampling. Triangulation is built on the state, not here.
 #[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode)]
 pub struct BlendSpace2DNode {
@@ -59,29 +59,37 @@ impl BlendSpace2DInstanceNode {
 }
 
 impl AnimationNode for BlendSpace2DNode {
-    type Instance = BlendSpace2DInstanceNode;
+    type State = BlendSpace2DInstanceNode;
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) -> BlendSpace2DInstanceNode {
+    fn create_state(
+        &self,
+        _: &(),
+        _context: &AnimationGraphContext<'_>,
+    ) -> BlendSpace2DInstanceNode {
         BlendSpace2DInstanceNode::new(self.points())
     }
 
     fn update(
         &self,
-        instance: &mut BlendSpace2DInstanceNode,
+        state: &mut BlendSpace2DInstanceNode,
         _delta_time: f32,
+        _: &(),
         context: &AnimationGraphContext<'_>,
     ) {
         let sample = context
             .blackboard()
             .get_vec2(&self.input.param)
             .unwrap_or(Vec2::ZERO);
-        instance.current_triangulated_point =
-            Some(instance.triangulation.locate_or_nearest(sample));
+        state.current_triangulated_point = Some(state.triangulation.locate_or_nearest(sample));
     }
 
     fn evaluate(
         &self,
-        instance: &mut BlendSpace2DInstanceNode,
+        state: &mut BlendSpace2DInstanceNode,
+        _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[uuid::Uuid],
         evaluated_inputs: &[EvaluatedPose],
@@ -99,11 +107,11 @@ impl AnimationNode for BlendSpace2DNode {
             return;
         }
 
-        let Some(triangulated_point) = instance.current_triangulated_point else {
+        let Some(triangulated_point) = state.current_triangulated_point else {
             return;
         };
 
-        let triangle = &instance.triangulation.triangles()[triangulated_point.triangle];
+        let triangle = &state.triangulation.triangles()[triangulated_point.triangle];
         let lambda_a = triangulated_point.lambda_a;
         let lambda_b = triangulated_point.lambda_b;
         let lambda_c = triangulated_point.lambda_c;
@@ -118,8 +126,8 @@ impl AnimationNode for BlendSpace2DNode {
         output.blend(&evaluated_inputs[triangle.c].pose, lambda_c);
     }
 
-    fn reset(&self, instance: &mut BlendSpace2DInstanceNode) {
-        instance.current_triangulated_point = None;
+    fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
+        state.current_triangulated_point = None;
     }
 }
 
@@ -127,7 +135,7 @@ pub struct BlendSpace2DBuilderContext<'a> {
     pub(crate) graph: &'a mut AnimationGraph,
     pub(crate) output_node_index: AnimationNodeIndex,
     pub(crate) points: Vec<Vec2>,
-    pub(crate) nodes: Vec<SerializedAnimationNode>,
+    pub(crate) nodes: Vec<AnimationNodeData>,
     pub(crate) input: BlendInput,
 }
 
@@ -152,7 +160,7 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
 
     pub fn input<T: AnimationNode>(&mut self, node: T, point: Vec2) -> &mut Self {
         self.points.push(point);
-        self.nodes.push(SerializedAnimationNode::of(&node));
+        self.nodes.push(AnimationNodeData::of(&node));
         self
     }
 
@@ -163,7 +171,7 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
     ) -> &mut Self {
         self.points.push(point);
         self.nodes
-            .push(SerializedAnimationNode::of(&AnimationClipNode::new(clip)));
+            .push(AnimationNodeData::of(&AnimationClipNode::new(clip)));
         self
     }
 }

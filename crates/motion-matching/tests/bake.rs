@@ -7,11 +7,11 @@ use concerto_motion_matching::bake::{
     sample_pose, simulation_bone,
 };
 use concerto_motion_matching::{
-    BakeError, BodyMotion, ChannelSource, FeatureChannel, FrameContext, JointAxis, MirrorAxis,
-    MotionDatabase, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
-    SimulationBoneSettings, StoredChannel, TimeRange, TrajectorySample, TrajectorySettings,
+    BakeError, BodyMotion, ChannelSource, FeatureChannel, FeatureChannelData, FrameContext,
+    JointAxis, MirrorAxis, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
+    ReflectFeatureChannel, SimulationBoneSettings, TimeRange, TrajectorySample, TrajectorySettings,
 };
-use concerto_reflect::{to_value, Reflect, TypeRegistry};
+use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -489,30 +489,21 @@ fn probe_registry() -> TypeRegistry {
     registry
 }
 
-fn probe(tag: f32) -> StoredChannel {
-    StoredChannel {
-        type_name: "ProbeChannel".into(),
-        value: to_value(&ProbeChannel { tag }).unwrap(),
-    }
+fn probe(tag: f32) -> FeatureChannelData {
+    FeatureChannelData::live(ProbeChannel { tag })
 }
 
-fn pose_channel() -> StoredChannel {
-    StoredChannel {
-        type_name: "PoseChannel".into(),
-        value: to_value(&PoseChannel { unused: 0.0 }).unwrap(),
-    }
+fn pose_channel() -> FeatureChannelData {
+    FeatureChannelData::live(PoseChannel { unused: 0.0 })
 }
 
-fn pair() -> StoredChannel {
-    StoredChannel {
-        type_name: "PairChannel".into(),
-        value: to_value(&PairChannel { gain: 1.0 }).unwrap(),
-    }
+fn pair() -> FeatureChannelData {
+    FeatureChannelData::live(PairChannel { gain: 1.0 })
 }
 
 fn baking_definition(
     entries: Vec<MotionEntry>,
-    channels: Vec<StoredChannel>,
+    channels: Vec<FeatureChannelData>,
 ) -> MotionDatabaseDefinition {
     MotionDatabaseDefinition {
         entries,
@@ -535,7 +526,7 @@ fn a_channel_fills_its_span_for_every_frame() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], vec![probe(7.0)]);
 
-    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     assert_eq!(database.feature_dims(), 3);
     assert_eq!(database.frame_count(), 30);
@@ -550,18 +541,24 @@ fn channels_are_laid_out_in_list_order() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], vec![pair(), probe(1.0)]);
 
-    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     assert_eq!(database.feature_dims(), 5);
     assert_eq!(database.channels().len(), 2);
-    assert_eq!(database.channels()[0].type_name, "PairChannel");
+    assert_eq!(database.channels()[0].type_name(), "PairChannel");
     assert_eq!(
-        (database.channels()[0].offset, database.channels()[0].dims),
+        (
+            database.channels()[0].offset(),
+            database.channels()[0].dims()
+        ),
         (0, 2)
     );
-    assert_eq!(database.channels()[1].type_name, "ProbeChannel");
+    assert_eq!(database.channels()[1].type_name(), "ProbeChannel");
     assert_eq!(
-        (database.channels()[1].offset, database.channels()[1].dims),
+        (
+            database.channels()[1].offset(),
+            database.channels()[1].dims()
+        ),
         (2, 3)
     );
     let features = database.features(4);
@@ -581,7 +578,7 @@ fn the_trajectory_settings_are_copied_from_the_definition() {
         sample_count: 4,
     };
 
-    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     assert_eq!(database.trajectory(), &definition.trajectory);
 }
@@ -592,9 +589,7 @@ fn a_sample_dt_that_is_not_positive_fails_the_bake() {
     for sample_dt in [0.0, -0.1, f32::NAN] {
         let mut definition = baking_definition(Vec::new(), Vec::new());
         definition.trajectory.sample_dt = sample_dt;
-        let error = bake(&definition, &skeleton, &[], &probe_registry())
-            .err()
-            .unwrap();
+        let error = bake(&definition, &skeleton, &[]).err().unwrap();
         assert!(matches!(error, BakeError::InvalidSampleDt(_)));
     }
 }
@@ -605,7 +600,7 @@ fn no_channels_gives_zero_dims() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
 
-    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     assert_eq!(database.feature_dims(), 0);
     assert!(database.features(0).is_empty());
@@ -614,16 +609,25 @@ fn no_channels_gives_zero_dims() {
 }
 
 #[test]
-fn an_unregistered_channel_fails_the_bake() {
+fn a_channel_that_was_not_loaded_fails_the_bake() {
     let skeleton = body_skeleton();
     let clip = walk_clip(1.0);
-    let definition = baking_definition(vec![entry(None)], vec![probe(1.0)]);
+    let probe = probe(1.0);
+    let stored = FeatureChannelData::Stored {
+        type_name: probe.type_name().into(),
+        value: probe.value().unwrap().into_owned(),
+    };
+    let mut definition = baking_definition(vec![entry(None)], vec![stored]);
 
-    let error = bake(&definition, &skeleton, &[&clip], &TypeRegistry::default())
-        .err()
-        .unwrap();
+    let error = bake(&definition, &skeleton, &[&clip]).err().unwrap();
+    assert_eq!(error, BakeError::UnloadedChannel("ProbeChannel".into()));
 
-    assert_eq!(error, BakeError::UnregisteredChannel("ProbeChannel".into()));
+    assert_eq!(
+        definition.load_channels(&TypeRegistry::default()),
+        Err(BakeError::UnregisteredChannel("ProbeChannel".into()))
+    );
+    definition.load_channels(&probe_registry()).unwrap();
+    assert!(bake(&definition, &skeleton, &[&clip]).is_ok());
 }
 
 #[test]
@@ -636,13 +640,7 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
         vec![probe(2.0), pair()],
     );
 
-    let database = bake(
-        &definition,
-        &skeleton,
-        &[&first, &second],
-        &probe_registry(),
-    )
-    .unwrap();
+    let database = bake(&definition, &skeleton, &[&first, &second]).unwrap();
 
     assert_eq!(database.bone_count(), 3);
     assert_eq!(database.frame_count(), 60);
@@ -665,19 +663,18 @@ fn an_end_to_end_bake_lays_out_bones_ranges_and_channels() {
 #[test]
 fn simulation_settings_are_checked_even_without_entries() {
     let skeleton = body_skeleton();
-    let registry = probe_registry();
 
     let mut missing = definition(Vec::new(), 60.0, 1.0);
     missing.simulation.position_joint = "Nope".into();
     assert_eq!(
-        bake(&missing, &skeleton, &[], &registry).err(),
+        bake(&missing, &skeleton, &[]).err(),
         Some(BakeError::MissingJoint("Nope".into()))
     );
 
     let mut even = definition(Vec::new(), 60.0, 1.0);
     even.simulation.facing_window = 4;
     assert_eq!(
-        bake(&even, &skeleton, &[], &registry).err(),
+        bake(&even, &skeleton, &[]).err(),
         Some(BakeError::InvalidWindow {
             name: "facing_window",
             window: 4
@@ -709,7 +706,7 @@ fn a_frames_pose_equals_the_pose_the_bake_gave_the_channels() {
     definition.speed = 1.5;
     let clips = [&first, &second];
 
-    let database = bake(&definition, &skeleton, &clips, &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &clips).unwrap();
 
     assert!(database.frame_count() >= 40);
     for frame in 0..database.frame_count() {
@@ -727,7 +724,7 @@ fn a_pose_is_expressed_relative_to_the_simulation_bone() {
     let skeleton = body_skeleton();
     let clip = walk_clip(2.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     let pose = database.pose(20, &skeleton, &[&clip]).unwrap();
 
@@ -752,13 +749,7 @@ fn clip_time_follows_speed_and_rate() {
     let mut definition = baking_definition(vec![entry(None), entry(Some((0.5, 1.5)))], Vec::new());
     definition.speed = 2.0;
 
-    let database = bake(
-        &definition,
-        &skeleton,
-        &[&first, &second],
-        &probe_registry(),
-    )
-    .unwrap();
+    let database = bake(&definition, &skeleton, &[&first, &second]).unwrap();
 
     assert_eq!(database.frame_count(), 15 + 15);
     assert_eq!(database.clip_time(0), Some((0, 0.0)));
@@ -775,7 +766,7 @@ fn a_skeleton_with_another_bone_count_is_an_error() {
     let database_skeleton = body_skeleton();
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = bake(&definition, &database_skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &database_skeleton, &[&clip]).unwrap();
 
     assert_eq!(
         database.pose(0, &skeleton(), &[&clip]).err(),
@@ -791,7 +782,7 @@ fn pose_rejects_a_wrong_clip_count_and_an_unknown_frame() {
     let skeleton = body_skeleton();
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], Vec::new());
-    let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     assert_eq!(
         database.pose(0, &skeleton, &[&clip, &clip]).err(),
@@ -864,25 +855,12 @@ impl FeatureChannel for LocalChannel {
     }
 }
 
-fn body_registry() -> TypeRegistry {
-    let mut registry = probe_registry();
-    registry.register::<BodyChannel>();
-    registry.register::<LocalChannel>();
-    registry
+fn body_channel() -> FeatureChannelData {
+    FeatureChannelData::live(BodyChannel { unused: 0.0 })
 }
 
-fn body_channel() -> StoredChannel {
-    StoredChannel {
-        type_name: "BodyChannel".into(),
-        value: to_value(&BodyChannel { unused: 0.0 }).unwrap(),
-    }
-}
-
-fn local_channel() -> StoredChannel {
-    StoredChannel {
-        type_name: "LocalChannel".into(),
-        value: to_value(&LocalChannel { unused: 0.0 }).unwrap(),
-    }
+fn local_channel() -> FeatureChannelData {
+    FeatureChannelData::live(LocalChannel { unused: 0.0 })
 }
 
 fn vec3(features: &[f32], at: usize) -> Vec3 {
@@ -896,7 +874,7 @@ fn quat(features: &[f32], at: usize) -> Quat {
 fn trajectory_definition(
     entries: Vec<MotionEntry>,
     speed: f32,
-    channels: Vec<StoredChannel>,
+    channels: Vec<FeatureChannelData>,
 ) -> MotionDatabaseDefinition {
     let mut definition = baking_definition(entries, channels);
     definition.speed = speed;
@@ -913,7 +891,7 @@ fn a_straight_walk_has_trajectory_samples_ahead_along_the_travel() {
     let clip = walk_clip(3.0);
     for speed in [1.0, 2.0] {
         let definition = trajectory_definition(vec![entry(None)], speed, vec![body_channel()]);
-        let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
+        let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
         let features = database.features(5);
         assert!((vec3(features, 0) - Vec3::new(0.0, 0.0, -speed)).length() < 1e-3);
@@ -939,7 +917,7 @@ fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
     let skeleton = body_skeleton();
     let clip = turning_clip(2.0);
     let definition = trajectory_definition(vec![entry(None)], 1.0, vec![body_channel()]);
-    let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     for frame in [0, 7, 30, database.frame_count() - 1] {
         let angular = vec3(database.features(frame), 3);
@@ -948,7 +926,7 @@ fn a_turning_walk_has_the_turn_rate_as_angular_velocity() {
     }
 }
 
-fn two_range_database(channels: Vec<StoredChannel>) -> MotionDatabase {
+fn two_range_database(channels: Vec<FeatureChannelData>) -> MotionDatabase {
     let skeleton = body_skeleton();
     let clip = walk_clip(3.0);
     let definition = trajectory_definition(
@@ -956,7 +934,7 @@ fn two_range_database(channels: Vec<StoredChannel>) -> MotionDatabase {
         1.0,
         channels,
     );
-    bake(&definition, &skeleton, &[&clip, &clip], &body_registry()).unwrap()
+    bake(&definition, &skeleton, &[&clip, &clip]).unwrap()
 }
 
 #[test]
@@ -1003,7 +981,7 @@ fn a_sample_past_the_range_end_equals_the_last_simulation_frame() {
         1.0,
         vec![body_channel()],
     );
-    let database = bake(&definition, &skeleton, &[&clip, &clip], &body_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip, &clip]).unwrap();
 
     let range = database.range_of(0).unwrap();
     let last = database.simulation(range.end - 1);
@@ -1026,7 +1004,7 @@ fn offline_features_equal_online_features_for_a_matching_simulation() {
         1.0,
         vec![body_channel(), local_channel()],
     );
-    let database = bake(&definition, &skeleton, &[&clip], &body_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
     let local_at = BODY_DIMS;
 
     let yaw = Quat::from_rotation_y(1.2);
@@ -1132,18 +1110,8 @@ impl FeatureChannel for RejectingChannel {
     }
 }
 
-fn weighted_registry() -> TypeRegistry {
-    let mut registry = probe_registry();
-    registry.register::<WeightedChannel>();
-    registry.register::<RejectingChannel>();
-    registry
-}
-
-fn weighted(weight: f32, value: f32) -> StoredChannel {
-    StoredChannel {
-        type_name: "WeightedChannel".into(),
-        value: to_value(&WeightedChannel { weight, value }).unwrap(),
-    }
+fn weighted(weight: f32, value: f32) -> FeatureChannelData {
+    FeatureChannelData::live(WeightedChannel { weight, value })
 }
 
 #[test]
@@ -1163,15 +1131,15 @@ fn spans_carry_the_weight_source_and_value_of_their_channel() {
     let clip = walk_clip(1.0);
     let definition = baking_definition(vec![entry(None)], vec![probe(7.0), weighted(2.5, 4.0)]);
 
-    let database = bake(&definition, &skeleton, &[&clip], &weighted_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
     let spans = database.channels();
-    assert_eq!(spans[0].weight, 1.0);
-    assert_eq!(spans[0].source, ChannelSource::Pose);
-    assert_eq!(spans[0].value, definition.channels[0].value);
-    assert_eq!(spans[1].weight, 2.5);
-    assert_eq!(spans[1].source, ChannelSource::Trajectory);
-    assert_eq!(spans[1].value, definition.channels[1].value);
+    assert_eq!(spans[0].weight(), 1.0);
+    assert_eq!(spans[0].source(), ChannelSource::Pose);
+    assert_eq!(spans[0].channel(), &definition.channels[0]);
+    assert_eq!(spans[1].weight(), 2.5);
+    assert_eq!(spans[1].source(), ChannelSource::Trajectory);
+    assert_eq!(spans[1].channel(), &definition.channels[1]);
 }
 
 #[test]
@@ -1181,9 +1149,7 @@ fn a_non_positive_or_non_finite_weight_is_rejected_before_extracting() {
     for weight in [0.0, -1.0, f32::NAN, f32::INFINITY] {
         let definition = baking_definition(vec![entry(None)], vec![weighted(weight, 0.0)]);
 
-        let error = bake(&definition, &skeleton, &[&clip], &weighted_registry())
-            .err()
-            .unwrap();
+        let error = bake(&definition, &skeleton, &[&clip]).err().unwrap();
 
         match error {
             BakeError::InvalidWeight(rejected) => {
@@ -1198,18 +1164,12 @@ fn a_non_positive_or_non_finite_weight_is_rejected_before_extracting() {
 fn a_channel_that_fails_validation_is_a_channel_value_error() {
     let skeleton = body_skeleton();
     let clip = walk_clip(1.0);
-    let rejecting = StoredChannel {
-        type_name: "RejectingChannel".into(),
-        value: to_value(&RejectingChannel {
-            reason: "no such bone".into(),
-        })
-        .unwrap(),
-    };
+    let rejecting = FeatureChannelData::live(RejectingChannel {
+        reason: "no such bone".into(),
+    });
     let definition = baking_definition(vec![entry(None)], vec![rejecting]);
 
-    let error = bake(&definition, &skeleton, &[&clip], &weighted_registry())
-        .err()
-        .unwrap();
+    let error = bake(&definition, &skeleton, &[&clip]).err().unwrap();
 
     assert_eq!(
         error,
@@ -1234,7 +1194,6 @@ fn bake_with_progress_reports_each_entry_once_in_order() {
         &definition,
         &skeleton,
         &[&clip, &clip, &clip],
-        &weighted_registry(),
         |finished, total| reports.push((finished, total)),
     )
     .unwrap();
@@ -1242,13 +1201,7 @@ fn bake_with_progress_reports_each_entry_once_in_order() {
     assert_eq!(reports, vec![(1, 3), (2, 3), (3, 3)]);
     assert_eq!(
         reported,
-        bake(
-            &definition,
-            &skeleton,
-            &[&clip, &clip, &clip],
-            &weighted_registry()
-        )
-        .unwrap()
+        bake(&definition, &skeleton, &[&clip, &clip, &clip]).unwrap()
     );
 }
 
@@ -1259,13 +1212,7 @@ fn bake_with_progress_reports_nothing_when_the_definition_is_refused() {
     let definition = baking_definition(vec![entry(None)], vec![weighted(-1.0, 0.0)]);
     let mut reports = 0;
 
-    let result = bake_with_progress(
-        &definition,
-        &skeleton,
-        &[&clip],
-        &weighted_registry(),
-        |_, _| reports += 1,
-    );
+    let result = bake_with_progress(&definition, &skeleton, &[&clip], |_, _| reports += 1);
 
     assert!(result.is_err());
     assert_eq!(reports, 0);
@@ -1360,7 +1307,7 @@ fn a_mirrored_entry_bakes_the_mirrored_simulation_bone() {
     let clip = diagonal_turning_clip(2.0);
     let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
 
-    let database = bake(&definition, &skeleton, &[&clip, &clip], &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &[&clip, &clip]).unwrap();
 
     assert_eq!(database.mirrored(), &[false, true]);
     assert_eq!(database.mirror_axis(), Some(MirrorAxis::X));
@@ -1394,7 +1341,7 @@ fn a_mirrored_frames_pose_is_the_mirrored_sampled_pose_under_its_simulation_bone
     let clip = diagonal_turning_clip(2.0);
     let definition = baking_definition(vec![entry(None), mirrored(Some((0.5, 1.5)))], Vec::new());
     let clips = [&clip, &clip];
-    let database = bake(&definition, &skeleton, &clips, &probe_registry()).unwrap();
+    let database = bake(&definition, &skeleton, &clips).unwrap();
     let mirror = PoseMirror::new(&skeleton, Vec3::X).unwrap();
 
     for frame in database.ranges().nth(1).unwrap() {
@@ -1415,13 +1362,7 @@ fn a_mirrored_frames_pose_on_a_skeleton_that_cannot_be_mirrored_is_a_mirror_erro
     let clip = diagonal_turning_clip(2.0);
     let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
     let clips = [&clip, &clip];
-    let database = bake(
-        &definition,
-        &symmetric_skeleton(),
-        &clips,
-        &probe_registry(),
-    )
-    .unwrap();
+    let database = bake(&definition, &symmetric_skeleton(), &clips).unwrap();
     let asymmetric = legged_skeleton(Vec3::new(-0.2, -0.1, 0.3));
     let frame = database.ranges().nth(1).unwrap().start;
 
@@ -1438,9 +1379,7 @@ fn a_mirrored_entry_on_an_asymmetric_skeleton_is_a_mirror_error() {
     let clip = diagonal_turning_clip(1.0);
     let definition = baking_definition(vec![entry(None), mirrored(None)], Vec::new());
 
-    let error = bake(&definition, &skeleton, &[&clip, &clip], &probe_registry())
-        .err()
-        .unwrap();
+    let error = bake(&definition, &skeleton, &[&clip, &clip]).err().unwrap();
 
     assert!(
         matches!(error, BakeError::Mirror(MirrorError::Asymmetric { .. })),
@@ -1456,7 +1395,7 @@ fn without_a_mirrored_entry_the_mirror_is_neither_built_nor_stored() {
         let mut definition = baking_definition(vec![entry(None)], Vec::new());
         definition.mirror_axis = axis;
 
-        let database = bake(&definition, &skeleton, &[&clip], &probe_registry()).unwrap();
+        let database = bake(&definition, &skeleton, &[&clip]).unwrap();
 
         assert_eq!(database.mirror_axis(), None);
         assert_eq!(database.mirrored(), &[false]);

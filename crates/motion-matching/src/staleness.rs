@@ -1,9 +1,9 @@
-use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
+use concerto_reflect::{to_value, Reflect, ReflectedValue};
 
 use crate::{
-    channel::build_channels,
-    database::{BakeError, MotionDatabase},
-    definition::{MotionDatabaseDefinition, StoredChannel},
+    channel::FeatureChannelData,
+    database::{BakeError, ChannelSpan, MotionDatabase},
+    definition::MotionDatabaseDefinition,
 };
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
@@ -70,9 +70,10 @@ impl Fnv1a {
         }
     }
 
-    fn channel(&mut self, channel: &StoredChannel) {
-        self.bytes(channel.type_name.as_bytes());
-        match &channel.value {
+    fn channel(&mut self, channel: &FeatureChannelData) {
+        self.bytes(channel.type_name().as_bytes());
+        let value = channel.value().expect("a feature channel encodes");
+        match value.as_ref() {
             ReflectedValue::Struct(fields) => {
                 let kept = || fields.iter().filter(|(name, _)| name != WEIGHT_FIELD);
                 self.raw(&[1]);
@@ -116,26 +117,20 @@ pub fn weightless_hash(
 }
 
 /// The weight of each channel of `definition`, in order, read from its live channels.
-pub fn weights_of(
-    definition: &MotionDatabaseDefinition,
-    registry: &TypeRegistry,
-) -> Result<Vec<f32>, BakeError> {
-    Ok(build_channels(&definition.channels, registry)?
+pub fn weights_of(definition: &MotionDatabaseDefinition) -> Result<Vec<f32>, BakeError> {
+    Ok(definition
+        .live_channels()?
         .iter()
         .map(|channel| channel.weight())
         .collect())
 }
 
-fn weights_differ(
-    database: &MotionDatabase,
-    definition: &MotionDatabaseDefinition,
-    registry: &TypeRegistry,
-) -> bool {
-    weights_of(definition, registry).map_or(true, |weights| {
+fn weights_differ(database: &MotionDatabase, definition: &MotionDatabaseDefinition) -> bool {
+    weights_of(definition).map_or(true, |weights| {
         !database
             .channels()
             .iter()
-            .map(|span| span.weight)
+            .map(ChannelSpan::weight)
             .eq(weights)
     })
 }
@@ -145,19 +140,17 @@ pub fn is_stale(
     database: &MotionDatabase,
     definition: &MotionDatabaseDefinition,
     hash: u64,
-    registry: &TypeRegistry,
 ) -> bool {
-    database.source_hash() != hash || weights_differ(database, definition, registry)
+    database.source_hash() != hash || weights_differ(database, definition)
 }
 
-/// [`is_stale`] for the case [`MotionDatabase::set_weights`] can fix: `hash` equals the database's source and a channel's weight differs.
+/// [`is_stale`] for the case [`MotionDatabase::reweigh`] can fix: `hash` equals the database's source and a channel's weight differs.
 pub fn weights_changed_only(
     database: &MotionDatabase,
     definition: &MotionDatabaseDefinition,
     hash: u64,
-    registry: &TypeRegistry,
 ) -> bool {
-    database.source_hash() == hash && weights_differ(database, definition, registry)
+    database.source_hash() == hash && weights_differ(database, definition)
 }
 
 #[cfg(test)]

@@ -192,7 +192,7 @@ impl Mul<Transform> for Transform {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, PartialEq)]
 pub struct GlobalTransform(Affine3A);
 
 impl GlobalTransform {

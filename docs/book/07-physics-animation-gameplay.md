@@ -193,7 +193,8 @@ covers that node.
 
 The node set is open: any crate can define a node. Derive `Reflect` and
 `Default`, mark it `#[reflect(AnimationNode)]`, implement `AnimationNode`, and
-register the type with `app.register_type::<MyNode>()`.
+register it in your plugin with `app.register_animation_node::<MyNode>()` (from
+`AnimationAppExt`), which registers the type and its inputs.
 
 ```rust
 #[derive(Default, Reflect)]
@@ -203,27 +204,49 @@ struct Gain {
 }
 
 impl AnimationNode for Gain {
-    type Instance = ();
-    // create_instance, update, evaluate, reset; is_finished defaults to true
+    type State = ();
+    type CreateInput = ();
+    type UpdateInput = Res<'static, Tuning>;
+    type EvaluateInput = ();
+    // create_state, update, evaluate, reset; is_finished defaults to true
 }
 ```
 
-The node's fields are its data and are stored with the graph. `Instance` is the
-per-player runtime state (a playhead, say): `create_instance` makes one for each
+The node's fields are its data and are stored with the graph. `State` is the
+per-player runtime state (a playhead, say): `create_state` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
-receive it. Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
+receive it.
+
+The three input types say what the node reads in each walk of the graph:
+`create_state` gets `CreateInput`, `update` gets `UpdateInput` and
+`evaluate` gets `EvaluateInput`, already fetched, as their typed data (`&Res<Tuning>`
+above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
+`Query`, or a tuple of them; `()` reads nothing. The systems that walk graphs,
+`initialize_animation_players`, `update_animation_players` and
+`animate_targets`, each declare the union of their walk's inputs over every
+registered node, and nothing else, so `animate_targets` never declares what only
+an update reads. A node whose input is missing, or whose type was registered
+without `register_animation_node`, is skipped in that walk with a warning. The
+clip node reads `AssetStore<AnimationClip>` and the state machine
+`AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
+player's own data: its blackboard, its root bone in `evaluate`, and its
+skeleton.
+
+Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
 `AnimationGraph::from_node`.
 
-A graph stores each node as its registry `type_name` plus its reflected value,
-which is what a `.gasset` file holds. The live nodes are built from that data
-by `make_live`, which the asset server runs in `on_load`, so a graph loaded
-from disk and a graph built in code both go live when they reach the asset
-server: `assets.add(graph)` runs it before the handle resolves. A player skips
-a graph that is not live. A node whose type is not registered, or whose stored
-value does not apply, becomes a `PlaceholderNode` that passes its first input
+A graph holds each node as an `AnimationNodeData`, written to a `.gasset` file
+as its registry `type_name` plus its reflected value. A node added in code or
+read from disk is `Stored`; `make_live` builds it `Live`, and the asset server
+runs `make_live` in `on_load`, so a graph loaded from disk and a graph built in
+code both go live when they reach the asset server: `assets.add(graph)` runs it
+before the handle resolves. A player skips a graph that is not live. A node
+whose type is not registered, or whose stored value does not apply, becomes a
+`Placeholder` that plays as a `PlaceholderNode`, passing its first input
 through, and a warning is logged and kept in `AnimationGraph::load_warnings()`.
-The stored data is left as it was, so saving the graph does not lose the node.
+The placeholder keeps the stored value, so saving the graph does not lose the
+node, and a later `make_live` with the type registered builds it.
 
 Handles inside a node (the clip of an `AnimationClipNode`, the state graphs of
 an `AnimationStateMachine`) are stored as asset ids and loaded again by

@@ -63,7 +63,7 @@ the database; it needs no handles of its own to the clips for it to play.
 | `speed` | clip seconds consumed per second of database time | 1.1 |
 | `simulation` | `SimulationBoneSettings` | see below |
 | `trajectory` | `TrajectorySettings`: `sample_dt` (1/3 s) and `sample_count` (3) | 1/3 s, 3 |
-| `channels` | `StoredChannel`s: a registered type name and a reflected value, in feature order | `reference_channels()` |
+| `channels` | `FeatureChannelData`s, in feature order: see [Loading channels](#loading-channels) | `reference_channels()` |
 | `mirror_axis` | a `MirrorAxis`, `X` or `Z`: the horizontal model-space axis normal to the plane mirrored entries are mirrored across | `MirrorAxis::X` |
 
 An entry bakes `floor((end - start) * rate / speed)` frames.
@@ -89,12 +89,12 @@ end of an entry's range is clamped to the range's last frame.
 ### Bake
 
 ```rust
-let database = bake(&definition, &skeleton, &clips, &registry)?;
+let database = bake(&definition, &skeleton, &clips)?;
 ```
 
-`clips` holds one resolved clip per entry, in order; `registry` is the
-`TypeRegistry` that knows the channel types. Each entry is baked on its own, so
-no frame blends across two entries.
+`clips` holds one resolved clip per entry, in order. The definition's channels
+must be loaded. Each entry is baked on its own, so no frame blends across two
+entries.
 
 `bake_with_progress` takes one more argument, `on_entry(finished, total)`,
 called after each entry with `finished` counting from 1. It is not called for a
@@ -109,11 +109,11 @@ definition that is refused before the first entry.
 | `ClipCountMismatch` | `clips.len()` differs from `entries.len()`, or from the database's clip count in `pose` |
 | `BoneCountMismatch` | `pose` was given a skeleton whose bone count differs from the baked one |
 | `FrameOutOfRange` | `pose` was given a frame the database did not bake |
-| `UnregisteredChannel` | a channel type name not in the registry, or without `ReflectFeatureChannel` |
+| `UnregisteredChannel` | loading a channel whose type name is not in the registry, or lacks `ReflectFeatureChannel` |
+| `UnloadedChannel` | a channel still `Stored`, read where a live one is needed |
 | `ChannelValue` | the stored value does not apply to the channel, or the channel's `validate` failed |
-| `InvalidWeight` | a channel weight, or one given to `set_weights`, that is not finite and positive |
-| `WeightCountMismatch` | `set_weights` was given a different number of weights than the database has channels |
-| `ChannelCountMismatch` | a `FeatureQuery` was used with a database of a different channel count |
+| `InvalidWeight` | a channel weight, at bake or `reweigh`, that is not finite and positive |
+| `ChannelCountMismatch` | a `FeatureQuery` was used with, or `reweigh` was given, a different channel count |
 | `TrajectoryTooShort` | `FeatureQuery::build` was given fewer trajectory samples than the database's `sample_count` |
 | `RangeTooShort` | an entry bakes fewer than 2 frames |
 | `InvalidRange` | a range outside its clip, or with `start >= end` |
@@ -156,8 +156,7 @@ and baked again.
 A `FeatureChannel` writes `dims()` values per frame from a `FrameContext`. The
 channels of a definition are concatenated in order into one feature vector per
 frame. `extract_features(&channels, &frame, &mut out)` runs them; `out` must
-hold exactly the sum of their `dims()`. `build_channels` turns a definition's
-`StoredChannel`s into live channels.
+hold exactly the sum of their `dims()`.
 
 `FrameContext` fields:
 
@@ -191,7 +190,7 @@ Because both fills go through the same `extract`, a channel written in terms of
 the inverse of `simulation` yields the same features in both.
 
 ```rust
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone)]
 #[reflect(FeatureChannel)]
 struct RootSpeed {
     scale: f32,
@@ -208,8 +207,24 @@ impl FeatureChannel for RootSpeed {
 app.register_type::<RootSpeed>();
 ```
 
-A channel needs `Reflect` and `Default`. The registered type name is what a
-`StoredChannel` refers to; a stored value is applied over `Default`.
+A channel needs `Reflect`, `Default` and `Clone`. The registered type name is
+what a stored channel refers to; a stored value is applied over `Default`.
+
+### Loading channels
+
+`FeatureChannelData` is one channel as an asset holds it: `Stored { type_name,
+value }`, as decoded, or `Live { type_name, channel }`, the boxed
+`FeatureChannel`. Both encode as the type name and the reflected value, and
+decoding always gives `Stored`. `FeatureChannelData::live(channel)` makes a live
+one under the type's short name, which is how code builds a definition.
+
+`load(&registry)` turns a `Stored` channel `Live`, returning
+`UnregisteredChannel` or `ChannelValue` when it can't. A definition's and a
+database's `on_load` load their channels with the asset server's type registry
+and log a warning for each that fails, leaving it `Stored`; outside the asset
+server, call `load_channels(&registry)`. After that nothing needs the registry:
+`bake`, `FeatureQuery::new`, `weights_of` and `is_stale` read the live channels,
+and a channel still `Stored` there is `UnloadedChannel`.
 
 A channel may also override four methods:
 
@@ -278,9 +293,10 @@ deviation is below `1e-6` normalises to 0. `features(frame)` stays raw.
 
 - `offset()`, `scales()`: per feature dimension.
 - `normalise(&mut features)`, `normalised_features(frame)`.
-- `set_weights(&[f32])`: one weight per channel; changes the scales only, with
-  no re-bake. It does not rewrite the weight inside each channel's stored
-  value; the span's weight is the one in use.
+- `reweigh(&definition)`: takes the definition's live channels and their
+  weights, keeping each span's offset; changes the scales only, with no
+  re-bake. It is for a definition that hashes as the database's source, so only
+  weights differ.
 
 ### Stale databases
 
@@ -289,7 +305,7 @@ A `MotionDatabase` stores `source_hash()`, the hash of what it was baked from.
 
 ```rust
 let hash = weightless_hash(&definition, &skeleton_bytes, &clip_bytes);
-let database = bake(&definition, &skeleton, &clips, &registry)?.with_source_hash(hash);
+let database = bake(&definition, &skeleton, &clips)?.with_source_hash(hash);
 ```
 
 `clip_bytes` holds the stored bytes of one clip per entry. The hash is FNV-1a,
@@ -298,13 +314,14 @@ skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
 `trajectory`, `mirror_axis` when some entry is mirrored, and each channel's type
 name and value with its top-level `weight` field left out.
 
-- `weights_of(&definition, &registry)`: each live channel's `weight()`, in order.
-- `is_stale(&database, &definition, hash, &registry)`: the hash differs from
+- `weights_of(&definition)`: each live channel's `weight()`, in order.
+- `is_stale(&database, &definition, hash)`: the hash differs from
   `source_hash()`, or a `ChannelSpan` weight differs from `weights_of`, or a
-  channel cannot be built.
-- `weights_changed_only(&database, &definition, hash, &registry)`: the same test
-  with the hash equal, the case `set_weights(&weights_of(..)?)` fixes with no
-  re-bake.
+  channel is not loaded.
+- `weights_changed_only(&database, &definition, hash)`: the same test with the
+  hash equal, the case `reweigh(&definition)` fixes with no re-bake.
+
+A stored and a live channel with the same value hash the same.
 
 A channel's top-level `weight` field means the search weight and nothing else.
 A field called `weight` that feeds `extract` changes no hash, so features baked
@@ -314,7 +331,7 @@ nested deeper, just changes the hash and asks for a full bake.
 ### FeatureQuery
 
 ```rust
-let query = FeatureQuery::new(&database, &registry)?;
+let query = FeatureQuery::new(&database)?;
 let vector = query.build(&database, &skeleton, pose_frame, &simulation, &trajectory)?;
 ```
 
@@ -326,8 +343,8 @@ from `trajectory` expressed in `simulation` (the character's world transform).
 Both return `FrameOutOfRange`, `BoneCountMismatch`, `ChannelCountMismatch` or
 `TrajectoryTooShort` instead of panicking.
 
-`channels()` returns the live channels in the database's order, which is what
-`preview_features` takes, so drawing does not build them again.
+`new` copies the database's live channels; `channels()` returns them in the
+database's order, which is what `preview_features` takes.
 
 ### Layout
 
@@ -353,11 +370,12 @@ every bone index is a skeleton joint index.
   bake. `TrajectorySettings::frame_offset(sample, rate)` is the rounded offset the
   bake and this share.
 - `body_motion(frame)`: the simulation bone's velocities at `frame`.
-- `live_channels(&registry)`: the channels built from the values in the spans.
+- `live_channels()`: the spans' live channels, in order; `UnloadedChannel` before
+  `load_channels`.
 - `simulation(frame)`: the simulation bone, a `Transform` in model space.
 - `features(frame)`, `feature_dims()`, `channels()`: `feature_dims()` values
-  per frame; `channels()` lists each `ChannelSpan` (`type_name`, `offset`,
-  `dims`, `weight`, `source`, `value`).
+  per frame; `channels()` lists each `ChannelSpan` (`type_name()`, `offset()`,
+  `dims()`, `range()`, `weight()`, `source()`, `channel()`).
 - `deviations()`: each channel's mean standard deviation, in channel order.
 - `size_in_bytes()`: the bytes held by the feature, simulation and range arrays.
 
@@ -422,9 +440,9 @@ are separate work. The simulation does not rotate the capsule.
 ## Playing a database
 
 `MotionMatchingNode` is an animation graph node that plays a `MotionDatabase`.
-`MotionMatchingPlugin` registers it and its systems; the plugin is in
-`DefaultPlugins`, so a game needs nothing more than a graph that holds the
-node.
+`MotionMatchingPlugin` registers it with `register_animation_node`, and its
+systems; the plugin is in `DefaultPlugins`, so a game needs nothing more than a
+graph that holds the node.
 
 | Field | Meaning | Default |
 |---|---|---|
@@ -443,7 +461,8 @@ the blackboard of its `AnimationPlayer`, where only this crate reads it. A
 entity. A player no link names, or a preview `App`, has no trajectory; the node
 then plays the database without searching.
 
-Per frame `run_motion_matching` advances the playhead at the database `rate`,
+Each frame the graph walk reaches it, the node's `update` advances the playhead
+at the database `rate`,
 searches when the timer runs out, when a settled change in the trajectory asks
 for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
@@ -454,10 +473,23 @@ playhead and the last `ignore_range_end` of each range are not candidates, as
 in orangeduck's Motion-Matching. At the last frame of a range nothing seeds the
 search and nothing around the playhead is excluded, and any frame it finds other
 than the playhead's is taken, so the playhead leaves unless `ignore_range_end`
-is 0. A query that holds a NaN or an infinity finds nothing. `run_motion_matching` runs after
-`update_animation_players` and before `animate_targets`.
+is 0. A query that holds a NaN or an infinity finds nothing.
 
-`MotionMatchingInstance::last_query` is a `LastQuery`, kept by each search:
+The step runs inside `update_animation_players`, where the graph is walked, so
+a node the walk does not reach, such as one in a state machine state that is
+not playing, does not advance. Its `UpdateInput` reads the stores of motion
+databases, skeletons and clips, and the player's skeleton comes from the graph
+context; when any of them is missing the node does not step and its root motion
+is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
+left. No other system declares the `MotionDatabase` store.
+
+`MotionMatchingState` is the node's per-player state. Its fields are
+private: the step that advances it is its own method, which the node's `update`
+calls. Other crates read it
+through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
+`last_query()`.
+
+`MotionMatchingState::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
 `Pose` channels from, `simulation` and `trajectory` what it was built with, and
 `best_cost` the squared distance to the frame the search found, or `None` when it
@@ -468,10 +500,10 @@ is `None` until a search runs and after
 `reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale
 query is not drawn. A frame with no search due keeps the last one.
 
-`MotionMatchingInstance::root_motion` is the simulation bone's velocity and
-angular velocity at the playhead, in model space. Each step turns them back by
+The state keeps the simulation bone's velocity and angular velocity at the
+playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
-scales them by the frame's time into a `RootMotion` on `instance.output`:
+scales them by the frame's time into a `RootMotion` on `state.output`:
 `translation = q⁻¹ * (velocity * dt)` and `rotation =
 from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph

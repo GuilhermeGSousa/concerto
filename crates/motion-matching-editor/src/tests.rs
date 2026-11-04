@@ -39,9 +39,9 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::JointName;
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannel, FrameContext, MirrorAxis,
-    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, StoredChannel, TimeRange,
-    TrajectoryDirections, TrajectoryPositions,
+    BonePositions, BoneVelocities, FeatureChannel, FeatureChannelData, FrameContext, MirrorAxis,
+    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, TimeRange, TrajectoryDirections,
+    TrajectoryPositions,
 };
 use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_ui::{node::UINode, theme::UITheme};
@@ -67,7 +67,7 @@ use crate::{
     save::save_definitions,
 };
 
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone)]
 #[reflect(FeatureChannel)]
 struct Unplaced;
 
@@ -79,7 +79,7 @@ impl FeatureChannel for Unplaced {
     fn extract(&self, _: &FrameContext, _: &mut [f32]) {}
 }
 
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone)]
 #[reflect(FeatureChannel)]
 struct Settings;
 
@@ -576,7 +576,7 @@ fn a_file_of_another_kind_fails_its_request() {
 
 fn with_channel(type_name: &str, value: ReflectedValue) -> MotionDatabaseDefinition {
     let mut definition = definition();
-    definition.channels.push(StoredChannel {
+    definition.channels.push(FeatureChannelData::Stored {
         type_name: type_name.into(),
         value,
     });
@@ -771,7 +771,7 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
     let names: Vec<&str> = saved
         .channels
         .iter()
-        .map(|channel| channel.type_name.as_str())
+        .map(FeatureChannelData::type_name)
         .collect();
     assert_eq!(
         names,
@@ -845,7 +845,10 @@ fn edits_that_cannot_be_discarded_stay_marked_unsaved() {
         .world
         .get_component_for_entity_mut::<DefinitionDocument>(document)
         .unwrap();
-    state.loaded.as_mut().unwrap().channels[0].type_name = "not registered".into();
+    state.loaded.as_mut().unwrap().channels[0] = FeatureChannelData::Stored {
+        type_name: "not registered".into(),
+        value: ReflectedValue::Struct(Vec::new()),
+    };
     f.world.remove_component::<Unsaved>(document);
 
     f.world.trigger(DiscardEdits(document));

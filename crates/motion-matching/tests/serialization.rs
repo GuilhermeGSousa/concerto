@@ -6,11 +6,11 @@ use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    reference_channels, FeatureChannel, FrameContext, JointAxis, MirrorAxis, MotionDatabase,
-    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
-    StoredChannel, TimeRange, TrajectorySettings,
+    reference_channels, FeatureChannel, FeatureChannelData, FrameContext, JointAxis, MirrorAxis,
+    MotionDatabase, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
+    SimulationBoneSettings, TimeRange, TrajectorySettings,
 };
-use concerto_reflect::{to_value, Reflect, ReflectedValue, TypeRegistry};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
 use uuid::Uuid;
 
@@ -107,13 +107,7 @@ fn database() -> MotionDatabase {
     };
     let first = walk_clip(2.0);
     let second = walk_clip(2.0);
-    bake(
-        &definition,
-        &skeleton(),
-        &[&first, &second],
-        &TypeRegistry::default(),
-    )
-    .unwrap()
+    bake(&definition, &skeleton(), &[&first, &second]).unwrap()
 }
 
 #[test]
@@ -159,7 +153,7 @@ fn definition_round_trips_through_bincode() {
             sample_dt: 0.5,
             sample_count: 5,
         },
-        channels: vec![StoredChannel {
+        channels: vec![FeatureChannelData::Stored {
             type_name: "test::Channel".into(),
             value: ReflectedValue::Struct(vec![("scale".into(), ReflectedValue::Leaf(vec![1, 2]))]),
         }],
@@ -192,10 +186,15 @@ fn a_source_hash_is_zero_until_set_and_round_trips_through_bincode() {
 }
 
 #[test]
-fn setting_weights_keeps_the_source_hash() {
+fn reweighing_keeps_the_source_hash() {
     let mut database = database().with_source_hash(0xfeed);
 
-    database.set_weights(&[]).unwrap();
+    database
+        .reweigh(&MotionDatabaseDefinition {
+            channels: Vec::new(),
+            ..Default::default()
+        })
+        .unwrap();
 
     assert_eq!(database.source_hash(), 0xfeed);
 }
@@ -221,17 +220,14 @@ fn size_in_bytes_counts_the_feature_simulation_and_range_arrays() {
             facing_window: 5,
             ..Default::default()
         },
-        channels: vec![StoredChannel {
-            type_name: "HeightChannel".into(),
-            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
-        }],
+        channels: vec![FeatureChannelData::live(HeightChannel { scale: 2.0 })],
         ..Default::default()
     };
     let mut registry = TypeRegistry::default();
     registry.register::<HeightChannel>();
     let first = walk_clip(2.0);
     let second = walk_clip(2.0);
-    let database = bake(&definition, &skeleton(), &[&first, &second], &registry).unwrap();
+    let database = bake(&definition, &skeleton(), &[&first, &second]).unwrap();
 
     let features = 15 * 2 * size_of::<f32>();
     let simulation = 15 * size_of::<(Vec3, Quat)>();
@@ -252,16 +248,13 @@ fn deviations_hold_one_value_per_channel() {
             facing_window: 5,
             ..Default::default()
         },
-        channels: vec![StoredChannel {
-            type_name: "HeightChannel".into(),
-            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
-        }],
+        channels: vec![FeatureChannelData::live(HeightChannel { scale: 2.0 })],
         ..Default::default()
     };
     let mut registry = TypeRegistry::default();
     registry.register::<HeightChannel>();
     let clip = walk_clip(2.0);
-    let database = bake(&definition, &skeleton(), &[&clip], &registry).unwrap();
+    let database = bake(&definition, &skeleton(), &[&clip]).unwrap();
 
     assert_eq!(database.deviations().len(), 1);
     assert!(database.deviations()[0] > 0.0);
@@ -329,17 +322,14 @@ fn a_database_with_channels_and_handles_round_trips_through_bincode() {
             facing_window: 5,
             ..Default::default()
         },
-        channels: vec![StoredChannel {
-            type_name: "HeightChannel".into(),
-            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
-        }],
+        channels: vec![FeatureChannelData::live(HeightChannel { scale: 2.0 })],
         ..Default::default()
     };
     let mut registry = TypeRegistry::default();
     registry.register::<HeightChannel>();
     let first = walk_clip(2.0);
     let second = walk_clip(2.0);
-    let database = bake(&definition, &skeleton(), &[&first, &second], &registry).unwrap();
+    let database = bake(&definition, &skeleton(), &[&first, &second]).unwrap();
     assert_eq!(database.feature_dims(), 2);
     assert_eq!(database.channels().len(), 1);
     assert!(database.features(4)[0] != 0.0);
@@ -386,10 +376,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             sample_dt: 0.25,
             sample_count: 2,
         },
-        channels: vec![StoredChannel {
-            type_name: "HeightChannel".into(),
-            value: to_value(&HeightChannel { scale: 2.0 }).unwrap(),
-        }],
+        channels: vec![FeatureChannelData::live(HeightChannel { scale: 2.0 })],
         mirror_axis: MirrorAxis::Z,
     }
 }
@@ -405,14 +392,9 @@ fn database_encoding_matches_its_fixture() {
     registry.register::<HeightChannel>();
     let first = walk_clip(2.0);
     let second = walk_clip(2.0);
-    let database = bake(
-        &encoded_definition(),
-        &skeleton(),
-        &[&first, &second],
-        &registry,
-    )
-    .unwrap()
-    .with_source_hash(0x5eed_f00d);
+    let database = bake(&encoded_definition(), &skeleton(), &[&first, &second])
+        .unwrap()
+        .with_source_hash(0x5eed_f00d);
     assert_eq!(database.mirror_axis(), Some(MirrorAxis::Z));
 
     check_encoding(&database, encoding_dir());

@@ -86,6 +86,13 @@ A host never touches the render world once frames are running.
   `cmd.trigger(signal)` queues the dispatch for the next sync point.
 - Ordering is by reference, never by registration: see
   [docs/scheduling.md](../../docs/scheduling.md).
+- Under the multi-threaded executor, a `Send` system runs on a pool thread,
+  or on the thread that found it ready when it is the only one ready and
+  nothing else runs. An exclusive system runs on the thread that runs the
+  schedule. A non-`Send` system runs on the `MainThreadExecutor`'s thread, or
+  on the thread that runs the schedule when there is none.
+- Commands apply on the thread that runs the schedule, when the executor
+  reaches their sync point.
 
 ## Assets
 
@@ -119,6 +126,19 @@ time. The running game never reads them.
   Asset handles are stored as their `AssetId` and entity references as node
   indices, through `ReflectSceneLeaf` type data; capture lists every asset a
   handle names in `referenced_assets`.
+- An asset that holds trait objects by type name (`AnimationGraph`'s nodes,
+  the feature channels of a `MotionDatabaseDefinition` and a `MotionDatabase`)
+  keeps each one as a data enum: `Stored { type_name, value }` as decoded and
+  `Live { type_name, <boxed value> }` once built (`AnimationNodeData`,
+  `FeatureChannelData`). Serde writes the type name and the reflected value for
+  every variant and always decodes `Stored`. `on_load` builds the live values
+  once, with `context.type_registry()`; after that nothing takes a
+  `TypeRegistry`, and a value still `Stored` where a live one is needed is an
+  error. A value that cannot be built stays `Stored` with a warning, or, when the
+  asset must still play, becomes a `Placeholder` that keeps its value so a save
+  loses nothing. Do not keep a parallel `#[serde(skip)]` list of live values,
+  rebuild them from the registry at each use, or pass a registry into runtime
+  code to do it.
 - Re-importing a source keeps its asset IDs. An output whose header no longer
   carries import provenance was saved by the editor and is not rewritten.
 

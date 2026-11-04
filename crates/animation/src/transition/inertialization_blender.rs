@@ -1,8 +1,9 @@
+use concerto_foundation::assets::asset_store::AssetStore;
 use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraphInstances, GraphId},
+    graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
     pose::{Pose, PosePool},
     transition::{AnimationTransitionBlender, blend_stack::BlendStack},
@@ -76,13 +77,14 @@ impl AnimationTransitionBlender for InertializationBlender {
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
         self.stack
-            .sample(bone_ids, graph_instances, context, pool, output);
+            .sample(bone_ids, graph_states, graphs, context, pool, output);
 
         let bone_count = output.len();
         self.drop_other_skeleton(bone_count);
@@ -123,26 +125,26 @@ impl AnimationTransitionBlender for InertializationBlender {
     fn update(
         &mut self,
         delta_time: f32,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     ) {
         self.delta_time += delta_time;
-        self.stack.update(delta_time, graph_instances, context);
+        self.stack.update(delta_time, graph_states, graphs, context);
     }
 
     fn transition(
         &mut self,
         next_graph: GraphId,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         blend_time: f32,
-        context: &AnimationGraphContext<'_>,
+        graphs: &AssetStore<AnimationGraph>,
     ) {
         if *self.stack.current() == *next_graph {
             return;
         }
 
-        self.stack
-            .transition(next_graph, graph_instances, 1.0, context);
+        self.stack.transition(next_graph, graph_states, 1.0, graphs);
         self.stack.collapse();
         self.pending_halflife = Some(blend_time);
     }
