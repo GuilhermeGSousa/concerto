@@ -22,7 +22,7 @@ use crate::{
         AnimationNode, ErasedAnimationNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
         blend_space::BlendSpace2DBuilderContext,
     },
-    player::ActiveNodeInstance,
+    player::ActiveNodeState,
     pose::{EvaluatedPose, Pose, PosePool},
 };
 
@@ -375,41 +375,41 @@ impl<'a> AnimationNodeContext<'a> {
 }
 
 #[derive(Default)]
-pub(crate) struct AnimationGraphInstance {
+pub(crate) struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
-    graph_state: HashMap<AnimationNodeIndex, ActiveNodeInstance>,
+    graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
 }
 
-impl AnimationGraphInstance {
+impl AnimationGraphState {
     pub(crate) fn set_node_weight(&mut self, node_index: &AnimationNodeIndex, weight: f32) {
         if let Some(active_anim) = self.graph_state.get_mut(node_index) {
             active_anim.weight = weight;
         }
     }
 
-    pub(crate) fn get_active_node_instance_mut(
+    pub(crate) fn get_active_node_state_mut(
         &mut self,
         node_index: &AnimationNodeIndex,
-    ) -> Option<&mut ActiveNodeInstance> {
+    ) -> Option<&mut ActiveNodeState> {
         self.graph_state.get_mut(node_index)
     }
 
-    pub(crate) fn get_instance<T: 'static>(&self, node_index: &AnimationNodeIndex) -> Option<&T> {
+    pub(crate) fn get_state<T: 'static>(&self, node_index: &AnimationNodeIndex) -> Option<&T> {
         self.graph_state
             .get(node_index)
-            .and_then(|node_state| node_state.node_instance.downcast_ref::<T>())
+            .and_then(|node_state| node_state.node_state.downcast_ref::<T>())
     }
 
-    pub(crate) fn get_instance_mut<T: 'static>(
+    pub(crate) fn get_state_mut<T: 'static>(
         &mut self,
         node_index: &AnimationNodeIndex,
     ) -> Option<&mut T> {
         self.graph_state
             .get_mut(node_index)
-            .and_then(|node_state| node_state.node_instance.downcast_mut::<T>())
+            .and_then(|node_state| node_state.node_state.downcast_mut::<T>())
     }
 
-    pub(crate) fn for_each_instance_mut<N: AnimationNode>(
+    pub(crate) fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         blackboard: &AnimationBlackboard,
@@ -430,10 +430,10 @@ impl AnimationGraphInstance {
             else {
                 continue;
             };
-            let Some(instance) = node_state.node_instance.downcast_mut::<N::State>() else {
+            let Some(state) = node_state.node_state.downcast_mut::<N::State>() else {
                 continue;
             };
-            f(node, instance, blackboard);
+            f(node, state, blackboard);
         }
     }
 
@@ -461,13 +461,13 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let Some(node_instance) = anim_node.create_instance(creation_context) else {
+            let Some(node_state) = anim_node.create_state(creation_context) else {
                 continue;
             };
             self.graph_state.insert(
                 node_index,
-                ActiveNodeInstance {
-                    node_instance,
+                ActiveNodeState {
+                    node_state,
                     weight: 1.0,
                 },
             );
@@ -483,7 +483,7 @@ impl AnimationGraphInstance {
             .iter_mut()
             .for_each(|(node_index, node_state)| {
                 if let Some(node) = graph.live_node(*node_index) {
-                    node.reset(&mut node_state.node_instance);
+                    node.reset(&mut node_state.node_state);
                 }
             });
     }
@@ -528,7 +528,7 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let Some(node_state) = self.get_active_node_instance_mut(&node_index) else {
+            let Some(node_state) = self.get_active_node_state_mut(&node_index) else {
                 warn!(
                     "No node state found for node, make sure the animation player has been correctly initialized"
                 );
@@ -542,7 +542,7 @@ impl AnimationGraphInstance {
             let mut node_output_pose = pool.acquire();
 
             node.evaluate(
-                &mut node_state.node_instance,
+                &mut node_state.node_state,
                 context,
                 bone_ids,
                 graph_evaluator.view_stack(stack_start),
@@ -588,7 +588,7 @@ impl AnimationGraphInstance {
         self.graph_state.iter().all(|(node_index, node_state)| {
             graph
                 .live_node(*node_index)
-                .is_none_or(|node| node.is_finished(&node_state.node_instance))
+                .is_none_or(|node| node.is_finished(&node_state.node_state))
         })
     }
 }
@@ -610,21 +610,21 @@ impl From<usize> for GraphId {
     }
 }
 
-pub(crate) struct AnimationGraphInstances {
-    instances: Vec<AnimationGraphInstance>,
+pub(crate) struct AnimationGraphStates {
+    states: Vec<AnimationGraphState>,
 }
 
-impl AnimationGraphInstances {
-    pub(crate) fn new(instances: Vec<AnimationGraphInstance>) -> Self {
-        Self { instances }
+impl AnimationGraphStates {
+    pub(crate) fn new(states: Vec<AnimationGraphState>) -> Self {
+        Self { states }
     }
 
-    pub(crate) fn get(&self, id: GraphId) -> Option<&AnimationGraphInstance> {
-        self.instances.get(*id)
+    pub(crate) fn get(&self, id: GraphId) -> Option<&AnimationGraphState> {
+        self.states.get(*id)
     }
 
-    pub(crate) fn get_mut(&mut self, id: GraphId) -> Option<&mut AnimationGraphInstance> {
-        self.instances.get_mut(*id)
+    pub(crate) fn get_mut(&mut self, id: GraphId) -> Option<&mut AnimationGraphState> {
+        self.states.get_mut(*id)
     }
 }
 

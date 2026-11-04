@@ -123,17 +123,17 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
 
-        fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> bool {
             false
         }
 
-        fn update(&self, instance: &mut bool, _: f32, _: &(), _: &AnimationGraphContext<'_>) {
-            *instance = true;
+        fn update(&self, state: &mut bool, _: f32, _: &(), _: &AnimationGraphContext<'_>) {
+            *state = true;
         }
 
         fn evaluate(
             &self,
-            instance: &mut bool,
+            state: &mut bool,
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
@@ -142,12 +142,12 @@ mod tests {
             output: &mut Pose,
         ) {
             if let Some(joint) = output.get_joint_pose_mut(0) {
-                joint.translation.x = if *instance { 1.0 } else { 0.0 };
+                joint.translation.x = if *state { 1.0 } else { 0.0 };
             }
         }
 
-        fn reset(&self, instance: &mut bool) {
-            *instance = false;
+        fn reset(&self, state: &mut bool) {
+            *state = false;
         }
     }
 
@@ -232,7 +232,7 @@ mod tests {
         type UpdateInput = Res<'static, Speed>;
         type EvaluateInput = ();
 
-        fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
         fn update(&self, _: &mut (), _: f32, _: &Res<Speed>, _: &AnimationGraphContext<'_>) {}
 

@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationGraphInstances, GraphId},
+    graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{Pose, PosePool},
     transition::AnimationTransitionBlender,
 };
@@ -52,7 +52,7 @@ impl AnimationTransitionBlender for BlendStack {
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
@@ -63,16 +63,16 @@ impl AnimationTransitionBlender for BlendStack {
         };
 
         // The settled base pose goes straight into the output...
-        if let Some(graph_instance) = graph_instances.get_mut(base.graph_id) {
-            graph_instance.evaluate(graphs, context, bone_ids, pool, output);
+        if let Some(graph_state) = graph_states.get_mut(base.graph_id) {
+            graph_state.evaluate(graphs, context, bone_ids, pool, output);
         }
 
         // ...then each newer graph is cross-faded on top by its current weight.
         for entry in fading_in {
             let mut layer_pose = pool.acquire();
 
-            if let Some(graph_instance) = graph_instances.get_mut(entry.graph_id) {
-                graph_instance.evaluate(graphs, context, bone_ids, pool, &mut layer_pose);
+            if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
+                graph_state.evaluate(graphs, context, bone_ids, pool, &mut layer_pose);
             }
 
             output.blend(&layer_pose, entry.weight);
@@ -83,13 +83,13 @@ impl AnimationTransitionBlender for BlendStack {
     fn update(
         &mut self,
         delta_time: f32,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     ) {
         for entry in &self.entries {
-            if let Some(graph_instance) = graph_instances.get_mut(entry.graph_id) {
-                graph_instance.update(delta_time, graphs, context);
+            if let Some(graph_state) = graph_states.get_mut(entry.graph_id) {
+                graph_state.update(delta_time, graphs, context);
             }
         }
 
@@ -107,7 +107,7 @@ impl AnimationTransitionBlender for BlendStack {
     fn transition(
         &mut self,
         next_graph: GraphId,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         transition_time: f32,
         graphs: &AssetStore<AnimationGraph>,
     ) {
@@ -116,12 +116,12 @@ impl AnimationTransitionBlender for BlendStack {
         }
 
         // Re-entering a state still fading lower in the stack: drop the stale occurrence so its
-        // single instance is not advanced twice and the reset below is unambiguous (invariant 2).
+        // single graph state is not advanced twice and the reset below is unambiguous (invariant 2).
         self.entries.retain(|entry| *entry.graph_id != *next_graph);
 
         // Anchor the target's clip (and OnAnimationEnd) to the moment of entry (invariant 3).
-        if let Some(graph_instance) = graph_instances.get_mut(next_graph) {
-            graph_instance.reset(graphs);
+        if let Some(graph_state) = graph_states.get_mut(next_graph) {
+            graph_state.reset(graphs);
         }
 
         self.entries.push(BlendStackEntry {

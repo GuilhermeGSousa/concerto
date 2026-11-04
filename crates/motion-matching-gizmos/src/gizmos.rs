@@ -14,8 +14,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingInstance,
-    MotionMatchingNode, preview_features,
+    CharacterLink, CharacterSimulation, FeatureShape, MotionDatabase, MotionMatchingNode,
+    MotionMatchingState, preview_features,
 };
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::plugin::RenderPlugin;
@@ -73,14 +73,14 @@ impl Plugin for MotionMatchingGizmosPlugin {
 }
 
 fn placed_channels(
-    instance: &MotionMatchingInstance,
+    state: &MotionMatchingState,
     database: &MotionDatabase,
     skeleton: &Skeleton,
     frame: &BakedFrame,
     features: &[f32],
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let channels = instance.query()?.channels();
+    let channels = state.query()?.channels();
     let dims: usize = channels.iter().map(|channel| channel.dims()).sum();
     if features.len() != database.feature_dims() || features.len() != dims {
         return None;
@@ -99,23 +99,23 @@ fn placed_channels(
     )
 }
 
-/// The shapes of the frame the instance plays, per channel and placed at `bone`; `None` when they can't be read.
+/// The shapes of the frame the node plays, per channel and placed at `bone`; `None` when they can't be read.
 pub fn matched_shapes(
-    instance: &MotionMatchingInstance,
+    state: &MotionMatchingState,
     database: &MotionDatabase,
     skeleton: &Skeleton,
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let frame = instance.frame();
+    let frame = state.frame();
     database.range_of(frame)?;
     let baked = BakedFrame::placed(
         skeleton,
-        instance.pose().joints().to_vec(),
+        state.pose().joints().to_vec(),
         database.simulation(frame),
         database.trajectory_samples(frame),
     );
     placed_channels(
-        instance,
+        state,
         database,
         skeleton,
         &baked,
@@ -126,13 +126,13 @@ pub fn matched_shapes(
 
 /// The shapes of the last search's query, per channel and placed at `bone`; `None` before a search or when they can't be read.
 pub fn query_shapes(
-    instance: &MotionMatchingInstance,
+    state: &MotionMatchingState,
     database: &MotionDatabase,
     skeleton: &Skeleton,
     clips: &[&AnimationClip],
     bone: &Transform,
 ) -> Option<Vec<Vec<FeatureShape>>> {
-    let query = instance.last_query()?;
+    let query = state.last_query()?;
     database.range_of(query.frame)?;
     let baked = BakedFrame::placed(
         skeleton,
@@ -140,7 +140,7 @@ pub fn query_shapes(
         query.simulation.clone(),
         query.trajectory.clone(),
     );
-    placed_channels(instance, database, skeleton, &baked, &query.features, bone)
+    placed_channels(state, database, skeleton, &baked, &query.features, bone)
 }
 
 fn remember(trail: &mut VecDeque<(f32, Vec3)>, delta: f32, position: Vec3) {
@@ -218,8 +218,8 @@ pub fn draw_motion_matching(
             continue;
         }
         let mut drawn = false;
-        player.for_each_instance_mut::<MotionMatchingNode>(&graphs, |node, instance, _| {
-            if drawn || !instance.is_initialised() || instance.has_failed() {
+        player.for_each_state_mut::<MotionMatchingNode>(&graphs, |node, state, _| {
+            if drawn || !state.is_initialised() || state.has_failed() {
                 return;
             }
             drawn = true;
@@ -238,14 +238,14 @@ pub fn draw_motion_matching(
                 return;
             };
             if shown.matched
-                && let Some(channels) = matched_shapes(instance, database, skeleton, &bone)
+                && let Some(channels) = matched_shapes(state, database, skeleton, &bone)
             {
                 draw_channels(&mut gizmos, &bone, &channels, |channel| {
                     channel_color(channel, Some(channel))
                 });
             }
             if shown.query
-                && let Some(channels) = query_shapes(instance, database, skeleton, &sampled, &bone)
+                && let Some(channels) = query_shapes(state, database, skeleton, &sampled, &bone)
             {
                 draw_channels(&mut gizmos, &bone, &channels, |channel| {
                     channel_color(channel, None)

@@ -31,7 +31,7 @@ impl AnimationNode for Gain {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
+    fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 

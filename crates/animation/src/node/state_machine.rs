@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::graph::{AnimationGraph, AnimationGraphInstance, AnimationGraphInstances, GraphId};
+use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
 use crate::pose::{EvaluatedPose, Pose, PosePool};
 use crate::transition::{
     AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
@@ -194,17 +194,17 @@ impl AnimationStateMachine {
     }
 }
 
-pub struct AnimationStateMachineInstance {
-    state_graph_instances: AnimationGraphInstances,
+pub struct AnimationStateMachineState {
+    state_graphs: AnimationGraphStates,
     current_state: StateId,
     state_names: Vec<String>,
     blender: Box<dyn AnimationTransitionBlender>,
 }
 
-impl AnimationStateMachineInstance {
+impl AnimationStateMachineState {
     pub(crate) fn new(
         initial_state: StateId,
-        graph_instance: Vec<AnimationGraphInstance>,
+        state_graphs: Vec<AnimationGraphState>,
         state_names: Vec<String>,
         blender: TransitionBlender,
     ) -> Self {
@@ -216,7 +216,7 @@ impl AnimationStateMachineInstance {
             }
         };
         Self {
-            state_graph_instances: AnimationGraphInstances::new(graph_instance),
+            state_graphs: AnimationGraphStates::new(state_graphs),
             current_state: initial_state,
             state_names,
             blender,
@@ -238,7 +238,7 @@ impl AnimationStateMachineInstance {
         self.current_state = transition.next_state;
         self.blender.transition(
             transition.next_state.as_graph_id(),
-            &mut self.state_graph_instances,
+            &mut self.state_graphs,
             transition.blend_time,
             graphs,
         );
@@ -254,48 +254,43 @@ impl AnimationStateMachineInstance {
 }
 
 impl AnimationNode for AnimationStateMachine {
-    type State = AnimationStateMachineInstance;
+    type State = AnimationStateMachineState;
     type CreateInput = Res<'static, AssetStore<AnimationGraph>>;
     type UpdateInput = Res<'static, AssetStore<AnimationGraph>>;
     type EvaluateInput = Res<'static, AssetStore<AnimationGraph>>;
 
-    fn create_instance(
+    fn create_state(
         &self,
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
-    ) -> AnimationStateMachineInstance {
-        let mut instanced_internal_graphs = Vec::new();
+    ) -> AnimationStateMachineState {
+        let mut state_graphs = Vec::new();
         let mut state_names = Vec::new();
         for fsm_state in &self.states {
-            let mut instanced_internal_graph = AnimationGraphInstance::default();
-            instanced_internal_graph.initialize(fsm_state.graph.clone(), graphs, context);
-            instanced_internal_graphs.push(instanced_internal_graph);
+            let mut state_graph = AnimationGraphState::default();
+            state_graph.initialize(fsm_state.graph.clone(), graphs, context);
+            state_graphs.push(state_graph);
             state_names.push(fsm_state.name.clone());
         }
 
-        AnimationStateMachineInstance::new(
-            self.initial_state,
-            instanced_internal_graphs,
-            state_names,
-            self.blender,
-        )
+        AnimationStateMachineState::new(self.initial_state, state_graphs, state_names, self.blender)
     }
 
     fn update(
         &self,
-        instance: &mut AnimationStateMachineInstance,
+        state: &mut AnimationStateMachineState,
         delta_time: f32,
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
     ) {
-        let Some(transitions) = self.get_state_transitions(instance.current_state) else {
+        let Some(transitions) = self.get_state_transitions(state.current_state) else {
             return;
         };
 
         for transition in transitions {
             match &transition.trigger {
                 AnimationFSMTrigger::Instant => {
-                    instance.transition(graphs, transition);
+                    state.transition(graphs, transition);
                     break;
                 }
                 AnimationFSMTrigger::BoolEquals { param, value } => {
@@ -304,7 +299,7 @@ impl AnimationNode for AnimationStateMachine {
                         .get_bool(param)
                         .is_some_and(|v| v == *value)
                     {
-                        instance.transition(graphs, transition);
+                        state.transition(graphs, transition);
                         break;
                     }
                 }
@@ -314,34 +309,31 @@ impl AnimationNode for AnimationStateMachine {
                         .get_vec2(param)
                         .is_some_and(|v| v.length_squared() > f32::EPSILON)
                     {
-                        instance.transition(graphs, transition);
+                        state.transition(graphs, transition);
                         break;
                     }
                 }
                 AnimationFSMTrigger::OnAnimationEnd => {
-                    if instance
-                        .state_graph_instances
-                        .get(instance.current_state.as_graph_id())
+                    if state
+                        .state_graphs
+                        .get(state.current_state.as_graph_id())
                         .is_some_and(|current_graph| current_graph.is_finished(graphs))
                     {
-                        instance.transition(graphs, transition);
+                        state.transition(graphs, transition);
                         break;
                     }
                 }
             }
         }
 
-        instance.blender.update(
-            delta_time,
-            &mut instance.state_graph_instances,
-            graphs,
-            context,
-        );
+        state
+            .blender
+            .update(delta_time, &mut state.state_graphs, graphs, context);
     }
 
     fn evaluate(
         &self,
-        instance: &mut AnimationStateMachineInstance,
+        state: &mut AnimationStateMachineState,
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
@@ -349,9 +341,9 @@ impl AnimationNode for AnimationStateMachine {
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        instance.blender.sample(
+        state.blender.sample(
             bone_ids,
-            &mut instance.state_graph_instances,
+            &mut state.state_graphs,
             graphs,
             context,
             pool,
@@ -359,7 +351,7 @@ impl AnimationNode for AnimationStateMachine {
         );
     }
 
-    fn reset(&self, _instance: &mut AnimationStateMachineInstance) {}
+    fn reset(&self, _state: &mut AnimationStateMachineState) {}
 }
 
 struct FSMStateEntry {
@@ -474,7 +466,7 @@ mod tests {
     use concerto_reflect::{Reflect, TypeRegistry};
     use uuid::Uuid;
 
-    use super::{AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineInstance};
+    use super::{AnimationFSMTrigger, AnimationStateMachine, AnimationStateMachineState};
     use crate::{
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
@@ -495,7 +487,7 @@ mod tests {
         type UpdateInput = ();
         type EvaluateInput = ();
 
-        fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> u32 {
             0
         }
 
@@ -528,15 +520,15 @@ mod tests {
     }
 
     fn updates_in_state(
-        machine: &mut AnimationStateMachineInstance,
+        machine: &mut AnimationStateMachineState,
         state: usize,
         walks: &Walks,
     ) -> Option<u32> {
         let mut updates = None;
         machine
-            .state_graph_instances
+            .state_graphs
             .get_mut(GraphId::from(state))?
-            .for_each_instance_mut::<Counter>(
+            .for_each_state_mut::<Counter>(
                 walks.graphs(),
                 &AnimationBlackboard::default(),
                 |_, state, _| updates = Some(*state),
@@ -564,19 +556,17 @@ mod tests {
         let machine: Box<dyn ErasedAnimationNode> = Box::new(machine);
         let walks = Walks::with(AssetStore::new(), graphs, register_node_inputs::<Counter>);
         let blackboard = AnimationBlackboard::default();
-        let mut instance = walks
-            .create(&blackboard, |context| machine.create_instance(context))
+        let mut state = walks
+            .create(&blackboard, |context| machine.create_state(context))
             .unwrap();
 
         for _ in 0..3 {
             walks.update(&blackboard, |context| {
-                machine.update(&mut instance, 0.1, context)
+                machine.update(&mut state, 0.1, context)
             });
         }
 
-        let machine = instance
-            .downcast_mut::<AnimationStateMachineInstance>()
-            .unwrap();
+        let machine = state.downcast_mut::<AnimationStateMachineState>().unwrap();
         assert_eq!(updates_in_state(machine, 0, &walks), Some(3));
         assert_eq!(updates_in_state(machine, 1, &walks), Some(0));
     }

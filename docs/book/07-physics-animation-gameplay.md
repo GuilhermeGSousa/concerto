@@ -208,17 +208,17 @@ impl AnimationNode for Gain {
     type CreateInput = ();
     type UpdateInput = Res<'static, Tuning>;
     type EvaluateInput = ();
-    // create_instance, update, evaluate, reset; is_finished defaults to true
+    // create_state, update, evaluate, reset; is_finished defaults to true
 }
 ```
 
 The node's fields are its data and are stored with the graph. `State` is the
-per-player runtime state (a playhead, say): `create_instance` makes one for each
+per-player runtime state (a playhead, say): `create_state` makes one for each
 player that uses the graph, and `update`, `evaluate`, `reset` and `is_finished`
 receive it.
 
 The three input types say what the node reads in each walk of the graph:
-`create_instance` gets `CreateInput`, `update` gets `UpdateInput` and
+`create_state` gets `CreateInput`, `update` gets `UpdateInput` and
 `evaluate` gets `EvaluateInput`, already fetched, as their typed data (`&Res<Tuning>`
 above). Each is a read-only system input: `Res`, `Option<Res>`, a read-only
 `Query`, or a tuple of them; `()` reads nothing. The systems that walk graphs,

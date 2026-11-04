@@ -35,7 +35,7 @@ pub struct LastQuery {
 }
 
 /// The per-player state of a motion matching node.
-pub struct MotionMatchingInstance {
+pub struct MotionMatchingState {
     initialised: bool,
     failed: bool,
     delta_time: f32,
@@ -60,7 +60,7 @@ pub struct MotionMatchingInstance {
     root_motion: BodyMotion,
 }
 
-impl MotionMatchingInstance {
+impl MotionMatchingState {
     pub(crate) fn new(search_period: f32) -> Self {
         Self {
             initialised: false,
@@ -88,27 +88,27 @@ impl MotionMatchingInstance {
         }
     }
 
-    /// Whether the instance has played its first frame.
+    /// Whether the node has played its first frame.
     pub fn is_initialised(&self) -> bool {
         self.initialised
     }
 
-    /// Whether the instance stopped on an error; it stays stopped.
+    /// Whether the node stopped on an error; it stays stopped.
     pub fn has_failed(&self) -> bool {
         self.failed
     }
 
-    /// The database frame the instance plays.
+    /// The database frame the node plays.
     pub fn frame(&self) -> usize {
         self.frame
     }
 
-    /// The local pose of the frame the instance plays, before blending.
+    /// The local pose of the frame the node plays, before blending.
     pub fn pose(&self) -> &Pose {
         &self.pose
     }
 
-    /// The live feature channels the instance queries with, once initialised.
+    /// The live feature channels the node queries with, once initialised.
     pub fn query(&self) -> Option<&FeatureQuery> {
         self.query.as_ref()
     }
@@ -122,7 +122,7 @@ impl MotionMatchingInstance {
         self.output.set_root_motion(RootMotion::IDENTITY);
     }
 
-    /// Copies the instance's pose into `output` and returns true, or returns false and leaves `output` untouched until the instance is initialised.
+    /// Copies the node's pose into `output` and returns true, or returns false and leaves `output` untouched until the node is initialised.
     pub(crate) fn write_output(&self, output: &mut Pose) -> bool {
         if !self.initialised || self.output.len() != output.len() {
             return false;
@@ -325,7 +325,7 @@ impl MotionMatchingInstance {
         let rate = database.rate();
         let range = database
             .range_of(self.frame)
-            .ok_or_else(|| "the instance's frame left the database".to_string())?;
+            .ok_or_else(|| "the state's frame left the database".to_string())?;
 
         self.search_timer -= dt;
         self.forced_search_timer -= dt;

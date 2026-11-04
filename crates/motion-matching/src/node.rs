@@ -13,8 +13,8 @@ use uuid::Uuid;
 
 use crate::{
     database::MotionDatabase,
-    instance::{MotionMatchingInstance, Sources},
     simulation::TrajectorySample,
+    state::{MotionMatchingState, Sources},
 };
 
 /// The blackboard key under which the trajectory is published.
@@ -89,7 +89,7 @@ impl Default for MotionMatchingNode {
 }
 
 impl AnimationNode for MotionMatchingNode {
-    type State = MotionMatchingInstance;
+    type State = MotionMatchingState;
     type CreateInput = ();
     type UpdateInput = (
         Res<'static, AssetStore<MotionDatabase>>,
@@ -98,17 +98,13 @@ impl AnimationNode for MotionMatchingNode {
     );
     type EvaluateInput = ();
 
-    fn create_instance(
-        &self,
-        _: &(),
-        _context: &AnimationGraphContext<'_>,
-    ) -> MotionMatchingInstance {
-        MotionMatchingInstance::new(self.search_period)
+    fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> MotionMatchingState {
+        MotionMatchingState::new(self.search_period)
     }
 
     fn update(
         &self,
-        instance: &mut MotionMatchingInstance,
+        state: &mut MotionMatchingState,
         delta_time: f32,
         (databases, skeletons, clips): &(
             Res<AssetStore<MotionDatabase>>,
@@ -118,14 +114,14 @@ impl AnimationNode for MotionMatchingNode {
         context: &AnimationGraphContext<'_>,
     ) {
         match sources(self, databases, skeletons, clips, context.skeleton()) {
-            Some(sources) => instance.step(self, delta_time, context.blackboard(), sources),
-            None => instance.clear_root_motion(),
+            Some(sources) => state.step(self, delta_time, context.blackboard(), sources),
+            None => state.clear_root_motion(),
         }
     }
 
     fn evaluate(
         &self,
-        instance: &mut MotionMatchingInstance,
+        state: &mut MotionMatchingState,
         _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
@@ -133,11 +129,11 @@ impl AnimationNode for MotionMatchingNode {
         _pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        instance.write_output(output);
+        state.write_output(output);
     }
 
-    fn reset(&self, instance: &mut MotionMatchingInstance) {
-        *instance = MotionMatchingInstance::new(self.search_period);
+    fn reset(&self, state: &mut MotionMatchingState) {
+        *state = MotionMatchingState::new(self.search_period);
     }
 }
 

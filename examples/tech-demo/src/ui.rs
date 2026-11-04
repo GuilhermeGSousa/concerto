@@ -160,8 +160,8 @@ pub(crate) fn update_grounded_overlay(
         .and_then(|link| link.skeleton.entity())
         .and_then(|skeleton| players.get_entity(skeleton))
     {
-        player.for_each_instance_mut::<MotionMatchingNode>(&graphs, |node, instance, _| {
-            let Some(last) = instance.last_query() else {
+        player.for_each_state_mut::<MotionMatchingNode>(&graphs, |node, node_state, _| {
+            let Some(last) = node_state.last_query() else {
                 return;
             };
             if matching.is_some() {
@@ -170,8 +170,8 @@ pub(crate) fn update_grounded_overlay(
             matching = Some(Matching {
                 entry: databases
                     .get(&node.database)
-                    .and_then(|database| database.entry_of(instance.frame())),
-                frame: instance.frame(),
+                    .and_then(|database| database.entry_of(node_state.frame())),
+                frame: node_state.frame(),
                 cost: last.best_cost,
             });
         });

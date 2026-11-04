@@ -18,34 +18,34 @@ use glam::{Vec2, Vec3};
 use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, RootBone},
-    graph::{AnimationGraph, AnimationGraphInstance, AnimationNodeIndex},
+    graph::{AnimationGraph, AnimationGraphState, AnimationNodeIndex},
     node::{
-        AnimationClipNodeInstance, AnimationNode, ErasedAnimationNode, NodeInstance,
-        state_machine::AnimationStateMachineInstance,
+        AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
+        state_machine::AnimationStateMachineState,
     },
     pose::PosePool,
     root::AnimationRootBone,
 };
 
-pub struct ActiveNodeInstance {
+pub struct ActiveNodeState {
     pub weight: f32,
-    pub(crate) node_instance: NodeInstance,
+    pub(crate) node_state: NodeState,
 }
 
-impl ActiveNodeInstance {
+impl ActiveNodeState {
     pub(crate) fn update(
         &mut self,
         node: &dyn ErasedAnimationNode,
         delta_time: f32,
         context: &AnimationGraphContext<'_>,
     ) {
-        node.update(&mut self.node_instance, delta_time, context);
+        node.update(&mut self.node_state, delta_time, context);
     }
 }
 
 #[derive(Component)]
 pub struct AnimationPlayer {
-    graph_instance: AnimationGraphInstance,
+    graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
     pose_pool: PosePool,
     paused: bool,
@@ -54,7 +54,7 @@ pub struct AnimationPlayer {
 impl AnimationPlayer {
     pub fn new(bone_count: usize) -> Self {
         Self {
-            graph_instance: AnimationGraphInstance::default(),
+            graph_state: AnimationGraphState::default(),
             blackboard: AnimationBlackboard::default(),
             pose_pool: PosePool::new(bone_count),
             paused: false,
@@ -72,16 +72,16 @@ impl AnimationPlayer {
     }
 
     pub fn play(&mut self, node_index: &AnimationNodeIndex) {
-        if let Some(anim_clip_instance) = self
-            .graph_instance
-            .get_instance_mut::<AnimationClipNodeInstance>(node_index)
+        if let Some(clip_state) = self
+            .graph_state
+            .get_state_mut::<AnimationClipNodeState>(node_index)
         {
-            anim_clip_instance.play();
+            clip_state.play();
         }
     }
 
     pub fn set_node_weight(&mut self, node_index: &AnimationNodeIndex, weight: f32) {
-        self.graph_instance.set_node_weight(node_index, weight);
+        self.graph_state.set_node_weight(node_index, weight);
     }
 
     pub fn set_param<T: Reflect>(&mut self, key: impl Into<String>, value: T) {
@@ -125,19 +125,19 @@ impl AnimationPlayer {
     }
 
     pub fn current_fsm_state(&self, node_index: &AnimationNodeIndex) -> Option<&str> {
-        self.graph_instance
-            .get_instance::<AnimationStateMachineInstance>(node_index)
-            .map(AnimationStateMachineInstance::current_state_name)
+        self.graph_state
+            .get_state::<AnimationStateMachineState>(node_index)
+            .map(AnimationStateMachineState::current_state_name)
     }
 
-    /// Calls `f` with each live node of type `N` in the player's graph, its instance and the blackboard.
-    pub fn for_each_instance_mut<N: AnimationNode>(
+    /// Calls `f` with each live node of type `N` in the player's graph, its state and the blackboard.
+    pub fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
     ) {
-        self.graph_instance
-            .for_each_instance_mut(graphs, &self.blackboard, f);
+        self.graph_state
+            .for_each_state_mut(graphs, &self.blackboard, f);
     }
 
     pub(crate) fn initialize_graph(
@@ -152,7 +152,7 @@ impl AnimationPlayer {
             skeleton: None,
             inputs,
         };
-        self.graph_instance
+        self.graph_state
             .initialize(animation_graph, graphs, &context);
     }
 
@@ -169,7 +169,7 @@ impl AnimationPlayer {
             skeleton,
             inputs,
         };
-        self.graph_instance.update(delta_time, graphs, &context);
+        self.graph_state.update(delta_time, graphs, &context);
     }
 
     pub(crate) fn evaluate(
@@ -210,7 +210,7 @@ impl AnimationPlayer {
 
         self.pose_pool.set_rest(rest_pose);
         let mut output_pose = self.pose_pool.acquire();
-        if !self.graph_instance.evaluate(
+        if !self.graph_state.evaluate(
             graphs,
             &context,
             bone_ids,
@@ -323,11 +323,11 @@ mod tests {
     }
 
     #[test]
-    fn for_each_instance_mut_visits_exactly_the_live_nodes_of_the_type() {
+    fn for_each_state_mut_visits_exactly_the_live_nodes_of_the_type() {
         let mut fixture = fixture();
 
         let mut clip_nodes = 0;
-        fixture.player.for_each_instance_mut::<AnimationClipNode>(
+        fixture.player.for_each_state_mut::<AnimationClipNode>(
             fixture.walks.graphs(),
             |_, _, _| {
                 clip_nodes += 1;
@@ -336,13 +336,13 @@ mod tests {
         let mut result_nodes = 0;
         fixture
             .player
-            .for_each_instance_mut::<ResultNode>(fixture.walks.graphs(), |_, _, _| {
+            .for_each_state_mut::<ResultNode>(fixture.walks.graphs(), |_, _, _| {
                 result_nodes += 1;
             });
         let mut blend_nodes = 0;
         fixture
             .player
-            .for_each_instance_mut::<BlendNode>(fixture.walks.graphs(), |_, _, _| {
+            .for_each_state_mut::<BlendNode>(fixture.walks.graphs(), |_, _, _| {
                 blend_nodes += 1;
             });
 
@@ -352,16 +352,16 @@ mod tests {
     }
 
     #[test]
-    fn for_each_instance_mut_hands_each_node_its_instance_and_the_blackboard() {
+    fn for_each_state_mut_hands_each_node_its_state_and_the_blackboard() {
         let mut fixture = fixture();
         fixture.player.set_bool_param("flag", true);
         fixture.player.set_float_param("speed", 3.0);
 
         let mut seen = Vec::new();
-        fixture.player.for_each_instance_mut::<AnimationClipNode>(
+        fixture.player.for_each_state_mut::<AnimationClipNode>(
             fixture.walks.graphs(),
-            |_, instance, board| {
-                instance.play();
+            |_, state, board| {
+                state.play();
                 seen.push((board.get_bool("flag"), board.get_float("speed")));
             },
         );
@@ -370,12 +370,12 @@ mod tests {
     }
 
     #[test]
-    fn for_each_instance_mut_visits_nothing_before_the_graph_is_initialized() {
+    fn for_each_state_mut_visits_nothing_before_the_graph_is_initialized() {
         let fixture = fixture();
         let mut player = AnimationPlayer::new(1);
 
         let mut visits = 0;
-        player.for_each_instance_mut::<AnimationClipNode>(fixture.walks.graphs(), |_, _, _| {
+        player.for_each_state_mut::<AnimationClipNode>(fixture.walks.graphs(), |_, _, _| {
             visits += 1;
         });
 

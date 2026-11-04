@@ -24,7 +24,7 @@ use concerto_foundation::assets::{AssetId, handle::AssetHandle};
 use concerto_mesh::{JointPose, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, FeatureChannelData, MotionDatabaseDefinition, MotionEntry,
-    MotionMatchingInstance, SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions,
+    MotionMatchingState, SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions,
     TrajectorySettings, bake,
 };
 use concerto_reflect::TypeRegistry;
@@ -158,10 +158,10 @@ fn baked(
     bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap()
 }
 
-fn read_instance<R>(
+fn read_state<R>(
     world: &mut World,
     player: Entity,
-    read: impl FnOnce(&mut MotionMatchingInstance) -> R,
+    read: impl FnOnce(&mut MotionMatchingState) -> R,
 ) -> R {
     let mut read = Some(read);
     let mut result = None;
@@ -169,9 +169,9 @@ fn read_instance<R>(
         world
             .get_component_for_entity_mut::<AnimationPlayer>(player)
             .unwrap()
-            .for_each_instance_mut::<MotionMatchingNode>(graphs, |_, instance, _| {
+            .for_each_state_mut::<MotionMatchingNode>(graphs, |_, state, _| {
                 if let Some(read) = read.take() {
-                    result = Some(read(instance));
+                    result = Some(read(state));
                 }
             });
     });
@@ -354,16 +354,16 @@ impl Stage {
 
     fn matched(&mut self, bone: &Transform) -> Option<Vec<Vec<FeatureShape>>> {
         let (database, skeleton) = (&self.database, &self.skeleton);
-        read_instance(self.app.main_mut().world_mut(), self.player, |instance| {
-            matched_shapes(instance, database, skeleton, bone)
+        read_state(self.app.main_mut().world_mut(), self.player, |state| {
+            matched_shapes(state, database, skeleton, bone)
         })
     }
 
     fn query(&mut self, bone: &Transform) -> Option<Vec<Vec<FeatureShape>>> {
         let (database, skeleton) = (&self.database, &self.skeleton);
         let clips = [&self.walk, &self.turn];
-        read_instance(self.app.main_mut().world_mut(), self.player, |instance| {
-            query_shapes(instance, database, skeleton, &clips, bone)
+        read_state(self.app.main_mut().world_mut(), self.player, |state| {
+            query_shapes(state, database, skeleton, &clips, bone)
         })
     }
 

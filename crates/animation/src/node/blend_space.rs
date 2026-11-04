@@ -22,7 +22,7 @@ pub struct BlendInput {
 }
 
 /// A 2D blend space definition: the sample points and which blackboard `Vec2`
-/// param drives sampling. Triangulation is built on the instance, not here.
+/// param drives sampling. Triangulation is built on the state, not here.
 #[derive(Default, Reflect, serde::Serialize, serde::Deserialize)]
 #[reflect(AnimationNode)]
 pub struct BlendSpace2DNode {
@@ -64,7 +64,7 @@ impl AnimationNode for BlendSpace2DNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn create_instance(
+    fn create_state(
         &self,
         _: &(),
         _context: &AnimationGraphContext<'_>,
@@ -74,7 +74,7 @@ impl AnimationNode for BlendSpace2DNode {
 
     fn update(
         &self,
-        instance: &mut BlendSpace2DInstanceNode,
+        state: &mut BlendSpace2DInstanceNode,
         _delta_time: f32,
         _: &(),
         context: &AnimationGraphContext<'_>,
@@ -83,13 +83,12 @@ impl AnimationNode for BlendSpace2DNode {
             .blackboard()
             .get_vec2(&self.input.param)
             .unwrap_or(Vec2::ZERO);
-        instance.current_triangulated_point =
-            Some(instance.triangulation.locate_or_nearest(sample));
+        state.current_triangulated_point = Some(state.triangulation.locate_or_nearest(sample));
     }
 
     fn evaluate(
         &self,
-        instance: &mut BlendSpace2DInstanceNode,
+        state: &mut BlendSpace2DInstanceNode,
         _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[uuid::Uuid],
@@ -108,11 +107,11 @@ impl AnimationNode for BlendSpace2DNode {
             return;
         }
 
-        let Some(triangulated_point) = instance.current_triangulated_point else {
+        let Some(triangulated_point) = state.current_triangulated_point else {
             return;
         };
 
-        let triangle = &instance.triangulation.triangles()[triangulated_point.triangle];
+        let triangle = &state.triangulation.triangles()[triangulated_point.triangle];
         let lambda_a = triangulated_point.lambda_a;
         let lambda_b = triangulated_point.lambda_b;
         let lambda_c = triangulated_point.lambda_c;
@@ -127,8 +126,8 @@ impl AnimationNode for BlendSpace2DNode {
         output.blend(&evaluated_inputs[triangle.c].pose, lambda_c);
     }
 
-    fn reset(&self, instance: &mut BlendSpace2DInstanceNode) {
-        instance.current_triangulated_point = None;
+    fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
+        state.current_triangulated_point = None;
     }
 }
 

@@ -18,7 +18,7 @@ use crate::{
 };
 
 /// The runtime state of one node in one player, erased.
-pub type NodeInstance = Box<dyn Any + Send + Sync>;
+pub type NodeState = Box<dyn Any + Send + Sync>;
 
 /// A kind of animation graph node: reflected data plus the per-player state it evaluates with.
 pub trait AnimationNode: Reflect + Send + Sync + 'static {
@@ -30,7 +30,7 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
     /// What the node reads to write its pose.
     type EvaluateInput: ReadOnlySystemInput + 'static;
 
-    fn create_instance(
+    fn create_state(
         &self,
         input: &SystemInputData<'_, '_, Self::CreateInput>,
         context: &AnimationGraphContext<'_>,
@@ -38,7 +38,7 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
 
     fn update(
         &self,
-        instance: &mut Self::State,
+        state: &mut Self::State,
         delta_time: f32,
         input: &SystemInputData<'_, '_, Self::UpdateInput>,
         context: &AnimationGraphContext<'_>,
@@ -46,7 +46,7 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
 
     fn evaluate(
         &self,
-        instance: &mut Self::State,
+        state: &mut Self::State,
         input: &SystemInputData<'_, '_, Self::EvaluateInput>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
@@ -55,9 +55,9 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         output: &mut Pose,
     );
 
-    fn reset(&self, instance: &mut Self::State);
+    fn reset(&self, state: &mut Self::State);
 
-    fn is_finished(&self, _instance: &Self::State) -> bool {
+    fn is_finished(&self, _state: &Self::State) -> bool {
         true
     }
 }
@@ -78,24 +78,19 @@ pub fn register_node_inputs<N: AnimationNode>(world: &mut World) {
     register_input::<EvaluateNodeInputs, N::EvaluateInput>(world);
 }
 
-/// An [`AnimationNode`] with its instance type erased; implemented for every node.
+/// An [`AnimationNode`] with its state type erased; implemented for every node.
 pub trait ErasedAnimationNode: Send + Sync {
     fn as_reflect(&self) -> &dyn Reflect;
 
     fn as_reflect_mut(&mut self) -> &mut dyn Reflect;
 
-    fn create_instance(&self, context: &AnimationGraphContext<'_>) -> Option<NodeInstance>;
+    fn create_state(&self, context: &AnimationGraphContext<'_>) -> Option<NodeState>;
 
-    fn update(
-        &self,
-        instance: &mut NodeInstance,
-        delta_time: f32,
-        context: &AnimationGraphContext<'_>,
-    );
+    fn update(&self, state: &mut NodeState, delta_time: f32, context: &AnimationGraphContext<'_>);
 
     fn evaluate(
         &self,
-        instance: &mut NodeInstance,
+        state: &mut NodeState,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         evaluated_inputs: &[EvaluatedPose],
@@ -103,13 +98,13 @@ pub trait ErasedAnimationNode: Send + Sync {
         output: &mut Pose,
     );
 
-    fn reset(&self, instance: &mut NodeInstance);
+    fn reset(&self, state: &mut NodeState);
 
-    fn is_finished(&self, instance: &NodeInstance) -> bool;
+    fn is_finished(&self, state: &NodeState) -> bool;
 
-    fn instance_as_any<'a>(&self, instance: &'a NodeInstance) -> &'a dyn Any;
+    fn state_as_any<'a>(&self, state: &'a NodeState) -> &'a dyn Any;
 
-    fn instance_as_any_mut<'a>(&self, instance: &'a mut NodeInstance) -> &'a mut dyn Any;
+    fn state_as_any_mut<'a>(&self, state: &'a mut NodeState) -> &'a mut dyn Any;
 }
 
 impl<T: AnimationNode> ErasedAnimationNode for T {
@@ -121,41 +116,34 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         self
     }
 
-    fn create_instance(&self, context: &AnimationGraphContext<'_>) -> Option<NodeInstance> {
+    fn create_state(&self, context: &AnimationGraphContext<'_>) -> Option<NodeState> {
         let input = fetched::<T, T::CreateInput>(context)?;
-        Some(Box::new(AnimationNode::create_instance(
-            self, input, context,
-        )))
+        Some(Box::new(AnimationNode::create_state(self, input, context)))
     }
 
-    fn update(
-        &self,
-        instance: &mut NodeInstance,
-        delta_time: f32,
-        context: &AnimationGraphContext<'_>,
-    ) {
-        if let Some(instance) = instance.downcast_mut::<T::State>()
+    fn update(&self, state: &mut NodeState, delta_time: f32, context: &AnimationGraphContext<'_>) {
+        if let Some(state) = state.downcast_mut::<T::State>()
             && let Some(input) = fetched::<T, T::UpdateInput>(context)
         {
-            AnimationNode::update(self, instance, delta_time, input, context);
+            AnimationNode::update(self, state, delta_time, input, context);
         }
     }
 
     fn evaluate(
         &self,
-        instance: &mut NodeInstance,
+        state: &mut NodeState,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         evaluated_inputs: &[EvaluatedPose],
         pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        if let Some(instance) = instance.downcast_mut::<T::State>()
+        if let Some(state) = state.downcast_mut::<T::State>()
             && let Some(input) = fetched::<T, T::EvaluateInput>(context)
         {
             AnimationNode::evaluate(
                 self,
-                instance,
+                state,
                 input,
                 context,
                 bone_ids,
@@ -166,24 +154,24 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         }
     }
 
-    fn reset(&self, instance: &mut NodeInstance) {
-        if let Some(instance) = instance.downcast_mut::<T::State>() {
-            AnimationNode::reset(self, instance);
+    fn reset(&self, state: &mut NodeState) {
+        if let Some(state) = state.downcast_mut::<T::State>() {
+            AnimationNode::reset(self, state);
         }
     }
 
-    fn is_finished(&self, instance: &NodeInstance) -> bool {
-        instance
+    fn is_finished(&self, state: &NodeState) -> bool {
+        state
             .downcast_ref::<T::State>()
-            .is_none_or(|instance| AnimationNode::is_finished(self, instance))
+            .is_none_or(|state| AnimationNode::is_finished(self, state))
     }
 
-    fn instance_as_any<'a>(&self, instance: &'a NodeInstance) -> &'a dyn Any {
-        &**instance
+    fn state_as_any<'a>(&self, state: &'a NodeState) -> &'a dyn Any {
+        &**state
     }
 
-    fn instance_as_any_mut<'a>(&self, instance: &'a mut NodeInstance) -> &'a mut dyn Any {
-        &mut **instance
+    fn state_as_any_mut<'a>(&self, state: &'a mut NodeState) -> &'a mut dyn Any {
+        &mut **state
     }
 }
 
@@ -243,7 +231,7 @@ impl AnimationNode for PlaceholderNode {
     type UpdateInput = ();
     type EvaluateInput = ();
 
-    fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
+    fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
     fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
@@ -285,34 +273,34 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct GainInstance {
+    struct GainState {
         updates: u32,
         resets: u32,
     }
 
     impl AnimationNode for Gain {
-        type State = GainInstance;
+        type State = GainState;
         type CreateInput = ();
         type UpdateInput = Res<'static, Step>;
         type EvaluateInput = ();
 
-        fn create_instance(&self, _: &(), _context: &AnimationGraphContext<'_>) -> GainInstance {
-            GainInstance::default()
+        fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) -> GainState {
+            GainState::default()
         }
 
         fn update(
             &self,
-            instance: &mut GainInstance,
+            state: &mut GainState,
             _delta_time: f32,
             step: &Res<Step>,
             _context: &AnimationGraphContext<'_>,
         ) {
-            instance.updates += step.0;
+            state.updates += step.0;
         }
 
         fn evaluate(
             &self,
-            instance: &mut GainInstance,
+            state: &mut GainState,
             _: &(),
             _context: &AnimationGraphContext<'_>,
             _bone_ids: &[Uuid],
@@ -321,16 +309,16 @@ mod tests {
             output: &mut Pose,
         ) {
             if let Some(joint) = output.get_joint_pose_mut(0) {
-                joint.translation.x = self.amount * instance.updates as f32;
+                joint.translation.x = self.amount * state.updates as f32;
             }
         }
 
-        fn reset(&self, instance: &mut GainInstance) {
-            instance.resets += 1;
+        fn reset(&self, state: &mut GainState) {
+            state.resets += 1;
         }
 
-        fn is_finished(&self, instance: &GainInstance) -> bool {
-            instance.updates >= 2
+        fn is_finished(&self, state: &GainState) -> bool {
+            state.updates >= 2
         }
     }
 
@@ -366,16 +354,14 @@ mod tests {
     fn updates_after_two_steps(walks: &Walks) -> u32 {
         let blackboard = AnimationBlackboard::default();
         let node: Box<dyn ErasedAnimationNode> = Box::new(Gain { amount: 2.0 });
-        let mut instance = walks
-            .create(&blackboard, |context| node.create_instance(context))
+        let mut state = walks
+            .create(&blackboard, |context| node.create_state(context))
             .unwrap();
         for _ in 0..2 {
-            walks.update(&blackboard, |context| {
-                node.update(&mut instance, 0.1, context)
-            });
+            walks.update(&blackboard, |context| node.update(&mut state, 0.1, context));
         }
-        node.instance_as_any(&instance)
-            .downcast_ref::<GainInstance>()
+        node.state_as_any(&state)
+            .downcast_ref::<GainState>()
             .unwrap()
             .updates
     }
@@ -388,29 +374,25 @@ mod tests {
         });
         let blackboard = AnimationBlackboard::default();
         let node: Box<dyn ErasedAnimationNode> = Box::new(Gain { amount: 2.0 });
-        let mut instance = walks
-            .create(&blackboard, |context| node.create_instance(context))
+        let mut state = walks
+            .create(&blackboard, |context| node.create_state(context))
             .unwrap();
         let mut pool = PosePool::new(1);
         let mut output = Pose::identity(1);
 
-        assert!(!node.is_finished(&instance));
-        walks.update(&blackboard, |context| {
-            node.update(&mut instance, 0.1, context)
-        });
-        walks.update(&blackboard, |context| {
-            node.update(&mut instance, 0.1, context)
-        });
+        assert!(!node.is_finished(&state));
+        walks.update(&blackboard, |context| node.update(&mut state, 0.1, context));
+        walks.update(&blackboard, |context| node.update(&mut state, 0.1, context));
         walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut instance, context, &[], &[], &mut pool, &mut output)
+            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
         });
-        node.reset(&mut instance);
+        node.reset(&mut state);
 
-        assert!(node.is_finished(&instance));
+        assert!(node.is_finished(&state));
         assert_eq!(output.joints()[0].translation.x, 4.0);
         let typed = node
-            .instance_as_any(&instance)
-            .downcast_ref::<GainInstance>()
+            .state_as_any(&state)
+            .downcast_ref::<GainState>()
             .unwrap();
         assert_eq!((typed.updates, typed.resets), (2, 1));
     }
@@ -444,8 +426,8 @@ mod tests {
         let walks = gain_walks(|_| {});
         let blackboard = AnimationBlackboard::default();
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
-        let mut instance = walks
-            .create(&blackboard, |context| node.create_instance(context))
+        let mut state = walks
+            .create(&blackboard, |context| node.create_state(context))
             .unwrap();
         let mut pool = PosePool::new(1);
         let mut input = Pose::identity(1);
@@ -457,13 +439,13 @@ mod tests {
 
         let mut output = Pose::identity(1);
         walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut instance, context, &[], &inputs, &mut pool, &mut output)
+            node.evaluate(&mut state, context, &[], &inputs, &mut pool, &mut output)
         });
         assert_eq!(output.joints()[0].translation.x, 3.0);
 
         let mut output = Pose::identity(1);
         walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut instance, context, &[], &[], &mut pool, &mut output)
+            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
         });
         assert_eq!(output.joints()[0].translation.x, 0.0);
     }
@@ -473,8 +455,8 @@ mod tests {
         let walks = gain_walks(|_| {});
         let blackboard = AnimationBlackboard::default();
         let node: Box<dyn ErasedAnimationNode> = Box::new(PlaceholderNode {});
-        let mut instance = walks
-            .create(&blackboard, |context| node.create_instance(context))
+        let mut state = walks
+            .create(&blackboard, |context| node.create_state(context))
             .unwrap();
         let rest = [JointPose {
             translation: Vec3::X,
@@ -485,7 +467,7 @@ mod tests {
 
         let mut output = pool.acquire();
         walks.evaluate(&blackboard, None, |context| {
-            node.evaluate(&mut instance, context, &[], &[], &mut pool, &mut output)
+            node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
         });
         assert_eq!(output.joints(), rest);
     }

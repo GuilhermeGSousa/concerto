@@ -445,13 +445,13 @@ context; when any of them is missing the node does not step and its root motion
 is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
 left. No other system declares the `MotionDatabase` store.
 
-`MotionMatchingInstance` is the node's per-player state. Its fields are
+`MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`
 calls. Other crates read it
 through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
 `last_query()`.
 
-`MotionMatchingInstance::last_query()` is a `LastQuery`, kept by each search:
+`MotionMatchingState::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
 `Pose` channels from, `simulation` and `trajectory` what it was built with, and
 `best_cost` the squared distance to the frame the search found, or `None` when it
@@ -462,10 +462,10 @@ is `None` until a search runs and after
 `reset`, and a search that fails with `TrajectoryTooShort` clears it, so a stale
 query is not drawn. A frame with no search due keeps the last one.
 
-The instance keeps the simulation bone's velocity and angular velocity at the
+The state keeps the simulation bone's velocity and angular velocity at the
 playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
-scales them by the frame's time into a `RootMotion` on `instance.output`:
+scales them by the frame's time into a `RootMotion` on `state.output`:
 `translation = q⁻¹ * (velocity * dt)` and `rotation =
 from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph

@@ -3,7 +3,7 @@ use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    graph::{AnimationGraph, AnimationGraphInstances, GraphId},
+    graph::{AnimationGraph, AnimationGraphStates, GraphId},
     pose::{Pose, PosePool},
 };
 
@@ -34,7 +34,7 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
     fn sample(
         &mut self,
         bone_ids: &[Uuid],
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         pool: &mut PosePool,
@@ -44,7 +44,7 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
     fn update(
         &mut self,
         delta_time: f32,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
     );
@@ -52,7 +52,7 @@ pub(crate) trait AnimationTransitionBlender: Send + Sync {
     fn transition(
         &mut self,
         next_graph: GraphId,
-        graph_instances: &mut AnimationGraphInstances,
+        graph_states: &mut AnimationGraphStates,
         blend_time: f32,
         graphs: &AssetStore<AnimationGraph>,
     );
