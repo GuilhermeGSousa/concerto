@@ -11,13 +11,18 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 
 use crate::{
     character::{
-        PlayerSpawner, debug_keys, setup_character_animations, spawn_character, update_movement,
+        CharacterConfig, PlayerSpawner, debug_keys, setup_character_animations, spawn_character,
+        spawn_forest_walls, update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
 
+mod autowalk;
 mod character;
+mod sanatorium;
 mod ui;
+
+pub use sanatorium::sanatorium;
 
 /// Builds tech-demo: the forest, the character, and its overlay.
 pub fn game(app: &mut App) {
@@ -26,9 +31,11 @@ pub fn game(app: &mut App) {
         .register_plugin(FrameStatsOverlayPlugin);
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
-        .register_type::<PlayerSpawner>();
+        .register_type::<PlayerSpawner>()
+        .insert_resource(CharacterConfig::FOREST);
 
-    app.add_system(Update, spawn_character)
+    app.add_system(Startup, spawn_forest_walls)
+        .add_system(Update, spawn_character)
         .add_system(Startup, spawn_grounded_overlay)
         .add_system(Update, setup_character_animations)
         .add_system(Update, update_movement)
