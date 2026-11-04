@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Deref};
+use std::{borrow::Cow, collections::HashMap, fmt, ops::Deref};
 
 use concerto_foundation::assets::{
     Asset, LoadableAsset,
@@ -6,7 +6,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     handle::{AssetHandle, LiveLeaves},
 };
-use concerto_reflect::{ReflectedValue, TypeRegistry, ValueWarning, to_value};
+use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, to_value};
 use log::warn;
 use petgraph::{
     Direction::Outgoing,
@@ -19,28 +19,123 @@ use crate::{
     blackboard::AnimationBlackboard,
     evaluation::{AnimationGraphContext, AnimationGraphEvaluator},
     node::{
-        AnimationNode, ErasedAnimationNode, NodeInstance, PlaceholderNode, ReflectAnimationNode,
-        ResultNode, blend_space::BlendSpace2DBuilderContext,
+        AnimationNode, ErasedAnimationNode, PlaceholderNode, ReflectAnimationNode, ResultNode,
+        blend_space::BlendSpace2DBuilderContext,
     },
-    player::ActiveNodeInstance,
+    player::ActiveNodeState,
     pose::{EvaluatedPose, Pose, PosePool},
 };
 
-type AnimationDirectedGraph = DiGraph<SerializedAnimationNode, ()>;
+type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
 
-/// One node as graph data: the registry key of its type plus its reflected value.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct SerializedAnimationNode {
-    pub type_name: String,
-    pub value: ReflectedValue,
+static PLACEHOLDER: PlaceholderNode = PlaceholderNode {};
+
+/// One node as a graph holds it: `Stored` until built, `Live` once built, or a `Placeholder` that plays as [`PlaceholderNode`] and keeps the value it could not build.
+pub enum AnimationNodeData {
+    Stored {
+        type_name: String,
+        value: ReflectedValue,
+    },
+    Live {
+        type_name: String,
+        node: Box<dyn ErasedAnimationNode>,
+    },
+    Placeholder {
+        type_name: String,
+        value: ReflectedValue,
+    },
 }
 
-impl SerializedAnimationNode {
+impl AnimationNodeData {
     pub(crate) fn of<T: AnimationNode>(node: &T) -> Self {
-        Self {
+        Self::Stored {
             type_name: std::any::type_name::<T>().to_owned(),
             value: to_value(node).expect("an animation node encodes through reflection"),
         }
+    }
+
+    /// The registry key of the node's type.
+    pub fn type_name(&self) -> &str {
+        match self {
+            Self::Stored { type_name, .. }
+            | Self::Live { type_name, .. }
+            | Self::Placeholder { type_name, .. } => type_name,
+        }
+    }
+
+    /// The reflected value a save writes.
+    pub fn value(&self) -> Result<Cow<'_, ReflectedValue>, EncodeError> {
+        match self {
+            Self::Stored { value, .. } | Self::Placeholder { value, .. } => {
+                Ok(Cow::Borrowed(value))
+            }
+            Self::Live { node, .. } => to_value(node.as_reflect()).map(Cow::Owned),
+        }
+    }
+
+    /// The node that plays: the live one, the placeholder, or none before the graph is made live.
+    pub fn live(&self) -> Option<&dyn ErasedAnimationNode> {
+        match self {
+            Self::Stored { .. } => None,
+            Self::Live { node, .. } => Some(node.as_ref()),
+            Self::Placeholder { .. } => Some(&PLACEHOLDER),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct StoredRef<'a> {
+    type_name: &'a str,
+    value: Cow<'a, ReflectedValue>,
+}
+
+#[derive(serde::Deserialize)]
+struct Stored {
+    type_name: String,
+    value: ReflectedValue,
+}
+
+impl serde::Serialize for AnimationNodeData {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        StoredRef {
+            type_name: self.type_name(),
+            value: self.value().map_err(serde::ser::Error::custom)?,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for AnimationNodeData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let Stored { type_name, value } = Stored::deserialize(deserializer)?;
+        Ok(Self::Stored { type_name, value })
+    }
+}
+
+impl fmt::Debug for AnimationNodeData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let variant = match self {
+            Self::Stored { .. } => "Stored",
+            Self::Live { .. } => "Live",
+            Self::Placeholder { .. } => "Placeholder",
+        };
+        f.debug_struct(variant)
+            .field("type_name", &self.type_name())
+            .field("value", &self.value())
+            .finish()
+    }
+}
+
+impl PartialEq for AnimationNodeData {
+    fn eq(&self, other: &Self) -> bool {
+        self.type_name() == other.type_name()
+            && matches!((self.value(), other.value()), (Ok(mine), Ok(theirs)) if mine == theirs)
     }
 }
 
@@ -63,10 +158,8 @@ impl From<NodeIndex> for AnimationNodeIndex {
 
 #[derive(Asset, serde::Serialize, serde::Deserialize)]
 pub struct AnimationGraph {
-    stored: AnimationDirectedGraph,
+    nodes: AnimationDirectedGraph,
     result_node: AnimationNodeIndex,
-    #[serde(skip)]
-    live: Vec<Box<dyn ErasedAnimationNode>>,
     #[serde(skip)]
     load_warnings: Vec<ValueWarning>,
 }
@@ -84,83 +177,88 @@ impl LoadableAsset for AnimationGraph {
 
 impl AnimationGraph {
     pub fn new() -> Self {
-        let mut stored = AnimationDirectedGraph::new();
-        let result_node = stored.add_node(SerializedAnimationNode::of(&ResultNode {}));
+        let mut nodes = AnimationDirectedGraph::new();
+        let result_node = nodes.add_node(AnimationNodeData::of(&ResultNode {}));
 
         Self {
-            stored,
+            nodes,
             result_node: result_node.into(),
-            live: Vec::new(),
             load_warnings: Vec::new(),
         }
     }
 
-    /// Builds every live node from its stored value, loading handles through `server`; a node that cannot be built becomes a placeholder and leaves a warning.
+    /// Builds every node not yet live from its stored value, loading handles through `server`; a node that cannot be built becomes a placeholder and leaves a warning.
     pub fn make_live(
         &mut self,
         registry: &TypeRegistry,
         server: Option<&AssetServer>,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.stored.node_weight(*self.result_node).is_some(),
+            self.nodes.node_weight(*self.result_node).is_some(),
             "animation graph result node {} is not a node of the graph",
             self.result_node.index()
         );
 
         let mut leaves = LiveLeaves::from_parts(registry, server);
-        let mut live = Vec::with_capacity(self.stored.node_count());
         let mut warnings = Vec::new();
 
-        for (index, node) in self.stored.node_weights().enumerate() {
-            let built = match registry
-                .get_by_name(&node.type_name)
+        for (index, node) in self.nodes.node_weights_mut().enumerate() {
+            let (AnimationNodeData::Stored { type_name, value }
+            | AnimationNodeData::Placeholder { type_name, value }) = node
+            else {
+                continue;
+            };
+            let failure = match registry
+                .get_by_name(type_name)
                 .and_then(|registration| registration.data::<ReflectAnimationNode>().copied())
             {
                 Some(data) => {
-                    let (built, node_warnings) = (data.from_value)(&node.value, &mut leaves);
+                    let (built, node_warnings) = (data.from_value)(value, &mut leaves);
                     if node_warnings.is_empty() {
-                        Some(built)
-                    } else {
-                        warnings.extend(node_warnings.into_iter().map(|warning| ValueWarning {
-                            path: node.type_name.clone(),
-                            reason: format!("node {index} replaced by a placeholder: {warning}"),
-                        }));
-                        None
+                        *node = AnimationNodeData::Live {
+                            type_name: std::mem::take(type_name),
+                            node: built,
+                        };
+                        continue;
                     }
+                    node_warnings
+                        .into_iter()
+                        .map(|warning| format!("node {index} replaced by a placeholder: {warning}"))
+                        .collect()
                 }
-                None => {
-                    warnings.push(ValueWarning {
-                        path: node.type_name.clone(),
-                        reason: format!(
-                            "node {index} replaced by a placeholder: type is not registered as an animation node"
-                        ),
-                    });
-                    None
-                }
+                None => vec![format!(
+                    "node {index} replaced by a placeholder: type is not registered as an animation node"
+                )],
             };
-            live.push(built.unwrap_or_else(|| Box::new(PlaceholderNode {})));
+            warnings.extend(failure.into_iter().map(|reason| ValueWarning {
+                path: type_name.clone(),
+                reason,
+            }));
+            *node = AnimationNodeData::Placeholder {
+                type_name: std::mem::take(type_name),
+                value: std::mem::replace(value, ReflectedValue::List(Vec::new())),
+            };
         }
 
-        self.live = live;
         self.load_warnings = warnings;
         Ok(())
     }
 
-    /// Whether every stored node has a live counterpart; the player skips a graph that is not.
+    /// Whether every node is live or a placeholder; the player skips a graph that is not.
     pub fn is_live(&self) -> bool {
-        self.live.len() == self.stored.node_count()
+        self.nodes.node_weights().all(|node| node.live().is_some())
     }
 
-    /// The type name and stored value of each node, in node order.
-    pub fn stored_nodes(&self) -> impl Iterator<Item = (&str, &ReflectedValue)> {
-        self.stored
-            .node_weights()
-            .map(|node| (node.type_name.as_str(), &node.value))
+    /// Every node, in node order.
+    pub fn nodes(&self) -> impl Iterator<Item = &AnimationNodeData> {
+        self.nodes.node_weights()
     }
 
-    /// The live nodes in node order; empty until the graph is made live.
+    /// The nodes that play, in node order; a node not yet made live is left out.
     pub fn live_nodes(&self) -> impl Iterator<Item = &dyn ErasedAnimationNode> {
-        self.live.iter().map(|node| &**node)
+        self.nodes
+            .node_weights()
+            .filter_map(AnimationNodeData::live)
     }
 
     /// What the last [`AnimationGraph::make_live`] could not apply.
@@ -180,16 +278,16 @@ impl AnimationGraph {
         node: T,
         output_node: AnimationNodeIndex,
     ) -> AnimationNodeContext<'_> {
-        self.add_stored_node(SerializedAnimationNode::of(&node), output_node)
+        self.add_stored_node(AnimationNodeData::of(&node), output_node)
     }
 
     pub(crate) fn add_stored_node(
         &mut self,
-        node: SerializedAnimationNode,
+        node: AnimationNodeData,
         output_node: AnimationNodeIndex,
     ) -> AnimationNodeContext<'_> {
-        let added_node = self.stored.add_node(node);
-        self.stored.add_edge(*output_node, added_node, ());
+        let added_node = self.nodes.add_node(node);
+        self.nodes.add_edge(*output_node, added_node, ());
 
         AnimationNodeContext {
             graph: self,
@@ -206,23 +304,25 @@ impl AnimationGraph {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
-        Dfs::new(&self.stored, *self.result_node)
-            .iter(&self.stored)
+        Dfs::new(&self.nodes, *self.result_node)
+            .iter(&self.nodes)
             .map(|node_index| node_index.into())
     }
 
     pub fn iter_post_order(&self) -> impl Iterator<Item = AnimationNodeIndex> + '_ {
-        DfsPostOrder::new(&self.stored, *self.result_node)
-            .iter(&self.stored)
+        DfsPostOrder::new(&self.nodes, *self.result_node)
+            .iter(&self.nodes)
             .map(|node_index| node_index.into())
     }
 
     pub fn live_node(&self, node_index: AnimationNodeIndex) -> Option<&dyn ErasedAnimationNode> {
-        self.live.get(node_index.index()).map(|node| &**node)
+        self.nodes
+            .node_weight(*node_index)
+            .and_then(AnimationNodeData::live)
     }
 
     pub fn get_node_inputs(&self, node_index: AnimationNodeIndex) -> Neighbors<'_, (), u32> {
-        self.stored.neighbors_directed(*node_index, Outgoing)
+        self.nodes.neighbors_directed(*node_index, Outgoing)
     }
 }
 
@@ -275,45 +375,45 @@ impl<'a> AnimationNodeContext<'a> {
 }
 
 #[derive(Default)]
-pub(crate) struct AnimationGraphInstance {
+pub(crate) struct AnimationGraphState {
     graph_handle: Option<AssetHandle<AnimationGraph>>,
-    graph_state: HashMap<AnimationNodeIndex, ActiveNodeInstance>,
+    graph_state: HashMap<AnimationNodeIndex, ActiveNodeState>,
 }
 
-impl AnimationGraphInstance {
+impl AnimationGraphState {
     pub(crate) fn set_node_weight(&mut self, node_index: &AnimationNodeIndex, weight: f32) {
         if let Some(active_anim) = self.graph_state.get_mut(node_index) {
             active_anim.weight = weight;
         }
     }
 
-    pub(crate) fn get_active_node_instance_mut(
+    pub(crate) fn get_active_node_state_mut(
         &mut self,
         node_index: &AnimationNodeIndex,
-    ) -> Option<&mut ActiveNodeInstance> {
+    ) -> Option<&mut ActiveNodeState> {
         self.graph_state.get_mut(node_index)
     }
 
-    pub(crate) fn get_instance<T: 'static>(&self, node_index: &AnimationNodeIndex) -> Option<&T> {
+    pub(crate) fn get_state<T: 'static>(&self, node_index: &AnimationNodeIndex) -> Option<&T> {
         self.graph_state
             .get(node_index)
-            .and_then(|node_state| node_state.node_instance.downcast_ref::<T>())
+            .and_then(|node_state| node_state.node_state.downcast_ref::<T>())
     }
 
-    pub(crate) fn get_instance_mut<T: 'static>(
+    pub(crate) fn get_state_mut<T: 'static>(
         &mut self,
         node_index: &AnimationNodeIndex,
     ) -> Option<&mut T> {
         self.graph_state
             .get_mut(node_index)
-            .and_then(|node_state| node_state.node_instance.downcast_mut::<T>())
+            .and_then(|node_state| node_state.node_state.downcast_mut::<T>())
     }
 
-    pub(crate) fn for_each_instance_mut<N: AnimationNode>(
+    pub(crate) fn for_each_state_mut<N: AnimationNode>(
         &mut self,
         graphs: &AssetStore<AnimationGraph>,
         blackboard: &AnimationBlackboard,
-        mut f: impl FnMut(&N, &mut N::Instance, &AnimationBlackboard),
+        mut f: impl FnMut(&N, &mut N::State, &AnimationBlackboard),
     ) {
         let Some(graph) = self
             .graph_handle
@@ -330,20 +430,21 @@ impl AnimationGraphInstance {
             else {
                 continue;
             };
-            let Some(instance) = node_state.node_instance.downcast_mut::<N::Instance>() else {
+            let Some(state) = node_state.node_state.downcast_mut::<N::State>() else {
                 continue;
             };
-            f(node, instance, blackboard);
+            f(node, state, blackboard);
         }
     }
 
     pub(crate) fn initialize(
         &mut self,
         animation_graph: AssetHandle<AnimationGraph>,
+        graphs: &AssetStore<AnimationGraph>,
         creation_context: &AnimationGraphContext,
     ) {
         self.graph_state.clear();
-        let Some(graph) = creation_context.animation_graphs.get(&animation_graph) else {
+        let Some(graph) = graphs.get(&animation_graph) else {
             self.graph_handle = None;
             return;
         };
@@ -360,19 +461,21 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let node_instance: NodeInstance = anim_node.create_instance(creation_context);
+            let Some(node_state) = anim_node.create_state(creation_context) else {
+                continue;
+            };
             self.graph_state.insert(
                 node_index,
-                ActiveNodeInstance {
-                    node_instance,
+                ActiveNodeState {
+                    node_state,
                     weight: 1.0,
                 },
             );
         }
     }
 
-    pub(crate) fn reset(&mut self, context: &AnimationGraphContext<'_>) {
-        let Some(graph) = self.get_animation_graph(context) else {
+    pub(crate) fn reset(&mut self, graphs: &AssetStore<AnimationGraph>) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return;
         };
 
@@ -380,13 +483,18 @@ impl AnimationGraphInstance {
             .iter_mut()
             .for_each(|(node_index, node_state)| {
                 if let Some(node) = graph.live_node(*node_index) {
-                    node.reset(&mut node_state.node_instance);
+                    node.reset(&mut node_state.node_state);
                 }
             });
     }
 
-    pub(crate) fn update(&mut self, delta_time: f32, context: &AnimationGraphContext<'_>) {
-        let Some(graph) = self.get_animation_graph(context) else {
+    pub(crate) fn update(
+        &mut self,
+        delta_time: f32,
+        graphs: &AssetStore<AnimationGraph>,
+        context: &AnimationGraphContext<'_>,
+    ) {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return;
         };
 
@@ -403,12 +511,13 @@ impl AnimationGraphInstance {
 
     pub(crate) fn evaluate(
         &mut self,
+        graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
         pool: &mut PosePool,
         output_pose: &mut Pose,
     ) -> bool {
-        let Some(graph) = self.get_animation_graph(context) else {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return false;
         };
 
@@ -419,7 +528,7 @@ impl AnimationGraphInstance {
                 continue;
             };
 
-            let Some(node_state) = self.get_active_node_instance_mut(&node_index) else {
+            let Some(node_state) = self.get_active_node_state_mut(&node_index) else {
                 warn!(
                     "No node state found for node, make sure the animation player has been correctly initialized"
                 );
@@ -433,7 +542,7 @@ impl AnimationGraphInstance {
             let mut node_output_pose = pool.acquire();
 
             node.evaluate(
-                &mut node_state.node_instance,
+                &mut node_state.node_state,
                 context,
                 bone_ids,
                 graph_evaluator.view_stack(stack_start),
@@ -464,22 +573,22 @@ impl AnimationGraphInstance {
 
     pub(crate) fn get_animation_graph<'a>(
         &self,
-        context: &'a AnimationGraphContext<'a>,
+        graphs: &'a AssetStore<AnimationGraph>,
     ) -> Option<&'a AnimationGraph> {
         self.graph_handle
             .as_ref()
-            .and_then(move |handle| context.animation_graphs().get(handle))
+            .and_then(move |handle| graphs.get(handle))
     }
 
-    pub(crate) fn is_finished(&self, context: &AnimationGraphContext<'_>) -> bool {
-        let Some(graph) = self.get_animation_graph(context) else {
+    pub(crate) fn is_finished(&self, graphs: &AssetStore<AnimationGraph>) -> bool {
+        let Some(graph) = self.get_animation_graph(graphs) else {
             return true;
         };
 
         self.graph_state.iter().all(|(node_index, node_state)| {
             graph
                 .live_node(*node_index)
-                .is_none_or(|node| node.is_finished(&node_state.node_instance))
+                .is_none_or(|node| node.is_finished(&node_state.node_state))
         })
     }
 }
@@ -501,21 +610,21 @@ impl From<usize> for GraphId {
     }
 }
 
-pub(crate) struct AnimationGraphInstances {
-    instances: Vec<AnimationGraphInstance>,
+pub(crate) struct AnimationGraphStates {
+    states: Vec<AnimationGraphState>,
 }
 
-impl AnimationGraphInstances {
-    pub(crate) fn new(instances: Vec<AnimationGraphInstance>) -> Self {
-        Self { instances }
+impl AnimationGraphStates {
+    pub(crate) fn new(states: Vec<AnimationGraphState>) -> Self {
+        Self { states }
     }
 
-    pub(crate) fn get(&self, id: GraphId) -> Option<&AnimationGraphInstance> {
-        self.instances.get(*id)
+    pub(crate) fn get(&self, id: GraphId) -> Option<&AnimationGraphState> {
+        self.states.get(*id)
     }
 
-    pub(crate) fn get_mut(&mut self, id: GraphId) -> Option<&mut AnimationGraphInstance> {
-        self.instances.get_mut(*id)
+    pub(crate) fn get_mut(&mut self, id: GraphId) -> Option<&mut AnimationGraphState> {
+        self.states.get_mut(*id)
     }
 }
 

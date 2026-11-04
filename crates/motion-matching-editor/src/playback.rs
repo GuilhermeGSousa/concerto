@@ -329,7 +329,7 @@ fn picked_channel(
     let index = shown_index(values?, shown?)?.checked_sub(1)?;
     let held = state.channels.get(index)?;
     let baked = state.playback.as_ref()?.database.channels().get(index)?;
-    (held.type_name == baked.type_name).then_some(index)
+    (held.type_name == baked.type_name()).then_some(index)
 }
 
 pub(crate) fn follow_playback(

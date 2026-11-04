@@ -1,10 +1,9 @@
-use concerto_foundation::assets::asset_store::AssetStore;
+use concerto_ecs::system::input::Inputs;
+use concerto_mesh::Skeleton;
 use glam::Vec3;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    clip::AnimationClip,
-    graph::AnimationGraph,
     pose::{EvaluatedPose, JointPose},
 };
 
@@ -50,22 +49,15 @@ pub struct RootBone {
     pub up: Vec3,
 }
 
+/// What every node of one player's graph is walked with: the player's own data and the walk's node inputs.
 pub struct AnimationGraphContext<'a> {
-    pub(crate) animation_clips: &'a AssetStore<AnimationClip>,
-    pub(crate) animation_graphs: &'a AssetStore<AnimationGraph>,
     pub(crate) blackboard: &'a AnimationBlackboard,
     pub(crate) root: Option<RootBone>,
+    pub(crate) skeleton: Option<&'a Skeleton>,
+    pub(crate) inputs: &'a Inputs<'a, 'a>,
 }
 
 impl<'a> AnimationGraphContext<'a> {
-    pub fn animation_clips(&self) -> &AssetStore<AnimationClip> {
-        self.animation_clips
-    }
-
-    pub fn animation_graphs(&self) -> &AssetStore<AnimationGraph> {
-        self.animation_graphs
-    }
-
     pub fn blackboard(&self) -> &AnimationBlackboard {
         self.blackboard
     }
@@ -73,5 +65,10 @@ impl<'a> AnimationGraphContext<'a> {
     /// The root bone of the player being evaluated, if it has one.
     pub fn root(&self) -> Option<&RootBone> {
         self.root.as_ref()
+    }
+
+    /// The skeleton of the player being walked, once its asset is loaded.
+    pub fn skeleton(&self) -> Option<&'a Skeleton> {
+        self.skeleton
     }
 }

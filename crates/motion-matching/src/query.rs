@@ -1,6 +1,5 @@
 use concerto_foundation::transform::Transform;
 use concerto_mesh::Skeleton;
-use concerto_reflect::TypeRegistry;
 
 use crate::{
     channel::{BodyMotion, ChannelSource, FeatureChannel, FrameContext},
@@ -14,10 +13,14 @@ pub struct FeatureQuery {
 }
 
 impl FeatureQuery {
-    /// Builds the live channels from the values stored in the database's spans; a type the registry lacks is an error.
-    pub fn new(database: &MotionDatabase, registry: &TypeRegistry) -> Result<Self, BakeError> {
+    /// Copies the live channels of a loaded database; a channel not yet loaded is an error.
+    pub fn new(database: &MotionDatabase) -> Result<Self, BakeError> {
         Ok(Self {
-            channels: database.live_channels(registry)?,
+            channels: database
+                .live_channels()?
+                .into_iter()
+                .map(|channel| channel.dyn_clone())
+                .collect(),
         })
     }
 
@@ -71,7 +74,7 @@ impl FeatureQuery {
         let reads_trajectory = database
             .channels()
             .iter()
-            .any(|span| span.source == ChannelSource::Trajectory);
+            .any(|span| span.source() == ChannelSource::Trajectory);
         if reads_trajectory && trajectory.len() < needed {
             return Err(BakeError::TrajectoryTooShort {
                 needed,
@@ -90,9 +93,8 @@ impl FeatureQuery {
         };
         let mut features = database.features(pose_frame).to_vec();
         for (span, channel) in database.channels().iter().zip(&self.channels) {
-            if span.source == ChannelSource::Trajectory {
-                let range = span.offset..span.offset + span.dims;
-                channel.extract(&context, &mut features[range]);
+            if span.source() == ChannelSource::Trajectory {
+                channel.extract(&context, &mut features[span.range()]);
             }
         }
         Ok(features)

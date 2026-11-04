@@ -25,10 +25,9 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
-    StoredChannel, TimeRange, TrajectoryPositions, bake,
+    BonePositions, BoneVelocities, FeatureChannelData, MotionDatabase, MotionDatabaseDefinition,
+    MotionEntry, TimeRange, TrajectoryPositions, bake,
 };
-use concerto_reflect::{TypeRegistry, to_value};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
@@ -88,7 +87,7 @@ fn baked_from(entries: Vec<MotionEntry>, speed: f32) -> BakedPlayback {
 fn baked_with(
     entries: Vec<MotionEntry>,
     speed: f32,
-    channels: Vec<StoredChannel>,
+    channels: Vec<FeatureChannelData>,
 ) -> BakedPlayback {
     let mut definition = MotionDatabaseDefinition {
         skeleton: AssetHandle::weak(AssetId::new()),
@@ -103,11 +102,13 @@ fn baked_with(
     definition.entries = entries;
     let skeleton = skeleton();
     let sampled: Vec<&AnimationClip> = clips.iter().collect();
-    let mut registry = TypeRegistry::default();
-    registry.register::<BoneVelocities>();
-    registry.register::<TrajectoryPositions>();
-    let database = bake(&definition, &skeleton, &sampled, &registry).unwrap();
-    let channels = database.live_channels(&registry).unwrap();
+    let database = bake(&definition, &skeleton, &sampled).unwrap();
+    let channels: Vec<Box<dyn FeatureChannel>> = database
+        .live_channels()
+        .unwrap()
+        .into_iter()
+        .map(|channel| channel.dyn_clone())
+        .collect();
     BakedPlayback {
         database: Arc::new(database),
         skeleton: Arc::new(skeleton),
@@ -116,26 +117,18 @@ fn baked_with(
     }
 }
 
-fn spine_velocities() -> StoredChannel {
-    StoredChannel {
-        type_name: "BoneVelocities".into(),
-        value: to_value(&BoneVelocities {
-            bones: vec!["Spine".into()],
-            weight: 1.0,
-        })
-        .unwrap(),
-    }
+fn spine_velocities() -> FeatureChannelData {
+    FeatureChannelData::live(BoneVelocities {
+        bones: vec!["Spine".into()],
+        weight: 1.0,
+    })
 }
 
-fn trajectory_positions() -> StoredChannel {
-    StoredChannel {
-        type_name: "TrajectoryPositions".into(),
-        value: to_value(&TrajectoryPositions {
-            samples: vec![0, 1, 2],
-            weight: 1.0,
-        })
-        .unwrap(),
-    }
+fn trajectory_positions() -> FeatureChannelData {
+    FeatureChannelData::live(TrajectoryPositions {
+        samples: vec![0, 1, 2],
+        weight: 1.0,
+    })
 }
 
 fn baked() -> BakedPlayback {
@@ -531,7 +524,7 @@ fn the_shapes_draw_the_features_of_the_shown_frame() {
 
 #[test]
 fn every_channel_is_drawn_while_a_database_plays() {
-    let drawn = |channels: Vec<StoredChannel>| {
+    let drawn = |channels: Vec<FeatureChannelData>| {
         let mut stage = Stage::new();
         let shown = baked_with(vec![entry(None)], 1.0, channels);
         stage.world.trigger(ShowDatabase(Some(shown)));
@@ -638,14 +631,10 @@ fn logging() -> SceneFixture {
 
 fn buildable(definition: &mut MotionDatabaseDefinition) {
     definition.simulation.position_joint = "Spine".into();
-    definition.channels = vec![StoredChannel {
-        type_name: "BonePositions".into(),
-        value: to_value(&BonePositions {
-            bones: vec!["Head".into()],
-            weight: 1.0,
-        })
-        .unwrap(),
-    }];
+    definition.channels = vec![FeatureChannelData::live(BonePositions {
+        bones: vec!["Head".into()],
+        weight: 1.0,
+    })];
 }
 
 fn ready(f: SceneFixture) -> Tab {

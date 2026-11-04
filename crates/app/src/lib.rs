@@ -249,6 +249,17 @@ impl App {
         self
     }
 
+    /// Makes `P` a member of every `InputSet<K>` in the main world; register before the schedules compile.
+    pub fn register_input<
+        K: 'static,
+        P: concerto_ecs::system::input::ReadOnlySystemInput + 'static,
+    >(
+        &mut self,
+    ) -> &mut Self {
+        concerto_ecs::system::input::register_input::<K, P>(self.main_mut().world_mut());
+        self
+    }
+
     /// Makes `T` require `U`, built with `U::default()`, in the main world.
     pub fn register_required_components<T: Component, U: Component + Default>(
         &mut self,

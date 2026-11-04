@@ -497,6 +497,20 @@ impl World {
         })
     }
 
+    /// Returns an exclusive reference to the resource of type `T`, inserting the result of `f` first if it is missing, and marks it changed.
+    pub fn get_resource_or_insert_with<T: Resource + 'static>(
+        &mut self,
+        f: impl FnOnce() -> T,
+    ) -> &mut T {
+        let change_tick = self.change_tick();
+        let data = self
+            .resources
+            .entry(TypeId::of::<T>())
+            .or_insert_with(|| ResourceData::new(f(), change_tick));
+        data.changed_tick = change_tick;
+        data.get_mut()
+    }
+
     /// The tick of the last write to `T`, or `None` if it is not present.
     pub fn resource_changed_tick<T: Resource + 'static>(&self) -> Option<Tick> {
         self.get_resource_data::<T>().map(|data| data.changed_tick)

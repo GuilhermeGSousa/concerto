@@ -1083,7 +1083,7 @@ fn wanted_channel_rows(
             .loaded
             .iter()
             .flat_map(|definition| &definition.channels)
-            .map(|channel| (None, channel.type_name.clone()))
+            .map(|channel| (None, channel.type_name().to_owned()))
             .collect()
     }
 }

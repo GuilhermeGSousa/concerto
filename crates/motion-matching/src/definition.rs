@@ -1,11 +1,17 @@
 use concerto_animation::clip::AnimationClip;
-use concerto_foundation::assets::{handle::AssetHandle, Asset, CreatableAsset, LoadableAsset};
+use concerto_foundation::assets::{
+    asset_server::AssetLoadContext, handle::AssetHandle, Asset, CreatableAsset, LoadableAsset,
+};
 use concerto_mesh::{JointName, Skeleton};
-use concerto_reflect::{Reflect, ReflectedValue};
+use concerto_reflect::{Reflect, TypeRegistry};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
-use crate::features::reference_channels;
+use crate::{
+    channel::{FeatureChannel, FeatureChannelData},
+    database::BakeError,
+    features::reference_channels,
+};
 
 /// A span of a clip in seconds, from `start` to `end`.
 #[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -66,13 +72,6 @@ impl Default for TrajectorySettings {
     }
 }
 
-/// A feature channel as stored on a definition: its registered type name and its reflected value.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct StoredChannel {
-    pub type_name: String,
-    pub value: ReflectedValue,
-}
-
 /// What to bake into a [`MotionDatabase`](crate::MotionDatabase): the clips, sampling, simulation bone, trajectory and feature channels.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MotionDatabaseDefinition {
@@ -82,7 +81,24 @@ pub struct MotionDatabaseDefinition {
     pub speed: f32,
     pub simulation: SimulationBoneSettings,
     pub trajectory: TrajectorySettings,
-    pub channels: Vec<StoredChannel>,
+    pub channels: Vec<FeatureChannelData>,
+}
+
+impl MotionDatabaseDefinition {
+    /// Builds every stored channel into a live one; the first channel that can't be built is the error.
+    pub fn load_channels(&mut self, registry: &TypeRegistry) -> Result<(), BakeError> {
+        self.channels
+            .iter_mut()
+            .try_for_each(|channel| channel.load(registry))
+    }
+
+    /// The live channels, in order; a channel not yet loaded is an error.
+    pub fn live_channels(&self) -> Result<Vec<&dyn FeatureChannel>, BakeError> {
+        self.channels
+            .iter()
+            .map(FeatureChannelData::channel)
+            .collect()
+    }
 }
 
 impl Default for MotionDatabaseDefinition {
@@ -105,4 +121,17 @@ impl CreatableAsset for MotionDatabaseDefinition {
     }
 }
 
-impl LoadableAsset for MotionDatabaseDefinition {}
+impl LoadableAsset for MotionDatabaseDefinition {
+    fn on_load(&mut self, context: &AssetLoadContext) -> anyhow::Result<()> {
+        let registry = context.type_registry().read();
+        for channel in &mut self.channels {
+            if let Err(error) = channel.load(&registry) {
+                log::warn!(
+                    "motion database definition {:?}: {error}",
+                    context.asset_id()
+                );
+            }
+        }
+        Ok(())
+    }
+}

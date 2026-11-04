@@ -24,10 +24,10 @@ use concerto_foundation::assets::{
 };
 use concerto_mesh::Skeleton;
 use concerto_motion_matching::{
-    FeatureChannel, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
-    SimulationBoneSettings, StoredChannel, TrajectorySettings,
+    BakeError, FeatureChannel, FeatureChannelData, MotionDatabaseDefinition, MotionEntry,
+    SimulationBoneSettings, TrajectorySettings,
 };
-use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_value};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
 
 use crate::{
@@ -72,36 +72,42 @@ pub struct HeldChannel {
 }
 
 impl HeldChannel {
-    pub(crate) fn of(stored: &StoredChannel, registry: &TypeRegistry) -> Result<Self, String> {
-        let name = &stored.type_name;
-        let registration = registry
-            .get_by_name(name)
-            .ok_or_else(|| format!("Channel {name} is not registered in the game"))?;
-        let channel = registration
-            .data::<ReflectFeatureChannel>()
-            .ok_or_else(|| format!("{name} is not a feature channel"))?;
-        let value = (channel.from_value)(&stored.value)
-            .map_err(|reason| format!("Channel {name} cannot be built: {reason}"))?;
+    pub(crate) fn of(data: &FeatureChannelData, registry: &TypeRegistry) -> Result<Self, String> {
+        let name = data.type_name();
+        let mut loaded = data.clone();
+        loaded.load(registry).map_err(|error| match error {
+            BakeError::UnregisteredChannel(_) if registry.get_by_name(name).is_some() => {
+                format!("{name} is not a feature channel")
+            }
+            BakeError::UnregisteredChannel(_) => {
+                format!("Channel {name} is not registered in the game")
+            }
+            BakeError::ChannelValue { reason, .. } => {
+                format!("Channel {name} cannot be built: {reason}")
+            }
+            error => error.to_string(),
+        })?;
+        let value = loaded.channel().map_err(|error| error.to_string())?;
         Ok(Self {
             id: ChannelId(Uuid::new_v4()),
-            type_name: name.clone(),
-            value,
+            type_name: name.to_owned(),
+            value: value.dyn_clone(),
         })
     }
 
     pub(crate) fn empty(name: &str, registry: &TypeRegistry) -> Result<Self, String> {
-        let stored = StoredChannel {
+        let stored = FeatureChannelData::Stored {
             type_name: name.to_owned(),
             value: ReflectedValue::Struct(Vec::new()),
         };
         Self::of(&stored, registry)
     }
 
-    fn stored(&self) -> anyhow::Result<StoredChannel> {
-        Ok(StoredChannel {
+    fn data(&self) -> FeatureChannelData {
+        FeatureChannelData::Live {
             type_name: self.type_name.clone(),
-            value: to_value(self.value.as_ref())?,
-        })
+            channel: self.value.dyn_clone(),
+        }
     }
 }
 
@@ -152,11 +158,7 @@ impl DefinitionDocument {
             speed: settings.speed,
             simulation: settings.simulation,
             trajectory: settings.trajectory,
-            channels: self
-                .channels
-                .iter()
-                .map(HeldChannel::stored)
-                .collect::<anyhow::Result<_>>()?,
+            channels: self.channels.iter().map(HeldChannel::data).collect(),
         })
     }
 
@@ -273,9 +275,12 @@ pub fn read_definition(
 
 fn hold_definition(
     state: &mut DefinitionDocument,
-    definition: MotionDatabaseDefinition,
+    mut definition: MotionDatabaseDefinition,
     channels: Option<Vec<HeldChannel>>,
 ) {
+    if let Some(channels) = &channels {
+        definition.channels = channels.iter().map(HeldChannel::data).collect();
+    }
     state.settings = channels
         .is_some()
         .then(|| DatabaseSettings::of(&definition));

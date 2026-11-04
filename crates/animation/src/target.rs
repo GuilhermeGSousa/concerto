@@ -7,6 +7,7 @@ use concerto_ecs::{
         filter::{Added, Changed},
     },
     resource::Res,
+    system::input::InputSet,
 };
 use concerto_foundation::{
     assets::asset_store::AssetStore,
@@ -16,8 +17,8 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
 
 use crate::{
-    clip::AnimationClip,
     graph::AnimationGraph,
+    node::{CreateNodeInputs, EvaluateNodeInputs, UpdateNodeInputs},
     player::{AnimationHandleComponent, AnimationPlayer},
     pose::RootMotion,
     root::AnimationRootBone,
@@ -43,8 +44,8 @@ pub fn animate_targets(
     parents: Query<&ChildOf>,
     globals: Query<&GlobalTransform>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
-    animation_clips: Res<AssetStore<AnimationClip>>,
     skeletons: Res<AssetStore<Skeleton>>,
+    inputs: InputSet<EvaluateNodeInputs>,
 ) {
     for (mut animation_player, skeleton_component) in animation_players.iter() {
         let evaluated = !animation_player.is_paused()
@@ -52,10 +53,9 @@ pub fn animate_targets(
                 .get(skeleton_component.skeleton())
                 .is_some_and(|skeleton| {
                     animation_player.evaluate(
-                        &animation_clips,
                         &animation_graphs,
-                        &skeleton.bone_ids,
-                        &skeleton.rest_pose,
+                        &inputs,
+                        skeleton,
                         skeleton_component.bones(),
                         &transforms,
                         &root_bones,
@@ -76,17 +76,19 @@ pub fn animate_targets(
 }
 
 pub fn update_animation_players(
-    animation_players: Query<&mut AnimationPlayer>,
-    animation_clips: Res<AssetStore<AnimationClip>>,
+    animation_players: Query<(&mut AnimationPlayer, Option<&SkeletonComponent>)>,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
+    skeletons: Res<AssetStore<Skeleton>>,
     time: Res<Time>,
+    inputs: InputSet<UpdateNodeInputs>,
 ) {
     let delta_time = time.delta().as_secs_f32();
-    for mut animation_player in animation_players.iter() {
+    for (mut animation_player, component) in animation_players.iter() {
         if animation_player.is_paused() {
             continue;
         }
-        animation_player.update(delta_time, &animation_clips, &animation_graphs);
+        let skeleton = component.and_then(|component| skeletons.get(component.skeleton()));
+        animation_player.update(delta_time, &animation_graphs, skeleton, &inputs);
     }
 }
 
@@ -96,14 +98,10 @@ pub(crate) fn initialize_animation_players(
         Changed<AnimationHandleComponent>,
     >,
     animation_graphs: Res<AssetStore<AnimationGraph>>,
-    animation_clips: Res<AssetStore<AnimationClip>>,
+    inputs: InputSet<CreateNodeInputs>,
 ) {
     for (mut animation_player, graph_handle) in animation_players.iter() {
-        animation_player.initialize_graph(
-            (*graph_handle).clone(),
-            &animation_clips,
-            &animation_graphs,
-        );
+        animation_player.initialize_graph((*graph_handle).clone(), &animation_graphs, &inputs);
     }
 }
 
@@ -123,14 +121,15 @@ mod tests {
     use glam::{Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
-    use super::{animate_targets, initialize_skeletons};
+    use super::{animate_targets, initialize_animation_players, initialize_skeletons};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         graph::{AnimationGraph, made_live},
         node::{AnimationClipNode, state_machine::AnimationStateMachine},
-        player::AnimationPlayer,
+        player::{AnimationHandleComponent, AnimationPlayer},
         pose::RootMotion,
         root::AnimationRootBone,
+        test_walks::Walks,
     };
 
     #[test]
@@ -203,9 +202,10 @@ mod tests {
         let skeleton_handle = server.add(one_bone_skeleton(bone_id));
 
         let mut player = AnimationPlayer::new(1);
-        player.initialize_graph(graph_handle, &clips, &graphs);
+        let walks = Walks::new(clips, graphs);
+        walks.initialize(&mut player, graph_handle);
 
-        let mut world = World::default();
+        let mut world = walks.into_world();
         let bone = world.spawn(Transform::IDENTITY);
         world.spawn((
             player,
@@ -215,8 +215,6 @@ mod tests {
                 root: None,
             },
         ));
-        world.insert_resource(clips);
-        world.insert_resource(graphs);
         world.insert_resource(skeletons);
 
         let mut system = animate_targets.into_system();
@@ -252,8 +250,7 @@ mod tests {
 
     struct Rig {
         server: AssetServer,
-        clips: AssetStore<AnimationClip>,
-        graphs: AssetStore<AnimationGraph>,
+        walks: Walks,
         skeletons: AssetStore<Skeleton>,
         skeleton: AssetHandle<Skeleton>,
         rest: JointPose,
@@ -277,8 +274,7 @@ mod tests {
             let skeleton = server.add(one_bone_skeleton(ROOT_ID));
             Self {
                 server,
-                clips,
-                graphs,
+                walks: Walks::new(clips, graphs),
                 skeletons,
                 skeleton,
                 rest,
@@ -352,7 +348,7 @@ mod tests {
                 clip.add_channel(bone_id, channel);
             }
             let handle = self.server.add(AnimationClip::default());
-            self.clips.insert(handle.id(), clip);
+            self.walks.clips_mut().insert(handle.id(), clip);
             handle
         }
 
@@ -362,7 +358,9 @@ mod tests {
 
         fn graph(&mut self, graph: AnimationGraph) -> AssetHandle<AnimationGraph> {
             let handle = self.server.add(AnimationGraph::default());
-            self.graphs.insert(handle.id(), made_live(graph));
+            self.walks
+                .graphs_mut()
+                .insert(handle.id(), made_live(graph));
             handle
         }
 
@@ -372,16 +370,16 @@ mod tests {
                 .get(&self.skeleton)
                 .map_or(1, Skeleton::bone_count);
             let mut player = AnimationPlayer::new(bone_count);
-            player.initialize_graph(graph, &self.clips, &self.graphs);
+            self.walks.initialize(&mut player, graph);
             player
         }
 
         fn update(&self, player: &mut AnimationPlayer, delta_time: f32) {
-            player.update(delta_time, &self.clips, &self.graphs);
+            self.walks.advance(player, delta_time);
         }
 
         fn root_motion_after_animating(self, player: AnimationPlayer) -> RootMotion {
-            let mut world = World::default();
+            let mut world = self.walks.into_world();
             let root = world.spawn((
                 Transform::IDENTITY,
                 AnimationRootBone {
@@ -401,8 +399,6 @@ mod tests {
                     root: self.names_root.then_some(SceneEntityRef::Entity(root)),
                 },
             ));
-            world.insert_resource(self.clips);
-            world.insert_resource(self.graphs);
             world.insert_resource(self.skeletons);
 
             let mut system = animate_targets.into_system();
@@ -416,7 +412,7 @@ mod tests {
         }
 
         fn spawn_two_bones(self, player: AnimationPlayer) -> TwoBones {
-            let mut world = World::default();
+            let mut world = self.walks.into_world();
             let root = world.spawn((Transform::IDENTITY, AnimationRootBone::default()));
             let child = world.spawn(Transform::IDENTITY);
             let owner = world.spawn((
@@ -427,8 +423,6 @@ mod tests {
                     root: Some(SceneEntityRef::Entity(root)),
                 },
             ));
-            world.insert_resource(self.clips);
-            world.insert_resource(self.graphs);
             world.insert_resource(self.skeletons);
             TwoBones {
                 world,
@@ -461,16 +455,11 @@ mod tests {
         }
 
         fn play(&mut self, graph: AssetHandle<AnimationGraph>) {
-            let owner = self.owner;
             self.world
-                .resource_scope(|world, clips: &AssetStore<AnimationClip>| {
-                    world.resource_scope(|world, graphs: &AssetStore<AnimationGraph>| {
-                        world
-                            .get_component_for_entity_mut::<AnimationPlayer>(owner)
-                            .unwrap()
-                            .initialize_graph(graph, clips, graphs);
-                    });
-                });
+                .insert(AnimationHandleComponent::new(graph), self.owner);
+            let mut system = initialize_animation_players.into_system();
+            system.initialize(&mut self.world);
+            system.run_and_apply((), &mut self.world);
         }
 
         fn put_root_under(&mut self, space: Mat4) {
@@ -778,7 +767,8 @@ mod tests {
         let graph = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
         let mut player = rig.player(graph);
         rig.update(&mut player, 0.5);
-        player.initialize_graph(AssetHandle::weak(AssetId::new()), &rig.clips, &rig.graphs);
+        rig.walks
+            .initialize(&mut player, AssetHandle::weak(AssetId::new()));
 
         assert_eq!(
             rig.root_motion_after_animating(player),

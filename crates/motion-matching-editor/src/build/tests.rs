@@ -15,10 +15,10 @@ use concerto_foundation::assets::{
     registry::{AssetEntry, AssetRegistry},
 };
 use concerto_motion_matching::{
-    BonePositions, FeatureChannel, FrameContext, MotionDatabase, MotionDatabaseDefinition,
-    ReflectFeatureChannel, StoredChannel, TimeRange,
+    BonePositions, FeatureChannel, FeatureChannelData, FrameContext, MotionDatabase,
+    MotionDatabaseDefinition, ReflectFeatureChannel, TimeRange,
 };
-use concerto_reflect::{Reflect, to_value};
+use concerto_reflect::Reflect;
 use concerto_ui::transform::UIValue;
 
 use super::*;
@@ -33,15 +33,11 @@ use crate::{
 
 const BAKED: &str = "content/hero/database_baked.gasset";
 
-fn head_positions(weight: f32) -> StoredChannel {
-    StoredChannel {
-        type_name: "BonePositions".into(),
-        value: to_value(&BonePositions {
-            bones: vec!["Head".into()],
-            weight,
-        })
-        .unwrap(),
-    }
+fn head_positions(weight: f32) -> FeatureChannelData {
+    FeatureChannelData::live(BonePositions {
+        bones: vec!["Head".into()],
+        weight,
+    })
 }
 
 fn buildable(definition: &mut MotionDatabaseDefinition) {
@@ -114,7 +110,7 @@ fn gated_job(tab: &Tab, finished: usize, total: usize) -> (BuildJob, std::sync::
     (job, release)
 }
 
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone)]
 #[reflect(FeatureChannel)]
 struct GameChannel {
     weight: f32,
@@ -281,7 +277,7 @@ fn a_weight_only_change_takes_the_fast_path() {
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Updated the weights in {BAKED}"));
-    assert_eq!(baked_database(&tab).channels()[0].weight, 2.5);
+    assert_eq!(baked_database(&tab).channels()[0].weight(), 2.5);
     assert_eq!(tab.state().baked, BakedState::UpToDate);
 }
 
@@ -477,17 +473,14 @@ fn a_finished_job_for_a_replaced_definition_writes_nothing() {
 #[test]
 fn a_game_registered_channel_bakes() {
     let mut tab = ready_with(fixture_with(game_recipe), |definition| {
-        definition.channels = vec![StoredChannel {
-            type_name: "GameChannel".into(),
-            value: to_value(&GameChannel { weight: 2.0 }).unwrap(),
-        }];
+        definition.channels = vec![FeatureChannelData::live(GameChannel { weight: 2.0 })];
     });
 
     press_build(&mut tab);
 
     assert_eq!(status(&tab), format!("Built {BAKED}"));
     let database = baked_database(&tab);
-    assert_eq!(database.channels()[0].type_name, "GameChannel");
+    assert_eq!(database.channels()[0].type_name(), "GameChannel");
     assert_eq!(database.features(0), [1.0]);
 }
 
@@ -580,7 +573,7 @@ fn a_weight_typed_but_not_yet_committed_is_in_the_build() {
     queue_edit(&mut tab.f, document, "BonePositions", "weight", 3.5);
     press_build(&mut tab);
 
-    assert_eq!(baked_database(&tab).channels()[0].weight, 3.5);
+    assert_eq!(baked_database(&tab).channels()[0].weight(), 3.5);
     assert!(!tab.unsaved());
 }
 
