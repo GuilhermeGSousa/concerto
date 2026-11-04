@@ -75,6 +75,13 @@ cost. Enable the Tracy backend with the root `tracy` feature:
 cargo run --profile profiling -p tech-demo --features tracy
 ```
 
+A game's generated `editor/` crate has the same feature, forwarded to
+`concerto-editor/tracy`, so the editor profiles the same way:
+
+```sh
+cargo run --profile profiling -p tech-demo-editor --features tracy -- --project <scratch copy of examples/tech-demo>
+```
+
 Then connect the Tracy server (GUI) to the running process. Install a Tracy
 release that matches the `tracy-client-sys` protocol version in use — check
 `cargo tree -p tracy-client-sys` and the compatibility table in the
