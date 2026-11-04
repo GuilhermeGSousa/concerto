@@ -1,3 +1,5 @@
 *.gasset filter=lfs diff=lfs merge=lfs -text
 examples/tech-demo/assets/lafan1/animations/*.bvh filter=lfs diff=lfs merge=lfs -text
 examples/tech-demo/assets/lafan1/*.fbx filter=lfs diff=lfs merge=lfs -text
+examples/tech-demo/assets/sanatorium/*.glb filter=lfs diff=lfs merge=lfs -text
+examples/tech-demo/assets/sanatorium/*.blend filter=lfs diff=lfs merge=lfs -text
