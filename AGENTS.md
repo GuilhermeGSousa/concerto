@@ -101,7 +101,8 @@ rest to CI.
 A change to a `Cargo.toml` commits the `Cargo.lock` that cargo rewrites. A
 session that doesn't build runs `cargo metadata --format-version 1 > /dev/null`,
 which resolves and rewrites the lockfile without compiling. A merge conflict in
-`Cargo.lock` is resolved by taking `master`'s file and running the same command.
+`Cargo.lock` is resolved by taking `master`'s file and running the same command,
+and any merge of `master` that brings in a `Cargo.toml` change runs it too.
 
 Rendering, UI, and editor changes also need a look at the running program; a
 passing test suite says nothing about what is on screen. Use the

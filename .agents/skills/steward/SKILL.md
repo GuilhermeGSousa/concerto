@@ -17,7 +17,8 @@ how to act on a PR event.
 - Start everything you post with `<!-- concerto-agent -->`.
 - On a conflict, merge `master` into the branch. Never rebase, never force.
   A conflict in `Cargo.lock` takes `master`'s file and then runs
-  `cargo metadata --format-version 1 > /dev/null`.
+  `cargo metadata --format-version 1 > /dev/null`; a merge that brings in a
+  `Cargo.toml` change runs it too, and commits `Cargo.lock` if it changed.
 - Never merge the PR. The owner merges.
 - A cloud session checks with `cargo fmt --all -- --check` only, plus
   `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
