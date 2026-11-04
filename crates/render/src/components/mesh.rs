@@ -25,7 +25,7 @@ pub(crate) struct RenderMeshInstance {
 pub(crate) fn extract_meshes(
     meshes: Extracted<
         Query<(
-            &MeshComponent,
+            Ref<MeshComponent>,
             Ref<GlobalTransform>,
             Option<&SkeletonComponent>,
             &RenderEntity,
@@ -50,7 +50,10 @@ pub(crate) fn extract_meshes(
             if render_mesh.mesh_asset_id != mesh.handle.id() {
                 render_mesh.mesh_asset_id = mesh.handle.id();
             }
-            if render_mesh.skinned != skinned || (!skinned && transform.is_changed()) {
+            if mesh.is_added()
+                || render_mesh.skinned != skinned
+                || (!skinned && transform.is_changed())
+            {
                 render_mesh.skinned = skinned;
                 queue.write_buffer(
                     &render_mesh.transform,
@@ -255,5 +258,59 @@ mod tests {
         app.update();
 
         assert_eq!(uploaded(&gpu, &buffer), Mat4::IDENTITY);
+    }
+
+    #[test]
+    fn a_mesh_that_loses_its_skeleton_uploads_its_world_transform() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let (mut app, entity) = app(&gpu, AssetId::new());
+        let world = app.main_mut().world_mut();
+        world.insert(SkeletonComponent::default(), entity);
+        world
+            .get_component_for_entity_mut::<Transform>(entity)
+            .unwrap()
+            .translation = Vec3::X;
+        app.update();
+        app.update();
+        let buffer = instance_buffer(&mut app, entity);
+        assert_eq!(uploaded(&gpu, &buffer), Mat4::IDENTITY);
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<SkeletonComponent>(entity);
+        app.update();
+
+        assert_eq!(uploaded(&gpu, &buffer), Mat4::from_translation(Vec3::X));
+    }
+
+    #[test]
+    fn a_mesh_readded_after_moving_without_one_uploads_where_it_now_is() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let (mut app, entity) = app(&gpu, mesh);
+        app.update();
+        app.update();
+        let buffer = instance_buffer(&mut app, entity);
+
+        let world = app.main_mut().world_mut();
+        world.remove_component::<MeshComponent>(entity);
+        world
+            .get_component_for_entity_mut::<Transform>(entity)
+            .unwrap()
+            .translation = Vec3::Y;
+        app.update();
+        app.main_mut().world_mut().insert(
+            MeshComponent {
+                handle: AssetHandle::weak(mesh),
+            },
+            entity,
+        );
+        app.update();
+
+        assert_eq!(uploaded(&gpu, &buffer), Mat4::from_translation(Vec3::Y));
     }
 }
