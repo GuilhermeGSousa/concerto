@@ -8,7 +8,10 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::{MeshComponent, Vertex};
-use concerto_render::{components::render_entity::SyncWithRenderWorld, MaterialComponent};
+use concerto_render::{
+    components::{render_entity::SyncWithRenderWorld, NoFrustumCulling, NotShadowCaster},
+    MaterialComponent,
+};
 
 use crate::material::{WorldGridMaterial, WorldGridUniform};
 
@@ -48,6 +51,8 @@ impl Component for WorldGrid {
 
     fn register_required(required: &mut concerto_ecs::component::RequiredComponents) {
         required.register::<SyncWithRenderWorld>(SyncWithRenderWorld::default);
+        required.register::<NoFrustumCulling>(NoFrustumCulling::default);
+        required.register::<NotShadowCaster>(NotShadowCaster::default);
     }
 }
 
@@ -114,4 +119,31 @@ pub(crate) fn on_world_grid_changed(
         material.uniform.surface_color = grid.surface_color.to_linear();
         material.uniform.lit = grid.lit.into();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use concerto_app::{main_schedule::MainSchedulePlugin, plugins::AssetManagerPlugin, App};
+    use concerto_render::assets::mesh::Mesh;
+
+    #[test]
+    fn a_world_grid_is_neither_frustum_culled_nor_a_shadow_caster() {
+        let mut app = App::new();
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin);
+        app.register_asset::<Mesh>()
+            .register_asset::<WorldGridMaterial>();
+        let world = app.main_mut().world_mut();
+        world.register_component::<Transform>();
+
+        let grid = world.spawn(WorldGrid::default());
+
+        assert!(world
+            .get_component_for_entity::<NoFrustumCulling>(grid)
+            .is_some());
+        assert!(world
+            .get_component_for_entity::<NotShadowCaster>(grid)
+            .is_some());
+    }
 }

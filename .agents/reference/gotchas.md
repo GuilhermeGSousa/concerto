@@ -25,7 +25,7 @@ fix the entry in the same commit as the change that made it false.
 - **Transform propagation recomputes every hierarchy each frame, but stamps
   only what moved.** `propagate_global_transforms` writes each
   `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
-  world transform changed. `extract_meshes` relies on it to upload only the
+  world transform changed. `extract_meshes` relies on it to re-extract only the
   meshes that moved, and `extract_skeletons` to rewrite only the bone palettes
   of skeletons whose bones moved.
 - **A command-using system's sync point sits at its registration position,
@@ -128,9 +128,15 @@ fix the entry in the same commit as the change that made it false.
   `Light`, `Camera`, a material, or a skeleton still leaves its render-world
   copy in place, so a removed light keeps shining. Those mirrors go away only
   when the main entity is despawned. Do not fix this in passing.
-- **Skinned meshes use an identity instance matrix.** The bone palette carries
-  the world transform, and the shader applies it to the position. Giving a
-  skinned mesh entity a real world transform as well transforms it twice.
+- **Skinned meshes use an identity instance matrix, and are neither batched
+  nor culled.** The bone palette carries the world transform, and the shader
+  applies it to the position. Giving a skinned mesh entity a real world
+  transform as well transforms it twice.
+- **A mesh whose shader ignores its vertices or its model matrix needs
+  `NoFrustumCulling`.** Culling judges a mesh by its `Aabb` under its
+  `GlobalTransform`, so such a mesh disappears whenever that box is out of
+  view. The world grid, whose three vertices sit at the origin, requires
+  `NoFrustumCulling` and `NotShadowCaster` for this reason.
 - **`Pose::identity` has zero translation per joint.** Applying a pose that was
   never evaluated collapses every bone to the origin and the mesh folds onto
   itself. A pose from `PosePool::acquire` starts at the skeleton's rest pose,

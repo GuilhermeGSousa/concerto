@@ -162,6 +162,10 @@ CPU frame times and logs a summary once per second (avg / p99 / worst, FPS):
 RUST_LOG=info cargo run --profile profiling -p tech-demo
 ```
 
+The render world's `RenderDrawStats` resource
+(`concerto_render::batching::RenderDrawStats`) holds, for the last frame, the
+batches queued and the mesh instances culled for each camera and shadow layer.
+
 Apps using `DefaultPlugins` also get a small on-screen
 frame-time overlay in the top-left corner (`FrameStatsOverlayPlugin` in the
 `ui` crate).

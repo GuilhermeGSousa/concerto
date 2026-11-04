@@ -10,10 +10,11 @@ use wgpu::{
 
 use crate::{
     assets::vertex::VertexBufferLayout,
+    batching::clear_draw_stats,
     capabilities::RenderCapabilities,
     components::shadows::{
-        render_shadow_maps, resize_shadow_maps, update_shadow_view_proj,
-        RenderShadowCasterViewProjs,
+        queue_shadow_meshes, render_shadow_maps, resize_shadow_maps, update_shadow_view_proj,
+        RenderShadowCasterViewProjs, ShadowViewBatches,
     },
     device::RenderDevice,
     layouts::SkeletonLayout,
@@ -37,13 +38,20 @@ pub struct ShadowPipelinePlugin;
 
 impl Plugin for ShadowPipelinePlugin {
     fn build(&self, app: &mut concerto_app::App) {
-        app.render_mut().add_system(
-            Render,
-            render_shadow_maps
-                .in_set(RenderSet::Shadows)
-                .after(update_shadow_view_proj)
-                .after(resize_shadow_maps),
-        );
+        app.render_mut()
+            .add_system(
+                Render,
+                queue_shadow_meshes
+                    .in_set(RenderSet::Queue)
+                    .after(clear_draw_stats),
+            )
+            .add_system(
+                Render,
+                render_shadow_maps
+                    .in_set(RenderSet::Shadows)
+                    .after(update_shadow_view_proj)
+                    .after(resize_shadow_maps),
+            );
     }
 
     fn finish(&self, app: &mut concerto_app::App) {
@@ -138,6 +146,7 @@ impl Plugin for ShadowPipelinePlugin {
             bind_group_layout: light_view_bind_group_layout,
         });
         app.render_mut()
-            .insert_resource(RenderShadowCasterViewProjs::default());
+            .insert_resource(RenderShadowCasterViewProjs::default())
+            .insert_resource(ShadowViewBatches::default());
     }
 }

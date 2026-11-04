@@ -5,6 +5,7 @@ use concerto_ecs::{
     resource::{Res, ResMut, Resource},
     Query,
 };
+use concerto_foundation::assets::AssetId;
 use encase::{ShaderSize, UniformBuffer};
 use glam::{Mat4, Vec3};
 use wgpu::{
@@ -13,15 +14,18 @@ use wgpu::{
 };
 
 use crate::{
-    batching::BatchedInstanceBuffers,
+    batching::{
+        BatchedInstanceBuffers, BinCandidate, RenderDrawStats, ViewBatches, ViewBins, ViewDrawStats,
+    },
     capabilities::RenderCapabilities,
     components::{
         light::{LightType, RenderLight, RenderLights, RenderShadowsEnabled},
-        mesh::RenderMeshInstances,
+        mesh::{RenderMeshInstanceFlags, RenderMeshInstances},
         render_entity::MainEntity,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
     device::RenderDevice,
+    frustum::Frustum,
     layouts::LightingLayout,
     queue::RenderQueue,
     render_asset::{render_mesh::RenderMesh, RenderAssets},
@@ -563,10 +567,64 @@ fn shadow_view_proj(light: &RenderLight) -> Mat4 {
     }
 }
 
-// Renders one depth-only pass per assigned layer of
-// `RenderSpotDirectionalShadowMaps`, into that layer. Every mesh instance is
-// redrawn into every caster with no culling — same as `material_renderpass`,
-// which redraws every instance per camera today.
+#[derive(Resource, Default)]
+pub(crate) struct ShadowViewBatches(pub(crate) Vec<ViewBatches<AssetId>>);
+
+pub(crate) fn queue_shadow_meshes(
+    spot_directional_shadow_maps: Res<RenderSpotDirectionalShadowMaps>,
+    lights: Query<&RenderLight>,
+    render_mesh_query: Query<(&MainEntity, Option<&RenderSkeletonComponent>)>,
+    render_mesh_instances: Res<RenderMeshInstances>,
+    buffers: Res<BatchedInstanceBuffers>,
+    render_meshes: Res<RenderAssets<RenderMesh>>,
+    mut shadow_view_batches: ResMut<ShadowViewBatches>,
+    mut draw_stats: ResMut<RenderDrawStats>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    let slots = &spot_directional_shadow_maps.slots;
+    draw_stats
+        .shadow_layers
+        .resize(slots.len(), ViewDrawStats::default());
+    for (layer, &entity) in slots.iter().enumerate() {
+        while shadow_view_batches.0.len() <= layer {
+            shadow_view_batches
+                .0
+                .push(ViewBatches::new(&device, "Shadow View Instances Buffer"));
+        }
+        let batches = &mut shadow_view_batches.0[layer];
+
+        let Some(light) = lights.get_entity(entity) else {
+            batches.bins = ViewBins::default();
+            continue;
+        };
+
+        let frustum = Frustum::from_clip_from_world(shadow_view_proj(light));
+        let candidates = render_mesh_query
+            .iter()
+            .filter_map(|(main_entity, skeleton)| {
+                let instance = render_mesh_instances.get(main_entity)?;
+                if !instance
+                    .flags
+                    .contains(RenderMeshInstanceFlags::SHADOW_CASTER)
+                    || !render_meshes.contains(&instance.mesh_asset_id)
+                {
+                    return None;
+                }
+                Some(BinCandidate {
+                    key: instance.mesh_asset_id,
+                    instance,
+                    skeleton_offset: skeleton.map(|skeleton| skeleton.offset),
+                })
+            });
+        draw_stats.shadow_layers[layer] =
+            batches
+                .bins
+                .rebuild(candidates, &frustum, &buffers.current_input_buffer);
+        batches.upload(&device, &queue);
+    }
+}
+
 pub(crate) fn render_shadow_maps(
     pipeline: Res<ShadowPipeline>,
     mut device: ResMut<RenderDevice>,
@@ -575,11 +633,9 @@ pub(crate) fn render_shadow_maps(
     mut caster_view_projs: ResMut<RenderShadowCasterViewProjs>,
     queue: Res<RenderQueue>,
     lights: Query<&RenderLight>,
-    render_mesh_query: Query<(&MainEntity, Option<&RenderSkeletonComponent>)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     skins: Res<SkinUniforms>,
-    render_mesh_instances: Res<RenderMeshInstances>,
-    buffers: Res<BatchedInstanceBuffers>,
+    shadow_view_batches: Res<ShadowViewBatches>,
 ) {
     for (layer, &entity) in spot_directional_shadow_maps.slots.iter().enumerate() {
         let Some(light) = lights.get_entity(entity) else {
@@ -615,23 +671,26 @@ pub(crate) fn render_shadow_maps(
             occlusion_query_set: None,
         });
 
+        let Some(batches) = shadow_view_batches
+            .0
+            .get(layer)
+            .filter(|batches| !batches.bins.batches.is_empty())
+        else {
+            continue;
+        };
+
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &view_proj.bind_group, &[]);
-        render_pass.set_vertex_buffer(1, buffers.current_input_buffer.buffer().slice(..));
+        render_pass.set_vertex_buffer(1, batches.instances.buffer().slice(..));
 
-        for (main_entity, skeleton) in render_mesh_query.iter() {
-            let Some(mesh_instance) = render_mesh_instances.get(main_entity) else {
+        for batch in &batches.bins.batches {
+            let Some(mesh) = render_meshes.get(&batch.key) else {
                 continue;
             };
-            if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
-                let offset = skeleton.map_or(0, |sk| sk.offset);
-                render_pass.set_bind_group(1, skins.bind_group(), &[offset]);
-
-                render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                let index = mesh_instance.current_uniform_index;
-                render_pass.draw_indexed(0..mesh.index_count, 0, index..index + 1);
-            }
+            render_pass.set_bind_group(1, skins.bind_group(), &[batch.skeleton_offset]);
+            render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
         }
     }
 }
@@ -640,12 +699,16 @@ pub(crate) fn render_shadow_maps(
 mod tests {
     use super::*;
     use crate::{
+        assets::{material::StandardMaterial, mesh::Mesh},
         components::{
             light::{Light, RenderLightSlot},
+            material::MaterialComponent,
             render_entity::{MainEntity, RenderEntity},
+            visibility::NotShadowCaster,
         },
         draw_target::DrawTarget,
         gpu::Gpu,
+        material_plugin::MaterialPlugin,
         plugin::RenderPlugin,
         shadow_pipeline::ShadowPipelinePlugin,
     };
@@ -655,7 +718,11 @@ mod tests {
         App,
     };
     use concerto_ecs::World;
-    use concerto_foundation::transform::Transform;
+    use concerto_foundation::{
+        assets::{asset_server::AssetServer, handle::AssetHandle},
+        transform::Transform,
+    };
+    use concerto_mesh::{primitives::cuboid, MeshComponent};
     use concerto_window::plugin::{Window, WindowPlugin};
 
     #[test]
@@ -1007,5 +1074,133 @@ mod tests {
             .unwrap()
             .0
             .len()
+    }
+
+    fn shadow_scene(gpu: &Gpu) -> App {
+        let mut app = App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(DrawTarget::None)
+            .insert_resource(Window::new((64, 48), 1.0));
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(RenderPlugin)
+            .register_plugin(ShadowPipelinePlugin)
+            .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+        app.main_mut().world_mut().register_component::<Transform>();
+        spawn(&mut app, Light::directional_light().with_shadows());
+        app.finish_plugin_build();
+        app
+    }
+
+    fn cube(app: &App) -> AssetHandle<Mesh> {
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .add(cuboid(Vec3::ONE))
+    }
+
+    fn material(app: &App) -> AssetHandle<StandardMaterial> {
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .add(StandardMaterial::default())
+    }
+
+    fn spawn_mesh(
+        app: &mut App,
+        mesh: &AssetHandle<Mesh>,
+        material: &AssetHandle<StandardMaterial>,
+        translation: Vec3,
+    ) -> Entity {
+        app.main_mut().world_mut().spawn((
+            MeshComponent {
+                handle: mesh.clone(),
+            },
+            MaterialComponent::<StandardMaterial> {
+                handle: material.clone(),
+            },
+            Transform::from_translation(translation),
+        ))
+    }
+
+    fn settle(app: &mut App, mesh: &AssetHandle<Mesh>) {
+        let prepared = |app: &App| {
+            app.render()
+                .get_resource::<RenderAssets<RenderMesh>>()
+                .unwrap()
+                .contains(&mesh.id())
+        };
+        for _ in 0..100 {
+            app.update();
+            if prepared(app) {
+                break;
+            }
+        }
+        assert!(prepared(app));
+        app.update();
+        app.update();
+    }
+
+    fn shadow_stats(app: &App) -> Vec<ViewDrawStats> {
+        app.render()
+            .get_resource::<RenderDrawStats>()
+            .unwrap()
+            .shadow_layers
+            .clone()
+    }
+
+    fn cast_instances(app: &App, layer: usize) -> usize {
+        app.render().get_resource::<ShadowViewBatches>().unwrap().0[layer]
+            .bins
+            .values
+            .len()
+    }
+
+    #[test]
+    fn a_not_shadow_caster_is_left_out_of_every_shadow_layer() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = shadow_scene(&gpu);
+        let (mesh, white) = (cube(&app), material(&app));
+        spawn_mesh(&mut app, &mesh, &white, Vec3::new(-1.0, 0.0, 0.0));
+        let hidden = spawn_mesh(&mut app, &mesh, &white, Vec3::new(1.0, 0.0, 0.0));
+        app.main_mut().world_mut().insert(NotShadowCaster, hidden);
+
+        settle(&mut app, &mesh);
+
+        assert_eq!(
+            shadow_stats(&app),
+            [ViewDrawStats {
+                draws: 1,
+                culled: 0
+            }]
+        );
+        assert_eq!(cast_instances(&app, 0), 1);
+    }
+
+    #[test]
+    fn meshes_sharing_a_mesh_with_different_materials_cast_in_one_call() {
+        let Some(gpu) = gpu() else {
+            return;
+        };
+        let mut app = shadow_scene(&gpu);
+        let mesh = cube(&app);
+        let (first, second) = (material(&app), material(&app));
+        spawn_mesh(&mut app, &mesh, &first, Vec3::new(-1.0, 0.0, 0.0));
+        spawn_mesh(&mut app, &mesh, &second, Vec3::ZERO);
+        spawn_mesh(&mut app, &mesh, &first, Vec3::new(1.0, 0.0, 0.0));
+
+        settle(&mut app, &mesh);
+
+        assert_eq!(
+            shadow_stats(&app),
+            [ViewDrawStats {
+                draws: 1,
+                culled: 0
+            }]
+        );
+        assert_eq!(cast_instances(&app, 0), 3);
     }
 }

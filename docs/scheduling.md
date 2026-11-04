@@ -113,9 +113,10 @@ registration order:
 app.add_system(LateUpdate, app_widget.after(UiSet::Input).before(UiSet::Layout));
 ```
 
-The render crate exports `RenderSet { Lights, Shadows, Draw, Overlay, Present }` the
-same way: `Lights`, `Shadows`, `Draw` and `Overlay` are chained in that order in
-`Render`, `Overlay` draws over the finished scene before any pass that samples a
+The render crate exports `RenderSet { Lights, Queue, Shadows, Draw, Overlay, Present }`
+the same way: `Lights`, `Queue`, `Shadows`, `Draw` and `Overlay` are chained in that
+order in `Render`, `Queue` culls and bins mesh instances into each view's draws,
+`Overlay` draws over the finished scene before any pass that samples a
 camera's target, and `Present` runs in `LateRender`, after all of them. The window
 crate exports `FoldInput`, the set in `First` that folds
 window events into `Input`; a system that decides `InputGate` for the frame runs

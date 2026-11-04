@@ -7,15 +7,19 @@ use concerto_app::{
 };
 use concerto_ecs::{
     command::CommandQueue,
+    entity::EntityHashMap,
     query::Query,
     resource::{Res, ResMut, Resource},
     system::input::SystemInputData,
-    IntoSystemConfig,
+    Entity, IntoSystemConfig,
 };
+use concerto_foundation::assets::AssetId;
 
 use crate::{
     assets::material::ShaderRef,
-    batching::BatchedInstanceBuffers,
+    batching::{
+        clear_draw_stats, BatchedInstanceBuffers, BinCandidate, RenderDrawStats, ViewBatches,
+    },
     capabilities::RenderCapabilities,
     components::{
         camera::RenderCamera,
@@ -26,7 +30,9 @@ use crate::{
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
     device::RenderDevice,
+    frustum::Frustum,
     layouts::{CameraLayout, LightingLayout, SkeletonLayout},
+    queue::RenderQueue,
     render_asset::{
         render_mesh::RenderMesh,
         render_texture::{DummyRenderTexture, RenderTexture},
@@ -49,8 +55,9 @@ use crate::{
 //   group layout plus whichever engine bind groups `M` declares it needs via
 //   [`Material::needs_camera`], [`Material::needs_lighting`] and
 //   [`Material::needs_skeleton`].
-// * Adds a render pass (`material_renderpass<M>`) that only processes mesh
-//   entities carrying [`MaterialComponent<M>`].
+// * Adds `queue_material_meshes<M>`, which culls and bins the mesh entities
+//   carrying [`MaterialComponent<M>`] for each camera, and a render pass
+//   (`material_renderpass<M>`) that draws those batches.
 //
 // # Using a custom material
 //
@@ -140,6 +147,32 @@ impl<M: Material + 'static> RenderAsset for RenderMaterial<M> {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct MaterialBinKey {
+    material: AssetId,
+    mesh: AssetId,
+}
+
+pub(crate) struct MaterialViewBatches<M> {
+    views: EntityHashMap<ViewBatches<MaterialBinKey>>,
+    _marker: PhantomData<fn() -> M>,
+}
+
+impl<M> Default for MaterialViewBatches<M> {
+    fn default() -> Self {
+        Self {
+            views: EntityHashMap::default(),
+            _marker: PhantomData,
+        }
+    }
+}
+
+impl<M: 'static> Resource for MaterialViewBatches<M> {
+    fn name() -> &'static str {
+        std::any::type_name::<MaterialViewBatches<M>>()
+    }
+}
+
 // ─── Systems ──────────────────────────────────────────────────────────────────
 
 // Extracts every `MaterialComponent<M>` into its `RenderMaterialComponent<M>`
@@ -216,31 +249,81 @@ pub(crate) fn clear_cameras(
     }
 }
 
-// Render pass for meshes that use material `M`.
-//
-// Only processes entities tagged with [`RenderMaterialComponent<M>`] so
-// multiple `MaterialPlugin` instantiations for different material types can
-// coexist without interfering with each other.
-pub(crate) fn material_renderpass<M: Material>(
-    pipeline: Res<MaterialPipeline<M>>,
-    mut device: ResMut<RenderDevice>,
+pub(crate) fn queue_material_meshes<M: Material>(
     render_mesh_query: Query<(
         &MainEntity,
         Option<&RenderSkeletonComponent>,
         &RenderMaterialComponent<M>,
     )>,
-    render_cameras: Query<&RenderCamera>,
+    render_cameras: Query<(Entity, &RenderCamera)>,
+    render_mesh_instances: Res<RenderMeshInstances>,
+    buffers: Res<BatchedInstanceBuffers>,
+    render_meshes: Res<RenderAssets<RenderMesh>>,
+    render_materials: Res<RenderAssets<RenderMaterial<M>>>,
+    mut view_batches: ResMut<MaterialViewBatches<M>>,
+    mut draw_stats: ResMut<RenderDrawStats>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    let view_batches = &mut *view_batches;
+    for (camera, render_camera) in render_cameras.iter() {
+        let frustum = Frustum::from_clip_from_world(render_camera.camera_uniform.view_proj());
+        let candidates =
+            render_mesh_query
+                .iter()
+                .filter_map(|(main_entity, skeleton, material)| {
+                    let instance = render_mesh_instances.get(main_entity)?;
+                    if !render_meshes.contains(&instance.mesh_asset_id)
+                        || !render_materials.contains(&material.material_asset_id)
+                    {
+                        return None;
+                    }
+                    Some(BinCandidate {
+                        key: MaterialBinKey {
+                            material: material.material_asset_id,
+                            mesh: instance.mesh_asset_id,
+                        },
+                        instance,
+                        skeleton_offset: skeleton.map(|skeleton| skeleton.offset),
+                    })
+                });
+        let batches = view_batches
+            .views
+            .entry(camera)
+            .or_insert_with(|| ViewBatches::new(&device, "Material View Instances Buffer"));
+        let stats = batches
+            .bins
+            .rebuild(candidates, &frustum, &buffers.current_input_buffer);
+        batches.upload(&device, &queue);
+
+        let total = draw_stats.cameras.entry(camera).or_default();
+        total.draws += stats.draws;
+        total.culled += stats.culled;
+    }
+    view_batches
+        .views
+        .retain(|camera, _| render_cameras.contains_entity(*camera));
+}
+
+// Render pass for meshes that use material `M`.
+//
+// Draws the batches `queue_material_meshes<M>` built in `MaterialViewBatches<M>`,
+// so multiple `MaterialPlugin` instantiations for different material types can
+// coexist without interfering with each other.
+pub(crate) fn material_renderpass<M: Material>(
+    pipeline: Res<MaterialPipeline<M>>,
+    mut device: ResMut<RenderDevice>,
+    render_cameras: Query<(Entity, &RenderCamera)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     render_materials: Res<RenderAssets<RenderMaterial<M>>>,
     render_window: Res<RenderWindow>,
     render_lighting: Res<RenderLighting>,
     skins: Res<SkinUniforms>,
-    render_mesh_instances: Res<RenderMeshInstances>,
-    buffers: Res<BatchedInstanceBuffers>,
+    view_batches: Res<MaterialViewBatches<M>>,
 ) {
     let encoder = device.command_encoder();
 
-    for render_camera in render_cameras.iter() {
+    for (camera, render_camera) in render_cameras.iter() {
         let depth_load = if M::clear_depth() {
             wgpu::LoadOp::Clear(1.0)
         } else {
@@ -281,8 +364,16 @@ pub(crate) fn material_renderpass<M: Material>(
             timestamp_writes: None,
         });
 
+        let Some(batches) = view_batches
+            .views
+            .get(&camera)
+            .filter(|batches| !batches.bins.batches.is_empty())
+        else {
+            continue;
+        };
+
         render_pass.set_pipeline(&pipeline.pipeline);
-        render_pass.set_vertex_buffer(1, buffers.current_input_buffer.buffer().slice(..));
+        render_pass.set_vertex_buffer(1, batches.instances.buffer().slice(..));
 
         // Set the engine built-in bind groups that M declared it needs.
         // Only the groups present in the pipeline layout are set — the
@@ -294,27 +385,26 @@ pub(crate) fn material_renderpass<M: Material>(
             render_pass.set_bind_group(2, &render_lighting.bind_group, &[]);
         }
 
-        for (main_entity, skeleton, render_mat_comp) in render_mesh_query.iter() {
-            let Some(mesh_instance) = render_mesh_instances.get(main_entity) else {
+        let mut bound_material = None;
+        for batch in &batches.bins.batches {
+            let (Some(mesh), Some(render_mat)) = (
+                render_meshes.get(&batch.key.mesh),
+                render_materials.get(&batch.key.material),
+            ) else {
                 continue;
             };
-            if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
-                if let Some(render_mat) = render_materials.get(&render_mat_comp.material_asset_id) {
-                    render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
-                } else {
-                    continue;
-                }
-
-                if M::needs_skeleton() {
-                    let offset = skeleton.map_or(0, |sk| sk.offset);
-                    render_pass.set_bind_group(3, skins.bind_group(), &[offset]);
-                }
-
-                render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
-                render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                let index = mesh_instance.current_uniform_index;
-                render_pass.draw_indexed(0..mesh.index_count, 0, index..index + 1);
+            if bound_material != Some(batch.key.material) {
+                render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
+                bound_material = Some(batch.key.material);
             }
+
+            if M::needs_skeleton() {
+                render_pass.set_bind_group(3, skins.bind_group(), &[batch.skeleton_offset]);
+            }
+
+            render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
+            render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
+            render_pass.draw_indexed(0..mesh.index_count, 0, batch.instances.clone());
         }
     }
 }
@@ -387,6 +477,12 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
         app.add_render_system(Extract, extract_materials::<M>)
+            .add_render_system(
+                Render,
+                queue_material_meshes::<M>
+                    .in_set(RenderSet::Queue)
+                    .after(clear_draw_stats),
+            )
             .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw));
     }
 
@@ -500,6 +596,10 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 
         app.render_mut()
             .insert_resource(MaterialPipeline::<M>::new(pipeline, material_layout));
+        if !self.pipeline_only {
+            app.render_mut()
+                .insert_resource(MaterialViewBatches::<M>::default());
+        }
     }
 }
 
@@ -507,19 +607,25 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
 mod tests {
     use super::*;
     use crate::{
-        assets::material::StandardMaterial, draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
+        assets::{material::StandardMaterial, mesh::Mesh},
+        batching::ViewDrawStats,
+        components::{camera::Camera, visibility::NoFrustumCulling},
+        draw_target::DrawTarget,
+        gpu::Gpu,
+        plugin::RenderPlugin,
     };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
         App,
     };
-    use concerto_ecs::Entity;
     use concerto_foundation::{
-        assets::{handle::AssetHandle, AssetId},
+        assets::{asset_server::AssetServer, handle::AssetHandle},
         transform::Transform,
     };
+    use concerto_mesh::{primitives::cuboid, MeshComponent};
     use concerto_window::plugin::{Window, WindowPlugin};
+    use glam::Vec3;
 
     fn app(gpu: &Gpu, material: AssetId) -> (App, Entity) {
         let mut app = App::new();
@@ -598,5 +704,174 @@ mod tests {
         app.update();
 
         assert_eq!(drawn_with(&mut app), [second]);
+    }
+
+    fn scene(gpu: &Gpu) -> App {
+        let mut app = App::new();
+        app.insert_resource(gpu.clone())
+            .insert_resource(DrawTarget::None)
+            .insert_resource(Window::new((64, 48), 1.0));
+        app.register_plugin(MainSchedulePlugin)
+            .register_plugin(AssetManagerPlugin)
+            .register_plugin(TimePlugin)
+            .register_plugin(WindowPlugin)
+            .register_plugin(TransformPlugin)
+            .register_plugin(RenderPlugin)
+            .register_plugin(MaterialPlugin::<StandardMaterial>::default());
+        let world = app.main_mut().world_mut();
+        world.register_component::<Transform>();
+        world.spawn((Camera::default(), Transform::IDENTITY));
+        app.finish_plugin_build();
+        app
+    }
+
+    fn mesh(app: &App) -> AssetHandle<Mesh> {
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .add(cuboid(Vec3::ONE))
+    }
+
+    fn material(app: &App) -> AssetHandle<StandardMaterial> {
+        app.get_resource::<AssetServer>()
+            .unwrap()
+            .add(StandardMaterial::default())
+    }
+
+    fn spawn(
+        app: &mut App,
+        mesh: &AssetHandle<Mesh>,
+        material: &AssetHandle<StandardMaterial>,
+        translation: Vec3,
+    ) -> Entity {
+        app.main_mut().world_mut().spawn((
+            MeshComponent {
+                handle: mesh.clone(),
+            },
+            MaterialComponent::<StandardMaterial> {
+                handle: material.clone(),
+            },
+            Transform::from_translation(translation),
+        ))
+    }
+
+    fn prepared(app: &App, meshes: &[AssetId], materials: &[AssetId]) -> bool {
+        let render = app.render();
+        let render_meshes = render.get_resource::<RenderAssets<RenderMesh>>().unwrap();
+        let render_materials = render
+            .get_resource::<RenderAssets<RenderMaterial<StandardMaterial>>>()
+            .unwrap();
+        meshes.iter().all(|id| render_meshes.contains(id))
+            && materials.iter().all(|id| render_materials.contains(id))
+    }
+
+    fn settle(
+        app: &mut App,
+        meshes: &[&AssetHandle<Mesh>],
+        materials: &[&AssetHandle<StandardMaterial>],
+    ) {
+        let meshes: Vec<AssetId> = meshes.iter().map(|mesh| mesh.id()).collect();
+        let materials: Vec<AssetId> = materials.iter().map(|material| material.id()).collect();
+        for _ in 0..100 {
+            app.update();
+            if prepared(app, &meshes, &materials) {
+                break;
+            }
+        }
+        assert!(prepared(app, &meshes, &materials));
+        app.update();
+        app.update();
+    }
+
+    fn camera_stats(app: &App) -> ViewDrawStats {
+        let stats = app.render().get_resource::<RenderDrawStats>().unwrap();
+        assert_eq!(stats.cameras.len(), 1);
+        *stats.cameras.values().next().unwrap()
+    }
+
+    #[test]
+    fn meshes_sharing_a_mesh_and_material_draw_in_one_call() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut app = scene(&gpu);
+        let (cube, white) = (mesh(&app), material(&app));
+        for x in [-1.0, 0.0, 1.0] {
+            spawn(&mut app, &cube, &white, Vec3::new(x, 0.0, -5.0));
+        }
+
+        settle(&mut app, &[&cube], &[&white]);
+
+        assert_eq!(
+            camera_stats(&app),
+            ViewDrawStats {
+                draws: 1,
+                culled: 0
+            }
+        );
+    }
+
+    #[test]
+    fn meshes_with_different_materials_draw_once_per_material() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut app = scene(&gpu);
+        let cube = mesh(&app);
+        let (first, second) = (material(&app), material(&app));
+        spawn(&mut app, &cube, &first, Vec3::new(-1.0, 0.0, -5.0));
+        spawn(&mut app, &cube, &second, Vec3::new(0.0, 0.0, -5.0));
+        spawn(&mut app, &cube, &first, Vec3::new(1.0, 0.0, -5.0));
+
+        settle(&mut app, &[&cube], &[&first, &second]);
+
+        assert_eq!(
+            camera_stats(&app),
+            ViewDrawStats {
+                draws: 2,
+                culled: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_mesh_behind_the_camera_is_culled() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut app = scene(&gpu);
+        let (cube, white) = (mesh(&app), material(&app));
+        spawn(&mut app, &cube, &white, Vec3::new(0.0, 0.0, -5.0));
+        spawn(&mut app, &cube, &white, Vec3::new(0.0, 0.0, 5.0));
+
+        settle(&mut app, &[&cube], &[&white]);
+
+        assert_eq!(
+            camera_stats(&app),
+            ViewDrawStats {
+                draws: 1,
+                culled: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_mesh_with_no_frustum_culling_behind_the_camera_is_drawn() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut app = scene(&gpu);
+        let (cube, white) = (mesh(&app), material(&app));
+        let behind = spawn(&mut app, &cube, &white, Vec3::new(0.0, 0.0, 5.0));
+        app.main_mut().world_mut().insert(NoFrustumCulling, behind);
+
+        settle(&mut app, &[&cube], &[&white]);
+
+        assert_eq!(
+            camera_stats(&app),
+            ViewDrawStats {
+                draws: 1,
+                culled: 0
+            }
+        );
     }
 }
