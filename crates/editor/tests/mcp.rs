@@ -3410,7 +3410,9 @@ fn play_answers_that_the_game_is_still_loading_when_its_wait_runs_out() {
         &Log::default(),
         gated_game,
         |app| {
-            app.insert_resource(concerto_editor::mcp::PlayTimeout(Duration::from_secs(8)));
+            app.insert_resource(concerto_editor::mcp::PlayTimeout(
+                concerto_editor::hosted::WARM_UP_LIMIT + Duration::from_secs(4),
+            ));
         },
         |client| async move {
             open(&client).await;
