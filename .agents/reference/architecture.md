@@ -86,6 +86,13 @@ A host never touches the render world once frames are running.
   `cmd.trigger(signal)` queues the dispatch for the next sync point.
 - Ordering is by reference, never by registration: see
   [docs/scheduling.md](../../docs/scheduling.md).
+- Under the multi-threaded executor, a `Send` system runs on a pool thread,
+  or on the thread that found it ready when it is the only one ready and
+  nothing else runs. An exclusive system runs on the thread that runs the
+  schedule. A non-`Send` system runs on the `MainThreadExecutor`'s thread, or
+  on the thread that runs the schedule when there is none.
+- Commands apply on the thread that runs the schedule, when the executor
+  reaches their sync point.
 
 ## Assets
 
