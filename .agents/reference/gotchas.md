@@ -25,7 +25,7 @@ fix the entry in the same commit as the change that made it false.
 - **Transform propagation recomputes every hierarchy each frame, but stamps
   only what moved.** `propagate_global_transforms` writes each
   `GlobalTransform` with `set_if_neq`, so `Changed<GlobalTransform>` means the
-  world transform changed. `extract_meshes` relies on it to upload only the
+  world transform changed. `extract_meshes` relies on it to re-extract only the
   meshes that moved, and `extract_skeletons` to rewrite only the bone palettes
   of skeletons whose bones moved.
 - **A command-using system's sync point sits at its registration position,

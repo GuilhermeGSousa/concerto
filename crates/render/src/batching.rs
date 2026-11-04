@@ -18,31 +18,14 @@ pub(crate) const INITIAL_MESH_INSTANCE_CAPACITY: u32 = 1024;
 pub(crate) struct InstanceInputUniformBuffer<T: Pod> {
     values: Vec<T>,
     free_uniform_indices: Vec<u32>,
-    buffer: wgpu::Buffer,
-    label: &'static str,
 }
 
 impl<T: Pod> InstanceInputUniformBuffer<T> {
-    const STRIDE: u64 = size_of::<T>() as u64;
-
-    pub(crate) fn new(device: &Device, label: &'static str, initial_capacity: u32) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             values: Vec::new(),
             free_uniform_indices: Vec::new(),
-            buffer: Self::create_buffer(device, label, initial_capacity as u64),
-            label,
         }
-    }
-
-    fn create_buffer(device: &Device, label: &'static str, capacity: u64) -> wgpu::Buffer {
-        device.create_buffer(&BufferDescriptor {
-            label: Some(label),
-            size: capacity * Self::STRIDE,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        })
     }
 
     pub(crate) fn add(&mut self, value: T) -> u32 {
@@ -64,31 +47,6 @@ impl<T: Pod> InstanceInputUniformBuffer<T> {
 
     pub(crate) fn remove(&mut self, index: u32) {
         self.free_uniform_indices.push(index);
-    }
-
-    #[cfg(test)]
-    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
-
-    pub(crate) fn write_buffer(&mut self, device: &Device, queue: &Queue, mut span: Range<u32>) {
-        let len = self.values.len() as u64;
-        let mut capacity = self.buffer.size() / Self::STRIDE;
-        if len > capacity {
-            while capacity < len {
-                capacity *= 2;
-            }
-            self.buffer = Self::create_buffer(device, self.label, capacity);
-            span = 0..self.values.len() as u32;
-        }
-        if span.is_empty() {
-            return;
-        }
-        queue.write_buffer(
-            &self.buffer,
-            span.start as u64 * Self::STRIDE,
-            bytemuck::cast_slice(&self.values[span.start as usize..span.end as usize]),
-        );
     }
 }
 
@@ -212,7 +170,9 @@ impl ViewInstanceBuffer {
         device.create_buffer(&BufferDescriptor {
             label: Some(label),
             size: capacity * Self::STRIDE,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            usage: wgpu::BufferUsages::VERTEX
+                | wgpu::BufferUsages::COPY_DST
+                | wgpu::BufferUsages::COPY_SRC,
             mapped_at_creation: false,
         })
     }
@@ -294,10 +254,6 @@ mod tests {
         Frustum::from_clip_from_world(proj * view)
     }
 
-    fn input(gpu: &Gpu) -> InstanceInputUniformBuffer<GlobalTransformRaw> {
-        InstanceInputUniformBuffer::new(&gpu.device, "Test Instances", 4)
-    }
-
     fn instance(
         input: &mut InstanceInputUniformBuffer<GlobalTransformRaw>,
         translation: Vec3,
@@ -339,10 +295,7 @@ mod tests {
 
     #[test]
     fn instances_sharing_a_key_form_one_batch() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut input = input(&gpu);
+        let mut input = InstanceInputUniformBuffer::new();
         let instances: Vec<RenderMeshInstance> = (0..3)
             .map(|i| {
                 instance(
@@ -372,10 +325,7 @@ mod tests {
 
     #[test]
     fn instances_with_different_keys_form_one_batch_each_in_key_order() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut input = input(&gpu);
+        let mut input = InstanceInputUniformBuffer::new();
         let instances: Vec<RenderMeshInstance> = (0..4)
             .map(|i| {
                 instance(
@@ -409,10 +359,7 @@ mod tests {
 
     #[test]
     fn a_skinned_instance_forms_its_own_batch_after_the_unskinned_ones() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut input = input(&gpu);
+        let mut input = InstanceInputUniformBuffer::new();
         let skinned = [
             instance(&mut input, Vec3::ZERO, RenderMeshInstanceFlags::SKINNED),
             instance(&mut input, Vec3::ZERO, RenderMeshInstanceFlags::SKINNED),
@@ -461,10 +408,7 @@ mod tests {
 
     #[test]
     fn culled_instances_are_counted_and_not_drawn() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut input = input(&gpu);
+        let mut input = InstanceInputUniformBuffer::new();
         let instances = [
             instance(
                 &mut input,
@@ -506,10 +450,7 @@ mod tests {
 
     #[test]
     fn a_batch_holds_its_instances_transforms_in_order() {
-        let Some(gpu) = Gpu::request_for_test() else {
-            return;
-        };
-        let mut input = input(&gpu);
+        let mut input = InstanceInputUniformBuffer::new();
         let translations = [
             Vec3::new(-1.0, 0.0, -10.0),
             Vec3::new(0.0, 1.0, -10.0),
@@ -531,5 +472,53 @@ mod tests {
             bins.values.iter().copied().map(matrix).collect::<Vec<_>>(),
             translations.map(Mat4::from_translation)
         );
+    }
+
+    fn read_back(gpu: &Gpu, buffer: &wgpu::Buffer, len: usize) -> Vec<Mat4> {
+        let size = (len * size_of::<GlobalTransformRaw>()) as u64;
+        let readback = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("View Instance Readback Buffer"),
+            size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_buffer_to_buffer(buffer, 0, &readback, 0, size);
+        gpu.queue.submit([encoder.finish()]);
+
+        let slice = readback.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(wgpu::MapMode::Read, move |result| {
+            let _ = tx.send(result);
+        });
+        gpu.device.poll(wgpu::Maintain::Wait);
+        rx.recv().unwrap().unwrap();
+        let matrices = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range())
+            .chunks_exact(16)
+            .map(Mat4::from_cols_slice)
+            .collect();
+        readback.unmap();
+        matrices
+    }
+
+    #[test]
+    fn a_view_buffer_grows_past_capacity_and_keeps_every_transform() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut buffer = ViewInstanceBuffer::new(&gpu.device, "Test View Instances");
+        let matrices: Vec<Mat4> = (0..=INITIAL_MESH_INSTANCE_CAPACITY)
+            .map(|i| Mat4::from_translation(Vec3::new(i as f32 + 1.0, 0.0, 0.0)))
+            .collect();
+        let values: Vec<GlobalTransformRaw> = matrices
+            .iter()
+            .map(|&matrix| GlobalTransform::new(matrix).to_raw())
+            .collect();
+
+        buffer.write_buffer(&gpu.device, &gpu.queue, &values);
+
+        assert_eq!(read_back(&gpu, buffer.buffer(), values.len()), matrices);
     }
 }

@@ -2,7 +2,6 @@ use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
     batching::{
         clear_draw_stats, BatchedInstanceBuffers, InstanceInputUniformBuffer, RenderDrawStats,
-        INITIAL_MESH_INSTANCE_CAPACITY,
     },
     capabilities::RenderCapabilities,
     components::{
@@ -251,11 +250,7 @@ impl Plugin for RenderPlugin {
         );
         let skin_uniforms = SkinUniforms::new(&device, &skeleton_layout, &queue);
         let batched_instance_buffers = BatchedInstanceBuffers {
-            current_input_buffer: InstanceInputUniformBuffer::new(
-                &device,
-                "Mesh Instances Buffer",
-                INITIAL_MESH_INSTANCE_CAPACITY,
-            ),
+            current_input_buffer: InstanceInputUniformBuffer::new(),
         };
 
         app.render_mut()
