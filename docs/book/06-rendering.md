@@ -124,6 +124,25 @@ use concerto::mesh::primitives::capsule;
 let mesh = assets.add(capsule(0.3, 0.6, 8, 16));
 ```
 
+## Batching and culling
+
+Entities that share a mesh and a material are drawn together, in one draw call
+per camera. Each camera draws only the meshes whose bounds, their `Aabb`, lie
+at least partly inside its view, and each shadow-casting spot or directional
+light draws into its shadow map only the meshes inside its own view. A mesh
+gets its `Aabb` from its vertices a frame or so after the mesh loads, and is
+drawn everywhere until then.
+
+Two components from `concerto::render::components` opt a mesh out:
+
+- `NoFrustumCulling` draws it in every view, whatever its bounds;
+- `NotShadowCaster` keeps it out of every shadow map.
+
+Skinned meshes are never culled, and each one takes its own draw call. A mesh
+whose shader ignores its vertices or its model matrix, such as a skybox built
+from `SkyboxCube`, needs both components, or it is culled whenever its
+vertices' box is out of view. The world grid requires both already.
+
 ## The world grid and the sky
 
 `WorldGrid::default()`, from `concerto::world_grid`, draws an infinite ground

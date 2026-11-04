@@ -15,4 +15,4 @@ pub use camera_environment::CameraEnvironment;
 pub use light::Light;
 pub use material::MaterialComponent;
 pub use render_entity::RenderEntity;
-pub use visibility::NoFrustumCulling;
+pub use visibility::{NoFrustumCulling, NotShadowCaster};

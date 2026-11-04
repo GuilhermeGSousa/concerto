@@ -8,3 +8,9 @@ use crate::components::render_entity::SyncWithRenderWorld;
 #[require(SyncWithRenderWorld)]
 #[reflect(SceneComponent)]
 pub struct NoFrustumCulling;
+
+/// Keeps a mesh out of every shadow map.
+#[derive(Component, Reflect, Default, Clone, Copy)]
+#[require(SyncWithRenderWorld)]
+#[reflect(SceneComponent)]
+pub struct NotShadowCaster;

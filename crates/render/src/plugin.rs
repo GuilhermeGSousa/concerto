@@ -17,7 +17,7 @@ use crate::{
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
         },
         skeleton::{extract_skeletons, SkinUniforms},
-        visibility::NoFrustumCulling,
+        visibility::{NoFrustumCulling, NotShadowCaster},
     },
     device::RenderDevice,
     draw_target::DrawTarget,
@@ -117,6 +117,7 @@ impl Plugin for RenderPlugin {
             .register_type::<CameraEnvironment>()
             .register_type::<SyncWithRenderWorld>()
             .register_type::<NoFrustumCulling>()
+            .register_type::<NotShadowCaster>()
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
             .register_type::<concerto_mesh::SkeletonComponent>()
@@ -125,6 +126,7 @@ impl Plugin for RenderPlugin {
         app.track_removals::<concerto_mesh::MeshComponent>()
             .track_removals::<concerto_mesh::SkeletonComponent>()
             .track_removals::<NoFrustumCulling>()
+            .track_removals::<NotShadowCaster>()
             .track_removals::<concerto_mesh::Aabb>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 

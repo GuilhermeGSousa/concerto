@@ -21,7 +21,7 @@ use crate::{
     batching::{BatchedInstanceBuffers, InstanceInputUniformBuffer},
     components::{
         render_entity::{MainEntity, MainEntityHashMap},
-        visibility::NoFrustumCulling,
+        visibility::{NoFrustumCulling, NotShadowCaster},
     },
     device::RenderDevice,
     frustum::Frustum,
@@ -40,6 +40,7 @@ bitflags! {
     pub(crate) struct RenderMeshInstanceFlags: u8 {
         const SKINNED = 1;
         const NO_FRUSTUM_CULLING = 1 << 1;
+        const SHADOW_CASTER = 1 << 2;
     }
 }
 
@@ -65,6 +66,7 @@ type MeshExtractionQuery = (
     Option<&'static SkeletonComponent>,
     Option<&'static Aabb>,
     Option<&'static NoFrustumCulling>,
+    Option<&'static NotShadowCaster>,
 );
 
 type ChangedMeshFilter = Or<(
@@ -73,6 +75,7 @@ type ChangedMeshFilter = Or<(
     Changed<SkeletonComponent>,
     Changed<Aabb>,
     Changed<NoFrustumCulling>,
+    Changed<NotShadowCaster>,
 )>;
 
 fn widen(span: Option<Range<u32>>, slot: u32) -> Range<u32> {
@@ -83,13 +86,14 @@ fn widen(span: Option<Range<u32>>, slot: u32) -> Range<u32> {
 }
 
 fn extract_mesh(
-    (entity, mesh, transform, skeleton, aabb, no_frustum_culling): (
+    (entity, mesh, transform, skeleton, aabb, no_frustum_culling, not_shadow_caster): (
         Entity,
         &MeshComponent,
         &GlobalTransform,
         Option<&SkeletonComponent>,
         Option<&Aabb>,
         Option<&NoFrustumCulling>,
+        Option<&NotShadowCaster>,
     ),
     render_mesh_instances: &mut RenderMeshInstances,
     input: &mut InstanceInputUniformBuffer<GlobalTransformRaw>,
@@ -100,6 +104,10 @@ fn extract_mesh(
     flags.set(
         RenderMeshInstanceFlags::NO_FRUSTUM_CULLING,
         no_frustum_culling.is_some(),
+    );
+    flags.set(
+        RenderMeshInstanceFlags::SHADOW_CASTER,
+        not_shadow_caster.is_none(),
     );
     let world_aabb = aabb.map(|aabb| aabb.transformed(transform.matrix()));
     let raw_transform = if flags.contains(RenderMeshInstanceFlags::SKINNED) {
@@ -141,6 +149,7 @@ pub(crate) fn extract_meshes(
     mut removed_skeletons: Extracted<RemovedComponents<SkeletonComponent>>,
     mut removed_aabbs: Extracted<RemovedComponents<Aabb>>,
     mut removed_no_frustum_culling: Extracted<RemovedComponents<NoFrustumCulling>>,
+    mut removed_not_shadow_casters: Extracted<RemovedComponents<NotShadowCaster>>,
     mut render_mesh_instances: ResMut<RenderMeshInstances>,
     mut buffers: ResMut<BatchedInstanceBuffers>,
     device: Res<RenderDevice>,
@@ -157,6 +166,7 @@ pub(crate) fn extract_meshes(
         .read()
         .chain(removed_aabbs.read())
         .chain(removed_no_frustum_culling.read())
+        .chain(removed_not_shadow_casters.read())
         .collect();
     for entity in removed {
         if changed_meshes.contains_entity(entity) {
@@ -649,5 +659,26 @@ mod tests {
         app.update();
 
         assert!(flags(&app).contains(RenderMeshInstanceFlags::NO_FRUSTUM_CULLING));
+    }
+
+    #[test]
+    fn a_mesh_losing_not_shadow_caster_becomes_a_shadow_caster_again() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let (mut app, entities) = app(&gpu, AssetId::new(), &[Vec3::ZERO]);
+        let entity = entities[0];
+        app.main_mut().world_mut().insert(NotShadowCaster, entity);
+        app.update();
+        app.update();
+        let flags = |app: &App| instances(app).get(&MainEntity::new(entity)).unwrap().flags;
+        assert!(!flags(&app).contains(RenderMeshInstanceFlags::SHADOW_CASTER));
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<NotShadowCaster>(entity);
+        app.update();
+
+        assert!(flags(&app).contains(RenderMeshInstanceFlags::SHADOW_CASTER));
     }
 }

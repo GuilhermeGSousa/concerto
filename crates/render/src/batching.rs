@@ -66,6 +66,7 @@ impl<T: Pod> InstanceInputUniformBuffer<T> {
         self.free_uniform_indices.push(index);
     }
 
+    #[cfg(test)]
     pub(crate) fn buffer(&self) -> &wgpu::Buffer {
         &self.buffer
     }

@@ -9,7 +9,7 @@ use concerto_foundation::{
 };
 use concerto_mesh::{MeshComponent, Vertex};
 use concerto_render::{
-    components::{render_entity::SyncWithRenderWorld, NoFrustumCulling},
+    components::{render_entity::SyncWithRenderWorld, NoFrustumCulling, NotShadowCaster},
     MaterialComponent,
 };
 
@@ -52,6 +52,7 @@ impl Component for WorldGrid {
     fn register_required(required: &mut concerto_ecs::component::RequiredComponents) {
         required.register::<SyncWithRenderWorld>(SyncWithRenderWorld::default);
         required.register::<NoFrustumCulling>(NoFrustumCulling::default);
+        required.register::<NotShadowCaster>(NotShadowCaster::default);
     }
 }
 
@@ -140,6 +141,9 @@ mod tests {
 
         assert!(world
             .get_component_for_entity::<NoFrustumCulling>(grid)
+            .is_some());
+        assert!(world
+            .get_component_for_entity::<NotShadowCaster>(grid)
             .is_some());
     }
 }
