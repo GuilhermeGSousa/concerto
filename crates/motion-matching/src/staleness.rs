@@ -110,6 +110,9 @@ pub fn weightless_hash(
     for channel in &definition.channels {
         hash.channel(channel);
     }
+    if definition.entries.iter().any(|entry| entry.mirrored) {
+        hash.value(&stored(&definition.mirror_axis));
+    }
     hash.0
 }
 

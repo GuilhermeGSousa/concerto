@@ -25,8 +25,8 @@ use concerto_foundation::{
 };
 use concerto_mesh::{Skeleton, SkeletonComponent, SkeletonGizmo};
 use concerto_motion_matching::{
-    BonePositions, BoneVelocities, FeatureChannelData, MotionDatabase, MotionDatabaseDefinition,
-    MotionEntry, TimeRange, TrajectoryPositions, bake,
+    BonePositions, BoneVelocities, FeatureChannelData, JointAxis, MotionDatabase,
+    MotionDatabaseDefinition, MotionEntry, TimeRange, TrajectoryPositions, bake,
 };
 use glam::{Quat, Vec3};
 use uuid::Uuid;
@@ -77,6 +77,7 @@ fn entry(range: Option<TimeRange>) -> MotionEntry {
     MotionEntry {
         clip: AssetHandle::weak(AssetId::new()),
         range,
+        mirrored: false,
     }
 }
 
@@ -97,7 +98,7 @@ fn baked_with(
         ..Default::default()
     };
     definition.simulation.position_joint = "Spine".into();
-    definition.simulation.facing_axis = Vec3::Z;
+    definition.simulation.facing_axis = JointAxis::Z;
     let clips: Vec<AnimationClip> = entries.iter().map(|_| walking()).collect();
     definition.entries = entries;
     let skeleton = skeleton();
@@ -1046,6 +1047,17 @@ fn an_entry_whose_clip_moved_since_the_build_is_not_sought() {
 
     assert_eq!(baked_entry(tab.state()), Some(0));
     tab.state_mut().selected_entry = Some(1);
+
+    assert_eq!(baked_entry(tab.state()), None);
+}
+
+#[test]
+fn an_entry_mirrored_since_the_build_is_not_sought() {
+    let mut tab = built(logging());
+    tab.state_mut().selected_entry = Some(1);
+    assert_eq!(baked_entry(tab.state()), Some(1));
+
+    tab.state_mut().entries[1].mirrored = true;
 
     assert_eq!(baked_entry(tab.state()), None);
 }

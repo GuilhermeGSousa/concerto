@@ -24,6 +24,7 @@ use concerto_motion_matching::{
 use concerto_reflect::to_value;
 use concerto_ui::{
     anchor::UIAnchoredPanel,
+    checkbox::UICheckbox,
     interaction::{UIClick, UIDisabled, UIInteractionStyle},
     node::{UIBox, UILayout, UINode},
     scroll::UIScrollArea,
@@ -101,6 +102,7 @@ fn entry_of(clip: &AssetEntry, range: Option<TimeRange>) -> MotionEntry {
     MotionEntry {
         clip: AssetHandle::weak(clip.id),
         range,
+        mirrored: false,
     }
 }
 
@@ -220,6 +222,13 @@ impl Tab {
         self.world()
             .get_component_for_entity::<UIDisabled>(entity)
             .is_some()
+    }
+
+    fn checked(&self, entity: Entity) -> bool {
+        self.world()
+            .get_component_for_entity::<UICheckbox>(entity)
+            .unwrap()
+            .checked
     }
 
     fn selected(&self, entity: Entity) -> bool {
@@ -637,6 +646,7 @@ fn a_clip_gone_from_the_project_reads_as_missing() {
     tab.state_mut().entries.push(MotionEntry {
         clip: gone,
         range: None,
+        mirrored: false,
     });
 
     tab.until_read();
@@ -690,6 +700,7 @@ fn add_opens_the_clip_picker_and_a_pick_appends_a_whole_clip_entry_and_selects_i
         MotionEntry {
             clip: AssetHandle::weak(jog.id),
             range: None,
+            mirrored: false,
         }
     );
     assert_eq!(tab.state().selected_entry, Some(2));
@@ -724,6 +735,41 @@ fn the_same_clip_can_be_added_twice() {
     assert_eq!(rows.len(), 3);
     assert_eq!(tab.text(rows[2].name).text, "walk");
     assert_eq!(tab.text(rows[2].driven).text, "3 of 3");
+}
+
+#[test]
+fn the_mirrored_checkbox_sets_the_entry_and_marks_the_document_unsaved() {
+    let mut tab = tab();
+    let mirrored = tab.panels().entry_rows[1].mirrored;
+    assert!(!tab.checked(mirrored));
+
+    tab.clicked(mirrored);
+
+    assert!(tab.state().entries[1].mirrored);
+    assert!(!tab.state().entries[0].mirrored);
+    assert!(tab.checked(mirrored));
+    assert!(tab.unsaved());
+}
+
+#[test]
+fn the_row_refresh_writes_the_mirrored_checkbox_from_the_entry() {
+    let mut tab = tab_of(fixture(), |definition| {
+        definition.entries[0].mirrored = true;
+    });
+    tab.until_read();
+    let rows = [
+        tab.panels().entry_rows[0].mirrored,
+        tab.panels().entry_rows[1].mirrored,
+    ];
+    assert!(tab.checked(rows[0]));
+    assert!(!tab.checked(rows[1]));
+
+    tab.state_mut().entries[0].mirrored = false;
+    tab.state_mut().entries[1].mirrored = true;
+    tab.f.frame();
+
+    assert!(!tab.checked(rows[0]));
+    assert!(tab.checked(rows[1]));
 }
 
 #[test]
@@ -1160,8 +1206,7 @@ fn a_status_shows_on_a_line_of_its_own_and_hides_when_empty() {
     assert!(!tab.shown(status));
 }
 
-#[test]
-fn a_failed_preview_shows_what_was_read_and_changes_nothing() {
+fn failed_tab() -> Tab {
     let mut f = fixture_with(broken_recipe);
     let skeleton = write_asset(&mut f, "content/rig.gasset", &skeleton_of(&["Hips"]));
     let walk = write_asset(&mut f, "content/walk.gasset", &clip_of(10, 0..1));
@@ -1185,6 +1230,12 @@ fn a_failed_preview_shows_what_was_read_and_changes_nothing() {
         asset,
     };
     tab.until_read();
+    tab
+}
+
+#[test]
+fn a_failed_preview_shows_what_was_read_and_changes_nothing() {
+    let mut tab = failed_tab();
 
     let panels = tab.panels();
     assert_eq!(tab.text(panels.entry_rows[0].name).text, "walk");
@@ -1217,6 +1268,15 @@ fn a_failed_preview_shows_what_was_read_and_changes_nothing() {
             .starts_with("Preview failed")
     );
     assert!(card_names(&mut tab.f).is_empty());
+}
+
+#[test]
+fn the_mirrored_checkbox_is_disabled_on_a_read_only_document() {
+    let failed = failed_tab();
+    assert!(failed.disabled(failed.panels().entry_rows[0].mirrored));
+
+    let opened = tab();
+    assert!(!opened.disabled(opened.panels().entry_rows[0].mirrored));
 }
 
 #[test]

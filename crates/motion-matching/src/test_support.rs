@@ -12,7 +12,8 @@ use crate::{
     },
     database::MotionDatabase,
     definition::{
-        MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings, TrajectorySettings,
+        JointAxis, MirrorAxis, MotionDatabaseDefinition, MotionEntry, SimulationBoneSettings,
+        TrajectorySettings,
     },
 };
 
@@ -147,22 +148,25 @@ fn two_clip_definition(
             MotionEntry {
                 clip: walk,
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: turn,
                 range: None,
+                mirrored: false,
             },
         ],
         rate: 30.0,
         speed,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
         },
         trajectory,
         channels,
+        mirror_axis: MirrorAxis::X,
     }
 }
 

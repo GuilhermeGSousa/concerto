@@ -20,11 +20,56 @@ pub struct TimeRange {
     pub end: f32,
 }
 
-/// One clip of a motion database and the part of it to bake; no range means the whole clip.
+/// One clip of a motion database, the part of it to bake, and whether it plays mirrored; no range means the whole clip.
 #[derive(Reflect, Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct MotionEntry {
     pub clip: AssetHandle<AnimationClip>,
     pub range: Option<TimeRange>,
+    pub mirrored: bool,
+}
+
+/// A signed axis of a joint's local space.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum JointAxis {
+    X,
+    NegX,
+    #[default]
+    Y,
+    NegY,
+    Z,
+    NegZ,
+}
+
+impl JointAxis {
+    /// The unit vector along this axis.
+    pub fn vector(self) -> Vec3 {
+        match self {
+            JointAxis::X => Vec3::X,
+            JointAxis::NegX => Vec3::NEG_X,
+            JointAxis::Y => Vec3::Y,
+            JointAxis::NegY => Vec3::NEG_Y,
+            JointAxis::Z => Vec3::Z,
+            JointAxis::NegZ => Vec3::NEG_Z,
+        }
+    }
+}
+
+/// The horizontal model-space axis normal to the plane that mirrored entries are mirrored across.
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MirrorAxis {
+    #[default]
+    X,
+    Z,
+}
+
+impl MirrorAxis {
+    /// The unit normal of the mirror plane.
+    pub fn normal(self) -> Vec3 {
+        match self {
+            MirrorAxis::X => Vec3::X,
+            MirrorAxis::Z => Vec3::Z,
+        }
+    }
 }
 
 /// Which joints place and orient the simulation bone, and how much to smooth it.
@@ -32,7 +77,7 @@ pub struct MotionEntry {
 pub struct SimulationBoneSettings {
     pub position_joint: JointName,
     pub facing_joint: JointName,
-    pub facing_axis: Vec3,
+    pub facing_axis: JointAxis,
     pub position_window: usize,
     pub facing_window: usize,
 }
@@ -42,7 +87,7 @@ impl Default for SimulationBoneSettings {
         Self {
             position_joint: "Spine2".into(),
             facing_joint: "Hips".into(),
-            facing_axis: Vec3::Y,
+            facing_axis: JointAxis::Y,
             position_window: 31,
             facing_window: 61,
         }
@@ -74,6 +119,7 @@ impl Default for TrajectorySettings {
 
 /// What to bake into a [`MotionDatabase`](crate::MotionDatabase): the clips, sampling, simulation bone, trajectory and feature channels.
 #[derive(Asset, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[asset(version = 2)]
 pub struct MotionDatabaseDefinition {
     pub skeleton: AssetHandle<Skeleton>,
     pub entries: Vec<MotionEntry>,
@@ -82,6 +128,7 @@ pub struct MotionDatabaseDefinition {
     pub simulation: SimulationBoneSettings,
     pub trajectory: TrajectorySettings,
     pub channels: Vec<FeatureChannelData>,
+    pub mirror_axis: MirrorAxis,
 }
 
 impl MotionDatabaseDefinition {
@@ -111,6 +158,7 @@ impl Default for MotionDatabaseDefinition {
             simulation: SimulationBoneSettings::default(),
             trajectory: TrajectorySettings::default(),
             channels: reference_channels(),
+            mirror_axis: MirrorAxis::X,
         }
     }
 }

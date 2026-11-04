@@ -58,18 +58,20 @@ the database; it needs no handles of its own to the clips for it to play.
 | Field | Meaning | Default |
 |---|---|---|
 | `skeleton` | the skeleton the clips animate | none |
-| `entries` | `MotionEntry`s: a clip and an optional `TimeRange` in seconds; no range means the whole clip | empty |
+| `entries` | `MotionEntry`s: a clip, an optional `TimeRange` in seconds and `mirrored` (`false`); no range means the whole clip | empty |
 | `rate` | frames per second of the database | 60 |
 | `speed` | clip seconds consumed per second of database time | 1.1 |
 | `simulation` | `SimulationBoneSettings` | see below |
 | `trajectory` | `TrajectorySettings`: `sample_dt` (1/3 s) and `sample_count` (3) | 1/3 s, 3 |
 | `channels` | `FeatureChannelData`s, in feature order: see [Loading channels](#loading-channels) | `reference_channels()` |
+| `mirror_axis` | a `MirrorAxis`, `X` or `Z`: the horizontal model-space axis normal to the plane mirrored entries are mirrored across | `MirrorAxis::X` |
 
 An entry bakes `floor((end - start) * rate / speed)` frames.
 
 `SimulationBoneSettings`: `position_joint` (`"Spine2"`) and `facing_joint`
-(`"Hips"`) are `JointName`s; `facing_axis` (`Vec3::Y`) is the facing
-joint's forward in its own space; `position_window` (31) and `facing_window`
+(`"Hips"`) are `JointName`s; `facing_axis` (`JointAxis::Y`) is the facing
+joint's forward in its own space, one of `X`, `NegX`, `Y`, `NegY`, `Z` and
+`NegZ`; `position_window` (31) and `facing_window`
 (61) are Savitzky-Golay windows. The simulation bone is the position joint's
 ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
@@ -117,6 +119,37 @@ definition that is refused before the first entry.
 | `InvalidRange` | a range outside its clip, or with `start >= end` |
 | `InvalidWindow` | a window that is even or at most 3 |
 | `InvalidRate`, `InvalidSpeed`, `InvalidSampleDt` | `rate`, `speed` or `trajectory.sample_dt` not finite and positive |
+| `Mirror` | a `MirrorError`: the skeleton cannot be mirrored across `mirror_axis`, in `bake` or `pose` |
+
+### Mirroring
+
+A `mirrored` entry plays its clip reflected across the plane through the
+model-space origin normal to `mirror_axis`, so a clip added twice, once
+mirrored, gives both sides of the motion. Nothing mirrored is stored: `bake`
+and `pose` pass each sampled local pose through `PoseMirror`, from
+`concerto_animation::mirror`, before model space, so the simulation bone, the
+trajectory and every feature come from the mirrored motion. Scale is copied
+from the twin, which is exact only for uniform scale.
+
+A joint whose name contains `Left` and not `Right` takes its pose from the
+joint named with every `Left` replaced by `Right`, and the other way round; any
+other joint is its own twin. Matching is case-sensitive. `PoseMirror::new`
+fails with `MissingTwin` when a twin is not in the skeleton, `TwinParents` when
+a joint's parent's twin is not its twin's parent, and `Asymmetric` when the rest
+pose is not symmetric: a bone with a parent whose rest translation is more than
+`1e-3 + 1e-2 * |t|` from its twin's mirrored. `Asymmetric` names the worst
+joint and its distance. Parentless bones are not checked.
+
+`MirrorAxis` offers only the horizontal axes, `X` and `Z`, because the
+simulation bone is a Y-up ground projection with a yaw. LAFAN1's BVH skeleton
+needs `MirrorAxis::Z`. A mirrored entry's simulation bone faces the mirror of the
+original's forward only when the facing joint's rest axis, its model-space rest
+rotation times `facing_axis`, lies in the plane; the bake does not check this.
+With no mirrored entry no mirror is built and the axis is not stored.
+
+Both assets are at version 2, with no migration: a version-1 definition or
+database fails to load, and the definition has to be re-created in the editor
+and baked again.
 
 ### Feature channels
 
@@ -278,8 +311,8 @@ let database = bake(&definition, &skeleton, &clips)?.with_source_hash(hash);
 `clip_bytes` holds the stored bytes of one clip per entry. The hash is FNV-1a,
 so it is stable across Rust versions. It covers the skeleton's asset id, the
 skeleton's and clips' bytes, the entries, `rate`, `speed`, `simulation`,
-`trajectory`, and each channel's type name and value with its top-level `weight`
-field left out.
+`trajectory`, `mirror_axis` when some entry is mirrored, and each channel's type
+name and value with its top-level `weight` field left out.
 
 - `weights_of(&definition)`: each live channel's `weight()`, in order.
 - `is_stale(&database, &definition, hash)`: the hash differs from
@@ -322,6 +355,10 @@ every bone index is a skeleton joint index.
 - `skeleton()`, `bone_count()`, `clips()`: the skeleton handle, its bone count
   at bake time and one clip handle per entry, in entry order.
 - `rate()`, `speed()`, `trajectory()`: the sampling the bake used.
+- `mirrored()`: whether each entry plays mirrored, in entry order;
+  `mirror_axis()`: the definition's `mirror_axis` when some entry is mirrored,
+  `None` otherwise. A clip listed twice, once mirrored, has the same handle in
+  `clips()` at both indices.
 - `source_hash()`: see [Stale databases](#stale-databases).
 - `frame_count()`; `entry_of(frame)`, `range_of(frame)`: the entry holding a
   frame and its half-open frame range; `frames_of_entry(index)`: the frames an
@@ -347,10 +384,11 @@ every bone index is a skeleton joint index.
 it, and `pose` returns `Err(FrameOutOfRange)`.
 
 `pose(frame, &skeleton, &clips)` samples the frame's local pose from
-`clips[entry]` at `clip_time` and re-expresses each parentless joint relative
-to the simulation bone. `clips` is one clip per entry, as given to `bake`. It
-returns `Err(BoneCountMismatch)`, `Err(ClipCountMismatch)` or
-`Err(FrameOutOfRange)` instead of panicking.
+`clips[entry]` at `clip_time`, passes it through the mirror if the entry is
+mirrored, and re-expresses each parentless joint relative to the simulation
+bone. `clips` is one clip per entry, as given to `bake`. It returns
+`Err(BoneCountMismatch)`, `Err(ClipCountMismatch)`, `Err(FrameOutOfRange)` or
+`Err(Mirror)` instead of panicking.
 
 ## Systems
 

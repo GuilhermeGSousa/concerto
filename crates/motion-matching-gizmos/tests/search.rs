@@ -29,9 +29,9 @@ use concerto_foundation::{
 use concerto_mesh::{JointName, JointPose, Skeleton, SkeletonComponent};
 use concerto_motion_matching::{
     BonePositions, BoneVelocities, CharacterLink, CharacterSimulation, DesiredMotion,
-    FeatureChannelData, FeatureShape, LastQuery, MotionDatabase, MotionDatabaseDefinition,
-    MotionEntry, MotionMatchingNode, MotionMatchingPlugin, SimulationBoneSettings,
-    TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
+    FeatureChannelData, FeatureShape, JointAxis, LastQuery, MirrorAxis, MotionDatabase,
+    MotionDatabaseDefinition, MotionEntry, MotionMatchingNode, MotionMatchingPlugin,
+    SimulationBoneSettings, TrajectoryDirections, TrajectoryPositions, TrajectorySettings, bake,
 };
 use concerto_motion_matching_gizmos::{
     MotionMatchingGizmos, MotionMatchingGizmosPlugin, matched_shapes, query_shapes,
@@ -145,22 +145,25 @@ fn baked(
             MotionEntry {
                 clip: walk_handle,
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: turn_handle,
                 range: None,
+                mirrored: false,
             },
         ],
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
         },
         trajectory: TrajectorySettings::default(),
         channels: channels(),
+        mirror_axis: MirrorAxis::X,
     };
     bake(&definition, &skeleton(), &[&walk(), &turn()]).unwrap()
 }
