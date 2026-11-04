@@ -19,7 +19,7 @@ use crate::{
     components::{
         camera::RenderCamera,
         material::{MaterialComponent, RenderMaterialComponent},
-        mesh::RenderMeshInstance,
+        mesh::{MeshInstances, RenderMeshInstance},
         render_entity::RenderEntity,
         shadows::RenderLighting,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
@@ -234,6 +234,7 @@ pub(crate) fn material_renderpass<M: Material>(
     render_window: Res<RenderWindow>,
     render_lighting: Res<RenderLighting>,
     skins: Res<SkinUniforms>,
+    mesh_instances: Res<MeshInstances>,
 ) {
     let encoder = device.command_encoder();
 
@@ -279,6 +280,7 @@ pub(crate) fn material_renderpass<M: Material>(
         });
 
         render_pass.set_pipeline(&pipeline.pipeline);
+        render_pass.set_vertex_buffer(1, mesh_instances.buffer().slice(..));
 
         // Set the engine built-in bind groups that M declared it needs.
         // Only the groups present in the pipeline layout are set — the
@@ -305,8 +307,8 @@ pub(crate) fn material_renderpass<M: Material>(
 
                 render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                let slot = mesh_instance.slot;
+                render_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
             }
         }
     }

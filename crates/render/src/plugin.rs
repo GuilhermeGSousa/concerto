@@ -6,7 +6,7 @@ use crate::{
         camera_environment::CameraEnvironment,
         light::{extract_lights, update_changed_lights, Light, RenderLights},
         material::MaterialComponent,
-        mesh::extract_meshes,
+        mesh::{extract_meshes, MeshInstances},
         render_entity::{extract, SyncWithRenderWorld},
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
@@ -234,6 +234,7 @@ impl Plugin for RenderPlugin {
             &render_shadow_view_projs,
         );
         let skin_uniforms = SkinUniforms::new(&device, &skeleton_layout, &queue);
+        let mesh_instances = MeshInstances::new(&device);
 
         app.render_mut()
             .insert_resource(DummyRenderTexture::new(&device))
@@ -256,6 +257,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_point_shadow_maps)
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
-            .insert_resource(skin_uniforms);
+            .insert_resource(skin_uniforms)
+            .insert_resource(mesh_instances);
     }
 }

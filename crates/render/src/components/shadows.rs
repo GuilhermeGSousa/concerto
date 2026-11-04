@@ -16,7 +16,7 @@ use crate::{
     capabilities::RenderCapabilities,
     components::{
         light::{LightType, RenderLight, RenderLights, RenderShadowsEnabled},
-        mesh::RenderMeshInstance,
+        mesh::{MeshInstances, RenderMeshInstance},
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
     device::RenderDevice,
@@ -576,6 +576,7 @@ pub(crate) fn render_shadow_maps(
     render_mesh_query: Query<(&RenderMeshInstance, Option<&RenderSkeletonComponent>)>,
     render_meshes: Res<RenderAssets<RenderMesh>>,
     skins: Res<SkinUniforms>,
+    mesh_instances: Res<MeshInstances>,
 ) {
     for (layer, &entity) in spot_directional_shadow_maps.slots.iter().enumerate() {
         let Some(light) = lights.get_entity(entity) else {
@@ -613,6 +614,7 @@ pub(crate) fn render_shadow_maps(
 
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &view_proj.bind_group, &[]);
+        render_pass.set_vertex_buffer(1, mesh_instances.buffer().slice(..));
 
         for (mesh_instance, skeleton) in render_mesh_query.iter() {
             if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
@@ -621,8 +623,8 @@ pub(crate) fn render_shadow_maps(
 
                 render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                render_pass.set_vertex_buffer(1, mesh_instance.transform.slice(..));
-                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                let slot = mesh_instance.slot;
+                render_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
             }
         }
     }
