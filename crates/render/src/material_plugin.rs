@@ -386,11 +386,6 @@ impl<M: Material> Plugin for MaterialPlugin<M> {
         app.register_type::<MaterialComponent<M>>();
         app.register_plugin(RenderAssetPlugin::<RenderMaterial<M>>::new());
 
-        // extract_materials<M> must be per-material so we know which material handle
-        // to store in RenderMaterialComponent<M>. Mesh transforms, however, are
-        // handled by the shared extract_meshes system already registered by
-        // RenderPlugin, which iterates over all entities with RenderEntity
-        // regardless of material type.
         app.add_render_system(Extract, extract_materials::<M>)
             .add_render_system(Render, material_renderpass::<M>.in_set(RenderSet::Draw));
     }
