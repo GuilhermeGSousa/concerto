@@ -1,7 +1,8 @@
 use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
     batching::{
-        BatchedInstanceBuffers, InstanceInputUniformBuffer, INITIAL_MESH_INSTANCE_CAPACITY,
+        clear_draw_stats, BatchedInstanceBuffers, InstanceInputUniformBuffer, RenderDrawStats,
+        INITIAL_MESH_INSTANCE_CAPACITY,
     },
     capabilities::RenderCapabilities,
     components::{
@@ -16,6 +17,7 @@ use crate::{
             RenderPointShadowMaps, RenderShadowViewProjs, RenderSpotDirectionalShadowMaps,
         },
         skeleton::{extract_skeletons, SkinUniforms},
+        visibility::NoFrustumCulling,
     },
     device::RenderDevice,
     draw_target::DrawTarget,
@@ -114,13 +116,16 @@ impl Plugin for RenderPlugin {
             .register_type::<Camera>()
             .register_type::<CameraEnvironment>()
             .register_type::<SyncWithRenderWorld>()
+            .register_type::<NoFrustumCulling>()
             .register_type::<MaterialComponent>()
             .register_type::<concerto_mesh::MeshComponent>()
             .register_type::<concerto_mesh::SkeletonComponent>()
             .register_type::<concerto_mesh::SkeletonGizmo>();
         register_sync_requirements(app);
         app.track_removals::<concerto_mesh::MeshComponent>()
-            .track_removals::<concerto_mesh::SkeletonComponent>();
+            .track_removals::<concerto_mesh::SkeletonComponent>()
+            .track_removals::<NoFrustumCulling>()
+            .track_removals::<concerto_mesh::Aabb>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);
@@ -139,6 +144,7 @@ impl Plugin for RenderPlugin {
             Render,
             (
                 RenderSet::Lights,
+                RenderSet::Queue,
                 RenderSet::Shadows,
                 RenderSet::Draw,
                 RenderSet::Overlay,
@@ -146,6 +152,7 @@ impl Plugin for RenderPlugin {
                 .chain(),
         )
         .add_render_system(Render, clear_cameras)
+        .add_render_system(Render, clear_draw_stats.in_set(RenderSet::Queue))
         .add_render_system(Render, assign_shadow_layers.in_set(RenderSet::Lights))
         .add_render_system(
             Render,
@@ -272,6 +279,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
             .insert_resource(batched_instance_buffers)
+            .insert_resource(RenderDrawStats::default())
             .insert_resource(RenderMeshInstances::default());
     }
 }

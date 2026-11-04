@@ -132,6 +132,10 @@ impl CameraUniform {
         self.view_proj = camera.build_projection_matrix() * transform.matrix().inverse();
         environment.copied().unwrap_or_default().fill(self);
     }
+
+    pub(crate) fn view_proj(&self) -> Mat4 {
+        self.view_proj
+    }
 }
 
 impl Default for CameraUniform {
