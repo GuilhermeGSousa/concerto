@@ -40,3 +40,6 @@ __pycache__/
 specs/
 
 **/content/.registry.toml
+
+# Tracing
+traces

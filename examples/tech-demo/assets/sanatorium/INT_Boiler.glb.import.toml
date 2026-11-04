@@ -1,0 +1,57 @@
+version = 1
+source_id = "37466aa1-4214-4ca8-a8ff-8ec189def489"
+importer = "gltf"
+
+[outputs."material/0"]
+asset_id = "2618bdce-4c89-44e2-a41b-cc51c7939c01"
+
+[outputs."material/1"]
+asset_id = "283d0222-4483-4e35-853f-6374aa6e39d4"
+
+[outputs."material/2"]
+asset_id = "5c8d7f64-03bc-4827-9579-d60f568981e4"
+
+[outputs."material/3"]
+asset_id = "0f22c5be-4697-4c22-9081-792c69ff5235"
+
+[outputs."material/4"]
+asset_id = "811a5b6b-888b-46e6-a9ca-350b553db87f"
+
+[outputs."material/5"]
+asset_id = "88f122f4-075e-45ad-8b05-03374b110ebe"
+
+[outputs."mesh/0"]
+asset_id = "51caa655-eb1a-49f5-8fc4-2c79170f959e"
+
+[outputs."mesh/1"]
+asset_id = "6b17bcda-3f3d-40cb-aeed-31d87fef9ce5"
+
+[outputs."mesh/10"]
+asset_id = "a35faa9f-d652-46f6-b400-78eb98d6d23e"
+
+[outputs."mesh/2"]
+asset_id = "1f91a035-a1c5-4e05-91fb-debd1b5ea3c0"
+
+[outputs."mesh/3"]
+asset_id = "69063f24-7075-415d-a2d0-6322bfd2373b"
+
+[outputs."mesh/4"]
+asset_id = "92dd34e3-464f-4660-a53b-e5c8af48697b"
+
+[outputs."mesh/5"]
+asset_id = "e1c45d62-7f87-4150-a684-977342d6c556"
+
+[outputs."mesh/6"]
+asset_id = "274ab186-5c7d-4db1-b524-8c71a90a6440"
+
+[outputs."mesh/7"]
+asset_id = "55995b3d-6081-477a-b9c4-da4dbdbc4f5a"
+
+[outputs."mesh/8"]
+asset_id = "d5df6152-14a4-4bd3-ad0d-bcc6ef53b28c"
+
+[outputs."mesh/9"]
+asset_id = "b96d19b1-563a-4b79-a170-baf0e9506846"
+
+[outputs.scene]
+asset_id = "04696784-0283-4773-9579-7aaf1d6f00ee"

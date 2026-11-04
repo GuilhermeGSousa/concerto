@@ -44,6 +44,7 @@ the whole-branch reviewer. Both are linked into `.claude/`.
 ```sh
 cargo build --workspace
 cargo run -p tech-demo
+cargo run -p tech-demo -- --sanatorium
 cargo run -p tech-demo-editor -- --project <scratch copy of examples/tech-demo>
 cargo build -p tech-demo-editor
 cargo run -p tech-demo-editor -- --mcp --project <scratch copy of examples/tech-demo>
@@ -54,10 +55,15 @@ cargo concerto new|editor <dir> [--engine <path>]
 cargo concerto editor <dir> --update [--engine <path>]
 ```
 
-Examples are `tech-demo` and `ui-showcase`. Sources are imported through the editor's Import…, over a
-scratch copy of the project; there is no import command line. An example may
-have an `editor/` crate, named `<game>-editor`, that runs the editor over the
-game's library; an editor exists only for a game that has one. Today that is
+Examples are `tech-demo` and `ui-showcase`. `tech-demo -- --sanatorium` runs the
+sanatorium graybox instead of the forest, with the character moved by root
+motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
+method there); its Blender source and exports are in
+`examples/tech-demo/assets/sanatorium/`. Sources are imported through the
+editor's Import…, over a scratch copy of the project; there is no import
+command line. An example may have an `editor/` crate, named `<game>-editor`,
+that runs the editor over the game's library; an editor exists only for a game
+that has one. Today that is
 `tech-demo`. Build `tech-demo-editor` before an MCP client starts it through
 `.mcp.json`: that entry runs `cargo run`, which compiles first and can outlast
 the client's connect timeout.

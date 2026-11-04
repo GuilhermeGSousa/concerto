@@ -1,0 +1,6 @@
+version = 1
+source_id = "11b72a97-7011-4bca-96ad-e648508b0756"
+importer = "gltf"
+
+[outputs.scene]
+asset_id = "67129d8e-d25c-4b29-949d-6788fc72ee63"
