@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use concerto_app::extractor::Extracted;
 use concerto_ecs::{
-    component::Component,
+    component::{Component, ComponentLifecycleCallback},
     query::{
         change_detection::{DetectChanges, Ref},
         Query,
@@ -27,6 +27,7 @@ const INSTANCE_STRIDE: u64 = size_of::<GlobalTransformRaw>() as u64;
 pub(crate) struct MeshInstances {
     buffer: wgpu::Buffer,
     transforms: Vec<GlobalTransformRaw>,
+    free: Vec<u32>,
 }
 
 impl MeshInstances {
@@ -34,6 +35,7 @@ impl MeshInstances {
         Self {
             buffer: Self::create_buffer(device, INITIAL_MESH_INSTANCE_CAPACITY as u64),
             transforms: Vec::new(),
+            free: Vec::new(),
         }
     }
 
@@ -53,9 +55,16 @@ impl MeshInstances {
     }
 
     fn alloc(&mut self) -> u32 {
+        if let Some(slot) = self.free.pop() {
+            return slot;
+        }
         let slot = self.transforms.len() as u32;
         self.transforms.push(bytemuck::Zeroable::zeroed());
         slot
+    }
+
+    fn free_slot(&mut self, slot: u32) {
+        self.free.push(slot);
     }
 
     fn set(&mut self, slot: u32, transform: GlobalTransformRaw) {
@@ -83,11 +92,25 @@ impl MeshInstances {
     }
 }
 
-#[derive(Component)]
 pub(crate) struct RenderMeshInstance {
     pub(crate) mesh_asset_id: AssetId,
     pub(crate) slot: u32,
     skinned: bool,
+}
+
+impl Component for RenderMeshInstance {
+    fn on_remove() -> Option<ComponentLifecycleCallback> {
+        Some(|mut world, context| {
+            let slot = world
+                .get_component_for_entity::<RenderMeshInstance>(context.entity)
+                .map(|instance| instance.slot);
+
+            if let (Some(slot), Some(instances)) = (slot, world.get_resource_mut::<MeshInstances>())
+            {
+                instances.free_slot(slot);
+            }
+        })
+    }
 }
 
 fn widen(span: Option<Range<u32>>, slot: u32) -> Range<u32> {
@@ -405,6 +428,24 @@ mod tests {
         app.update();
 
         assert_eq!(uploaded(&gpu, &app, slot), Mat4::from_translation(Vec3::Y));
+    }
+
+    #[test]
+    fn a_despawned_meshs_slot_is_reused() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
+        app.update();
+        app.update();
+        let old_slot = slot(&mut app, entities[0]);
+
+        app.main_mut().world_mut().despawn(entities[0]);
+        let replacement = spawn_mesh(&mut app, mesh, Vec3::X);
+        app.update();
+
+        assert_eq!(slot(&mut app, replacement), old_slot);
     }
 
     #[test]
