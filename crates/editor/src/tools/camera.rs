@@ -221,7 +221,7 @@ fn frame_all(_: On<FrameAll>, mut commands: ResMut<ViewportCommands>) {
     commands.frame_all = true;
 }
 
-pub(crate) const SKY: Color = Color::srgba(0.086, 0.094, 0.157, 1.0);
+pub(crate) const SKY: Color = Camera::DEFAULT_CLEAR_COLOR;
 const GRID_LINES: Color = Color::srgba(0.247, 0.259, 0.322, 0.6);
 const GRID_SURFACE: Color = Color::srgba(0.247, 0.259, 0.322, 0.0);
 

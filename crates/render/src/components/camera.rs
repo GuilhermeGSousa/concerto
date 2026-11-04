@@ -73,6 +73,9 @@ pub struct Camera {
 }
 
 impl Camera {
+    /// The colour a camera clears to unless told otherwise, the editor viewport's background.
+    pub const DEFAULT_CLEAR_COLOR: Color = Color::srgba(0.086, 0.094, 0.157, 1.0);
+
     /// Creates a perspective camera with the given field-of-view (radians) and aspect ratio.
     /// Uses sensible defaults for near/far planes and clear colour.
     pub fn perspective(fovy: f32, aspect: f32) -> Self {
@@ -95,7 +98,7 @@ impl Default for Camera {
             fovy: std::f32::consts::FRAC_PI_4,
             znear: 0.1,
             zfar: 100.0,
-            clear_color: Color::rgba(0.118, 0.831, 0.922, 1.0),
+            clear_color: Self::DEFAULT_CLEAR_COLOR,
             render_target: RenderTarget::main_window(),
         }
     }
