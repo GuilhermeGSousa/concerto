@@ -269,6 +269,10 @@ fix the entry in the same commit as the change that made it false.
   the edit `App`'s state (`HostedApp::scene_dirty`) instead of an event. A
   value's `Hosted<PropertyCommitted>` does not lag: the value lives in the
   editor's world, and the event is written there directly.
+- **Events written by a warming-up `App` are never forwarded.** An edit or
+  play `App` is stepped hidden after its build until it settles, and it is not
+  a `HostedApp` yet, so `forward_events` does not read it. A `SceneStatus` or
+  `SceneEdited` it writes then is gone by the time it is shown.
 - **The inspector's one `ComponentStack` has two owners.** Entity cards and
   value cards share it, because it is the scroll area's content.
   `sync_value_cards` returns while a document has `EditTarget`, despawns only
@@ -355,11 +359,12 @@ fix the entry in the same commit as the change that made it false.
   `POINTER_GONE`, off the picture, so a hovered gizmo handle lets go. When the
   viewport is under the pointer again, the host moves it to where the editor's
   pointer is, so a press or a wheel before the next move lands in place.
-- **A panic in an edit `App` is caught only while it is built.** A panic in
+- **A panic in an edit `App` is caught only until it is shown.** A panic in
   the recipe or a plugin's `build`, in a plugin's `ready` or `finish`, in
-  `Startup`, or in the ready step that publishes the content and opens the
-  scene becomes the open request's error. A panic while the `App` is stepped
-  or takes a signal still takes the editor down. Catching a panic from a
+  `Startup`, in the ready step that publishes the content and opens the
+  scene, or in a hidden step while it warms up becomes the open request's
+  error. A panic while the shown `App` is stepped or takes a signal still
+  takes the editor down. Catching a panic from a
   schedule is safe only because `TaskPool::scope` re-raises a task's panic
   after every task it spawned has finished; the panicked system's dependants
   never run.

@@ -235,7 +235,9 @@ message, as does a save while the game plays (`Stop to save`), and a scene still
 loading answers `busy`. `play` starts the active scene's game in the viewport,
 as the play button does, and answers once the game has built, plays, has
 spawned every scene it loaded, and has no asset loads in flight: `Playing
-<address> in document <id>; it loaded in <seconds> s.` Like the play button it first saves the scene's unsaved changes,
+<address> in document <id>; it loaded in <seconds> s.` The time runs from
+`PlayStarted`, which comes after the play `App` has warmed up hidden, so it
+covers only what the game still loads once it is shown. Like the play button it first saves the scene's unsaved changes,
 and the answer then says so. If the game is still loading when the call's 30
 second wait runs out, `play` answers anyway, not as an error, saying `it is
 still loading`; `scene_tree` and `screenshot` then show the game as it arrives.
@@ -319,7 +321,30 @@ steps, and drops. The crate has three parts:
 
 - `src/hosted/` builds an `App` from a recipe, holds it on its document as a
   `HostedApp`, steps it, feeds it the viewport's input, and carries messages
-  both ways.
+  both ways. A `PendingApp` is building while the editor polls its plugins'
+  `ready` each `First`, then finishing: `finish_plugin_build` and the ready
+  step run on a `hosted-build` thread, and the editor joins it in a later
+  `First` and hands the `App` the current asset registry. Dropping the
+  `PendingApp`, however it is removed, detaches the thread and sets a flag the
+  thread reads after `finish_plugin_build`: it then cancels the `App`'s loads,
+  skips the ready step, and drops the `App`.
+  An edit or play `App` then warms up: the editor steps it hidden once per
+  `First`, whatever tab is in front and with no input, until a step leaves its
+  `AssetServer` not loading, no `SceneSpawnerComponent` whose scene is in its
+  `AssetStore<Scene>`, and `render_assets_settled` true, or until
+  `WARM_UP_LIMIT`, 10 s after the join.
+  Only then does it become the document's `HostedApp`; a panic in a hidden
+  step is the build's failure, in the step `warming up`. A preview `App` skips
+  the warm-up. `finish_blocking` and `PendingApp::finish_now` finish on the
+  calling thread and skip it too.
+  Finishing on the thread and the warm-up happen only when `register_editor`
+  inserts `FinishBuildsOffThread`. Without it, as in tests that build the
+  editor's world themselves, `First` finishes a ready `App` on the editor's
+  thread and makes it the `HostedApp` at once, with no warm-up.
+  Every hosted `App` uploads at most `HOSTED_UPLOAD_BYTES_PER_FRAME`, 32 MiB,
+  of render assets per frame, set after the recipe and again after
+  `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not
+  apply in the editor.
 - `src/tools/` is everything that runs inside an edit `App`: the editor camera,
   the grid, picking, the selection box, the gizmo, and the listeners that apply
   each edit. `EditToolsPlugin` installs it. The half that edits and captures a
@@ -344,10 +369,11 @@ must be marked.
 
 A panic while the edit `App` is built does not take the editor down. That
 covers the recipe and every plugin's `build`, each plugin's `ready` and
-`finish`, the `Startup` schedule, and the ready step that publishes the content
-and opens the scene. The half-built `App` is dropped once every system it was
-running has returned, the panic is logged, and the Scene tab shows "Could not
-open scene: <panic message>", as a failed load does.
+`finish`, the `Startup` schedule, the ready step that publishes the content
+and opens the scene, and every hidden step while it warms up. The half-built
+`App` is dropped once every system it was running has returned, the panic is
+logged, and the Scene tab shows "Could not open scene: <panic message>", as a
+failed load does.
 
 A panel reaches the scene in two ways and no other:
 
