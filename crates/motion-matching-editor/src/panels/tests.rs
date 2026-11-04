@@ -1055,7 +1055,7 @@ fn a_channel_added_from_the_menu_goes_last_at_its_default_and_marks_the_document
 
     let saved = read_definition(&tab.f.project_root, &tab.asset).unwrap();
     assert_eq!(saved.channels.len(), 6);
-    assert_eq!(saved.channels[5].type_name, "BonePositions");
+    assert_eq!(saved.channels[5].type_name(), "BonePositions");
     assert!(!tab.unsaved());
 }
 
@@ -1118,7 +1118,7 @@ fn removing_a_channel_keeps_the_others_in_order() {
     let names: Vec<&str> = saved
         .channels
         .iter()
-        .map(|channel| channel.type_name.as_str())
+        .map(|channel| channel.type_name())
         .collect();
     assert_eq!(
         names,

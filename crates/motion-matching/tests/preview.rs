@@ -70,7 +70,7 @@ fn assert_near(actual: Vec3, expected: Vec3) {
     );
 }
 
-#[derive(Reflect, Default)]
+#[derive(Reflect, Default, Clone)]
 #[reflect(FeatureChannel)]
 struct SilentChannel;
 

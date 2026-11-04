@@ -26,15 +26,19 @@ struct Gain {
 }
 
 impl AnimationNode for Gain {
-    type Instance = ();
+    type State = ();
+    type CreateInput = ();
+    type UpdateInput = ();
+    type EvaluateInput = ();
 
-    fn create_instance(&self, _context: &AnimationGraphContext<'_>) {}
+    fn create_state(&self, _: &(), _context: &AnimationGraphContext<'_>) {}
 
-    fn update(&self, _: &mut (), _: f32, _: &AnimationGraphContext<'_>) {}
+    fn update(&self, _: &mut (), _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
 
     fn evaluate(
         &self,
         _: &mut (),
+        _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
         _: &[EvaluatedPose],
@@ -193,15 +197,15 @@ fn a_graph_built_in_code_and_one_loaded_from_its_bytes_match() {
     loaded.make_live(&registry, None).unwrap();
 
     assert_eq!(
-        built.stored_nodes().collect::<Vec<_>>(),
-        loaded.stored_nodes().collect::<Vec<_>>()
+        built.nodes().collect::<Vec<_>>(),
+        loaded.nodes().collect::<Vec<_>>()
     );
     assert_eq!(live_type_names(&built), live_type_names(&loaded));
     assert_eq!(built.iter().collect::<Vec<_>>().len(), 7);
     assert!(
         built
-            .stored_nodes()
-            .any(|(type_name, _)| type_name == std::any::type_name::<Gain>())
+            .nodes()
+            .any(|node| node.type_name() == std::any::type_name::<Gain>())
     );
 }
 
@@ -224,6 +228,20 @@ fn an_unregistered_node_type_loads_with_a_warning_and_is_kept_on_save() {
             .any(|name| name.ends_with("PlaceholderNode"))
     );
 
+    assert_eq!(bincode::serialize(&loaded).unwrap(), bytes);
+}
+
+#[test]
+fn a_placeholder_builds_once_its_type_is_registered() {
+    let bytes = bincode::serialize(&mixed_graph()).unwrap();
+    let mut loaded: AnimationGraph = bincode::deserialize(&bytes).unwrap();
+    loaded.make_live(&registry(false), None).unwrap();
+    assert!(live_node::<Gain>(&loaded).is_none());
+
+    loaded.make_live(&registry(true), None).unwrap();
+
+    assert!(loaded.load_warnings().is_empty());
+    assert_eq!(live_node::<Gain>(&loaded).unwrap().amount, 2.5);
     assert_eq!(bincode::serialize(&loaded).unwrap(), bytes);
 }
 

@@ -42,7 +42,7 @@ mod tests {
     use concerto_reflect::Reflect;
 
     use super::AnimationBlackboard;
-    use crate::evaluation::AnimationGraphContext;
+    use crate::{evaluation::AnimationGraphContext, test_walks::Walks};
 
     #[derive(Debug, PartialEq, Reflect)]
     struct Stance {
@@ -67,14 +67,11 @@ mod tests {
                 lean: 0.5,
             },
         );
-        let context = AnimationGraphContext {
-            animation_clips: &clips,
-            animation_graphs: &graphs,
-            blackboard: &blackboard,
-            root: None,
-        };
+        let walks = Walks::new(clips, graphs);
 
-        assert_eq!(read_stance(&context), Some((true, 0.5)));
+        let stance = walks.update(&blackboard, read_stance);
+
+        assert_eq!(stance, Some((true, 0.5)));
     }
 
     #[test]
