@@ -338,9 +338,12 @@ mod tests {
         });
         gpu.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
-        let floats: Vec<f32> = bytemuck::cast_slice(&slice.get_mapped_range()).to_vec();
+        let matrices = bytemuck::cast_slice::<u8, [f32; 16]>(&slice.get_mapped_range())
+            .iter()
+            .map(Mat4::from_cols_array)
+            .collect();
         readback.unmap();
-        floats.chunks_exact(16).map(Mat4::from_cols_slice).collect()
+        matrices
     }
 
     fn overwrite(gpu: &Gpu, app: &App, offset: u64, matrices: &[Mat4]) {
