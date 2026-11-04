@@ -1,12 +1,15 @@
 use crate::{
     assets::{mesh::Mesh, skeleton::Skeleton, texture::Texture},
+    batching::{
+        BatchedInstanceBuffers, InstanceInputUniformBuffer, INITIAL_MESH_INSTANCE_CAPACITY,
+    },
     capabilities::RenderCapabilities,
     components::{
         camera::{extract_cameras, sync_camera_aspect, Camera},
         camera_environment::CameraEnvironment,
         light::{extract_lights, update_changed_lights, Light, RenderLights},
         material::MaterialComponent,
-        mesh::{extract_meshes, MeshInstances},
+        mesh::{extract_meshes, RenderMeshInstances},
         render_entity::{extract, SyncWithRenderWorld},
         shadows::{
             assign_shadow_layers, resize_shadow_maps, update_shadow_view_proj, RenderLighting,
@@ -114,6 +117,8 @@ impl Plugin for RenderPlugin {
             .register_type::<concerto_mesh::SkeletonComponent>()
             .register_type::<concerto_mesh::SkeletonGizmo>();
         register_sync_requirements(app);
+        app.track_removals::<concerto_mesh::MeshComponent>()
+            .track_removals::<concerto_mesh::SkeletonComponent>();
         app.add_system(Update, concerto_mesh::update_mesh_bounds.at_edit_time());
 
         app.set_extract_fn(extract);
@@ -234,7 +239,13 @@ impl Plugin for RenderPlugin {
             &render_shadow_view_projs,
         );
         let skin_uniforms = SkinUniforms::new(&device, &skeleton_layout, &queue);
-        let mesh_instances = MeshInstances::new(&device);
+        let batched_instance_buffers = BatchedInstanceBuffers {
+            current_input_buffer: InstanceInputUniformBuffer::new(
+                &device,
+                "Mesh Instances Buffer",
+                INITIAL_MESH_INSTANCE_CAPACITY,
+            ),
+        };
 
         app.render_mut()
             .insert_resource(DummyRenderTexture::new(&device))
@@ -258,6 +269,7 @@ impl Plugin for RenderPlugin {
             .insert_resource(render_shadow_view_projs)
             .insert_resource(render_lighting)
             .insert_resource(skin_uniforms)
-            .insert_resource(mesh_instances);
+            .insert_resource(batched_instance_buffers)
+            .insert_resource(RenderMeshInstances::default());
     }
 }

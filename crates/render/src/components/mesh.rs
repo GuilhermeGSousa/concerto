@@ -1,117 +1,56 @@
 use std::ops::Range;
 
+use bitflags::bitflags;
 use concerto_app::extractor::Extracted;
 use concerto_ecs::{
-    component::{Component, ComponentLifecycleCallback},
-    query::{
-        change_detection::{DetectChanges, Ref},
-        Query,
-    },
+    component::removed::RemovedComponents,
+    query::Query,
     resource::{Res, ResMut, Resource},
-    CommandQueue,
+    Changed, Entity, Or,
 };
 use concerto_foundation::{
     assets::AssetId,
     transform::{GlobalTransform, GlobalTransformRaw},
 };
 use concerto_mesh::{mesh::MeshComponent, SkeletonComponent};
+use derive_more::{Deref, DerefMut};
 use glam::Mat4;
-use wgpu::{BufferDescriptor, Device, Queue};
 
-use crate::{components::render_entity::RenderEntity, device::RenderDevice, queue::RenderQueue};
-
-pub(crate) const INITIAL_MESH_INSTANCE_CAPACITY: u32 = 1024;
-const INSTANCE_STRIDE: u64 = size_of::<GlobalTransformRaw>() as u64;
-
-#[derive(Resource)]
-pub(crate) struct MeshInstances {
-    buffer: wgpu::Buffer,
-    transforms: Vec<GlobalTransformRaw>,
-    free: Vec<u32>,
-}
-
-impl MeshInstances {
-    pub(crate) fn new(device: &Device) -> Self {
-        Self {
-            buffer: Self::create_buffer(device, INITIAL_MESH_INSTANCE_CAPACITY as u64),
-            transforms: Vec::new(),
-            free: Vec::new(),
-        }
-    }
-
-    pub(crate) fn buffer(&self) -> &wgpu::Buffer {
-        &self.buffer
-    }
-
-    fn create_buffer(device: &Device, capacity: u64) -> wgpu::Buffer {
-        device.create_buffer(&BufferDescriptor {
-            label: Some("Mesh Instances Buffer"),
-            size: capacity * INSTANCE_STRIDE,
-            usage: wgpu::BufferUsages::VERTEX
-                | wgpu::BufferUsages::COPY_DST
-                | wgpu::BufferUsages::COPY_SRC,
-            mapped_at_creation: false,
-        })
-    }
-
-    fn alloc(&mut self) -> u32 {
-        if let Some(slot) = self.free.pop() {
-            return slot;
-        }
-        let slot = self.transforms.len() as u32;
-        self.transforms.push(bytemuck::Zeroable::zeroed());
-        slot
-    }
-
-    fn free_slot(&mut self, slot: u32) {
-        self.free.push(slot);
-    }
-
-    fn set(&mut self, slot: u32, transform: GlobalTransformRaw) {
-        self.transforms[slot as usize] = transform;
-    }
-
-    fn upload(&mut self, device: &Device, queue: &Queue, mut span: Range<u32>) {
-        let len = self.transforms.len() as u64;
-        let mut capacity = self.buffer.size() / INSTANCE_STRIDE;
-        if len > capacity {
-            while capacity < len {
-                capacity *= 2;
-            }
-            self.buffer = Self::create_buffer(device, capacity);
-            span = 0..self.transforms.len() as u32;
-        }
-        if span.is_empty() {
-            return;
-        }
-        queue.write_buffer(
-            &self.buffer,
-            span.start as u64 * INSTANCE_STRIDE,
-            bytemuck::cast_slice(&self.transforms[span.start as usize..span.end as usize]),
-        );
-    }
-}
+use crate::{
+    batching::{BatchedInstanceBuffers, InstanceInputUniformBuffer},
+    components::render_entity::{MainEntity, MainEntityHashMap},
+    device::RenderDevice,
+    queue::RenderQueue,
+};
 
 pub(crate) struct RenderMeshInstance {
     pub(crate) mesh_asset_id: AssetId,
-    pub(crate) slot: u32,
-    skinned: bool,
+    pub(crate) flags: RenderMeshInstanceFlags,
+    pub(crate) current_uniform_index: u32,
 }
 
-impl Component for RenderMeshInstance {
-    fn on_remove() -> Option<ComponentLifecycleCallback> {
-        Some(|mut world, context| {
-            let slot = world
-                .get_component_for_entity::<RenderMeshInstance>(context.entity)
-                .map(|instance| instance.slot);
-
-            if let (Some(slot), Some(instances)) = (slot, world.get_resource_mut::<MeshInstances>())
-            {
-                instances.free_slot(slot);
-            }
-        })
+bitflags! {
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub(crate) struct RenderMeshInstanceFlags: u8 {
+        const SKINNED = 1;
     }
 }
+
+#[derive(Resource, Default, Deref, DerefMut)]
+pub(crate) struct RenderMeshInstances(MainEntityHashMap<RenderMeshInstance>);
+
+type MeshExtractionQuery = (
+    Entity,
+    &'static MeshComponent,
+    &'static GlobalTransform,
+    Option<&'static SkeletonComponent>,
+);
+
+type ChangedMeshFilter = Or<(
+    Changed<GlobalTransform>,
+    Changed<MeshComponent>,
+    Changed<SkeletonComponent>,
+)>;
 
 fn widen(span: Option<Range<u32>>, slot: u32) -> Range<u32> {
     match span {
@@ -120,68 +59,97 @@ fn widen(span: Option<Range<u32>>, slot: u32) -> Range<u32> {
     }
 }
 
+fn extract_mesh(
+    (entity, mesh, transform, skeleton): (
+        Entity,
+        &MeshComponent,
+        &GlobalTransform,
+        Option<&SkeletonComponent>,
+    ),
+    render_mesh_instances: &mut RenderMeshInstances,
+    input: &mut InstanceInputUniformBuffer<GlobalTransformRaw>,
+    span: &mut Option<Range<u32>>,
+) {
+    let flags = if skeleton.is_some() {
+        RenderMeshInstanceFlags::SKINNED
+    } else {
+        RenderMeshInstanceFlags::empty()
+    };
+    let raw_transform = if flags.contains(RenderMeshInstanceFlags::SKINNED) {
+        GlobalTransform::new(Mat4::IDENTITY).to_raw()
+    } else {
+        transform.to_raw()
+    };
+
+    let main_entity = MainEntity::new(entity);
+    if let Some(instance) = render_mesh_instances.get_mut(&main_entity) {
+        instance.mesh_asset_id = mesh.handle.id();
+        let write = !flags.contains(RenderMeshInstanceFlags::SKINNED) || instance.flags != flags;
+        instance.flags = flags;
+        if write {
+            input.set(instance.current_uniform_index, raw_transform);
+            *span = Some(widen(span.take(), instance.current_uniform_index));
+        }
+        return;
+    }
+
+    let current_uniform_index = input.add(raw_transform);
+    *span = Some(widen(span.take(), current_uniform_index));
+    render_mesh_instances.insert(
+        main_entity,
+        RenderMeshInstance {
+            mesh_asset_id: mesh.handle.id(),
+            flags,
+            current_uniform_index,
+        },
+    );
+}
+
 pub(crate) fn extract_meshes(
-    meshes: Extracted<
-        Query<(
-            Ref<MeshComponent>,
-            Ref<GlobalTransform>,
-            Option<&SkeletonComponent>,
-            &RenderEntity,
-        )>,
-    >,
-    render_meshes: Query<&mut RenderMeshInstance>,
-    mut cmd: CommandQueue,
-    mut instances: ResMut<MeshInstances>,
+    changed_meshes: Extracted<Query<MeshExtractionQuery, ChangedMeshFilter>>,
+    all_meshes: Extracted<Query<MeshExtractionQuery>>,
+    mut removed_meshes: Extracted<RemovedComponents<MeshComponent>>,
+    mut removed_skeletons: Extracted<RemovedComponents<SkeletonComponent>>,
+    mut render_mesh_instances: ResMut<RenderMeshInstances>,
+    mut buffers: ResMut<BatchedInstanceBuffers>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
 ) {
+    let input = &mut buffers.current_input_buffer;
     let mut span = None;
 
-    for (mesh, transform, skeleton, render_entity) in meshes.iter() {
-        let render_entity = **render_entity;
-
-        let skinned = skeleton.is_some();
-        let raw_transform = if skinned {
-            GlobalTransform::new(Mat4::IDENTITY).to_raw()
-        } else {
-            transform.to_raw()
-        };
-
-        if let Some(mut render_mesh) = render_meshes.get_entity(render_entity) {
-            if render_mesh.mesh_asset_id != mesh.handle.id() {
-                render_mesh.mesh_asset_id = mesh.handle.id();
-            }
-            if mesh.is_added()
-                || render_mesh.skinned != skinned
-                || (!skinned && transform.is_changed())
-            {
-                render_mesh.skinned = skinned;
-                instances.set(render_mesh.slot, raw_transform);
-                span = Some(widen(span, render_mesh.slot));
-            }
-            continue;
-        }
-
-        let slot = instances.alloc();
-        instances.set(slot, raw_transform);
-        span = Some(widen(span, slot));
-
-        let instance = RenderMeshInstance {
-            mesh_asset_id: mesh.handle.id(),
-            slot,
-            skinned,
-        };
-
-        cmd.insert(instance, render_entity);
+    for row in changed_meshes.iter() {
+        extract_mesh(row, &mut render_mesh_instances, input, &mut span);
     }
 
-    instances.upload(&device, &queue, span.unwrap_or(0..0));
+    for entity in removed_skeletons.read() {
+        if changed_meshes.contains_entity(entity) {
+            continue;
+        }
+        if let Some(row) = all_meshes.get_entity(entity) {
+            extract_mesh(row, &mut render_mesh_instances, input, &mut span);
+        }
+    }
+
+    for entity in removed_meshes.read() {
+        if all_meshes.contains_entity(entity) {
+            continue;
+        }
+        if let Some(instance) = render_mesh_instances.remove(&MainEntity::new(entity)) {
+            input.remove(instance.current_uniform_index);
+        }
+    }
+
+    input.write_buffer(&device, &queue, span.unwrap_or(0..0));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin};
+    use crate::{
+        batching::INITIAL_MESH_INSTANCE_CAPACITY, components::render_entity::MainEntity,
+        draw_target::DrawTarget, gpu::Gpu, plugin::RenderPlugin,
+    };
     use concerto_app::{
         main_schedule::MainSchedulePlugin,
         plugins::{AssetManagerPlugin, TimePlugin, TransformPlugin},
@@ -221,11 +189,15 @@ mod tests {
         ))
     }
 
+    const INSTANCE_STRIDE: u64 = size_of::<GlobalTransformRaw>() as u64;
+
+    fn instances(app: &App) -> &RenderMeshInstances {
+        app.render().get_resource::<RenderMeshInstances>().unwrap()
+    }
+
     fn drawn(app: &mut App) -> Vec<AssetId> {
-        let world = app.render_mut().world_mut();
-        world
-            .query::<&RenderMeshInstance, ()>()
-            .iter(world)
+        instances(app)
+            .values()
             .map(|instance| instance.mesh_asset_id)
             .collect()
     }
@@ -251,22 +223,17 @@ mod tests {
     }
 
     fn slot(app: &mut App, entity: Entity) -> u32 {
-        let render_entity = **app
-            .main_mut()
-            .world_mut()
-            .get_component_for_entity::<RenderEntity>(entity)
-            .unwrap();
-        app.render_mut()
-            .world_mut()
-            .get_component_for_entity::<RenderMeshInstance>(render_entity)
+        instances(app)
+            .get(&MainEntity::new(entity))
             .unwrap()
-            .slot
+            .current_uniform_index
     }
 
     fn instance_buffer(app: &App) -> wgpu::Buffer {
         app.render()
-            .get_resource::<MeshInstances>()
+            .get_resource::<BatchedInstanceBuffers>()
             .unwrap()
+            .current_input_buffer
             .buffer()
             .clone()
     }
@@ -442,9 +409,58 @@ mod tests {
         let old_slot = slot(&mut app, entities[0]);
 
         app.main_mut().world_mut().despawn(entities[0]);
+        app.update();
         let replacement = spawn_mesh(&mut app, mesh, Vec3::X);
         app.update();
 
+        assert_eq!(slot(&mut app, replacement), old_slot);
+    }
+
+    #[test]
+    fn a_mesh_removed_and_readded_in_one_frame_keeps_its_slot() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
+        let entity = entities[0];
+        app.update();
+        app.update();
+        let old_slot = slot(&mut app, entity);
+
+        let world = app.main_mut().world_mut();
+        world.remove_component::<MeshComponent>(entity);
+        world.insert(
+            MeshComponent {
+                handle: AssetHandle::weak(mesh),
+            },
+            entity,
+        );
+        app.update();
+
+        assert_eq!(slot(&mut app, entity), old_slot);
+    }
+
+    #[test]
+    fn a_mesh_that_loses_its_mesh_component_leaves_render_mesh_instances() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mesh = AssetId::new();
+        let (mut app, entities) = app(&gpu, mesh, &[Vec3::ZERO]);
+        let entity = entities[0];
+        app.update();
+        app.update();
+        let old_slot = slot(&mut app, entity);
+
+        app.main_mut()
+            .world_mut()
+            .remove_component::<MeshComponent>(entity);
+        app.update();
+
+        assert!(instances(&app).get(&MainEntity::new(entity)).is_none());
+        let replacement = spawn_mesh(&mut app, mesh, Vec3::X);
+        app.update();
         assert_eq!(slot(&mut app, replacement), old_slot);
     }
 

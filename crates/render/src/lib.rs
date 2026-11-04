@@ -17,6 +17,7 @@
 extern crate self as concerto_render;
 
 pub mod assets;
+pub(crate) mod batching;
 pub mod capabilities;
 pub mod components;
 pub mod device;

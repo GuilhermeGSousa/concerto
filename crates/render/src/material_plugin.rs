@@ -15,12 +15,13 @@ use concerto_ecs::{
 
 use crate::{
     assets::material::ShaderRef,
+    batching::BatchedInstanceBuffers,
     capabilities::RenderCapabilities,
     components::{
         camera::RenderCamera,
         material::{MaterialComponent, RenderMaterialComponent},
-        mesh::{MeshInstances, RenderMeshInstance},
-        render_entity::RenderEntity,
+        mesh::RenderMeshInstances,
+        render_entity::{MainEntity, RenderEntity},
         shadows::RenderLighting,
         skeleton::{RenderSkeletonComponent, SkinUniforms},
     },
@@ -224,7 +225,7 @@ pub(crate) fn material_renderpass<M: Material>(
     pipeline: Res<MaterialPipeline<M>>,
     mut device: ResMut<RenderDevice>,
     render_mesh_query: Query<(
-        &RenderMeshInstance,
+        &MainEntity,
         Option<&RenderSkeletonComponent>,
         &RenderMaterialComponent<M>,
     )>,
@@ -234,7 +235,8 @@ pub(crate) fn material_renderpass<M: Material>(
     render_window: Res<RenderWindow>,
     render_lighting: Res<RenderLighting>,
     skins: Res<SkinUniforms>,
-    mesh_instances: Res<MeshInstances>,
+    render_mesh_instances: Res<RenderMeshInstances>,
+    buffers: Res<BatchedInstanceBuffers>,
 ) {
     let encoder = device.command_encoder();
 
@@ -280,7 +282,7 @@ pub(crate) fn material_renderpass<M: Material>(
         });
 
         render_pass.set_pipeline(&pipeline.pipeline);
-        render_pass.set_vertex_buffer(1, mesh_instances.buffer().slice(..));
+        render_pass.set_vertex_buffer(1, buffers.current_input_buffer.buffer().slice(..));
 
         // Set the engine built-in bind groups that M declared it needs.
         // Only the groups present in the pipeline layout are set — the
@@ -292,7 +294,10 @@ pub(crate) fn material_renderpass<M: Material>(
             render_pass.set_bind_group(2, &render_lighting.bind_group, &[]);
         }
 
-        for (mesh_instance, skeleton, render_mat_comp) in render_mesh_query.iter() {
+        for (main_entity, skeleton, render_mat_comp) in render_mesh_query.iter() {
+            let Some(mesh_instance) = render_mesh_instances.get(main_entity) else {
+                continue;
+            };
             if let Some(mesh) = render_meshes.get(&mesh_instance.mesh_asset_id) {
                 if let Some(render_mat) = render_materials.get(&render_mat_comp.material_asset_id) {
                     render_pass.set_bind_group(0, &render_mat.bind_group, &[]);
@@ -307,8 +312,8 @@ pub(crate) fn material_renderpass<M: Material>(
 
                 render_pass.set_vertex_buffer(0, mesh.vertices.slice(..));
                 render_pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
-                let slot = mesh_instance.slot;
-                render_pass.draw_indexed(0..mesh.index_count, 0, slot..slot + 1);
+                let index = mesh_instance.current_uniform_index;
+                render_pass.draw_indexed(0..mesh.index_count, 0, index..index + 1);
             }
         }
     }
