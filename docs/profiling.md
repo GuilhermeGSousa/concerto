@@ -96,7 +96,9 @@ What you should see:
   mark frames.
 - Zones: `App::update` → `schedule::update` / `schedule::render` / … →
   `system` zones, one per ECS system, running in parallel across the named
-  `compute-N` threads. `fixed_update_step` zones tick at ~30 Hz.
+  `compute-N` threads. A system that is the only one ready while nothing else
+  runs shows its zone on the thread that found it ready, which can be the
+  thread that runs the schedule. `fixed_update_step` zones tick at ~30 Hz.
 - `apply_deferred` zones at sync points — long gaps right before them mean
   the scheduler is stalled waiting on one straggler system.
 - wgpu-core's own zones (device/queue internals) appear automatically: wgpu

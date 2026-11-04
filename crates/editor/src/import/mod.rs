@@ -696,6 +696,7 @@ mod tests {
             id: AssetId::new(),
             address: address.into(),
             kind: "Scene".into(),
+            kind_version: None,
             provenance: None,
         };
         let kept = entry("content/a/scene.gasset");
