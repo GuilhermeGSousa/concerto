@@ -83,15 +83,10 @@ impl<K: 'static> Resource for InputSetRegistry<K> {
 
 /// Makes `P` a member of every `InputSet<K>` initialized afterwards; registering it again changes nothing.
 pub fn register_input<K: 'static, P: ReadOnlySystemInput + 'static>(world: &mut World) {
-    if world.get_resource::<InputSetRegistry<K>>().is_none() {
-        world.insert_resource(InputSetRegistry::<K> {
-            members: Vec::new(),
-            marker: PhantomData,
-        });
-    }
-    let registry = world
-        .get_resource_mut::<InputSetRegistry<K>>()
-        .expect("the registry was just inserted");
+    let registry = world.get_resource_or_insert_with(|| InputSetRegistry::<K> {
+        members: Vec::new(),
+        marker: PhantomData,
+    });
     if registry
         .members
         .iter()
