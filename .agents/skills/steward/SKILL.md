@@ -16,6 +16,9 @@ how to act on a PR event.
   driver.
 - Start everything you post with `<!-- concerto-agent -->`.
 - On a conflict, merge `master` into the branch. Never rebase, never force.
+  A conflict in `Cargo.lock` takes `master`'s file and then runs
+  `cargo metadata --format-version 1 > /dev/null`.
 - Never merge the PR. The owner merges.
-- A cloud session checks with `cargo fmt --all -- --check` only and leaves
-  clippy, tests and wasm to CI.
+- A cloud session checks with `cargo fmt --all -- --check` only, plus
+  `cargo metadata --format-version 1 > /dev/null` when a `Cargo.toml` changed,
+  and leaves clippy, tests and wasm to CI.

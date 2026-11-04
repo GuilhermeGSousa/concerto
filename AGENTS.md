@@ -88,8 +88,14 @@ debug info, rebuilding what that test needs.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
-alone needs none of them. A cloud pipeline session runs only the first and
-leaves the rest to CI.
+alone needs none of them. A cloud pipeline session runs only the first, and
+the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
+rest to CI.
+
+A change to a `Cargo.toml` commits the `Cargo.lock` that cargo rewrites. A
+session that doesn't build runs `cargo metadata --format-version 1 > /dev/null`,
+which resolves and rewrites the lockfile without compiling. A merge conflict in
+`Cargo.lock` is resolved by taking `master`'s file and running the same command.
 
 Rendering, UI, and editor changes also need a look at the running program; a
 passing test suite says nothing about what is on screen. Use the
