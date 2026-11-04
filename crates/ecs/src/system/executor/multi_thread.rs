@@ -1,6 +1,7 @@
 use std::{
     mem,
     sync::{Arc, Mutex},
+    thread::{self, ThreadId},
 };
 
 use crate::Resource;
@@ -64,6 +65,8 @@ struct Environment<'env> {
     system_meta: &'env [SystemMetadata],
     system_access: &'env [SystemAccess],
     world_cell: UnsafeWorldCell<'env>,
+    scope_thread: ThreadId,
+    thread_executor: Option<&'env ThreadExecutor<'static>>,
 }
 
 #[derive(Clone, Copy)]
@@ -120,6 +123,8 @@ impl SystemExecutor for MultiThreadedExecutor {
             system_meta: compiled_data.system_meta.as_slice(),
             system_access: compiled_data.system_access.as_slice(),
             world_cell: world.as_unsafe_world_cell_mut(),
+            scope_thread: thread::current().id(),
+            thread_executor,
         };
 
         ComputeTaskPool::get_or_init(|| TaskPool::with_name("compute")).scope_with_executor(
@@ -139,12 +144,43 @@ impl<'scope, 'env> Context<'scope, 'env> {
             let Ok(mut state) = executor.state.try_lock() else {
                 return;
             };
-            state.tick(self);
+            let candidate = state.tick(self);
             drop(state);
+
+            if let Some(system_index) = candidate {
+                self.run_system(system_index);
+                executor
+                    .system_completion
+                    .push(system_index)
+                    .expect("Error registering finished system");
+                continue;
+            }
 
             if executor.system_completion.is_empty() {
                 return;
             }
+        }
+    }
+
+    fn run_system(self, system_index: usize) {
+        let sys = unsafe { &mut *self.environment.systems[system_index].get() };
+        profiling::scope!(sys.name());
+        // SAFETY: the executor starts a system only once no running system
+        // conflicts with its declared access.
+        unsafe { sys.run_unsafe((), self.environment.world_cell) };
+    }
+
+    fn may_run_here(self, system_index: usize) -> bool {
+        let environment = self.environment;
+        let on_scope_thread = thread::current().id() == environment.scope_thread;
+        if !environment.system_meta[system_index].is_send() {
+            environment
+                .thread_executor
+                .map_or(on_scope_thread, ThreadExecutor::is_current_thread)
+        } else if environment.system_access[system_index].is_exclusive() {
+            on_scope_thread
+        } else {
+            true
         }
     }
 
@@ -173,7 +209,7 @@ impl ExecutorState {
         }
     }
 
-    fn tick(&mut self, context: Context) {
+    fn tick(&mut self, context: Context) -> Option<usize> {
         let environment = context.environment;
 
         let mut apply_deferred = false;
@@ -194,7 +230,28 @@ impl ExecutorState {
             self.unapplied_systems.clear();
         }
 
+        let candidate = self.lone_candidate(context);
+        if let Some(system_index) = candidate {
+            self.start_system(context.environment, system_index);
+        }
         self.spawn_system_tasks(context);
+        candidate
+    }
+
+    fn lone_candidate(&self, context: Context) -> Option<usize> {
+        if !self.running_systems.is_clear() || self.ready_systems.count_ones(..) != 1 {
+            return None;
+        }
+        let system_index = self.ready_systems.ones().next()?;
+        context.may_run_here(system_index).then_some(system_index)
+    }
+
+    fn start_system(&mut self, environment: &Environment, system_index: usize) {
+        if !environment.system_meta[system_index].is_send() {
+            self.local_thread_running = true;
+        }
+        self.ready_systems.remove(system_index);
+        self.running_systems.insert(system_index);
     }
 
     fn finish_system(&mut self, environment: &Environment, system_index: usize) {
@@ -219,25 +276,14 @@ impl ExecutorState {
         for system_index in ready_systems.ones() {
             let is_send = context.environment.system_meta[system_index].is_send();
             let is_exclusive = context.environment.system_access[system_index].is_exclusive();
-            if !is_send {
-                if self.local_thread_running {
-                    continue;
-                }
-                self.local_thread_running = true;
+            if !is_send && self.local_thread_running {
+                continue;
             }
 
-            self.ready_systems.remove(system_index);
-            self.running_systems.insert(system_index);
+            self.start_system(context.environment, system_index);
 
-            let sys = unsafe { &mut *context.environment.systems[system_index].get() };
-            let world_cell = context.environment.world_cell;
             let task = async move {
-                {
-                    profiling::scope!(sys.name());
-                    // SAFETY: the executor starts a system only once no running system
-                    // conflicts with its declared access.
-                    unsafe { sys.run_unsafe((), world_cell) };
-                }
+                context.run_system(system_index);
                 context.system_completed(system_index);
             };
 
@@ -260,6 +306,7 @@ mod tests {
         sync::{
             Arc, Mutex,
             atomic::{AtomicBool, Ordering},
+            mpsc::{Receiver, Sender, channel},
         },
         thread::ThreadId,
         time::Duration,
@@ -533,5 +580,147 @@ mod tests {
             assert!(finished.slow.load(Ordering::SeqCst));
             assert!(!finished.dependant.load(Ordering::SeqCst));
         }
+    }
+
+    #[derive(Resource, Default)]
+    struct ChainThreads(Vec<ThreadId>);
+
+    fn chain_first(mut threads: ResMut<ChainThreads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn chain_second(mut threads: ResMut<ChainThreads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    fn chain_third(mut threads: ResMut<ChainThreads>) {
+        threads.0.push(std::thread::current().id());
+    }
+
+    #[test]
+    fn a_chain_of_send_systems_runs_on_the_calling_thread() {
+        use crate::IntoSystemConfig;
+        let mut world = World::new();
+        world.insert_resource(ChainThreads::default());
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(chain_first)
+            .add_system(chain_second.after(chain_first))
+            .add_system(chain_third.after(chain_second));
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        let threads = &world.get_resource::<ChainThreads>().unwrap().0;
+        assert_eq!(threads.len(), 3);
+        assert!(threads.iter().all(|&id| id == std::thread::current().id()));
+    }
+
+    #[test]
+    fn a_lone_panicking_system_at_the_start_is_raised_and_its_dependant_never_runs() {
+        use crate::IntoSystemConfig;
+        let mut world = World::new();
+        world.insert_resource(Finished::default());
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(breaks)
+            .add_system(after_breaks.after(breaks));
+        let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
+
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
+
+        let payload = outcome.expect_err("the panic is raised again");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
+        let finished = world.get_resource::<Finished>().unwrap();
+        assert!(!finished.dependant.load(Ordering::SeqCst));
+    }
+
+    struct Side {
+        send: Mutex<Sender<()>>,
+        recv: Mutex<Receiver<()>>,
+        met: AtomicBool,
+    }
+
+    #[derive(Resource)]
+    struct Rendezvous {
+        a: Side,
+        b: Side,
+    }
+
+    impl Rendezvous {
+        fn new() -> Self {
+            let (to_b, from_a) = channel();
+            let (to_a, from_b) = channel();
+            Self {
+                a: Side {
+                    send: Mutex::new(to_b),
+                    recv: Mutex::new(from_b),
+                    met: AtomicBool::new(false),
+                },
+                b: Side {
+                    send: Mutex::new(to_a),
+                    recv: Mutex::new(from_a),
+                    met: AtomicBool::new(false),
+                },
+            }
+        }
+    }
+
+    fn meet(side: &Side) {
+        let _ = side.send.lock().unwrap().send(());
+        let met = side
+            .recv
+            .lock()
+            .unwrap()
+            .recv_timeout(Duration::from_secs(5))
+            .is_ok();
+        side.met.store(met, Ordering::SeqCst);
+    }
+
+    fn meet_a(rendezvous: crate::resource::Res<Rendezvous>) {
+        meet(&rendezvous.a);
+    }
+
+    fn meet_b(rendezvous: crate::resource::Res<Rendezvous>) {
+        meet(&rendezvous.b);
+    }
+
+    #[test]
+    fn a_lone_panicking_system_after_a_parallel_pair_is_raised_and_its_dependant_never_runs() {
+        use crate::IntoSystemConfig;
+        let mut world = World::new();
+        world.insert_resource(Finished::default());
+        world.insert_resource(Rendezvous::new());
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(meet_a)
+            .add_system(meet_b)
+            .add_system(breaks.after(meet_a).after(meet_b))
+            .add_system(after_breaks.after(breaks));
+        let mut compiled = schedule.compile::<MultiThreadedExecutor>(&mut world);
+
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| compiled.run(&mut world)));
+
+        let payload = outcome.expect_err("the panic is raised again");
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"the system broke"));
+        let finished = world.get_resource::<Finished>().unwrap();
+        assert!(!finished.dependant.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn two_systems_ready_at_the_start_run_at_the_same_time() {
+        let mut world = World::new();
+        world.insert_resource(Rendezvous::new());
+        let mut schedule = Schedule::new();
+        schedule.add_system(meet_a).add_system(meet_b);
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        let rendezvous = world.get_resource::<Rendezvous>().unwrap();
+        assert!(rendezvous.a.met.load(Ordering::SeqCst));
+        assert!(rendezvous.b.met.load(Ordering::SeqCst));
     }
 }
