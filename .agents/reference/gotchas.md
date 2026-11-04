@@ -277,6 +277,13 @@ fix the entry in the same commit as the change that made it false.
   including signals sent through `EditWorldSignals` and direct writes by the
   host. Its first look at a newly targeted world, another scene or a play
   `App`, sees as added and changed everything stamped within `MAX_CHANGE_AGE`.
+- **Hosted `App`s track removals of `Children`, `Name`, `Camera`, `Light` and
+  `MeshComponent` for the editor's panels,** which read them through
+  `EditWorld<RemovedComponents<T>>`. `build_core` does it, so every edit and
+  play `App` has the channels. A panel that needs another removal adds it in
+  `build_core`; without it the system is skipped with a warning every frame.
+  The reader's cursor starts again at the beginning of the channel of each new
+  target world.
 - **A scene id is not an editor entity.** Both are `Entity`. A field in the
   editor's world that holds a scene id is named `scene_…` and is only ever
   looked up through `EditWorld<…>`.

@@ -9,7 +9,12 @@ pub mod selection;
 
 use concerto_app::{App, Plugin};
 use concerto_debug_gizmos::DebugGizmosPlugin;
-use concerto_render::plugin::RenderPlugin;
+use concerto_ecs::{component::name::Name, entity::hierarchy::Children};
+use concerto_mesh::MeshComponent;
+use concerto_render::{
+    components::{camera::Camera, light::Light},
+    plugin::RenderPlugin,
+};
 
 /// The scene tools, for a recipe to host: editing always, the viewport when the recipe has a renderer.
 pub struct EditToolsPlugin;
@@ -36,6 +41,11 @@ impl Plugin for EditToolsCorePlugin {
 }
 
 pub(crate) fn build_core(app: &mut App) {
+    app.track_removals::<Children>()
+        .track_removals::<Name>()
+        .track_removals::<Camera>()
+        .track_removals::<Light>()
+        .track_removals::<MeshComponent>();
     scene::build(app);
     selection::build(app);
     entity_ops::build(app);
