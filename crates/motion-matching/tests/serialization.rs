@@ -6,9 +6,9 @@ use concerto_foundation::assets::{handle::AssetHandle, AssetId};
 use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
-    reference_channels, FeatureChannel, FeatureChannelData, FrameContext, MotionDatabase,
-    MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
-    TimeRange, TrajectorySettings,
+    reference_channels, FeatureChannel, FeatureChannelData, FrameContext, JointAxis, MirrorAxis,
+    MotionDatabase, MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel,
+    SimulationBoneSettings, TimeRange, TrajectorySettings,
 };
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use glam::{Mat4, Quat, Vec3};
@@ -20,17 +20,35 @@ fn encoding_dir() -> &'static Path {
 
 fn skeleton() -> Skeleton {
     Skeleton::new(
-        vec![Mat4::IDENTITY; 2],
-        vec![None, Some(0)],
-        vec!["Root".into(), "Child".into()],
+        vec![Mat4::IDENTITY; 4],
+        vec![None, Some(0), Some(1), Some(1)],
+        vec![
+            "Root".into(),
+            "Child".into(),
+            "LeftFoot".into(),
+            "RightFoot".into(),
+        ],
         vec![
             JointPose::IDENTITY,
             JointPose {
                 translation: Vec3::new(0.0, 1.0, 0.0),
                 ..JointPose::IDENTITY
             },
+            JointPose {
+                translation: Vec3::new(0.0, -0.5, 0.2),
+                ..JointPose::IDENTITY
+            },
+            JointPose {
+                translation: Vec3::new(0.0, -0.5, -0.2),
+                ..JointPose::IDENTITY
+            },
         ],
-        vec![Uuid::from_u128(1), Uuid::from_u128(2)],
+        vec![
+            Uuid::from_u128(1),
+            Uuid::from_u128(2),
+            Uuid::from_u128(3),
+            Uuid::from_u128(4),
+        ],
     )
     .unwrap()
 }
@@ -51,6 +69,7 @@ fn entry(range: Option<(f32, f32)>) -> MotionEntry {
     MotionEntry {
         clip: Default::default(),
         range: range.map(|(start, end)| TimeRange { start, end }),
+        mirrored: false,
     }
 }
 
@@ -101,7 +120,7 @@ fn definition_defaults_match_the_spec() {
     assert_eq!(definition.speed, 1.1);
     assert_eq!(definition.simulation.position_joint, "Spine2".into());
     assert_eq!(definition.simulation.facing_joint, "Hips".into());
-    assert_eq!(definition.simulation.facing_axis, Vec3::Y);
+    assert_eq!(definition.simulation.facing_axis, JointAxis::Y);
     assert_eq!(definition.simulation.position_window, 31);
     assert_eq!(definition.simulation.facing_window, 61);
     assert_eq!(definition.trajectory.sample_dt, 1.0 / 3.0);
@@ -126,7 +145,7 @@ fn definition_round_trips_through_bincode() {
         simulation: SimulationBoneSettings {
             position_joint: "Chest".into(),
             facing_joint: "Pelvis".into(),
-            facing_axis: Vec3::X,
+            facing_axis: JointAxis::X,
             position_window: 15,
             facing_window: 21,
         },
@@ -245,7 +264,7 @@ fn deviations_hold_one_value_per_channel() {
 fn accessors_index_frame_major() {
     let database = database();
     assert_eq!(database.frame_count(), 15);
-    assert_eq!(database.bone_count(), 2);
+    assert_eq!(database.bone_count(), 4);
     assert_eq!(database.rate(), 10.0);
     assert_eq!(database.speed(), 2.0);
     assert_eq!(database.clips().len(), 2);
@@ -291,6 +310,7 @@ fn a_database_with_channels_and_handles_round_trips_through_bincode() {
             .map(|id| MotionEntry {
                 clip: AssetHandle::weak(*id),
                 range: None,
+                mirrored: false,
             })
             .collect(),
         rate: 10.0,
@@ -332,6 +352,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("content/hero/walk.gasset")),
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("content/hero/run.gasset")),
@@ -339,6 +360,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
                     start: 0.5,
                     end: 1.5,
                 }),
+                mirrored: true,
             },
         ],
         rate: 10.0,
@@ -346,7 +368,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
         simulation: SimulationBoneSettings {
             position_joint: "Child".into(),
             facing_joint: "Root".into(),
-            facing_axis: Vec3::new(0.0, 0.0, 2.0),
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 7,
         },
@@ -355,6 +377,7 @@ fn encoded_definition() -> MotionDatabaseDefinition {
             sample_count: 2,
         },
         channels: vec![FeatureChannelData::live(HeightChannel { scale: 2.0 })],
+        mirror_axis: MirrorAxis::Z,
     }
 }
 
@@ -372,6 +395,7 @@ fn database_encoding_matches_its_fixture() {
     let database = bake(&encoded_definition(), &skeleton(), &[&first, &second])
         .unwrap()
         .with_source_hash(0x5eed_f00d);
+    assert_eq!(database.mirror_axis(), Some(MirrorAxis::Z));
 
     check_encoding(&database, encoding_dir());
 }

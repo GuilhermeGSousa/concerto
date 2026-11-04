@@ -4,7 +4,7 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::{bake, trajectory_samples};
 use concerto_motion_matching::{
     reference_channels, BakeError, BodyMotion, BonePositions, BoneVelocities, ChannelSource,
-    FeatureChannel, FeatureChannelData, FeatureQuery, FrameContext, MotionDatabase,
+    FeatureChannel, FeatureChannelData, FeatureQuery, FrameContext, JointAxis, MotionDatabase,
     MotionDatabaseDefinition, MotionEntry, ReflectFeatureChannel, SimulationBoneSettings,
     TrajectoryDirections, TrajectoryPositions, TrajectorySample,
 };
@@ -107,11 +107,12 @@ fn definition_of(channels: Vec<FeatureChannelData>) -> MotionDatabaseDefinition 
         entries: vec![MotionEntry {
             clip: Default::default(),
             range: None,
+            mirrored: false,
         }],
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -343,11 +344,12 @@ fn bake_with(channel: FeatureChannelData) -> Result<MotionDatabase, BakeError> {
         entries: vec![MotionEntry {
             clip: Default::default(),
             range: None,
+            mirrored: false,
         }],
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()
@@ -416,11 +418,12 @@ fn query_definition(
         entries: vec![MotionEntry {
             clip: Default::default(),
             range: None,
+            mirrored: false,
         }],
         rate: 30.0,
         speed: 1.0,
         simulation: SimulationBoneSettings {
-            facing_axis: Vec3::Z,
+            facing_axis: JointAxis::Z,
             position_window: 5,
             facing_window: 5,
             ..Default::default()

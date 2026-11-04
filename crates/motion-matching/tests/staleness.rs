@@ -4,8 +4,8 @@ use concerto_mesh::{JointPose, Skeleton};
 use concerto_motion_matching::bake::bake;
 use concerto_motion_matching::{
     is_stale, weightless_hash, weights_changed_only, weights_of, BakeError, FeatureChannel,
-    FeatureChannelData, FrameContext, MotionDatabase, MotionDatabaseDefinition, MotionEntry,
-    ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
+    FeatureChannelData, FrameContext, MirrorAxis, MotionDatabase, MotionDatabaseDefinition,
+    MotionEntry, ReflectFeatureChannel, SimulationBoneSettings, TimeRange,
 };
 use concerto_reflect::{Reflect, TypeRegistry};
 use glam::{Mat4, Vec3};
@@ -98,6 +98,7 @@ fn definition() -> MotionDatabaseDefinition {
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("walk")),
                 range: None,
+                mirrored: false,
             },
             MotionEntry {
                 clip: AssetHandle::weak(AssetId::from_path("turn")),
@@ -105,6 +106,7 @@ fn definition() -> MotionDatabaseDefinition {
                     start: 0.25,
                     end: 1.5,
                 }),
+                mirrored: false,
             },
         ],
         rate: 10.0,
@@ -189,6 +191,24 @@ fn a_changed_entry_changes_the_hash() {
     assert_changes_the_hash(|definition| {
         definition.entries.pop();
     });
+}
+
+#[test]
+fn a_changed_mirrored_flag_changes_the_hash() {
+    assert_changes_the_hash(|definition| definition.entries[0].mirrored = true);
+}
+
+#[test]
+fn the_mirror_axis_changes_the_hash_only_when_an_entry_is_mirrored() {
+    let mut unmirrored = definition();
+    unmirrored.mirror_axis = MirrorAxis::Z;
+    assert_eq!(hash(&unmirrored), hash(&definition()));
+
+    let mut mirrored = definition();
+    mirrored.entries[1].mirrored = true;
+    let mut turned = mirrored.clone();
+    turned.mirror_axis = MirrorAxis::Z;
+    assert_ne!(hash(&turned), hash(&mirrored));
 }
 
 #[test]
