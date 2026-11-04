@@ -5889,6 +5889,7 @@ dependencies = [
  "anyhow",
  "concerto",
  "concerto-asset-build",
+ "concerto-debug-gizmos",
  "concerto-motion-matching-gizmos",
  "derive_more",
  "fs_extra",
