@@ -319,7 +319,18 @@ steps, and drops. The crate has three parts:
 
 - `src/hosted/` builds an `App` from a recipe, holds it on its document as a
   `HostedApp`, steps it, feeds it the viewport's input, and carries messages
-  both ways.
+  both ways. A `PendingApp` is building while the editor polls its plugins'
+  `ready` each `First`, then finishing: `finish_plugin_build` and the ready
+  step run on a `hosted-build` thread, and the editor joins it in a later
+  `First` and hands the `App` the current asset registry. Removing the
+  `PendingApp` detaches the thread, which drops the `App` when it ends. Stop
+  and a refused scene replacement also set a flag the thread reads after
+  `finish_plugin_build`: it then cancels the `App`'s loads and skips the ready
+  step.
+  Every hosted `App` uploads at most `HOSTED_UPLOAD_BYTES_PER_FRAME`, 32 MiB,
+  of render assets per frame, set after the recipe and again after
+  `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not
+  apply in the editor.
 - `src/tools/` is everything that runs inside an edit `App`: the editor camera,
   the grid, picking, the selection box, the gizmo, and the listeners that apply
   each edit. `EditToolsPlugin` installs it. The half that edits and captures a

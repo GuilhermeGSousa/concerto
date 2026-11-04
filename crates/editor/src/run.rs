@@ -110,7 +110,8 @@ pub(crate) fn register_editor(
             decorated,
             recipe,
         })
-        .register_plugin(concerto_ui::plugin::UIPlugin);
+        .register_plugin(concerto_ui::plugin::UIPlugin)
+        .insert_resource(crate::hosted::FinishBuildsOffThread);
     apply_plugins(app, plugins);
 }
 

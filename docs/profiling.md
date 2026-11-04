@@ -102,7 +102,8 @@ What you should see:
 - When an `App` finishes building: one `Plugin::finish` zone per plugin,
   with the plugin's name as its text, then `App::compile_schedules`,
   `App::compile_render_schedules`, and `Startup` around the startup schedules
-  of both worlds.
+  of both worlds. In the editor these zones are on the `hosted-build` thread,
+  which finishes each hosted `App`'s build off the editor's frame.
 - `apply_deferred` zones at sync points — long gaps right before them mean
   the scheduler is stalled waiting on one straggler system.
 - wgpu-core's own zones (device/queue internals) appear automatically: wgpu

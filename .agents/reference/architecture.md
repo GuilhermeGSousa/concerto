@@ -52,6 +52,9 @@ An `App` does not run itself. A host builds it, feeds it, and steps it:
 1. Create the `App` and insert a `Gpu`, a `DrawTarget`, and a `Window`.
 2. Apply the recipe, a function that registers plugins and systems.
 3. Poll `plugin_state()` until `Ready`, then call `finish_plugin_build()`.
+   A host may run `finish_plugin_build()` on another thread, as the editor
+   does; it then gives the `App` a `MainThreadExecutor` for that thread while
+   it runs, so non-`Send` `Startup` systems run there, and puts its own back.
 4. Each frame, push `WindowEvent`s into the main world, call `update()`, and
    read `Window` for what the game asked for.
 
