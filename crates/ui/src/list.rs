@@ -184,7 +184,7 @@ pub(crate) mod tests {
         text_input::UITextInput,
         theme::UITheme,
         transform::UIValue,
-        tree::{set_up_tree, update_trees},
+        tree::update_trees,
     };
 
     #[derive(Clone, Copy, Debug, PartialEq)]
@@ -220,7 +220,7 @@ pub(crate) mod tests {
             world.insert_resource(EventChannel::<UIFocusLost>::default());
             world.insert_resource(Log::default());
             world.add_listener(set_up_list);
-            world.add_listener(set_up_tree);
+            crate::tree::install_listeners(&mut world);
             install_listeners(&mut world);
             install_layout_listeners(&mut world);
             let mut schedule = Schedule::new();

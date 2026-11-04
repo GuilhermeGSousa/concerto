@@ -47,4 +47,11 @@ impl RenderAsset for RenderMesh {
             index_count,
         })
     }
+
+    fn byte_len(source: &Self::SourceAsset) -> Option<usize> {
+        Some(
+            std::mem::size_of_val(source.vertices.as_slice())
+                + std::mem::size_of_val(source.indices.as_slice()),
+        )
+    }
 }

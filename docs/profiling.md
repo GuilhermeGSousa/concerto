@@ -99,6 +99,11 @@ What you should see:
   `compute-N` threads. A system that is the only one ready while nothing else
   runs shows its zone on the thread that found it ready, which can be the
   thread that runs the schedule. `fixed_update_step` zones tick at ~30 Hz.
+- When an `App` finishes building: one `Plugin::finish` zone per plugin,
+  with the plugin's name as its text, then `App::compile_schedules`,
+  `App::compile_render_schedules`, and `Startup` around the startup schedules
+  of both worlds. In the editor these zones are on the `hosted-build` thread,
+  which finishes each hosted `App`'s build off the editor's frame.
 - `apply_deferred` zones at sync points — long gaps right before them mean
   the scheduler is stalled waiting on one straggler system.
 - wgpu-core's own zones (device/queue internals) appear automatically: wgpu
@@ -123,6 +128,30 @@ Tracy also has its own sampling mode (call stacks on top of zones) — enable
 Instrumentation cost with `--features tracy` is normally low single-digit
 percent. If you need a number for your machine: run a scene for 60 s with and
 without the feature and compare average frame time from the frame-stats log.
+
+## Which GPU renders
+
+`Gpu::request` asks wgpu for the high-performance adapter, so a hybrid laptop
+renders on its discrete GPU, and logs the adapter it got at `info`. Native
+logging shows only errors unless `RUST_LOG` is set, so run with `RUST_LOG=info`
+(or `RUST_LOG=concerto_render=info`) to see it:
+
+```
+Rendering on NVIDIA GeForce RTX 3060 Laptop GPU (DiscreteGpu, Vulkan)
+```
+
+Check that line before reading a capture: a frame bound on the integrated GPU
+shows up as time in `vkAcquireNextImageKHR`, not in any engine zone. Two
+environment variables override the choice:
+
+- `WGPU_POWER_PREF=low|high|none` sets the power preference.
+- `WGPU_ADAPTER_NAME=<substring>` takes the first adapter whose name contains
+  it, ignoring case, among those that can present to the window. wgpu panics
+  when none matches.
+
+```sh
+WGPU_ADAPTER_NAME=intel RUST_LOG=info cargo run --profile profiling -p tech-demo
+```
 
 ## Frame stats without any profiler
 

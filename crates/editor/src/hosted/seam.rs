@@ -1085,4 +1085,52 @@ mod tests {
 
         assert_eq!(changes(&mut world), [vec![1, 2], vec![], vec![2]]);
     }
+
+    #[derive(Resource, Default)]
+    struct Removed(Vec<concerto_ecs::Entity>);
+
+    fn read_removed(
+        mut removed: EditWorld<concerto_ecs::component::removed::RemovedComponents<Marker>>,
+        mut seen: ResMut<Removed>,
+    ) {
+        seen.0.extend(removed.read());
+    }
+
+    fn tracking_markers(blanks: usize) -> (HostedApp, concerto_ecs::Entity) {
+        let mut marked = None;
+        let hosted = hosted_now(plain_recipe, |app| {
+            app.track_removals::<Marker>();
+            let world = app.main_mut().world_mut();
+            for _ in 0..blanks {
+                world.spawn(());
+            }
+            marked = Some(world.spawn(Marker(1)));
+        });
+        (hosted, marked.unwrap())
+    }
+
+    #[test]
+    fn edit_world_reads_removals_in_the_target_and_in_the_next_target() {
+        let (mut world, first) = seam_world(1);
+        world.insert_resource(Removed::default());
+        let (hosted, a) = tracking_markers(0);
+        world.insert(hosted, first);
+        let (hosted, b) = tracking_markers(1);
+        let second = world.spawn(hosted);
+        retarget(&mut world);
+        let mut system = read_removed.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        scene_of(&mut world, first).remove_component::<Marker>(a);
+        system.run_and_apply((), &mut world);
+        scene_of(&mut world, second).remove_component::<Marker>(b);
+        world.get_resource_mut::<ActiveEditor>().unwrap().0 = Some(second);
+        retarget(&mut world);
+        system.run_and_apply((), &mut world);
+        system.run_and_apply((), &mut world);
+
+        assert_ne!(a, b);
+        assert_eq!(world.get_resource::<Removed>().unwrap().0, [a, b]);
+    }
 }

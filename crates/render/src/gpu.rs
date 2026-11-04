@@ -27,18 +27,30 @@ impl Gpu {
         })
     }
 
-    /// Requests a device, or returns `None` when the machine has no suitable adapter.
+    /// Requests a device, or returns `None` when the machine has no suitable adapter; panics when `WGPU_ADAPTER_NAME` names no usable adapter.
     pub async fn request(
         instance: &wgpu::Instance,
         compatible_surface: Option<&wgpu::Surface<'_>>,
     ) -> Option<Gpu> {
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::default(),
-                compatible_surface,
-                force_fallback_adapter: false,
-            })
-            .await?;
+        let adapter = match wgpu::util::initialize_adapter_from_env(instance, compatible_surface) {
+            Some(adapter) => adapter,
+            None => {
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: power_preference(wgpu::PowerPreference::from_env()),
+                        compatible_surface,
+                        force_fallback_adapter: false,
+                    })
+                    .await?
+            }
+        };
+        let info = adapter.get_info();
+        log::info!(
+            "Rendering on {} ({:?}, {:?})",
+            info.name,
+            info.device_type,
+            info.backend
+        );
 
         let (device, queue) = adapter
             .request_device(
@@ -78,6 +90,10 @@ impl Gpu {
     }
 }
 
+fn power_preference(from_env: Option<wgpu::PowerPreference>) -> wgpu::PowerPreference {
+    from_env.unwrap_or(wgpu::PowerPreference::HighPerformance)
+}
+
 fn skip_without_adapter<T>(found: Option<T>, require: bool) -> Option<T> {
     if found.is_none() {
         assert!(
@@ -91,7 +107,13 @@ fn skip_without_adapter<T>(found: Option<T>, require: bool) -> Option<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::skip_without_adapter;
+    use super::{power_preference, skip_without_adapter};
+    use wgpu::PowerPreference;
+
+    #[test]
+    fn the_high_performance_adapter_is_preferred_by_default() {
+        assert_eq!(power_preference(None), PowerPreference::HighPerformance);
+    }
 
     #[test]
     fn a_found_adapter_is_returned() {

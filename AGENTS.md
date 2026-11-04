@@ -81,11 +81,11 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo test --workspace
-cargo test -p concerto-physics --no-default-features --features force-rapier
-cargo build --target wasm32-unknown-unknown
+cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo test --locked --workspace
+cargo test --locked -p concerto-physics --no-default-features --features force-rapier
+cargo build --locked --target wasm32-unknown-unknown
 ```
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on macOS and Windows.
@@ -100,8 +100,15 @@ debug info, rebuilding what that test needs.
 
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
-alone needs none of them. A cloud pipeline session runs only the first and
-leaves the rest to CI.
+alone needs none of them. A cloud pipeline session runs only the first, and
+the `cargo metadata` step below when a `Cargo.toml` changed, and leaves the
+rest to CI.
+
+A change to a `Cargo.toml` commits the `Cargo.lock` that cargo rewrites. A
+session that doesn't build runs `cargo metadata --format-version 1 > /dev/null`,
+which resolves and rewrites the lockfile without compiling. A merge conflict in
+`Cargo.lock` is resolved by taking `master`'s file and running the same command,
+and any merge of `master` that brings in a `Cargo.toml` change runs it too.
 
 Rendering, UI, and editor changes also need a look at the running program; a
 passing test suite says nothing about what is on screen. Use the
