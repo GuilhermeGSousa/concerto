@@ -137,6 +137,17 @@ impl SystemExecutor for MultiThreadedExecutor {
     }
 }
 
+impl Environment<'_> {
+    fn apply_deferred(&self, systems: &FixedBitSet) {
+        profiling::scope!("apply_deferred");
+        for system_index in systems.ones() {
+            let sys = unsafe { &mut *self.systems[system_index].get() };
+            // SAFETY: no system runs while a sync point applies.
+            sys.apply(unsafe { self.world_cell.world_mut() });
+        }
+    }
+}
+
 impl<'scope, 'env> Context<'scope, 'env> {
     fn tick_executor(self) {
         let executor = self.environment.executor;
@@ -212,23 +223,11 @@ impl ExecutorState {
     fn tick(&mut self, context: Context) -> Option<usize> {
         let environment = context.environment;
 
-        let mut apply_deferred = false;
         while let Ok(finished_system) = environment.executor.system_completion.pop() {
             self.finish_system(environment, finished_system);
-            let sys = unsafe { &*environment.systems[finished_system].get() };
-            apply_deferred |= is_sync_point(sys);
         }
 
-        if apply_deferred {
-            profiling::scope!("apply_deferred");
-            for unapplied_system in self.unapplied_systems.ones() {
-                let sys = unsafe { &mut *environment.systems[unapplied_system].get() };
-                // SAFETY: a sync point declares the whole world and has just finished, and no
-                // system starts until the deferred work is applied.
-                sys.apply(unsafe { environment.world_cell.world_mut() });
-            }
-            self.unapplied_systems.clear();
-        }
+        self.start_sync_points(context);
 
         let candidate = self.lone_candidate(context);
         if let Some(system_index) = candidate {
@@ -236,6 +235,31 @@ impl ExecutorState {
         }
         self.spawn_system_tasks(context);
         candidate
+    }
+
+    fn start_sync_points(&mut self, context: Context) {
+        let environment = context.environment;
+        while let Some(sync_index) = self
+            .ready_systems
+            .ones()
+            .find(|&index| is_sync_point(unsafe { &*environment.systems[index].get() }))
+        {
+            self.start_system(environment, sync_index);
+            if thread::current().id() == environment.scope_thread {
+                environment.apply_deferred(&self.unapplied_systems);
+                self.unapplied_systems.clear();
+                self.finish_system(environment, sync_index);
+                continue;
+            }
+
+            let unapplied = self.unapplied_systems.clone();
+            self.unapplied_systems.clear();
+            context.scope.spawn_on_scope(async move {
+                environment.apply_deferred(&unapplied);
+                context.system_completed(sync_index);
+            });
+            return;
+        }
     }
 
     fn lone_candidate(&self, context: Context) -> Option<usize> {
@@ -722,5 +746,105 @@ mod tests {
         let rendezvous = world.get_resource::<Rendezvous>().unwrap();
         assert!(rendezvous.a.met.load(Ordering::SeqCst));
         assert!(rendezvous.b.met.load(Ordering::SeqCst));
+    }
+
+    struct Applied;
+    impl crate::signal::Signal for Applied {}
+
+    #[derive(Resource, Default)]
+    struct AppliedOn(Option<ThreadId>);
+
+    fn record_applied(_: crate::signal::On<Applied>, mut applied_on: ResMut<AppliedOn>) {
+        applied_on.0 = Some(std::thread::current().id());
+    }
+
+    fn meet_and_trigger(rendezvous: crate::resource::Res<Rendezvous>, mut cmd: CommandQueue) {
+        meet(&rendezvous.b);
+        cmd.trigger(Applied);
+    }
+
+    fn trigger_applied(mut cmd: CommandQueue) {
+        cmd.trigger(Applied);
+    }
+
+    fn after_trigger(mut counter: ResMut<Counter>) {
+        counter.0 += 1;
+    }
+
+    #[test]
+    fn commands_reached_from_pool_threads_apply_on_the_calling_thread() {
+        for _ in 0..5 {
+            let mut world = World::new();
+            world.insert_resource(Rendezvous::new());
+            world.insert_resource(AppliedOn::default());
+            world.add_listener(record_applied);
+            let mut schedule = Schedule::new();
+            schedule.add_system(meet_a).add_system(meet_and_trigger);
+            schedule
+                .compile::<MultiThreadedExecutor>(&mut world)
+                .run(&mut world);
+
+            let rendezvous = world.get_resource::<Rendezvous>().unwrap();
+            assert!(rendezvous.a.met.load(Ordering::SeqCst));
+            assert!(rendezvous.b.met.load(Ordering::SeqCst));
+            assert_eq!(
+                world.get_resource::<AppliedOn>().unwrap().0,
+                Some(std::thread::current().id())
+            );
+        }
+    }
+
+    #[test]
+    fn commands_of_a_chain_apply_on_the_calling_thread() {
+        use crate::IntoSystemConfig;
+        let mut world = World::new();
+        world.insert_resource(Counter(0));
+        world.insert_resource(AppliedOn::default());
+        world.add_listener(record_applied);
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(trigger_applied)
+            .add_system(after_trigger.after(trigger_applied));
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        assert_eq!(world.get_resource::<Counter>().unwrap().0, 1);
+        assert_eq!(
+            world.get_resource::<AppliedOn>().unwrap().0,
+            Some(std::thread::current().id())
+        );
+    }
+
+    #[derive(Resource, Default)]
+    struct FirstCount(usize);
+
+    #[derive(Resource, Default)]
+    struct SecondCount(usize);
+
+    fn count_first(mut count: ResMut<FirstCount>) {
+        count.0 += 1;
+    }
+
+    fn count_second(mut count: ResMut<SecondCount>) {
+        count.0 += 1;
+    }
+
+    #[test]
+    fn every_dependant_ready_after_a_sync_point_runs() {
+        let mut world = World::new();
+        world.insert_resource(FirstCount::default());
+        world.insert_resource(SecondCount::default());
+        let mut schedule = Schedule::new();
+        schedule
+            .add_system(trigger_applied)
+            .add_system(count_first)
+            .add_system(count_second);
+        schedule
+            .compile::<MultiThreadedExecutor>(&mut world)
+            .run(&mut world);
+
+        assert_eq!(world.get_resource::<FirstCount>().unwrap().0, 1);
+        assert_eq!(world.get_resource::<SecondCount>().unwrap().0, 1);
     }
 }
