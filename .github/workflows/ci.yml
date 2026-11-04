@@ -23,19 +23,10 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Cache Cargo registry and build artefacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-wasm-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-wasm-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Build WASM target
-        run: cargo build --target wasm32-unknown-unknown
+        run: cargo build --locked --target wasm32-unknown-unknown
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -59,22 +50,13 @@ jobs:
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo registry and build artefacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ matrix.os }}-cargo-test-v2-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ matrix.os }}-cargo-test-v2-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run tests
         # Runs the physics suite against the Jolt backend (the native
         # default); the same suite runs against the Rapier backend in the
         # test_physics_rapier job.
-        run: cargo test --workspace -- ${{ runner.os == 'Linux' && '--test-threads=1' || '' }}
+        run: cargo test --locked --workspace -- ${{ runner.os == 'Linux' && '--test-threads=1' || '' }}
         env:
           CARGO_INCREMENTAL: 0
 
@@ -90,19 +72,10 @@ jobs:
       - name: Install stable Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache Cargo registry and build artefacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-rapier-v2-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-rapier-v2-
+      - uses: Swatinem/rust-cache@v2
 
       - name: Run physics tests against the Rapier backend
-        run: cargo test -p concerto-physics --no-default-features --features force-rapier
+        run: cargo test --locked -p concerto-physics --no-default-features --features force-rapier
 
   clippy_check:
     name: Clippy
@@ -115,26 +88,17 @@ jobs:
           # jolt-ffi builds the Jolt Physics C++ sources from a submodule.
           submodules: true
       - uses: ./.github/actions/lfs-pull
-      - name: Cache
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.toml') }}
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
+      - uses: Swatinem/rust-cache@v2
       - name: Install Dependencies
         run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev libwayland-dev
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
       - name: Run clippy on the Rapier physics backend
-        run: cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+        run: cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
         
   format:
     name: Format

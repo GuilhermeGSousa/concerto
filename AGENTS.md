@@ -69,11 +69,11 @@ of these pass, in this order. They are the CI jobs, with CI's flags.
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo clippy -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
-cargo test --workspace
-cargo test -p concerto-physics --no-default-features --features force-rapier
-cargo build --target wasm32-unknown-unknown
+cargo clippy --locked --workspace --all-targets -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo clippy --locked -p concerto-physics --no-default-features --features force-rapier -- -A clippy::type_complexity -A clippy::too_many_arguments -D warnings
+cargo test --locked --workspace
+cargo test --locked -p concerto-physics --no-default-features --features force-rapier
+cargo build --locked --target wasm32-unknown-unknown
 ```
 
 A test that needs a GPU skips with a `SKIPPED` line on stderr when there is no adapter; `CONCERTO_REQUIRE_GPU=1` turns the skip into a failure. The Ubuntu CI runner has no adapter, so GPU tests skip there and run on macOS and Windows.
