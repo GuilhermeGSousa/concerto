@@ -57,16 +57,19 @@ impl RenderAssetBytesPerFrameLimiter {
         *self.deferred.get_mut() = false;
     }
 
-    fn try_write(&self, bytes: usize) -> bool {
+    fn exhausted(&self) -> bool {
         let Some(max_bytes) = self.max_bytes else {
-            return true;
-        };
-        let written = self.bytes_written.fetch_add(bytes, Ordering::Relaxed);
-        if written >= max_bytes {
-            self.deferred.store(true, Ordering::Relaxed);
             return false;
+        };
+        if self.bytes_written.load(Ordering::Relaxed) >= max_bytes {
+            self.deferred.store(true, Ordering::Relaxed);
+            return true;
         }
-        true
+        false
+    }
+
+    fn write(&self, bytes: usize) {
+        self.bytes_written.fetch_add(bytes, Ordering::Relaxed);
     }
 
     fn settled(&self) -> bool {
@@ -121,8 +124,9 @@ pub(crate) fn prepare_render_asset<A: RenderAsset>(
             continue;
         }
 
-        if let (Some(limiter), Some(bytes)) = (limiter, A::byte_len(asset)) {
-            if !limiter.try_write(bytes) {
+        let bytes = A::byte_len(asset);
+        if let (Some(limiter), Some(_)) = (limiter, bytes) {
+            if limiter.exhausted() {
                 continue;
             }
         }
@@ -132,6 +136,9 @@ pub(crate) fn prepare_render_asset<A: RenderAsset>(
         if let Ok(prepared_asset) = prepared_asset {
             if let Some(limiter) = limiter {
                 limiter.prepared.store(true, Ordering::Relaxed);
+                if let Some(bytes) = bytes {
+                    limiter.write(bytes);
+                }
             }
             render_assets.insert(*asset_id, prepared_asset)
         }
@@ -202,7 +209,7 @@ mod tests {
     use super::*;
 
     #[derive(serde::Serialize, serde::Deserialize)]
-    struct Payload(Option<usize>);
+    struct Payload(Option<usize>, bool);
 
     impl Asset for Payload {
         fn name() -> &'static str {
@@ -217,9 +224,12 @@ mod tests {
         type PreparationParams = ();
 
         fn prepare_asset(
-            _source_asset: &Self::SourceAsset,
+            source_asset: &Self::SourceAsset,
             _params: &mut SystemInputData<Self::PreparationParams>,
         ) -> Result<Self, AssetPreparationError> {
+            if source_asset.1 {
+                return Err(AssetPreparationError::NotReady);
+            }
             Ok(Uploaded)
         }
 
@@ -229,13 +239,20 @@ mod tests {
     }
 
     fn app(max_bytes: Option<usize>, sizes: &[Option<usize>]) -> App {
+        app_of(
+            max_bytes,
+            sizes.iter().map(|&size| Payload(size, false)).collect(),
+        )
+    }
+
+    fn app_of(max_bytes: Option<usize>, payloads: Vec<Payload>) -> App {
         let mut app = App::new();
         app.set_extract_fn(concerto_app::extractor::extract);
         register_render_asset_budget(&mut app);
         app.register_plugin(RenderAssetPlugin::<Uploaded>::new());
         let mut store = AssetStore::<Payload>::new();
-        for &size in sizes {
-            store.insert(AssetId::new(), Payload(size));
+        for payload in payloads {
+            store.insert(AssetId::new(), payload);
         }
         app.insert_resource(store)
             .insert_resource(RenderAssetBytesPerFrame { max_bytes });
@@ -298,6 +315,18 @@ mod tests {
         app.update();
 
         assert_eq!(prepared(&app), 3);
+    }
+
+    #[test]
+    fn assets_that_fail_to_prepare_do_not_use_up_the_budget() {
+        let mut payloads: Vec<Payload> = (0..20).map(|_| Payload(Some(10), true)).collect();
+        payloads.push(Payload(Some(4), false));
+        let mut app = app_of(Some(10), payloads);
+
+        app.update();
+
+        assert_eq!(prepared(&app), 1);
+        assert!(!deferred(&app));
     }
 
     #[test]
