@@ -840,7 +840,7 @@ impl SceneFixture {
     pub fn starting_world(&self, document: Entity) -> Option<WorldId> {
         self.world
             .get_component_for_entity::<PendingPlayApp>(document)
-            .and_then(|pending| pending.0.building())
+            .and_then(|pending| pending.0.held())
             .map(|hosted| hosted.world().id())
     }
 

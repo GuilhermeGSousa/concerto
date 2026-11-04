@@ -20,7 +20,7 @@ use std::{
 
 use concerto_app::{App, Plugin, plugins::PluginsState, schedule_groups::First};
 use concerto_ecs::{
-    Component, Entity, Event, IntoSystemConfig, Query, Res, Resource, With, World,
+    Component, Entity, Event, IntoSystemConfig, Query, Res, Resource, World,
     command::CommandQueue,
     events::{event_channel::EventChannel, event_writer::EventWriter},
     query::change_detection::DetectChanges,
@@ -28,7 +28,9 @@ use concerto_ecs::{
     signal::{On, Signal},
     system::{NonSendMarker, executor::multi_thread::MainThreadExecutor},
 };
-use concerto_foundation::assets::{asset_server::AssetServer, registry::AssetRegistry};
+use concerto_foundation::assets::{
+    asset_server::AssetServer, asset_store::AssetStore, registry::AssetRegistry,
+};
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
     gpu::Gpu,
@@ -154,11 +156,14 @@ impl HostedApp {
             .get_resource::<AssetServer>()
             .is_some_and(AssetServer::is_loading);
         let world = self.app.main_mut().world_mut();
-        let spawning = world
-            .query::<Entity, With<SceneSpawnerComponent>>()
+        let spawners: Vec<_> = world
+            .query::<&SceneSpawnerComponent, ()>()
             .iter(world)
-            .next()
-            .is_some();
+            .map(|spawner| spawner.0.clone())
+            .collect();
+        let spawning = world
+            .get_resource::<AssetStore<Scene>>()
+            .is_some_and(|scenes| spawners.iter().any(|scene| scenes.get(scene).is_some()));
         !loading && !spawning && render_assets_settled(&self.app)
     }
 
@@ -221,14 +226,6 @@ impl PendingApp {
     /// The panic message of a recipe, plugin step, or ready step that failed; such an `App` never becomes ready.
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
-    }
-
-    #[cfg(any(test, feature = "testing"))]
-    fn building(&self) -> Option<&HostedApp> {
-        match &self.phase {
-            Phase::Building(hosted) => Some(hosted.as_ref()),
-            _ => None,
-        }
     }
 
     fn building_mut(&mut self) -> Option<&mut HostedApp> {
@@ -404,6 +401,12 @@ impl PendingApp {
     #[cfg(test)]
     fn warming_up(&self) -> bool {
         matches!(self.phase, Phase::WarmingUp(_))
+    }
+}
+
+impl Drop for PendingApp {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::SeqCst);
     }
 }
 
@@ -668,8 +671,7 @@ impl PendingPlayApp {
         self.0.failure()
     }
 
-    fn cancel(&self) {
-        self.0.cancelled.store(true, Ordering::SeqCst);
+    fn cancel_loads(&self) {
         if let Some(hosted) = self.0.held() {
             hosted.cancel_loads();
         }
@@ -773,7 +775,7 @@ pub(crate) fn stop_play(
     let document = on.signal().0;
     let mut stopped = false;
     if let Some(pending) = pending.get_entity(document) {
-        pending.cancel();
+        pending.cancel_loads();
         cmd.remove::<PendingPlayApp>(document);
         failed.write(PlayFailed {
             document,
@@ -2542,6 +2544,15 @@ mod tests {
 
     #[test]
     fn cancelling_while_the_build_finishes_skips_the_ready_step_and_drops_the_app() {
+        removing_while_the_build_finishes_skips_the_ready_step(true);
+    }
+
+    #[test]
+    fn removing_a_pending_app_while_its_build_finishes_skips_the_ready_step_and_drops_the_app() {
+        removing_while_the_build_finishes_skips_the_ready_step(false);
+    }
+
+    fn removing_while_the_build_finishes_skips_the_ready_step(cancel: bool) {
         let mut world = off_thread_world();
         let (barrier, wait) = waiting_in_finish();
         let (dropped, insert_canary) = canary();
@@ -2558,10 +2569,12 @@ mod tests {
         let mut finish = finishing(&mut world);
         finish(&mut world);
 
-        world
-            .get_component_for_entity_mut::<PendingApp>(document)
-            .unwrap()
-            .cancel();
+        if cancel {
+            world
+                .get_component_for_entity_mut::<PendingApp>(document)
+                .unwrap()
+                .cancel();
+        }
         world.remove_component::<PendingApp>(document);
         barrier.wait();
 
@@ -2636,7 +2649,7 @@ mod tests {
         );
 
         assert_eq!(
-            upload_budget(pending.building().unwrap()),
+            upload_budget(pending.held().unwrap()),
             Some(HOSTED_UPLOAD_BYTES_PER_FRAME)
         );
     }
@@ -2796,5 +2809,86 @@ mod tests {
         let hosted = pending.warm_up_now().unwrap();
 
         assert_eq!(hosted_frames(&hosted), 0);
+    }
+
+    fn with_a_spawner(stored: bool) -> impl FnOnce(&mut App) {
+        move |app: &mut App| {
+            let id = concerto_foundation::assets::AssetId::new();
+            let mut scenes = concerto_foundation::assets::asset_store::AssetStore::<Scene>::new();
+            if stored {
+                scenes.insert(
+                    id,
+                    Scene {
+                        nodes: vec![],
+                        referenced_assets: vec![],
+                    },
+                );
+            }
+            app.insert_resource(scenes);
+            app.main_mut().world_mut().spawn(SceneSpawnerComponent(
+                concerto_foundation::assets::handle::AssetHandle::weak(id),
+            ));
+        }
+    }
+
+    #[test]
+    fn an_app_with_a_spawner_whose_scene_is_stored_is_not_settled() {
+        let mut hosted = hosted_now(plain_recipe, with_a_spawner(true));
+
+        hosted.step();
+
+        assert!(!hosted.settled());
+    }
+
+    #[test]
+    fn a_spawner_whose_scene_is_neither_stored_nor_loading_does_not_hold_the_warm_up() {
+        let mut pending = begin(request(plain_recipe), with_a_spawner(false), |_| {});
+
+        let hosted = pending.warm_up_now().unwrap();
+
+        assert_eq!(hosted_frames(&hosted), 1);
+    }
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Upload;
+
+    impl concerto_foundation::assets::Asset for Upload {
+        fn name() -> &'static str {
+            "Upload"
+        }
+    }
+
+    struct Uploaded;
+
+    impl concerto_render::render_asset::RenderAsset for Uploaded {
+        type SourceAsset = Upload;
+        type PreparationParams = ();
+
+        fn prepare_asset(
+            _: &Upload,
+            _: &mut concerto_ecs::system::input::SystemInputData<()>,
+        ) -> Result<Self, concerto_render::render_asset::AssetPreparationError> {
+            Ok(Uploaded)
+        }
+    }
+
+    fn uploading(app: &mut App) {
+        let mut uploads = concerto_foundation::assets::asset_store::AssetStore::<Upload>::new();
+        uploads.insert(concerto_foundation::assets::AssetId::new(), Upload);
+        app.set_extract_fn(concerto_app::extractor::extract);
+        app.render_mut().insert_resource(
+            concerto_render::render_asset::RenderAssetBytesPerFrameLimiter::default(),
+        );
+        app.register_plugin(concerto_render::render_asset::RenderAssetPlugin::<Uploaded>::new())
+            .insert_resource(uploads);
+    }
+
+    #[test]
+    fn an_app_whose_last_frame_prepared_a_render_asset_is_not_settled() {
+        let mut hosted = hosted_now(plain_recipe, uploading);
+
+        hosted.step();
+
+        assert!(!hosted.settled());
     }
 }

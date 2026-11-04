@@ -324,19 +324,23 @@ steps, and drops. The crate has three parts:
   both ways. A `PendingApp` is building while the editor polls its plugins'
   `ready` each `First`, then finishing: `finish_plugin_build` and the ready
   step run on a `hosted-build` thread, and the editor joins it in a later
-  `First` and hands the `App` the current asset registry. Removing the
-  `PendingApp` detaches the thread, which drops the `App` when it ends. Stop
-  and a refused scene replacement also set a flag the thread reads after
-  `finish_plugin_build`: it then cancels the `App`'s loads and skips the ready
-  step.
+  `First` and hands the `App` the current asset registry. Dropping the
+  `PendingApp`, however it is removed, detaches the thread and sets a flag the
+  thread reads after `finish_plugin_build`: it then cancels the `App`'s loads,
+  skips the ready step, and drops the `App`.
   An edit or play `App` then warms up: the editor steps it hidden once per
   `First`, whatever tab is in front and with no input, until a step leaves its
-  `AssetServer` not loading, no `SceneSpawnerComponent` in its world, and
-  `render_assets_settled` true, or until `WARM_UP_LIMIT`, 10 s after the join.
+  `AssetServer` not loading, no `SceneSpawnerComponent` whose scene is in its
+  `AssetStore<Scene>`, and `render_assets_settled` true, or until
+  `WARM_UP_LIMIT`, 10 s after the join.
   Only then does it become the document's `HostedApp`; a panic in a hidden
   step is the build's failure, in the step `warming up`. A preview `App` skips
   the warm-up. `finish_blocking` and `PendingApp::finish_now` finish on the
   calling thread and skip it too.
+  Finishing on the thread and the warm-up happen only when `register_editor`
+  inserts `FinishBuildsOffThread`. Without it, as in tests that build the
+  editor's world themselves, `First` finishes a ready `App` on the editor's
+  thread and makes it the `HostedApp` at once, with no warm-up.
   Every hosted `App` uploads at most `HOSTED_UPLOAD_BYTES_PER_FRAME`, 32 MiB,
   of render assets per frame, set after the recipe and again after
   `finish_plugin_build`, so a game's own `RenderAssetBytesPerFrame` does not
@@ -365,10 +369,11 @@ must be marked.
 
 A panic while the edit `App` is built does not take the editor down. That
 covers the recipe and every plugin's `build`, each plugin's `ready` and
-`finish`, the `Startup` schedule, and the ready step that publishes the content
-and opens the scene. The half-built `App` is dropped once every system it was
-running has returned, the panic is logged, and the Scene tab shows "Could not
-open scene: <panic message>", as a failed load does.
+`finish`, the `Startup` schedule, the ready step that publishes the content
+and opens the scene, and every hidden step while it warms up. The half-built
+`App` is dropped once every system it was running has returned, the panic is
+logged, and the Scene tab shows "Could not open scene: <panic message>", as a
+failed load does.
 
 A panel reaches the scene in two ways and no other:
 
