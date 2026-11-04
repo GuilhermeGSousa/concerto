@@ -43,25 +43,37 @@ const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
 
-/// The player capsule's size and how far behind it the camera sits.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+/// The player capsule's size, how far behind it the camera sits, and how the visible character follows it.
+#[derive(Resource, Clone, Debug, PartialEq)]
 pub(crate) struct CharacterConfig {
     pub(crate) radius: f32,
     pub(crate) height: f32,
     pub(crate) camera_distance: f32,
+    pub(crate) displacement: CharacterDisplacement,
 }
 
 impl CharacterConfig {
-    pub(crate) const FOREST: Self = Self {
-        radius: 0.3,
-        height: 1.6,
-        camera_distance: 5.0,
-    };
-    pub(crate) const SANATORIUM: Self = Self {
-        radius: 0.35,
-        height: 1.8,
-        camera_distance: 3.0,
-    };
+    /// The forest's character, which follows its capsule by the default method.
+    pub(crate) fn forest() -> Self {
+        Self {
+            radius: 0.3,
+            height: 1.6,
+            camera_distance: 5.0,
+            displacement: CharacterDisplacement::default(),
+        }
+    }
+
+    /// The sanatorium's character, moved by its root motion alone.
+    pub(crate) fn sanatorium() -> Self {
+        Self {
+            radius: 0.35,
+            height: 1.8,
+            camera_distance: 3.0,
+            displacement: CharacterDisplacement::Synchronization(Synchronization {
+                data_factor: 1.0,
+            }),
+        }
+    }
 }
 
 #[derive(Component, Default)]
@@ -132,7 +144,7 @@ pub(crate) fn spawn_character(
         }));
         cmd.spawn((
             placement,
-            CharacterDisplacement::default(),
+            config.displacement.clone(),
             MotionMatchingGizmos::default(),
             SceneSpawnerComponent(asset_server.load::<Scene>(CHARACTER_SCENE)),
             PendingLink { capsule, graph },
@@ -308,12 +320,9 @@ fn next_displacement(current: &CharacterDisplacement) -> CharacterDisplacement {
     }
 }
 
-pub(crate) fn debug_keys(
-    characters: Query<(&mut MotionMatchingGizmos, &mut CharacterDisplacement)>,
-    input: Res<Input>,
-) {
+pub(crate) fn debug_keys(characters: Query<&mut MotionMatchingGizmos>, input: Res<Input>) {
     let pressed = |key| input.is_just_pressed(PhysicalKey::Code(key));
-    for (mut gizmos, mut displacement) in characters.iter() {
+    for mut gizmos in characters.iter() {
         if pressed(KeyCode::Digit1) {
             gizmos.simulation = !gizmos.simulation;
         }
@@ -326,9 +335,15 @@ pub(crate) fn debug_keys(
         if pressed(KeyCode::Digit4) {
             gizmos.history = !gizmos.history;
         }
-        if pressed(KeyCode::KeyM) {
-            **displacement = next_displacement(&displacement);
-        }
+    }
+}
+
+pub(crate) fn cycle_displacement(characters: Query<&mut CharacterDisplacement>, input: Res<Input>) {
+    if !input.is_just_pressed(PhysicalKey::Code(KeyCode::KeyM)) {
+        return;
+    }
+    for mut displacement in characters.iter() {
+        **displacement = next_displacement(&displacement);
     }
 }
 
@@ -373,9 +388,9 @@ mod tests {
     use concerto::gameplay::camera::CameraPivot;
 
     use super::{
-        CHARACTER_SCENE, CharacterConfig, DATABASE, Player, PlayerSpawner, RUN, WALK, debug_keys,
-        facing, movement, setup_character_animations, spawn_character, spawn_forest_walls,
-        update_movement,
+        CHARACTER_SCENE, CharacterConfig, DATABASE, Player, PlayerSpawner, RUN, WALK,
+        cycle_displacement, debug_keys, facing, movement, setup_character_animations,
+        spawn_character, spawn_forest_walls, update_movement,
     };
 
     fn spawned(world: &mut World) {
@@ -457,7 +472,7 @@ mod tests {
     #[test]
     fn the_capsule_and_the_camera_take_their_size_from_the_character_config() {
         let (mut world, _) = world_with_spawner();
-        world.insert_resource(CharacterConfig::SANATORIUM);
+        world.insert_resource(CharacterConfig::sanatorium());
 
         spawned(&mut world);
 
@@ -473,6 +488,25 @@ mod tests {
             .map(|transform| transform.translation)
             .collect();
         assert_eq!(cameras, vec![Vec3::NEG_Z * 3.0]);
+    }
+
+    #[test]
+    fn the_character_moves_by_the_displacement_the_config_names() {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(CharacterConfig::sanatorium());
+
+        spawned(&mut world);
+
+        let methods: Vec<CharacterDisplacement> = visible_characters(&mut world)
+            .into_iter()
+            .map(|(_, _, displacement, _)| displacement)
+            .collect();
+        assert_eq!(
+            methods,
+            vec![CharacterDisplacement::Synchronization(Synchronization {
+                data_factor: 1.0
+            })]
+        );
     }
 
     #[test]
@@ -623,7 +657,7 @@ mod tests {
         stored::<AnimationGraph>(&mut world, &mut server);
         stored::<MotionDatabase>(&mut world, &mut server);
         world.insert_resource(server);
-        world.insert_resource(CharacterConfig::FOREST);
+        world.insert_resource(CharacterConfig::forest());
         let spawn_point = Vec3::new(3.0, 1.5, -7.0);
         world.spawn((
             Transform::from_translation_rotation(spawn_point, Quat::IDENTITY),
@@ -818,11 +852,18 @@ mod tests {
         ))
     }
 
-    fn pressed(world: &mut World, key: KeyCode) {
+    fn pressed<M>(world: &mut World, key: KeyCode, system: impl IntoSystem<(), M>) {
         world.insert_resource(holding(&[key]));
-        let mut system = debug_keys.into_system();
+        let mut system = system.into_system();
         system.initialize(world);
         system.run_and_apply((), world);
+    }
+
+    fn displacement(world: &World, character: Entity) -> CharacterDisplacement {
+        world
+            .get_component_for_entity::<CharacterDisplacement>(character)
+            .unwrap()
+            .clone()
     }
 
     fn layers(world: &World, character: Entity) -> [bool; 4] {
@@ -849,12 +890,12 @@ mod tests {
             let mut world = World::new();
             let character = debugged_character(&mut world);
 
-            pressed(&mut world, key);
+            pressed(&mut world, key, debug_keys);
             let mut expected = [true; 4];
             expected[layer] = false;
             assert_eq!(layers(&world, character), expected);
 
-            pressed(&mut world, key);
+            pressed(&mut world, key, debug_keys);
             assert_eq!(layers(&world, character), [true; 4]);
         }
     }
@@ -866,11 +907,8 @@ mod tests {
 
         let methods: Vec<CharacterDisplacement> = (0..4)
             .map(|_| {
-                pressed(&mut world, KeyCode::KeyM);
-                world
-                    .get_component_for_entity::<CharacterDisplacement>(character)
-                    .unwrap()
-                    .clone()
+                pressed(&mut world, KeyCode::KeyM, cycle_displacement);
+                displacement(&world, character)
             })
             .collect();
 
@@ -882,6 +920,19 @@ mod tests {
                 CharacterDisplacement::Synchronization(Synchronization { data_factor: 1.0 }),
                 CharacterDisplacement::Adjustment(Adjustment::default()),
             ]
+        );
+    }
+
+    #[test]
+    fn the_gizmo_keys_leave_the_displacement_method_alone() {
+        let mut world = World::new();
+        let character = debugged_character(&mut world);
+
+        pressed(&mut world, KeyCode::KeyM, debug_keys);
+
+        assert_eq!(
+            displacement(&world, character),
+            CharacterDisplacement::default()
         );
     }
 

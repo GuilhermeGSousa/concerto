@@ -11,8 +11,8 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmosPlugin;
 
 use crate::{
     character::{
-        CharacterConfig, PlayerSpawner, debug_keys, setup_character_animations, spawn_character,
-        spawn_forest_walls, update_movement,
+        CharacterConfig, PlayerSpawner, cycle_displacement, debug_keys, setup_character_animations,
+        spawn_character, spawn_forest_walls, update_movement,
     },
     ui::{spawn_grounded_overlay, update_grounded_overlay},
 };
@@ -32,7 +32,7 @@ pub fn game(app: &mut App) {
 
     app.set_startup_scene(asset_id!("content/forest/scene.gasset"))
         .register_type::<PlayerSpawner>()
-        .insert_resource(CharacterConfig::FOREST);
+        .insert_resource(CharacterConfig::forest());
 
     app.add_system(Startup, spawn_forest_walls)
         .add_system(Update, spawn_character)
@@ -40,6 +40,7 @@ pub fn game(app: &mut App) {
         .add_system(Update, setup_character_animations)
         .add_system(Update, update_movement)
         .add_system(Update, debug_keys)
+        .add_system(Update, cycle_displacement)
         .add_system(Update, update_grounded_overlay);
 }
 

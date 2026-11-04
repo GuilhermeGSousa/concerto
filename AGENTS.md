@@ -57,7 +57,9 @@ cargo concerto editor <dir> --update [--engine <path>]
 ```
 
 Examples are `tech-demo` and `ui-showcase`. `tech-demo -- --sanatorium` runs the
-sanatorium graybox instead of the forest; its Blender source and exports are in
+sanatorium graybox instead of the forest, with the character moved by root
+motion alone (`Synchronization` at `data_factor` 1; M does not cycle the
+method there); its Blender source and exports are in
 `examples/tech-demo/assets/sanatorium/`, and `SANATORIUM_AUTOWALK=1` walks its
 critical path and writes `sanatorium_autowalk.csv` and `.txt` (frame times,
 stuck spots, falls). Sources are imported through the editor's Import…, over a

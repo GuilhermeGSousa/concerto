@@ -62,7 +62,7 @@ pub fn sanatorium(app: &mut App) {
 
     app.set_startup_scene(MARKERS)
         .register_type::<PlayerSpawner>()
-        .insert_resource(CharacterConfig::SANATORIUM)
+        .insert_resource(CharacterConfig::sanatorium())
         .insert_resource(MarkerDebug::default());
 
     app.add_system(Startup, spawn_areas)
@@ -391,7 +391,7 @@ mod tests {
         );
         assert_eq!(
             app.get_resource::<CharacterConfig>(),
-            Some(&CharacterConfig::SANATORIUM)
+            Some(&CharacterConfig::sanatorium())
         );
     }
 
