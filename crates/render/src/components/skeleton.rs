@@ -60,7 +60,7 @@ pub(crate) struct SkinUniforms {
 impl SkinUniforms {
     pub(crate) fn new(device: &Device, layout: &SkeletonLayout, queue: &Queue) -> Self {
         let (buffer, bind_group) = Self::create_buffer(device, layout, INITIAL_SKIN_CAPACITY);
-        Self::write_identity_slot(queue, &buffer);
+        Self::write_identity_slot(queue, &buffer, 0);
 
         Self {
             buffer,
@@ -105,12 +105,12 @@ impl SkinUniforms {
         (buffer, bind_group)
     }
 
-    fn write_identity_slot(queue: &Queue, buffer: &wgpu::Buffer) {
+    fn write_identity_slot(queue: &Queue, buffer: &wgpu::Buffer, offset: u32) {
         let mut identity = UniformBuffer::new(Vec::new());
         identity
             .write(&[Mat4::IDENTITY; MAX_SKELETON_BONES])
             .unwrap();
-        queue.write_buffer(buffer, 0, &identity.into_inner());
+        queue.write_buffer(buffer, offset as u64, &identity.into_inner());
     }
 
     fn alloc_slot(&mut self, device: &Device, layout: &SkeletonLayout, queue: &Queue) -> u32 {
@@ -172,6 +172,7 @@ pub(crate) fn extract_skeletons(
             }
             None => {
                 let offset = skins.alloc_slot(&device, &skeleton_layout, &queue) * SKIN_STRIDE;
+                SkinUniforms::write_identity_slot(&queue, &skins.buffer, offset);
                 cmd.insert(
                     RenderSkeletonComponent {
                         offset,
@@ -440,6 +441,33 @@ mod tests {
         assert_eq!(
             palette(&gpu, &app, offset, 2),
             [Mat4::from_translation(Vec3::Y), sentinel]
+        );
+    }
+
+    #[test]
+    fn a_reused_slot_holds_identity_past_the_new_skeletons_bones() {
+        let Some(gpu) = Gpu::request_for_test() else {
+            return;
+        };
+        let mut app = app(&gpu);
+        let (two_bones, one_bone) = (AssetId::new(), AssetId::new());
+        insert_skeleton_asset(&mut app, two_bones, 2);
+        insert_skeleton_asset(&mut app, one_bone, 1);
+        let earlier = spawn_skeleton(&mut app, two_bones, &[Vec3::X, Vec3::Y]);
+        app.update();
+        app.update();
+        let old_offset = offset(&app, earlier.entity);
+
+        app.main_mut().world_mut().despawn(earlier.entity);
+        app.update();
+        let later = spawn_skeleton(&mut app, one_bone, &[Vec3::Z]);
+        app.update();
+        app.update();
+
+        assert_eq!(offset(&app, later.entity), old_offset);
+        assert_eq!(
+            palette(&gpu, &app, old_offset, 2),
+            [Mat4::from_translation(Vec3::Z), Mat4::IDENTITY]
         );
     }
 
