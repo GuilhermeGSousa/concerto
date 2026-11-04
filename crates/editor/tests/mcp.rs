@@ -62,7 +62,9 @@ use concerto_mesh::Aabb;
 use concerto_reflect::{Reflect, ReflectDefault};
 use concerto_render::components::{camera::Camera, light::Light};
 use concerto_scene::scene::{Scene, SceneNode};
-use concerto_ui::{text::UIText, text_input::UITextInput, theme::UITheme};
+use concerto_ui::{
+    node::UILayoutDiagnostics, text::UIText, text_input::UITextInput, theme::UITheme,
+};
 use concerto_window::{
     input::{Input, KeyCode, MouseButton, PhysicalKey},
     plugin::WindowPlugin,
@@ -369,6 +371,9 @@ struct EditFramesSoFar {}
 struct TextFields {}
 
 #[derive(Deserialize, JsonSchema)]
+struct LayoutReading {}
+
+#[derive(Deserialize, JsonSchema)]
 struct ExtensionState {}
 
 #[derive(Resource)]
@@ -579,6 +584,16 @@ fn seen_frames(
     for (_, reply) in calls.read() {
         log.push(format!("tool {}", frames.0));
         reply.ok(frames.0.to_string());
+    }
+}
+
+fn layout_reading(
+    mut calls: ToolCalls<LayoutReading>,
+    frames: EditWorld<Res<EditFrames>>,
+    layout: Res<UILayoutDiagnostics>,
+) {
+    for (_, reply) in calls.read() {
+        reply.ok(format!("{} {}", frames.0, layout.layout_passes));
     }
 }
 
@@ -799,6 +814,10 @@ where
                     edit_frames_so_far,
                 )
                 .add_tool::<TextFields, _>(McpTool::read_only("text_fields"), text_fields)
+                .add_tool::<LayoutReading, _>(
+                    McpTool::new("layout_reading").needs(Needs::Playing),
+                    layout_reading,
+                )
                 .add_tool::<ExtensionState, _>(
                     McpTool::read_only("extension_state"),
                     extension_state,
@@ -2321,6 +2340,59 @@ fn set_camera_and_frame_are_refused_while_the_game_plays() {
     let (posed, framed) = served.result;
     assert_eq!(posed["code"], "refused", "{posed}");
     assert_eq!(framed["code"], "refused", "{framed}");
+}
+
+async fn layout_reading_of(client: &Client) -> Option<(u32, u64)> {
+    let result = call(client, "layout_reading").await;
+    if result.is_error != Some(false) {
+        return None;
+    }
+    let answer = text(&result);
+    let (frames, passes) = answer.split_once(' ').unwrap();
+    Some((frames.parse().unwrap(), passes.parse().unwrap()))
+}
+
+#[test]
+fn a_playing_editor_lays_out_nothing_while_idle() {
+    let fixture = Fixture::new();
+    let log = Log::default();
+    let Some(served) = serve(&fixture, &log, |client| async move {
+        open(&client).await;
+        assert_eq!(ok(&client, "play_scene").await, "playing");
+        let started = Instant::now();
+        let mut previous = layout_reading_of(&client).await;
+        let first = loop {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            let reading = layout_reading_of(&client).await;
+            if let (Some(before), Some(now)) = (previous, reading)
+                && before.1 == now.1
+            {
+                break now;
+            }
+            assert!(
+                started.elapsed() < PATIENCE,
+                "the playing editor never settled: {previous:?}, {reading:?}"
+            );
+            previous = reading;
+        };
+        let idle = Instant::now();
+        while idle.elapsed() < Duration::from_millis(500) {
+            layout_reading_of(&client).await.unwrap();
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let second = layout_reading_of(&client).await.unwrap();
+        client.cancel().await.unwrap();
+        (first, second)
+    }) else {
+        return;
+    };
+
+    let ((first_frames, first_passes), (second_frames, second_passes)) = served.result;
+    assert!(
+        second_frames > first_frames,
+        "the game stepped: {first_frames}, {second_frames}"
+    );
+    assert_eq!(second_passes, first_passes, "layout ran while idle");
 }
 
 fn picture_of(result: &CallToolResult) -> RgbaImage {
