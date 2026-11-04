@@ -496,8 +496,10 @@ mod tests {
         gpu.device.poll(wgpu::Maintain::Wait);
         rx.recv().unwrap().unwrap();
         let matrices = bytemuck::cast_slice::<u8, f32>(&slice.get_mapped_range())
-            .chunks_exact(16)
-            .map(Mat4::from_cols_slice)
+            .as_chunks::<16>()
+            .0
+            .iter()
+            .map(Mat4::from_cols_array)
             .collect();
         readback.unmap();
         matrices
