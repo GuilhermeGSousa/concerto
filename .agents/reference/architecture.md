@@ -72,7 +72,10 @@ answers read-only calls between frames with `serve(McpRead)`, and quits when
 stdin closes or the `App` closes its window; the editor's `--mcp` uses it. A `DrawTarget::Texture` makes an
 `App` draw its window into a texture the host can sample.
 
-A host never touches the render world once frames are running.
+A host never touches the render world once frames are running. The one
+exception: between frames it may call `render_assets_settled(&app)`, which
+reads whether the last frame prepared or deferred any render asset under the
+`RenderAssetBytesPerFrame` upload budget.
 
 ## ECS
 

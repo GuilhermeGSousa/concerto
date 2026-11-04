@@ -24,6 +24,7 @@ use crate::{
     material_plugin::clear_cameras,
     queue::RenderQueue,
     render_asset::{
+        register_render_asset_budget,
         render_mesh::RenderMesh,
         render_texture::{DummyRenderTexture, RenderTexture},
         render_window::RenderWindow,
@@ -103,6 +104,7 @@ impl Plugin for RenderPlugin {
             .get_resource::<concerto_window::plugin::Window>()
             .is_some();
 
+        register_render_asset_budget(app);
         app.register_plugin(RenderAssetPlugin::<RenderMesh>::new())
             .register_plugin(RenderAssetPlugin::<RenderTexture>::new());
         app.register_asset::<Mesh>()
