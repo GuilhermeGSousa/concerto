@@ -21,12 +21,12 @@ use concerto_color::Color;
 use concerto_ecs::{
     Component, Entity, IntoSystemConfig, Query, Ref, Res, ResMut, Resource, World,
     command::CommandQueue,
-    component::name::Name,
+    component::{name::Name, removed::RemovedComponents},
     entity::hierarchy::{ChildOf, Children},
     events::event_reader::EventReader,
     query::{
         change_detection::DetectChanges,
-        filter::{With, Without},
+        filter::{Added, Changed, Or, With, Without},
     },
     signal::{
         On,
@@ -66,6 +66,7 @@ pub struct HierarchyState {
     filter: String,
     items: HashMap<Entity, Entity>,
     pending_scene_reveal: Option<Entity>,
+    top_level: Vec<Entity>,
 }
 
 impl HierarchyState {
@@ -173,6 +174,7 @@ fn forget_scene(
     let items: HashSet<Entity> = state.items.drain().map(|(_, item)| item).collect();
     despawn_outermost(&items, &parents, &mut cmd);
     state.pending_scene_reveal = None;
+    state.top_level.clear();
     for mut menu in menus.iter() {
         menu.scene_target = None;
     }
@@ -556,11 +558,19 @@ pub(crate) fn listed_entities(
 }
 
 pub(crate) fn reconcile_structure(
-    roots: EditWorld<Query<(Entity, &SceneRoot)>>,
-    top_level: EditWorld<Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>>,
-    scene_children: EditWorld<Query<&Children>>,
+    mut scene: EditWorld<(
+        Query<(Entity, &SceneRoot)>,
+        Query<Entity, (Without<ChildOf>, Without<GlobalListener>)>,
+        Query<&Children>,
+        Query<Entity, Changed<Children>>,
+        RemovedComponents<Children>,
+    )>,
     active: Res<ActiveEditor>,
     states: Query<&PlayState>,
+    (played, targeted): (
+        Query<Entity, Or<(Added<PlayState>, Changed<PlayState>)>>,
+        Query<Entity, Added<EditTarget>>,
+    ),
     mut state: ResMut<HierarchyState>,
     views: Query<Entity, With<TreeView>>,
     parents: Query<&ChildOf>,
@@ -568,21 +578,59 @@ pub(crate) fn reconcile_structure(
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
+    let (roots, top_level, scene_children, changed_children, removed_children) = &mut *scene;
+    let removed = removed_children.read().count() > 0;
+    let changed = changed_children.iter().next().is_some();
+    let played = played.iter().next().is_some();
+    let targeted = targeted.iter().next().is_some();
+    let tops: Vec<Entity> = top_level.iter().collect();
+    let structural =
+        active.is_changed() || played || targeted || changed || removed || tops != state.top_level;
     let Some(view) = views.iter().next() else {
         return;
     };
-    let listed = listed_entities(
-        &roots,
-        &top_level,
-        &scene_children,
-        &active,
-        &states,
-        ListRoot::Include,
-    );
-    let wanted: HashSet<Entity> = listed.iter().map(|listed| listed.entity).collect();
+    if structural {
+        state.top_level = tops;
+        reconcile_items(
+            &listed_entities(
+                roots,
+                top_level,
+                scene_children,
+                &active,
+                &states,
+                ListRoot::Include,
+            ),
+            view,
+            &mut state,
+            &parents,
+            &theme,
+            &mut cmd,
+        );
+    }
 
+    if let Some(scene_entity) = state.pending_scene_reveal {
+        match state.items.get(&scene_entity) {
+            None => state.pending_scene_reveal = None,
+            Some(&item) if placed.contains_entity(item) => {
+                cmd.entity(item).trigger(UIReveal);
+                state.pending_scene_reveal = None;
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+fn reconcile_items(
+    listed: &[ListedEntity],
+    view: Entity,
+    state: &mut HierarchyState,
+    parents: &Query<&ChildOf>,
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let wanted: HashSet<Entity> = listed.iter().map(|listed| listed.entity).collect();
     let mut order: HashMap<Entity, Vec<Entity>> = HashMap::new();
-    for listed in &listed {
+    for listed in listed {
         let scene_entity = listed.entity;
         let parent = listed
             .parent
@@ -596,7 +644,7 @@ pub(crate) fn reconcile_structure(
                 item
             }
             None => {
-                let item = spawn_item(&mut cmd, &theme, scene_entity, parent);
+                let item = spawn_item(cmd, theme, scene_entity, parent);
                 state.items.insert(scene_entity, item);
                 item
             }
@@ -614,90 +662,159 @@ pub(crate) fn reconcile_structure(
         .into_iter()
         .filter_map(|scene_entity| state.items.remove(&scene_entity))
         .collect();
-    despawn_outermost(&gone, &parents, &mut cmd);
+    despawn_outermost(&gone, parents, cmd);
     cmd.entity(view)
         .trigger(OrderItems(order.into_iter().collect()));
-
-    if let Some(scene_entity) = state.pending_scene_reveal {
-        if !wanted.contains(&scene_entity) {
-            state.pending_scene_reveal = None;
-        } else if let Some(&item) = state.items.get(&scene_entity)
-            && placed.contains_entity(item)
-        {
-            cmd.entity(item).trigger(UIReveal);
-            state.pending_scene_reveal = None;
-        }
-    }
 }
 
 pub(crate) fn reconcile_content(
-    selection: EditWorld<Res<Selection>>,
-    names: EditWorld<Query<Ref<Name>>>,
-    roots: EditWorld<Query<&SceneRoot>>,
-    scene_children: EditWorld<Query<Ref<Children>>>,
-    kinds: EditWorld<Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>>,
+    mut scene: EditWorld<(
+        Res<Selection>,
+        Query<Ref<Name>>,
+        Query<&SceneRoot>,
+        Query<Ref<Children>>,
+        Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
+        Query<
+            Entity,
+            Or<(
+                Changed<Name>,
+                Changed<Children>,
+                Added<SceneRoot>,
+                Added<Camera>,
+                Added<Light>,
+                Added<MeshComponent>,
+            )>,
+        >,
+        (
+            RemovedComponents<Name>,
+            RemovedComponents<Children>,
+            RemovedComponents<Camera>,
+            RemovedComponents<Light>,
+            RemovedComponents<MeshComponent>,
+        ),
+    )>,
     active: Res<ActiveEditor>,
-    documents: Query<&EditorDocument>,
-    items: Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
+    documents: Query<Ref<EditorDocument>>,
+    state: Res<HierarchyState>,
+    (items, added): (
+        Query<(Entity, Ref<HierarchyItem>, Option<&UISelected>)>,
+        Query<Entity, Added<HierarchyItem>>,
+    ),
     texts: Query<&mut UIText>,
     marks: Query<(&mut UINode, &mut UIMaterial)>,
     theme: Res<UITheme>,
     mut cmd: CommandQueue,
 ) {
-    let address = active
-        .0
-        .and_then(|document| documents.get_entity(document))
+    let (selection, names, roots, scene_children, kinds, changed, removed) = &mut *scene;
+    let (removed_names, removed_children, removed_cameras, removed_lights, removed_meshes) =
+        removed;
+    let mut dirty: HashSet<Entity> = changed.iter().collect();
+    dirty.extend(removed_names.read());
+    dirty.extend(removed_children.read());
+    dirty.extend(removed_cameras.read());
+    dirty.extend(removed_lights.read());
+    dirty.extend(removed_meshes.read());
+    let document = active.0.and_then(|document| documents.get_entity(document));
+    let address = document
+        .as_ref()
         .and_then(|document| document.current.as_ref())
         .map(|asset| asset.address.as_str())
         .unwrap_or_default();
-    for (entity, item, selected) in items.iter() {
-        let scene_entity = item.scene_entity;
-        let is_root = roots.get_entity(scene_entity).is_some();
-        let children = scene_children.get_entity(scene_entity);
-        let count = children
+    let every_row = selection.is_changed()
+        || active.is_changed()
+        || theme.is_changed()
+        || document
             .as_ref()
-            .map_or(0, |children| children.iter().len());
-        let kind = kinds.get_entity(scene_entity);
-        let mark = match kind {
-            _ if is_root => Mark::Group,
-            Some((Some(_), _, _)) => Mark::Camera,
-            Some((_, Some(_), _)) => Mark::Light,
-            Some((_, _, Some(_))) => Mark::Mesh,
-            _ if count > 0 => Mark::Group,
-            _ => Mark::Plain,
-        };
-        let name = names.get_entity(scene_entity);
-        let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());
-        let label: Option<Cow<str>> = match name.as_deref() {
-            _ if is_root => Some(address.into()),
-            _ if same_name => None,
-            Some(name) if !name.as_str().is_empty() => Some(name.as_str().into()),
-            _ => Some(format!("Entity {}", scene_entity.index()).into()),
-        };
-        let same_children =
-            !item.is_added() && children.is_some_and(|children| !children.is_changed());
-        let count: Option<Cow<str>> = match count {
-            0 => Some("".into()),
-            _ if same_children => None,
-            count => Some(count.to_string().into()),
-        };
-        for (text, value) in [(item.label, label), (item.count, count)] {
-            if let Some(value) = value
-                && let Some(mut text) = texts.get_entity(text)
-                && text.text != *value
-            {
-                text.text = value.into_owned();
-            }
+            .is_some_and(|document| document.is_changed());
+    let scene = (&*names, &*roots, &*scene_children, &*kinds);
+    let selected = selection.entity();
+    let mut update = |row| {
+        update_row(
+            row,
+            selected,
+            address,
+            scene,
+            (&texts, &marks),
+            &theme,
+            &mut cmd,
+        )
+    };
+    if every_row {
+        items.iter().for_each(&mut update);
+        return;
+    }
+    let rows: HashSet<Entity> = added
+        .iter()
+        .chain(
+            dirty
+                .iter()
+                .filter_map(|scene_entity| state.items.get(scene_entity).copied()),
+        )
+        .collect();
+    rows.into_iter()
+        .filter_map(|row| items.get_entity(row))
+        .for_each(update);
+}
+
+fn update_row(
+    (entity, item, selected): (Entity, Ref<HierarchyItem>, Option<&UISelected>),
+    selection: Option<Entity>,
+    address: &str,
+    (names, roots, scene_children, kinds): (
+        &Query<Ref<Name>>,
+        &Query<&SceneRoot>,
+        &Query<Ref<Children>>,
+        &Query<(Option<&Camera>, Option<&Light>, Option<&MeshComponent>)>,
+    ),
+    (texts, marks): (&Query<&mut UIText>, &Query<(&mut UINode, &mut UIMaterial)>),
+    theme: &UITheme,
+    cmd: &mut CommandQueue,
+) {
+    let scene_entity = item.scene_entity;
+    let is_root = roots.get_entity(scene_entity).is_some();
+    let children = scene_children.get_entity(scene_entity);
+    let count = children
+        .as_ref()
+        .map_or(0, |children| children.iter().len());
+    let kind = kinds.get_entity(scene_entity);
+    let mark = match kind {
+        _ if is_root => Mark::Group,
+        Some((Some(_), _, _)) => Mark::Camera,
+        Some((_, Some(_), _)) => Mark::Light,
+        Some((_, _, Some(_))) => Mark::Mesh,
+        _ if count > 0 => Mark::Group,
+        _ => Mark::Plain,
+    };
+    let name = names.get_entity(scene_entity);
+    let same_name = !item.is_added() && name.as_ref().is_some_and(|name| !name.is_changed());
+    let label: Option<Cow<str>> = match name.as_deref() {
+        _ if is_root => Some(address.into()),
+        _ if same_name => None,
+        Some(name) if !name.as_str().is_empty() => Some(name.as_str().into()),
+        _ => Some(format!("Entity {}", scene_entity.index()).into()),
+    };
+    let same_children = !item.is_added() && children.is_some_and(|children| !children.is_changed());
+    let count: Option<Cow<str>> = match count {
+        0 => Some("".into()),
+        _ if same_children => None,
+        count => Some(count.to_string().into()),
+    };
+    for (text, value) in [(item.label, label), (item.count, count)] {
+        if let Some(value) = value
+            && let Some(mut text) = texts.get_entity(text)
+            && text.text != *value
+        {
+            text.text = value.into_owned();
         }
-        let wanted = selection.entity() == Some(scene_entity);
-        if let Some((mut node, mut material)) = marks.get_entity(item.mark) {
-            marks::apply(mark, &theme, wanted, &mut node, &mut material);
-        }
-        if wanted && selected.is_none() {
-            cmd.insert(UISelected, entity);
-        } else if !wanted && selected.is_some() {
-            cmd.remove::<UISelected>(entity);
-        }
+    }
+    let wanted = selection == Some(scene_entity);
+    if let Some((mut node, mut material)) = marks.get_entity(item.mark) {
+        marks::apply(mark, theme, wanted, &mut node, &mut material);
+    }
+    if wanted && selected.is_none() {
+        cmd.insert(UISelected, entity);
+    } else if !wanted && selected.is_some() {
+        cmd.remove::<UISelected>(entity);
     }
 }
 
@@ -1747,6 +1864,169 @@ mod tests {
 
         assert_eq!(f.label_of(node), format!("Entity {}", node.index()));
         assert_eq!(f.count_of(node), "");
+    }
+
+    fn mark_of(f: &Fixture, scene_entity: Entity) -> (UIValue, concerto_color::LinearRgba) {
+        (f.mark_width(scene_entity), f.mark_border(scene_entity))
+    }
+
+    fn removing_reaches_the_mark<T: Component>(component: impl FnOnce() -> T) {
+        let mut f = fixture();
+        f.expand(f.root);
+        let node = f.node;
+        let plain = mark_of(&f, node);
+        f.scene
+            .scene_world_mut(f.document)
+            .insert(component(), node);
+        f.scene.world.tick();
+        f.refresh();
+        let marked = mark_of(&f, node);
+        assert_ne!(marked, plain);
+
+        f.scene
+            .scene_world_mut(f.document)
+            .remove_component::<T>(node);
+        f.scene.world.tick();
+        f.refresh();
+
+        assert_eq!(mark_of(&f, node), plain);
+    }
+
+    #[test]
+    fn removing_a_camera_light_or_mesh_changes_the_rows_mark() {
+        removing_reaches_the_mark(Camera::default);
+        removing_reaches_the_mark(Light::default);
+        removing_reaches_the_mark(MeshComponent::default);
+    }
+
+    #[test]
+    fn removing_a_name_alone_labels_the_row_by_its_entity() {
+        let mut f = fixture();
+        f.expand(f.root);
+        let node = f.node;
+        assert_eq!(f.label_of(node), "first");
+
+        f.scene
+            .scene_world_mut(f.document)
+            .remove_component::<Name>(node);
+        f.scene.world.tick();
+        f.refresh();
+
+        assert_eq!(f.label_of(node), format!("Entity {}", node.index()));
+    }
+
+    #[derive(Resource, Default)]
+    struct Orders(usize);
+
+    fn count_orders(f: &mut Fixture) {
+        f.scene.world.insert_resource(Orders::default());
+        let tree = f.tree();
+        f.scene.world.insert(
+            (|_: On<OrderItems>, mut orders: ResMut<Orders>| orders.0 += 1).into_listener(),
+            tree,
+        );
+    }
+
+    fn orders(f: &Fixture) -> usize {
+        f.scene.world.get_resource::<Orders>().unwrap().0
+    }
+
+    fn has_caret(f: &Fixture, scene_entity: Entity) -> bool {
+        f.scene
+            .world
+            .get_component_for_entity::<Children>(f.item_of(scene_entity))
+            .is_some_and(|children| {
+                children.iter().any(|child| {
+                    f.scene
+                        .world
+                        .get_component_for_entity::<Interactable>(*child)
+                        .is_some()
+                })
+            })
+    }
+
+    #[test]
+    fn a_frame_without_a_structural_change_orders_no_items() {
+        let mut f = fixture();
+        f.expand(f.root);
+        count_orders(&mut f);
+
+        for _ in 0..3 {
+            f.scene.world.tick();
+            f.refresh();
+        }
+        f.select(f.node);
+        let node = f.node;
+        f.scene
+            .scene_world_mut(f.document)
+            .insert(Name::new("renamed"), node);
+        f.refresh();
+        assert_eq!(orders(&f), 0);
+        assert_eq!(f.label_of(node), "renamed");
+
+        f.spawn_under(node, "child");
+        f.refresh();
+        assert_eq!(orders(&f), 1);
+        f.refresh();
+        assert_eq!(orders(&f), 1);
+    }
+
+    #[test]
+    fn while_playing_spawning_and_despawning_a_top_level_entity_adds_and_removes_its_row() {
+        let mut f = playing_fixture();
+        let spawned = f
+            .scene
+            .scene_world_mut(f.document)
+            .spawn((Name::new("spawned"), Transform::IDENTITY));
+        f.refresh();
+        assert!(top_level(&mut f).contains(&spawned));
+        let item = f.item_of(spawned);
+
+        f.scene.scene_world_mut(f.document).despawn(spawned);
+        f.refresh();
+
+        assert!(!top_level(&mut f).contains(&spawned));
+        assert!(!f.state().items.contains_key(&spawned));
+        assert!(!f.scene.world.entity_is_valid(item));
+    }
+
+    #[test]
+    fn despawning_an_only_child_clears_its_parents_count_and_caret() {
+        let mut f = fixture();
+        let node = f.node;
+        let child = f.spawn_under(node, "child");
+        f.refresh();
+        f.expand(f.root);
+        assert_eq!(f.count_of(node), "1");
+        assert!(has_caret(&f, node));
+
+        f.scene.scene_world_mut(f.document).despawn(child);
+        f.refresh();
+
+        assert!(!f.state().items.contains_key(&child));
+        assert_eq!(f.count_of(node), "");
+        assert!(!has_caret(&f, node));
+    }
+
+    #[test]
+    fn play_and_stop_rebuild_the_rows_from_the_new_targets_world() {
+        let mut f = playing_fixture();
+        let document = f.document;
+        let character = f.scene.scene_entity(document, "character");
+        assert!(top_level(&mut f).contains(&character));
+
+        f.scene.world.trigger(crate::hosted::StopPlay(document));
+        f.scene.frames_until("the game never stopped", |scene| {
+            scene.hosted_is_editing(document)
+        });
+        f.refresh();
+
+        let root = f.scene.scene_root(document);
+        let node = f.scene.scene_entity(document, "first");
+        assert_eq!(top_level(&mut f), [root]);
+        f.expand(root);
+        assert_eq!(f.item_children(f.item_of(root)), [node]);
+        assert_eq!(f.state().items.len(), 2);
     }
 
     #[test]

@@ -24,7 +24,7 @@ use concerto_ecs::system::executor::multi_thread::MultiThreadedExecutor;
 #[cfg(not(all(feature = "multithreaded", not(target_arch = "wasm32"))))]
 use concerto_ecs::system::executor::single_thread::SingleThreadedExecutor;
 use concerto_ecs::{
-    component::removed::{record_removal, ComponentRemoved},
+    component::removed::ComponentRemoved,
     events::{
         event_channel::{update_event_channel, EventChannel},
         event_writer::EventWriter,
@@ -240,8 +240,12 @@ impl App {
         {
             return self;
         }
-        self.register_event::<ComponentRemoved<T>>();
-        self.add_listener(record_removal::<T>.at_edit_time())
+        self.add_system(
+            First,
+            update_event_channel::<ComponentRemoved<T>>.at_edit_time(),
+        );
+        self.main_mut().world_mut().track_removals::<T>();
+        self
     }
 
     pub fn insert_resource<R: Resource>(&mut self, value: R) -> &mut Self {

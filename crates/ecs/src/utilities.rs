@@ -130,4 +130,10 @@ impl<T: ?Sized> SyncCell<T> {
     }
 }
 
+impl<T: Clone + Sync> Clone for SyncCell<T> {
+    fn clone(&self) -> Self {
+        Self(self.0.clone())
+    }
+}
+
 unsafe impl<T: ?Sized> Sync for SyncCell<T> {}
