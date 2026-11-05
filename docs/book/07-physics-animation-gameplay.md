@@ -404,8 +404,10 @@ one closure, which dispatches on `name`. Two features that both want them,
 audio and effects say, share that closure, or the game gives each its own event
 type. The signals run when `animate_targets`' commands are applied, after the
 bones' local `Transform`s are posed for the frame; their `GlobalTransform`s may
-still be last frame's. Events fire in editor previews too, but a preview keeps
-only listeners marked `.at_preview_time()`, as above.
+still be last frame's. Events fire in editor previews that run an
+`AnimationPlayer`, such as scene previews, but a preview keeps only listeners
+marked `.at_preview_time()`, as above. The clip editor's preview samples the
+clip directly and fires nothing.
 
 Every playing source fires, with its effective weight: a blend gives each input
 its share, a blend space each corner its barycentric weight, and a cross-fade
@@ -423,8 +425,10 @@ its start time. A loop that wraps fires up to the clip's end and then its start
 time; a `PlayOnce` clip that ends fires up to its end. A paused clip, one that
 has not loaded, and one at rate 0 fire nothing, and a clip that has not yet
 moved still fires its start time once it does. Nothing else fires a span it
-skipped: a state machine entering a state restarts it, so the state fires its
-start time, but no other jump fires what lies between.
+skipped: a state machine entering a state restarts it, so a clip state fires
+its start time, but no other jump fires what lies between. A motion matching
+state fires nothing on its first frame: entering it resets the state, and it
+fires only once it has started playing an entry.
 
 ## Gameplay helpers
 

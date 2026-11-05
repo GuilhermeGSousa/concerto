@@ -203,8 +203,7 @@ Settings, in the sidecar's `[settings]` table:
 |---------------|---------|---------|
 | `scale`       | `0.01`  | Multiplier applied to every offset and translation. The default turns the centimetres most BVH files use into metres. Must be finite and positive. |
 | `frame_range` | whole file | `[start, end)` frame indices to keep. Needs `start < end <= frame count` and at least two frames. Keys are timed from the first kept frame. |
-
-| `events`      | none    | Named events on the clip, as described under [Clip events](#clip-events). The table is `[settings.events.<file stem>]`, the clip's `animation/<name>`. Times count from the first kept frame. |
+| `events`      | none    | Named events on the clip, as described under [Clip events](#clip-events). The table is `[settings.events.<name>]`, where `<name>` is the clip's sanitised name, the `<name>` of its `animation/<name>` output: `Walk#Cycle.bvh` gives `Walk_Cycle`. Times count from the first kept frame. |
 
 A `frame_range` outside the file, an empty or one-frame range, a bad `scale`,
 bad `events`, or an unknown key fails the import. The file's own timing is
