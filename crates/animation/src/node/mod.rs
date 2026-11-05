@@ -30,7 +30,7 @@ pub enum AnimationPlayMode {
 #[reflect(AnimationNode)]
 pub struct ResultNode {}
 
-/// Passes its first input through.
+/// Blends its inputs, each by its node weight; inputs at zero weight are left out.
 #[derive(Default, Reflect)]
 #[reflect(AnimationNode)]
 pub struct BlendNode {}
@@ -87,7 +87,15 @@ impl AnimationNode for BlendNode {
         _: &mut PosePool,
         output: &mut Pose,
     ) {
-        pass_through(evaluated_inputs, output);
+        let mut total_weight = 0.0;
+        for input in evaluated_inputs.iter().filter(|input| input.weight > 0.0) {
+            total_weight += input.weight;
+            if total_weight == input.weight {
+                output.copy_from(&input.pose);
+            } else {
+                output.blend(&input.pose, input.weight / total_weight);
+            }
+        }
     }
 
     fn reset(&self, _: &mut ()) {}
