@@ -304,7 +304,12 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>> {
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>> {
         let origin_array = origin.to_array();
         let direction_array = direction.to_array();
         let mut hit = concerto_jolt_ffi::JoltRayHit {
@@ -313,13 +318,14 @@ impl PhysicsBackend for JoltBackend {
             normal: [0.0; 3],
         };
 
-        // SAFETY: the input arrays are valid xyz triples and `hit` is a valid
-        // out-buffer; the shim only writes it when returning true.
+        // SAFETY: the arrays are valid xyz triples, `ignore` holds `ignore.len()` ids, and `hit` is a valid out-buffer.
         let did_hit = unsafe {
             concerto_jolt_ffi::jolt_world_cast_ray(
                 self.world,
                 origin_array.as_ptr(),
                 direction_array.as_ptr(),
+                ignore.as_ptr(),
+                ignore.len() as u32,
                 &mut hit,
             )
         };

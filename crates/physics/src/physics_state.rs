@@ -9,6 +9,7 @@ use crate::backend::PhysicsBackend;
 use crate::body::BodyId;
 use crate::collider::{Collider, ColliderOffset};
 use crate::ground::{GroundContact, GroundState};
+use crate::query::QueryFilter;
 use crate::ray::RayHit;
 use crate::rigid_body::RigidBody;
 use crate::ActiveBackend;
@@ -118,19 +119,23 @@ impl PhysicsState {
     }
 
     /// Casts a ray from `origin` along `direction` — whose length is the
-    /// maximum cast distance — and returns the closest hit, if any.
-    pub fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RayHit> {
-        self.backend.cast_ray(origin, direction).map(|hit| {
-            let body = BodyId(hit.body);
+    /// maximum cast distance — and returns the closest hit, if any, skipping
+    /// the bodies `filter` ignores.
+    pub fn cast_ray(&self, origin: Vec3, direction: Vec3, filter: QueryFilter) -> Option<RayHit> {
+        let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
+        self.backend
+            .cast_ray(origin, direction, &ignore)
+            .map(|hit| {
+                let body = BodyId(hit.body);
 
-            RayHit {
-                body,
-                entity: self.get_entity(body),
-                fraction: hit.fraction,
-                point: origin + direction * hit.fraction,
-                normal: hit.normal,
-            }
-        })
+                RayHit {
+                    body,
+                    entity: self.get_entity(body),
+                    fraction: hit.fraction,
+                    point: origin + direction * hit.fraction,
+                    normal: hit.normal,
+                }
+            })
     }
 
     pub fn add_impulse(&mut self, body: BodyId, impulse: Vec3) {

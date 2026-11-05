@@ -270,13 +270,15 @@ extern "C" {
     );
 
     /// Casts a ray from `origin` (xyz) along `direction` (xyz, whose length is
-    /// the maximum cast distance) against all bodies, writing the closest hit
-    /// to `out_hit`. Returns `false` — leaving `out_hit` untouched — if
-    /// nothing was hit.
+    /// the maximum cast distance) against every body except the `ignore_count`
+    /// ids at `ignore`, writing the closest hit to `out_hit`. Returns `false`
+    /// — leaving `out_hit` untouched — if nothing was hit.
     pub fn jolt_world_cast_ray(
         world: *const JoltWorld,
         origin: *const f32,
         direction: *const f32,
+        ignore: *const JoltBodyId,
+        ignore_count: u32,
         out_hit: *mut JoltRayHit,
     ) -> bool;
 

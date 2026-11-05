@@ -46,20 +46,26 @@ The `PhysicsState` resource answers questions about the simulated world and
 takes forces:
 
 ```rust
+use concerto::physics::body::BodyId;
 use concerto::physics::physics_state::PhysicsState;
+use concerto::physics::query::QueryFilter;
 
-fn shoot(physics: Res<PhysicsState>, guns: Query<&GlobalTransform, With<Gun>>) {
-    for gun in guns.iter() {
+fn shoot(physics: Res<PhysicsState>, guns: Query<(&GlobalTransform, &BodyId), With<Gun>>) {
+    for (gun, body) in guns.iter() {
         let forward = gun.matrix().transform_vector3(Vec3::NEG_Z);
-        if let Some(hit) = physics.cast_ray(gun.translation(), forward * 100.0) {
+        let filter = QueryFilter { ignore: &[*body] };
+        if let Some(hit) = physics.cast_ray(gun.translation(), forward * 100.0, filter) {
             println!("hit {:?} at {}", hit.entity, hit.point);
         }
     }
 }
 ```
 
-`cast_ray(origin, direction_and_length)` returns the first hit, with its
-point and, when it hit a body with an entity, that `entity`. A simulated
+`cast_ray(origin, direction_and_length, filter)` returns the first hit, with
+its fraction, point and normal and, when it hit a body with an entity, that
+`entity`. A ray that starts inside a body hits it at fraction 0. The
+`QueryFilter` lists bodies the ray passes through, such as the shooter's own;
+`QueryFilter::default()` ignores nothing. A simulated
 entity gets a `BodyId`, which `physics.add_impulse(body_id, impulse)` takes.
 
 ### Characters

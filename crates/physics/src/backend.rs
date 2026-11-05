@@ -117,8 +117,14 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
     /// Casts a ray from `origin` along `direction` — whose length is the
-    /// maximum cast distance — and returns the closest hit, if any.
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>>;
+    /// maximum cast distance — and returns the closest hit, if any, skipping
+    /// the bodies in `ignore`.
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
     /// and reports the contact with the most upward-facing normal within

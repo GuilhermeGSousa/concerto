@@ -284,7 +284,12 @@ impl PhysicsBackend for RapierBackend {
         self.bodies[body].add_force_at_point(to_rapier_vec(force), to_rapier_vec(position), true);
     }
 
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>> {
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>> {
         // With an unnormalised direction, a time of impact of 1.0 is the tip
         // of `direction` — so the hit's time of impact is exactly the
         // `RawRayHit` fraction.
@@ -292,6 +297,12 @@ impl PhysicsBackend for RapierBackend {
 
         let mut best: Option<RawRayHit<Self::BodyHandle>> = None;
         for (_, collider) in self.colliders.iter() {
+            let body = collider
+                .parent()
+                .expect("every collider is created with a parent body");
+            if ignore.contains(&body) {
+                continue;
+            }
             let Some(intersection) =
                 collider
                     .shape()
@@ -304,9 +315,7 @@ impl PhysicsBackend for RapierBackend {
                 .is_none_or(|best| intersection.time_of_impact < best.fraction)
             {
                 best = Some(RawRayHit {
-                    body: collider
-                        .parent()
-                        .expect("every collider is created with a parent body"),
+                    body,
                     fraction: intersection.time_of_impact,
                     normal: from_rapier_vec(intersection.normal),
                 });

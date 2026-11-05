@@ -10,6 +10,7 @@ use concerto_physics::body::BodyId;
 use concerto_physics::collider::Collider;
 use concerto_physics::physics_pipeline::PhysicsPipeline;
 use concerto_physics::physics_state::PhysicsState;
+use concerto_physics::query::QueryFilter;
 use concerto_physics::rigid_body::RigidBody;
 use glam::Vec3;
 
@@ -51,7 +52,9 @@ fn despawned_collider_stops_colliding() {
     let ray_origin = Vec3::new(30.0, 5.0, 0.0);
     let ray = Vec3::new(0.0, -10.0, 0.0);
     assert!(
-        state.cast_ray(ray_origin, ray).is_some(),
+        state
+            .cast_ray(ray_origin, ray, QueryFilter::default())
+            .is_some(),
         "floor should be hittable before despawn"
     );
 
@@ -60,7 +63,9 @@ fn despawned_collider_stops_colliding() {
 
     let state = world.get_resource::<PhysicsState>().unwrap();
     assert!(
-        state.cast_ray(ray_origin, ray).is_none(),
+        state
+            .cast_ray(ray_origin, ray, QueryFilter::default())
+            .is_none(),
         "despawned floor should no longer be hittable"
     );
 
