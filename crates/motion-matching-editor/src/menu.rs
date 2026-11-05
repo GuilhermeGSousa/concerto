@@ -32,7 +32,7 @@ fn menu_panel(button: Entity) -> UIAnchoredPanel {
 
 pub(crate) fn open_name_menu(
     button: Entity,
-    names: &[String],
+    names: &[impl AsRef<str>],
     current: Option<&str>,
     pick: impl Fn(&str) -> Listener<UIClick>,
     menus: &Query<(Entity, &mut UIAnchoredPanel), With<NameMenu>>,
@@ -81,10 +81,11 @@ pub(crate) fn open_name_menu(
                 ..UIRect::all(0.0)
             }));
             for name in names {
+                let name = name.as_ref();
                 list.add_child_with(
                     theme
                         .pressable()
-                        .selected(current == Some(name.as_str()))
+                        .selected(current == Some(name))
                         .row()
                         .fixed()
                         .height(UIValue::Px(ITEM_HEIGHT))
@@ -93,7 +94,7 @@ pub(crate) fn open_name_menu(
                     |mut item| {
                         item.add_child(
                             theme
-                                .label(name.as_str())
+                                .label(name)
                                 .font_size(theme.font_size_sm)
                                 .single_line()
                                 .grow()

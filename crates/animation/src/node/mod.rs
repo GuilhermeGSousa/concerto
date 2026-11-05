@@ -1,9 +1,11 @@
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use uuid::Uuid;
 
 use crate::{
+    blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, RootBone},
     pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion, twist_about},
@@ -17,6 +19,21 @@ pub use definition::{
     AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, NodeState,
     PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
 };
+
+/// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
+pub fn effective_play_rate(
+    play_rate: f32,
+    param: Option<Name>,
+    blackboard: &AnimationBlackboard,
+) -> f32 {
+    let scale = param.and_then(|param| blackboard.get_float(param));
+    let rate = play_rate * scale.unwrap_or(1.0);
+    if rate.is_finite() && rate > 0.0 {
+        rate
+    } else {
+        0.0
+    }
+}
 
 #[derive(Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub enum AnimationPlayMode {
@@ -108,7 +125,6 @@ pub struct AnimationClipNodeState {
     wrapped: bool,
     start_time: f32,
     is_paused: bool,
-    play_rate: f32,
     is_finished: bool,
 }
 
@@ -120,7 +136,6 @@ impl AnimationClipNodeState {
             wrapped: false,
             start_time: 0.0,
             is_paused: false,
-            play_rate: 1.0,
             is_finished: false,
         }
     }
@@ -170,7 +185,7 @@ impl AnimationNode for AnimationClipNode {
         state: &mut AnimationClipNodeState,
         delta_time: f32,
         clips: &Res<AssetStore<AnimationClip>>,
-        _context: &AnimationGraphContext<'_>,
+        context: &AnimationGraphContext<'_>,
     ) {
         state.previous_time = state.time;
         state.wrapped = false;
@@ -187,7 +202,8 @@ impl AnimationNode for AnimationClipNode {
             return;
         };
 
-        state.time += delta_time * state.play_rate * self.play_rate;
+        let rate = effective_play_rate(self.play_rate, self.play_rate_param, context.blackboard());
+        state.time += delta_time * rate;
 
         match self.play_mode {
             AnimationPlayMode::Loop => {
@@ -306,6 +322,7 @@ pub struct AnimationClipNode {
     play_mode: AnimationPlayMode,
     start_time: f32,
     play_rate: f32,
+    play_rate_param: Option<Name>,
 }
 
 impl Default for AnimationClipNode {
@@ -321,6 +338,7 @@ impl AnimationClipNode {
             play_mode: AnimationPlayMode::Loop,
             start_time: 0.0,
             play_rate: 1.0,
+            play_rate_param: None,
         }
     }
 
@@ -344,6 +362,12 @@ impl AnimationClipNode {
         self.play_rate = play_rate.max(0.0);
         self
     }
+
+    /// Multiplies the play rate by the `f32` blackboard param named `param`, when it holds one.
+    pub fn with_play_rate_param(mut self, param: Name) -> Self {
+        self.play_rate_param = Some(param);
+        self
+    }
 }
 
 #[cfg(test)]
@@ -352,11 +376,13 @@ mod tests {
     use concerto_foundation::assets::{
         asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
+    use concerto_name::name;
     use glam::{Quat, Vec3};
     use uuid::Uuid;
 
     use super::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, AnimationPlayMode, BlendNode,
+        effective_play_rate,
     };
     use crate::{
         blackboard::AnimationBlackboard,
@@ -782,6 +808,77 @@ mod tests {
             rig.step(&node, &mut state, 0.5),
             RootMotion::IDENTITY,
             "a finished clip must not repeat its last delta"
+        );
+    }
+
+    #[test]
+    fn a_float_param_multiplies_the_play_rate_of_a_clip() {
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0));
+        let mut rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
+        rig.blackboard.set(name!("draw_speed"), 3.0_f32);
+        let node = rig
+            .node()
+            .with_play_rate(0.5)
+            .with_play_rate_param(name!("draw_speed"));
+        let mut state = rig.create(&node);
+
+        assert_motion(
+            rig.step(&node, &mut state, 0.2),
+            Vec3::new(0.6, 0.0, 1.2),
+            Quat::IDENTITY,
+        );
+        assert!((state.current_time() - 0.3).abs() < 1e-6);
+    }
+
+    #[test]
+    fn no_param_or_one_that_is_missing_or_not_a_float_leaves_the_play_rate_alone() {
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("draw_speed"), 4.0_f32);
+        blackboard.set(name!("crouched"), true);
+
+        assert_eq!(effective_play_rate(1.5, None, &blackboard), 1.5);
+        assert_eq!(
+            effective_play_rate(1.5, Some(name!("missing")), &blackboard),
+            1.5
+        );
+        assert_eq!(
+            effective_play_rate(1.5, Some(name!("crouched")), &blackboard),
+            1.5
+        );
+    }
+
+    #[test]
+    fn a_negative_play_rate_holds_the_clip() {
+        let moving = translation_channel(Vec3::ZERO, Vec3::new(2.0, 0.0, 4.0));
+        let mut rig = Rig::new(clip(vec![moving]), at_rest(Quat::IDENTITY));
+        rig.blackboard.set(name!("draw_speed"), -2.0_f32);
+        let node = rig
+            .node()
+            .with_start_time(0.25)
+            .with_play_rate_param(name!("draw_speed"));
+        let mut state = rig.create(&node);
+
+        assert_eq!(rig.step(&node, &mut state, 0.3), RootMotion::IDENTITY);
+        assert_eq!(state.current_time(), 0.25);
+    }
+
+    #[test]
+    fn a_play_rate_that_is_not_finite_is_zero() {
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("nan"), f32::NAN);
+        blackboard.set(name!("infinite"), f32::INFINITY);
+
+        assert_eq!(
+            effective_play_rate(1.0, Some(name!("nan")), &blackboard),
+            0.0
+        );
+        assert_eq!(
+            effective_play_rate(1.0, Some(name!("infinite")), &blackboard),
+            0.0
+        );
+        assert_eq!(
+            effective_play_rate(0.0, Some(name!("infinite")), &blackboard),
+            0.0
         );
     }
 

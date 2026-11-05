@@ -118,6 +118,7 @@ mod tests {
         transform::{GlobalTransform, Transform},
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
+    use concerto_name::name;
     use glam::{Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
@@ -162,7 +163,7 @@ mod tests {
         Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )
@@ -302,7 +303,7 @@ mod tests {
             let skeleton = Skeleton::new(
                 vec![Mat4::IDENTITY],
                 vec![None],
-                vec!["root".to_string()],
+                vec!["root".into()],
                 vec![self.rest.clone()],
                 vec![ROOT_ID],
             )
@@ -315,7 +316,7 @@ mod tests {
             let skeleton = Skeleton::new(
                 vec![Mat4::IDENTITY; 2],
                 vec![None, Some(0)],
-                vec!["root".to_string(), "child".to_string()],
+                vec!["root".into(), "child".into()],
                 vec![
                     self.rest.clone(),
                     JointPose {
@@ -645,7 +646,7 @@ mod tests {
         let mut graph = AnimationGraph::new();
         graph
             .result_node()
-            .with_blend_space_2d_input("at", |space| {
+            .with_blend_space_2d_input(name!("at"), |space| {
                 space
                     .animation_clip_input(along_x, Vec2::ZERO)
                     .animation_clip_input(along_y, Vec2::X)
@@ -653,7 +654,7 @@ mod tests {
             });
         let graph = rig.graph(graph);
         let mut player = rig.player(graph);
-        player.set_vec2_param("at", Vec2::new(0.25, 0.25));
+        player.set_vec2_param(name!("at"), Vec2::new(0.25, 0.25));
         rig.update(&mut player, 0.5);
 
         let motion = rig.root_motion_after_animating(player);
@@ -679,7 +680,8 @@ mod tests {
             ),
         ]);
         let inner = rig.graph(AnimationGraph::from_node(AnimationClipNode::new(clip)));
-        let machine = AnimationStateMachine::from_initial_state("only", inner, |_| {}).build();
+        let machine =
+            AnimationStateMachine::from_initial_state(name!("only"), inner, |_| {}).build();
         let outer = rig.graph(AnimationGraph::from_node(machine));
         let mut player = rig.player(outer);
         rig.update(&mut player, 0.5);

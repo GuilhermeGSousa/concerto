@@ -1,6 +1,7 @@
 use std::{collections::HashMap, fmt};
 
 use concerto_mesh::skeleton::{JointPose, Skeleton};
+use concerto_name::Name;
 use glam::{Mat3, Quat, Vec3};
 
 /// How to mirror a pose of one skeleton across a plane through its model-space origin.
@@ -22,7 +23,7 @@ impl PoseMirror {
             let twin = usize::from(twins[bone]);
             if parent.map(|parent| twins[usize::from(parent)]) != skeleton.parents[twin] {
                 return Err(MirrorError::TwinParents {
-                    joint: skeleton.names[bone].clone(),
+                    joint: skeleton.names[bone].to_string(),
                 });
             }
         }
@@ -65,7 +66,7 @@ impl PoseMirror {
         }
         if let Some((bone, distance)) = worst {
             return Err(MirrorError::Asymmetric {
-                joint: skeleton.names[bone].clone(),
+                joint: skeleton.names[bone].to_string(),
                 distance,
             });
         }
@@ -109,12 +110,12 @@ impl PoseMirror {
 }
 
 fn twins(skeleton: &Skeleton) -> Result<Box<[u16]>, MirrorError> {
-    let indices: HashMap<&str, usize> = skeleton
+    let indices: HashMap<Name, usize> = skeleton
         .names
         .iter()
         .enumerate()
         .rev()
-        .map(|(bone, name)| (name.as_str(), bone))
+        .map(|(bone, name)| (*name, bone))
         .collect();
     skeleton
         .names
@@ -127,10 +128,10 @@ fn twins(skeleton: &Skeleton) -> Result<Box<[u16]>, MirrorError> {
                 _ => return Ok(bone as u16),
             };
             indices
-                .get(twin_name.as_str())
+                .get(&Name::new(&twin_name))
                 .map(|twin| *twin as u16)
                 .ok_or(MirrorError::MissingTwin {
-                    joint: name.clone(),
+                    joint: name.to_string(),
                     twin: twin_name,
                 })
         })

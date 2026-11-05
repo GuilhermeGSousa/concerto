@@ -3,7 +3,7 @@ use std::f32::consts::{PI, TAU};
 use concerto_animation::clip::AnimationClip;
 use concerto_animation::mirror::PoseMirror;
 use concerto_foundation::{math::spring_damper::angular_velocity, transform::Transform};
-use concerto_mesh::{JointPose, Skeleton};
+use concerto_mesh::{JointName, JointPose, Skeleton};
 use glam::{Quat, Vec3};
 
 use crate::{
@@ -122,10 +122,10 @@ fn check_window(name: &'static str, window: usize) -> Result<(), BakeError> {
     Ok(())
 }
 
-fn find_joint(skeleton: &Skeleton, name: &str) -> Result<usize, BakeError> {
+fn find_joint(skeleton: &Skeleton, joint: JointName) -> Result<usize, BakeError> {
     skeleton
-        .bone_index(name)
-        .ok_or_else(|| BakeError::MissingJoint(name.to_string()))
+        .bone_index(joint.0)
+        .ok_or_else(|| BakeError::MissingJoint(joint.0.to_string()))
 }
 
 fn smooth(values: &[f32], window: usize) -> Result<Vec<f32>, BakeError> {
@@ -147,8 +147,8 @@ pub fn simulation_bone(
 ) -> Result<Vec<Transform>, BakeError> {
     check_window("position_window", settings.position_window)?;
     check_window("facing_window", settings.facing_window)?;
-    let position_joint = find_joint(skeleton, &settings.position_joint)?;
-    let facing_joint = find_joint(skeleton, &settings.facing_joint)?;
+    let position_joint = find_joint(skeleton, settings.position_joint)?;
+    let facing_joint = find_joint(skeleton, settings.facing_joint)?;
     if model_poses.is_empty() {
         return Ok(Vec::new());
     }
@@ -317,8 +317,8 @@ pub fn bake_with_progress(
     let mirror = mirror_of(definition, skeleton)?;
     check_window("position_window", definition.simulation.position_window)?;
     check_window("facing_window", definition.simulation.facing_window)?;
-    find_joint(skeleton, &definition.simulation.position_joint)?;
-    find_joint(skeleton, &definition.simulation.facing_joint)?;
+    find_joint(skeleton, definition.simulation.position_joint)?;
+    find_joint(skeleton, definition.simulation.facing_joint)?;
     let channels = definition.live_channels()?;
     for (stored, channel) in definition.channels.iter().zip(&channels) {
         channel

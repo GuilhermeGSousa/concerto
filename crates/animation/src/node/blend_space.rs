@@ -2,6 +2,7 @@ use concerto_foundation::{
     assets::handle::AssetHandle,
     geometry::delauney::{TriangulatedPoint2D, Triangulation2D},
 };
+use concerto_name::Name;
 use concerto_reflect::Reflect;
 use glam::Vec2;
 use log::warn;
@@ -15,10 +16,10 @@ use crate::{
 };
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
-/// `blackboard.get_vec2(&param).unwrap_or(Vec2::ZERO)`.
+/// `blackboard.get_vec2(param).unwrap_or(Vec2::ZERO)`.
 #[derive(Debug, Clone, Default, Reflect, serde::Serialize, serde::Deserialize)]
 pub struct BlendInput {
-    pub param: String,
+    pub param: Name,
 }
 
 /// A 2D blend space definition: the sample points and which blackboard `Vec2`
@@ -81,7 +82,7 @@ impl AnimationNode for BlendSpace2DNode {
     ) {
         let sample = context
             .blackboard()
-            .get_vec2(&self.input.param)
+            .get_vec2(self.input.param)
             .unwrap_or(Vec2::ZERO);
         state.current_triangulated_point = Some(state.triangulation.locate_or_nearest(sample));
     }

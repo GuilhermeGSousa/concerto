@@ -114,7 +114,7 @@ fn bone_x_after_a_few_frames(mut app: App) -> f32 {
         Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )
