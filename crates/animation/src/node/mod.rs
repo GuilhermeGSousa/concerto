@@ -8,7 +8,7 @@ use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, RootBone},
-    pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion, twist_about},
+    pose::{EvaluatedPose, FiredEvent, JointPose, Pose, PosePool, RootMotion, twist_about},
 };
 
 pub mod blend_space;
@@ -126,6 +126,8 @@ pub struct AnimationClipNodeState {
     start_time: f32,
     is_paused: bool,
     is_finished: bool,
+    fresh: bool,
+    fired: Vec<(u32, f32)>,
 }
 
 impl AnimationClipNodeState {
@@ -137,6 +139,8 @@ impl AnimationClipNodeState {
             start_time: 0.0,
             is_paused: false,
             is_finished: false,
+            fresh: true,
+            fired: Vec::new(),
         }
     }
 
@@ -157,6 +161,13 @@ impl AnimationClipNodeState {
         self.time = self.start_time;
         self.previous_time = self.start_time;
         self.wrapped = false;
+        self.fresh = true;
+    }
+
+    fn fire(&mut self, clip: &AnimationClip, from: f32, to: f32, include_from: bool) {
+        for key in clip.events_in(from, to, include_from) {
+            self.fired.push((key as u32, clip.events()[key].time));
+        }
     }
 
     pub fn current_time(&self) -> f32 {
@@ -187,6 +198,7 @@ impl AnimationNode for AnimationClipNode {
         clips: &Res<AssetStore<AnimationClip>>,
         context: &AnimationGraphContext<'_>,
     ) {
+        state.fired.clear();
         state.previous_time = state.time;
         state.wrapped = false;
 
@@ -220,6 +232,18 @@ impl AnimationNode for AnimationClipNode {
                 }
             }
         }
+
+        if rate == 0.0 {
+            return;
+        }
+        let fresh = std::mem::take(&mut state.fresh);
+        if state.wrapped {
+            state.fire(clip, state.previous_time, clip.duration(), fresh);
+            state.fire(clip, state.start_time, state.time, true);
+        } else {
+            let to = state.time.min(clip.duration());
+            state.fire(clip, state.previous_time, to, fresh);
+        }
     }
 
     fn evaluate(
@@ -232,6 +256,16 @@ impl AnimationNode for AnimationClipNode {
         _pool: &mut PosePool,
         output: &mut Pose,
     ) {
+        for &(key, time) in &state.fired {
+            output.push_event(FiredEvent {
+                clip: self.clip.id(),
+                key,
+                time,
+                weight: 1.0,
+                mirrored: false,
+            });
+        }
+
         let Some(animation_clip) = clips.get(&self.clip) else {
             return;
         };
@@ -374,9 +408,9 @@ impl AnimationClipNode {
 mod tests {
     use concerto_ecs::Res;
     use concerto_foundation::assets::{
-        asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
+        AssetId, asset_server::AssetServer, asset_store::AssetStore, handle::AssetHandle,
     };
-    use concerto_name::name;
+    use concerto_name::{Name, name};
     use glam::{Quat, Vec3};
     use uuid::Uuid;
 
@@ -388,7 +422,8 @@ mod tests {
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
-        pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion},
+        event::AnimationEvent,
+        pose::{EvaluatedPose, FiredEvent, JointPose, Pose, PosePool, RootMotion},
         test_walks::Walks,
     };
 
@@ -497,6 +532,169 @@ mod tests {
             });
             self.motion(node, state)
         }
+
+        fn fire(
+            &self,
+            node: &AnimationClipNode,
+            state: &mut AnimationClipNodeState,
+            delta_time: f32,
+        ) -> Vec<f32> {
+            self.walks.update(&self.blackboard, |context| {
+                node.update(state, delta_time, clips(context), context)
+            });
+            let mut pool = PosePool::new(1);
+            let mut output = pool.acquire();
+            self.evaluate(node, state, &[ROOT], &mut pool, &mut output);
+            output.events().iter().map(|event| event.time).collect()
+        }
+    }
+
+    fn with_events(times: &[f32]) -> AnimationClip {
+        let mut clip = clip(vec![translation_channel(Vec3::ZERO, Vec3::X)]);
+        for (index, time) in times.iter().enumerate() {
+            clip.add_event(
+                *time,
+                AnimationEvent {
+                    name: Name::new(&format!("event_{index}")),
+                },
+            );
+        }
+        clip
+    }
+
+    fn events_rig(times: &[f32]) -> Rig {
+        Rig::new(with_events(times), at_rest(Quat::IDENTITY))
+    }
+
+    #[test]
+    fn a_step_fires_the_events_after_the_previous_time_up_to_the_new_one() {
+        let rig = events_rig(&[0.1, 0.3, 0.5]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+        rig.fire(&node, &mut state, 0.2);
+
+        assert_eq!(rig.fire(&node, &mut state, 0.2), [0.3]);
+    }
+
+    #[test]
+    fn a_fired_event_names_its_clip_and_key_at_full_weight() {
+        let rig = events_rig(&[0.1, 0.3]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+        rig.walks.update(&rig.blackboard, |context| {
+            node.update(&mut state, 0.2, clips(context), context)
+        });
+        let mut pool = PosePool::new(1);
+        let mut output = pool.acquire();
+        rig.evaluate(&node, &mut state, &[ROOT], &mut pool, &mut output);
+
+        assert_eq!(
+            output.events(),
+            [FiredEvent {
+                clip: rig.clip.id(),
+                key: 0,
+                time: 0.1,
+                weight: 1.0,
+                mirrored: false,
+            }]
+        );
+    }
+
+    #[test]
+    fn the_first_update_after_play_fires_the_start_time() {
+        let rig = events_rig(&[0.0, 0.25, 0.3]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+
+        assert_eq!(rig.fire(&node, &mut state, 0.1), [0.0]);
+        assert!(rig.fire(&node, &mut state, 0.1).is_empty());
+        state.play();
+        assert_eq!(rig.fire(&node, &mut state, 0.1), [0.0]);
+
+        let node = rig.node().with_start_time(0.25);
+        let mut state = rig.create(&node);
+        assert_eq!(rig.fire(&node, &mut state, 0.1), [0.25, 0.3]);
+    }
+
+    #[test]
+    fn a_reset_clip_fires_its_start_time_again() {
+        let rig = events_rig(&[0.0]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+        rig.fire(&node, &mut state, 0.1);
+
+        node.reset(&mut state);
+
+        assert_eq!(rig.fire(&node, &mut state, 0.1), [0.0]);
+    }
+
+    #[test]
+    fn a_loop_wrap_fires_to_the_end_and_then_the_start() {
+        let rig = events_rig(&[0.2, 0.5, 0.9, 1.0]);
+        let node = rig.node().with_start_time(0.2);
+        let mut state = rig.create(&node);
+
+        assert_eq!(rig.fire(&node, &mut state, 0.4), [0.2, 0.5]);
+        assert_eq!(rig.fire(&node, &mut state, 0.3), [0.9]);
+        assert_eq!(rig.fire(&node, &mut state, 0.4), [1.0, 0.2]);
+        assert_eq!(rig.fire(&node, &mut state, 0.4), [0.5]);
+    }
+
+    #[test]
+    fn a_play_once_clip_fires_up_to_its_end_and_then_nothing() {
+        let rig = events_rig(&[0.9, 1.0]);
+        let node = rig.node().with_play_mode(AnimationPlayMode::PlayOnce);
+        let mut state = rig.create(&node);
+        rig.fire(&node, &mut state, 0.75);
+
+        assert_eq!(rig.fire(&node, &mut state, 0.5), [0.9, 1.0]);
+        assert!(rig.fire(&node, &mut state, 0.5).is_empty());
+    }
+
+    #[test]
+    fn a_paused_clip_fires_nothing_and_drops_what_it_fired_before() {
+        let rig = events_rig(&[0.0, 0.1]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+        rig.walks.update(&rig.blackboard, |context| {
+            node.update(&mut state, 0.2, clips(context), context)
+        });
+        state.is_paused = true;
+
+        assert!(rig.fire(&node, &mut state, 0.2).is_empty());
+    }
+
+    #[test]
+    fn a_clip_at_rate_zero_fires_nothing_and_keeps_its_start_for_later() {
+        let mut rig = events_rig(&[0.0, 0.1]);
+        rig.blackboard.set(name!("speed"), 0.0_f32);
+        let node = rig.node().with_play_rate_param(name!("speed"));
+        let mut state = rig.create(&node);
+
+        assert!(rig.fire(&node, &mut state, 0.2).is_empty());
+        rig.blackboard.set(name!("speed"), 1.0_f32);
+        assert_eq!(rig.fire(&node, &mut state, 0.2), [0.0, 0.1]);
+    }
+
+    #[test]
+    fn a_clip_that_is_not_loaded_fires_nothing_and_keeps_its_start_for_later() {
+        let rig = events_rig(&[0.0]);
+        let node = AnimationClipNode::new(AssetHandle::weak(AssetId::new()));
+        let mut state = rig.create(&node);
+        rig.fire(&node, &mut state, 0.1);
+
+        assert!(state.fresh);
+    }
+
+    #[test]
+    fn an_event_exactly_at_the_new_time_fires_once() {
+        let rig = events_rig(&[0.5]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+        rig.fire(&node, &mut state, 0.25);
+
+        assert_eq!(rig.fire(&node, &mut state, 0.25), [0.5]);
+        assert!(rig.fire(&node, &mut state, 0.25).is_empty());
     }
 
     fn translation_channel(from: Vec3, to: Vec3) -> AnimationChannel {
@@ -951,6 +1149,42 @@ mod tests {
         let blended = blend(&[weighted(Vec3::X * 4.0, 0.0), weighted(Vec3::Z * 2.0, 1.0)]);
 
         assert_translation(&blended, Vec3::Z * 2.0);
+    }
+
+    fn firing(key: u32, weight: f32) -> EvaluatedPose {
+        let mut input = weighted(Vec3::ZERO, weight);
+        input.pose.push_event(FiredEvent {
+            clip: AssetId::new(),
+            key,
+            time: 0.0,
+            weight: 1.0,
+            mirrored: false,
+        });
+        input
+    }
+
+    fn event_weights(pose: &Pose) -> Vec<(u32, f32)> {
+        let mut weights: Vec<_> = pose
+            .events()
+            .iter()
+            .map(|event| (event.key, event.weight))
+            .collect();
+        weights.sort_by_key(|(key, _)| *key);
+        weights
+    }
+
+    #[test]
+    fn a_blend_gives_each_input_event_the_weight_of_its_input() {
+        let blended = blend(&[firing(0, 0.25), firing(1, 0.75)]);
+
+        assert_eq!(event_weights(&blended), [(0, 0.25), (1, 0.75)]);
+    }
+
+    #[test]
+    fn an_input_at_zero_weight_fires_nothing() {
+        let blended = blend(&[firing(0, 0.0), firing(1, 1.0)]);
+
+        assert_eq!(event_weights(&blended), [(1, 1.0)]);
     }
 
     #[test]

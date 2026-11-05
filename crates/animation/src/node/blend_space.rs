@@ -176,3 +176,73 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
         self
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{AssetId, asset_store::AssetStore};
+    use concerto_name::name;
+    use glam::Vec2;
+
+    use super::{BlendInput, BlendSpace2DNode};
+    use crate::{
+        blackboard::AnimationBlackboard,
+        node::AnimationNode,
+        pose::{EvaluatedPose, FiredEvent, Pose, PosePool},
+        test_walks::Walks,
+    };
+
+    fn firing(key: u32) -> EvaluatedPose {
+        let mut pose = Pose::identity(1);
+        pose.push_event(FiredEvent {
+            clip: AssetId::new(),
+            key,
+            time: 0.0,
+            weight: 1.0,
+            mirrored: false,
+        });
+        EvaluatedPose { pose, weight: 1.0 }
+    }
+
+    #[test]
+    fn each_corner_event_carries_its_barycentric_weight() {
+        let space = BlendSpace2DNode::new(
+            vec![Vec2::ZERO, Vec2::X, Vec2::Y],
+            BlendInput { param: name!("at") },
+        );
+        let walks = Walks::new(AssetStore::new(), AssetStore::new());
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("at"), Vec2::new(0.25, 0.25));
+        let mut state = walks.create(&blackboard, |context| space.create_state(&(), context));
+        walks.update(&blackboard, |context| {
+            space.update(&mut state, 0.1, &(), context)
+        });
+        let mut pool = PosePool::new(1);
+        let mut output = pool.acquire();
+
+        walks.evaluate(&blackboard, None, |context| {
+            space.evaluate(
+                &mut state,
+                &(),
+                context,
+                &[],
+                &[firing(0), firing(1), firing(2)],
+                &mut pool,
+                &mut output,
+            )
+        });
+
+        let mut weights: Vec<_> = output
+            .events()
+            .iter()
+            .map(|event| (event.key, event.weight))
+            .collect();
+        weights.sort_by_key(|(key, _)| *key);
+        assert_eq!(weights.len(), 3);
+        for ((key, weight), expected) in weights.into_iter().zip([0.5, 0.25, 0.25]) {
+            assert!(
+                (weight - expected).abs() < 1e-5,
+                "event {key}: expected {expected}, got {weight}"
+            );
+        }
+    }
+}

@@ -24,7 +24,7 @@ use crate::{
         AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
         state_machine::AnimationStateMachineState,
     },
-    pose::PosePool,
+    pose::{FiredEvent, PosePool},
     root::AnimationRootBone,
 };
 
@@ -50,6 +50,8 @@ pub struct AnimationPlayer {
     blackboard: AnimationBlackboard,
     pose_pool: PosePool,
     paused: bool,
+    event_threshold: f32,
+    pub(crate) fired: Vec<FiredEvent>,
 }
 
 impl AnimationPlayer {
@@ -59,7 +61,14 @@ impl AnimationPlayer {
             blackboard: AnimationBlackboard::default(),
             pose_pool: PosePool::new(bone_count),
             paused: false,
+            event_threshold: 0.0,
+            fired: Vec::new(),
         }
+    }
+
+    /// Drops clip events whose source weighs no more than `threshold` in the final pose; 0 by default.
+    pub fn set_event_threshold(&mut self, threshold: f32) {
+        self.event_threshold = threshold;
     }
 
     /// Freezes the player: its graph stops advancing and its bones are no
@@ -185,6 +194,7 @@ impl AnimationPlayer {
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
+        self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
         let rest_pose = &skeleton.rest_pose;
         let root = bones
@@ -223,6 +233,14 @@ impl AnimationPlayer {
             self.pose_pool.release(output_pose);
             return false;
         }
+
+        let threshold = self.event_threshold;
+        self.fired.extend(
+            output_pose
+                .events
+                .drain(..)
+                .filter(|event| event.weight > threshold),
+        );
 
         let root_motion = output_pose.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {

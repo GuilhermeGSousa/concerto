@@ -259,6 +259,12 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 player's own data: its blackboard, its root bone in `evaluate`, and its
 skeleton.
 
+A pose carries the clip events its sources fired this frame
+(`Pose::events`), and `copy_from` and `blend` carry them along, weighted as
+the joints are. A node that builds its output without `copy_from` or `blend`
+must forward its inputs' events itself, with `Pose::push_event`, or they never
+reach the player.
+
 Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
 `AnimationGraph::from_node`.
@@ -334,6 +340,91 @@ Height is always the capsule's. Do not parent the character to its capsule: it
 would move twice. The [crate's README](../../crates/motion-matching/README.md)
 has the fields, what the skeleton has to be, and what each method promises at a
 wall.
+
+### Clip events
+
+A clip can mark times where something happens: a footstep, the fire frame of a
+gun. When playback crosses one, the player's entity receives an
+`AnimationSignal<S>` (`concerto::animation::event`), where `S` is the event's
+type. The importers write `AnimationEvent { name }`, the generic event, from a
+clip's import settings ([asset importing](../asset-importing.md)), and code can
+add any registered event with `AnimationClip::add_event(time, event)`.
+
+A game defines its own event type by deriving `Reflect`, `Clone` and `Default`,
+marking it `#[reflect(ClipEvent)]`, implementing `ClipEvent`, and registering
+it with `app.register_clip_event::<Footstep>()` (from `AnimationAppExt`).
+`AnimationPlugin` registers `AnimationEvent`. The derive names the type data by
+its bare identifier, so import `ReflectClipEvent` wherever you write
+`#[reflect(ClipEvent)]`:
+
+```rust
+use concerto::animation::event::{ClipEvent, ReflectClipEvent};
+
+#[derive(Clone, Default, Reflect)]
+#[reflect(ClipEvent)]
+struct Footstep {
+    left: bool,
+}
+
+impl ClipEvent for Footstep {}
+```
+
+A clip that loads an event whose type is not registered logs a warning naming
+the clip and the type, and drops it.
+
+`AnimationSignal<S>` holds the event as `signal`, the clip time it sits at as
+`time`, the `weight` of its source in the final pose, and `mirrored`, set when
+a motion matching entry plays the clip mirrored. It is an entity signal,
+triggered on the player's entity, the one with the `AnimationPlayer` and
+`SkeletonComponent`, so only a `Listener` on that entity hears it; a global
+listener from `app.add_listener` never does. Put one there when you spawn the
+character, or from a listener on `Add<AnimationPlayer>`:
+
+```rust
+use concerto::animation::event::{AnimationEvent, AnimationSignal};
+use concerto::ecs::signal::{lifecycle::Add, listener::IntoListener};
+
+fn hear_events(on: On<AnimationSignal<AnimationEvent>>, mut steps: EventWriter<Step>) {
+    let fired = on.signal();
+    if fired.signal.name == name!("footstep_left") {
+        steps.write(Step { loudness: fired.weight });
+    }
+}
+
+fn listen_for_events(on: On<Add<AnimationPlayer>>, mut cmd: CommandQueue) {
+    cmd.insert(hear_events.into_listener(), on.signal().entity);
+}
+
+app.add_listener(listen_for_events.at_preview_time());
+```
+
+An entity carries one listener per signal type, and every imported event is an
+`AnimationSignal<AnimationEvent>`, so all of a player's named events go through
+one closure, which dispatches on `name`. Two features that both want them,
+audio and effects say, share that closure, or the game gives each its own event
+type. The signals run when `animate_targets`' commands are applied, after the
+bones' local `Transform`s are posed for the frame; their `GlobalTransform`s may
+still be last frame's. Events fire in editor previews too, but a preview keeps
+only listeners marked `.at_preview_time()`, as above.
+
+Every playing source fires, with its effective weight: a blend gives each input
+its share, a blend space each corner its barycentric weight, and a cross-fade
+the fading states theirs. A state entered with `CrossFade` fires its start
+event on the first frame of the fade, at that frame's weight, about
+`dt / blend_time`: 0.07 for a 0.25 s blend at 60 Hz. With `Inertialization` the
+new state plays alone, so its start event fires at weight 1.
+`AnimationPlayer::set_event_threshold(threshold)` drops every event whose
+weight is at or below the threshold; the default, 0, drops only sources a blend
+left out.
+
+A clip fires the events after its previous time up to and including its new
+one, and the first update after it starts, plays again or is reset also fires
+its start time. A loop that wraps fires up to the clip's end and then its start
+time; a `PlayOnce` clip that ends fires up to its end. A paused clip, one that
+has not loaded, and one at rate 0 fire nothing, and a clip that has not yet
+moved still fires its start time once it does. Nothing else fires a span it
+skipped: a state machine entering a state restarts it, so the state fires its
+start time, but no other jump fires what lies between.
 
 ## Gameplay helpers
 

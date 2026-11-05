@@ -31,6 +31,7 @@ mod tests {
     use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::RootBone;
+    use crate::event::AnimationEvent;
     use crate::graph::{AnimationGraph, made_live};
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
@@ -39,7 +40,7 @@ mod tests {
     use crate::node::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
-    use crate::pose::{JointPose, PosePool, RootMotion};
+    use crate::pose::{FiredEvent, JointPose, PosePool, RootMotion};
     use crate::test_walks::Walks;
     use crate::transition::TransitionBlender;
 
@@ -489,6 +490,7 @@ mod tests {
         bone: Uuid,
         pool: PosePool,
         root_motion: RootMotion,
+        events: Vec<FiredEvent>,
     }
 
     impl Machine {
@@ -557,6 +559,7 @@ mod tests {
                 bone,
                 pool: PosePool::new(1),
                 root_motion: RootMotion::IDENTITY,
+                events: Vec::new(),
             }
         }
 
@@ -588,6 +591,7 @@ mod tests {
                 });
             let x = pose.get_joint_pose(0).unwrap().translation.x;
             self.root_motion = pose.root_motion();
+            self.events = pose.events().to_vec();
             self.pool.release(pose);
             x
         }
@@ -774,5 +778,73 @@ mod tests {
             "expected {expected}, got {}",
             machine.root_motion.translation.x
         );
+    }
+
+    fn with_event(mut clip: AnimationClip, time: f32) -> AnimationClip {
+        clip.add_event(
+            time,
+            AnimationEvent {
+                name: name!("step"),
+            },
+        );
+        clip
+    }
+
+    fn machine_firing(blender: TransitionBlender) -> Machine {
+        let bone = Uuid::new_v4();
+        Machine::new(
+            bone,
+            with_event(linear_x_clip(bone, 2.0), 5.5 * MACHINE_FRAME),
+            with_event(linear_x_clip(bone, 8.0), 0.0),
+            constant_x_clip(bone, 0.0),
+            0.1,
+            blender,
+        )
+    }
+
+    fn fired_by_time(machine: &Machine) -> Vec<(f32, f32)> {
+        let mut fired: Vec<_> = machine
+            .events
+            .iter()
+            .map(|event| (event.time, event.weight))
+            .collect();
+        fired.sort_by(|a, b| a.0.total_cmp(&b.0));
+        fired
+    }
+
+    fn assert_fired(actual: &[(f32, f32)], expected: &[(f32, f32)]) {
+        assert_eq!(actual.len(), expected.len(), "fired {actual:?}");
+        for ((time, weight), (expected_time, expected_weight)) in actual.iter().zip(expected) {
+            assert!(
+                (time - expected_time).abs() < 1e-6 && (weight - expected_weight).abs() < 1e-5,
+                "expected {expected:?}, fired {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cross_fade_gives_each_event_the_weight_of_its_state_in_the_fade() {
+        let mut machine = machine_firing(TransitionBlender::CrossFade);
+        machine.run(5);
+        machine.set(name!("to_b"), true);
+
+        machine.step();
+
+        let entered = MACHINE_FRAME / 0.1;
+        assert_fired(
+            &fired_by_time(&machine),
+            &[(0.0, entered), (5.5 * MACHINE_FRAME, 1.0 - entered)],
+        );
+    }
+
+    #[test]
+    fn inertialization_fires_the_start_of_the_entered_state_at_full_weight() {
+        let mut machine = machine_firing(TransitionBlender::Inertialization);
+        machine.run(5);
+        machine.set(name!("to_b"), true);
+
+        machine.step();
+
+        assert_fired(&fired_by_time(&machine), &[(0.0, 1.0)]);
     }
 }

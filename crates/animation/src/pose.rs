@@ -1,4 +1,4 @@
-use concerto_foundation::blend::Blendable;
+use concerto_foundation::{assets::AssetId, blend::Blendable};
 pub use concerto_mesh::skeleton::JointPose;
 use glam::{Quat, Vec3};
 
@@ -43,9 +43,20 @@ pub fn twist_about(rotation: Quat, axis: Vec3) -> Quat {
     twist.normalize()
 }
 
+/// A clip event crossed this frame: the key on its clip, and the weight its source has in the pose.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FiredEvent {
+    pub clip: AssetId,
+    pub key: u32,
+    pub time: f32,
+    pub weight: f32,
+    pub mirrored: bool,
+}
+
 pub struct Pose {
     joints: Box<[JointPose]>,
     root_motion: RootMotion,
+    pub(crate) events: Vec<FiredEvent>,
 }
 
 impl Pose {
@@ -58,6 +69,7 @@ impl Pose {
         Pose {
             joints: joints.into(),
             root_motion: RootMotion::IDENTITY,
+            events: Vec::new(),
         }
     }
 
@@ -86,6 +98,16 @@ impl Pose {
         self.root_motion = root_motion;
     }
 
+    /// The clip events this pose carries, each weighted by its source.
+    pub fn events(&self) -> &[FiredEvent] {
+        &self.events
+    }
+
+    /// Adds a clip event to this pose.
+    pub fn push_event(&mut self, event: FiredEvent) {
+        self.events.push(event);
+    }
+
     pub fn get_joint_pose(&mut self, bone_index: usize) -> Option<&JointPose> {
         self.joints.get(bone_index)
     }
@@ -110,14 +132,23 @@ impl Pose {
                 .rotation
                 .slerp(other.root_motion.rotation, weight),
         };
+        for event in &mut self.events {
+            event.weight *= 1.0 - weight;
+        }
+        self.events
+            .extend(other.events.iter().map(|event| FiredEvent {
+                weight: event.weight * weight,
+                ..*event
+            }));
     }
 
-    /// Overwrites this pose's joints and root motion with those of `other` (same skeleton / length).
+    /// Overwrites this pose's joints, root motion and events with those of `other` (same skeleton / length).
     pub fn copy_from(&mut self, other: &Pose) {
         for (joint, other_joint) in self.joints.iter_mut().zip(other.joints.iter()) {
             *joint = other_joint.clone();
         }
         self.root_motion = other.root_motion;
+        self.events.clone_from(&other.events);
     }
 }
 
@@ -156,6 +187,7 @@ impl PosePool {
             pose.joints.clone_from_slice(&self.rest);
         }
         pose.root_motion = RootMotion::IDENTITY;
+        pose.events.clear();
         pose
     }
 
@@ -180,7 +212,9 @@ mod tests {
 
     use glam::{Quat, Vec3};
 
-    use super::{JointPose, Pose, PosePool, RootMotion, twist_about};
+    use concerto_foundation::assets::AssetId;
+
+    use super::{FiredEvent, JointPose, Pose, PosePool, RootMotion, twist_about};
 
     fn moved() -> RootMotion {
         RootMotion {
@@ -274,6 +308,58 @@ mod tests {
         pool.release(recycled);
 
         assert_eq!(pool.acquire().root_motion(), RootMotion::IDENTITY);
+    }
+
+    fn fired(key: u32, weight: f32) -> FiredEvent {
+        FiredEvent {
+            clip: AssetId::new(),
+            key,
+            time: key as f32,
+            weight,
+            mirrored: false,
+        }
+    }
+
+    fn weights(pose: &Pose) -> Vec<(u32, f32)> {
+        pose.events()
+            .iter()
+            .map(|event| (event.key, event.weight))
+            .collect()
+    }
+
+    #[test]
+    fn copy_from_carries_the_events_and_drops_its_own() {
+        let mut source = Pose::identity(1);
+        source.push_event(fired(1, 1.0));
+        let mut copy = Pose::identity(1);
+        copy.push_event(fired(2, 1.0));
+
+        copy.copy_from(&source);
+
+        assert_eq!(copy.events(), source.events());
+    }
+
+    #[test]
+    fn blend_scales_its_own_events_by_the_rest_and_appends_the_others_scaled_by_the_weight() {
+        let mut pose = Pose::identity(1);
+        pose.push_event(fired(1, 1.0));
+        pose.push_event(fired(2, 0.5));
+        let mut other = Pose::identity(1);
+        other.push_event(fired(3, 1.0));
+
+        pose.blend(&other, 0.25);
+
+        assert_eq!(weights(&pose), [(1, 0.75), (2, 0.375), (3, 0.25)]);
+    }
+
+    #[test]
+    fn acquire_clears_the_events_of_a_recycled_pose() {
+        let mut pool = PosePool::new(1);
+        let mut recycled = pool.acquire();
+        recycled.push_event(fired(1, 1.0));
+        pool.release(recycled);
+
+        assert!(pool.acquire().events().is_empty());
     }
 
     #[test]
