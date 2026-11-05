@@ -453,6 +453,18 @@ graph that holds the node.
 | `ignore_surrounding` | a search returns no other frame fewer than this many frames from the playhead, though the playhead's own frame stays when nothing beats it; at the last frame of a range nothing is excluded around the playhead | 20 |
 | `ignore_range_end` | a search never returns the last this many frames of a range; at 0 the playhead can hold the last frame of a range, and a small value can loop it over the last few | 20 |
 | `blend_halflife` | inertialization halflife after a jump | 0.1 s |
+| `play_rate` | how fast the playhead advances, as a multiple of the database `rate` | 1 |
+| `play_rate_param` | a blackboard float param that multiplies `play_rate`; empty, missing or not an `f32` leaves `play_rate` alone | empty |
+
+The node plays at `r = effective_play_rate(play_rate, play_rate_param,
+blackboard)` from `concerto_animation::node`: the product, or 0 when it is
+negative, NaN or infinite. With `dt` the frame's delta, the playhead and the
+root motion advance by `dt * r`. The search timer, the forced-search timer and
+the change per second that forces a search run on `dt`, in real time, as do the
+inertializer's decay and the blended pose's velocity. A database pose velocity
+is per animation second, so it is multiplied by `r` before it is handed to
+`Inertializer::transition`, both for the frame jumped to and for the source when
+there is no previous blended pose to take the velocity from.
 
 Each fixed step `publish_trajectory` writes the character's predicted path to
 the blackboard of its `AnimationPlayer`, where only this crate reads it. A
@@ -462,7 +474,7 @@ entity. A player no link names, or a preview `App`, has no trajectory; the node
 then plays the database without searching.
 
 Each frame the graph walk reaches it, the node's `update` advances the playhead
-at the database `rate`,
+at the database `rate` times `r`,
 searches when the timer runs out, when a settled change in the trajectory asks
 for it, or when the playhead is in the last `ignore_range_end` frames of its
 range, and on a better frame jumps with inertialization. The search is brute
@@ -503,9 +515,9 @@ query is not drawn. A frame with no search due keeps the last one.
 The state keeps the simulation bone's velocity and angular velocity at the
 playhead, in model space. Each step turns them back by
 the root joint's rotation away from rest, `q = simulation * root * rest⁻¹`, and
-scales them by the frame's time into a `RootMotion` on `state.output`:
-`translation = q⁻¹ * (velocity * dt)` and `rotation =
-from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt))`. That is the frame a
+scales them by the frame's animation time into a `RootMotion` on `state.output`:
+`translation = q⁻¹ * (velocity * dt * r)` and `rotation =
+from_scaled_angle_axis(q⁻¹ * (angular_velocity * dt * r))`. That is the frame a
 clip's root motion reads in, so it reaches `AnimationRootBone` through the graph
 the same way. The root joint is the database skeleton's first without a parent,
 and `rest` is that bone's rest on the skeleton playing it, so a database baked on

@@ -39,6 +39,7 @@ pub struct MotionMatchingState {
     initialised: bool,
     failed: bool,
     delta_time: f32,
+    play_rate: f32,
     frame: usize,
     sub_frame_time: f32,
     search_timer: f32,
@@ -66,6 +67,7 @@ impl MotionMatchingState {
             initialised: false,
             failed: false,
             delta_time: 0.0,
+            play_rate: 1.0,
             frame: 0,
             sub_frame_time: 0.0,
             search_timer: search_period,
@@ -149,7 +151,7 @@ impl MotionMatchingState {
         };
         let simulation = sources.database.simulation(self.frame).rotation;
         let turn_back = (simulation * joint.rotation * rest.rotation.inverse()).inverse();
-        let dt = self.delta_time;
+        let dt = self.delta_time * self.play_rate;
         RootMotion {
             translation: turn_back * (self.root_motion.velocity * dt),
             rotation: from_scaled_angle_axis(turn_back * (self.root_motion.angular_velocity * dt)),
@@ -322,6 +324,7 @@ impl MotionMatchingState {
         }
         let database = sources.database;
         let dt = self.delta_time;
+        let play_rate = self.play_rate;
         let rate = database.rate();
         let range = database
             .range_of(self.frame)
@@ -329,7 +332,7 @@ impl MotionMatchingState {
 
         self.search_timer -= dt;
         self.forced_search_timer -= dt;
-        self.sub_frame_time += dt;
+        self.sub_frame_time += dt * play_rate;
         let whole = (self.sub_frame_time * rate).floor().max(0.0) as usize;
         self.sub_frame_time -= whole as f32 / rate;
         let previous_frame = self.frame;
@@ -358,10 +361,15 @@ impl MotionMatchingState {
             let source_velocity = if self.last_delta > 0.0 {
                 PoseVelocity::between(&self.previous_blended, &self.blended, self.last_delta)
             } else {
-                copy_velocity(&self.velocity)
+                self.velocity.scaled(play_rate)
             };
             if let Some(inertializer) = self.inertializer.as_mut() {
-                inertializer.transition(&self.blended, &source_velocity, &pose, &velocity);
+                inertializer.transition(
+                    &self.blended,
+                    &source_velocity,
+                    &pose,
+                    &velocity.scaled(play_rate),
+                );
             }
             self.frame = best;
             self.pose = pose;
@@ -400,10 +408,12 @@ impl MotionMatchingState {
         &mut self,
         node: &MotionMatchingNode,
         delta_time: f32,
+        play_rate: f32,
         blackboard: &AnimationBlackboard,
         sources: Sources,
     ) {
         self.delta_time = delta_time;
+        self.play_rate = play_rate;
         self.clear_root_motion();
         if self.failed {
             return;
@@ -425,13 +435,6 @@ pub(crate) struct Sources<'a> {
 
 fn copy_pose(pose: &Pose) -> Pose {
     Pose::from_joints(pose.joints().to_vec())
-}
-
-fn copy_velocity(velocity: &PoseVelocity) -> PoseVelocity {
-    PoseVelocity {
-        linear: velocity.linear.clone(),
-        angular: velocity.angular.clone(),
-    }
 }
 
 fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeError> {

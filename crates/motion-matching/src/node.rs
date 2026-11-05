@@ -1,7 +1,7 @@
 use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
-    node::{AnimationNode, ReflectAnimationNode},
+    node::{effective_play_rate, AnimationNode, ReflectAnimationNode},
     pose::{EvaluatedPose, Pose, PosePool},
 };
 use concerto_ecs::Res;
@@ -71,6 +71,8 @@ pub struct MotionMatchingNode {
     pub ignore_surrounding: usize,
     pub ignore_range_end: usize,
     pub blend_halflife: f32,
+    pub play_rate: f32,
+    pub play_rate_param: String,
 }
 
 impl Default for MotionMatchingNode {
@@ -84,6 +86,8 @@ impl Default for MotionMatchingNode {
             ignore_surrounding: 20,
             ignore_range_end: 20,
             blend_halflife: 0.1,
+            play_rate: 1.0,
+            play_rate_param: String::new(),
         }
     }
 }
@@ -114,7 +118,14 @@ impl AnimationNode for MotionMatchingNode {
         context: &AnimationGraphContext<'_>,
     ) {
         match sources(self, databases, skeletons, clips, context.skeleton()) {
-            Some(sources) => state.step(self, delta_time, context.blackboard(), sources),
+            Some(sources) => {
+                let rate = effective_play_rate(
+                    self.play_rate,
+                    &self.play_rate_param,
+                    context.blackboard(),
+                );
+                state.step(self, delta_time, rate, context.blackboard(), sources)
+            }
             None => state.clear_root_motion(),
         }
     }
@@ -142,8 +153,8 @@ mod tests {
     use concerto_animation::{
         graph::AnimationGraph, node::ReflectAnimationNode, plugin::register_animation_types,
     };
-    use concerto_foundation::assets::handle::AssetHandle;
-    use concerto_reflect::TypeRegistry;
+    use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
+    use concerto_reflect::{to_value, ReflectedValue, TypeRegistry};
 
     use super::{MotionMatchingNode, MotionMatchingTrajectory};
     use crate::database::MotionDatabase;
@@ -175,6 +186,8 @@ mod tests {
         assert_eq!(node.ignore_surrounding, 20);
         assert_eq!(node.ignore_range_end, 20);
         assert_eq!(node.blend_halflife, 0.1);
+        assert_eq!(node.play_rate, 1.0);
+        assert_eq!(node.play_rate_param, "");
         assert_eq!(
             node.database.id(),
             AssetHandle::<MotionDatabase>::default().id()
@@ -202,6 +215,8 @@ mod tests {
             ignore_surrounding: 7,
             ignore_range_end: 9,
             blend_halflife: 0.4,
+            play_rate: 1.5,
+            play_rate_param: "speed".into(),
             ..Default::default()
         };
         let graph = AnimationGraph::from_node(node);
@@ -219,6 +234,38 @@ mod tests {
         assert_eq!(restored.ignore_surrounding, 7);
         assert_eq!(restored.ignore_range_end, 9);
         assert_eq!(restored.blend_halflife, 0.4);
+        assert_eq!(restored.play_rate, 1.5);
+        assert_eq!(restored.play_rate_param, "speed");
+    }
+
+    #[test]
+    fn a_stored_node_without_a_play_rate_loads_at_the_defaults_with_no_warning() {
+        let registry = registry();
+        let node = MotionMatchingNode {
+            search_period: 0.25,
+            play_rate: 1.5,
+            play_rate_param: "speed".into(),
+            ..Default::default()
+        };
+        let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+            panic!("a motion matching node is stored as a struct");
+        };
+        fields.retain(|(name, _)| name != "play_rate" && name != "play_rate_param");
+        let data = *registry
+            .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<MotionMatchingNode>())
+            .unwrap();
+
+        let mut leaves = LiveLeaves::from_parts(&registry, None);
+        let (built, warnings) = (data.from_value)(&ReflectedValue::Struct(fields), &mut leaves);
+
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let built = built
+            .as_reflect()
+            .downcast_ref::<MotionMatchingNode>()
+            .unwrap();
+        assert_eq!(built.search_period, 0.25);
+        assert_eq!(built.play_rate, 1.0);
+        assert_eq!(built.play_rate_param, "");
     }
 
     #[test]
