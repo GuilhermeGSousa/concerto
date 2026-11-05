@@ -29,6 +29,7 @@ extern "C"
 		JPH::ShapeCastSettings settings;
 		settings.mBackFaceModeTriangles = JPH::EBackFaceMode::CollideWithBackFaces;
 		settings.mBackFaceModeConvex = JPH::EBackFaceMode::CollideWithBackFaces;
+		settings.mReturnDeepestPoint = true;
 
 		JPH::IgnoreMultipleBodiesFilter body_filter;
 		body_filter.Reserve(ignore_count);

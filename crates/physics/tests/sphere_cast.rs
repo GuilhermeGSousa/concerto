@@ -84,6 +84,29 @@ fn sweep_ending_before_the_wall_misses() {
 }
 
 #[test]
+fn a_non_positive_radius_still_sweeps_like_a_tiny_sphere() {
+    let (world, wall) = world_with_wall();
+    let state = world.get_resource::<PhysicsState>().unwrap();
+
+    for radius in [0.0, -1.0] {
+        let hit = state
+            .cast_sphere(
+                Vec3::ZERO,
+                radius,
+                Vec3::new(10.0, 0.0, 0.0),
+                QueryFilter::default(),
+            )
+            .expect("a zero-radius sweep should still hit the wall");
+        assert_eq!(hit.entity, Some(wall));
+        assert!(
+            (hit.fraction - 0.45).abs() < 0.01,
+            "expected fraction ~0.45 for radius {radius}, got {}",
+            hit.fraction
+        );
+    }
+}
+
+#[test]
 fn sweep_starting_inside_a_body_hits_it_at_zero_unless_ignored() {
     let (mut world, wall) = world_with_wall();
     let blocker = world.spawn((
@@ -103,6 +126,11 @@ fn sweep_starting_inside_a_body_hits_it_at_zero_unless_ignored() {
             hit.fraction.abs() < 1e-3,
             "expected fraction 0 along {direction:?}, got {}",
             hit.fraction
+        );
+        assert!(
+            hit.normal.dot(Vec3::NEG_X) > 0.9,
+            "expected the blocker's nearest face normal -X along {direction:?}, got {:?}",
+            hit.normal
         );
     }
 
