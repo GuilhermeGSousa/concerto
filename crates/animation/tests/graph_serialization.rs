@@ -15,8 +15,9 @@ use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::check_encoding;
-use concerto_foundation::assets::handle::AssetHandle;
-use concerto_reflect::{Reflect, TypeRegistry};
+use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
+use concerto_name::{Name, name};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
 use uuid::Uuid;
 
 #[derive(Default, Reflect)]
@@ -82,14 +83,22 @@ fn live_node<T: AnimationNode>(graph: &AnimationGraph) -> Option<&T> {
 
 fn state_machine() -> AnimationStateMachine {
     let state = |name: &str| AssetHandle::weak(AssetId::from_path(name));
-    AnimationStateMachine::from_initial_state("idle", state("idle_graph"), |transition| {
-        transition.to("walk", AnimationFSMTrigger::on_bool("go", true), 0.2);
+    AnimationStateMachine::from_initial_state(name!("idle"), state("idle_graph"), |transition| {
+        transition.to(
+            name!("walk"),
+            AnimationFSMTrigger::on_bool(name!("go"), true),
+            0.2,
+        );
     })
-    .state("walk", state("walk_graph"), |transition| {
-        transition.to("run", AnimationFSMTrigger::on_non_zero_vec("move"), 0.15);
+    .state(name!("walk"), state("walk_graph"), |transition| {
+        transition.to(
+            name!("run"),
+            AnimationFSMTrigger::on_non_zero_vec(name!("move")),
+            0.15,
+        );
     })
-    .state("run", state("run_graph"), |transition| {
-        transition.to("idle", AnimationFSMTrigger::OnAnimationEnd, 0.1);
+    .state(name!("run"), state("run_graph"), |transition| {
+        transition.to(name!("idle"), AnimationFSMTrigger::OnAnimationEnd, 0.1);
     })
     .blender(TransitionBlender::Inertialization)
     .build()
@@ -100,9 +109,14 @@ fn mixed_graph() -> AnimationGraph {
     graph
         .result_node()
         .with_input(Gain { amount: 2.5 }, |_| {})
-        .with_input(AnimationClipNode::new(clip("outer_pose")), |_| {})
+        .with_input(
+            AnimationClipNode::new(clip("outer_pose"))
+                .with_play_rate(1.5)
+                .with_play_rate_param(name!("draw_speed")),
+            |_| {},
+        )
         .with_input(state_machine(), |_| {})
-        .with_blend_space_2d_input("movement", |ctx| {
+        .with_blend_space_2d_input(name!("movement"), |ctx| {
             ctx.animation_clip_input(clip("idle"), glam::Vec2::ZERO)
                 .animation_clip_input(clip("walk"), glam::Vec2::new(0.0, 1.0));
         });
@@ -142,7 +156,7 @@ fn a_blend_space_keeps_its_input_param_and_points() {
     restored.make_live(&registry, None).unwrap();
 
     let blend_space = live_node::<BlendSpace2DNode>(&restored).expect("blend space survived");
-    assert_eq!(blend_space.input().param, "movement");
+    assert_eq!(blend_space.input().param, name!("movement"));
     assert_eq!(
         blend_space.points(),
         &[glam::Vec2::ZERO, glam::Vec2::new(0.0, 1.0)]
@@ -161,20 +175,20 @@ fn a_state_machine_keeps_trigger_payloads_blender_and_blend_times() {
     let bool_equals = triggers
         .iter()
         .find_map(|trigger| match trigger {
-            AnimationFSMTrigger::BoolEquals { param, value } => Some((param.as_str(), *value)),
+            AnimationFSMTrigger::BoolEquals { param, value } => Some((*param, *value)),
             _ => None,
         })
         .expect("BoolEquals trigger survived");
-    assert_eq!(bool_equals, ("go", true));
+    assert_eq!(bool_equals, (name!("go"), true));
 
     let vec2_non_zero = triggers
         .iter()
         .find_map(|trigger| match trigger {
-            AnimationFSMTrigger::Vec2NonZero { param } => Some(param.as_str()),
+            AnimationFSMTrigger::Vec2NonZero { param } => Some(*param),
             _ => None,
         })
         .expect("Vec2NonZero trigger survived");
-    assert_eq!(vec2_non_zero, "move");
+    assert_eq!(vec2_non_zero, name!("move"));
     assert!(
         triggers
             .iter()
@@ -258,6 +272,74 @@ fn a_clip_handle_in_a_node_comes_back_strong() {
     let handle = live_node::<AnimationClipNode>(&graph).unwrap().clip();
     assert!(matches!(handle, AssetHandle::Strong(..)));
     assert_eq!(handle.id(), AssetId::from_path("outer_pose"));
+}
+
+fn play_rate_param_of(value: &ReflectedValue) -> &ReflectedValue {
+    let ReflectedValue::Struct(fields) = value else {
+        panic!("a clip node is stored as a struct");
+    };
+    fields
+        .iter()
+        .find_map(|(name, value)| (name == "play_rate_param").then_some(value))
+        .expect("play_rate_param is stored")
+}
+
+fn load_clip_node(
+    registry: &TypeRegistry,
+    stored: ReflectedValue,
+) -> (ReflectedValue, Vec<ValueWarning>) {
+    let data = *registry
+        .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<AnimationClipNode>())
+        .unwrap();
+    let mut leaves = LiveLeaves::from_parts(registry, None);
+    let (built, warnings) = (data.from_value)(&stored, &mut leaves);
+    ((data.to_value)(&*built).unwrap().unwrap(), warnings)
+}
+
+#[test]
+fn a_stored_clip_node_without_a_play_rate_param_loads_with_no_param_and_no_warning() {
+    let registry = registry(false);
+    let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        panic!("a clip node is stored as a struct");
+    };
+    fields.retain(|(name, _)| name != "play_rate_param");
+
+    let (built, warnings) = load_clip_node(&registry, ReflectedValue::Struct(fields));
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        play_rate_param_of(&built),
+        &to_value(&None::<Name>).unwrap()
+    );
+    assert_eq!(built, to_value(&node).unwrap());
+}
+
+#[test]
+fn a_stored_clip_node_whose_play_rate_param_is_a_string_loads_with_one_warning_and_no_param() {
+    let registry = registry(false);
+    let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        panic!("a clip node is stored as a struct");
+    };
+    for (name, value) in &mut fields {
+        if name == "play_rate_param" {
+            *value = to_value(&String::from("draw_speed")).unwrap();
+        }
+    }
+
+    let (built, warnings) = load_clip_node(&registry, ReflectedValue::Struct(fields));
+
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(
+        warnings[0].reason,
+        "stored data is a different kind of value"
+    );
+    assert_eq!(
+        play_rate_param_of(&built),
+        &to_value(&None::<Name>).unwrap()
+    );
+    assert_eq!(built, to_value(&node).unwrap());
 }
 
 #[test]

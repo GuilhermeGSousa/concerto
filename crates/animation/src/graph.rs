@@ -6,6 +6,7 @@ use concerto_foundation::assets::{
     asset_store::AssetStore,
     handle::{AssetHandle, LiveLeaves},
 };
+use concerto_name::Name;
 use concerto_reflect::{EncodeError, ReflectedValue, TypeRegistry, ValueWarning, to_value};
 use log::warn;
 use petgraph::{
@@ -353,7 +354,7 @@ impl<'a> AnimationNodeContext<'a> {
 
     pub fn with_blend_space_2d_input(
         &mut self,
-        param: &str,
+        param: Name,
         f: impl FnOnce(&mut BlendSpace2DBuilderContext<'_>),
     ) -> &mut Self {
         let mut builder_context = BlendSpace2DBuilderContext {
@@ -361,9 +362,7 @@ impl<'a> AnimationNodeContext<'a> {
             output_node_index: self.node_index,
             points: Vec::new(),
             nodes: Vec::new(),
-            input: crate::node::blend_space::BlendInput {
-                param: param.to_string(),
-            },
+            input: crate::node::blend_space::BlendInput { param },
         };
 
         f(&mut builder_context);

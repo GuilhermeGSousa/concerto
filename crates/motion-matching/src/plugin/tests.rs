@@ -3,6 +3,8 @@ use std::time::{Duration, Instant};
 use concerto_animation::{
     animate_targets,
     clip::AnimationClip,
+    graph::AnimationGraph,
+    player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{register_animation_types, AnimationAppExt},
     pose::RootMotion,
     root::AnimationRootBone,
@@ -31,6 +33,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_name::name;
 use concerto_reflect::TypeRegistry;
 use glam::{Quat, Vec3};
 
@@ -86,6 +89,53 @@ fn a_frame_with_a_missing_database_gives_the_root_bone_no_root_motion() {
         .unwrap()
         .root_motion;
     assert_eq!(stopped, RootMotion::IDENTITY);
+}
+
+#[test]
+fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
+    let (mut app, database_handle, skeleton_handle, _) = stocked_app();
+    let world = app.main_mut().world_mut();
+    let graph_handle = add_graph(
+        world,
+        MotionMatchingNode {
+            database: database_handle,
+            play_rate_param: Some(name!("speed")),
+            ..Default::default()
+        },
+    );
+    let plain = spawn_player(
+        world,
+        graph_handle.clone(),
+        skeleton_handle.clone(),
+        AnimationPlayer::new(3),
+    );
+    let mut fast_player = AnimationPlayer::new(3);
+    fast_player.set_float_param(name!("speed"), 2.0);
+    let fast = spawn_player(world, graph_handle, skeleton_handle, fast_player);
+    compile_schedules(world);
+    world.insert(AnimationRootBone::default(), plain[0]);
+    world.insert(AnimationRootBone::default(), fast[0]);
+    world.run_schedule(LateUpdate);
+    world.run_schedule(LateUpdate);
+
+    std::thread::sleep(Duration::from_millis(5));
+    world.get_resource_mut::<Time>().unwrap().update();
+    world.run_schedule(LateUpdate);
+
+    let moved = |bone: Entity| {
+        world
+            .get_component_for_entity::<AnimationRootBone>(bone)
+            .unwrap()
+            .root_motion
+            .translation
+    };
+    let once = moved(plain[0]);
+    let twice = moved(fast[0]);
+    assert!(once.z < 0.0, "{once:?}");
+    assert!(
+        twice.distance(once * 2.0) < once.length() * 1e-2,
+        "{once:?} vs {twice:?}"
+    );
 }
 
 #[test]
@@ -236,6 +286,18 @@ fn motion_app() -> App {
 }
 
 fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
+    let (mut app, database_handle, skeleton_handle, database) = stocked_app();
+    let world = app.main_mut().world_mut();
+    let entities = start_playing(world, database_handle, skeleton_handle);
+    (app, entities, database)
+}
+
+fn stocked_app() -> (
+    App,
+    AssetHandle<MotionDatabase>,
+    AssetHandle<Skeleton>,
+    MotionDatabase,
+) {
     let mut app = motion_app();
     let world = app.main_mut().world_mut();
     let skeleton_handle = AssetHandle::<Skeleton>::weak(AssetId::new());
@@ -262,9 +324,7 @@ fn playing_app() -> (App, Vec<Entity>, MotionDatabase) {
         .get_resource_mut::<AssetStore<MotionDatabase>>()
         .unwrap()
         .insert(database_handle.id(), database.clone());
-
-    let entities = start_playing(world, database_handle, skeleton_handle);
-    (app, entities, database)
+    (app, database_handle, skeleton_handle, database)
 }
 
 fn start_playing(
@@ -272,23 +332,44 @@ fn start_playing(
     database_handle: AssetHandle<MotionDatabase>,
     skeleton_handle: AssetHandle<Skeleton>,
 ) -> Vec<Entity> {
+    let graph_handle = add_graph(
+        world,
+        MotionMatchingNode {
+            database: database_handle,
+            ..Default::default()
+        },
+    );
+    let entities = spawn_player(
+        world,
+        graph_handle,
+        skeleton_handle,
+        AnimationPlayer::new(3),
+    );
+    compile_schedules(world);
+    entities
+}
+
+fn add_graph(world: &mut World, node: MotionMatchingNode) -> AssetHandle<AnimationGraph> {
     let mut type_registry = TypeRegistry::default();
     register_animation_types(&mut type_registry);
     type_registry.register::<MotionMatchingNode>();
     type_registry.register::<AssetHandle<MotionDatabase>>();
-    let mut graph = concerto_animation::graph::AnimationGraph::from_node(MotionMatchingNode {
-        database: database_handle,
-        ..Default::default()
-    });
+    let mut graph = AnimationGraph::from_node(node);
     graph.make_live(&type_registry, None).unwrap();
-    let graph_handle =
-        AssetHandle::<concerto_animation::graph::AnimationGraph>::weak(AssetId::new());
+    let graph_handle = AssetHandle::<AnimationGraph>::weak(AssetId::new());
     world
-        .get_resource_mut::<AssetStore<concerto_animation::graph::AnimationGraph>>()
+        .get_resource_mut::<AssetStore<AnimationGraph>>()
         .unwrap()
         .insert(graph_handle.id(), graph);
+    graph_handle
+}
 
-    let player = concerto_animation::player::AnimationPlayer::new(3);
+fn spawn_player(
+    world: &mut World,
+    graph_handle: AssetHandle<AnimationGraph>,
+    skeleton_handle: AssetHandle<Skeleton>,
+    player: AnimationPlayer,
+) -> Vec<Entity> {
     let entities: Vec<_> = (0..3).map(|_| world.spawn(Transform::IDENTITY)).collect();
     let bones = entities
         .iter()
@@ -296,16 +377,18 @@ fn start_playing(
         .collect();
     world.spawn((
         player,
-        concerto_animation::player::AnimationHandleComponent::new(graph_handle),
+        AnimationHandleComponent::new(graph_handle),
         SkeletonComponent {
             skeleton: skeleton_handle,
             bones,
             root: None,
         },
     ));
+    entities
+}
 
+fn compile_schedules(world: &mut World) {
     let schedules = world.remove_resource::<Schedules>().unwrap();
     let compiled = schedules.compile::<SingleThreadedExecutor>(world);
     world.insert_resource(compiled);
-    entities
 }

@@ -39,6 +39,14 @@ impl PoseVelocity {
             angular: angular.into_boxed_slice(),
         }
     }
+
+    /// This velocity with every bone's linear and angular velocity multiplied by `factor`.
+    pub fn scaled(&self, factor: f32) -> Self {
+        Self {
+            linear: self.linear.iter().map(|v| *v * factor).collect(),
+            angular: self.angular.iter().map(|v| *v * factor).collect(),
+        }
+    }
 }
 
 const SETTLED_EPSILON: f32 = 1.0e-4;
