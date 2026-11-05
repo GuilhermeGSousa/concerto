@@ -240,7 +240,8 @@ under a `ContentAssetRoot`, which the `AssetServer` uses:
 | older                     | `A::migrate(version, payload)`; the default rejects it      |
 | newer                     | rejected: the file was written by a newer build             |
 
-A `kind` other than `A::name()` is rejected too. bincode is not
+A `kind` that is neither `A::name()` nor one of `A::FORMER_NAMES` is rejected
+too; a former name is covered under [Renaming a type](#renaming-a-type). bincode is not
 self-describing, so a payload cannot absorb a new field with
 `#[serde(default)]`: any change to a type's serialized fields, their order or
 their types is a new encoding.
@@ -306,11 +307,12 @@ When you change one:
    rejected.
 
 The editor reports outdated files when the first scene of a project opens.
-It compares each entry's `kind_version` with the `FORMAT_VERSION` that the
-scene's `AssetServer` records for that kind. That server is built from the
-game's recipe, so it knows every type the game registers. For each kind and
-file version that differs, it logs a warning with the count, and the status
-line reads `N content assets are outdated; see the log`. It reports once per
+It compares each entry's kind and `kind_version` with the name and
+`FORMAT_VERSION` that the scene's `AssetServer` records for that kind, which
+`AssetServer::current_kind` gives for a type's name and its former names. That
+server is built from the game's recipe, so it knows every type the game
+registers. For each kind and file version that is a former name or another
+version, it logs a warning with the count, and the status line reads `N content assets are outdated; see the log`. It reports once per
 opened project. A kind the game's recipe does not register is not reported;
 such a file still fails when it is loaded.
 
@@ -318,6 +320,23 @@ such a file still fails when it is loaded.
 framing or `ContentAssetHeader` changes, never for a payload, and a new header
 version keeps the previous one readable where it can, as version 5 reads
 version 4.
+
+### Renaming a type
+
+A type that changes its `name()` lists the names it was persisted under in
+`Asset::FORMER_NAMES`, which defaults to empty. `kind_matches::<A>(kind)` is
+true for `A::name()` and every former name, and `kind_is(kind, name,
+former_names)` is the same test for a caller that holds only the names. Every
+place that compares a header's kind with a type accepts a former name:
+`AssetEntry::is`, `AssetRegistry::of_type` and `of_kind`, decoding, the
+inspector's asset picker, and the editor's asset-editor lookup and MCP
+`list_assets` kind filter. The last two learn former names from
+`register_asset_editor`, so they know them only for a type with an asset
+editor. A file under a former name decodes through
+`A::migrate_former(name, version, payload)`, whose default rejects it with the
+same advice as `migrate`. `#[derive(Asset)]` cannot set either, so a renamed
+type implements `Asset` by hand. A save writes the current name and
+`FORMAT_VERSION`, so the file keeps its former name until it is saved.
 
 ## The asset registry
 

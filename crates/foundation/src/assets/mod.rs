@@ -121,10 +121,22 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
 
     fn name() -> &'static str;
 
+    /// Names this type was persisted under before, whose files it still reads through `migrate_former`.
+    const FORMER_NAMES: &'static [&'static str] = &[];
+
     /// Decodes a payload written at `version`, older than `FORMAT_VERSION`; the default rejects it.
     fn migrate(version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
         anyhow::bail!(
             "{} version {version} has no migration to version {}; re-import its source, or re-create it if it was authored in the editor",
+            Self::name(),
+            Self::FORMAT_VERSION
+        )
+    }
+
+    /// Decodes a payload written at `version` under `name`, one of `FORMER_NAMES`; the default rejects it.
+    fn migrate_former(name: &str, version: u32, _payload: &[u8]) -> anyhow::Result<Self> {
+        anyhow::bail!(
+            "{name} version {version} has no migration to {} version {}; re-import its source, or re-create it if it was authored in the editor",
             Self::name(),
             Self::FORMAT_VERSION
         )
@@ -135,6 +147,16 @@ pub trait Asset: Send + Sync + 'static + serde::Serialize + serde::de::Deseriali
     fn referenced_sub_assets(&self) -> Vec<AssetId> {
         Vec::new()
     }
+}
+
+/// Whether a file whose header names `kind` holds an `A`, under its name or one of its former names.
+pub fn kind_matches<A: Asset>(kind: &str) -> bool {
+    kind_is(kind, A::name(), A::FORMER_NAMES)
+}
+
+/// Whether `kind` is `name` or one of `former_names`, for a caller that knows a type only by its names.
+pub fn kind_is(kind: &str, name: &str, former_names: &[&str]) -> bool {
+    kind == name || former_names.contains(&kind)
 }
 
 /// An asset the editor can create from nothing.

@@ -7,17 +7,17 @@ use std::path::Path;
 use anyhow::Context;
 
 use super::registry::{AssetEntry, AssetRegistry};
-use super::{Asset, AssetId};
+use super::{kind_matches, Asset, AssetId};
 
 pub use concerto_asset_format::{
     read_content_asset, read_content_asset_header, write_content_asset, ContentAssetHeader,
     ImportProvenance, CONTENT_ASSET_MAGIC, CONTENT_FORMAT_VERSION,
 };
 
-/// Decodes a content asset as `A`, checking its kind and type version and migrating an older version.
+/// Decodes a content asset as `A`, checking its kind and type version and migrating an older version or a former name.
 pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAssetHeader, A)> {
     let (header, payload) = read_content_asset(bytes)?;
-    if header.kind != A::name() {
+    if !kind_matches::<A>(&header.kind) {
         anyhow::bail!(
             "content asset holds a {} but a {} was requested",
             header.kind,
@@ -25,6 +25,17 @@ pub fn decode_content_asset<A: Asset>(bytes: &[u8]) -> anyhow::Result<(ContentAs
         );
     }
     let version = header.kind_version;
+    if header.kind != A::name() {
+        let value = A::migrate_former(&header.kind, version, payload).with_context(|| {
+            format!(
+                "{former} is the former name of {name}; this build's {name} is version {current}",
+                former = header.kind,
+                name = A::name(),
+                current = A::FORMAT_VERSION
+            )
+        })?;
+        return Ok((header, value));
+    }
     let current = A::FORMAT_VERSION;
     let value = match version.cmp(&current) {
         std::cmp::Ordering::Equal => bincode::deserialize(payload)

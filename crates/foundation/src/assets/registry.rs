@@ -5,7 +5,7 @@ use concerto_asset_format::{parse_registry, scan_content, write_registry, Scanne
 use concerto_ecs::resource::Resource;
 
 use super::content::ImportProvenance;
-use super::{Asset, AssetId};
+use super::{kind_is, kind_matches, Asset, AssetId};
 
 /// One content asset on disk: its id, where it is, and what kind of asset it holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,9 +38,9 @@ impl AssetEntry {
             .map_or("", |(folder, _)| folder)
     }
 
-    /// Whether the file holds an `A`.
+    /// Whether the file holds an `A`, under its name or one of its former names.
     pub fn is<A: Asset>(&self) -> bool {
-        self.kind == A::name()
+        kind_matches::<A>(&self.kind)
     }
 
     fn sort_key(&self) -> (&str, &str, &str, &str) {
@@ -135,14 +135,19 @@ impl AssetRegistry {
         self.order.iter().map(|id| &self.entries[id])
     }
 
-    /// Every entry holding an `A`, in [`AssetRegistry::iter`] order.
+    /// Every entry holding an `A`, under its name or one of its former names, in [`AssetRegistry::iter`] order.
     pub fn of_type<A: Asset>(&self) -> impl Iterator<Item = &AssetEntry> {
-        self.of_kind(A::name())
+        self.iter().filter(|entry| entry.is::<A>())
     }
 
-    /// The entries of the kind an [`Asset::name`] gives, for a caller that does not know the type.
-    pub fn of_kind<'a>(&'a self, kind: &'a str) -> impl Iterator<Item = &'a AssetEntry> {
-        self.iter().filter(move |entry| entry.kind == kind)
+    /// The entries of the kind an [`Asset::name`] and [`Asset::FORMER_NAMES`] give, for a caller that does not know the type.
+    pub fn of_kind<'a>(
+        &'a self,
+        name: &'a str,
+        former_names: &'a [&'a str],
+    ) -> impl Iterator<Item = &'a AssetEntry> {
+        self.iter()
+            .filter(move |entry| kind_is(&entry.kind, name, former_names))
     }
 
     /// Adds `entry`, replacing any entry with the same id or at the same address.

@@ -857,15 +857,16 @@ color clips at full brightness. An editor registered for `Color` with
 
 `AssetPicker` edits every `AssetHandle<A>` the scene's `AppTypeRegistry` holds,
 with nothing registered on the editor's `App`. The handle's registration
-carries `ReflectAssetHandle`, which names the asset kind and loads an id without
-the editor knowing `A`. Registering the component that holds the handle is
+carries `ReflectAssetHandle`, which names the asset kind and its former names
+(`Asset::FORMER_NAMES`) and loads an id without the editor knowing `A`. Registering the component that holds the handle is
 enough, so a game's own material gets a picker once `MaterialPlugin::<M>::new()`
 registers `MaterialComponent<M>`. An editor registered for the exact handle type
 with `register_property_editor` still takes precedence.
 
 The row names the asset the handle holds, "None" for an empty handle or
 "Missing" for an id the registry does not know, and opens a menu of the
-project's assets of that kind. Picking one writes a handle loaded through the
+project's assets of that kind, files still under one of its former names
+included. Picking one writes a handle loaded through the
 scene's `AssetServer`, so the viewport shows the new asset at once. The edit is
 refused if the id is not an asset of that kind, or if the scene `App` never
 registered the asset type with `register_asset`. `AssetPickerPlugin` keeps the
@@ -938,8 +939,11 @@ app.register_asset_editor::<Dialogue, DialogueEditor>()?;
 
 The editor type implements `Default`, which is how the registry builds it.
 Register after `EditorPlugin` installs its registry. Dispatch uses the asset's
-serialized kind (`Asset::name()`), which is what catalogue entries carry.
-Duplicate editor registrations are rejected.
+serialized kind (`Asset::name()`), which is what catalogue entries carry; a file
+whose kind is one of `Asset::FORMER_NAMES` opens in the same editor, and MCP's
+`list_assets` with that type's `kind` lists it too. `open_asset_menu` lists
+files under the kind it is given only. Duplicate editor registrations are
+rejected.
 
 A type that has no source file can be made creatable instead. Implement
 `CreatableAsset`, which lives in `concerto-foundation` so a game crate can
