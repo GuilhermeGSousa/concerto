@@ -87,14 +87,15 @@ impl AnimationNode for BlendNode {
         _: &mut PosePool,
         output: &mut Pose,
     ) {
-        let mut total_weight = 0.0;
-        for input in evaluated_inputs.iter().filter(|input| input.weight > 0.0) {
+        let mut weighted = evaluated_inputs.iter().filter(|input| input.weight > 0.0);
+        let Some(first) = weighted.next() else {
+            return;
+        };
+        output.copy_from(&first.pose);
+        let mut total_weight = first.weight;
+        for input in weighted {
             total_weight += input.weight;
-            if total_weight == input.weight {
-                output.copy_from(&input.pose);
-            } else {
-                output.blend(&input.pose, input.weight / total_weight);
-            }
+            output.blend(&input.pose, input.weight / total_weight);
         }
     }
 

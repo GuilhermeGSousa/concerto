@@ -80,6 +80,7 @@ impl AnimationPlayer {
         }
     }
 
+    /// Sets the weight a `BlendNode` gives this node's pose among its inputs.
     pub fn set_node_weight(&mut self, node_index: &AnimationNodeIndex, weight: f32) {
         self.graph_state.set_node_weight(node_index, weight);
     }

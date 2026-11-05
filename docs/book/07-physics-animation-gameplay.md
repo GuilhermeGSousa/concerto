@@ -165,7 +165,10 @@ A graph is a tree of nodes under a result node:
 
 - **Clip** plays one `AnimationClip`, looping or once
   (`AnimationClipNode::new(clip).with_play_mode(PlayOnce)`).
-- **Blend** mixes its inputs.
+- **Blend** mixes its inputs, each in proportion to its node weight, set
+  with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
+  at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
+  none left the node gives the rest pose.
 - **2D blend space** places clips at points and blends by a `Vec2`
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
