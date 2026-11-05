@@ -3,6 +3,7 @@ pub mod clip;
 pub mod evaluation;
 pub mod event;
 pub mod graph;
+pub mod ik;
 pub mod inertialization;
 pub mod mirror;
 pub mod node;
