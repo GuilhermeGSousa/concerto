@@ -4,6 +4,8 @@
 //! through serialized component payloads.
 use std::path::Path;
 
+use concerto_animation::clip::AnimationClip;
+use concerto_animation::event::AnimationEvent;
 use concerto_asset_import::{ImportContext, ImportOutputs, Importer};
 use concerto_ecs::component::Component;
 use concerto_foundation::assets::AssetId;
@@ -443,4 +445,94 @@ fn import_names_animation_clips_after_the_gltf() {
         clips,
         vec!["animation/1", "animation/Wiggle", "animation/Wiggle_2"]
     );
+}
+
+fn import_named_animations(
+    settings: &str,
+) -> Result<ImportOutputs, concerto_asset_import::ImportError> {
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/animations_named.gltf");
+    let mut ctx = ImportContext::new(std::path::PathBuf::from("animations_named.gltf"))
+        .with_settings(settings.parse().unwrap());
+    GltfImporter.import(&fixture, &mut ctx)?;
+    Ok(ctx.into_parts())
+}
+
+#[derive(Debug, PartialEq)]
+struct NamedKey {
+    time: f32,
+    name: String,
+}
+
+fn named_key(time: f32, name: &str) -> NamedKey {
+    NamedKey {
+        time,
+        name: name.to_string(),
+    }
+}
+
+fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
+    let entry = outputs
+        .sub_assets
+        .iter()
+        .find(|s| s.name == name)
+        .unwrap_or_else(|| panic!("expected a {name} sub-asset"));
+    let clip: AnimationClip = bincode::deserialize(&entry.bytes).unwrap();
+    clip.events()
+        .iter()
+        .map(|key| {
+            assert_eq!(
+                key.event.type_name(),
+                std::any::type_name::<AnimationEvent>()
+            );
+            let mut event = AnimationEvent::default();
+            let warnings = apply_value(&mut event, &key.event.value().unwrap());
+            assert!(warnings.is_empty(), "{warnings:?}");
+            named_key(key.time, event.name.as_str())
+        })
+        .collect()
+}
+
+fn assert_import_fails(settings: &str, expected: &str) {
+    match import_named_animations(settings) {
+        Err(error) => {
+            let message = format!("{error:?}");
+            assert!(
+                message.contains(expected),
+                "expected {expected:?} in {message}"
+            );
+        }
+        Ok(_) => panic!("expected the import to fail for settings {settings:?}"),
+    }
+}
+
+#[test]
+fn event_settings_add_sorted_animation_events_to_the_named_clip() {
+    let outputs = import_named_animations(
+        "[events.Wiggle_2]\nhit = [0.75, 0.25, 0.75]\nstart = [0.0]\n[events.1]\nend = [1.0]\n",
+    )
+    .expect("the import should succeed");
+    assert_eq!(
+        event_keys(&outputs, "animation/Wiggle_2"),
+        [
+            named_key(0.0, "start"),
+            named_key(0.25, "hit"),
+            named_key(0.75, "hit"),
+        ]
+    );
+    assert_eq!(event_keys(&outputs, "animation/1"), [named_key(1.0, "end")]);
+    assert!(event_keys(&outputs, "animation/Wiggle").is_empty());
+}
+
+#[test]
+fn invalid_event_settings_fail_the_import() {
+    assert_import_fails("[events.Wobble]\nhit = [0.5]\n", "Wobble");
+    for time in ["-0.5", "nan", "inf", "1.5"] {
+        assert_import_fails(&format!("[events.Wiggle]\nhit = [{time}]\n"), "hit");
+    }
+}
+
+#[test]
+fn an_unknown_settings_key_fails_the_import() {
+    assert_import_fails("scale = 0.01\n", "scale");
 }

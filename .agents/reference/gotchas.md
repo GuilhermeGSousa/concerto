@@ -137,9 +137,9 @@ fix the entry in the same commit as the change that made it false.
   `GlobalTransform`, so such a mesh disappears whenever that box is out of
   view. The world grid, whose three vertices sit at the origin, requires
   `NoFrustumCulling` and `NotShadowCaster` for this reason.
-- **`Pose::identity` has zero translation per joint.** Applying a pose that was
-  never evaluated collapses every bone to the origin and the mesh folds onto
-  itself. A pose from `PosePool::acquire` starts at the skeleton's rest pose,
+- **`Pose::identity` and `AnimationFrame::identity` have zero translation per
+  joint.** Applying a pose that was never evaluated collapses every bone to the
+  origin and the mesh folds onto itself. A frame from `FramePool::acquire` starts at the skeleton's rest pose,
   recycled ones too, so a node that writes nothing leaves rest; don't overwrite
   `output` with identity. A pool that was never given a rest pose, as in a test,
   hands out identity. `AnimationPlayer::evaluate` calls `set_rest` first, and

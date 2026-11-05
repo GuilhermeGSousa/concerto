@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use concerto_animation::{
     animate_targets,
     clip::AnimationClip,
+    event::{AnimationEvent, AnimationSignal},
     graph::AnimationGraph,
     player::{AnimationHandleComponent, AnimationPlayer},
     plugin::{register_animation_types, AnimationAppExt},
@@ -13,12 +14,16 @@ use concerto_animation::{
 use concerto_app::{plugins::AssetManagerPlugin, schedule_groups::LateUpdate, App};
 use concerto_ecs::{
     component::scene::SceneEntityRef,
+    signal::{
+        listener::{IntoListener, Listener},
+        On,
+    },
     system::{
         access::SystemAccess, executor::single_thread::SingleThreadedExecutor,
         meta::SystemMetadata, schedule::Schedules,
     },
     world::World,
-    Entity, IntoSystem, ResMut, System,
+    Entity, IntoSystem, ResMut, Resource, System,
 };
 use concerto_foundation::{
     assets::{
@@ -272,6 +277,76 @@ fn a_database_loaded_through_the_server_plays() {
         hips_transform.translation,
         expected[1].translation
     );
+}
+
+#[derive(Resource, Default)]
+struct Heard(usize);
+
+fn heard(world: &World) -> usize {
+    world.get_resource::<Heard>().unwrap().0
+}
+
+fn hear() -> Listener<AnimationSignal<AnimationEvent>> {
+    (|_: On<AnimationSignal<AnimationEvent>>, mut heard: ResMut<Heard>| {
+        heard.0 += 1;
+    })
+    .into_listener()
+}
+
+#[test]
+fn a_crossed_clip_event_is_heard_once_and_not_again_while_the_database_is_missing() {
+    let (mut app, database_handle, skeleton_handle, database) = stocked_app();
+    let world = app.main_mut().world_mut();
+    let mut walk = walk_forward();
+    walk.add_event(
+        1.0 / 60.0,
+        AnimationEvent {
+            name: name!("step"),
+        },
+    );
+    world
+        .get_resource_mut::<AssetStore<AnimationClip>>()
+        .unwrap()
+        .insert(database.clips()[0].id(), walk);
+    world.insert_resource(Heard::default());
+    world.register_component::<Listener<AnimationSignal<AnimationEvent>>>();
+    let graph_handle = add_graph(
+        world,
+        MotionMatchingNode {
+            database: database_handle,
+            ..Default::default()
+        },
+    );
+    let bones = (0..3)
+        .map(|_| SceneEntityRef::Entity(world.spawn(Transform::IDENTITY)))
+        .collect();
+    world.spawn((
+        AnimationPlayer::new(3),
+        AnimationHandleComponent::new(graph_handle),
+        SkeletonComponent {
+            skeleton: skeleton_handle,
+            bones,
+            root: None,
+        },
+        hear(),
+    ));
+    compile_schedules(world);
+    world.run_schedule(LateUpdate);
+    world.run_schedule(LateUpdate);
+    assert_eq!(heard(world), 0);
+
+    std::thread::sleep(Duration::from_millis(5));
+    {
+        let time = world.get_resource_mut::<Time>().unwrap();
+        time.set_time_scale(20.0);
+        time.update();
+    }
+    world.run_schedule(LateUpdate);
+    assert_eq!(heard(world), 1);
+
+    world.insert_resource(AssetStore::<MotionDatabase>::new());
+    world.run_schedule(LateUpdate);
+    assert_eq!(heard(world), 1);
 }
 
 fn motion_app() -> App {

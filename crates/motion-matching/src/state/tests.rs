@@ -3,23 +3,32 @@ use std::f32::consts::FRAC_PI_2;
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    event::AnimationEvent,
     inertialization::{Inertializer, PoseVelocity},
     node::AnimationNode,
-    pose::{Pose, RootMotion},
+    pose::{AnimationFrame, FiredEvent, Pose, RootMotion},
 };
-use concerto_foundation::transform::Transform;
+use concerto_foundation::{
+    assets::{handle::AssetHandle, AssetId},
+    transform::Transform,
+};
 use concerto_mesh::{skeleton::Skeleton, JointPose};
+use concerto_name::name;
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
-use super::{copy_pose, sample, MotionMatchingState, Sources};
+use super::{sample, MotionMatchingState, Sources};
 use crate::{
+    bake::bake,
     database::MotionDatabase,
     node::{trajectory_key, MotionMatchingNode, MotionMatchingTrajectory},
     query::FeatureQuery,
     search::search,
     simulation::TrajectorySample,
-    test_support::{pace_database, pace_database_of, skeleton, turn_left, walk_forward, TURN_RATE},
+    test_support::{
+        pace_database, pace_database_of, pace_definition, skeleton, turn_left, walk_forward,
+        TURN_RATE,
+    },
 };
 
 struct Fixture {
@@ -716,7 +725,7 @@ fn a_player_skeleton_with_none_of_the_database_bones_stops_the_node() {
 
     assert!(state.failed);
     assert!(!state.initialised);
-    let mut output = Pose::identity(1);
+    let mut output = AnimationFrame::identity(1);
     assert!(!state.write_output(&mut output));
 }
 
@@ -939,8 +948,8 @@ fn moved(x: f32) -> JointPose {
 #[test]
 fn an_uninitialised_state_leaves_the_output_untouched() {
     let mut state = MotionMatchingState::new(0.1);
-    state.output = Pose::from_joints(vec![moved(5.0)]);
-    let mut output = Pose::from_joints(vec![moved(1.0)]);
+    state.output = AnimationFrame::new(Pose::from_joints(vec![moved(5.0)]));
+    let mut output = AnimationFrame::new(Pose::from_joints(vec![moved(1.0)]));
 
     assert!(!state.write_output(&mut output));
     assert_eq!(output.joints()[0].translation.x, 1.0);
@@ -949,9 +958,9 @@ fn an_uninitialised_state_leaves_the_output_untouched() {
 #[test]
 fn an_initialised_state_copies_its_pose_to_the_output() {
     let mut state = MotionMatchingState::new(0.1);
-    state.output = Pose::from_joints(vec![moved(5.0)]);
+    state.output = AnimationFrame::new(Pose::from_joints(vec![moved(5.0)]));
     state.initialised = true;
-    let mut output = Pose::from_joints(vec![moved(1.0)]);
+    let mut output = AnimationFrame::new(Pose::from_joints(vec![moved(1.0)]));
 
     assert!(state.write_output(&mut output));
     assert_eq!(output.joints()[0].translation.x, 5.0);
@@ -1029,7 +1038,7 @@ fn at_rate_two_a_forced_jump_blends_from_the_destination_velocity_in_real_time()
     let rate = 2.0;
     let mut state = started(&fixture, &node);
     state.step(&node, 0.1, rate, &quiet(), fixture.sources());
-    let source = copy_pose(&state.blended);
+    let source = state.blended.clone();
     let source_velocity = PoseVelocity::between(&state.previous_blended, &state.blended, 0.1);
     let frame_before = state.frame;
 
@@ -1046,7 +1055,7 @@ fn at_rate_two_a_forced_jump_blends_from_the_destination_velocity_in_real_time()
         &destination,
         &velocity.scaled(rate),
     );
-    let mut expected = copy_pose(&destination);
+    let mut expected = destination.clone();
     inertializer.update(
         &destination,
         &velocity,
@@ -1166,4 +1175,124 @@ fn at_rate_zero_a_due_search_is_dropped_and_the_next_runs_once_the_rate_rises() 
 
     state.step(&node, 0.05, 1.0, &board, fixture.sources());
     assert!(state.last_query.is_some());
+}
+
+const STEP: f32 = 0.05;
+
+fn stepping(mut walk: AnimationClip) -> AnimationClip {
+    walk.add_event(
+        STEP,
+        AnimationEvent {
+            name: name!("step"),
+        },
+    );
+    walk
+}
+
+fn accelerating() -> AnimationClip {
+    let mut clip = AnimationClip::default();
+    clip.add_channel(
+        Uuid::from_u128(1),
+        AnimationChannel::new(
+            vec![0.0, 1.0, 2.0],
+            AnimationChanelOutput::Translation(vec![
+                Vec3::ZERO,
+                Vec3::new(0.0, 0.0, -0.5),
+                Vec3::new(0.0, 0.0, -2.0),
+            ]),
+        ),
+    );
+    clip
+}
+
+fn evented(walk: AnimationClip, mirrored: bool) -> Fixture {
+    let skeleton = skeleton();
+    let turn = turn_left();
+    let mut definition = pace_definition(
+        1.0,
+        Default::default(),
+        [
+            AssetHandle::weak(AssetId::new()),
+            AssetHandle::weak(AssetId::new()),
+        ],
+    );
+    for entry in &mut definition.entries {
+        entry.mirrored = mirrored;
+    }
+    Fixture {
+        database: bake(&definition, &skeleton, &[&walk, &turn]).unwrap(),
+        skeleton,
+        walk,
+        turn,
+    }
+}
+
+fn walked(fixture: &Fixture) -> MotionMatchingState {
+    let node = MotionMatchingNode::default();
+    let mut state = started(fixture, &node);
+    state.delta_time = 0.1;
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
+    state
+}
+
+fn step_on(fixture: &Fixture, mirrored: bool) -> FiredEvent {
+    FiredEvent {
+        clip: fixture.database.clips()[0].id(),
+        key: 0,
+        time: STEP,
+        weight: 1.0,
+        mirrored,
+    }
+}
+
+#[test]
+fn a_step_that_advances_past_a_clip_event_fires_it_at_full_weight() {
+    let fixture = evented(stepping(walk_forward()), false);
+
+    let state = walked(&fixture);
+
+    assert_eq!(state.frame, 3);
+    assert_eq!(state.fired, [step_on(&fixture, false)]);
+}
+
+#[test]
+fn a_mirrored_entry_fires_its_events_as_authored_and_marked_mirrored() {
+    let fixture = evented(stepping(walk_forward()), true);
+
+    let state = walked(&fixture);
+
+    assert_eq!(state.fired, [step_on(&fixture, true)]);
+}
+
+#[test]
+fn the_first_step_fires_nothing_even_when_it_advances() {
+    let fixture = evented(stepping(walk_forward()), false);
+    let node = MotionMatchingNode::default();
+    let mut state = state(&node, 0.1);
+
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
+
+    assert_eq!(state.frame, 3);
+    assert!(state.fired.is_empty(), "{:?}", state.fired);
+}
+
+#[test]
+fn a_search_jump_forward_within_an_entry_fires_nothing() {
+    let fixture = evented(stepping(accelerating()), false);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+
+    state.delta_time = 0.1;
+    state.search_timer = 0.0;
+    state.step(
+        &node,
+        state.delta_time,
+        1.0,
+        &trajectory(1.5, 2),
+        fixture.sources(),
+    );
+
+    assert_eq!(fixture.database.entry_of(state.frame), Some(0));
+    assert!(state.frame > 3, "{}", state.frame);
+    assert!(state.fired.is_empty(), "{:?}", state.fired);
 }

@@ -10,7 +10,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     ik::{TwoBoneChain, solve_two_bone},
     node::{AnimationNode, ReflectAnimationNode, pass_through},
-    pose::{EvaluatedPose, JointPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool, JointPose},
 };
 
 /// Bends the chain ending at `tip` so the tip reaches `target`; passes its first input through first.
@@ -344,9 +344,9 @@ impl AnimationNode for TwoBoneIkNode {
         _: &(),
         context: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        _: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         pass_through(evaluated_inputs, output);
         let weight = self.effective_weight(context.blackboard());
@@ -365,7 +365,7 @@ impl AnimationNode for TwoBoneIkNode {
         };
         if let Some(solved) = self.solve(&chain, context, output.joints()) {
             for (bone, rotation) in solved {
-                if let Some(joint) = output.get_joint_pose_mut(bone) {
+                if let Some(joint) = output.joint_mut(bone) {
                     joint.rotation = joint.rotation.slerp(rotation, weight);
                 }
             }
@@ -377,7 +377,7 @@ impl AnimationNode for TwoBoneIkNode {
 
 #[cfg(test)]
 mod tests {
-    use concerto_foundation::assets::asset_store::AssetStore;
+    use concerto_foundation::assets::{AssetId, asset_store::AssetStore};
     use concerto_mesh::{JointName, Skeleton, skeleton::JointPose};
     use concerto_name::name;
     use glam::{Affine3A, Mat4, Quat, Vec3};
@@ -387,7 +387,7 @@ mod tests {
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
         node::AnimationNode,
-        pose::{EvaluatedPose, Pose, PosePool, RootMotion},
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, Pose, RootMotion},
         test_walks::Walks,
     };
 
@@ -456,6 +456,16 @@ mod tests {
         }
     }
 
+    fn input_event() -> FiredEvent {
+        FiredEvent {
+            clip: AssetId::from_path("ik_input"),
+            key: 2,
+            time: 0.4,
+            weight: 0.5,
+            mirrored: false,
+        }
+    }
+
     struct Rig {
         walks: Walks,
         blackboard: AnimationBlackboard,
@@ -473,26 +483,27 @@ mod tests {
             }
         }
 
-        fn input(&self) -> Pose {
-            let mut pose = Pose::from_joints(self.skeleton.rest_pose.clone());
-            pose.set_root_motion(input_motion());
-            pose
+        fn input(&self) -> AnimationFrame {
+            let mut frame = AnimationFrame::new(Pose::from_joints(self.skeleton.rest_pose.clone()));
+            frame.set_root_motion(input_motion());
+            frame.push_event(input_event());
+            frame
         }
 
-        fn solve(&self, node: &TwoBoneIkNode) -> Pose {
+        fn solve(&self, node: &TwoBoneIkNode) -> AnimationFrame {
             self.run(node, true)
         }
 
-        fn solve_without_skeleton(&self, node: &TwoBoneIkNode) -> Pose {
+        fn solve_without_skeleton(&self, node: &TwoBoneIkNode) -> AnimationFrame {
             self.run(node, false)
         }
 
-        fn run(&self, node: &TwoBoneIkNode, with_skeleton: bool) -> Pose {
-            let input = [EvaluatedPose {
-                pose: self.input(),
+        fn run(&self, node: &TwoBoneIkNode, with_skeleton: bool) -> AnimationFrame {
+            let input = [EvaluatedFrame {
+                frame: self.input(),
                 weight: 1.0,
             }];
-            let mut pool = PosePool::new(self.skeleton.bone_count());
+            let mut pool = FramePool::new(self.skeleton.bone_count());
             let mut output = pool.acquire();
             let mut state = TwoBoneIkState::default();
             let evaluate = |context: &AnimationGraphContext<'_>| {
@@ -519,16 +530,16 @@ mod tests {
             output
         }
 
-        fn model(&self, pose: &Pose, bone: usize) -> Mat4 {
-            self.skeleton.forward_kinematics(pose.joints()).unwrap()[bone]
+        fn model(&self, frame: &AnimationFrame, bone: usize) -> Mat4 {
+            self.skeleton.forward_kinematics(frame.joints()).unwrap()[bone]
         }
 
-        fn model_position(&self, pose: &Pose, bone: usize) -> Vec3 {
-            self.model(pose, bone).w_axis.truncate()
+        fn model_position(&self, frame: &AnimationFrame, bone: usize) -> Vec3 {
+            self.model(frame, bone).w_axis.truncate()
         }
 
-        fn model_rotation(&self, pose: &Pose, bone: usize) -> Quat {
-            self.model(pose, bone).to_scale_rotation_translation().1
+        fn model_rotation(&self, frame: &AnimationFrame, bone: usize) -> Quat {
+            self.model(frame, bone).to_scale_rotation_translation().1
         }
 
         fn grip_point(&self, translation: Vec3) -> Vec3 {
@@ -573,9 +584,9 @@ mod tests {
         );
     }
 
-    fn assert_unchanged(rig: &Rig, pose: &Pose) {
-        assert_eq!(pose.joints(), rig.input().joints());
-        assert_eq!(pose.root_motion(), input_motion());
+    fn assert_unchanged(rig: &Rig, frame: &AnimationFrame) {
+        assert_eq!(frame.joints(), rig.input().joints());
+        assert_eq!(frame.root_motion(), input_motion());
     }
 
     fn turned_world() -> Affine3A {
@@ -592,17 +603,17 @@ mod tests {
         let rig = Rig::new();
         let offset = Vec3::new(0.05, 0.02, 0.1);
 
-        let pose = rig.solve(&node(on_grip(offset, Quat::IDENTITY)));
+        let frame = rig.solve(&node(on_grip(offset, Quat::IDENTITY)));
 
-        assert_near(rig.model_position(&pose, HAND), rig.grip_point(offset));
-        assert_eq!(pose.root_motion(), input_motion());
+        assert_near(rig.model_position(&frame, HAND), rig.grip_point(offset));
+        assert_eq!(frame.root_motion(), input_motion());
         let input = rig.input();
         for bone in (0..rig.skeleton.bone_count()).filter(|bone| !CHAIN.contains(bone)) {
-            assert_eq!(pose.joints()[bone], input.joints()[bone], "bone {bone}");
+            assert_eq!(frame.joints()[bone], input.joints()[bone], "bone {bone}");
         }
         for bone in CHAIN {
             assert_eq!(
-                pose.joints()[bone].translation,
+                frame.joints()[bone].translation,
                 input.joints()[bone].translation
             );
         }
@@ -612,10 +623,10 @@ mod tests {
     fn keep_input_keeps_the_model_rotation_of_the_tip() {
         let rig = Rig::new();
 
-        let pose = rig.solve(&node(on_grip(Vec3::ZERO, Quat::from_rotation_y(0.9))));
+        let frame = rig.solve(&node(on_grip(Vec3::ZERO, Quat::from_rotation_y(0.9))));
 
         assert_rotation(
-            rig.model_rotation(&pose, HAND),
+            rig.model_rotation(&frame, HAND),
             rig.model_rotation(&rig.input(), HAND),
         );
     }
@@ -625,13 +636,13 @@ mod tests {
         let rig = Rig::new();
         let turn = Quat::from_rotation_y(0.9);
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             tip_rotation: TipRotation::FromTarget,
             ..node(on_grip(Vec3::ZERO, turn))
         });
 
         assert_rotation(
-            rig.model_rotation(&pose, HAND),
+            rig.model_rotation(&frame, HAND),
             rig.model_rotation(&rig.input(), GRIP) * turn,
         );
     }
@@ -649,9 +660,9 @@ mod tests {
             },
         );
 
-        let pose = rig.solve(&node(on_param()));
+        let frame = rig.solve(&node(on_param()));
 
-        assert_near(rig.model_position(&pose, HAND), goal);
+        assert_near(rig.model_position(&frame, HAND), goal);
     }
 
     #[test]
@@ -666,13 +677,13 @@ mod tests {
             },
         );
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             tip_rotation: TipRotation::FromTarget,
             ..node(on_param())
         });
 
         assert_rotation(
-            rig.model_rotation(&pose, HAND),
+            rig.model_rotation(&frame, HAND),
             rig.model_rotation(&rig.input(), HAND),
         );
     }
@@ -690,13 +701,13 @@ mod tests {
             },
         );
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             tip_rotation: TipRotation::FromTarget,
             ..node(on_param())
         });
 
         assert_rotation(
-            rig.model_rotation(&pose, HAND),
+            rig.model_rotation(&frame, HAND),
             Quat::from_rotation_y(1.1).inverse() * world_rotation,
         );
     }
@@ -746,9 +757,9 @@ mod tests {
         }
     }
 
-    fn assert_on_the_pole_side(rig: &Rig, pose: &Pose, case: &PoleCase) {
+    fn assert_on_the_pole_side(rig: &Rig, frame: &AnimationFrame, case: &PoleCase) {
         let axis = case.target - case.root;
-        let side = across(rig.model_position(pose, LOWER) - case.root, axis).normalize();
+        let side = across(rig.model_position(frame, LOWER) - case.root, axis).normalize();
         let pole_side = across(case.pole - case.root, axis).normalize();
         assert!(
             side.dot(pole_side) > 0.999,
@@ -770,14 +781,14 @@ mod tests {
             },
         );
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             pole: Some(IkGoal::Param {
                 param: name!("elbow_pole"),
             }),
             ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
         });
 
-        assert_on_the_pole_side(&rig, &pose, &case);
+        assert_on_the_pole_side(&rig, &frame, &case);
     }
 
     #[test]
@@ -786,7 +797,7 @@ mod tests {
         let case = pole_case(&rig);
         let grip = rig.model(&rig.input(), GRIP);
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             pole: Some(on_grip(
                 grip.inverse().transform_point3(case.pole),
                 Quat::IDENTITY,
@@ -794,7 +805,7 @@ mod tests {
             ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
         });
 
-        assert_on_the_pole_side(&rig, &pose, &case);
+        assert_on_the_pole_side(&rig, &frame, &case);
     }
 
     #[test]
@@ -802,14 +813,14 @@ mod tests {
         let rig = Rig::new();
         let unpoled = node(on_grip(Vec3::ZERO, Quat::IDENTITY));
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             pole: Some(IkGoal::Param {
                 param: name!("elbow_pole"),
             }),
             ..unpoled.clone()
         });
 
-        assert_eq!(pose.joints(), rig.solve(&unpoled).joints());
+        assert_eq!(frame.joints(), rig.solve(&unpoled).joints());
     }
 
     #[test]
@@ -839,15 +850,24 @@ mod tests {
     }
 
     #[test]
+    fn an_event_on_the_input_survives_the_ik_node() {
+        let rig = Rig::new();
+
+        let frame = rig.solve(&node(on_grip(Vec3::ZERO, Quat::IDENTITY)));
+
+        assert_eq!(frame.events(), [input_event()]);
+    }
+
+    #[test]
     fn zero_weight_leaves_the_input_pose() {
         let rig = Rig::new();
 
-        let pose = rig.solve(&TwoBoneIkNode {
+        let frame = rig.solve(&TwoBoneIkNode {
             weight: 0.0,
             ..node(on_grip(Vec3::ZERO, Quat::IDENTITY))
         });
 
-        assert_unchanged(&rig, &pose);
+        assert_unchanged(&rig, &frame);
     }
 
     #[test]

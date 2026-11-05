@@ -1142,6 +1142,8 @@ dependencies = [
  "gltf",
  "image",
  "log",
+ "serde",
+ "toml",
  "uuid",
 ]
 

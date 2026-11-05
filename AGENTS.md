@@ -180,6 +180,10 @@ import fails the build.
 **Match the code around you.** Naming, module layout, error handling, and test
 style follow the file you are in.
 
+**No tuples as types.** Don't use a tuple such as `(u32, f32)` as a field
+type, a collection element, a return type or a parameter, in tests too. Name
+each field in a struct, and give it methods where they read better.
+
 **Tests first.** Write the failing test, watch it fail, then make it pass. A
 cloud pipeline session writes the test first but cannot run it, so the red step
 is not observed.

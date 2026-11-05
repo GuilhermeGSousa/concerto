@@ -1,6 +1,7 @@
 pub mod blackboard;
 pub mod clip;
 pub mod evaluation;
+pub mod event;
 pub mod graph;
 pub mod ik;
 pub mod inertialization;
@@ -31,6 +32,7 @@ mod tests {
     use crate::blackboard::AnimationBlackboard;
     use crate::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
     use crate::evaluation::RootBone;
+    use crate::event::AnimationEvent;
     use crate::graph::{AnimationGraph, made_live};
     use crate::node::AnimationPlayMode::PlayOnce;
     use crate::node::state_machine::{
@@ -39,7 +41,7 @@ mod tests {
     use crate::node::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
-    use crate::pose::{JointPose, PosePool, RootMotion};
+    use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
     use crate::test_walks::Walks;
     use crate::transition::TransitionBlender;
 
@@ -346,12 +348,12 @@ mod tests {
         };
 
         let sample_x = |node_state: &mut NodeState| -> f32 {
-            let mut pool = PosePool::new(1);
-            let mut pose = pool.acquire();
+            let mut pool = FramePool::new(1);
+            let mut frame = pool.acquire();
             walks.evaluate(&blackboard, None, |context| {
-                fsm.evaluate(node_state, context, &[bone], &[], &mut pool, &mut pose)
+                fsm.evaluate(node_state, context, &[bone], &[], &mut pool, &mut frame)
             });
-            pose.get_joint_pose(0).unwrap().translation.x
+            frame.joint(0).unwrap().translation.x
         };
 
         // One frame into the 0.1s fade: a genuine blend between the two poses, not a hard cut.
@@ -487,8 +489,9 @@ mod tests {
         blackboard: AnimationBlackboard,
         node_state: NodeState,
         bone: Uuid,
-        pool: PosePool,
+        pool: FramePool,
         root_motion: RootMotion,
+        events: Vec<FiredEvent>,
     }
 
     impl Machine {
@@ -555,8 +558,9 @@ mod tests {
                 blackboard,
                 node_state,
                 bone,
-                pool: PosePool::new(1),
+                pool: FramePool::new(1),
                 root_motion: RootMotion::IDENTITY,
+                events: Vec::new(),
             }
         }
 
@@ -574,7 +578,7 @@ mod tests {
                 self.fsm
                     .update(&mut self.node_state, MACHINE_FRAME, context)
             });
-            let mut pose = self.pool.acquire();
+            let mut frame = self.pool.acquire();
             self.walks
                 .evaluate(&self.blackboard, Some(root), |context| {
                     self.fsm.evaluate(
@@ -583,12 +587,13 @@ mod tests {
                         &[self.bone],
                         &[],
                         &mut self.pool,
-                        &mut pose,
+                        &mut frame,
                     )
                 });
-            let x = pose.get_joint_pose(0).unwrap().translation.x;
-            self.root_motion = pose.root_motion();
-            self.pool.release(pose);
+            let x = frame.joint(0).unwrap().translation.x;
+            self.root_motion = frame.root_motion();
+            self.events = frame.events().to_vec();
+            self.pool.release(frame);
             x
         }
 
@@ -774,5 +779,87 @@ mod tests {
             "expected {expected}, got {}",
             machine.root_motion.translation.x
         );
+    }
+
+    fn with_event(mut clip: AnimationClip, time: f32) -> AnimationClip {
+        clip.add_event(
+            time,
+            AnimationEvent {
+                name: name!("step"),
+            },
+        );
+        clip
+    }
+
+    fn machine_firing(blender: TransitionBlender) -> Machine {
+        let bone = Uuid::new_v4();
+        Machine::new(
+            bone,
+            with_event(linear_x_clip(bone, 2.0), 5.5 * MACHINE_FRAME),
+            with_event(linear_x_clip(bone, 8.0), 0.0),
+            constant_x_clip(bone, 0.0),
+            0.1,
+            blender,
+        )
+    }
+
+    #[derive(Debug)]
+    struct TimeWeight {
+        time: f32,
+        weight: f32,
+    }
+
+    fn time_weight(time: f32, weight: f32) -> TimeWeight {
+        TimeWeight { time, weight }
+    }
+
+    fn fired_by_time(machine: &Machine) -> Vec<TimeWeight> {
+        let mut fired: Vec<_> = machine
+            .events
+            .iter()
+            .map(|event| time_weight(event.time, event.weight))
+            .collect();
+        fired.sort_by(|a, b| a.time.total_cmp(&b.time));
+        fired
+    }
+
+    fn assert_fired(actual: &[TimeWeight], expected: &[TimeWeight]) {
+        assert_eq!(actual.len(), expected.len(), "fired {actual:?}");
+        for (fired, expected_fired) in actual.iter().zip(expected) {
+            assert!(
+                (fired.time - expected_fired.time).abs() < 1e-6
+                    && (fired.weight - expected_fired.weight).abs() < 1e-5,
+                "expected {expected:?}, fired {actual:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_cross_fade_gives_each_event_the_weight_of_its_state_in_the_fade() {
+        let mut machine = machine_firing(TransitionBlender::CrossFade);
+        machine.run(5);
+        machine.set(name!("to_b"), true);
+
+        machine.step();
+
+        let entered = MACHINE_FRAME / 0.1;
+        assert_fired(
+            &fired_by_time(&machine),
+            &[
+                time_weight(0.0, entered),
+                time_weight(5.5 * MACHINE_FRAME, 1.0 - entered),
+            ],
+        );
+    }
+
+    #[test]
+    fn inertialization_fires_the_start_of_the_entered_state_at_full_weight() {
+        let mut machine = machine_firing(TransitionBlender::Inertialization);
+        machine.run(5);
+        machine.set(name!("to_b"), true);
+
+        machine.step();
+
+        assert_fired(&fired_by_time(&machine), &[time_weight(0.0, 1.0)]);
     }
 }

@@ -6,6 +6,7 @@ use concerto_reflect::{GetTypeRegistration, TypeRegistry};
 
 use crate::{
     clip::AnimationClip,
+    event::{AnimationEvent, ClipEvent},
     graph::AnimationGraph,
     node::{
         AnimationClipNode, AnimationNode, BlendNode, PlaceholderNode, ResultNode, TwoBoneIkNode,
@@ -17,7 +18,7 @@ use crate::{
     },
 };
 
-/// Registers the built-in animation nodes and the handle types a graph stores.
+/// Registers the built-in animation nodes, the built-in clip event, and the handle types a graph stores.
 pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<ResultNode>();
     registry.register::<BlendNode>();
@@ -26,6 +27,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<BlendSpace2DNode>();
     registry.register::<AnimationStateMachine>();
     registry.register::<PlaceholderNode>();
+    registry.register::<AnimationEvent>();
     registry.register::<AssetHandle<AnimationClip>>();
     registry.register::<AssetHandle<AnimationGraph>>();
 }
@@ -45,12 +47,20 @@ pub fn register_animation_node_inputs(world: &mut World) {
 pub trait AnimationAppExt {
     /// Registers `N` with the type registry and its inputs with the graph walks; call it in a plugin's `build`.
     fn register_animation_node<N: AnimationNode + GetTypeRegistration>(&mut self) -> &mut Self;
+
+    /// Registers `S` with the type registry, so clips that store it make it live on load.
+    fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self;
 }
 
 impl AnimationAppExt for App {
     fn register_animation_node<N: AnimationNode + GetTypeRegistration>(&mut self) -> &mut Self {
         self.register_type::<N>();
         register_node_inputs::<N>(self.main_mut().world_mut());
+        self
+    }
+
+    fn register_clip_event<S: ClipEvent + GetTypeRegistration>(&mut self) -> &mut Self {
+        self.register_type::<S>();
         self
     }
 }
@@ -111,7 +121,7 @@ mod tests {
         graph::AnimationGraph,
         node::{AnimationNode, CreateNodeInputs, ReflectAnimationNode},
         player::AnimationPlayer,
-        pose::{EvaluatedPose, Pose, PosePool},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
         target::{animate_targets, initialize_animation_players, update_animation_players},
     };
 
@@ -139,11 +149,11 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            output: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            output: &mut AnimationFrame,
         ) {
-            if let Some(joint) = output.get_joint_pose_mut(0) {
+            if let Some(joint) = output.joint_mut(0) {
                 joint.translation.x = if *state { 1.0 } else { 0.0 };
             }
         }
@@ -244,9 +254,9 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            _: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
         ) {
         }
 

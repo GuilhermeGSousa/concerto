@@ -24,7 +24,7 @@ use crate::{
         AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
         state_machine::AnimationStateMachineState,
     },
-    pose::PosePool,
+    pose::{FiredEvent, FramePool},
     root::AnimationRootBone,
 };
 
@@ -48,8 +48,10 @@ impl ActiveNodeState {
 pub struct AnimationPlayer {
     graph_state: AnimationGraphState,
     blackboard: AnimationBlackboard,
-    pose_pool: PosePool,
+    frame_pool: FramePool,
     paused: bool,
+    event_threshold: f32,
+    pub(crate) fired: Vec<FiredEvent>,
 }
 
 impl AnimationPlayer {
@@ -57,9 +59,16 @@ impl AnimationPlayer {
         Self {
             graph_state: AnimationGraphState::default(),
             blackboard: AnimationBlackboard::default(),
-            pose_pool: PosePool::new(bone_count),
+            frame_pool: FramePool::new(bone_count),
             paused: false,
+            event_threshold: 0.0,
+            fired: Vec::new(),
         }
+    }
+
+    /// Drops clip events whose source weighs no more than `threshold` in the final frame; 0 by default.
+    pub fn set_event_threshold(&mut self, threshold: f32) {
+        self.event_threshold = threshold;
     }
 
     /// Freezes the player: its graph stops advancing and its bones are no
@@ -187,6 +196,7 @@ impl AnimationPlayer {
         parents: &Query<&ChildOf>,
         globals: &Query<&GlobalTransform>,
     ) -> bool {
+        self.fired.clear();
         let bone_ids = &skeleton.bone_ids;
         let rest_pose = &skeleton.rest_pose;
         let root = bones
@@ -213,26 +223,34 @@ impl AnimationPlayer {
             inputs,
         };
 
-        self.pose_pool.set_rest(rest_pose);
-        let mut output_pose = self.pose_pool.acquire();
+        self.frame_pool.set_rest(rest_pose);
+        let mut output_frame = self.frame_pool.acquire();
         if !self.graph_state.evaluate(
             graphs,
             &context,
             bone_ids,
-            &mut self.pose_pool,
-            &mut output_pose,
+            &mut self.frame_pool,
+            &mut output_frame,
         ) {
             // No graph evaluated — keep the bones' current (default) pose.
-            self.pose_pool.release(output_pose);
+            self.frame_pool.release(output_frame);
             return false;
         }
 
-        let root_motion = output_pose.root_motion();
+        let threshold = self.event_threshold;
+        self.fired.extend(
+            output_frame
+                .events
+                .drain(..)
+                .filter(|event| event.weight > threshold),
+        );
+
+        let root_motion = output_frame.root_motion();
         for (bone_index, bone) in bones.iter().enumerate() {
             let Some(bone_entity) = bone.entity() else {
                 continue;
             };
-            let Some(joint_pose) = output_pose.get_joint_pose(bone_index) else {
+            let Some(joint_pose) = output_frame.joint(bone_index) else {
                 continue;
             };
 
@@ -247,7 +265,7 @@ impl AnimationPlayer {
             }
         }
 
-        self.pose_pool.release(output_pose);
+        self.frame_pool.release(output_frame);
         true
     }
 }

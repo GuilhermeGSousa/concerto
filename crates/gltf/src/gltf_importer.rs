@@ -6,7 +6,7 @@
 //!
 
 use std::borrow::Cow;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::Path;
 
@@ -32,6 +32,7 @@ use glam::{Mat4, Quat, Vec3};
 use gltf::{Node, Primitive, buffer::Data};
 use image::ImageBuffer;
 use log::warn;
+use serde::Deserialize;
 use uuid::Uuid;
 
 // glTF (KHR_lights_punctual) stores light intensity in photometric units: lux
@@ -43,6 +44,15 @@ use uuid::Uuid;
 const LUMINOUS_EFFICACY: f32 = 683.0;
 
 pub struct GltfImporter;
+
+/// Importer settings read from the `[settings]` table of a glTF source's sidecar.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GltfSettings {
+    /// Per emitted clip name, the clip times in seconds of each named event.
+    #[serde(default)]
+    pub events: BTreeMap<String, BTreeMap<String, Vec<f32>>>,
+}
 
 /// One emitted primitive of a glTF mesh: the sub-asset indices of its imported
 /// `mesh/*` geometry and the `material/*` it draws with.
@@ -80,6 +90,15 @@ impl Importer for GltfImporter {
     }
 
     fn import(&self, source_path: &Path, ctx: &mut ImportContext) -> Result<(), ImportError> {
+        let malformed_settings = |message: String| ImportError::MalformedSource {
+            source_path: source_path.to_path_buf(),
+            message,
+        };
+        let settings: GltfSettings = ctx
+            .settings()
+            .clone()
+            .try_into()
+            .map_err(|err: toml::de::Error| malformed_settings(err.to_string()))?;
         let (document, buffers, images) =
             gltf::import(source_path).map_err(|e| ImportError::MalformedSource {
                 source_path: source_path.to_path_buf(),
@@ -352,6 +371,15 @@ impl Importer for GltfImporter {
         let requested_clip_names: Vec<Option<&str>> =
             document.animations().map(|a| a.name()).collect();
         let animation_names = clip_names(&requested_clip_names);
+        if let Some(name) = settings
+            .events
+            .keys()
+            .find(|name| !animation_names.contains(name))
+        {
+            return Err(malformed_settings(format!(
+                "events are set for clip `{name}`, which this file does not emit; its clips are {animation_names:?}"
+            )));
+        }
         for (animation_index, (animation, animation_name)) in
             document.animations().zip(&animation_names).enumerate()
         {
@@ -405,6 +433,14 @@ impl Importer for GltfImporter {
                 } else {
                     warn!("Missing an node name for node {}.", target_node_idx);
                 }
+            }
+
+            if let Some(events) = settings.events.get(animation_name) {
+                animation_clip
+                    .add_animation_events(events)
+                    .map_err(|message| {
+                        malformed_settings(format!("clip `{animation_name}`: {message}"))
+                    })?;
             }
 
             let index_name = animation_index.to_string();

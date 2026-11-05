@@ -508,6 +508,17 @@ context; when any of them is missing the node does not step and its root motion
 is `RootMotion::IDENTITY`. `animate_targets` then only copies the pose the step
 left. No other system declares the `MotionDatabase` store.
 
+Clip events fire from the clip time crossed within an entry. A step whose
+playhead advances, with no search jump, fires the events of the entry's clip in
+`(clip_time(previous), clip_time(advanced)]`, each as a `FiredEvent` naming that
+clip and key at weight 1. A search jump fires nothing, whether it lands in the
+same entry or another, and so do a held frame and the first step. A mirrored
+entry fires its events as authored, with `mirrored: true`; the game decides what
+a mirrored event means, such as swapping a left footstep for a right one. The
+node's `update` clears what it fired before anything else, so a frame with a
+missing asset or a stopped node fires nothing, and its `evaluate` adds the
+events to the `AnimationFrame` after copying the state's frame into it.
+
 `MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`
 calls. Other crates read it

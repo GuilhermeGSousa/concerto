@@ -12,7 +12,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
-    pose::{EvaluatedPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
@@ -93,9 +93,9 @@ impl AnimationNode for BlendSpace2DNode {
         _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[uuid::Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        _pool: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         if evaluated_inputs.is_empty() {
             return;
@@ -117,14 +117,14 @@ impl AnimationNode for BlendSpace2DNode {
         let lambda_b = triangulated_point.lambda_b;
         let lambda_c = triangulated_point.lambda_c;
 
-        output.copy_from(&evaluated_inputs[triangle.a].pose);
+        output.copy_from(&evaluated_inputs[triangle.a].frame);
 
         let ab_sum = lambda_a + lambda_b;
         if ab_sum > 1e-6 {
-            output.blend(&evaluated_inputs[triangle.b].pose, lambda_b / ab_sum);
+            output.blend(&evaluated_inputs[triangle.b].frame, lambda_b / ab_sum);
         }
 
-        output.blend(&evaluated_inputs[triangle.c].pose, lambda_c);
+        output.blend(&evaluated_inputs[triangle.c].frame, lambda_c);
     }
 
     fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
@@ -174,5 +174,73 @@ impl<'a> BlendSpace2DBuilderContext<'a> {
         self.nodes
             .push(AnimationNodeData::of(&AnimationClipNode::new(clip)));
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use concerto_foundation::assets::{AssetId, asset_store::AssetStore};
+    use concerto_name::name;
+    use glam::Vec2;
+
+    use super::{BlendInput, BlendSpace2DNode};
+    use crate::{
+        blackboard::AnimationBlackboard,
+        node::AnimationNode,
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
+        test_walks::Walks,
+    };
+
+    fn firing(key: u32) -> EvaluatedFrame {
+        let mut frame = AnimationFrame::identity(1);
+        frame.push_event(FiredEvent {
+            clip: AssetId::new(),
+            key,
+            time: 0.0,
+            weight: 1.0,
+            mirrored: false,
+        });
+        EvaluatedFrame { frame, weight: 1.0 }
+    }
+
+    #[test]
+    fn each_corner_event_carries_its_barycentric_weight() {
+        let space = BlendSpace2DNode::new(
+            vec![Vec2::ZERO, Vec2::X, Vec2::Y],
+            BlendInput { param: name!("at") },
+        );
+        let walks = Walks::new(AssetStore::new(), AssetStore::new());
+        let mut blackboard = AnimationBlackboard::default();
+        blackboard.set(name!("at"), Vec2::new(0.25, 0.25));
+        let mut state = walks.create(&blackboard, |context| space.create_state(&(), context));
+        walks.update(&blackboard, |context| {
+            space.update(&mut state, 0.1, &(), context)
+        });
+        let mut pool = FramePool::new(1);
+        let mut output = pool.acquire();
+
+        walks.evaluate(&blackboard, None, |context| {
+            space.evaluate(
+                &mut state,
+                &(),
+                context,
+                &[],
+                &[firing(0), firing(1), firing(2)],
+                &mut pool,
+                &mut output,
+            )
+        });
+
+        let mut events: Vec<_> = output.events().iter().collect();
+        events.sort_by_key(|event| event.key);
+        assert_eq!(events.len(), 3);
+        for (event, expected) in events.into_iter().zip([0.5, 0.25, 0.25]) {
+            assert!(
+                (event.weight - expected).abs() < 1e-5,
+                "event {}: expected {expected}, got {}",
+                event.key,
+                event.weight
+            );
+        }
     }
 }
