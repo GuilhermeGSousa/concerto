@@ -819,6 +819,7 @@ dependencies = [
  "concerto-gameplay",
  "concerto-mesh",
  "concerto-motion-matching",
+ "concerto-name",
  "concerto-physics",
  "concerto-reflect",
  "concerto-render",
@@ -1272,6 +1273,16 @@ dependencies = [
  "concerto-render",
  "glam 0.30.10",
  "uuid",
+]
+
+[[package]]
+name = "concerto-name"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "concerto-reflect",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
