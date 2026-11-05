@@ -228,6 +228,10 @@ pub(crate) fn open(f: &mut SceneFixture, asset: &AssetEntry) -> Entity {
     let document = request(f, asset);
     f.frame();
     f.frame();
+    f.frames_until("the derive never ended", |f| {
+        let state = state(f, document);
+        !state.derive_wanted && state.derive_job.is_none()
+    });
     document
 }
 
