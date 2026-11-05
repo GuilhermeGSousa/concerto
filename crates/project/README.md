@@ -169,6 +169,6 @@ writes that it did not create.
   the crate's own path is added.
 - A game under the workspace's `exclude`, or under no workspace, is its own
   workspace: `editor` appends `[workspace] members = [".", "editor"]` to the
-  game's `Cargo.toml`, and `new` writes that table, with
-  `[profile.dev.package.concerto-jolt-ffi] opt-level = 3`, into the manifest it
-  creates.
+  game's `Cargo.toml`, and `new` writes that table into the manifest it
+  creates, with a `dev` profile at `opt-level = 1` that builds every
+  dependency, the engine included, at `opt-level = 3`.

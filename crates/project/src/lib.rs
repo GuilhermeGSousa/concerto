@@ -30,7 +30,7 @@ const EDITOR_MAIN_WITH_PLUGINS: &str = include_str!("../templates/editor/src/mai
 const PLUGIN_KEYS: &[&str] = &["package", "install", "version", "path"];
 const ARRAY_WIDTH: usize = 60;
 
-const OWN_WORKSPACE: &str = "\n[workspace]\nmembers = [\".\", \"editor\"]\n\n[profile.dev.package.concerto-jolt-ffi]\nopt-level = 3";
+const OWN_WORKSPACE: &str = "\n[workspace]\nmembers = [\".\", \"editor\"]\n\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3";
 
 const KEYWORDS: &[&str] = &[
     "abstract", "as", "async", "await", "become", "box", "break", "const", "continue", "crate",
@@ -952,7 +952,9 @@ mod tests {
         assert!(manifest.contains("[lib]"));
         assert!(!manifest.contains("crate-type"));
         assert!(manifest.contains("[workspace]\nmembers = [\".\", \"editor\"]\n"));
-        assert!(manifest.contains("[profile.dev.package.concerto-jolt-ffi]\nopt-level = 3\n"));
+        assert!(manifest.contains(
+            "[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n"
+        ));
         assert!(read(dir.join("src/main.rs"))
             .contains("concerto::run(my_game::game, concerto::content_registry!());"));
         assert!(!dir.join("content/.registry.toml").exists());
@@ -1352,7 +1354,7 @@ mod tests {
         );
         let manifest = read(dir.join("Cargo.toml"));
         assert!(!manifest.contains("[workspace]"));
-        assert!(!manifest.contains("concerto-jolt-ffi"));
+        assert!(!manifest.contains("[profile"));
     }
 
     #[test]
