@@ -40,7 +40,7 @@ mod tests {
     use crate::node::{
         AnimationClipNode, AnimationClipNodeState, AnimationNode, ErasedAnimationNode, NodeState,
     };
-    use crate::pose::{FiredEvent, JointPose, PosePool, RootMotion};
+    use crate::pose::{FiredEvent, FramePool, JointPose, RootMotion};
     use crate::test_walks::Walks;
     use crate::transition::TransitionBlender;
 
@@ -347,12 +347,12 @@ mod tests {
         };
 
         let sample_x = |node_state: &mut NodeState| -> f32 {
-            let mut pool = PosePool::new(1);
-            let mut pose = pool.acquire();
+            let mut pool = FramePool::new(1);
+            let mut frame = pool.acquire();
             walks.evaluate(&blackboard, None, |context| {
-                fsm.evaluate(node_state, context, &[bone], &[], &mut pool, &mut pose)
+                fsm.evaluate(node_state, context, &[bone], &[], &mut pool, &mut frame)
             });
-            pose.get_joint_pose(0).unwrap().translation.x
+            frame.joint(0).unwrap().translation.x
         };
 
         // One frame into the 0.1s fade: a genuine blend between the two poses, not a hard cut.
@@ -488,7 +488,7 @@ mod tests {
         blackboard: AnimationBlackboard,
         node_state: NodeState,
         bone: Uuid,
-        pool: PosePool,
+        pool: FramePool,
         root_motion: RootMotion,
         events: Vec<FiredEvent>,
     }
@@ -557,7 +557,7 @@ mod tests {
                 blackboard,
                 node_state,
                 bone,
-                pool: PosePool::new(1),
+                pool: FramePool::new(1),
                 root_motion: RootMotion::IDENTITY,
                 events: Vec::new(),
             }
@@ -577,7 +577,7 @@ mod tests {
                 self.fsm
                     .update(&mut self.node_state, MACHINE_FRAME, context)
             });
-            let mut pose = self.pool.acquire();
+            let mut frame = self.pool.acquire();
             self.walks
                 .evaluate(&self.blackboard, Some(root), |context| {
                     self.fsm.evaluate(
@@ -586,13 +586,13 @@ mod tests {
                         &[self.bone],
                         &[],
                         &mut self.pool,
-                        &mut pose,
+                        &mut frame,
                     )
                 });
-            let x = pose.get_joint_pose(0).unwrap().translation.x;
-            self.root_motion = pose.root_motion();
-            self.events = pose.events().to_vec();
-            self.pool.release(pose);
+            let x = frame.joint(0).unwrap().translation.x;
+            self.root_motion = frame.root_motion();
+            self.events = frame.events().to_vec();
+            self.pool.release(frame);
             x
         }
 

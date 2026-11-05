@@ -43,7 +43,7 @@ pub fn twist_about(rotation: Quat, axis: Vec3) -> Quat {
     twist.normalize()
 }
 
-/// A clip event crossed this frame: the key on its clip, and the weight its source has in the pose.
+/// A clip event crossed this frame: the key on its clip, and the weight its source has in the frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FiredEvent {
     pub clip: AssetId,
@@ -53,13 +53,14 @@ pub struct FiredEvent {
     pub mirrored: bool,
 }
 
+/// The joints of a skeleton, in bone order.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Pose {
     joints: Box<[JointPose]>,
-    root_motion: RootMotion,
-    pub(crate) events: Vec<FiredEvent>,
 }
 
 impl Pose {
+    /// A pose of `bone_count` identity joints.
     pub fn identity(bone_count: usize) -> Pose {
         Pose::from_joints(vec![JointPose::IDENTITY; bone_count])
     }
@@ -68,8 +69,6 @@ impl Pose {
     pub fn from_joints(joints: impl Into<Box<[JointPose]>>) -> Pose {
         Pose {
             joints: joints.into(),
-            root_motion: RootMotion::IDENTITY,
-            events: Vec::new(),
         }
     }
 
@@ -88,6 +87,90 @@ impl Pose {
         &self.joints
     }
 
+    /// The joint of the bone at `bone_index`.
+    pub fn joint(&self, bone_index: usize) -> Option<&JointPose> {
+        self.joints.get(bone_index)
+    }
+
+    /// The joint of the bone at `bone_index`, to change.
+    pub fn joint_mut(&mut self, bone_index: usize) -> Option<&mut JointPose> {
+        self.joints.get_mut(bone_index)
+    }
+
+    /// Moves each joint toward the one of `other` by `weight`, lerping translation and scale and slerping rotation.
+    pub fn blend(&mut self, other: &Pose, weight: f32) {
+        for (joint, other_joint) in self.joints.iter_mut().zip(other.joints.iter()) {
+            joint.translation = joint.translation.lerp(other_joint.translation, weight);
+            joint.rotation = joint.rotation.slerp(other_joint.rotation, weight);
+            joint.scale = joint.scale.lerp(other_joint.scale, weight);
+        }
+    }
+
+    /// Overwrites this pose's joints with those of `other` (same skeleton / length).
+    pub fn copy_from(&mut self, other: &Pose) {
+        for (joint, other_joint) in self.joints.iter_mut().zip(other.joints.iter()) {
+            *joint = other_joint.clone();
+        }
+    }
+}
+
+/// What an animation graph gives for one frame: the pose, how the root moved, and the clip events crossed.
+pub struct AnimationFrame {
+    pose: Pose,
+    root_motion: RootMotion,
+    pub(crate) events: Vec<FiredEvent>,
+}
+
+impl AnimationFrame {
+    /// A frame of `bone_count` identity joints, no root motion and no events.
+    pub fn identity(bone_count: usize) -> AnimationFrame {
+        AnimationFrame::new(Pose::identity(bone_count))
+    }
+
+    /// A frame of `pose`, with no root motion and no events.
+    pub fn new(pose: Pose) -> AnimationFrame {
+        AnimationFrame {
+            pose,
+            root_motion: RootMotion::IDENTITY,
+            events: Vec::new(),
+        }
+    }
+
+    /// The pose of this frame.
+    pub fn pose(&self) -> &Pose {
+        &self.pose
+    }
+
+    /// The pose of this frame, to change.
+    pub fn pose_mut(&mut self) -> &mut Pose {
+        &mut self.pose
+    }
+
+    /// The number of joints in this frame's pose.
+    pub fn len(&self) -> usize {
+        self.pose.len()
+    }
+
+    /// Whether this frame's pose has no joints.
+    pub fn is_empty(&self) -> bool {
+        self.pose.is_empty()
+    }
+
+    /// The joints of this frame's pose, in bone order.
+    pub fn joints(&self) -> &[JointPose] {
+        self.pose.joints()
+    }
+
+    /// The joint of the bone at `bone_index`.
+    pub fn joint(&self, bone_index: usize) -> Option<&JointPose> {
+        self.pose.joint(bone_index)
+    }
+
+    /// The joint of the bone at `bone_index`, to change.
+    pub fn joint_mut(&mut self, bone_index: usize) -> Option<&mut JointPose> {
+        self.pose.joint_mut(bone_index)
+    }
+
     /// How the root moved this frame.
     pub fn root_motion(&self) -> RootMotion {
         self.root_motion
@@ -98,30 +181,19 @@ impl Pose {
         self.root_motion = root_motion;
     }
 
-    /// The clip events this pose carries, each weighted by its source.
+    /// The clip events this frame carries, each weighted by its source.
     pub fn events(&self) -> &[FiredEvent] {
         &self.events
     }
 
-    /// Adds a clip event to this pose.
+    /// Adds a clip event to this frame.
     pub fn push_event(&mut self, event: FiredEvent) {
         self.events.push(event);
     }
 
-    pub fn get_joint_pose(&mut self, bone_index: usize) -> Option<&JointPose> {
-        self.joints.get(bone_index)
-    }
-
-    pub fn get_joint_pose_mut(&mut self, bone_index: usize) -> Option<&mut JointPose> {
-        self.joints.get_mut(bone_index)
-    }
-
-    pub fn blend(&mut self, other: &Pose, weight: f32) {
-        for (joint, other_joint) in self.joints.iter_mut().zip(other.joints.iter()) {
-            joint.translation = joint.translation.lerp(other_joint.translation, weight);
-            joint.rotation = joint.rotation.slerp(other_joint.rotation, weight);
-            joint.scale = joint.scale.lerp(other_joint.scale, weight);
-        }
+    /// Blends the pose and root motion toward `other` by `weight`, and weights both frames' events to match.
+    pub fn blend(&mut self, other: &AnimationFrame, weight: f32) {
+        self.pose.blend(&other.pose, weight);
         self.root_motion = RootMotion {
             translation: self
                 .root_motion
@@ -142,67 +214,67 @@ impl Pose {
             }));
     }
 
-    /// Overwrites this pose's joints, root motion and events with those of `other` (same skeleton / length).
-    pub fn copy_from(&mut self, other: &Pose) {
-        for (joint, other_joint) in self.joints.iter_mut().zip(other.joints.iter()) {
-            *joint = other_joint.clone();
-        }
+    /// Overwrites this frame's joints, root motion and events with those of `other` (same skeleton / length).
+    pub fn copy_from(&mut self, other: &AnimationFrame) {
+        self.pose.copy_from(&other.pose);
         self.root_motion = other.root_motion;
         self.events.clone_from(&other.events);
     }
 }
 
-impl Blendable for Pose {
+impl Blendable for AnimationFrame {
     fn interpolate(_from: Self, _to: Self, _t: f32) -> Self {
         todo!()
     }
 }
 
-pub struct EvaluatedPose {
-    pub pose: Pose,
+/// A frame an input of a node evaluated, and the weight it carries.
+pub struct EvaluatedFrame {
+    pub frame: AnimationFrame,
     pub weight: f32,
 }
 
-pub struct PosePool {
-    free_poses: Vec<Pose>,
+/// Recycled frames, handed out at the skeleton's rest pose.
+pub struct FramePool {
+    free_frames: Vec<AnimationFrame>,
     bone_count: usize,
     rest: Box<[JointPose]>,
 }
 
-impl PosePool {
+impl FramePool {
     pub(crate) fn new(bone_count: usize) -> Self {
         Self {
-            free_poses: Vec::new(),
+            free_frames: Vec::new(),
             bone_count,
             rest: Box::default(),
         }
     }
 
-    pub(crate) fn acquire(&mut self) -> Pose {
-        let mut pose = self
-            .free_poses
+    pub(crate) fn acquire(&mut self) -> AnimationFrame {
+        let mut frame = self
+            .free_frames
             .pop()
-            .unwrap_or_else(|| Pose::identity(self.bone_count));
+            .unwrap_or_else(|| AnimationFrame::identity(self.bone_count));
         if !self.rest.is_empty() {
-            pose.joints.clone_from_slice(&self.rest);
+            frame.pose.joints.clone_from_slice(&self.rest);
         }
-        pose.root_motion = RootMotion::IDENTITY;
-        pose.events.clear();
-        pose
+        frame.root_motion = RootMotion::IDENTITY;
+        frame.events.clear();
+        frame
     }
 
     pub(crate) fn set_rest(&mut self, rest: &[JointPose]) {
         if rest.len() != self.bone_count {
             self.bone_count = rest.len();
-            self.free_poses.clear();
+            self.free_frames.clear();
         }
         if *self.rest != *rest {
             self.rest = rest.into();
         }
     }
 
-    pub(crate) fn release(&mut self, pose: Pose) {
-        self.free_poses.push(pose);
+    pub(crate) fn release(&mut self, frame: AnimationFrame) {
+        self.free_frames.push(frame);
     }
 }
 
@@ -214,7 +286,7 @@ mod tests {
 
     use concerto_foundation::assets::AssetId;
 
-    use super::{FiredEvent, JointPose, Pose, PosePool, RootMotion, twist_about};
+    use super::{AnimationFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about};
 
     fn moved() -> RootMotion {
         RootMotion {
@@ -271,10 +343,10 @@ mod tests {
 
     #[test]
     fn copy_from_carries_root_motion() {
-        let mut source = Pose::identity(1);
+        let mut source = AnimationFrame::identity(1);
         source.set_root_motion(moved());
 
-        let mut copy = Pose::identity(1);
+        let mut copy = AnimationFrame::identity(1);
         copy.copy_from(&source);
 
         assert_eq!(copy.root_motion(), moved());
@@ -282,27 +354,29 @@ mod tests {
 
     #[test]
     fn blend_lerps_root_translation_and_slerps_root_rotation() {
-        let mut other = Pose::identity(1);
+        let mut other = AnimationFrame::identity(1);
         other.set_root_motion(moved());
 
-        let mut pose = Pose::identity(1);
-        pose.blend(&other, 0.25);
+        let mut frame = AnimationFrame::identity(1);
+        frame.blend(&other, 0.25);
 
         assert!(
-            pose.root_motion()
+            frame
+                .root_motion()
                 .translation
                 .abs_diff_eq(Vec3::new(0.5, 0.0, 0.0), 1e-5)
         );
         assert!(
-            pose.root_motion()
+            frame
+                .root_motion()
                 .rotation
                 .abs_diff_eq(Quat::from_rotation_y(0.2), 1e-5)
         );
     }
 
     #[test]
-    fn acquire_clears_the_root_motion_of_a_recycled_pose() {
-        let mut pool = PosePool::new(1);
+    fn acquire_clears_the_root_motion_of_a_recycled_frame() {
+        let mut pool = FramePool::new(1);
         let mut recycled = pool.acquire();
         recycled.set_root_motion(moved());
         pool.release(recycled);
@@ -330,8 +404,9 @@ mod tests {
         KeyWeight { key, weight }
     }
 
-    fn weights(pose: &Pose) -> Vec<KeyWeight> {
-        pose.events()
+    fn weights(frame: &AnimationFrame) -> Vec<KeyWeight> {
+        frame
+            .events()
             .iter()
             .map(|event| key_weight(event.key, event.weight))
             .collect()
@@ -339,9 +414,9 @@ mod tests {
 
     #[test]
     fn copy_from_carries_the_events_and_drops_its_own() {
-        let mut source = Pose::identity(1);
+        let mut source = AnimationFrame::identity(1);
         source.push_event(fired(1, 1.0));
-        let mut copy = Pose::identity(1);
+        let mut copy = AnimationFrame::identity(1);
         copy.push_event(fired(2, 1.0));
 
         copy.copy_from(&source);
@@ -351,16 +426,16 @@ mod tests {
 
     #[test]
     fn blend_scales_its_own_events_by_the_rest_and_appends_the_others_scaled_by_the_weight() {
-        let mut pose = Pose::identity(1);
-        pose.push_event(fired(1, 1.0));
-        pose.push_event(fired(2, 0.5));
-        let mut other = Pose::identity(1);
+        let mut frame = AnimationFrame::identity(1);
+        frame.push_event(fired(1, 1.0));
+        frame.push_event(fired(2, 0.5));
+        let mut other = AnimationFrame::identity(1);
         other.push_event(fired(3, 1.0));
 
-        pose.blend(&other, 0.25);
+        frame.blend(&other, 0.25);
 
         assert_eq!(
-            weights(&pose),
+            weights(&frame),
             [
                 key_weight(1, 0.75),
                 key_weight(2, 0.375),
@@ -370,8 +445,8 @@ mod tests {
     }
 
     #[test]
-    fn acquire_clears_the_events_of_a_recycled_pose() {
-        let mut pool = PosePool::new(1);
+    fn acquire_clears_the_events_of_a_recycled_frame() {
+        let mut pool = FramePool::new(1);
         let mut recycled = pool.acquire();
         recycled.push_event(fired(1, 1.0));
         pool.release(recycled);
@@ -381,7 +456,7 @@ mod tests {
 
     #[test]
     fn set_rest_with_another_length_resizes_the_pool() {
-        let mut pool = PosePool::new(1);
+        let mut pool = FramePool::new(1);
         let shorter = pool.acquire();
         pool.release(shorter);
         let rest = [

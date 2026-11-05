@@ -12,7 +12,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationNodeContext, AnimationNodeData, AnimationNodeIndex},
     node::{AnimationClipNode, AnimationNode, ReflectAnimationNode},
-    pose::{EvaluatedPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
 /// Which blackboard `Vec2` param drives a blend space. Read with
@@ -93,9 +93,9 @@ impl AnimationNode for BlendSpace2DNode {
         _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[uuid::Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        _pool: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         if evaluated_inputs.is_empty() {
             return;
@@ -117,14 +117,14 @@ impl AnimationNode for BlendSpace2DNode {
         let lambda_b = triangulated_point.lambda_b;
         let lambda_c = triangulated_point.lambda_c;
 
-        output.copy_from(&evaluated_inputs[triangle.a].pose);
+        output.copy_from(&evaluated_inputs[triangle.a].frame);
 
         let ab_sum = lambda_a + lambda_b;
         if ab_sum > 1e-6 {
-            output.blend(&evaluated_inputs[triangle.b].pose, lambda_b / ab_sum);
+            output.blend(&evaluated_inputs[triangle.b].frame, lambda_b / ab_sum);
         }
 
-        output.blend(&evaluated_inputs[triangle.c].pose, lambda_c);
+        output.blend(&evaluated_inputs[triangle.c].frame, lambda_c);
     }
 
     fn reset(&self, state: &mut BlendSpace2DInstanceNode) {
@@ -187,20 +187,20 @@ mod tests {
     use crate::{
         blackboard::AnimationBlackboard,
         node::AnimationNode,
-        pose::{EvaluatedPose, FiredEvent, Pose, PosePool},
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool},
         test_walks::Walks,
     };
 
-    fn firing(key: u32) -> EvaluatedPose {
-        let mut pose = Pose::identity(1);
-        pose.push_event(FiredEvent {
+    fn firing(key: u32) -> EvaluatedFrame {
+        let mut frame = AnimationFrame::identity(1);
+        frame.push_event(FiredEvent {
             clip: AssetId::new(),
             key,
             time: 0.0,
             weight: 1.0,
             mirrored: false,
         });
-        EvaluatedPose { pose, weight: 1.0 }
+        EvaluatedFrame { frame, weight: 1.0 }
     }
 
     #[test]
@@ -216,7 +216,7 @@ mod tests {
         walks.update(&blackboard, |context| {
             space.update(&mut state, 0.1, &(), context)
         });
-        let mut pool = PosePool::new(1);
+        let mut pool = FramePool::new(1);
         let mut output = pool.acquire();
 
         walks.evaluate(&blackboard, None, |context| {

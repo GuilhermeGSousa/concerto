@@ -4,11 +4,11 @@ use glam::Vec3;
 
 use crate::{
     blackboard::AnimationBlackboard,
-    pose::{EvaluatedPose, JointPose},
+    pose::{EvaluatedFrame, JointPose},
 };
 
 pub struct AnimationGraphEvaluator {
-    pub(crate) evaluation_stack: Vec<EvaluatedPose>,
+    pub(crate) evaluation_stack: Vec<EvaluatedFrame>,
 }
 
 impl AnimationGraphEvaluator {
@@ -18,11 +18,11 @@ impl AnimationGraphEvaluator {
         }
     }
 
-    pub fn push_evaluation(&mut self, evaluated_pose: EvaluatedPose) {
-        self.evaluation_stack.push(evaluated_pose);
+    pub fn push_evaluation(&mut self, evaluated_frame: EvaluatedFrame) {
+        self.evaluation_stack.push(evaluated_frame);
     }
 
-    pub fn pop_evaluation(&mut self) -> Option<EvaluatedPose> {
+    pub fn pop_evaluation(&mut self) -> Option<EvaluatedFrame> {
         self.evaluation_stack.pop()
     }
 
@@ -30,7 +30,7 @@ impl AnimationGraphEvaluator {
         self.evaluation_stack.len()
     }
 
-    pub fn view_stack(&self, start: usize) -> &[EvaluatedPose] {
+    pub fn view_stack(&self, start: usize) -> &[EvaluatedFrame] {
         &self.evaluation_stack[start..]
     }
 }

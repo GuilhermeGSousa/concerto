@@ -8,7 +8,9 @@ use crate::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChannel, AnimationClip},
     evaluation::{AnimationGraphContext, RootBone},
-    pose::{EvaluatedPose, FiredEvent, JointPose, Pose, PosePool, RootMotion, twist_about},
+    pose::{
+        AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, RootMotion, twist_about,
+    },
 };
 
 pub mod blend_space;
@@ -52,9 +54,9 @@ pub struct ResultNode {}
 #[reflect(AnimationNode)]
 pub struct BlendNode {}
 
-fn pass_through(evaluated_inputs: &[EvaluatedPose], output: &mut Pose) {
+fn pass_through(evaluated_inputs: &[EvaluatedFrame], output: &mut AnimationFrame) {
     if let Some(input) = evaluated_inputs.first() {
-        output.copy_from(&input.pose);
+        output.copy_from(&input.frame);
     }
 }
 
@@ -74,9 +76,9 @@ impl AnimationNode for ResultNode {
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        _: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         pass_through(evaluated_inputs, output);
     }
@@ -100,19 +102,19 @@ impl AnimationNode for BlendNode {
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        _: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         let mut weighted = evaluated_inputs.iter().filter(|input| input.weight > 0.0);
         let Some(first) = weighted.next() else {
             return;
         };
-        output.copy_from(&first.pose);
+        output.copy_from(&first.frame);
         let mut total_weight = first.weight;
         for input in weighted {
             total_weight += input.weight;
-            output.blend(&input.pose, input.weight / total_weight);
+            output.blend(&input.frame, input.weight / total_weight);
         }
     }
 
@@ -261,9 +263,9 @@ impl AnimationNode for AnimationClipNode {
         clips: &Res<AssetStore<AnimationClip>>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        _evaluated_inputs: &[EvaluatedPose],
-        _pool: &mut PosePool,
-        output: &mut Pose,
+        _evaluated_inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         for crossed in &state.fired {
             output.push_event(FiredEvent {
@@ -288,7 +290,7 @@ impl AnimationNode for AnimationClipNode {
                     return;
                 };
 
-                let Some(joint_pose) = output.get_joint_pose_mut(bone_index) else {
+                let Some(joint_pose) = output.joint_mut(bone_index) else {
                     return;
                 };
 
@@ -432,7 +434,9 @@ mod tests {
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
         event::AnimationEvent,
-        pose::{EvaluatedPose, FiredEvent, JointPose, Pose, PosePool, RootMotion},
+        pose::{
+            AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, JointPose, Pose, RootMotion,
+        },
         test_walks::Walks,
     };
 
@@ -496,8 +500,8 @@ mod tests {
             node: &AnimationClipNode,
             state: &mut AnimationClipNodeState,
             bones: &[Uuid],
-            pool: &mut PosePool,
-            output: &mut Pose,
+            pool: &mut FramePool,
+            output: &mut AnimationFrame,
         ) {
             self.walks
                 .evaluate(&self.blackboard, Some(self.root()), |context| {
@@ -509,10 +513,10 @@ mod tests {
             AnimationClipNode::new(self.clip.clone())
         }
 
-        fn pose(&self, bones: &[Uuid]) -> Pose {
+        fn pose(&self, bones: &[Uuid]) -> AnimationFrame {
             let node = self.node();
             let mut state = self.create(&node);
-            let mut pool = PosePool::new(bones.len());
+            let mut pool = FramePool::new(bones.len());
             pool.set_rest(&vec![self.rest.clone(); bones.len()]);
             let mut output = pool.acquire();
             self.evaluate(&node, &mut state, bones, &mut pool, &mut output);
@@ -524,7 +528,7 @@ mod tests {
             node: &AnimationClipNode,
             state: &mut AnimationClipNodeState,
         ) -> RootMotion {
-            let mut pool = PosePool::new(1);
+            let mut pool = FramePool::new(1);
             let mut output = pool.acquire();
             self.evaluate(node, state, &[ROOT], &mut pool, &mut output);
             output.root_motion()
@@ -551,7 +555,7 @@ mod tests {
             self.walks.update(&self.blackboard, |context| {
                 node.update(state, delta_time, clips(context), context)
             });
-            let mut pool = PosePool::new(1);
+            let mut pool = FramePool::new(1);
             let mut output = pool.acquire();
             self.evaluate(node, state, &[ROOT], &mut pool, &mut output);
             output.events().iter().map(|event| event.time).collect()
@@ -593,7 +597,7 @@ mod tests {
         rig.walks.update(&rig.blackboard, |context| {
             node.update(&mut state, 0.2, clips(context), context)
         });
-        let mut pool = PosePool::new(1);
+        let mut pool = FramePool::new(1);
         let mut output = pool.acquire();
         rig.evaluate(&node, &mut state, &[ROOT], &mut pool, &mut output);
 
@@ -1102,22 +1106,22 @@ mod tests {
         );
     }
 
-    fn weighted(translation: Vec3, weight: f32) -> EvaluatedPose {
-        let mut pose = Pose::from_joints(vec![JointPose {
+    fn weighted(translation: Vec3, weight: f32) -> EvaluatedFrame {
+        let mut frame = AnimationFrame::new(Pose::from_joints(vec![JointPose {
             translation,
             rotation: Quat::IDENTITY,
             scale: Vec3::ONE,
-        }]);
-        pose.set_root_motion(RootMotion {
+        }]));
+        frame.set_root_motion(RootMotion {
             translation,
             rotation: Quat::IDENTITY,
         });
-        EvaluatedPose { pose, weight }
+        EvaluatedFrame { frame, weight }
     }
 
-    fn blend(inputs: &[EvaluatedPose]) -> Pose {
+    fn blend(inputs: &[EvaluatedFrame]) -> AnimationFrame {
         let walks = Walks::new(AssetStore::new(), AssetStore::new());
-        let mut pool = PosePool::new(1);
+        let mut pool = FramePool::new(1);
         let mut output = pool.acquire();
         walks.evaluate(&AnimationBlackboard::default(), None, |context| {
             BlendNode {}.evaluate(&mut (), &(), context, &[], inputs, &mut pool, &mut output)
@@ -1125,13 +1129,13 @@ mod tests {
         output
     }
 
-    fn assert_translation(pose: &Pose, expected: Vec3) {
-        let joint = pose.joints()[0].translation;
+    fn assert_translation(frame: &AnimationFrame, expected: Vec3) {
+        let joint = frame.joints()[0].translation;
         assert!(
             joint.abs_diff_eq(expected, 1e-5),
             "expected joint translation {expected}, got {joint}"
         );
-        let root = pose.root_motion().translation;
+        let root = frame.root_motion().translation;
         assert!(
             root.abs_diff_eq(expected, 1e-5),
             "expected root motion translation {expected}, got {root}"
@@ -1173,9 +1177,9 @@ mod tests {
         assert_translation(&blended, Vec3::Z * 2.0);
     }
 
-    fn firing(key: u32, weight: f32) -> EvaluatedPose {
+    fn firing(key: u32, weight: f32) -> EvaluatedFrame {
         let mut input = weighted(Vec3::ZERO, weight);
-        input.pose.push_event(FiredEvent {
+        input.frame.push_event(FiredEvent {
             clip: AssetId::new(),
             key,
             time: 0.0,
@@ -1195,8 +1199,8 @@ mod tests {
         KeyWeight { key, weight }
     }
 
-    fn event_weights(pose: &Pose) -> Vec<KeyWeight> {
-        let mut weights: Vec<_> = pose
+    fn event_weights(frame: &AnimationFrame) -> Vec<KeyWeight> {
+        let mut weights: Vec<_> = frame
             .events()
             .iter()
             .map(|event| key_weight(event.key, event.weight))

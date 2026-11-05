@@ -6,7 +6,7 @@ use concerto_animation::{
     event::AnimationEvent,
     inertialization::{Inertializer, PoseVelocity},
     node::AnimationNode,
-    pose::{FiredEvent, Pose, RootMotion},
+    pose::{AnimationFrame, FiredEvent, Pose, RootMotion},
 };
 use concerto_foundation::{
     assets::{handle::AssetHandle, AssetId},
@@ -17,7 +17,7 @@ use concerto_name::name;
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
-use super::{copy_pose, sample, MotionMatchingState, Sources};
+use super::{sample, MotionMatchingState, Sources};
 use crate::{
     bake::bake,
     database::MotionDatabase,
@@ -725,7 +725,7 @@ fn a_player_skeleton_with_none_of_the_database_bones_stops_the_node() {
 
     assert!(state.failed);
     assert!(!state.initialised);
-    let mut output = Pose::identity(1);
+    let mut output = AnimationFrame::identity(1);
     assert!(!state.write_output(&mut output));
 }
 
@@ -948,8 +948,8 @@ fn moved(x: f32) -> JointPose {
 #[test]
 fn an_uninitialised_state_leaves_the_output_untouched() {
     let mut state = MotionMatchingState::new(0.1);
-    state.output = Pose::from_joints(vec![moved(5.0)]);
-    let mut output = Pose::from_joints(vec![moved(1.0)]);
+    state.output = AnimationFrame::new(Pose::from_joints(vec![moved(5.0)]));
+    let mut output = AnimationFrame::new(Pose::from_joints(vec![moved(1.0)]));
 
     assert!(!state.write_output(&mut output));
     assert_eq!(output.joints()[0].translation.x, 1.0);
@@ -958,9 +958,9 @@ fn an_uninitialised_state_leaves_the_output_untouched() {
 #[test]
 fn an_initialised_state_copies_its_pose_to_the_output() {
     let mut state = MotionMatchingState::new(0.1);
-    state.output = Pose::from_joints(vec![moved(5.0)]);
+    state.output = AnimationFrame::new(Pose::from_joints(vec![moved(5.0)]));
     state.initialised = true;
-    let mut output = Pose::from_joints(vec![moved(1.0)]);
+    let mut output = AnimationFrame::new(Pose::from_joints(vec![moved(1.0)]));
 
     assert!(state.write_output(&mut output));
     assert_eq!(output.joints()[0].translation.x, 5.0);
@@ -1038,7 +1038,7 @@ fn at_rate_two_a_forced_jump_blends_from_the_destination_velocity_in_real_time()
     let rate = 2.0;
     let mut state = started(&fixture, &node);
     state.step(&node, 0.1, rate, &quiet(), fixture.sources());
-    let source = copy_pose(&state.blended);
+    let source = state.blended.clone();
     let source_velocity = PoseVelocity::between(&state.previous_blended, &state.blended, 0.1);
     let frame_before = state.frame;
 
@@ -1055,7 +1055,7 @@ fn at_rate_two_a_forced_jump_blends_from_the_destination_velocity_in_real_time()
         &destination,
         &velocity.scaled(rate),
     );
-    let mut expected = copy_pose(&destination);
+    let mut expected = destination.clone();
     inertializer.update(
         &destination,
         &velocity,

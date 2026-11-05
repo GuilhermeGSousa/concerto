@@ -517,7 +517,7 @@ entry fires its events as authored, with `mirrored: true`; the game decides what
 a mirrored event means, such as swapping a left footstep for a right one. The
 node's `update` clears what it fired before anything else, so a frame with a
 missing asset or a stopped node fires nothing, and its `evaluate` adds the
-events to the pose after copying the state's pose into it.
+events to the `AnimationFrame` after copying the state's frame into it.
 
 `MotionMatchingState` is the node's per-player state. Its fields are
 private: the step that advances it is its own method, which the node's `update`

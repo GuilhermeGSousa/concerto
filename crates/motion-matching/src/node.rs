@@ -2,7 +2,7 @@ use concerto_animation::{
     clip::AnimationClip,
     evaluation::AnimationGraphContext,
     node::{effective_play_rate, AnimationNode, ReflectAnimationNode},
-    pose::{EvaluatedPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 use concerto_ecs::Res;
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
@@ -137,9 +137,9 @@ impl AnimationNode for MotionMatchingNode {
         _: &(),
         _context: &AnimationGraphContext<'_>,
         _bone_ids: &[Uuid],
-        _evaluated_inputs: &[EvaluatedPose],
-        _pool: &mut PosePool,
-        output: &mut Pose,
+        _evaluated_inputs: &[EvaluatedFrame],
+        _pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         state.write_output(output);
         for event in state.fired() {

@@ -5,7 +5,7 @@ use crate::{
     evaluation::AnimationGraphContext,
     graph::{AnimationGraph, AnimationGraphStates, GraphId},
     inertialization::{Inertializer, PoseVelocity},
-    pose::{Pose, PosePool},
+    pose::{AnimationFrame, FramePool, Pose},
     transition::{AnimationTransitionBlender, blend_stack::BlendStack},
 };
 
@@ -80,8 +80,8 @@ impl AnimationTransitionBlender for InertializationBlender {
         graph_states: &mut AnimationGraphStates,
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
-        pool: &mut PosePool,
-        output: &mut Pose,
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         self.stack
             .sample(bone_ids, graph_states, graphs, context, pool, output);
@@ -100,7 +100,7 @@ impl AnimationTransitionBlender for InertializationBlender {
                     .expect("last output checked above");
                 self.inertializer
                     .get_or_insert_with(|| Inertializer::new(bone_count))
-                    .transition(source, &source_velocity, output, &zero_velocity);
+                    .transition(source, &source_velocity, output.pose(), &zero_velocity);
                 self.halflife = halflife;
                 true
             }
@@ -115,11 +115,17 @@ impl AnimationTransitionBlender for InertializationBlender {
             let mut destination = pool.acquire();
             destination.copy_from(output);
             let step = if started { 0.0 } else { delta_time };
-            inertializer.update(&destination, &zero_velocity, self.halflife, step, output);
+            inertializer.update(
+                destination.pose(),
+                &zero_velocity,
+                self.halflife,
+                step,
+                output.pose_mut(),
+            );
             pool.release(destination);
         }
 
-        self.store_output(output, delta_time);
+        self.store_output(output.pose(), delta_time);
     }
 
     fn update(

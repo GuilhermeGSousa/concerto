@@ -259,11 +259,14 @@ clip node reads `AssetStore<AnimationClip>` and the state machine
 player's own data: its blackboard, its root bone in `evaluate`, and its
 skeleton.
 
-A pose carries the clip events its sources fired this frame
-(`Pose::events`), and `copy_from` and `blend` carry them along, weighted as
-the joints are. A node that builds its output without `copy_from` or `blend`
-must forward its inputs' events itself, with `Pose::push_event`, or they never
-reach the player.
+`evaluate` writes an `AnimationFrame`: a `Pose`, the joints in bone order, with
+the root motion and the clip events its sources gave this frame. Its inputs
+arrive as `EvaluatedFrame`s, each a frame and the weight its node carries.
+The frame carries the clip events its sources fired this frame
+(`AnimationFrame::events`), and `copy_from` and `blend` carry them along,
+weighted as the joints are. A node that builds its output without `copy_from`
+or `blend` must forward its inputs' events itself, with
+`AnimationFrame::push_event`, or they never reach the player.
 
 Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
@@ -291,7 +294,7 @@ until `assets.add(graph)` has run.
 A clip whose root bone moves gives root motion: a `RootMotion` that says how the
 root moved this frame, with a `translation` and a `rotation` that read as
 "forward, as the character faced last frame". Every source in a graph produces
-one, and blends and transitions carry it with the pose, so it works for any
+one, and blends and transitions carry it with the frame, so it works for any
 graph. Each frame the result lands on the root bone, in
 `AnimationRootBone::root_motion`. A paused player, an unloaded skeleton or graph,
 or a clip with no channels for the root gives `RootMotion::IDENTITY`.
@@ -373,7 +376,7 @@ A clip that loads an event whose type is not registered logs a warning naming
 the clip and the type, and drops it.
 
 `AnimationSignal<S>` holds the event as `signal`, the clip time it sits at as
-`time`, the `weight` of its source in the final pose, and `mirrored`, set when
+`time`, the `weight` of its source in the final frame, and `mirrored`, set when
 a motion matching entry plays the clip mirrored. It is an entity signal,
 triggered on the player's entity, the one with the `AnimationPlayer` and
 `SkeletonComponent`, so only a `Listener` on that entity hears it; a global

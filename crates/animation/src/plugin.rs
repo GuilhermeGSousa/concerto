@@ -119,7 +119,7 @@ mod tests {
         graph::AnimationGraph,
         node::{AnimationNode, CreateNodeInputs, ReflectAnimationNode},
         player::AnimationPlayer,
-        pose::{EvaluatedPose, Pose, PosePool},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
         target::{animate_targets, initialize_animation_players, update_animation_players},
     };
 
@@ -147,11 +147,11 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            output: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            output: &mut AnimationFrame,
         ) {
-            if let Some(joint) = output.get_joint_pose_mut(0) {
+            if let Some(joint) = output.joint_mut(0) {
                 joint.translation.x = if *state { 1.0 } else { 0.0 };
             }
         }
@@ -252,9 +252,9 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            _: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
         ) {
         }
 

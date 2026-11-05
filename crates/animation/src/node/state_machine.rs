@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::graph::{AnimationGraph, AnimationGraphState, AnimationGraphStates, GraphId};
-use crate::pose::{EvaluatedPose, Pose, PosePool};
+use crate::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use crate::transition::{
     AnimationTransitionBlender, TransitionBlender, blend_stack::BlendStack,
     inertialization_blender::InertializationBlender,
@@ -330,9 +330,9 @@ impl AnimationNode for AnimationStateMachine {
         graphs: &Res<AssetStore<AnimationGraph>>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        _evaluated_inputs: &[EvaluatedPose],
-        pool: &mut PosePool,
-        output: &mut Pose,
+        _evaluated_inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         state.blender.sample(
             bone_ids,
@@ -467,7 +467,7 @@ mod tests {
         graph::{AnimationGraph, GraphId},
         node::{AnimationNode, ErasedAnimationNode, ReflectAnimationNode, register_node_inputs},
         plugin::register_animation_types,
-        pose::{EvaluatedPose, Pose, PosePool},
+        pose::{AnimationFrame, EvaluatedFrame, FramePool},
         test_walks::Walks,
     };
 
@@ -495,9 +495,9 @@ mod tests {
             _: &(),
             _: &AnimationGraphContext<'_>,
             _: &[Uuid],
-            _: &[EvaluatedPose],
-            _: &mut PosePool,
-            _: &mut Pose,
+            _: &[EvaluatedFrame],
+            _: &mut FramePool,
+            _: &mut AnimationFrame,
         ) {
         }
 

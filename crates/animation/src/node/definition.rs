@@ -14,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     evaluation::AnimationGraphContext,
-    pose::{EvaluatedPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
 /// The runtime state of one node in one player, erased.
@@ -50,9 +50,9 @@ pub trait AnimationNode: Reflect + Send + Sync + 'static {
         input: &SystemInputData<'_, '_, Self::EvaluateInput>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        pool: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     );
 
     fn reset(&self, state: &mut Self::State);
@@ -93,9 +93,9 @@ pub trait ErasedAnimationNode: Send + Sync {
         state: &mut NodeState,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        pool: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     );
 
     fn reset(&self, state: &mut NodeState);
@@ -134,9 +134,9 @@ impl<T: AnimationNode> ErasedAnimationNode for T {
         state: &mut NodeState,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        pool: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        pool: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         if let Some(state) = state.downcast_mut::<T::State>()
             && let Some(input) = fetched::<T, T::EvaluateInput>(context)
@@ -241,12 +241,12 @@ impl AnimationNode for PlaceholderNode {
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        evaluated_inputs: &[EvaluatedPose],
-        _: &mut PosePool,
-        output: &mut Pose,
+        evaluated_inputs: &[EvaluatedFrame],
+        _: &mut FramePool,
+        output: &mut AnimationFrame,
     ) {
         if let Some(input) = evaluated_inputs.first() {
-            output.copy_from(&input.pose);
+            output.copy_from(&input.frame);
         }
     }
 
@@ -304,11 +304,11 @@ mod tests {
             _: &(),
             _context: &AnimationGraphContext<'_>,
             _bone_ids: &[Uuid],
-            _evaluated_inputs: &[EvaluatedPose],
-            _pool: &mut PosePool,
-            output: &mut Pose,
+            _evaluated_inputs: &[EvaluatedFrame],
+            _pool: &mut FramePool,
+            output: &mut AnimationFrame,
         ) {
-            if let Some(joint) = output.get_joint_pose_mut(0) {
+            if let Some(joint) = output.joint_mut(0) {
                 joint.translation.x = self.amount * state.updates as f32;
             }
         }
@@ -377,8 +377,8 @@ mod tests {
         let mut state = walks
             .create(&blackboard, |context| node.create_state(context))
             .unwrap();
-        let mut pool = PosePool::new(1);
-        let mut output = Pose::identity(1);
+        let mut pool = FramePool::new(1);
+        let mut output = AnimationFrame::identity(1);
 
         assert!(!node.is_finished(&state));
         walks.update(&blackboard, |context| node.update(&mut state, 0.1, context));
@@ -429,21 +429,21 @@ mod tests {
         let mut state = walks
             .create(&blackboard, |context| node.create_state(context))
             .unwrap();
-        let mut pool = PosePool::new(1);
-        let mut input = Pose::identity(1);
-        input.get_joint_pose_mut(0).unwrap().translation.x = 3.0;
-        let inputs = [EvaluatedPose {
-            pose: input,
+        let mut pool = FramePool::new(1);
+        let mut input = AnimationFrame::identity(1);
+        input.joint_mut(0).unwrap().translation.x = 3.0;
+        let inputs = [EvaluatedFrame {
+            frame: input,
             weight: 1.0,
         }];
 
-        let mut output = Pose::identity(1);
+        let mut output = AnimationFrame::identity(1);
         walks.evaluate(&blackboard, None, |context| {
             node.evaluate(&mut state, context, &[], &inputs, &mut pool, &mut output)
         });
         assert_eq!(output.joints()[0].translation.x, 3.0);
 
-        let mut output = Pose::identity(1);
+        let mut output = AnimationFrame::identity(1);
         walks.evaluate(&blackboard, None, |context| {
             node.evaluate(&mut state, context, &[], &[], &mut pool, &mut output)
         });
@@ -462,7 +462,7 @@ mod tests {
             translation: Vec3::X,
             ..JointPose::IDENTITY
         }];
-        let mut pool = PosePool::new(1);
+        let mut pool = FramePool::new(1);
         pool.set_rest(&rest);
 
         let mut output = pool.acquire();

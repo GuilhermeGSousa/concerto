@@ -4,7 +4,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
     inertialization::{Inertializer, PoseVelocity},
-    pose::{FiredEvent, Pose, RootMotion},
+    pose::{AnimationFrame, FiredEvent, Pose, RootMotion},
 };
 use concerto_foundation::{
     math::spring_damper::{angular_velocity, from_scaled_angle_axis},
@@ -54,7 +54,7 @@ pub struct MotionMatchingState {
     previous_blended: Pose,
     last_delta: f32,
     inertializer: Option<Inertializer>,
-    output: Pose,
+    output: AnimationFrame,
     query: Option<FeatureQuery>,
     last_query: Option<LastQuery>,
     bone_indices: HashMap<Uuid, usize>,
@@ -83,7 +83,7 @@ impl MotionMatchingState {
             previous_blended: Pose::identity(0),
             last_delta: 0.0,
             inertializer: None,
-            output: Pose::identity(0),
+            output: AnimationFrame::identity(0),
             query: None,
             last_query: None,
             bone_indices: HashMap::new(),
@@ -165,7 +165,7 @@ impl MotionMatchingState {
     }
 
     /// Copies the node's pose into `output` and returns true, or returns false and leaves `output` untouched until the node is initialised.
-    pub(crate) fn write_output(&self, output: &mut Pose) -> bool {
+    pub(crate) fn write_output(&self, output: &mut AnimationFrame) -> bool {
         if !self.initialised || self.output.len() != output.len() {
             return false;
         }
@@ -204,7 +204,7 @@ impl MotionMatchingState {
                 continue;
             };
             if let (Some(joint), Some(source)) = (
-                self.output.get_joint_pose_mut(index),
+                self.output.joint_mut(index),
                 self.blended.joints().get(bone),
             ) {
                 *joint = source.clone();
@@ -244,10 +244,12 @@ impl MotionMatchingState {
             .ok_or_else(|| "the database has no frames".to_string())?;
         let (pose, velocity) = sample(sources, frame).map_err(|error| error.to_string())?;
 
-        self.output = Pose::from_joints(sources.player_skeleton.rest_pose.to_vec());
+        self.output = AnimationFrame::new(Pose::from_joints(
+            sources.player_skeleton.rest_pose.to_vec(),
+        ));
         self.inertializer = Some(Inertializer::new(bone_count));
-        self.blended = copy_pose(&pose);
-        self.previous_blended = copy_pose(&pose);
+        self.blended = pose.clone();
+        self.previous_blended = pose.clone();
         self.pose = pose;
         self.velocity = velocity;
         self.frame = frame;
@@ -493,10 +495,6 @@ fn rescaled(trajectory: &MotionMatchingTrajectory, play_rate: f32) -> Vec<Trajec
             rotation: sample.rotation,
         })
         .collect()
-}
-
-fn copy_pose(pose: &Pose) -> Pose {
-    Pose::from_joints(pose.joints().to_vec())
 }
 
 fn sample(sources: &Sources, frame: usize) -> Result<(Pose, PoseVelocity), BakeError> {

@@ -13,7 +13,7 @@ use concerto_animation::node::{
     AnimationClipNode, AnimationNode, ErasedAnimationNode, ReflectAnimationNode,
 };
 use concerto_animation::plugin::register_animation_types;
-use concerto_animation::pose::{EvaluatedPose, Pose, PosePool};
+use concerto_animation::pose::{AnimationFrame, EvaluatedFrame, FramePool};
 use concerto_ecs::reflect::AppTypeRegistry;
 use concerto_ecs::world::World;
 use concerto_foundation::assets::AssetId;
@@ -49,9 +49,9 @@ impl AnimationNode for Gain {
         _: &(),
         _: &AnimationGraphContext<'_>,
         _: &[Uuid],
-        _: &[EvaluatedPose],
-        _: &mut PosePool,
-        _: &mut Pose,
+        _: &[EvaluatedFrame],
+        _: &mut FramePool,
+        _: &mut AnimationFrame,
     ) {
     }
 

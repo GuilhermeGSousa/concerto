@@ -24,7 +24,7 @@ use crate::{
         blend_space::BlendSpace2DBuilderContext,
     },
     player::ActiveNodeState,
-    pose::{EvaluatedPose, Pose, PosePool},
+    pose::{AnimationFrame, EvaluatedFrame, FramePool},
 };
 
 type AnimationDirectedGraph = DiGraph<AnimationNodeData, ()>;
@@ -513,8 +513,8 @@ impl AnimationGraphState {
         graphs: &AssetStore<AnimationGraph>,
         context: &AnimationGraphContext<'_>,
         bone_ids: &[Uuid],
-        pool: &mut PosePool,
-        output_pose: &mut Pose,
+        pool: &mut FramePool,
+        output_frame: &mut AnimationFrame,
     ) -> bool {
         let Some(graph) = self.get_animation_graph(graphs) else {
             return false;
@@ -538,7 +538,7 @@ impl AnimationGraphState {
 
             let stack_start = graph_evaluator.stack_len() - input_count;
 
-            let mut node_output_pose = pool.acquire();
+            let mut node_output = pool.acquire();
 
             node.evaluate(
                 &mut node_state.node_state,
@@ -546,26 +546,26 @@ impl AnimationGraphState {
                 bone_ids,
                 graph_evaluator.view_stack(stack_start),
                 pool,
-                &mut node_output_pose,
+                &mut node_output,
             );
 
             // Consume inputs and add them back to the free list
-            for evaluated_pose in graph_evaluator.evaluation_stack.drain(stack_start..) {
-                pool.release(evaluated_pose.pose);
+            for evaluated in graph_evaluator.evaluation_stack.drain(stack_start..) {
+                pool.release(evaluated.frame);
             }
 
-            graph_evaluator.push_evaluation(EvaluatedPose {
-                pose: node_output_pose,
+            graph_evaluator.push_evaluation(EvaluatedFrame {
+                frame: node_output,
                 weight: node_state.weight,
             });
         }
 
         let mut result = graph_evaluator
             .pop_evaluation()
-            .map(|evaluated_pose| evaluated_pose.pose)
+            .map(|evaluated| evaluated.frame)
             .unwrap_or_else(|| pool.acquire());
 
-        std::mem::swap(output_pose, &mut result);
+        std::mem::swap(output_frame, &mut result);
         pool.release(result);
         true
     }
