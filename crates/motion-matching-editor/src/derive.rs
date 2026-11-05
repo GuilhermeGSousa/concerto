@@ -105,6 +105,7 @@ pub(crate) struct DeriveJob {
     pub(crate) handle: JoinHandle<anyhow::Result<Derived>>,
     pub(crate) asset: AssetEntry,
     pub(crate) progress: DeriveProgress,
+    pub(crate) line: String,
 }
 
 impl DeriveJob {
@@ -220,9 +221,10 @@ fn finish_derive(
         .join()
         .map_err(|_| anyhow!("the worker panicked"))
         .and_then(|derived| derived);
+    let mut job_line = job.line;
     match derived {
         Ok(derived) => {
-            if counted {
+            if counted && editor.status == job_line {
                 editor.status.clear();
             }
             state.stats = Some(derived.stats);
@@ -230,10 +232,24 @@ fn finish_derive(
             previews.trigger(document, ShowDatabase(Some(derived.playback)));
         }
         Err(error) => {
-            editor.status = format!("Derive failed: {error:#}");
+            show_derive_line(editor, &mut job_line, format!("Derive failed: {error:#}"));
             forget_derived(document, state, previews);
         }
     }
+}
+
+fn derive_may_write(editor: &EditorDocument, held: &str) -> bool {
+    editor.status.is_empty() || editor.status == held
+}
+
+fn show_derive_line(editor: &mut EditorDocument, held: &mut String, line: String) {
+    if !derive_may_write(editor, held) {
+        return;
+    }
+    if editor.status != line {
+        editor.status = line.clone();
+    }
+    *held = line;
 }
 
 fn forget_derived(document: Entity, state: &mut DefinitionDocument, previews: &mut PreviewSignals) {
@@ -262,11 +278,16 @@ pub(crate) fn derive_definitions(
         {
             finish_derive(document, &mut editor, &mut state, job, &mut previews);
         }
-        if let Some((finished, total)) = state.derive_job.as_ref().and_then(DeriveJob::progress) {
+        let shown = state.derive_job.as_ref().and_then(|job| {
+            let (finished, total) = job.progress()?;
             let line = progress_line(finished, total);
-            if editor.status != line {
-                editor.status = line;
-            }
+            let stale = job.line != line || editor.status != line;
+            (stale && derive_may_write(&editor, &job.line)).then_some(line)
+        });
+        if let Some(line) = shown
+            && let Some(job) = state.derive_job.as_mut()
+        {
+            show_derive_line(&mut editor, &mut job.line, line);
         }
         if !state.derive_wanted || state.derive_job.is_some() || editor.pending.is_some() {
             continue;
@@ -288,6 +309,7 @@ pub(crate) fn derive_definitions(
             handle: std::thread::spawn(move || run_derive(input)),
             asset,
             progress,
+            line: editor.status.clone(),
         });
     }
 }

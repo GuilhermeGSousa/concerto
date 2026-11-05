@@ -10,7 +10,7 @@ use concerto_motion_matching::{
     BonePositions, FeatureChannel, FeatureChannelData, FrameContext, MotionDatabase,
     ReflectFeatureChannel, TimeRange, bake,
 };
-use concerto_reflect::Reflect;
+use concerto_reflect::{Reflect, ReflectedValue};
 use concerto_ui::transform::UIValue;
 
 use super::*;
@@ -126,6 +126,7 @@ fn gated_job(
         }),
         asset: tab.asset.clone(),
         progress: Arc::new(Mutex::new(progress)),
+        line: String::new(),
     };
     (job, release)
 }
@@ -488,4 +489,62 @@ fn a_derive_that_a_newer_one_replaces_is_dropped() {
 
     assert_eq!(status(&tab), "");
     assert_eq!(frames(&tab), Some(81 + 109));
+}
+
+fn counting(tab: &mut Tab) -> std::sync::mpsc::Sender<()> {
+    let (job, release) = gated_job(tab, Some((1, 6)));
+    tab.state_mut().derive_job = Some(job);
+    tab.f.frame();
+    assert_eq!(status(tab), "Deriving 2 of 6");
+    release
+}
+
+#[test]
+fn a_save_failure_during_a_derive_keeps_its_line() {
+    let mut tab = ready(fixture());
+    let document = tab.document;
+    let release = counting(&mut tab);
+    edit(&mut tab.f, document, "Settings", "speed", 2.0);
+    tab.f.make_project_unwritable();
+
+    save(&mut tab.f, document);
+    let failed = status(&tab);
+    assert!(failed.starts_with("Save failed: "), "{failed}");
+    tab.f.frame();
+    tab.f.frame();
+    assert_eq!(status(&tab), failed);
+
+    release.send(()).unwrap();
+    tab.until_settled();
+
+    assert_eq!(status(&tab), failed);
+}
+
+#[test]
+fn a_refused_open_during_a_derive_keeps_its_error() {
+    let mut tab = ready(fixture());
+    let document = tab.document;
+    let mut refused = tab.state().loaded.clone().unwrap();
+    refused.channels.push(FeatureChannelData::Stored {
+        type_name: "NeverRegistered".into(),
+        value: ReflectedValue::Struct(vec![]),
+    });
+    let refused = write_asset(&mut tab.f, "content/hero/refused.gasset", &refused);
+    let release = counting(&mut tab);
+
+    tab.f.request(&refused);
+    tab.f
+        .frames_until("the refused definition never answered", |f| {
+            f.document(document).pending.is_none()
+        });
+    let error = status(&tab);
+    assert!(error.contains("NeverRegistered"), "{error}");
+    tab.f.frame();
+    tab.f.frame();
+    assert_eq!(status(&tab), error);
+
+    release.send(()).unwrap();
+    tab.until_settled();
+
+    assert_eq!(status(&tab), error);
 }
