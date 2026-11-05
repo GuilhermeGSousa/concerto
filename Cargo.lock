@@ -1042,6 +1042,7 @@ dependencies = [
  "concerto-import",
  "concerto-mcp",
  "concerto-mesh",
+ "concerto-name",
  "concerto-reflect",
  "concerto-render",
  "concerto-scene",

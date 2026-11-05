@@ -1690,6 +1690,146 @@ mod bool_field {
     }
 }
 
+mod name_text_rows {
+    use super::color_rows::editor_of;
+    use super::variant_rows::{queued, widget};
+    use super::*;
+    use concerto_ecs::events::event_channel::EventChannel;
+    use concerto_name::Name;
+    use concerto_ui::{
+        focus::{FocusedWidget, UIFocusLost},
+        text_input::{UITextInput, UITextInputCancelled, UITextInputSubmitted},
+    };
+
+    #[derive(Component, concerto_reflect::Reflect)]
+    #[reflect(Component)]
+    struct Tag {
+        label: Name,
+    }
+
+    fn fixture() -> (Inspecting, Entity, Entity) {
+        let (mut w, entity, _) = inspecting();
+        w.register::<Tag>();
+        w.f.world.insert_resource(FocusedWidget::default());
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputSubmitted>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UIFocusLost>::default());
+        w.f.world
+            .insert_resource(EventChannel::<UITextInputCancelled>::default());
+        w.scene().insert(
+            Tag {
+                label: Name::new("idle"),
+            },
+            entity,
+        );
+        w.update();
+        w.update();
+        run(&mut w.f.world, name_text::refresh_name_fields);
+        let field = widget(&mut w.f.world, &["label"]);
+        (w, entity, field)
+    }
+
+    fn shown(world: &World, field: Entity) -> String {
+        world
+            .get_component_for_entity::<UITextInput>(field)
+            .unwrap()
+            .value
+            .clone()
+    }
+
+    fn type_text(world: &mut World, field: Entity, text: &str) {
+        world
+            .get_component_for_entity_mut::<UITextInput>(field)
+            .unwrap()
+            .value = text.into();
+        **world.get_resource_mut::<FocusedWidget>().unwrap() = Some(field);
+    }
+
+    fn label(w: &Inspecting, entity: Entity) -> Name {
+        w.get::<Tag>(entity).unwrap().label
+    }
+
+    #[test]
+    fn a_name_property_is_a_text_field_showing_its_text() {
+        let (mut w, _, field) = fixture();
+
+        assert_eq!(
+            editor_of(&mut w.f.world, &["label"]),
+            Some(TypeId::of::<name_text::NameText>())
+        );
+        assert_eq!(shown(&w.f.world, field), "idle");
+    }
+
+    #[test]
+    fn submitting_typed_text_commits_it_as_a_name() {
+        let (mut w, entity, field) = fixture();
+
+        type_text(&mut w.f.world, field, "walk");
+        w.f.world
+            .get_resource_mut::<EventChannel<UITextInputSubmitted>>()
+            .unwrap()
+            .push_event(UITextInputSubmitted {
+                entity: field,
+                value: "walk".into(),
+            });
+        run(&mut w.f.world, name_text::commit_name_fields);
+        run(&mut w.f.world, send_property_commits);
+
+        assert_eq!(label(&w, entity), Name::new("walk"));
+        assert!(w.f.unsaved(w.document));
+    }
+
+    #[test]
+    fn cancel_reverts_the_text_and_commits_nothing() {
+        let (mut w, entity, field) = fixture();
+
+        type_text(&mut w.f.world, field, "unfinished");
+        w.f.world
+            .get_resource_mut::<EventChannel<UITextInputCancelled>>()
+            .unwrap()
+            .push_event(UITextInputCancelled { entity: field });
+        run(&mut w.f.world, name_text::cancel_name_fields);
+
+        assert_eq!(shown(&w.f.world, field), "idle");
+        assert_eq!(**w.f.world.get_resource::<FocusedWidget>().unwrap(), None);
+        assert_eq!(queued(&w.f.world), 0);
+        assert_eq!(label(&w, entity), Name::new("idle"));
+    }
+
+    #[test]
+    fn losing_focus_reverts_the_text_and_commits_nothing() {
+        let (mut w, entity, field) = fixture();
+
+        type_text(&mut w.f.world, field, "unfinished");
+        w.f.world
+            .get_resource_mut::<EventChannel<UIFocusLost>>()
+            .unwrap()
+            .push_event(UIFocusLost(field));
+        run(&mut w.f.world, name_text::commit_name_fields);
+
+        assert_eq!(shown(&w.f.world, field), "idle");
+        assert_eq!(queued(&w.f.world), 0);
+        assert_eq!(label(&w, entity), Name::new("idle"));
+    }
+
+    #[test]
+    fn a_name_changed_elsewhere_reaches_the_same_field() {
+        let (mut w, entity, field) = fixture();
+
+        w.scene()
+            .get_component_for_entity_mut::<Tag>(entity)
+            .unwrap()
+            .label = Name::new("run");
+        w.update();
+        w.update();
+        run(&mut w.f.world, name_text::refresh_name_fields);
+
+        assert_eq!(widget(&mut w.f.world, &["label"]), field);
+        assert_eq!(shown(&w.f.world, field), "run");
+    }
+}
+
 mod variant_rows {
     use super::*;
     use concerto_render::components::{
