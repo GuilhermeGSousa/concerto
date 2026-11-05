@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::{copy_pose, sample, MotionMatchingState, Sources};
 use crate::{
     database::MotionDatabase,
-    node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
+    node::{trajectory_key, MotionMatchingNode, MotionMatchingTrajectory},
     query::FeatureQuery,
     search::search,
     simulation::TrajectorySample,
@@ -70,7 +70,7 @@ impl Fixture {
 fn trajectory(pace: f32, samples: usize) -> AnimationBlackboard {
     let mut board = AnimationBlackboard::default();
     board.set(
-        TRAJECTORY_KEY,
+        trajectory_key(),
         MotionMatchingTrajectory {
             translation: Vec3::ZERO,
             rotation: Quat::IDENTITY,
@@ -226,7 +226,7 @@ fn a_transition_lands_on_the_frame_the_normalised_query_finds() {
     state.step(&node, state.delta_time, 1.0, &board, fixture.sources());
 
     let samples = &board
-        .get::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
+        .get::<MotionMatchingTrajectory>(trajectory_key())
         .unwrap()
         .samples;
     let query = FeatureQuery::new(&fixture.database)
@@ -323,7 +323,7 @@ fn a_search_keeps_its_raw_query_with_what_it_was_built_from() {
         ],
     };
     let mut board = AnimationBlackboard::default();
-    board.set(TRAJECTORY_KEY, published.clone());
+    board.set(trajectory_key(), published.clone());
 
     state.delta_time = 0.1;
     state.search_timer = 0.0;
@@ -513,7 +513,7 @@ fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
     let simulation = fixture.database.simulation(last);
     let mut board = AnimationBlackboard::default();
     board.set(
-        TRAJECTORY_KEY,
+        trajectory_key(),
         MotionMatchingTrajectory {
             translation: simulation.translation,
             rotation: simulation.rotation,
@@ -1085,7 +1085,7 @@ fn at_rate_two_the_last_query_holds_the_trajectory_rescaled_into_animation_time(
         ],
     };
     let mut board = AnimationBlackboard::default();
-    board.set(TRAJECTORY_KEY, published.clone());
+    board.set(trajectory_key(), published.clone());
 
     state.search_timer = 0.0;
     state.step(&node, 0.1, 2.0, &board, fixture.sources());

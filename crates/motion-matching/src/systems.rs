@@ -9,7 +9,7 @@ use concerto_physics::{body::BodyId, physics_state::PhysicsState};
 
 use crate::{
     displacement::{yaw_of, CharacterDisplacement, CharacterLink, Placement},
-    node::{MotionMatchingTrajectory, TRAJECTORY_KEY},
+    node::{trajectory_key, MotionMatchingTrajectory},
     simulation::{CharacterSimulation, DesiredMotion},
 };
 
@@ -50,7 +50,7 @@ pub fn publish_trajectory(
         };
         let translation = physics.body_transform(*body_id).translation;
         player.set_param(
-            TRAJECTORY_KEY,
+            trajectory_key(),
             MotionMatchingTrajectory {
                 translation,
                 rotation: simulation.facing.value,
@@ -210,7 +210,7 @@ mod tests {
         world
             .get_component_for_entity::<AnimationPlayer>(entity)
             .unwrap()
-            .get_param::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
+            .get_param::<MotionMatchingTrajectory>(trajectory_key())
             .cloned()
     }
 

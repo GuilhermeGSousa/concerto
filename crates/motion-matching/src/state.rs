@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::{
     channel::BodyMotion,
     database::{BakeError, MotionDatabase},
-    node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
+    node::{trajectory_key, MotionMatchingNode, MotionMatchingTrajectory},
     query::FeatureQuery,
     search::{cost_of, search},
     simulation::TrajectorySample,
@@ -340,7 +340,7 @@ impl MotionMatchingState {
         self.frame = (self.frame + whole).min(range.end - 1);
         let moved = self.frame != previous_frame;
 
-        let trajectory = blackboard.get::<MotionMatchingTrajectory>(TRAJECTORY_KEY);
+        let trajectory = blackboard.get::<MotionMatchingTrajectory>(trajectory_key());
         let forced = trajectory
             .and_then(|trajectory| trajectory.samples.first())
             .is_some_and(|first| self.forced_search(node, first, dt));

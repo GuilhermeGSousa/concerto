@@ -144,6 +144,7 @@ use concerto::animation::{
     graph::AnimationGraph,
     player::{AnimationHandleComponent, AnimationPlayer},
 };
+use concerto::name::name;
 
 fn setup_animations(
     players: Query<Entity, (With<AnimationPlayer>, Without<AnimationsReady>)>,
@@ -158,7 +159,7 @@ fn setup_animations(
     let run = assets.load::<AnimationClip>(RUN);
 
     let mut graph = AnimationGraph::new();
-    graph.result_node().with_blend_space_2d_input("movement", |space| {
+    graph.result_node().with_blend_space_2d_input(name!("movement"), |space| {
         space
             .animation_clip_input(idle, Vec2::ZERO)
             .animation_clip_input(walk, Vec2::new(0.0, 0.5))
@@ -171,7 +172,7 @@ fn setup_animations(
 
 fn drive(players: Query<&mut AnimationPlayer>) {
     for mut player in players.iter() {
-        player.set_vec2_param("movement", Vec2::new(0.0, 0.8));
+        player.set_vec2_param(name!("movement"), Vec2::new(0.0, 0.8));
     }
 }
 ```
@@ -180,7 +181,7 @@ A graph is a tree of nodes under a result node:
 
 - **Clip** plays one `AnimationClip`, looping or once
   (`AnimationClipNode::new(clip).with_play_mode(PlayOnce)`), at the rate set
-  with `with_play_rate` times the float parameter named with
+  with `with_play_rate` times the float parameter whose `Name` is given to
   `with_play_rate_param`. Root motion scales with the rate.
 - **Blend** mixes its inputs, each in proportion to its node weight, set
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
@@ -189,7 +190,7 @@ A graph is a tree of nodes under a result node:
 - **2D blend space** places clips at points and blends by a `Vec2`
   parameter: the classic locomotion setup.
 - **State machine** switches between sub-graphs on triggers such as
-  `AnimationFSMTrigger::on_bool("is_grounded", false)` or
+  `AnimationFSMTrigger::on_bool(name!("is_grounded"), false)` or
   `AnimationFSMTrigger::OnAnimationEnd`. Each transition takes a
   `blend_time`, and the machine's `TransitionBlender` (set with
   `.blender(..)` on the builder) decides what it means: `CrossFade`, the
@@ -197,14 +198,16 @@ A graph is a tree of nodes under a result node:
   `Inertialization` plays only the new state and decays the pose difference
   to the old one with `blend_time` as the halflife.
 
-Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
-`set_int_param`, `set_float_param` and `set_vec2_param`. They live on a
-blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
+Parameters are set on the `AnimationPlayer` with `set_bool_param`,
+`set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`
+(`concerto::name`): an interned string, written `name!("movement")` for a
+literal or `Name::new(text)` otherwise, that compares as one integer. They live
+on a blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
 takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
 missing or holds another type; the typed methods are wrappers over those two.
 A node can read its playback rate from a float parameter: the rate is the
-node's own rate times the parameter, and a parameter that is missing or holds
-another type leaves the node's rate alone. A product that is negative or not
+node's own rate times the parameter, and no parameter (`None`, the default), or
+one that is missing or holds another type, leaves the node's rate alone. A product that is negative or not
 finite holds the node at rate 0.
 `crates/animation/tests/graph_serialization.rs` builds a graph with a blend
 space and a state machine. The tech demo's character plays no authored graph:

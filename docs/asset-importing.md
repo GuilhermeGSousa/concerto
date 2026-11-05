@@ -277,6 +277,13 @@ from the type's `Default` and no warning. The bytes of a newly encoded node do
 change, so the fixture is re-blessed at the same version, with the field set
 to something other than its default in the checked graph.
 
+A reflected node field that changes type is not a version bump either, for the
+same reason. A stored node whose field holds a value of the old kind, such as a
+`String` leaf where the field is now an `Option<Name>`, loads with that field
+at its value from the type's `Default` and a warning that the stored data is a
+different kind of value; the graph still loads. The fixture is re-blessed at
+the same version.
+
 When you change one:
 
 1. Raise the version. A derived type writes `#[asset(version = N)]` next to

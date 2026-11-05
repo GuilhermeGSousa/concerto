@@ -33,6 +33,7 @@ use concerto_foundation::{
     transform::Transform,
 };
 use concerto_mesh::skeleton::{Skeleton, SkeletonComponent};
+use concerto_name::name;
 use concerto_reflect::TypeRegistry;
 use glam::{Quat, Vec3};
 
@@ -98,7 +99,7 @@ fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
         world,
         MotionMatchingNode {
             database: database_handle,
-            play_rate_param: "speed".into(),
+            play_rate_param: Some(name!("speed")),
             ..Default::default()
         },
     );
@@ -109,7 +110,7 @@ fn a_float_param_on_the_blackboard_drives_the_nodes_play_rate() {
         AnimationPlayer::new(3),
     );
     let mut fast_player = AnimationPlayer::new(3);
-    fast_player.set_float_param("speed", 2.0);
+    fast_player.set_float_param(name!("speed"), 2.0);
     let fast = spawn_player(world, graph_handle, skeleton_handle, fast_player);
     compile_schedules(world);
     world.insert(AnimationRootBone::default(), plain[0]);
