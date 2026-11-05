@@ -14,8 +14,10 @@ use concerto_animation::node::{
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{EvaluatedPose, Pose, PosePool};
+use concerto_ecs::reflect::AppTypeRegistry;
+use concerto_ecs::world::World;
 use concerto_foundation::assets::AssetId;
-use concerto_foundation::assets::asset_server::AssetServer;
+use concerto_foundation::assets::asset_server::{AssetServer, handle_asset_load_events};
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::{
     ContentAssetHeader, check_encoding, decode_content_asset, write_content_asset,
@@ -63,6 +65,14 @@ struct Footstep {
 }
 
 impl ClipEvent for Footstep {}
+
+#[derive(Clone, Default, Reflect)]
+#[reflect(ClipEvent)]
+struct Impact {
+    pose: AssetHandle<AnimationClip>,
+}
+
+impl ClipEvent for Impact {}
 
 fn encoding_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
@@ -476,6 +486,79 @@ fn an_unregistered_stored_event_is_dropped_with_one_warning_naming_its_type() {
     assert_eq!(loaded.events().len(), 1);
     assert_eq!(loaded.events()[0].time, 0.2);
     assert!(live_event::<AnimationEvent>(&loaded, 0).is_some());
+}
+
+struct ClipLoader {
+    server: AssetServer,
+    world: World,
+}
+
+impl ClipLoader {
+    fn new(registry: TypeRegistry) -> Self {
+        let mut server = AssetServer::new();
+        let store = AssetStore::<AnimationClip>::new();
+        server.register_asset(&store);
+        let shared = AppTypeRegistry::default();
+        *shared.write() = registry;
+        server.set_type_registry(shared);
+        let mut world = World::new();
+        world.insert_resource(store);
+        world.insert_resource(server.clone());
+        Self { server, world }
+    }
+
+    fn load(&mut self, clip: AnimationClip) -> &AnimationClip {
+        let handle = self.server.add(clip);
+        handle_asset_load_events(&mut self.world);
+        let store = self
+            .world
+            .get_resource::<AssetStore<AnimationClip>>()
+            .unwrap();
+        store.get(&handle).expect("the clip loaded")
+    }
+}
+
+#[test]
+fn a_clip_added_to_the_asset_server_makes_its_stored_events_live() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(
+        0.25,
+        AnimationEvent {
+            name: name!("footstep_left"),
+        },
+    );
+    let mut loader = ClipLoader::new(registry(false));
+
+    let loaded = loader.load(round_trip_clip(&clip));
+
+    assert_eq!(
+        live_event::<AnimationEvent>(loaded, 0),
+        Some(&AnimationEvent {
+            name: name!("footstep_left"),
+        })
+    );
+}
+
+#[test]
+fn a_handle_inside_a_game_event_comes_back_strong_when_its_clip_loads() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(
+        0.5,
+        Impact {
+            pose: self::clip("impact_pose"),
+        },
+    );
+    let mut registry = registry(false);
+    registry.register::<Impact>();
+    let mut loader = ClipLoader::new(registry);
+
+    let loaded = loader.load(round_trip_clip(&clip));
+
+    let pose = &live_event::<Impact>(loaded, 0)
+        .expect("the event is live")
+        .pose;
+    assert!(matches!(pose, AssetHandle::Strong(..)));
+    assert_eq!(pose.id(), AssetId::from_path("impact_pose"));
 }
 
 #[test]

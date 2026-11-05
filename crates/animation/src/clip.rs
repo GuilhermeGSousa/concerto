@@ -539,9 +539,10 @@ mod tests {
 
     fn quarters() -> AnimationClip {
         let mut clip = AnimationClip::default();
-        for (time, text) in [(0.0, "a"), (0.25, "b"), (0.5, "c"), (0.75, "d")] {
-            clip.add_event(time, named(text));
-        }
+        clip.add_event(0.0, named("a"));
+        clip.add_event(0.25, named("b"));
+        clip.add_event(0.5, named("c"));
+        clip.add_event(0.75, named("d"));
         clip
     }
 
