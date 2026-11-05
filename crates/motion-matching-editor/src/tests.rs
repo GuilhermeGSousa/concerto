@@ -10,7 +10,9 @@ use concerto_app::{
     main_schedule::MainSchedulePlugin,
     plugins::{AssetManagerPlugin, TimePlugin},
 };
-use concerto_ecs::{Entity, IntoSystem, Res, System, command::CommandQueue};
+use concerto_ecs::{
+    Entity, IntoSystem, Res, System, command::CommandQueue, events::event_channel::EventChannel,
+};
 use concerto_editor::{
     EditorPlugin,
     asset_editor::{
@@ -28,12 +30,14 @@ use concerto_editor::{
         PropertyTarget, ShownValue, ValueCard, commit_number, spawn_panel, value_systems,
     },
     preview::{PreviewFailed, PreviewHostPlugin},
-    project::{Project, ProjectState},
+    project::{AssetsWritten, Project, ProjectState},
     scene::{SaveFailed, ScenePlugin, SceneRecipe, SceneSaved},
 };
 use concerto_foundation::assets::{
     Asset, AssetId,
+    asset_server::AssetServer,
     content::save_content_asset_into,
+    derived::DerivedDataCache,
     handle::AssetHandle,
     registry::{AssetEntry, AssetRegistry},
 };
@@ -50,7 +54,7 @@ use glam::Vec2;
 
 use crate::{
     DatabaseSettings, DefinitionDocument, MotionDatabaseEditor,
-    build::{check_baked, finish_build, mark_background_work, start_build},
+    derive::{derive_definitions, follow_written_inputs, mark_background_work},
     document::{
         clear_status_on_edit, follow_definition_edits, load_definition, restore_discarded_edits,
     },
@@ -120,6 +124,12 @@ fn build_inspector(mut cmd: CommandQueue, theme: Res<UITheme>) {
 
 pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     let mut f = SceneFixture::new();
+    f.world
+        .get_resource::<AssetServer>()
+        .unwrap()
+        .set_derived_cache(DerivedDataCache::in_project(&f.project_root));
+    f.world
+        .insert_resource(EventChannel::<AssetsWritten>::new());
     f.world.insert_resource(SceneRecipe {
         recipe,
         gpu: None,
@@ -146,12 +156,11 @@ pub(crate) fn fixture_with(recipe: fn(&mut App)) -> SceneFixture {
     }
     f.add_delivery(follow_definition_edits.into_boxed_system());
     f.add_delivery(save_definitions.into_boxed_system());
-    f.add_delivery(start_build.into_boxed_system());
     f.add_delivery(load_definition.into_boxed_system());
     f.add_delivery(follow_skeleton.into_boxed_system());
     f.add_delivery(read_entry_facts.into_boxed_system());
-    f.add_delivery(finish_build.into_boxed_system());
-    f.add_delivery(check_baked.into_boxed_system());
+    f.add_delivery(follow_written_inputs.into_boxed_system());
+    f.add_delivery(derive_definitions.into_boxed_system());
     f.add_delivery(follow_playback.into_boxed_system());
     f.add_delivery(follow_preview_time.into_boxed_system());
     f.add_delivery(mark_background_work.into_boxed_system());
@@ -467,7 +476,7 @@ fn opening_a_definition_holds_its_settings_and_its_channels_in_order() {
         1.5
     );
     assert_eq!(f.document(document).current, Some(asset));
-    assert_eq!(f.status(document), "");
+    assert_eq!(f.document(document).failed, None);
     assert!(!f.unsaved(document));
 }
 
@@ -761,6 +770,7 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
     assert!(f.unsaved(document));
 
     save(&mut f, document);
+    assert_eq!(f.status(document), "Saved content/database.gasset");
 
     let saved = read_definition(&f.project_root, &asset).unwrap();
     assert_eq!(saved.rate, 48.0);
@@ -798,7 +808,6 @@ fn saving_writes_the_edits_and_the_document_in_order_and_marks_it_saved() {
         }]
     );
     assert!(f.written::<SaveFailed>().is_empty());
-    assert_eq!(f.status(document), "Saved content/database.gasset");
     assert_eq!(f.document(document).current, Some(asset));
 }
 
@@ -973,6 +982,9 @@ fn the_next_edit_clears_the_saved_line() {
     edit(&mut f, document, "Settings", "speed", 2.0);
     save(&mut f, document);
     assert_eq!(f.status(document), "Saved content/database.gasset");
+    f.frames_until("the derive never ended", |f| {
+        state(f, document).derive_job.is_none()
+    });
 
     edit(&mut f, document, "Settings", "speed", 3.0);
 

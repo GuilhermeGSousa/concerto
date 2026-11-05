@@ -32,7 +32,7 @@ use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry};
 use uuid::Uuid;
 
 use crate::{
-    build::{BakedJob, BakedState, BakedStats, BuildState},
+    derive::{BakedStats, DeriveJob},
     facts::{EntryFacts, FactsJob, ShownSkeleton},
     playback::{BakedPlayback, ClipJob, ShowDatabase},
     preview::database_preview,
@@ -124,15 +124,13 @@ pub struct DefinitionDocument {
     pub channels: Vec<HeldChannel>,
     pub bones: Option<Vec<String>>,
     pub loaded: Option<MotionDatabase>,
-    pub build: BuildState,
-    pub baked: BakedState,
     pub stats: Option<BakedStats>,
     pub entry_facts: Vec<EntryFacts>,
     pub time: f32,
     pub(crate) shown_skeleton: Option<ShownSkeleton>,
     pub(crate) facts_job: Option<FactsJob>,
-    pub(crate) baked_wanted: bool,
-    pub(crate) baked_job: Option<BakedJob>,
+    pub(crate) derive_wanted: bool,
+    pub(crate) derive_job: Option<DeriveJob>,
     pub(crate) playback: Option<BakedPlayback>,
     pub(crate) sought_entry: Option<usize>,
     pub(crate) picked_channel: Option<usize>,
@@ -292,13 +290,7 @@ fn hold_definition(
     state.selected_entry = (!definition.entries.is_empty()).then_some(0);
     state.entry_facts.clear();
     state.shown_skeleton = None;
-    state.build = BuildState::default();
-    state.baked = BakedState::default();
-    state.stats = None;
-    state.baked_job = None;
-    state.baked_wanted = true;
     state.time = 0.0;
-    state.playback = None;
     state.sought_entry = None;
     state.loaded = Some(definition);
 }
@@ -352,6 +344,10 @@ pub(crate) fn load_definition(
             }
         };
         hold_definition(&mut state, definition, channels);
+        state.stats = None;
+        state.playback = None;
+        state.derive_job = None;
+        state.derive_wanted = true;
         previews.trigger(entity, ShowDatabase(None));
         if let Some(types) = types {
             publish_values(entity, &state, &types.read(), None, &mut cmd);
@@ -363,7 +359,6 @@ pub(crate) fn load_definition(
 pub(crate) fn restore_discarded_edits(
     on: On<DiscardEdits>,
     documents: Query<(&mut DefinitionDocument, Option<&HostedApp>)>,
-    mut previews: PreviewSignals,
     mut cmd: CommandQueue,
 ) {
     let document = on.signal().0;
@@ -387,7 +382,7 @@ pub(crate) fn restore_discarded_edits(
         }
     };
     hold_definition(&mut state, definition, channels);
-    previews.trigger(document, ShowDatabase(None));
+    state.derive_wanted = true;
     if let Some(types) = types {
         publish_values(document, &state, &types.read(), None, &mut cmd);
     }

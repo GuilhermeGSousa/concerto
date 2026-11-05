@@ -367,16 +367,8 @@ impl Tab {
     pub(crate) fn until_settled(&mut self) {
         let document = self.document;
         self.f.frames_until("the workers never settled", |f| {
-            let requested = f
-                .world
-                .get_component_for_entity::<BuildRequested>(document)
-                .is_some();
             let state = state(f, document);
-            !requested
-                && !state.build.is_running()
-                && state.baked_job.is_none()
-                && !state.baked_wanted
-                && state.clip_job.is_none()
+            state.derive_job.is_none() && !state.derive_wanted && state.clip_job.is_none()
         });
         self.f.frame();
         self.f.frame();
@@ -1187,7 +1179,8 @@ fn a_commit_queued_against_a_removed_channel_changes_nothing() {
 
 #[test]
 fn a_status_shows_on_a_line_of_its_own_and_hides_when_empty() {
-    let mut tab = tab();
+    let mut tab = tab_of(fixture(), |definition| definition.entries.clear());
+    tab.until_settled();
     let status = tab.panels().status;
     assert!(!tab.shown(status));
 

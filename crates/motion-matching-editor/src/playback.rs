@@ -39,7 +39,7 @@ use concerto_motion_matching_gizmos::{
     placed_pose,
 };
 
-use crate::{build::BakedState, document::DefinitionDocument, panels::shown_index};
+use crate::{document::DefinitionDocument, panels::shown_index};
 
 /// A baked database with the skeleton and the clips it samples, as a preview plays it.
 #[derive(Clone)]
@@ -315,7 +315,7 @@ pub(crate) fn scrub_entry(document: Entity) -> Listener<TimelineScrubbed> {
 }
 
 fn wanted_clip(state: &DefinitionDocument) -> Option<AssetId> {
-    if state.playback.is_some() || state.baked == BakedState::Unknown {
+    if state.playback.is_some() || state.derive_wanted || state.derive_job.is_some() {
         return None;
     }
     Some(state.entries.get(state.selected_entry?)?.clip.id())
