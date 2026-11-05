@@ -933,7 +933,7 @@ mod tests {
             Skeleton::new(
                 vec![Mat4::IDENTITY],
                 vec![None],
-                vec!["Root".to_string()],
+                vec!["Root".into()],
                 vec![JointPose::IDENTITY],
                 vec![root_id],
             )
@@ -1015,7 +1015,7 @@ mod tests {
             Skeleton::new(
                 vec![Mat4::IDENTITY],
                 vec![None],
-                vec!["Root".to_string()],
+                vec!["Root".into()],
                 vec![JointPose::IDENTITY],
                 vec![root_id],
             )

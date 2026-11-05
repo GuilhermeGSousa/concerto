@@ -373,7 +373,7 @@ fn skeleton_asset_carries_names_parents_rest_pose_and_ids() {
         skeleton.rest_pose[1].translation,
         glam::Vec3::new(0.0, 1.0, 0.0)
     );
-    assert_eq!(skeleton.bone_index("Joint"), Some(1));
+    assert_eq!(skeleton.bone_index("Joint".into()), Some(1));
     assert_ne!(skeleton.bone_ids[0], skeleton.bone_ids[1]);
 }
 

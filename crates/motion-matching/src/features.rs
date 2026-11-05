@@ -27,7 +27,7 @@ fn local_vector(frame: &FrameContext, vector: Vec3) -> Vec3 {
 fn check_bones(bones: &[JointName], skeleton: &Skeleton) -> Result<(), String> {
     match bones
         .iter()
-        .find(|bone| skeleton.bone_index(bone).is_none())
+        .find(|bone| skeleton.bone_index(bone.0).is_none())
     {
         Some(bone) => Err(format!("the skeleton has no bone named {}", bone.0)),
         None => Ok(()),
@@ -73,7 +73,7 @@ impl FeatureChannel for BonePositions {
         for (bone, out) in self.bones.iter().zip(out.chunks_mut(3)) {
             let value = frame
                 .skeleton
-                .bone_index(bone)
+                .bone_index(bone.0)
                 .and_then(|index| frame.model_pose.get(index))
                 .map_or(Vec3::ZERO, |pose| local_point(frame, pose.translation));
             out.copy_from_slice(&value.to_array());
@@ -132,7 +132,7 @@ impl FeatureChannel for BoneVelocities {
         for (bone, out) in self.bones.iter().zip(out.chunks_mut(3)) {
             let value = frame
                 .skeleton
-                .bone_index(bone)
+                .bone_index(bone.0)
                 .and_then(|index| frame.model_velocities.get(index))
                 .map_or(Vec3::ZERO, |velocity| local_vector(frame, *velocity));
             out.copy_from_slice(&value.to_array());
@@ -155,7 +155,7 @@ impl FeatureChannel for BoneVelocities {
         for (bone, velocity) in self.bones.iter().zip(features.as_chunks::<3>().0) {
             let pose = frame
                 .skeleton
-                .bone_index(bone)
+                .bone_index(bone.0)
                 .and_then(|index| frame.model_pose.get(index));
             if let Some(pose) = pose {
                 let start = local_point(frame, pose.translation);

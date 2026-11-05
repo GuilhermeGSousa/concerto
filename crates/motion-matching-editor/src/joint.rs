@@ -14,6 +14,7 @@ use concerto_editor::{
     },
 };
 use concerto_mesh::JointName;
+use concerto_name::Name;
 use concerto_ui::elements::prelude::*;
 use concerto_ui::{
     anchor::UIAnchoredPanel,
@@ -45,7 +46,7 @@ impl PropertyEditor<JointName> for JointNameEditor {
     type Edit = JointName;
 
     fn snapshot(&self, value: &JointName) -> JointName {
-        value.clone()
+        *value
     }
 
     fn build(&self, row: &mut EntityCommandQueue, _: &JointName, theme: &UITheme) {
@@ -70,12 +71,12 @@ impl PropertyEditor<JointName> for JointNameEditor {
         edit: &JointName,
         _: &EditContext,
     ) -> Result<(), EditError> {
-        *value = edit.clone();
+        *value = *edit;
         Ok(())
     }
 
     fn edit_to(&self, value: &JointName) -> Option<JointName> {
-        Some(value.clone())
+        Some(*value)
     }
 
     fn follows_snapshot(&self) -> bool {
@@ -87,13 +88,13 @@ fn joint_of(values: &Query<&PropertyRowValue>, row: Entity) -> Option<JointName>
     values
         .get_entity(row)?
         .snapshot::<JointName, JointNameEditor>()
-        .cloned()
+        .copied()
 }
 
 fn front_bones<'a>(
     active: &ActiveEditor,
     documents: &'a Query<&DefinitionDocument>,
-) -> Option<&'a [String]> {
+) -> Option<&'a [Name]> {
     documents.get_entity(active.0?)?.bones.as_deref()
 }
 
@@ -141,7 +142,7 @@ fn pick_joint(row: Entity, name: JointName) -> Listener<UIClick> {
         if joint_of(&values, row).as_ref() == Some(&name) {
             return;
         }
-        if let Err(error) = commits.push::<JointName, JointNameEditor>(target, name.clone()) {
+        if let Err(error) = commits.push::<JointName, JointNameEditor>(target, name) {
             log::warn!("Joint pick dropped: {error}");
         }
     })
@@ -168,7 +169,7 @@ pub(crate) fn refresh_joint_rows(
         }
         let color = match bones {
             None => theme.text_muted,
-            Some(bones) if bones.iter().any(|bone| *bone == *name) => theme.text,
+            Some(bones) if bones.contains(&name.0) => theme.text,
             Some(_) => theme.warning,
         };
         if text.color != color {

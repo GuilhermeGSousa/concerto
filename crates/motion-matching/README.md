@@ -77,9 +77,9 @@ ground projection smoothed, with the smoothed yaw of the facing joint. A
 window longer than an entry's range is clamped to the largest odd size that
 fits the range; a range too short for a window above 3 is left unsmoothed.
 
-`JointName`, from `concerto-mesh`, is a `String` newtype that reflects as a
-leaf, with `Deref<Target = str>`, `From<&str>` and a JSON form. Stored, it is
-the bytes of its text.
+`JointName`, from `concerto-mesh`, is a `Copy` newtype over `Name` (from
+`concerto-name`) that reflects as a leaf, with `Deref<Target = str>`,
+`From<&str>` and a JSON form. Stored, it is the bytes of its text.
 
 `TrajectorySettings` defaults match `CharacterSimulation`'s `sample_dt` and
 `sample_count`. Offline, sample `k` sits `round(sample_dt * (k + 1) * rate)`

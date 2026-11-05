@@ -1,9 +1,10 @@
 use std::any::TypeId;
 
 use concerto_mesh::skeleton::{JointName, JointPose, Skeleton, SkeletonError};
+use concerto_name::name;
 use concerto_reflect::{
-    apply_value, json_to_value, to_json, to_value, ReflectDefault, ReflectJson, ReflectedValue,
-    TypeRegistry,
+    apply_value, json_to_value, to_json, to_value, JsonLeaf, Leaf, ReflectDefault, ReflectJson,
+    ReflectedValue, TypeRegistry,
 };
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
@@ -20,7 +21,7 @@ fn chain() -> Skeleton {
     Skeleton::new(
         vec![Mat4::IDENTITY; 3],
         vec![None, Some(0), Some(1)],
-        vec!["hips".to_string(), "spine".to_string(), "head".to_string()],
+        vec!["hips".into(), "spine".into(), "head".into()],
         vec![
             translated(0.0, 1.0, 0.0),
             translated(0.0, 1.0, 0.0),
@@ -36,7 +37,7 @@ fn new_rejects_unequal_lengths() {
     let result = Skeleton::new(
         vec![Mat4::IDENTITY; 2],
         vec![None],
-        vec!["a".to_string(), "b".to_string()],
+        vec!["a".into(), "b".into()],
         vec![JointPose::IDENTITY; 2],
         vec![Uuid::nil(); 2],
     );
@@ -55,7 +56,7 @@ fn new_rejects_a_parent_that_does_not_precede_its_child() {
     let result = Skeleton::new(
         vec![Mat4::IDENTITY; 2],
         vec![Some(1), None],
-        vec!["a".to_string(), "b".to_string()],
+        vec!["a".into(), "b".into()],
         vec![JointPose::IDENTITY; 2],
         vec![Uuid::nil(); 2],
     );
@@ -67,7 +68,7 @@ fn new_rejects_a_parent_that_does_not_precede_its_child() {
     let own_parent = Skeleton::new(
         vec![Mat4::IDENTITY],
         vec![Some(0)],
-        vec!["a".to_string()],
+        vec!["a".into()],
         vec![JointPose::IDENTITY],
         vec![Uuid::nil()],
     );
@@ -78,8 +79,8 @@ fn new_rejects_a_parent_that_does_not_precede_its_child() {
 fn bone_index_finds_the_first_bone_by_name() {
     let skeleton = chain();
     assert_eq!(skeleton.bone_count(), 3);
-    assert_eq!(skeleton.bone_index("spine"), Some(1));
-    assert_eq!(skeleton.bone_index("tail"), None);
+    assert_eq!(skeleton.bone_index(name!("spine")), Some(1));
+    assert_eq!(skeleton.bone_index(name!("tail")), None);
 }
 
 #[test]
@@ -182,4 +183,16 @@ fn a_joint_name_round_trips_through_bincode_as_its_text() {
         bincode::deserialize::<JointName>(&bytes).unwrap(),
         JointName::from("Hips")
     );
+}
+
+#[test]
+fn a_joint_name_encodes_its_leaf_and_json_as_its_string_does() {
+    let joint = JointName::from("x");
+
+    assert_eq!(
+        Leaf::encode(&joint).unwrap(),
+        Leaf::encode(&String::from("x")).unwrap()
+    );
+    assert_eq!(JsonLeaf::to_json(&joint), json!("x"));
+    assert_eq!(JointName::from_json(&json!("x")).unwrap(), joint);
 }

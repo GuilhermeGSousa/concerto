@@ -5,6 +5,7 @@ use concerto_ecs::{
     Component, Entity,
 };
 use concerto_foundation::assets::{handle::AssetHandle, Asset, LoadableAsset};
+use concerto_name::Name;
 use concerto_reflect::{JsonLeaf, Reflect, ReflectDefault, ReflectJson};
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
@@ -76,21 +77,21 @@ impl fmt::Display for SkeletonError {
 impl std::error::Error for SkeletonError {}
 
 /// The name of a bone of a [`Skeleton`], stored as a reflected leaf so an editor can offer the skeleton's bones.
-#[derive(Reflect, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[reflect(opaque, Default, Json)]
-pub struct JointName(pub String);
+pub struct JointName(pub Name);
 
 impl Deref for JointName {
     type Target = str;
 
     fn deref(&self) -> &str {
-        &self.0
+        self.0.as_str()
     }
 }
 
 impl From<&str> for JointName {
     fn from(name: &str) -> Self {
-        Self(name.to_owned())
+        Self(Name::new(name))
     }
 }
 
@@ -100,7 +101,7 @@ impl JsonLeaf for JointName {
     }
 
     fn from_json(value: &Value) -> Result<Self, String> {
-        String::from_json(value).map(Self)
+        Name::from_json(value).map(Self)
     }
 }
 
@@ -109,7 +110,7 @@ impl JsonLeaf for JointName {
 pub struct Skeleton {
     pub inverse_bindposes: Box<[Mat4]>,
     pub parents: Box<[Option<u16>]>,
-    pub names: Box<[String]>,
+    pub names: Box<[Name]>,
     pub rest_pose: Box<[JointPose]>,
     pub bone_ids: Box<[Uuid]>,
 }
@@ -119,7 +120,7 @@ impl Skeleton {
     pub fn new(
         inverse_bindposes: Vec<Mat4>,
         parents: Vec<Option<u16>>,
-        names: Vec<String>,
+        names: Vec<Name>,
         rest_pose: Vec<JointPose>,
         bone_ids: Vec<Uuid>,
     ) -> Result<Skeleton, SkeletonError> {
@@ -162,8 +163,8 @@ impl Skeleton {
     }
 
     /// The index of the first bone with this name.
-    pub fn bone_index(&self, name: &str) -> Option<usize> {
-        self.names.iter().position(|bone| bone == name)
+    pub fn bone_index(&self, name: Name) -> Option<usize> {
+        self.names.iter().position(|bone| *bone == name)
     }
 
     /// The global transform of every bone for the given local poses.

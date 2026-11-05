@@ -165,7 +165,7 @@ mod tests {
         let skeleton = Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )

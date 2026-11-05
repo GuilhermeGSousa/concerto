@@ -162,7 +162,7 @@ mod tests {
         Skeleton::new(
             vec![Mat4::IDENTITY],
             vec![None],
-            vec!["bone".to_string()],
+            vec!["bone".into()],
             vec![JointPose::IDENTITY],
             vec![bone_id],
         )
@@ -302,7 +302,7 @@ mod tests {
             let skeleton = Skeleton::new(
                 vec![Mat4::IDENTITY],
                 vec![None],
-                vec!["root".to_string()],
+                vec!["root".into()],
                 vec![self.rest.clone()],
                 vec![ROOT_ID],
             )
@@ -315,7 +315,7 @@ mod tests {
             let skeleton = Skeleton::new(
                 vec![Mat4::IDENTITY; 2],
                 vec![None, Some(0)],
-                vec!["root".to_string(), "child".to_string()],
+                vec!["root".into(), "child".into()],
                 vec![
                     self.rest.clone(),
                     JointPose {
