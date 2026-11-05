@@ -8,7 +8,7 @@ use crate::{
     clip::AnimationClip,
     graph::AnimationGraph,
     node::{
-        AnimationClipNode, AnimationNode, BlendNode, PlaceholderNode, ResultNode,
+        AnimationClipNode, AnimationNode, BlendNode, PlaceholderNode, ResultNode, TwoBoneIkNode,
         blend_space::BlendSpace2DNode, register_node_inputs, state_machine::AnimationStateMachine,
     },
     target::{
@@ -21,6 +21,7 @@ use crate::{
 pub fn register_animation_types(registry: &mut TypeRegistry) {
     registry.register::<ResultNode>();
     registry.register::<BlendNode>();
+    registry.register::<TwoBoneIkNode>();
     registry.register::<AnimationClipNode>();
     registry.register::<BlendSpace2DNode>();
     registry.register::<AnimationStateMachine>();
@@ -33,6 +34,7 @@ pub fn register_animation_types(registry: &mut TypeRegistry) {
 pub fn register_animation_node_inputs(world: &mut World) {
     register_node_inputs::<ResultNode>(world);
     register_node_inputs::<BlendNode>(world);
+    register_node_inputs::<TwoBoneIkNode>(world);
     register_node_inputs::<AnimationClipNode>(world);
     register_node_inputs::<BlendSpace2DNode>(world);
     register_node_inputs::<AnimationStateMachine>(world);

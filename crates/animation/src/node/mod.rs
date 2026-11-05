@@ -14,11 +14,13 @@ use crate::{
 pub mod blend_space;
 pub mod definition;
 pub mod state_machine;
+pub mod two_bone_ik;
 
 pub use definition::{
     AnimationNode, CreateNodeInputs, ErasedAnimationNode, EvaluateNodeInputs, NodeState,
     PlaceholderNode, ReflectAnimationNode, UpdateNodeInputs, register_node_inputs,
 };
+pub use two_bone_ik::{IkGoal, IkTarget, TipRotation, TwoBoneIkNode, TwoBoneIkState};
 
 /// The rate a node plays at: `play_rate` times the `f32` under `param`, or `play_rate` alone when `param` is `None` or holds no `f32`; never negative.
 pub fn effective_play_rate(

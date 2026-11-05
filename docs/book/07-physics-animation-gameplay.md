@@ -197,6 +197,21 @@ A graph is a tree of nodes under a result node:
   default, fades the old state out over `blend_time` seconds, and
   `Inertialization` plays only the new state and decays the pose difference
   to the old one with `blend_time` as the halflife.
+- **Two-bone IK** (`TwoBoneIkNode`) bends a limb so its tip reaches a goal.
+  The `tip` bone names the chain: its parent is the elbow or knee and its
+  grandparent the shoulder or hip, all under bone 0. The `target` is an
+  `IkGoal`: `Bone` fixes it to a bone of the input pose, with a translation
+  and rotation in that bone's space, and `Param` reads an `IkTarget` the game
+  set on the blackboard, in world space. An optional `pole`, another
+  `IkGoal`, picks the side the elbow or knee bends toward. `softness` eases
+  the last stretch before full extension, `tip_rotation` keeps the input's
+  hand or foot rotation (`KeepInput`) or takes the goal's (`FromTarget`), and
+  `weight`, times the float under `weight_param`, blends the solve over the
+  input. Wire it after the nodes whose pose it corrects. A target param the
+  game has not set yet leaves the pose as it is. The same solve is
+  `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
+  the three joint positions in any one space and returns rotations in that
+  space.
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`

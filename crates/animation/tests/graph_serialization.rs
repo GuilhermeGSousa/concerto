@@ -7,7 +7,8 @@ use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
 use concerto_animation::node::{
-    AnimationClipNode, AnimationNode, ErasedAnimationNode, ReflectAnimationNode,
+    AnimationClipNode, AnimationNode, ErasedAnimationNode, IkGoal, ReflectAnimationNode,
+    TipRotation, TwoBoneIkNode,
 };
 use concerto_animation::plugin::register_animation_types;
 use concerto_animation::pose::{EvaluatedPose, Pose, PosePool};
@@ -257,6 +258,38 @@ fn a_placeholder_builds_once_its_type_is_registered() {
     assert!(loaded.load_warnings().is_empty());
     assert_eq!(live_node::<Gain>(&loaded).unwrap().amount, 2.5);
     assert_eq!(bincode::serialize(&loaded).unwrap(), bytes);
+}
+
+#[test]
+fn a_two_bone_ik_node_keeps_every_field_through_a_round_trip() {
+    let node = TwoBoneIkNode {
+        tip: "hand_l".into(),
+        target: IkGoal::Bone {
+            bone: "hand_r".into(),
+            translation: glam::Vec3::new(0.05, -0.02, 0.1),
+            rotation: glam::Quat::from_rotation_y(0.4),
+        },
+        pole: Some(IkGoal::Param {
+            param: name!("elbow_pole"),
+        }),
+        tip_rotation: TipRotation::FromTarget,
+        softness: 0.03,
+        weight: 0.75,
+        weight_param: Some(name!("grip_weight")),
+    };
+    assert_ne!(node, TwoBoneIkNode::default());
+    let mut graph = AnimationGraph::from_node(node.clone());
+    graph.make_live(&registry(false), None).unwrap();
+
+    let mut restored = round_trip(&graph);
+    restored.make_live(&registry(false), None).unwrap();
+
+    assert!(
+        restored.load_warnings().is_empty(),
+        "{:?}",
+        restored.load_warnings()
+    );
+    assert_eq!(live_node::<TwoBoneIkNode>(&restored), Some(&node));
 }
 
 #[test]

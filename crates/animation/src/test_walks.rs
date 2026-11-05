@@ -120,7 +120,6 @@ impl Walks {
         walk(&self.world, &self.evaluate, blackboard, root, None, None, f)
     }
 
-    #[expect(dead_code)]
     pub(crate) fn evaluate_posed<R>(
         &self,
         blackboard: &AnimationBlackboard,
