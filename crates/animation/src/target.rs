@@ -515,7 +515,7 @@ mod tests {
             system.run_and_apply((), &mut world);
 
             let mut heard = std::mem::take(&mut world.get_resource_mut::<Heard>().unwrap().0);
-            heard.sort_by_key(|(name, _, _)| name.as_str().to_owned());
+            heard.sort_by_key(|event| event.name.as_str().to_owned());
             Delivery {
                 heard,
                 heard_globally: world.get_resource::<HeardGlobally>().unwrap().0,
@@ -556,14 +556,25 @@ mod tests {
         }
     }
 
+    #[derive(Debug, PartialEq)]
+    struct HeardEvent {
+        name: Name,
+        weight: f32,
+        time: f32,
+    }
+
+    fn heard_event(name: Name, weight: f32, time: f32) -> HeardEvent {
+        HeardEvent { name, weight, time }
+    }
+
     #[derive(Resource, Default)]
-    struct Heard(Vec<(Name, f32, f32)>);
+    struct Heard(Vec<HeardEvent>);
 
     #[derive(Resource, Default)]
     struct HeardGlobally(usize);
 
     struct Delivery {
-        heard: Vec<(Name, f32, f32)>,
+        heard: Vec<HeardEvent>,
         heard_globally: usize,
         still_fired: usize,
     }
@@ -571,7 +582,9 @@ mod tests {
     fn hear() -> Listener<AnimationSignal<AnimationEvent>> {
         (|on: On<AnimationSignal<AnimationEvent>>, mut heard: ResMut<Heard>| {
             let fired = on.signal();
-            heard.0.push((fired.signal.name, fired.weight, fired.time));
+            heard
+                .0
+                .push(heard_event(fired.signal.name, fired.weight, fired.time));
         })
         .into_listener()
     }
@@ -923,7 +936,10 @@ mod tests {
 
         assert_eq!(
             delivery.heard,
-            [(name!("left"), 0.25, 0.25), (name!("right"), 0.75, 0.25)]
+            [
+                heard_event(name!("left"), 0.25, 0.25),
+                heard_event(name!("right"), 0.75, 0.25)
+            ]
         );
         assert_eq!(delivery.still_fired, 0);
         assert_eq!(
@@ -939,7 +955,10 @@ mod tests {
         player.set_event_threshold(0.25);
         rig.update(&mut player, 0.5);
 
-        assert_eq!(rig.deliver(player).heard, [(name!("right"), 0.75, 0.25)]);
+        assert_eq!(
+            rig.deliver(player).heard,
+            [heard_event(name!("right"), 0.75, 0.25)]
+        );
     }
 
     fn left_fired(clip: AssetId) -> FiredEvent {

@@ -802,21 +802,32 @@ mod tests {
         )
     }
 
-    fn fired_by_time(machine: &Machine) -> Vec<(f32, f32)> {
+    #[derive(Debug)]
+    struct TimeWeight {
+        time: f32,
+        weight: f32,
+    }
+
+    fn time_weight(time: f32, weight: f32) -> TimeWeight {
+        TimeWeight { time, weight }
+    }
+
+    fn fired_by_time(machine: &Machine) -> Vec<TimeWeight> {
         let mut fired: Vec<_> = machine
             .events
             .iter()
-            .map(|event| (event.time, event.weight))
+            .map(|event| time_weight(event.time, event.weight))
             .collect();
-        fired.sort_by(|a, b| a.0.total_cmp(&b.0));
+        fired.sort_by(|a, b| a.time.total_cmp(&b.time));
         fired
     }
 
-    fn assert_fired(actual: &[(f32, f32)], expected: &[(f32, f32)]) {
+    fn assert_fired(actual: &[TimeWeight], expected: &[TimeWeight]) {
         assert_eq!(actual.len(), expected.len(), "fired {actual:?}");
-        for ((time, weight), (expected_time, expected_weight)) in actual.iter().zip(expected) {
+        for (fired, expected_fired) in actual.iter().zip(expected) {
             assert!(
-                (time - expected_time).abs() < 1e-6 && (weight - expected_weight).abs() < 1e-5,
+                (fired.time - expected_fired.time).abs() < 1e-6
+                    && (fired.weight - expected_fired.weight).abs() < 1e-5,
                 "expected {expected:?}, fired {actual:?}"
             );
         }
@@ -833,7 +844,10 @@ mod tests {
         let entered = MACHINE_FRAME / 0.1;
         assert_fired(
             &fired_by_time(&machine),
-            &[(0.0, entered), (5.5 * MACHINE_FRAME, 1.0 - entered)],
+            &[
+                time_weight(0.0, entered),
+                time_weight(5.5 * MACHINE_FRAME, 1.0 - entered),
+            ],
         );
     }
 
@@ -845,6 +859,6 @@ mod tests {
 
         machine.step();
 
-        assert_fired(&fired_by_time(&machine), &[(0.0, 1.0)]);
+        assert_fired(&fired_by_time(&machine), &[time_weight(0.0, 1.0)]);
     }
 }

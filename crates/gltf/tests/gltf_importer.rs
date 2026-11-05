@@ -458,7 +458,20 @@ fn import_named_animations(
     Ok(ctx.into_parts())
 }
 
-fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<(f32, String)> {
+#[derive(Debug, PartialEq)]
+struct NamedKey {
+    time: f32,
+    name: String,
+}
+
+fn named_key(time: f32, name: &str) -> NamedKey {
+    NamedKey {
+        time,
+        name: name.to_string(),
+    }
+}
+
+fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<NamedKey> {
     let entry = outputs
         .sub_assets
         .iter()
@@ -475,7 +488,7 @@ fn event_keys(outputs: &ImportOutputs, name: &str) -> Vec<(f32, String)> {
             let mut event = AnimationEvent::default();
             let warnings = apply_value(&mut event, &key.event.value().unwrap());
             assert!(warnings.is_empty(), "{warnings:?}");
-            (key.time, event.name.as_str().to_string())
+            named_key(key.time, event.name.as_str())
         })
         .collect()
 }
@@ -502,15 +515,12 @@ fn event_settings_add_sorted_animation_events_to_the_named_clip() {
     assert_eq!(
         event_keys(&outputs, "animation/Wiggle_2"),
         [
-            (0.0, "start".to_string()),
-            (0.25, "hit".to_string()),
-            (0.75, "hit".to_string()),
+            named_key(0.0, "start"),
+            named_key(0.25, "hit"),
+            named_key(0.75, "hit"),
         ]
     );
-    assert_eq!(
-        event_keys(&outputs, "animation/1"),
-        [(1.0, "end".to_string())]
-    );
+    assert_eq!(event_keys(&outputs, "animation/1"), [named_key(1.0, "end")]);
     assert!(event_keys(&outputs, "animation/Wiggle").is_empty());
 }
 

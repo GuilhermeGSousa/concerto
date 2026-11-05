@@ -551,7 +551,20 @@ fn the_clip_is_named_after_the_source_file_stem() {
     );
 }
 
-fn event_keys(clip: &AnimationClip) -> Vec<(f32, String)> {
+#[derive(Debug, PartialEq)]
+struct NamedKey {
+    time: f32,
+    name: String,
+}
+
+fn named_key(time: f32, name: &str) -> NamedKey {
+    NamedKey {
+        time,
+        name: name.to_string(),
+    }
+}
+
+fn event_keys(clip: &AnimationClip) -> Vec<NamedKey> {
     clip.events()
         .iter()
         .map(|key| {
@@ -562,7 +575,7 @@ fn event_keys(clip: &AnimationClip) -> Vec<(f32, String)> {
             let mut event = AnimationEvent::default();
             let warnings = apply_value(&mut event, &key.event.value().unwrap());
             assert!(warnings.is_empty(), "{warnings:?}");
-            (key.time, event.name.as_str().to_string())
+            named_key(key.time, event.name.as_str())
         })
         .collect()
 }
@@ -574,9 +587,9 @@ fn event_settings_add_sorted_animation_events_to_the_clip() {
     assert_eq!(
         event_keys(&clip),
         [
-            (0.01, "footstep_right".to_string()),
-            (0.02, "footstep_left".to_string()),
-            (0.05, "footstep_right".to_string()),
+            named_key(0.01, "footstep_right"),
+            named_key(0.02, "footstep_left"),
+            named_key(0.05, "footstep_right"),
         ]
     );
 }
@@ -587,7 +600,7 @@ fn event_times_count_from_the_first_kept_frame() {
     let (_, clip) = import_ok("trim_events.bvh", TWO_JOINTS, settings);
     assert_eq!(
         event_keys(&clip),
-        [(0.0, "land".to_string()), (0.03, "land".to_string())]
+        [named_key(0.0, "land"), named_key(0.03, "land")]
     );
 }
 
@@ -604,7 +617,7 @@ fn event_settings_are_keyed_by_the_sanitised_clip_name() {
             .bytes,
     )
     .unwrap();
-    assert_eq!(event_keys(&clip), [(0.0, "step".to_string())]);
+    assert_eq!(event_keys(&clip), [named_key(0.0, "step")]);
 }
 
 #[test]

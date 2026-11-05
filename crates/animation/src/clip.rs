@@ -455,16 +455,17 @@ impl AnimationClip {
                 .and_then(|registration| registration.data::<ReflectClipEvent>().copied())
             {
                 Some(data) => {
-                    let (built, event_warnings) = (data.from_value)(value, &mut leaves);
-                    if event_warnings.is_empty() {
+                    let built = (data.from_value)(value, &mut leaves);
+                    if built.warnings.is_empty() {
                         key.event = ClipEventData::Live {
                             type_name: std::mem::take(type_name),
-                            value: built,
+                            value: built.value,
                             data,
                         };
                         return true;
                     }
-                    event_warnings
+                    built
+                        .warnings
                         .iter()
                         .map(ToString::to_string)
                         .collect::<Vec<_>>()
@@ -508,7 +509,17 @@ mod tests {
         }
     }
 
-    fn event_names(clip: &AnimationClip) -> Vec<(f32, &str)> {
+    #[derive(Debug, PartialEq)]
+    struct NamedKey<'a> {
+        time: f32,
+        name: &'a str,
+    }
+
+    fn key(time: f32, name: &str) -> NamedKey<'_> {
+        NamedKey { time, name }
+    }
+
+    fn event_names(clip: &AnimationClip) -> Vec<NamedKey<'_>> {
         clip.events()
             .iter()
             .map(|key| {
@@ -518,7 +529,10 @@ mod tests {
                 let event = value
                     .downcast_ref::<AnimationEvent>()
                     .expect("the event is an AnimationEvent");
-                (key.time, event.name.as_str())
+                NamedKey {
+                    time: key.time,
+                    name: event.name.as_str(),
+                }
             })
             .collect()
     }
@@ -542,10 +556,10 @@ mod tests {
         assert_eq!(
             event_names(&clip),
             [
-                (0.1, "first"),
-                (0.5, "second"),
-                (0.5, "third"),
-                (0.9, "fourth")
+                key(0.1, "first"),
+                key(0.5, "second"),
+                key(0.5, "third"),
+                key(0.9, "fourth")
             ]
         );
     }

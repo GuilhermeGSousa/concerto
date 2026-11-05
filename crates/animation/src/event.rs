@@ -37,10 +37,16 @@ pub struct Fired {
     pub mirrored: bool,
 }
 
+/// A clip event built from stored data, with what could not be applied to it.
+pub struct BuiltClipEvent {
+    pub value: Box<dyn Reflect>,
+    pub warnings: Vec<ValueWarning>,
+}
+
 /// How a clip builds an event from stored data and triggers it on an entity.
 #[derive(Clone, Copy)]
 pub struct ReflectClipEvent {
-    pub from_value: fn(&ReflectedValue, &mut LiveLeaves) -> (Box<dyn Reflect>, Vec<ValueWarning>),
+    pub from_value: fn(&ReflectedValue, &mut LiveLeaves) -> BuiltClipEvent,
     pub trigger: fn(&dyn Reflect, Fired, Entity, &mut CommandQueue),
 }
 
@@ -55,13 +61,13 @@ impl<S: ClipEvent> FromType<S> for ReflectClipEvent {
     }
 }
 
-fn from_value<S: ClipEvent>(
-    stored: &ReflectedValue,
-    leaves: &mut LiveLeaves,
-) -> (Box<dyn Reflect>, Vec<ValueWarning>) {
+fn from_value<S: ClipEvent>(stored: &ReflectedValue, leaves: &mut LiveLeaves) -> BuiltClipEvent {
     let mut event = S::default();
     let warnings = apply_value_with(&mut event, stored, leaves);
-    (Box::new(event), warnings)
+    BuiltClipEvent {
+        value: Box::new(event),
+        warnings,
+    }
 }
 
 fn trigger<S: ClipEvent>(

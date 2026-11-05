@@ -320,10 +320,20 @@ mod tests {
         }
     }
 
-    fn weights(pose: &Pose) -> Vec<(u32, f32)> {
+    #[derive(Debug, PartialEq)]
+    struct KeyWeight {
+        key: u32,
+        weight: f32,
+    }
+
+    fn key_weight(key: u32, weight: f32) -> KeyWeight {
+        KeyWeight { key, weight }
+    }
+
+    fn weights(pose: &Pose) -> Vec<KeyWeight> {
         pose.events()
             .iter()
-            .map(|event| (event.key, event.weight))
+            .map(|event| key_weight(event.key, event.weight))
             .collect()
     }
 
@@ -349,7 +359,14 @@ mod tests {
 
         pose.blend(&other, 0.25);
 
-        assert_eq!(weights(&pose), [(1, 0.75), (2, 0.375), (3, 0.25)]);
+        assert_eq!(
+            weights(&pose),
+            [
+                key_weight(1, 0.75),
+                key_weight(2, 0.375),
+                key_weight(3, 0.25)
+            ]
+        );
     }
 
     #[test]

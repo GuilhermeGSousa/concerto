@@ -231,17 +231,15 @@ mod tests {
             )
         });
 
-        let mut weights: Vec<_> = output
-            .events()
-            .iter()
-            .map(|event| (event.key, event.weight))
-            .collect();
-        weights.sort_by_key(|(key, _)| *key);
-        assert_eq!(weights.len(), 3);
-        for ((key, weight), expected) in weights.into_iter().zip([0.5, 0.25, 0.25]) {
+        let mut events: Vec<_> = output.events().iter().collect();
+        events.sort_by_key(|event| event.key);
+        assert_eq!(events.len(), 3);
+        for (event, expected) in events.into_iter().zip([0.5, 0.25, 0.25]) {
             assert!(
-                (weight - expected).abs() < 1e-5,
-                "event {key}: expected {expected}, got {weight}"
+                (event.weight - expected).abs() < 1e-5,
+                "event {}: expected {expected}, got {}",
+                event.key,
+                event.weight
             );
         }
     }

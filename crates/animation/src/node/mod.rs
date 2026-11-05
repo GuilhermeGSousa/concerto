@@ -127,7 +127,12 @@ pub struct AnimationClipNodeState {
     is_paused: bool,
     is_finished: bool,
     fresh: bool,
-    fired: Vec<(u32, f32)>,
+    fired: Vec<CrossedKey>,
+}
+
+struct CrossedKey {
+    key: u32,
+    time: f32,
 }
 
 impl AnimationClipNodeState {
@@ -166,7 +171,10 @@ impl AnimationClipNodeState {
 
     fn fire(&mut self, clip: &AnimationClip, from: f32, to: f32, include_from: bool) {
         for key in clip.events_in(from, to, include_from) {
-            self.fired.push((key as u32, clip.events()[key].time));
+            self.fired.push(CrossedKey {
+                key: key as u32,
+                time: clip.events()[key].time,
+            });
         }
     }
 
@@ -256,11 +264,11 @@ impl AnimationNode for AnimationClipNode {
         _pool: &mut PosePool,
         output: &mut Pose,
     ) {
-        for &(key, time) in &state.fired {
+        for crossed in &state.fired {
             output.push_event(FiredEvent {
                 clip: self.clip.id(),
-                key,
-                time,
+                key: crossed.key,
+                time: crossed.time,
                 weight: 1.0,
                 mirrored: false,
             });
@@ -1163,13 +1171,23 @@ mod tests {
         input
     }
 
-    fn event_weights(pose: &Pose) -> Vec<(u32, f32)> {
+    #[derive(Debug, PartialEq)]
+    struct KeyWeight {
+        key: u32,
+        weight: f32,
+    }
+
+    fn key_weight(key: u32, weight: f32) -> KeyWeight {
+        KeyWeight { key, weight }
+    }
+
+    fn event_weights(pose: &Pose) -> Vec<KeyWeight> {
         let mut weights: Vec<_> = pose
             .events()
             .iter()
-            .map(|event| (event.key, event.weight))
+            .map(|event| key_weight(event.key, event.weight))
             .collect();
-        weights.sort_by_key(|(key, _)| *key);
+        weights.sort_by_key(|weight| weight.key);
         weights
     }
 
@@ -1177,14 +1195,17 @@ mod tests {
     fn a_blend_gives_each_input_event_the_weight_of_its_input() {
         let blended = blend(&[firing(0, 0.25), firing(1, 0.75)]);
 
-        assert_eq!(event_weights(&blended), [(0, 0.25), (1, 0.75)]);
+        assert_eq!(
+            event_weights(&blended),
+            [key_weight(0, 0.25), key_weight(1, 0.75)]
+        );
     }
 
     #[test]
     fn an_input_at_zero_weight_fires_nothing() {
         let blended = blend(&[firing(0, 0.0), firing(1, 1.0)]);
 
-        assert_eq!(event_weights(&blended), [(1, 1.0)]);
+        assert_eq!(event_weights(&blended), [key_weight(1, 1.0)]);
     }
 
     #[test]
