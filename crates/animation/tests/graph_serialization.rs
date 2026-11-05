@@ -1,8 +1,11 @@
 use std::path::Path;
 
 use concerto_animation::TransitionBlender;
-use concerto_animation::clip::{AnimationChanelOutput, AnimationChannel, AnimationClip};
+use concerto_animation::clip::{
+    AnimationChanelOutput, AnimationChannel, AnimationClip, ClipEventData,
+};
 use concerto_animation::evaluation::AnimationGraphContext;
+use concerto_animation::event::{AnimationEvent, ClipEvent, ReflectClipEvent};
 use concerto_animation::graph::AnimationGraph;
 use concerto_animation::node::blend_space::BlendSpace2DNode;
 use concerto_animation::node::state_machine::{AnimationFSMTrigger, AnimationStateMachine};
@@ -14,7 +17,9 @@ use concerto_animation::pose::{EvaluatedPose, Pose, PosePool};
 use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::assets::asset_store::AssetStore;
-use concerto_foundation::assets::content::check_encoding;
+use concerto_foundation::assets::content::{
+    ContentAssetHeader, check_encoding, decode_content_asset, write_content_asset,
+};
 use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
 use concerto_name::{Name, name};
 use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, ValueWarning, to_value};
@@ -50,6 +55,14 @@ impl AnimationNode for Gain {
 
     fn reset(&self, _: &mut ()) {}
 }
+
+#[derive(Clone, Debug, Default, PartialEq, Reflect)]
+#[reflect(ClipEvent)]
+struct Footstep {
+    strength: f32,
+}
+
+impl ClipEvent for Footstep {}
 
 fn encoding_dir() -> &'static Path {
     Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/encoding"))
@@ -356,8 +369,113 @@ fn animation_clip_encoding_matches_its_fixture() {
         ),
     );
     clip.set_frame_rate(30.0);
+    clip.add_event(
+        0.25,
+        AnimationEvent {
+            name: name!("footstep_left"),
+        },
+    );
 
     check_encoding(&clip, encoding_dir());
+}
+
+#[test]
+fn a_version_1_clip_migrates_to_a_clip_with_no_events() {
+    let payload = std::fs::read(encoding_dir().join("AnimationClip.v1.bin")).unwrap();
+    let header = ContentAssetHeader {
+        asset_id: AssetId::from_path("content/clips/turn.gasset"),
+        references: Vec::new(),
+        kind: "AnimationClip".to_string(),
+        kind_version: 1,
+        provenance: None,
+    };
+    let bytes = write_content_asset(&header, &payload).unwrap();
+
+    let (_, clip) = decode_content_asset::<AnimationClip>(&bytes).expect("migrates");
+
+    assert!(clip.events().is_empty());
+    assert_eq!(clip.duration(), 0.5);
+    assert_eq!(clip.frame_rate(), Some(30.0));
+    assert_eq!(
+        clip.get_channels(&Uuid::from_u128(7)).map(Vec::len),
+        Some(1)
+    );
+}
+
+fn round_trip_clip(clip: &AnimationClip) -> AnimationClip {
+    bincode::deserialize(&bincode::serialize(clip).unwrap()).unwrap()
+}
+
+fn live_event<T: ClipEvent>(clip: &AnimationClip, index: usize) -> Option<&T> {
+    match &clip.events()[index].event {
+        ClipEventData::Live { value, .. } => value.downcast_ref::<T>(),
+        ClipEventData::Stored { .. } => None,
+    }
+}
+
+#[test]
+fn a_loaded_animation_event_is_stored_until_made_live() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(
+        0.25,
+        AnimationEvent {
+            name: name!("footstep_left"),
+        },
+    );
+    let mut loaded = round_trip_clip(&clip);
+    assert!(matches!(
+        loaded.events()[0].event,
+        ClipEventData::Stored { .. }
+    ));
+
+    let warnings = loaded.make_live(&registry(false), None);
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.events()[0].time, 0.25);
+    assert_eq!(
+        live_event::<AnimationEvent>(&loaded, 0),
+        Some(&AnimationEvent {
+            name: name!("footstep_left"),
+        })
+    );
+}
+
+#[test]
+fn a_registered_game_event_is_made_live_with_its_stored_fields() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(0.5, Footstep { strength: 2.5 });
+    let mut loaded = round_trip_clip(&clip);
+    let mut registry = registry(false);
+    registry.register::<Footstep>();
+
+    let warnings = loaded.make_live(&registry, None);
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        live_event::<Footstep>(&loaded, 0),
+        Some(&Footstep { strength: 2.5 })
+    );
+}
+
+#[test]
+fn an_unregistered_stored_event_is_dropped_with_one_warning_naming_its_type() {
+    let mut clip = AnimationClip::default();
+    clip.add_event(0.1, Footstep { strength: 1.0 });
+    clip.add_event(
+        0.2,
+        AnimationEvent {
+            name: name!("land"),
+        },
+    );
+    let mut loaded = round_trip_clip(&clip);
+
+    let warnings = loaded.make_live(&registry(false), None);
+
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].path, std::any::type_name::<Footstep>());
+    assert_eq!(loaded.events().len(), 1);
+    assert_eq!(loaded.events()[0].time, 0.2);
+    assert!(live_event::<AnimationEvent>(&loaded, 0).is_some());
 }
 
 #[test]

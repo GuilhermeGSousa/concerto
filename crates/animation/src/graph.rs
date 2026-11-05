@@ -85,15 +85,15 @@ impl AnimationNodeData {
 }
 
 #[derive(serde::Serialize)]
-struct StoredRef<'a> {
-    type_name: &'a str,
-    value: Cow<'a, ReflectedValue>,
+pub(crate) struct StoredRef<'a> {
+    pub(crate) type_name: &'a str,
+    pub(crate) value: Cow<'a, ReflectedValue>,
 }
 
 #[derive(serde::Deserialize)]
-struct Stored {
-    type_name: String,
-    value: ReflectedValue,
+pub(crate) struct Stored {
+    pub(crate) type_name: String,
+    pub(crate) value: ReflectedValue,
 }
 
 impl serde::Serialize for AnimationNodeData {

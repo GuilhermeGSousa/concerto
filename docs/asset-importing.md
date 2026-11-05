@@ -312,6 +312,18 @@ When you change one:
    with it, and the PR says so. After that, files at that version are
    rejected.
 
+`AnimationClip` is at version 2, which adds the clip's events. Its `migrate`
+reads a version-1 payload through `legacy::AnimationClipV1`
+(`crates/animation/src/clip.rs`) as a clip with no events, and
+`AnimationClip.v1.bin` stays with a test that decodes it. The clips committed
+under `examples/tech-demo/content/UAL1/` and
+`examples/tech-demo/content/lafan1/animations/` are still version 1: they
+migrate in memory on every load, and the editor reports them as outdated until
+they are re-imported. Like a graph's nodes, each event is stored as its Rust
+type name and reflected fields. A clip makes its events live when it loads; an
+event whose type is not registered with `register_clip_event`, or whose stored
+value leaves a warning, is dropped with a warning naming the clip and the type.
+
 The editor reports outdated files when the first scene of a project opens.
 It compares each entry's `kind_version` with the `FORMAT_VERSION` that the
 scene's `AssetServer` records for that kind. That server is built from the
