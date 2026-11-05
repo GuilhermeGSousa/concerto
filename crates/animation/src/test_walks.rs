@@ -5,6 +5,8 @@ use concerto_ecs::{
     system::input::{InputSet, InputState},
 };
 use concerto_foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
+use concerto_mesh::Skeleton;
+use glam::Affine3A;
 
 use crate::{
     blackboard::AnimationBlackboard,
@@ -98,7 +100,7 @@ impl Walks {
         blackboard: &AnimationBlackboard,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.create, blackboard, None, f)
+        walk(&self.world, &self.create, blackboard, None, None, None, f)
     }
 
     pub(crate) fn update<R>(
@@ -106,7 +108,7 @@ impl Walks {
         blackboard: &AnimationBlackboard,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.update, blackboard, None, f)
+        walk(&self.world, &self.update, blackboard, None, None, None, f)
     }
 
     pub(crate) fn evaluate<R>(
@@ -115,7 +117,26 @@ impl Walks {
         root: Option<RootBone>,
         f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
     ) -> R {
-        walk(&self.world, &self.evaluate, blackboard, root, f)
+        walk(&self.world, &self.evaluate, blackboard, root, None, None, f)
+    }
+
+    #[expect(dead_code)]
+    pub(crate) fn evaluate_posed<R>(
+        &self,
+        blackboard: &AnimationBlackboard,
+        skeleton: &Skeleton,
+        model_to_world: Option<Affine3A>,
+        f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
+    ) -> R {
+        walk(
+            &self.world,
+            &self.evaluate,
+            blackboard,
+            None,
+            Some(skeleton),
+            model_to_world,
+            f,
+        )
     }
 }
 
@@ -124,6 +145,8 @@ fn walk<K: 'static, R>(
     state: &Walk<K>,
     blackboard: &AnimationBlackboard,
     root: Option<RootBone>,
+    skeleton: Option<&Skeleton>,
+    model_to_world: Option<Affine3A>,
     f: impl FnOnce(&AnimationGraphContext<'_>) -> R,
 ) -> R {
     let mut state = state.borrow_mut();
@@ -131,7 +154,8 @@ fn walk<K: 'static, R>(
     let context = AnimationGraphContext {
         blackboard,
         root,
-        skeleton: None,
+        skeleton,
+        model_to_world,
         inputs: &inputs,
     };
     f(&context)

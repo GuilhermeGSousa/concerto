@@ -256,8 +256,9 @@ an update reads. A node whose input is missing, or whose type was registered
 without `register_animation_node`, is skipped in that walk with a warning. The
 clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
-player's own data: its blackboard, its root bone in `evaluate`, and its
-skeleton.
+player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
+and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
+or identity when it has none.
 
 Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with

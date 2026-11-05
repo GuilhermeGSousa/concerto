@@ -14,7 +14,7 @@ use concerto_foundation::{
 use concerto_mesh::skeleton::Skeleton;
 use concerto_name::Name;
 use concerto_reflect::Reflect;
-use glam::{Vec2, Vec3};
+use glam::{Affine3A, Vec2, Vec3};
 
 use crate::{
     blackboard::AnimationBlackboard,
@@ -152,6 +152,7 @@ impl AnimationPlayer {
             blackboard: &self.blackboard,
             root: None,
             skeleton: None,
+            model_to_world: None,
             inputs,
         };
         self.graph_state
@@ -169,6 +170,7 @@ impl AnimationPlayer {
             blackboard: &self.blackboard,
             root: None,
             skeleton,
+            model_to_world: None,
             inputs,
         };
         self.graph_state.update(delta_time, graphs, &context);
@@ -207,6 +209,7 @@ impl AnimationPlayer {
             blackboard: &self.blackboard,
             root,
             skeleton: Some(skeleton),
+            model_to_world: Some(model_to_world_of(bones, parents, globals)),
             inputs,
         };
 
@@ -247,6 +250,21 @@ impl AnimationPlayer {
         self.pose_pool.release(output_pose);
         true
     }
+}
+
+fn model_to_world_of(
+    bones: &[SceneEntityRef],
+    parents: &Query<&ChildOf>,
+    globals: &Query<&GlobalTransform>,
+) -> Affine3A {
+    bones
+        .first()
+        .and_then(|bone| bone.entity())
+        .and_then(|bone| parents.get_entity(bone))
+        .and_then(|parent| globals.get_entity(parent.parent()))
+        .map_or(Affine3A::IDENTITY, |global| {
+            Affine3A::from_mat4(global.matrix())
+        })
 }
 
 fn up_of(root: Entity, parents: &Query<&ChildOf>, globals: &Query<&GlobalTransform>) -> Vec3 {
