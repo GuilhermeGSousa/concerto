@@ -346,12 +346,14 @@ mod tests {
     use glam::{Quat, Vec3};
     use uuid::Uuid;
 
-    use super::{AnimationClipNode, AnimationClipNodeState, AnimationNode, AnimationPlayMode};
+    use super::{
+        AnimationClipNode, AnimationClipNodeState, AnimationNode, AnimationPlayMode, BlendNode,
+    };
     use crate::{
         blackboard::AnimationBlackboard,
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
         evaluation::{AnimationGraphContext, RootBone},
-        pose::{JointPose, Pose, PosePool, RootMotion},
+        pose::{EvaluatedPose, JointPose, Pose, PosePool, RootMotion},
         test_walks::Walks,
     };
 
@@ -772,5 +774,83 @@ mod tests {
             RootMotion::IDENTITY,
             "a finished clip must not repeat its last delta"
         );
+    }
+
+    fn weighted(translation: Vec3, weight: f32) -> EvaluatedPose {
+        let mut pose = Pose::from_joints(vec![JointPose {
+            translation,
+            rotation: Quat::IDENTITY,
+            scale: Vec3::ONE,
+        }]);
+        pose.set_root_motion(RootMotion {
+            translation,
+            rotation: Quat::IDENTITY,
+        });
+        EvaluatedPose { pose, weight }
+    }
+
+    fn blend(inputs: &[EvaluatedPose]) -> Pose {
+        let walks = Walks::new(AssetStore::new(), AssetStore::new());
+        let mut pool = PosePool::new(1);
+        let mut output = pool.acquire();
+        walks.evaluate(&AnimationBlackboard::default(), None, |context| {
+            BlendNode {}.evaluate(&mut (), &(), context, &[], inputs, &mut pool, &mut output)
+        });
+        output
+    }
+
+    fn assert_translation(pose: &Pose, expected: Vec3) {
+        let joint = pose.joints()[0].translation;
+        assert!(
+            joint.abs_diff_eq(expected, 1e-5),
+            "expected joint translation {expected}, got {joint}"
+        );
+        let root = pose.root_motion().translation;
+        assert!(
+            root.abs_diff_eq(expected, 1e-5),
+            "expected root motion translation {expected}, got {root}"
+        );
+    }
+
+    #[test]
+    fn a_blend_of_two_inputs_at_equal_weight_lands_halfway() {
+        let blended = blend(&[
+            weighted(Vec3::ZERO, 1.0),
+            weighted(Vec3::new(4.0, 0.0, 2.0), 1.0),
+        ]);
+
+        assert_translation(&blended, Vec3::new(2.0, 0.0, 1.0));
+    }
+
+    #[test]
+    fn a_blend_leans_toward_its_heavier_input() {
+        let blended = blend(&[weighted(Vec3::ZERO, 3.0), weighted(Vec3::X * 4.0, 1.0)]);
+
+        assert_translation(&blended, Vec3::X);
+    }
+
+    #[test]
+    fn a_blend_of_three_inputs_is_their_weighted_average() {
+        let blended = blend(&[
+            weighted(Vec3::ZERO, 1.0),
+            weighted(Vec3::X * 4.0, 1.0),
+            weighted(Vec3::Z * 4.0, 2.0),
+        ]);
+
+        assert_translation(&blended, Vec3::new(1.0, 0.0, 2.0));
+    }
+
+    #[test]
+    fn an_input_at_zero_weight_has_no_part_in_the_blend() {
+        let blended = blend(&[weighted(Vec3::X * 4.0, 0.0), weighted(Vec3::Z * 2.0, 1.0)]);
+
+        assert_translation(&blended, Vec3::Z * 2.0);
+    }
+
+    #[test]
+    fn a_blend_with_no_weighted_input_keeps_the_rest_pose() {
+        let blended = blend(&[weighted(Vec3::X * 4.0, 0.0)]);
+
+        assert_translation(&blended, Vec3::ZERO);
     }
 }
