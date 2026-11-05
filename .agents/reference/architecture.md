@@ -113,8 +113,10 @@ time. The running game never reads them.
   at compile time. The runtime finds files by UUID through the registry.
 - No registry file exists, committed or at runtime. A game's `build.rs` calls
   `concerto_asset_build::track_assets`, which scans `content/` and writes the
-  registry to `OUT_DIR`. `concerto::content_registry!()` embeds it, and
-  `concerto::run` installs it. A `.gasset` moved or added in a file explorer
+  registry to `OUT_DIR` and records the package directory as
+  `CONCERTO_PROJECT_ROOT`. `concerto::content_registry!()` embeds both, and
+  `concerto::run` installs the registry and, natively, keeps derived data under
+  that root's `derived-cache/`. A `.gasset` moved or added in a file explorer
   or by git is picked up at the next build.
 - `AssetRegistry` is the one catalogue of content on disk: id, address, kind.
   It is a resource; `registry.of_type::<T>()` lists assets without loading
