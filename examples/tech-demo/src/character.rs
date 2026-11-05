@@ -33,7 +33,7 @@ use concerto_motion_matching_gizmos::MotionMatchingGizmos;
 use glam::{EulerRot, Quat, Vec2, Vec3};
 
 const CHARACTER_SCENE: AssetId = asset_id!("content/lafan1/model_skeleton/scene.gasset");
-const DATABASE: AssetId = asset_id!("content/lafan_database_baked.gasset");
+const DATABASE: AssetId = asset_id!("content/lafan_database.gasset");
 
 const WALLS: [(Vec3, Vec3); 2] = [
     (Vec3::new(0.0, 1.0, -18.0), Vec3::new(6.0, 2.0, 0.5)),
