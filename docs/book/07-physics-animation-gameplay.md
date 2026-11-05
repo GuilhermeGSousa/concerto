@@ -46,21 +46,36 @@ The `PhysicsState` resource answers questions about the simulated world and
 takes forces:
 
 ```rust
+use concerto::physics::body::BodyId;
 use concerto::physics::physics_state::PhysicsState;
+use concerto::physics::query::QueryFilter;
 
-fn shoot(physics: Res<PhysicsState>, guns: Query<&GlobalTransform, With<Gun>>) {
-    for gun in guns.iter() {
+fn shoot(physics: Res<PhysicsState>, guns: Query<(&GlobalTransform, &BodyId), With<Gun>>) {
+    for (gun, body) in guns.iter() {
         let forward = gun.matrix().transform_vector3(Vec3::NEG_Z);
-        if let Some(hit) = physics.cast_ray(gun.translation(), forward * 100.0) {
+        let filter = QueryFilter { ignore: &[*body] };
+        if let Some(hit) = physics.cast_ray(gun.translation(), forward * 100.0, filter) {
             println!("hit {:?} at {}", hit.entity, hit.point);
         }
     }
 }
 ```
 
-`cast_ray(origin, direction_and_length)` returns the first hit, with its
-point and, when it hit a body with an entity, that `entity`. A simulated
-entity gets a `BodyId`, which `physics.add_impulse(body_id, impulse)` takes.
+`cast_ray(origin, direction_and_length, filter)` returns the first hit, with
+its fraction, point and normal and, when it hit a body with an entity, that
+`entity`. A ray that starts inside a body hits it at fraction 0. The
+`QueryFilter` lists bodies the ray passes through, such as the shooter's own;
+`QueryFilter::default()` ignores nothing.
+
+`cast_sphere(origin, radius, direction_and_length, filter)` sweeps a sphere
+instead of a ray and returns a `ShapeHit` for the first body it touches: the
+fraction of the sweep at which it touches, the contact point on the body, and
+the normal of the hit surface, pointing away from it. A sphere that starts
+overlapping a body hits it at fraction 0, whichever way it moves, and triangle
+meshes are hit from both sides. A radius below `0.001` is raised to it.
+
+A simulated entity gets a `BodyId`, which
+`physics.add_impulse(body_id, impulse)` takes.
 
 ### Characters
 
@@ -318,6 +333,13 @@ wall.
 - `CameraPivot` and `EntityFollow { target, offset }` make a third-person
   camera rig: put a `VirtualCamera` as a child of a pivot that follows the
   player.
+- `CameraBoom { offset, probe_radius, min_distance, return_halflife }` on that
+  camera child keeps it out of walls. Each frame it sweeps a sphere of
+  `probe_radius` from the pivot toward `offset`, ignoring the body of the
+  pivot's `EntityFollow` target, and pulls the camera in to the first hit at
+  once, never closer than `min_distance`. Once the way is clear it eases back
+  out, closing half the gap every `return_halflife` seconds. The pivot must be
+  a root entity.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
   system flies it with the keyboard and mouse, for looking around a scene.
@@ -331,6 +353,7 @@ cmd.spawn((
 .add_child((
     VirtualCamera::new(0),
     Transform::from_translation_rotation(Vec3::NEG_Z * 10.0, Quat::from_rotation_y(PI)),
+    CameraBoom { offset: Vec3::NEG_Z * 10.0, ..Default::default() },
 ));
 ```
 

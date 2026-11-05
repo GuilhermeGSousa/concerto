@@ -40,6 +40,14 @@ pub struct RawRayHit<Handle> {
     pub normal: Vec3,
 }
 
+/// The first body a swept sphere touches, in backend terms.
+pub struct RawShapeHit<Handle> {
+    pub body: Handle,
+    pub fraction: f32,
+    pub point: Vec3,
+    pub normal: Vec3,
+}
+
 /// A ground contact found by [`PhysicsBackend::probe_ground`]: the contact
 /// with the most upward-facing normal within reach of the probed body's
 /// shape. Slope classification against a walkable angle happens in the
@@ -117,8 +125,23 @@ pub trait PhysicsBackend: Send + Sync + Sized {
     fn add_force_at(&mut self, body: Self::BodyHandle, force: Vec3, position: Vec3);
 
     /// Casts a ray from `origin` along `direction` — whose length is the
-    /// maximum cast distance — and returns the closest hit, if any.
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>>;
+    /// maximum cast distance — and returns the closest hit, if any, skipping
+    /// the bodies in `ignore`.
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>>;
+
+    /// Sweeps a sphere of `radius` from `origin` along `direction` and returns the first body it touches, skipping `ignore`.
+    fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawShapeHit<Self::BodyHandle>>;
 
     /// Collides `body`'s shape against the world (ignoring `body` itself)
     /// and reports the contact with the most upward-facing normal within

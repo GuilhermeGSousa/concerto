@@ -8,7 +8,9 @@ use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 
 use crate::aabb::Aabb;
-use crate::backend::{MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit};
+use crate::backend::{
+    MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawShapeHit,
+};
 use crate::collider::{Collider, ColliderOffset};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
@@ -304,7 +306,12 @@ impl PhysicsBackend for JoltBackend {
         }
     }
 
-    fn cast_ray(&self, origin: Vec3, direction: Vec3) -> Option<RawRayHit<Self::BodyHandle>> {
+    fn cast_ray(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawRayHit<Self::BodyHandle>> {
         let origin_array = origin.to_array();
         let direction_array = direction.to_array();
         let mut hit = concerto_jolt_ffi::JoltRayHit {
@@ -313,13 +320,14 @@ impl PhysicsBackend for JoltBackend {
             normal: [0.0; 3],
         };
 
-        // SAFETY: the input arrays are valid xyz triples and `hit` is a valid
-        // out-buffer; the shim only writes it when returning true.
+        // SAFETY: the arrays are valid xyz triples, `ignore` holds `ignore.len()` ids, and `hit` is a valid out-buffer.
         let did_hit = unsafe {
             concerto_jolt_ffi::jolt_world_cast_ray(
                 self.world,
                 origin_array.as_ptr(),
                 direction_array.as_ptr(),
+                ignore.as_ptr(),
+                ignore.len() as u32,
                 &mut hit,
             )
         };
@@ -327,6 +335,43 @@ impl PhysicsBackend for JoltBackend {
         did_hit.then(|| RawRayHit {
             body: hit.body,
             fraction: hit.fraction,
+            normal: Vec3::from(hit.normal),
+        })
+    }
+
+    fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawShapeHit<Self::BodyHandle>> {
+        let origin_array = origin.to_array();
+        let direction_array = direction.to_array();
+        let mut hit = concerto_jolt_ffi::JoltShapeHit {
+            body: 0,
+            fraction: 0.0,
+            point: [0.0; 3],
+            normal: [0.0; 3],
+        };
+
+        // SAFETY: the arrays are valid xyz triples, `ignore` holds `ignore.len()` ids, and `hit` is a valid out-buffer.
+        let did_hit = unsafe {
+            concerto_jolt_ffi::jolt_world_cast_sphere(
+                self.world,
+                origin_array.as_ptr(),
+                radius,
+                direction_array.as_ptr(),
+                ignore.as_ptr(),
+                ignore.len() as u32,
+                &mut hit,
+            )
+        };
+
+        did_hit.then(|| RawShapeHit {
+            body: hit.body,
+            fraction: hit.fraction,
+            point: Vec3::from(hit.point),
             normal: Vec3::from(hit.normal),
         })
     }

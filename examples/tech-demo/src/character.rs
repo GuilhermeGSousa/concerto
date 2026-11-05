@@ -10,7 +10,7 @@ use concerto::ecs::reflect::{ReflectComponent, ReflectSceneComponent};
 use concerto::ecs::{Entity, Query, With, Without};
 use concerto::foundation::assets::{asset_store::AssetStore, handle::AssetHandle};
 use concerto::foundation::transform::Transform;
-use concerto::gameplay::camera::{CameraPivot, EntityFollow};
+use concerto::gameplay::camera::{CameraBoom, CameraPivot, EntityFollow};
 use concerto::mesh::{MeshComponent, primitives::cuboid};
 use concerto::motion_matching::{
     Adjustment, CharacterDisplacement, CharacterLink, CharacterSimulation, Clamp, DesiredMotion,
@@ -43,12 +43,13 @@ const WALL_COLOR: Color = Color::srgba(0.45, 0.45, 0.5, 1.0);
 
 const CAMERA_HEIGHT: f32 = 1.4;
 
-/// The player capsule's size, how far behind it the camera sits, and how the visible character follows it.
+/// The player capsule's size, how far behind it the camera sits and whether walls pull it in, and how the visible character follows it.
 #[derive(Resource, Clone, Debug, PartialEq)]
 pub(crate) struct CharacterConfig {
     pub(crate) radius: f32,
     pub(crate) height: f32,
     pub(crate) camera_distance: f32,
+    pub(crate) camera_collision: bool,
     pub(crate) displacement: CharacterDisplacement,
 }
 
@@ -59,6 +60,7 @@ impl CharacterConfig {
             radius: 0.3,
             height: 1.6,
             camera_distance: 5.0,
+            camera_collision: false,
             displacement: CharacterDisplacement::default(),
         }
     }
@@ -69,6 +71,7 @@ impl CharacterConfig {
             radius: 0.35,
             height: 1.8,
             camera_distance: 3.0,
+            camera_collision: true,
             displacement: CharacterDisplacement::Synchronization(Synchronization {
                 data_factor: 1.0,
             }),
@@ -159,13 +162,23 @@ pub(crate) fn spawn_character(
                 offset: Vec3::Y * CAMERA_HEIGHT,
             },
         ))
-        .add_child((
-            VirtualCamera::new(0),
-            Transform::from_translation_rotation(
-                Vec3::NEG_Z * config.camera_distance,
-                Quat::from_rotation_y(PI),
+        .add_child_with(
+            (
+                VirtualCamera::new(0),
+                Transform::from_translation_rotation(
+                    Vec3::NEG_Z * config.camera_distance,
+                    Quat::from_rotation_y(PI),
+                ),
             ),
-        ));
+            |mut camera| {
+                if config.camera_collision {
+                    camera.insert(CameraBoom {
+                        offset: Vec3::NEG_Z * config.camera_distance,
+                        ..Default::default()
+                    });
+                }
+            },
+        );
 
         spawner.should_spawn = false;
     }
@@ -385,7 +398,7 @@ mod tests {
     use glam::{Quat, Vec3};
 
     use concerto::director::VirtualCamera;
-    use concerto::gameplay::camera::CameraPivot;
+    use concerto::gameplay::camera::{CameraBoom, CameraPivot};
 
     use super::{
         CHARACTER_SCENE, CharacterConfig, DATABASE, Player, PlayerSpawner, RUN, WALK,
@@ -488,6 +501,39 @@ mod tests {
             .map(|transform| transform.translation)
             .collect();
         assert_eq!(cameras, vec![Vec3::NEG_Z * 3.0]);
+    }
+
+    fn camera_booms(world: &mut World) -> Vec<Option<CameraBoom>> {
+        world
+            .query::<(&VirtualCamera, Option<&CameraBoom>), ()>()
+            .iter(world)
+            .map(|(_, boom)| boom.cloned())
+            .collect()
+    }
+
+    #[test]
+    fn the_sanatorium_camera_has_a_boom_as_long_as_its_distance() {
+        let (mut world, _) = world_with_spawner();
+        world.insert_resource(CharacterConfig::sanatorium());
+
+        spawned(&mut world);
+
+        assert_eq!(
+            camera_booms(&mut world),
+            vec![Some(CameraBoom {
+                offset: Vec3::NEG_Z * 3.0,
+                ..Default::default()
+            })]
+        );
+    }
+
+    #[test]
+    fn the_forest_camera_has_no_boom() {
+        let (mut world, _) = world_with_spawner();
+
+        spawned(&mut world);
+
+        assert_eq!(camera_booms(&mut world), vec![None]);
     }
 
     #[test]
