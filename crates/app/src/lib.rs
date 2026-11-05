@@ -38,7 +38,8 @@ use concerto_ecs::{
 use log::info;
 
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, handle::AssetLifetimeEvent, Asset, AssetId,
+    asset_server::AssetServer, asset_store::AssetStore, derived::DerivedData,
+    handle::AssetLifetimeEvent, Asset, AssetId,
 };
 
 use crate::{
@@ -152,12 +153,24 @@ impl App {
 
     /// Registers an asset type and the system that tracks its handles; requires [`AssetManagerPlugin`](plugins::AssetManagerPlugin).
     pub fn register_asset<A: Asset>(&mut self) -> &mut Self {
+        self.register_asset_with::<A>(AssetServer::register_asset)
+    }
+
+    /// Registers a derived asset type as [`register_asset`](Self::register_asset) does, deriving its blob on every load.
+    pub fn register_derived_asset<A: DerivedData>(&mut self) -> &mut Self {
+        self.register_asset_with::<A>(AssetServer::register_derived_asset)
+    }
+
+    fn register_asset_with<A: Asset>(
+        &mut self,
+        register: fn(&mut AssetServer, &AssetStore<A>),
+    ) -> &mut Self {
         let asset_store = AssetStore::<A>::new();
         let asset_server = self
             .get_resource_mut::<AssetServer>()
             .expect("Asset Server not found");
 
-        asset_server.register_asset::<A>(&asset_store);
+        register(asset_server, &asset_store);
 
         self.add_system(
             Update,

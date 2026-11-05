@@ -26,6 +26,7 @@ use crate::{
 use super::{
     asset_container::AssetContainer,
     asset_store::AssetStore,
+    derived::{derived_hook, note_derived_kinds, DerivedData, DerivedDataCache, DerivedHook},
     handle::{AssetHandle, AssetLifetimeEvent},
     registry::{AssetEntry, AssetRegistry},
     Asset, AssetId, ContentAssetRoot,
@@ -107,6 +108,8 @@ pub(crate) struct AssetServerData {
     content: RwLock<ContentState>,
     type_registry: RwLock<AppTypeRegistry>,
     kinds: RwLock<HashMap<&'static str, (&'static str, u32)>>,
+    derived_hooks: RwLock<HashMap<TypeId, DerivedHook>>,
+    derived_cache: RwLock<DerivedDataCache>,
 }
 
 struct ContentState {
@@ -139,6 +142,8 @@ impl AssetServer {
             }),
             type_registry: RwLock::new(AppTypeRegistry::default()),
             kinds: RwLock::new(HashMap::new()),
+            derived_hooks: RwLock::new(HashMap::new()),
+            derived_cache: RwLock::new(DerivedDataCache::none()),
         };
 
         Self {
@@ -226,6 +231,27 @@ impl AssetServer {
         }
     }
 
+    /// Registers `A` as [`register_asset`](Self::register_asset) does, and derives its blob on every load.
+    pub fn register_derived_asset<A: DerivedData>(&mut self, asset: &AssetStore<A>) {
+        self.register_asset(asset);
+        note_derived_kinds::<A>();
+        self.data
+            .derived_hooks
+            .write()
+            .unwrap()
+            .insert(TypeId::of::<A>(), derived_hook::<A>);
+    }
+
+    /// Replaces the cache derived loads read and write; every clone sees it.
+    pub fn set_derived_cache(&self, cache: DerivedDataCache) {
+        *self.data.derived_cache.write().unwrap() = cache;
+    }
+
+    /// The cache derived loads read and write, none until one is set.
+    pub fn derived_cache(&self) -> DerivedDataCache {
+        self.data.derived_cache.read().unwrap().clone()
+    }
+
     /// The name and `FORMAT_VERSION` of the registered asset type that reads files of `kind`, under its name or one of its former names.
     pub fn current_kind(&self, kind: &str) -> Option<(&'static str, u32)> {
         self.data.kinds.read().unwrap().get(kind).copied()
@@ -298,6 +324,11 @@ impl AssetServer {
         self.resolve_asset(id).map(|(_, entry)| entry.address)
     }
 
+    pub(crate) fn content_source(&self) -> (ContentAssetRoot, Arc<AssetRegistry>) {
+        let content = self.data.content.read().unwrap();
+        (content.root.clone(), Arc::clone(&content.registry))
+    }
+
     fn resolve_asset(&self, id: AssetId) -> Option<(ContentAssetRoot, AssetEntry)> {
         let content = self.data.content.read().unwrap();
         let entry = content.registry.get(id)?.clone();
@@ -342,13 +373,26 @@ impl AssetServer {
                 return;
             }
             let address = entry.address;
+            let hook = server
+                .data
+                .derived_hooks
+                .read()
+                .unwrap()
+                .get(&TypeId::of::<A>())
+                .copied();
             let asset = async {
                 let mut asset =
                     crate::assets::utils::load_content_asset::<A>(&content_root, &address)
                         .await
                         .with_context(|| format!("failed to read {} asset", A::name()))?;
-                let context = AssetLoadContext::new(server, id);
+                let context = AssetLoadContext::new(server.clone(), id);
                 asset.on_load(&context)?;
+                if let Some(hook) = hook {
+                    asset = *hook(Box::new(asset), server)
+                        .await?
+                        .downcast::<A>()
+                        .map_err(|_| anyhow::anyhow!("the derived hook returned another type"))?;
+                }
                 anyhow::Ok(asset)
             }
             .await;
