@@ -466,6 +466,19 @@ is per animation second, so it is multiplied by `r` before it is handed to
 `Inertializer::transition`, both for the frame jumped to and for the source when
 there is no previous blended pose to take the velocity from.
 
+A database frame's future trajectory samples are reached after `1 / r` of
+their authored time, so before a search the published samples are rescaled
+into animation time: each sample's position relative to the simulation
+translation, and its velocity, are divided by `r`, and its rotation is kept.
+This is exact for a constant velocity and an approximation while the path
+curves. At `r == 1` the samples are used as published. The forced-search check
+reads the published trajectory, in real time. At `r == 0` the playhead holds,
+the root delta is `RootMotion::IDENTITY`, and no search runs: a search that
+comes due, from the timer, a settled change or the range end, is dropped, the
+timer restarts and the forced-search cooldown is spent as usual, and the next
+search is the next one due while `r` is above 0. The held pose still settles
+through the inertializer.
+
 Each fixed step `publish_trajectory` writes the character's predicted path to
 the blackboard of its `AnimationPlayer`, where only this crate reads it. A
 `CharacterLink` says where both are: `capsule` holds the simulation and
@@ -503,7 +516,9 @@ through `is_initialised()`, `has_failed()`, `frame()`, `pose()`, `query()` and
 
 `MotionMatchingState::last_query()` is a `LastQuery`, kept by each search:
 `features` is the raw query vector, `frame` the database frame it copied its
-`Pose` channels from, `simulation` and `trajectory` what it was built with, and
+`Pose` channels from, `simulation` and `trajectory` what it was built with
+(`trajectory` holds the samples rescaled by the rate, as the features read
+them), and
 `best_cost` the squared distance to the frame the search found, or `None` when it
 found none: a query that holds a NaN or an infinity, or a search at a range's
 last frame when every range is no longer than `ignore_range_end`. All five come from one moment, so a

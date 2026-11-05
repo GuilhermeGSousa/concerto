@@ -266,12 +266,13 @@ impl MotionMatchingState {
         };
         let simulation =
             Transform::from_translation_rotation(trajectory.translation, trajectory.rotation);
+        let samples = rescaled(trajectory, self.play_rate);
         let raw = match query.raw(
             database,
             sources.skeleton,
             self.frame,
             &simulation,
-            &trajectory.samples,
+            &samples,
         ) {
             Ok(raw) => raw,
             Err(BakeError::TrajectoryTooShort { .. }) => {
@@ -297,7 +298,7 @@ impl MotionMatchingState {
             features: raw,
             frame: self.frame,
             simulation,
-            trajectory: trajectory.samples.clone(),
+            trajectory: samples,
             best_cost: found.map(|(_, cost)| cost),
         });
         let Some((best, best_cost)) = found else {
@@ -350,7 +351,7 @@ impl MotionMatchingState {
         let in_range_end = self.frame + node.ignore_range_end >= range.end;
 
         let mut better = None;
-        if timer_due || forced || in_range_end {
+        if (timer_due || forced || in_range_end) && play_rate > 0.0 {
             if let Some(trajectory) = trajectory {
                 better = self.find_better_frame(node, trajectory, &sources)?;
             }
@@ -431,6 +432,22 @@ pub(crate) struct Sources<'a> {
     pub skeleton: &'a Skeleton,
     pub player_skeleton: &'a Skeleton,
     pub clips: Vec<&'a AnimationClip>,
+}
+
+fn rescaled(trajectory: &MotionMatchingTrajectory, play_rate: f32) -> Vec<TrajectorySample> {
+    if play_rate == 1.0 {
+        return trajectory.samples.clone();
+    }
+    trajectory
+        .samples
+        .iter()
+        .map(|sample| TrajectorySample {
+            position: trajectory.translation
+                + (sample.position - trajectory.translation) / play_rate,
+            velocity: sample.velocity / play_rate,
+            rotation: sample.rotation,
+        })
+        .collect()
 }
 
 fn copy_pose(pose: &Pose) -> Pose {

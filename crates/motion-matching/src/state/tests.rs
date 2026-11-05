@@ -1061,3 +1061,109 @@ fn at_rate_two_a_forced_jump_blends_from_the_destination_velocity_in_real_time()
         assert!(rotation.dot(expected_rotation).abs() > 0.99999);
     }
 }
+
+#[test]
+fn at_rate_two_the_last_query_holds_the_trajectory_rescaled_into_animation_time() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    let translation = Vec3::new(1.0, 0.0, 2.0);
+    let published = MotionMatchingTrajectory {
+        translation,
+        rotation: Quat::from_rotation_y(0.5),
+        samples: vec![
+            TrajectorySample {
+                position: Vec3::new(1.0, 0.0, 3.0),
+                velocity: Vec3::new(0.0, 0.0, -0.5),
+                rotation: Quat::from_rotation_y(0.6),
+            },
+            TrajectorySample {
+                position: Vec3::new(3.0, 1.0, 2.0),
+                velocity: Vec3::new(2.0, 0.0, 0.0),
+                rotation: Quat::from_rotation_y(-0.4),
+            },
+        ],
+    };
+    let mut board = AnimationBlackboard::default();
+    board.set(TRAJECTORY_KEY, published.clone());
+
+    state.search_timer = 0.0;
+    state.step(&node, 0.1, 2.0, &board, fixture.sources());
+
+    let last = state.last_query.as_ref().unwrap();
+    assert_eq!(last.simulation.translation, translation);
+    assert_eq!(last.trajectory.len(), published.samples.len());
+    for (rescaled, sample) in last.trajectory.iter().zip(&published.samples) {
+        let offset = (sample.position - translation) * 0.5;
+        assert!(rescaled.position.distance(translation + offset) < 1e-6);
+        assert!(rescaled.velocity.distance(sample.velocity * 0.5) < 1e-6);
+        assert_eq!(rescaled.rotation, sample.rotation);
+    }
+}
+
+#[test]
+fn at_rate_zero_the_frame_holds_with_no_root_motion_and_no_search() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    let start = state.frame;
+    state.search_timer = 0.0;
+
+    state.step(&node, 0.1, 0.0, &trajectory(0.25, 2), fixture.sources());
+
+    assert_eq!(state.frame, start);
+    assert_eq!(state.output.root_motion(), RootMotion::IDENTITY);
+    assert!(state.last_query.is_none());
+}
+
+#[test]
+fn at_rate_zero_the_end_of_a_range_does_not_search() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    state.frame = 40;
+    state.search_timer = 10.0;
+
+    state.step(&node, 0.0, 0.0, &trajectory(0.0, 2), fixture.sources());
+
+    assert_eq!(state.frame, 40);
+    assert!(state.last_query.is_none());
+}
+
+#[test]
+fn at_rate_zero_a_forced_search_is_dropped_and_its_cooldown_spent() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode {
+        search_period: 100.0,
+        velocity_change_threshold: 1.0,
+        ..Default::default()
+    };
+    let mut state = started(&fixture, &node);
+    state.search_timer = 100.0;
+
+    for pace in [0.0, 5.0, 5.0] {
+        state.step(&node, 0.1, 0.0, &trajectory(pace, 2), fixture.sources());
+    }
+
+    assert_eq!(state.forced_search_timer, 100.0);
+    assert!(state.last_query.is_none());
+}
+
+#[test]
+fn at_rate_zero_a_due_search_is_dropped_and_the_next_runs_once_the_rate_rises() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    let board = trajectory(0.25, 2);
+    state.search_timer = 0.0;
+
+    state.step(&node, 0.05, 0.0, &board, fixture.sources());
+    assert!(state.last_query.is_none());
+    assert_eq!(state.search_timer, node.search_period);
+
+    state.step(&node, 0.05, 1.0, &board, fixture.sources());
+    assert!(state.last_query.is_none());
+
+    state.step(&node, 0.05, 1.0, &board, fixture.sources());
+    assert!(state.last_query.is_some());
+}
