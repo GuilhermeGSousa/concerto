@@ -65,8 +65,17 @@ fn shoot(physics: Res<PhysicsState>, guns: Query<(&GlobalTransform, &BodyId), Wi
 its fraction, point and normal and, when it hit a body with an entity, that
 `entity`. A ray that starts inside a body hits it at fraction 0. The
 `QueryFilter` lists bodies the ray passes through, such as the shooter's own;
-`QueryFilter::default()` ignores nothing. A simulated
-entity gets a `BodyId`, which `physics.add_impulse(body_id, impulse)` takes.
+`QueryFilter::default()` ignores nothing.
+
+`cast_sphere(origin, radius, direction_and_length, filter)` sweeps a sphere
+instead of a ray and returns a `ShapeHit` for the first body it touches: the
+fraction of the sweep at which it touches, the contact point on the body, and
+the normal of the hit surface, pointing away from it. A sphere that starts
+overlapping a body hits it at fraction 0, whichever way it moves, and triangle
+meshes are hit from both sides. A radius below `0.001` is raised to it.
+
+A simulated entity gets a `BodyId`, which
+`physics.add_impulse(body_id, impulse)` takes.
 
 ### Characters
 

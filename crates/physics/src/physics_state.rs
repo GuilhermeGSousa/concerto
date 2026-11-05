@@ -9,10 +9,12 @@ use crate::backend::PhysicsBackend;
 use crate::body::BodyId;
 use crate::collider::{Collider, ColliderOffset};
 use crate::ground::{GroundContact, GroundState};
-use crate::query::QueryFilter;
+use crate::query::{QueryFilter, ShapeHit};
 use crate::ray::RayHit;
 use crate::rigid_body::RigidBody;
 use crate::ActiveBackend;
+
+const MIN_SPHERE_CAST_RADIUS: f32 = 1e-3;
 
 /// Owns the physics world of the active backend, plus the engine-side
 /// body↔entity bookkeeping shared by every backend.
@@ -133,6 +135,35 @@ impl PhysicsState {
                     entity: self.get_entity(body),
                     fraction: hit.fraction,
                     point: origin + direction * hit.fraction,
+                    normal: hit.normal,
+                }
+            })
+    }
+
+    /// Sweeps a sphere of `radius` from `origin` along `direction`, whose length is the sweep's reach.
+    pub fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        filter: QueryFilter,
+    ) -> Option<ShapeHit> {
+        let ignore: Vec<_> = filter.ignore.iter().map(|body| body.0).collect();
+        self.backend
+            .cast_sphere(
+                origin,
+                radius.max(MIN_SPHERE_CAST_RADIUS),
+                direction,
+                &ignore,
+            )
+            .map(|hit| {
+                let body = BodyId(hit.body);
+
+                ShapeHit {
+                    body,
+                    entity: self.get_entity(body),
+                    fraction: hit.fraction,
+                    point: hit.point,
                     normal: hit.normal,
                 }
             })

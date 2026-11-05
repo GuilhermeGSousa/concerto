@@ -14,14 +14,20 @@ use concerto_mesh::Mesh;
 use glam::{Quat, Vec3};
 use log::warn;
 use rapier3d::parry::bounding_volume::BoundingVolume;
-use rapier3d::parry::query::{ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher};
+use rapier3d::parry::query::{
+    cast_shapes, ContactManifold, DefaultQueryDispatcher, PersistentQueryDispatcher,
+    ShapeCastOptions,
+};
+use rapier3d::parry::shape::Ball;
 use rapier3d::prelude::{
     BroadPhaseBvh, CCDSolver, ColliderBuilder, ColliderSet, ImpulseJointSet, IntegrationParameters,
     IslandManager, LockedAxes, MultibodyJointSet, NarrowPhase, Ray, RigidBodyBuilder,
     RigidBodyHandle, RigidBodySet, SharedShape,
 };
 
-use crate::backend::{Aabb, MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit};
+use crate::backend::{
+    Aabb, MeshShapeCreationError, PhysicsBackend, RawGroundHit, RawRayHit, RawShapeHit,
+};
 use crate::collider::{Collider, ColliderOffset};
 use crate::rigid_body::{AllowedDofs, MotionType, RigidBody};
 
@@ -318,6 +324,58 @@ impl PhysicsBackend for RapierBackend {
                     body,
                     fraction: intersection.time_of_impact,
                     normal: from_rapier_vec(intersection.normal),
+                });
+            }
+        }
+
+        best
+    }
+
+    fn cast_sphere(
+        &self,
+        origin: Vec3,
+        radius: f32,
+        direction: Vec3,
+        ignore: &[Self::BodyHandle],
+    ) -> Option<RawShapeHit<Self::BodyHandle>> {
+        let ball = Ball::new(radius);
+        let ball_pose = rapier3d::math::Pose::from_translation(to_rapier_vec(origin));
+        let velocity = to_rapier_vec(direction);
+        let options = ShapeCastOptions {
+            max_time_of_impact: 1.0,
+            stop_at_penetration: true,
+            ..ShapeCastOptions::default()
+        };
+
+        let mut best: Option<RawShapeHit<Self::BodyHandle>> = None;
+        for (_, collider) in self.colliders.iter() {
+            let body = collider
+                .parent()
+                .expect("every collider is created with a parent body");
+            if ignore.contains(&body) {
+                continue;
+            }
+            let pose = collider.position();
+            let Ok(Some(hit)) = cast_shapes(
+                &ball_pose,
+                velocity,
+                &ball,
+                pose,
+                rapier3d::math::Vector::ZERO,
+                collider.shape(),
+                options,
+            ) else {
+                continue;
+            };
+            if best
+                .as_ref()
+                .is_none_or(|best| hit.time_of_impact < best.fraction)
+            {
+                best = Some(RawShapeHit {
+                    body,
+                    fraction: hit.time_of_impact,
+                    point: from_rapier_vec(pose.transform_point(hit.witness2)),
+                    normal: from_rapier_vec(pose.rotation * hit.normal2),
                 });
             }
         }
