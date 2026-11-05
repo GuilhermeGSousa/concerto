@@ -120,7 +120,8 @@ native run of the game use, so a blob found under that key is applied as it is,
 and a weight change, which the key leaves out, finds the blob it had. Otherwise
 the worker derives the blob, writes it to the cache and applies it, while the
 status reads `Deriving 2 of 6`: the entry being worked on, out of how many. A
-cache hit leaves the status alone. An error shows as `Derive failed: …` and
+cache hit leaves the status alone, except a `Deriving …` line left by a derive
+it replaced, which it clears. An error shows as `Derive failed: …` and
 stops the database, and so does a channel weight that is not finite and
 positive, on a cache hit as on a miss. A derive writes its lines only over an
 empty status, the line it started over, or its own last line: a line written

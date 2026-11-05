@@ -114,8 +114,14 @@ impl DeriveJob {
     }
 }
 
+const PROGRESS_PREFIX: &str = "Deriving ";
+
 pub(crate) fn progress_line(finished: usize, total: usize) -> String {
-    format!("Deriving {} of {total}", (finished + 1).min(total))
+    format!("{PROGRESS_PREFIX}{} of {total}", (finished + 1).min(total))
+}
+
+fn is_progress_line(line: &str) -> bool {
+    line.starts_with(PROGRESS_PREFIX)
 }
 
 struct DeriveInput {
@@ -225,7 +231,7 @@ fn finish_derive(
     let mut job_line = job.line;
     match derived {
         Ok(derived) => {
-            if counted && editor.status == job_line {
+            if editor.status == job_line && (counted || is_progress_line(&job_line)) {
                 editor.status.clear();
             }
             state.stats = Some(derived.stats);

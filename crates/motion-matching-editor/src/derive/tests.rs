@@ -491,6 +491,19 @@ fn a_derive_that_a_newer_one_replaces_is_dropped() {
     assert_eq!(frames(&tab), Some(81 + 109));
 }
 
+#[test]
+fn a_cache_hit_after_a_replaced_derive_clears_its_progress_line() {
+    let mut tab = ready(fixture());
+    let release = counting(&mut tab);
+    tab.state_mut().derive_wanted = true;
+    release.send(()).unwrap();
+
+    tab.until_settled();
+
+    assert_eq!(status(&tab), "");
+    assert_eq!(frames(&tab), Some(81 + 109));
+}
+
 fn counting(tab: &mut Tab) -> std::sync::mpsc::Sender<()> {
     let (job, release) = gated_job(tab, Some((1, 6)));
     tab.state_mut().derive_job = Some(job);
