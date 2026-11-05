@@ -330,6 +330,13 @@ wall.
 - `CameraPivot` and `EntityFollow { target, offset }` make a third-person
   camera rig: put a `VirtualCamera` as a child of a pivot that follows the
   player.
+- `CameraBoom { offset, probe_radius, min_distance, return_halflife }` on that
+  camera child keeps it out of walls. Each frame it sweeps a sphere of
+  `probe_radius` from the pivot toward `offset`, ignoring the body of the
+  pivot's `EntityFollow` target, and pulls the camera in to the first hit at
+  once, never closer than `min_distance`. Once the way is clear it eases back
+  out, closing half the gap every `return_halflife` seconds. The pivot must be
+  a root entity.
 - `gameplay::player::spawn_first_person_player(&mut cmd, position, extra)`
   spawns a player with a camera, and the `gameplay::movement::first_person_player_fly`
   system flies it with the keyboard and mouse, for looking around a scene.
@@ -343,6 +350,7 @@ cmd.spawn((
 .add_child((
     VirtualCamera::new(0),
     Transform::from_translation_rotation(Vec3::NEG_Z * 10.0, Quat::from_rotation_y(PI)),
+    CameraBoom { offset: Vec3::NEG_Z * 10.0, ..Default::default() },
 ));
 ```
 
