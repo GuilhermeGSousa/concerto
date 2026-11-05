@@ -15,8 +15,8 @@ use concerto_foundation::assets::AssetId;
 use concerto_foundation::assets::asset_server::AssetServer;
 use concerto_foundation::assets::asset_store::AssetStore;
 use concerto_foundation::assets::content::check_encoding;
-use concerto_foundation::assets::handle::AssetHandle;
-use concerto_reflect::{Reflect, TypeRegistry};
+use concerto_foundation::assets::handle::{AssetHandle, LiveLeaves};
+use concerto_reflect::{Reflect, ReflectedValue, TypeRegistry, to_value};
 use uuid::Uuid;
 
 #[derive(Default, Reflect)]
@@ -100,7 +100,12 @@ fn mixed_graph() -> AnimationGraph {
     graph
         .result_node()
         .with_input(Gain { amount: 2.5 }, |_| {})
-        .with_input(AnimationClipNode::new(clip("outer_pose")), |_| {})
+        .with_input(
+            AnimationClipNode::new(clip("outer_pose"))
+                .with_play_rate(1.5)
+                .with_play_rate_param("draw_speed"),
+            |_| {},
+        )
         .with_input(state_machine(), |_| {})
         .with_blend_space_2d_input("movement", |ctx| {
             ctx.animation_clip_input(clip("idle"), glam::Vec2::ZERO)
@@ -258,6 +263,28 @@ fn a_clip_handle_in_a_node_comes_back_strong() {
     let handle = live_node::<AnimationClipNode>(&graph).unwrap().clip();
     assert!(matches!(handle, AssetHandle::Strong(..)));
     assert_eq!(handle.id(), AssetId::from_path("outer_pose"));
+}
+
+#[test]
+fn a_stored_clip_node_without_a_play_rate_param_loads_with_an_empty_param_and_no_warning() {
+    let registry = registry(false);
+    let node = AnimationClipNode::new(clip("outer_pose")).with_play_rate(1.5);
+    let ReflectedValue::Struct(mut fields) = to_value(&node).unwrap() else {
+        panic!("a clip node is stored as a struct");
+    };
+    fields.retain(|(name, _)| name != "play_rate_param");
+    let data = *registry
+        .get_type_data::<ReflectAnimationNode>(std::any::TypeId::of::<AnimationClipNode>())
+        .unwrap();
+
+    let mut leaves = LiveLeaves::from_parts(&registry, None);
+    let (built, warnings) = (data.from_value)(&ReflectedValue::Struct(fields), &mut leaves);
+
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        (data.to_value)(&*built).unwrap().unwrap(),
+        to_value(&node).unwrap()
+    );
 }
 
 #[test]

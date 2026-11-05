@@ -179,7 +179,9 @@ fn drive(players: Query<&mut AnimationPlayer>) {
 A graph is a tree of nodes under a result node:
 
 - **Clip** plays one `AnimationClip`, looping or once
-  (`AnimationClipNode::new(clip).with_play_mode(PlayOnce)`).
+  (`AnimationClipNode::new(clip).with_play_mode(PlayOnce)`), at the rate set
+  with `with_play_rate` times the float parameter named with
+  `with_play_rate_param`. Root motion scales with the rate.
 - **Blend** mixes its inputs, each in proportion to its node weight, set
   with `AnimationPlayer::set_node_weight(node, weight)`. Every weight starts
   at 1.0, so inputs mix equally; an input at weight 0 is left out, and with
@@ -200,6 +202,10 @@ Parameters are set by name on the `AnimationPlayer` with `set_bool_param`,
 blackboard that stores each value as a boxed `Reflect`, so `set_param(key, value)`
 takes any `Reflect` type and `get_param::<T>(key)` returns `None` when the key is
 missing or holds another type; the typed methods are wrappers over those two.
+A node can read its playback rate from a float parameter: the rate is the
+node's own rate times the parameter, and a parameter that is missing or holds
+another type leaves the node's rate alone. A product that is negative or not
+finite holds the node at rate 0.
 `crates/animation/tests/graph_serialization.rs` builds a graph with a blend
 space and a state machine. The tech demo's character plays no authored graph:
 `examples/tech-demo/src/character.rs` gives it one `MotionMatchingNode`, which

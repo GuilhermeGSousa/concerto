@@ -270,6 +270,13 @@ node type also fails its check. That is a change to the persisted form, but not
 to the field layout: old graphs need the old name to resolve, not a version
 bump.
 
+Adding a reflected field to a node type is not a version bump either. A node is
+stored as its reflected fields by name, so the graph's bincode layout does not
+change, and a stored node without the new field loads with the field's value
+from the type's `Default` and no warning. The bytes of a newly encoded node do
+change, so the fixture is re-blessed at the same version, with the field set
+to something other than its default in the checked graph.
+
 When you change one:
 
 1. Raise the version. A derived type writes `#[asset(version = N)]` next to

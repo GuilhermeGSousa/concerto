@@ -3,6 +3,7 @@ use std::f32::consts::FRAC_PI_2;
 use concerto_animation::{
     blackboard::AnimationBlackboard,
     clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+    inertialization::{Inertializer, PoseVelocity},
     node::AnimationNode,
     pose::{Pose, RootMotion},
 };
@@ -11,7 +12,7 @@ use concerto_mesh::{skeleton::Skeleton, JointPose};
 use glam::{Quat, Vec3};
 use uuid::Uuid;
 
-use super::{MotionMatchingState, Sources};
+use super::{copy_pose, sample, MotionMatchingState, Sources};
 use crate::{
     database::MotionDatabase,
     node::{MotionMatchingNode, MotionMatchingTrajectory, TRAJECTORY_KEY},
@@ -109,7 +110,7 @@ fn the_first_step_initialises_the_state_and_outputs_the_first_frame() {
     let mut state = state(&node, 0.0);
     assert!(!state.initialised);
 
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     assert!(state.initialised);
     assert!(!state.failed);
@@ -129,12 +130,12 @@ fn a_new_state_after_a_graph_change_starts_uninitialised_and_initialises_again()
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut first = state(&node, 0.1);
-    first.step(&node, first.delta_time, &quiet(), fixture.sources());
+    first.step(&node, first.delta_time, 1.0, &quiet(), fixture.sources());
     assert!(first.initialised);
 
     let mut second = state(&node, 0.1);
     assert!(!second.initialised);
-    second.step(&node, second.delta_time, &quiet(), fixture.sources());
+    second.step(&node, second.delta_time, 1.0, &quiet(), fixture.sources());
 
     assert!(second.initialised);
     assert_eq!(second.frame, first.frame);
@@ -145,11 +146,11 @@ fn playback_at_speed_two_advances_two_clip_seconds_per_second() {
     let fixture = fixture(2.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let (_, start) = fixture.database.clip_time(state.frame).unwrap();
 
     state.delta_time = 0.5;
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     let (_, end) = fixture.database.clip_time(state.frame).unwrap();
     assert!((end - start - 1.0).abs() < 1e-3, "{start} -> {end}");
@@ -160,12 +161,13 @@ fn a_trajectory_shorter_than_needed_skips_the_search_and_keeps_playing() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.1;
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 1),
         fixture.sources(),
     );
@@ -181,10 +183,10 @@ fn a_missing_trajectory_keeps_playing_without_a_search() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.1;
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     assert!(!state.failed);
     assert_eq!(state.frame, 3);
@@ -195,13 +197,14 @@ fn a_standing_trajectory_moves_the_playhead_into_the_turn_clip() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.1;
     state.search_timer = 0.0;
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 2),
         fixture.sources(),
     );
@@ -215,12 +218,12 @@ fn a_transition_lands_on_the_frame_the_normalised_query_finds() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.1;
     state.search_timer = 0.0;
     let board = trajectory(0.25, 2);
-    state.step(&node, state.delta_time, &board, fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &board, fixture.sources());
 
     let samples = &board
         .get::<MotionMatchingTrajectory>(TRAJECTORY_KEY)
@@ -276,12 +279,13 @@ fn a_search_skips_the_range_ends_the_node_ignores() {
 
 fn searched(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingState {
     let mut state = state(node, 0.0);
-    state.step(node, state.delta_time, &quiet(), fixture.sources());
+    state.step(node, state.delta_time, 1.0, &quiet(), fixture.sources());
     state.delta_time = 0.1;
     state.search_timer = 0.0;
     state.step(
         node,
         state.delta_time,
+        1.0,
         &trajectory(0.25, 2),
         fixture.sources(),
     );
@@ -294,7 +298,7 @@ fn a_state_that_has_not_searched_has_no_last_query() {
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.1);
 
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     assert!(state.initialised);
     assert!(state.last_query.is_none());
@@ -305,7 +309,7 @@ fn a_search_keeps_its_raw_query_with_what_it_was_built_from() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let published = MotionMatchingTrajectory {
         translation: Vec3::new(1.0, 0.0, 2.0),
         rotation: Quat::from_rotation_y(0.5),
@@ -323,7 +327,7 @@ fn a_search_keeps_its_raw_query_with_what_it_was_built_from() {
 
     state.delta_time = 0.1;
     state.search_timer = 0.0;
-    state.step(&node, state.delta_time, &board, fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &board, fixture.sources());
 
     let last = state.last_query.as_ref().unwrap();
     assert_eq!(last.features, [0.25]);
@@ -388,13 +392,14 @@ fn a_non_finite_query_leaves_no_best_cost() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.1;
     state.search_timer = 0.0;
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(f32::INFINITY, 2),
         fixture.sources(),
     );
@@ -415,6 +420,7 @@ fn a_trajectory_too_short_to_search_clears_the_last_query() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.25, 1),
         fixture.sources(),
     );
@@ -433,6 +439,7 @@ fn a_tick_with_no_search_due_keeps_the_last_query() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.5, 2),
         fixture.sources(),
     );
@@ -458,13 +465,14 @@ fn no_search_runs_before_the_timer_is_due() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.03;
     state.search_timer = 10.0;
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 2),
         fixture.sources(),
     );
@@ -477,7 +485,7 @@ fn the_last_ignore_range_end_frames_force_a_search_before_the_timer_is_due() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     state.frame = 40;
     state.search_timer = 10.0;
 
@@ -485,6 +493,7 @@ fn the_last_ignore_range_end_frames_force_a_search_before_the_timer_is_due() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 2),
         fixture.sources(),
     );
@@ -497,7 +506,7 @@ fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     state.frame = last;
     state.search_timer = 10.0;
@@ -513,7 +522,7 @@ fn the_last_frame_of_a_range_never_holds_against_its_own_cost() {
     );
 
     state.delta_time = 0.0;
-    state.step(&node, state.delta_time, &board, fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &board, fixture.sources());
 
     assert_ne!(state.frame, last);
 }
@@ -523,7 +532,7 @@ fn the_last_frame_of_a_range_moves_to_the_next_ranges_first_frame() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     state.frame = last;
     state.search_timer = 10.0;
@@ -532,6 +541,7 @@ fn the_last_frame_of_a_range_moves_to_the_next_ranges_first_frame() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 2),
         fixture.sources(),
     );
@@ -555,13 +565,14 @@ fn a_nan_query_leaves_no_best_cost() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     state.delta_time = 0.1;
     state.search_timer = 0.0;
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(f32::NAN, 2),
         fixture.sources(),
     );
@@ -579,13 +590,14 @@ fn a_velocity_change_that_settles_forces_one_search() {
         ..Default::default()
     };
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     state.search_timer = 100.0;
 
     state.delta_time = 0.1;
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 2),
         fixture.sources(),
     );
@@ -595,6 +607,7 @@ fn a_velocity_change_that_settles_forces_one_search() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(5.0, 2),
         fixture.sources(),
     );
@@ -604,6 +617,7 @@ fn a_velocity_change_that_settles_forces_one_search() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(5.0, 2),
         fixture.sources(),
     );
@@ -615,9 +629,9 @@ fn the_output_pose_on_a_transition_frame_equals_the_pose_before_it() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     state.delta_time = 0.1;
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let before = joints(&state.blended);
     let frame_before = state.frame;
 
@@ -626,6 +640,7 @@ fn the_output_pose_on_a_transition_frame_equals_the_pose_before_it() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(0.0, 2),
         fixture.sources(),
     );
@@ -662,7 +677,7 @@ fn the_player_skeleton_is_matched_to_the_database_by_bone_uuid() {
         ..fixture.sources()
     };
 
-    state.step(&node, state.delta_time, &quiet(), sources);
+    state.step(&node, state.delta_time, 1.0, &quiet(), sources);
 
     assert_eq!(state.bone_indices[&Uuid::from_u128(1)], 1);
     assert_eq!(state.bone_indices[&Uuid::from_u128(2)], 2);
@@ -697,7 +712,7 @@ fn a_player_skeleton_with_none_of_the_database_bones_stops_the_node() {
         ..fixture.sources()
     };
 
-    state.step(&node, state.delta_time, &quiet(), sources);
+    state.step(&node, state.delta_time, 1.0, &quiet(), sources);
 
     assert!(state.failed);
     assert!(!state.initialised);
@@ -712,7 +727,7 @@ fn a_failed_state_stays_stopped() {
     let mut state = state(&node, 0.0);
     state.failed = true;
 
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     assert!(!state.initialised);
 }
@@ -724,7 +739,7 @@ fn root_motion_is_the_simulation_bones_velocity_at_the_frame() {
     let mut state = state(&node, 0.0);
     state.delta_time = 0.5;
 
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     let motion = state.root_motion;
     assert!(
@@ -762,7 +777,7 @@ fn root_motion_reads_forward_for_a_walk_heading_away_from_model_forward() {
         let node = MotionMatchingNode::default();
         let mut state = state(&node, 0.1);
 
-        state.step(&node, state.delta_time, &quiet(), fixture.sources());
+        state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
         let motion = state.output.root_motion();
         assert!(
@@ -812,7 +827,7 @@ fn root_motion_turns_out_the_rest_of_the_skeleton_it_plays_on() {
         ..fixture.sources()
     };
 
-    state.step(&node, state.delta_time, &quiet(), sources);
+    state.step(&node, state.delta_time, 1.0, &quiet(), sources);
 
     let expected = played_rest * baked_rest.inverse() * Vec3::new(0.0, 0.0, -0.1);
     let motion = state.output.root_motion();
@@ -840,7 +855,7 @@ fn root_motion_carries_a_leaning_root_to_where_it_faces_next() {
     let dt = 0.1;
     let mut state = state(&node, dt);
 
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
 
     let (_, time) = fixture.database.clip_time(state.frame).unwrap();
     let arrived = facing(time) * state.output.root_motion().rotation;
@@ -852,18 +867,18 @@ fn a_pose_held_at_the_end_of_its_range_gives_no_root_motion() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     state.frame = last - 1;
 
     state.delta_time = 0.1;
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     assert_eq!(state.frame, last);
     assert!(state.output.root_motion().translation.z < 0.0);
 
     for dt in [0.1, 0.001] {
         state.delta_time = dt;
-        state.step(&node, state.delta_time, &quiet(), fixture.sources());
+        state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
         assert_eq!(state.frame, last);
         assert_eq!(state.output.root_motion(), RootMotion::IDENTITY);
     }
@@ -874,7 +889,7 @@ fn a_jump_away_from_the_end_of_a_range_moves_the_root_again() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     let last = fixture.database.range_of(0).unwrap().end - 1;
     state.frame = last;
 
@@ -882,6 +897,7 @@ fn a_jump_away_from_the_end_of_a_range_moves_the_root_again() {
     state.step(
         &node,
         state.delta_time,
+        1.0,
         &trajectory(1.0, 2),
         fixture.sources(),
     );
@@ -895,7 +911,7 @@ fn steps_shorter_than_a_database_frame_add_up_to_the_distance_played() {
     let fixture = fixture(1.0);
     let node = MotionMatchingNode::default();
     let mut state = state(&node, 0.0);
-    state.step(&node, state.delta_time, &quiet(), fixture.sources());
+    state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
     state.frame = 20;
     let steps = 40;
     let dt = 0.5 / steps as f32;
@@ -903,7 +919,7 @@ fn steps_shorter_than_a_database_frame_add_up_to_the_distance_played() {
     let mut travelled = Vec3::ZERO;
     for _ in 0..steps {
         state.delta_time = dt;
-        state.step(&node, state.delta_time, &quiet(), fixture.sources());
+        state.step(&node, state.delta_time, 1.0, &quiet(), fixture.sources());
         travelled += state.output.root_motion().translation;
     }
 
@@ -939,4 +955,215 @@ fn an_initialised_state_copies_its_pose_to_the_output() {
 
     assert!(state.write_output(&mut output));
     assert_eq!(output.joints()[0].translation.x, 5.0);
+}
+
+fn started(fixture: &Fixture, node: &MotionMatchingNode) -> MotionMatchingState {
+    let mut state = state(node, 0.0);
+    state.step(node, state.delta_time, 1.0, &quiet(), fixture.sources());
+    state
+}
+
+#[test]
+fn at_rate_two_the_playhead_advances_twice_the_frames_of_rate_one() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let dt = 2.65 / fixture.database.rate();
+    let advanced = |rate: f32| {
+        let mut state = started(&fixture, &node);
+        let start = state.frame;
+        for _ in 0..2 {
+            state.step(&node, dt, rate, &quiet(), fixture.sources());
+        }
+        state.frame - start
+    };
+
+    let once = advanced(1.0);
+
+    assert_eq!(once, 5);
+    assert_eq!(advanced(2.0), 2 * once);
+}
+
+#[test]
+fn at_rate_two_one_steps_root_delta_is_twice_the_rate_one_delta() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let delta = |rate: f32| {
+        let mut state = started(&fixture, &node);
+        state.step(&node, 0.1, rate, &quiet(), fixture.sources());
+        state.output.root_motion().translation
+    };
+
+    let once = delta(1.0);
+
+    assert!(once.length() > 0.05, "{once:?}");
+    assert!(delta(2.0).distance(once * 2.0) < 1e-4, "{once:?}");
+}
+
+#[test]
+fn the_search_clocks_run_in_real_time_whatever_the_rate() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let played = |rate: f32| {
+        let mut state = started(&fixture, &node);
+        state.search_timer = 10.0;
+        state.forced_search_timer = 10.0;
+        for _ in 0..3 {
+            state.step(&node, 0.03, rate, &quiet(), fixture.sources());
+        }
+        state
+    };
+
+    let once = played(1.0);
+    let twice = played(2.0);
+
+    assert_ne!(once.frame, twice.frame);
+    assert_eq!(once.search_timer, twice.search_timer);
+    assert_eq!(once.forced_search_timer, twice.forced_search_timer);
+    assert!((once.search_timer - 9.91).abs() < 1e-5);
+}
+
+#[test]
+fn at_rate_two_a_forced_jump_blends_from_the_destination_velocity_in_real_time() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let rate = 2.0;
+    let mut state = started(&fixture, &node);
+    state.step(&node, 0.1, rate, &quiet(), fixture.sources());
+    let source = copy_pose(&state.blended);
+    let source_velocity = PoseVelocity::between(&state.previous_blended, &state.blended, 0.1);
+    let frame_before = state.frame;
+
+    let dt = 0.05;
+    state.search_timer = 0.0;
+    state.step(&node, dt, rate, &trajectory(0.0, 2), fixture.sources());
+
+    assert_ne!(state.frame, frame_before);
+    let (destination, velocity) = sample(&fixture.sources(), state.frame).unwrap();
+    let mut inertializer = Inertializer::new(destination.len());
+    inertializer.transition(
+        &source,
+        &source_velocity,
+        &destination,
+        &velocity.scaled(rate),
+    );
+    let mut expected = copy_pose(&destination);
+    inertializer.update(
+        &destination,
+        &velocity,
+        node.blend_halflife,
+        dt,
+        &mut expected,
+    );
+    for ((translation, rotation), (expected_translation, expected_rotation)) in
+        joints(&state.blended).into_iter().zip(joints(&expected))
+    {
+        assert!(translation.distance(expected_translation) < 1e-5);
+        assert!(rotation.dot(expected_rotation).abs() > 0.99999);
+    }
+}
+
+#[test]
+fn at_rate_two_the_last_query_holds_the_trajectory_rescaled_into_animation_time() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    let translation = Vec3::new(1.0, 0.0, 2.0);
+    let published = MotionMatchingTrajectory {
+        translation,
+        rotation: Quat::from_rotation_y(0.5),
+        samples: vec![
+            TrajectorySample {
+                position: Vec3::new(1.0, 0.0, 3.0),
+                velocity: Vec3::new(0.0, 0.0, -0.5),
+                rotation: Quat::from_rotation_y(0.6),
+            },
+            TrajectorySample {
+                position: Vec3::new(3.0, 1.0, 2.0),
+                velocity: Vec3::new(2.0, 0.0, 0.0),
+                rotation: Quat::from_rotation_y(-0.4),
+            },
+        ],
+    };
+    let mut board = AnimationBlackboard::default();
+    board.set(TRAJECTORY_KEY, published.clone());
+
+    state.search_timer = 0.0;
+    state.step(&node, 0.1, 2.0, &board, fixture.sources());
+
+    let last = state.last_query.as_ref().unwrap();
+    assert_eq!(last.simulation.translation, translation);
+    assert_eq!(last.trajectory.len(), published.samples.len());
+    for (rescaled, sample) in last.trajectory.iter().zip(&published.samples) {
+        let offset = (sample.position - translation) * 0.5;
+        assert!(rescaled.position.distance(translation + offset) < 1e-6);
+        assert!(rescaled.velocity.distance(sample.velocity * 0.5) < 1e-6);
+        assert_eq!(rescaled.rotation, sample.rotation);
+    }
+}
+
+#[test]
+fn at_rate_zero_the_frame_holds_with_no_root_motion_and_no_search() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    let start = state.frame;
+    state.search_timer = 0.0;
+
+    state.step(&node, 0.1, 0.0, &trajectory(0.25, 2), fixture.sources());
+
+    assert_eq!(state.frame, start);
+    assert_eq!(state.output.root_motion(), RootMotion::IDENTITY);
+    assert!(state.last_query.is_none());
+}
+
+#[test]
+fn at_rate_zero_the_end_of_a_range_does_not_search() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    state.frame = 40;
+    state.search_timer = 10.0;
+
+    state.step(&node, 0.0, 0.0, &trajectory(0.0, 2), fixture.sources());
+
+    assert_eq!(state.frame, 40);
+    assert!(state.last_query.is_none());
+}
+
+#[test]
+fn at_rate_zero_a_forced_search_is_dropped_and_its_cooldown_spent() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode {
+        search_period: 100.0,
+        velocity_change_threshold: 1.0,
+        ..Default::default()
+    };
+    let mut state = started(&fixture, &node);
+    state.search_timer = 100.0;
+
+    for pace in [0.0, 5.0, 5.0] {
+        state.step(&node, 0.1, 0.0, &trajectory(pace, 2), fixture.sources());
+    }
+
+    assert_eq!(state.forced_search_timer, 100.0);
+    assert!(state.last_query.is_none());
+}
+
+#[test]
+fn at_rate_zero_a_due_search_is_dropped_and_the_next_runs_once_the_rate_rises() {
+    let fixture = fixture(1.0);
+    let node = MotionMatchingNode::default();
+    let mut state = started(&fixture, &node);
+    let board = trajectory(0.25, 2);
+    state.search_timer = 0.0;
+
+    state.step(&node, 0.05, 0.0, &board, fixture.sources());
+    assert!(state.last_query.is_none());
+    assert_eq!(state.search_timer, node.search_period);
+
+    state.step(&node, 0.05, 1.0, &board, fixture.sources());
+    assert!(state.last_query.is_none());
+
+    state.step(&node, 0.05, 1.0, &board, fixture.sources());
+    assert!(state.last_query.is_some());
 }
