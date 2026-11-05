@@ -120,6 +120,7 @@ impl AnimationNode for MotionMatchingNode {
         ),
         context: &AnimationGraphContext<'_>,
     ) {
+        state.clear_fired();
         match sources(self, databases, skeletons, clips, context.skeleton()) {
             Some(sources) => {
                 let rate =
@@ -141,6 +142,9 @@ impl AnimationNode for MotionMatchingNode {
         output: &mut Pose,
     ) {
         state.write_output(output);
+        for event in state.fired() {
+            output.push_event(*event);
+        }
     }
 
     fn reset(&self, state: &mut MotionMatchingState) {

@@ -4,7 +4,7 @@ use concerto_animation::{
     blackboard::AnimationBlackboard,
     clip::AnimationClip,
     inertialization::{Inertializer, PoseVelocity},
-    pose::{Pose, RootMotion},
+    pose::{FiredEvent, Pose, RootMotion},
 };
 use concerto_foundation::{
     math::spring_damper::{angular_velocity, from_scaled_angle_axis},
@@ -59,6 +59,7 @@ pub struct MotionMatchingState {
     last_query: Option<LastQuery>,
     bone_indices: HashMap<Uuid, usize>,
     root_motion: BodyMotion,
+    fired: Vec<FiredEvent>,
 }
 
 impl MotionMatchingState {
@@ -87,6 +88,7 @@ impl MotionMatchingState {
             last_query: None,
             bone_indices: HashMap::new(),
             root_motion: BodyMotion::default(),
+            fired: Vec::new(),
         }
     }
 
@@ -122,6 +124,44 @@ impl MotionMatchingState {
 
     pub(crate) fn clear_root_motion(&mut self) {
         self.output.set_root_motion(RootMotion::IDENTITY);
+    }
+
+    pub(crate) fn clear_fired(&mut self) {
+        self.fired.clear();
+    }
+
+    pub(crate) fn fired(&self) -> &[FiredEvent] {
+        &self.fired
+    }
+
+    fn fire(&mut self, sources: &Sources, from: usize, to: usize) {
+        let database = sources.database;
+        if to <= from {
+            return;
+        }
+        let Some((entry, from_time)) = database.clip_time(from) else {
+            return;
+        };
+        let Some((to_entry, to_time)) = database.clip_time(to) else {
+            return;
+        };
+        if entry != to_entry {
+            return;
+        }
+        let (Some(clip), Some(handle)) = (sources.clips.get(entry), database.clips().get(entry))
+        else {
+            return;
+        };
+        let mirrored = database.mirrored().get(entry).copied().unwrap_or(false);
+        for key in clip.events_in(from_time, to_time, false) {
+            self.fired.push(FiredEvent {
+                clip: handle.id(),
+                key: key as u32,
+                time: clip.events()[key].time,
+                weight: 1.0,
+                mirrored,
+            });
+        }
     }
 
     /// Copies the node's pose into `output` and returns true, or returns false and leaves `output` untouched until the node is initialised.
@@ -320,7 +360,8 @@ impl MotionMatchingState {
         blackboard: &AnimationBlackboard,
         sources: Sources,
     ) -> Result<(), String> {
-        if !self.initialised {
+        let started = self.initialised;
+        if !started {
             self.initialise(&sources)?;
         }
         let database = sources.database;
@@ -338,6 +379,7 @@ impl MotionMatchingState {
         self.sub_frame_time -= whole as f32 / rate;
         let previous_frame = self.frame;
         self.frame = (self.frame + whole).min(range.end - 1);
+        let advanced = self.frame;
         let moved = self.frame != previous_frame;
 
         let trajectory = blackboard.get::<MotionMatchingTrajectory>(trajectory_key());
@@ -402,6 +444,9 @@ impl MotionMatchingState {
         };
         self.output.set_root_motion(delta);
         self.scatter(&sources);
+        if started && better.is_none() {
+            self.fire(&sources, previous_frame, advanced);
+        }
         Ok(())
     }
 
