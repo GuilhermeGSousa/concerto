@@ -348,6 +348,12 @@ name and value with its top-level `weight` field left out.
 
 A stored and a live channel with the same value hash the same.
 
+The key covers the definition and the inputs' bytes, not the code of a
+channel. Changing the `extract` of a channel a game registers changes no key,
+so a load reuses the blob derived by the old code; delete the project's
+`derived-cache/` to derive again. A change to the engine's bake raises
+`DERIVED_VERSION` instead.
+
 A channel's top-level `weight` field means the search weight and nothing else.
 A field called `weight` that feeds `extract` changes no key, so a cached blob
 baked from its old value is reused. A weight stored under another name, or

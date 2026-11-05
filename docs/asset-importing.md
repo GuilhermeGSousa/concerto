@@ -570,6 +570,12 @@ handle reads as loaded only once the blob is applied, and a missing or derived
 input fails the load. `AssetServer::add` derives nothing: code that adds a
 derived asset in memory attaches the computed part itself.
 
+The key covers the definition and the bytes of its inputs, not code. A change
+to an engine `derive` raises `DERIVED_VERSION`. Code a game registers, such as
+the `extract` of a game's own `FeatureChannel`, is in no key and no version, so
+after changing it the cache still holds blobs derived by the old code and a
+load applies them. Delete the project's `derived-cache/` to derive them again.
+
 The cache is a directory of files at
 `<cache>/<TypeName>/v<DERIVED_VERSION>/<key as 16 hex digits>.blob`, created
 on the first write. A write goes to a uniquely named temporary file that is
