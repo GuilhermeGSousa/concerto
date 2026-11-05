@@ -119,16 +119,22 @@ mod tests {
     };
     use concerto_mesh::skeleton::{JointPose, Skeleton, SkeletonComponent};
     use concerto_name::name;
-    use glam::{Mat4, Quat, Vec2, Vec3};
+    use concerto_reflect::{Reflect, TypeRegistry};
+    use glam::{Affine3A, Mat4, Quat, Vec2, Vec3};
     use uuid::Uuid;
 
     use super::{animate_targets, initialize_animation_players, initialize_skeletons};
     use crate::{
         clip::{AnimationChanelOutput, AnimationChannel, AnimationClip},
+        evaluation::AnimationGraphContext,
         graph::{AnimationGraph, made_live},
-        node::{AnimationClipNode, state_machine::AnimationStateMachine},
+        node::{
+            AnimationClipNode, AnimationNode, IkGoal, IkTarget, ReflectAnimationNode,
+            TwoBoneIkNode, register_node_inputs, state_machine::AnimationStateMachine,
+        },
         player::{AnimationHandleComponent, AnimationPlayer},
-        pose::RootMotion,
+        plugin::register_animation_types,
+        pose::{EvaluatedPose, Pose, PosePool, RootMotion},
         root::AnimationRootBone,
         test_walks::Walks,
     };
@@ -261,6 +267,14 @@ mod tests {
 
     impl Rig {
         fn new(rest_rotation: Quat) -> Self {
+            Self::registering(rest_rotation, |_| {})
+        }
+
+        fn probing() -> Self {
+            Self::registering(Quat::IDENTITY, register_node_inputs::<Probe>)
+        }
+
+        fn registering(rest_rotation: Quat, register: impl FnOnce(&mut World)) -> Self {
             let mut server = AssetServer::new();
             let clips = AssetStore::<AnimationClip>::new();
             let graphs = AssetStore::<AnimationGraph>::new();
@@ -275,7 +289,7 @@ mod tests {
             let skeleton = server.add(one_bone_skeleton(ROOT_ID));
             Self {
                 server,
-                walks: Walks::new(clips, graphs),
+                walks: Walks::with(clips, graphs, register),
                 skeletons,
                 skeleton,
                 rest,
@@ -362,6 +376,17 @@ mod tests {
             self.walks
                 .graphs_mut()
                 .insert(handle.id(), made_live(graph));
+            handle
+        }
+
+        fn probe_graph(&mut self) -> AssetHandle<AnimationGraph> {
+            let mut registry = TypeRegistry::default();
+            register_animation_types(&mut registry);
+            registry.register::<Probe>();
+            let mut graph = AnimationGraph::from_node(Probe {});
+            graph.make_live(&registry, None).unwrap();
+            let handle = self.server.add(AnimationGraph::default());
+            self.walks.graphs_mut().insert(handle.id(), graph);
             handle
         }
 
@@ -468,6 +493,25 @@ mod tests {
             self.world.insert(ChildOf::new(parent), self.root);
         }
 
+        fn put_root_under_a_parent_with_no_global(&mut self) {
+            let parent = self.world.spawn(());
+            self.world.insert(ChildOf::new(parent), self.root);
+        }
+
+        fn model_to_world_seen(mut self) -> Option<Affine3A> {
+            let graphs = self
+                .world
+                .remove_resource::<AssetStore<AnimationGraph>>()
+                .unwrap();
+            let player = self
+                .world
+                .get_component_for_entity_mut::<AnimationPlayer>(self.owner)
+                .unwrap();
+            let mut seen = None;
+            player.for_each_state_mut::<Probe>(&graphs, |_, state, _| seen = *state);
+            seen
+        }
+
         fn root(&self) -> &Transform {
             self.world
                 .get_component_for_entity::<Transform>(self.root)
@@ -479,6 +523,45 @@ mod tests {
                 .get_component_for_entity::<Transform>(self.child)
                 .unwrap()
         }
+    }
+
+    #[derive(Default, Reflect)]
+    #[reflect(AnimationNode)]
+    struct Probe {}
+
+    impl AnimationNode for Probe {
+        type State = Option<Affine3A>;
+        type CreateInput = ();
+        type UpdateInput = ();
+        type EvaluateInput = ();
+
+        fn create_state(&self, _: &(), _: &AnimationGraphContext<'_>) -> Option<Affine3A> {
+            None
+        }
+
+        fn update(&self, _: &mut Option<Affine3A>, _: f32, _: &(), _: &AnimationGraphContext<'_>) {}
+
+        fn evaluate(
+            &self,
+            seen: &mut Option<Affine3A>,
+            _: &(),
+            context: &AnimationGraphContext<'_>,
+            _: &[Uuid],
+            _: &[EvaluatedPose],
+            _: &mut PosePool,
+            _: &mut Pose,
+        ) {
+            *seen = context.model_to_world();
+        }
+
+        fn reset(&self, _: &mut Option<Affine3A>) {}
+    }
+
+    fn probed_bones() -> TwoBones {
+        let mut rig = Rig::probing().loaded_two_bone_skeleton();
+        let graph = rig.probe_graph();
+        let player = rig.player(graph);
+        rig.spawn_two_bones(player)
     }
 
     fn stale_motion() -> RootMotion {
@@ -776,5 +859,130 @@ mod tests {
             rig.root_motion_after_animating(player),
             RootMotion::IDENTITY
         );
+    }
+
+    #[test]
+    fn a_graph_sees_the_global_of_bone_zeros_parent_as_model_to_world() {
+        let space = Mat4::from_scale_rotation_translation(
+            Vec3::new(2.0, 1.0, 0.5),
+            Quat::from_rotation_y(0.7),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let mut bones = probed_bones();
+        bones.put_root_under(space);
+
+        bones.animate();
+
+        let seen = bones.model_to_world_seen().unwrap();
+        assert!(
+            seen.abs_diff_eq(Affine3A::from_mat4(space), 1e-5),
+            "got {seen:?}"
+        );
+    }
+
+    #[test]
+    fn a_graph_sees_identity_as_model_to_world_when_bone_zero_has_no_parent() {
+        let mut bones = probed_bones();
+
+        bones.animate();
+
+        assert_eq!(bones.model_to_world_seen(), Some(Affine3A::IDENTITY));
+    }
+
+    #[test]
+    fn a_graph_sees_identity_as_model_to_world_when_bone_zeros_parent_has_no_global() {
+        let mut bones = probed_bones();
+        bones.put_root_under_a_parent_with_no_global();
+
+        bones.animate();
+
+        assert_eq!(bones.model_to_world_seen(), Some(Affine3A::IDENTITY));
+    }
+
+    #[test]
+    fn a_two_bone_ik_graph_puts_the_hand_on_a_world_target_under_the_skeletons_parent() {
+        let mut server = AssetServer::new();
+        let clips = AssetStore::<AnimationClip>::new();
+        let graphs = AssetStore::<AnimationGraph>::new();
+        let mut skeletons = AssetStore::<Skeleton>::new();
+        server.register_asset(&clips);
+        server.register_asset(&graphs);
+        server.register_asset(&skeletons);
+        let arm = || {
+            Skeleton::new(
+                vec![Mat4::IDENTITY; 3],
+                vec![None, Some(0), Some(1)],
+                vec!["upper".into(), "lower".into(), "hand".into()],
+                vec![
+                    JointPose::IDENTITY,
+                    JointPose {
+                        translation: Vec3::new(0.0, -1.0, 0.0),
+                        ..JointPose::IDENTITY
+                    },
+                    JointPose {
+                        translation: Vec3::new(0.3, -0.8, 0.0),
+                        ..JointPose::IDENTITY
+                    },
+                ],
+                vec![Uuid::from_u128(1), Uuid::from_u128(2), Uuid::from_u128(3)],
+            )
+            .unwrap()
+        };
+        let skeleton = server.add(arm());
+        skeletons.insert(skeleton.id(), arm());
+
+        let mut walks = Walks::new(clips, graphs);
+        let graph = server.add(AnimationGraph::default());
+        walks.graphs_mut().insert(
+            graph.id(),
+            made_live(AnimationGraph::from_node(TwoBoneIkNode {
+                tip: "hand".into(),
+                target: IkGoal::Param {
+                    param: name!("hand_target"),
+                },
+                ..TwoBoneIkNode::default()
+            })),
+        );
+        let space = Affine3A::from_rotation_translation(
+            Quat::from_rotation_y(0.7),
+            Vec3::new(1.0, 2.0, 3.0),
+        );
+        let target = space.transform_point3(Vec3::new(0.6, -1.2, 0.4));
+        let mut player = AnimationPlayer::new(3);
+        walks.initialize(&mut player, graph);
+        player.set_param(
+            name!("hand_target"),
+            IkTarget {
+                position: target,
+                rotation: None,
+            },
+        );
+
+        let mut world = walks.into_world();
+        let parent = world.spawn(GlobalTransform::new(Mat4::from(space)));
+        let bones: Vec<Entity> = (0..3).map(|_| world.spawn(Transform::IDENTITY)).collect();
+        world.insert(ChildOf::new(parent), bones[0]);
+        world.spawn((
+            player,
+            SkeletonComponent {
+                skeleton,
+                bones: bones.iter().copied().map(SceneEntityRef::Entity).collect(),
+                root: None,
+            },
+        ));
+        world.insert_resource(skeletons);
+        let mut system = animate_targets.into_system();
+        system.initialize(&mut world);
+        system.run_and_apply((), &mut world);
+
+        let model = bones.iter().fold(Mat4::IDENTITY, |model, bone| {
+            model
+                * world
+                    .get_component_for_entity::<Transform>(*bone)
+                    .unwrap()
+                    .compute_matrix()
+        });
+        let hand = space.transform_point3(model.w_axis.truncate());
+        assert!(hand.distance(target) < 1e-4, "hand {hand}, target {target}");
     }
 }

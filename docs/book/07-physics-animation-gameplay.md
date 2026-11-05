@@ -197,6 +197,21 @@ A graph is a tree of nodes under a result node:
   default, fades the old state out over `blend_time` seconds, and
   `Inertialization` plays only the new state and decays the pose difference
   to the old one with `blend_time` as the halflife.
+- **Two-bone IK** (`TwoBoneIkNode`) bends a limb so its tip reaches a goal.
+  The `tip` bone names the chain: its parent is the elbow or knee and its
+  grandparent the shoulder or hip, all under bone 0. The `target` is an
+  `IkGoal`: `Bone` fixes it to a bone of the input pose, with a translation
+  and rotation in that bone's space, and `Param` reads an `IkTarget` the game
+  set on the blackboard, in world space. An optional `pole`, another
+  `IkGoal`, picks the side the elbow or knee bends toward. `softness` eases
+  the last stretch before full extension, `tip_rotation` keeps the input's
+  hand or foot rotation (`KeepInput`) or takes the goal's (`FromTarget`), and
+  `weight`, times the float under `weight_param`, blends the solve over the
+  input. Wire it after the nodes whose pose it corrects. A target param the
+  game has not set yet leaves the pose as it is. The same solve is
+  `concerto_animation::ik::solve_two_bone` for code outside a graph: it takes
+  the three joint positions in any one space and returns rotations in that
+  space.
 
 Parameters are set on the `AnimationPlayer` with `set_bool_param`,
 `set_int_param`, `set_float_param` and `set_vec2_param`, each keyed by a `Name`
@@ -256,8 +271,9 @@ an update reads. A node whose input is missing, or whose type was registered
 without `register_animation_node`, is skipped in that walk with a warning. The
 clip node reads `AssetStore<AnimationClip>` and the state machine
 `AssetStore<AnimationGraph>` this way. `AnimationGraphContext` carries only the
-player's own data: its blackboard, its root bone in `evaluate`, and its
-skeleton.
+player's own data: its blackboard, its root bone in `evaluate`, its skeleton,
+and, in `evaluate`, `model_to_world`: the `GlobalTransform` of bone 0's parent,
+or identity when it has none.
 
 Add a node with `with_input(Gain { amount: 2.0 }, |node| { .. })`
 on the result node or on another node's context, or start a graph with
