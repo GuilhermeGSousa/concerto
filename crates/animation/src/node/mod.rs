@@ -246,8 +246,9 @@ impl AnimationNode for AnimationClipNode {
         }
         let fresh = std::mem::take(&mut state.fresh);
         if state.wrapped {
+            let start_fired = fresh && state.previous_time <= state.start_time;
             state.fire(clip, state.previous_time, clip.duration(), fresh);
-            state.fire(clip, state.start_time, state.time, true);
+            state.fire(clip, state.start_time, state.time, !start_fired);
         } else {
             let to = state.time.min(clip.duration());
             state.fire(clip, state.previous_time, to, fresh);
@@ -646,6 +647,19 @@ mod tests {
         assert_eq!(rig.fire(&node, &mut state, 0.3), [0.9]);
         assert_eq!(rig.fire(&node, &mut state, 0.4), [1.0, 0.2]);
         assert_eq!(rig.fire(&node, &mut state, 0.4), [0.5]);
+    }
+
+    #[test]
+    fn a_fresh_loop_that_wraps_on_its_first_update_fires_its_start_time_once() {
+        let rig = events_rig(&[0.0, 0.25]);
+        let node = rig.node();
+        let mut state = rig.create(&node);
+
+        assert_eq!(rig.fire(&node, &mut state, 1.5), [0.0, 0.25]);
+
+        let node = rig.node().with_start_time(0.25);
+        let mut state = rig.create(&node);
+        assert_eq!(rig.fire(&node, &mut state, 1.5), [0.25]);
     }
 
     #[test]
