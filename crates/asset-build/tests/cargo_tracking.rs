@@ -265,3 +265,28 @@ fn cargo_fails_the_build_on_an_invalid_content_toml() {
         "content extension must be a nonempty extension",
     );
 }
+
+#[test]
+fn cargo_gives_the_package_its_project_root() {
+    let project = tempfile::tempdir().unwrap();
+    let root = project.path();
+    write_registry_fixture(root);
+    std::fs::write(
+        root.join("src/main.rs"),
+        r#"fn main() { print!("{}", env!("CONCERTO_PROJECT_ROOT")); }"#,
+    )
+    .unwrap();
+
+    let output = cargo(root);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        Path::new(&String::from_utf8(output.stdout).unwrap())
+            .canonicalize()
+            .unwrap(),
+        root.canonicalize().unwrap()
+    );
+}

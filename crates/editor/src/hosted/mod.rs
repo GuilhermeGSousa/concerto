@@ -29,7 +29,8 @@ use concerto_ecs::{
     system::{NonSendMarker, executor::multi_thread::MainThreadExecutor},
 };
 use concerto_foundation::assets::{
-    asset_server::AssetServer, asset_store::AssetStore, registry::AssetRegistry,
+    asset_server::AssetServer, asset_store::AssetStore, derived::DerivedDataCache,
+    registry::AssetRegistry,
 };
 use concerto_render::{
     draw_target::{DrawTarget, SharedTexture},
@@ -174,10 +175,11 @@ impl HostedApp {
     }
 
     fn serve_project(&mut self, root: &Path, registry: &AssetRegistry) {
-        if let Some(server) = self.app.get_resource::<AssetServer>()
-            && let Err(error) = server.publish_project_content(root, registry.clone())
-        {
-            log::error!("Could not activate project assets: {error:#}");
+        if let Some(server) = self.app.get_resource::<AssetServer>() {
+            match server.publish_project_content(root, registry.clone()) {
+                Ok(()) => server.set_derived_cache(DerivedDataCache::in_project(root)),
+                Err(error) => log::error!("Could not activate project assets: {error:#}"),
+            }
         }
         self.app.insert_resource(registry.clone());
     }

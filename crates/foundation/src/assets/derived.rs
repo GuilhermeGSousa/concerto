@@ -119,6 +119,11 @@ impl DerivedDataCache {
         }
     }
 
+    /// The cache in `<project_root>/derived-cache`, created on the first `put`.
+    pub fn in_project(project_root: &Path) -> Self {
+        Self::at(project_root.join("derived-cache"))
+    }
+
     /// No cache: every lookup misses and every `put` is dropped.
     pub fn none() -> Self {
         Self::default()

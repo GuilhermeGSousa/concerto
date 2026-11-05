@@ -3,7 +3,9 @@ use concerto_ecs::{
     Event, Res, ResMut, Resource, World, events::event_writer::EventWriter,
     system::input::SystemLocal, world::FromWorld,
 };
-use concerto_foundation::assets::{AssetId, asset_server::AssetServer, registry::AssetRegistry};
+use concerto_foundation::assets::{
+    AssetId, asset_server::AssetServer, derived::DerivedDataCache, registry::AssetRegistry,
+};
 use concerto_import::config::ContentConfig;
 use concerto_scene::scene::Scene;
 use std::{
@@ -242,6 +244,7 @@ fn process_commands(
                     });
                     return;
                 }
+                asset_server.set_derived_cache(DerivedDataCache::in_project(&project.root));
                 state.status.clear();
                 opened.write(ProjectOpened {
                     root: project.root.clone(),
@@ -506,6 +509,30 @@ mod tests {
             }]
         );
         assert!(written::<ProjectOpenFailed>(&world).is_empty());
+    }
+
+    #[test]
+    fn an_opened_project_keeps_derived_data_in_its_derived_cache_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut world = project_world();
+
+        settle(
+            &mut world,
+            Some(EditorCommand::OpenProject(dir.path().into())),
+        );
+
+        let cache = world.get_resource::<AssetServer>().unwrap().derived_cache();
+        assert_eq!(
+            cache.root(),
+            Some(
+                dir.path()
+                    .canonicalize()
+                    .unwrap()
+                    .join("derived-cache")
+                    .as_path()
+            )
+        );
+        assert!(!dir.path().join("derived-cache").exists());
     }
 
     #[test]

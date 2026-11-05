@@ -37,20 +37,26 @@ use concerto_ui::plugin::UIPlugin;
 use concerto_window::plugin::WindowPlugin;
 use concerto_world_grid::plugin::WorldGridPlugin;
 
-/// Sets up logging, opens a window, and runs the `App` that `build` makes with `registry`, from [`content_registry!`], installed.
-pub fn run(build: impl FnOnce(&mut app::App) + 'static, registry: &'static str) {
+/// Sets up logging, opens a window, and runs the `App` that `build` makes with `content`, from [`content_registry!`], installed.
+pub fn run(
+    build: impl FnOnce(&mut app::App) + 'static,
+    content: concerto_app::plugins::ContentSettings<'static>,
+) {
     init_logging();
     concerto_winit::run(move |app| {
         build(app);
-        concerto_app::plugins::install_content_registry(app, registry);
+        concerto_app::plugins::install_content_registry(app, content);
     });
 }
 
-/// The asset registry the package's `build.rs` wrote through `concerto_asset_build::track_assets`.
+/// The asset registry and project root the package's `build.rs` recorded through `concerto_asset_build::track_assets`.
 #[macro_export]
 macro_rules! content_registry {
     () => {
-        include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml"))
+        $crate::app::plugins::ContentSettings {
+            registry: include_str!(concat!(env!("OUT_DIR"), "/concerto_registry.toml")),
+            project_root: option_env!("CONCERTO_PROJECT_ROOT"),
+        }
     };
 }
 

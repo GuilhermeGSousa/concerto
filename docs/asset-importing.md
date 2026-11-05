@@ -470,8 +470,11 @@ leave stale UUIDs in the executable. Existing examples include this setup.
 the build when the file is invalid or sets a root other than `content`, and writes
 the registry to `$OUT_DIR/concerto_registry.toml`. Two files with one id, or an
 unreadable header, print the paths as a Cargo warning and fail the build.
-`concerto::content_registry!()` embeds the file; it needs a `build.rs` that
-calls `track_assets`. Cargo watches that tree and `content.toml` as well as the
+It also records the package directory as `CONCERTO_PROJECT_ROOT`.
+`concerto::content_registry!()` embeds the file and that directory; it needs a
+`build.rs` that calls `track_assets`. `concerto::run` installs both, and a
+native game keeps derived data in `<project>/derived-cache/`, as the editor
+does; the web build has no cache. Cargo watches that tree and `content.toml` as well as the
 registered directory, so a `.gasset` moved or added by git or a file explorer,
 or a change to `content.toml`, is in the registry at the next build. Cargo
 re-runs a build script on every build while a path it watches is missing, so a
