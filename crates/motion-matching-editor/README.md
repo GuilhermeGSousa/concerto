@@ -122,7 +122,9 @@ the worker derives the blob, writes it to the cache and applies it, while the
 status reads `Deriving 2 of 6`: the entry being worked on, out of how many. A
 cache hit leaves the status alone. An error shows as `Derive failed: …` and
 stops the database, and so does a channel weight that is not finite and
-positive, on a cache hit as on a miss.
+positive, on a cache hit as on a miss. A derive writes its lines only over an
+empty status, the line it started over, or its own last line: a line written
+while it runs, such as `Save failed: …` or the error of a refused open, stays.
 
 The document holds `BackgroundWork` while the worker runs, so under `--mcp`
 `status` reads `busy: yes` until it ends. A result is dropped when the tab has
