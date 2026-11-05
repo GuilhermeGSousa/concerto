@@ -377,7 +377,7 @@ impl AnimationNode for TwoBoneIkNode {
 
 #[cfg(test)]
 mod tests {
-    use concerto_foundation::assets::asset_store::AssetStore;
+    use concerto_foundation::assets::{AssetId, asset_store::AssetStore};
     use concerto_mesh::{JointName, Skeleton, skeleton::JointPose};
     use concerto_name::name;
     use glam::{Affine3A, Mat4, Quat, Vec3};
@@ -387,7 +387,7 @@ mod tests {
         blackboard::AnimationBlackboard,
         evaluation::AnimationGraphContext,
         node::AnimationNode,
-        pose::{AnimationFrame, EvaluatedFrame, FramePool, Pose, RootMotion},
+        pose::{AnimationFrame, EvaluatedFrame, FiredEvent, FramePool, Pose, RootMotion},
         test_walks::Walks,
     };
 
@@ -456,6 +456,16 @@ mod tests {
         }
     }
 
+    fn input_event() -> FiredEvent {
+        FiredEvent {
+            clip: AssetId::from_path("ik_input"),
+            key: 2,
+            time: 0.4,
+            weight: 0.5,
+            mirrored: false,
+        }
+    }
+
     struct Rig {
         walks: Walks,
         blackboard: AnimationBlackboard,
@@ -476,6 +486,7 @@ mod tests {
         fn input(&self) -> AnimationFrame {
             let mut frame = AnimationFrame::new(Pose::from_joints(self.skeleton.rest_pose.clone()));
             frame.set_root_motion(input_motion());
+            frame.push_event(input_event());
             frame
         }
 
@@ -836,6 +847,15 @@ mod tests {
             assert_rotation(by_weight.joints()[bone].rotation, halfway);
             assert_rotation(by_param.joints()[bone].rotation, halfway);
         }
+    }
+
+    #[test]
+    fn an_event_on_the_input_survives_the_ik_node() {
+        let rig = Rig::new();
+
+        let frame = rig.solve(&node(on_grip(Vec3::ZERO, Quat::IDENTITY)));
+
+        assert_eq!(frame.events(), [input_event()]);
     }
 
     #[test]
