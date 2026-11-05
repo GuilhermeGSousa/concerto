@@ -57,6 +57,12 @@ pub struct ProjectOpenFailed {
     pub message: String,
 }
 
+/// Content assets `ids` were written to disk by an import, an asset editor's save, or a New in the content browser.
+#[derive(Event, Clone, Debug, PartialEq)]
+pub struct AssetsWritten {
+    pub ids: Vec<AssetId>,
+}
+
 struct ProjectJob {
     root: PathBuf,
     worker: JoinHandle<Result<Option<(Project, AssetRegistry)>, String>>,
@@ -119,6 +125,7 @@ impl Plugin for ProjectPlugin {
     fn build(&self, app: &mut App) {
         app.register_event::<ProjectOpened>()
             .register_event::<ProjectOpenFailed>()
+            .register_event::<AssetsWritten>()
             .add_system(Update, process_commands)
             .add_system(Update, report_outdated_content);
     }
