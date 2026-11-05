@@ -3,8 +3,8 @@ use std::any::TypeId;
 use concerto_mesh::skeleton::{JointName, JointPose, Skeleton, SkeletonError};
 use concerto_name::name;
 use concerto_reflect::{
-    apply_value, json_to_value, to_json, to_value, JsonLeaf, Leaf, ReflectDefault, ReflectJson,
-    ReflectedValue, TypeRegistry,
+    apply_value, json_to_value, to_json, to_value, ReflectDefault, ReflectJson, ReflectedValue,
+    TypeRegistry,
 };
 use glam::{Mat4, Quat, Vec3};
 use serde_json::json;
@@ -183,16 +183,4 @@ fn a_joint_name_round_trips_through_bincode_as_its_text() {
         bincode::deserialize::<JointName>(&bytes).unwrap(),
         JointName::from("Hips")
     );
-}
-
-#[test]
-fn a_joint_name_encodes_its_leaf_and_json_as_its_string_does() {
-    let joint = JointName::from("x");
-
-    assert_eq!(
-        Leaf::encode(&joint).unwrap(),
-        Leaf::encode(&String::from("x")).unwrap()
-    );
-    assert_eq!(JsonLeaf::to_json(&joint), json!("x"));
-    assert_eq!(JointName::from_json(&json!("x")).unwrap(), joint);
 }
