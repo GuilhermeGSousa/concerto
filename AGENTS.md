@@ -98,6 +98,11 @@ a test,
 `CARGO_PROFILE_TEST_DEBUG=true cargo test -p <crate> --test <name>` gives full
 debug info, rebuilding what that test needs.
 
+Both build third-party crates at `opt-level = 3` and the workspace crates at
+1, so a plain `cargo run` is playable. A variable can show as optimized out
+in the debugger; `--profile profiling` is the fully optimized build, and the
+one to measure performance with.
+
 Report each command you ran with its result. If one fails, say so and show the
 output. A command you did not run is reported as not run. A change to Markdown
 alone needs none of them. A cloud pipeline session runs only the first, and
